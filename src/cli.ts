@@ -741,7 +741,11 @@ async function serveCommand(): Promise<number> {
       createDoneTool(),
       createShellTool(config),
       createComputerTool(config, screen),
-      createBrowserTool(browserFor(thread.key), scope),
+      createBrowserTool(browserFor(thread.key), scope, (png) =>
+        telegram
+          .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
+          .then(() => true),
+      ),
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
