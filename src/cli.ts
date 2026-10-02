@@ -17,6 +17,7 @@ import type { ChannelAudio, Inbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
 import { PersonalAgent } from './core/agent.js';
+import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
@@ -2187,7 +2188,7 @@ export function buildContextNote(
         .join('\n')}\n</routines>`,
     );
   }
-  parts.push(`<now>${new Date().toISOString().slice(0, 16).replace('T', ' ')}</now>`);
+  parts.push(buildNowNote());
   return parts.join('\n');
 }
 
