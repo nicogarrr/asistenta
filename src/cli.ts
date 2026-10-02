@@ -3,7 +3,14 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { ActionLog } from './audit/log.js';
 import { BrowserService } from './browser/service.js';
+import {
+  cleanForTelegram,
+  progressMessage,
+  shorten,
+  stripVoicePrefix,
+} from './channels/formatters.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
@@ -14,6 +21,8 @@ import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
 import { AudioRecall } from './media/recall.js';
+import { detectMemoryWorthy } from './memory/nudges.js';
+import { MemorySnapshot } from './memory/snapshot.js';
 import { MemoryStore } from './memory.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate } from './permissions.js';
@@ -30,6 +39,7 @@ import {
 import { ocrAvailable } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { WindowsScreen } from './screen/windows.js';
+import { SkillStore } from './skills/store.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { createComputerTool } from './tools/computer.js';
@@ -40,6 +50,7 @@ import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
 import { createShellTool } from './tools/shell.js';
+import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { Mutex } from './utils.js';
@@ -516,6 +527,17 @@ async function serveCommand(): Promise<number> {
   store.sweepExpired();
   const memory = new MemoryStore();
 
+  /**
+   * The durable memory the model is shown at the start of every turn.
+   *
+   * Frozen on disk rather than assembled per message: a person should not have to
+   * re-explain who they are every morning, and a snapshot costs one read instead of
+   * rebuilding the same context from scattered rows each time.
+   */
+  const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
+
   const telegram = new TelegramChannel({ token, allowedUserIds: allowed });
   const registry = new ChannelRegistry();
   registry.register(telegram);
@@ -714,7 +736,11 @@ async function serveCommand(): Promise<number> {
       createShellTool(config),
       createComputerTool(config, screen),
       createBrowserTool(browserFor(thread.key), scope),
-      createMemoryTool(memory, scope),
+      // The durable memory plus the model's own procedural skills. The snapshot is
+      // what makes the model stop asking who the user is; the skills are what make it
+      // stop re-deriving a procedure it already worked out.
+      createMemoryTool(memory, scope, snapshot),
+      createSkillsTool({ store: skills }),
       // Window and UI Automation inspection. Read-only, so it is not under the
       // machine mutex: two conversations may both look at the window list at once.
       createWindowsTool(),
@@ -957,9 +983,17 @@ async function serveCommand(): Promise<number> {
   /**
    * Reply with speech when the user spoke. The mirror policy: talking gets a spoken
    * answer, typing gets text. Anything else is noise on a phone speaker.
+   *
+   * The text is cleaned and bounded before it leaves. Telegram renders markdown
+   * headers and tables badly, and a wall of text on a phone is not an answer: the
+   * model is asked to be terse in the prompt, and this is the second half of that
+   * promise - a reply that runs long is cut at a word and offered in full on request,
+   * rather than scrolling past the thing the user asked.
    */
   const answer = async (thread: Thread, inbound: Inbound, text: string): Promise<void> => {
     const wantsVoice = voiceOn.get(inbound.chatId) ?? voiceDefault;
+    const cleaned = cleanForTelegram(stripVoicePrefix(text.trim()));
+    const short = shorten(cleaned);
     let audio: ChannelAudio | undefined;
     if (wantsVoice && inbound.audioFileId && text.trim()) {
       try {
@@ -969,8 +1003,11 @@ async function serveCommand(): Promise<number> {
         log.warn('tts failed, sending text only', { err });
       }
     }
-    const id = await say(inbound, text, { audio });
+    const id = await say(inbound, short.text, { audio });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
+    if (short.truncated) {
+      log.info('reply shortened', { chars: cleaned.length, thread: thread.name });
+    }
   };
 
   const lifecycle = installLifecycle({
@@ -1644,6 +1681,8 @@ async function serveCommand(): Promise<number> {
     const startedAt = Date.now();
     let lastStatusAt = 0;
     let finished = false;
+    /** The progress notes this turn sent, so they can be taken out of the chat at the end. */
+    const progressIds: string[] = [];
 
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
     // is alive. It says "working" without inventing a progress report.
@@ -1666,7 +1705,13 @@ async function serveCommand(): Promise<number> {
             channel: 'telegram',
             account: telegram.account,
             chatId: inbound.chatId,
-            text: `Sigo en ello, ahora ${lastSummary}.`,
+            // Varied and short. A progress note that says the same three words every
+            // time reads as an automated nag; this is the same information in the
+            // voice of someone checking in.
+            text: `${progressMessage()} — ${lastSummary}.`,
+          })
+          .then((id) => {
+            if (id) progressIds.push(id);
           })
           .catch(() => {});
       }
@@ -1722,7 +1767,7 @@ async function serveCommand(): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(buildContextNote(thread, store, memory));
+      thread.agent.attachContext(buildContextNote(thread, store, memory, snapshot));
 
       const result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
@@ -1746,6 +1791,25 @@ async function serveCommand(): Promise<number> {
       const text2 =
         result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
       await answer(thread, inbound, text2);
+
+      // What happened, kept where the user can ask about it later: "¿qué enviaste
+      // anoche?" is a question about a past action, and without a record the honest
+      // answer is "no sé".
+      actions.record({
+        actor: 'asistenta',
+        action: result.error ? 'turn' : 'turn',
+        target: thread.name,
+        result: result.error ? 'error' : 'ok',
+        detail: `${result.toolCalls} tools, ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      });
+
+      // A durable fact said out loud is worth offering to keep. The user should not
+      // have to remember to ask: the moment they say "prefiero X" is the moment it
+      // costs least to write it down.
+      const nudge = detectMemoryWorthy(inbound.text);
+      if (nudge.worth) {
+        await say(inbound, nudge.suggestion, { quote: true }).catch(() => {});
+      }
     } catch (err) {
       log.error('turn threw', { thread: thread.name, err });
       await say(inbound, `Algo falló: ${err instanceof Error ? err.message : String(err)}`, {
@@ -1756,6 +1820,13 @@ async function serveCommand(): Promise<number> {
       thread.active = false;
       clearInterval(typing);
       clearInterval(status);
+      // The progress notes are scaffolding, not part of the conversation. Leaving
+      // them turns a chat into a log of what the agent did instead of a dialogue, so
+      // they go once the real answer has arrived. Best effort: a note Telegram will
+      // not delete stays, and that is fine.
+      for (const id of progressIds) {
+        await telegram.deleteMessage(inbound.chatId, id).catch(() => {});
+      }
       // Approval scope is one task: a memo or grant must never leak into the next
       // turn, where the user has new context that the approval did not cover.
       thread.gate.clearSession(thread.key);
@@ -2094,8 +2165,16 @@ export function buildContextNote(
   thread: { key: string; name: string },
   store: Store,
   memory: MemoryStore,
+  snapshot?: MemorySnapshot,
 ): string {
   const parts: string[] = [];
+
+  // The frozen memory first: who the user is and what the agent has learned about
+  // them, read from disk rather than rebuilt per turn. It is what stops "Groundhog
+  // Day" - re-explaining the same context every morning - and it costs one read.
+  const frozen = snapshot?.contextNote() ?? '';
+  if (frozen) parts.push(frozen);
+
   const entries = memory.all(thread.key).slice(-20);
   if (entries.length) {
     parts.push(`<memory>\n${entries.map((e) => `- ${e.text}`).join('\n')}\n</memory>`);
