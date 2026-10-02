@@ -51,6 +51,7 @@ import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
+import { createRenfeTool } from './tools/renfe.js';
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
@@ -736,6 +737,7 @@ async function serveCommand(): Promise<number> {
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
+      createRenfeTool(),
       createDoneTool(),
       createShellTool(config),
       createComputerTool(config, screen),
