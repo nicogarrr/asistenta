@@ -462,6 +462,47 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /**
+   * Replace the text of a message already sent.
+   *
+   * This is what turns the trail of "Sigo con ello" progress notes into one bubble
+   * that updates in place. Failures are swallowed on purpose: Telegram refuses an
+   * edit that changes nothing and edits past 48h, and a stale progress note is
+   * never worth failing the turn that was reporting on.
+   */
+  async editMessageText(chatId: string, messageId: string, text: string): Promise<void> {
+    const ref = parseMessageRef(chatId, messageId);
+    if (!ref) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageText(ref.chatId, ref.messageId, text),
+        20_000,
+        'editMessageText timed out',
+      ),
+    ).catch((err: unknown) => {
+      log.warn('editMessageText failed', { error: describeError(err) });
+    });
+  }
+
+  /**
+   * Delete one of our own messages, so a finished task leaves no progress chatter
+   * behind. Same swallow-on-failure contract as editMessageText: cleanup runs at
+   * the end of a turn and must never be able to fail it.
+   */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    const ref = parseMessageRef(chatId, messageId);
+    if (!ref) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.deleteMessage(ref.chatId, ref.messageId),
+        20_000,
+        'deleteMessage timed out',
+      ),
+    ).catch((err: unknown) => {
+      log.warn('deleteMessage failed', { error: describeError(err) });
+    });
+  }
+
+  /**
    * Send a recorded screen clip.
    *
    * `sendVideo` is documented as MPEG4, and x264 in an mp4 container is exactly
@@ -626,6 +667,26 @@ export function isAddressedToBot(
   if (text.includes(`@${botUsername}`)) return true;
   const reply = message.reply_to_message as { from?: { is_bot?: boolean } } | undefined;
   return reply?.from?.is_bot === true;
+}
+
+/**
+ * Parse the string message references the channel layer carries into the numeric
+ * pair the Bot API needs. Returns null when either side cannot name a real message,
+ * so a caller can skip a doomed edit instead of throwing mid-cleanup. Group chats
+ * use negative chat ids, so only zero is excluded there; message ids are positive.
+ */
+export function parseMessageRef(
+  chatId: string,
+  messageId: string,
+): { chatId: number; messageId: number } | null {
+  const chat = chatId.trim();
+  const message = messageId.trim();
+  if (chat === '' || message === '') return null;
+  const chatNum = Number(chat);
+  const messageNum = Number(message);
+  if (!Number.isSafeInteger(chatNum) || chatNum === 0) return null;
+  if (!Number.isSafeInteger(messageNum) || messageNum <= 0) return null;
+  return { chatId: chatNum, messageId: messageNum };
 }
 
 /**

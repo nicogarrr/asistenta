@@ -2,7 +2,16 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
-import { compareFrames, type FrameDiff } from '../screen/verify.js';
+import type { Decision, ToolCall } from '../permissions.js';
+import { expand, type Region, scaleRegion } from '../screen/regions.js';
+import {
+  type BatchVerdict,
+  captureRoi,
+  compareFrames,
+  type FrameDiff,
+  type Screenshot,
+  verifyBatch,
+} from '../screen/verify.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -11,13 +20,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Desktop control: screenshot, click, move, drag, type, key.
+ * Desktop control: screenshot, click, move, drag, type, key, batch.
  *
  * Findings that shaped this file:
  *
  * - Screenshots dominate the token bill: ~1.5k tokens at 1280x800, ~2.85k at
  *   1920x1080. The default max edge is 1280 because a fare table still reads at
  *   that size and it roughly halves the cost versus full resolution.
+ * - Every action is a model round trip, and a task of twenty clicks pays twenty
+ *   of them even when the plan was decided in one breath. `batch` runs a list of
+ *   actions inside ONE tool call so the round trips collapse to one; an optional
+ *   `roi` on screenshot/click shrinks the image and the coordinate space to the
+ *   part of the screen the task is actually about.
  * - `space-bunny-free` leaks tool calls into `content` roughly a quarter of the
  *   time, tagged `<|minimax|>...<|tool_call|>`. The harness only reads the
  *   tool_calls channel, so those steps would silently vanish. `normalizeAction()`
@@ -27,12 +41,35 @@ function sleep(ms: number): Promise<void> {
  *   you swap the provider, that is the line to change.
  */
 export type Action =
-  | { action: 'screenshot' }
-  | { action: 'click'; x: number; y: number; button?: string; clicks?: number }
+  | { action: 'screenshot'; roi?: Region }
+  | { action: 'click'; x: number; y: number; button?: string; clicks?: number; roi?: Region }
   | { action: 'move'; x: number; y: number }
   | { action: 'drag'; x: number; y: number; toX: number; toY: number }
   | { action: 'type'; text: string }
-  | { action: 'key'; key: string };
+  | { action: 'key'; key: string }
+  | { action: 'batch'; actions: Array<Record<string, unknown>> };
+
+/**
+ * The permission check one action must pass before it runs: literally
+ * `Gate.check` from permissions.ts with the session and actor bound by the
+ * wiring, `(call) => gate.check(sessionId, { ...call, actor })`.
+ *
+ * A standalone action already passes through this gate in `beforeToolCall`
+ * (core/agent.ts). A batch's sub-actions never reach that hook — they are
+ * arguments inside one tool call — so the batch runs each one through this same
+ * check instead of letting the approval of the outer `batch` cover them all.
+ * When nothing is wired the batch fails closed rather than skipping the check.
+ */
+export type ActionGate = (call: ToolCall) => Decision | Promise<Decision>;
+
+/** Fate of one action inside a `batch`, in the order they were requested. */
+export interface BatchItemResult {
+  index: number;
+  action: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
 
 export interface ScreenShot {
   image: Buffer;
@@ -114,6 +151,20 @@ export function normalizeAction(text: string): Action | null {
   }
 }
 
+const RegionParams = Type.Object(
+  {
+    x: Type.Number({ description: 'Left edge in screenshot pixels.' }),
+    y: Type.Number({ description: 'Top edge in screenshot pixels.' }),
+    width: Type.Number({ description: 'Width in screenshot pixels.' }),
+    height: Type.Number({ description: 'Height in screenshot pixels.' }),
+  },
+  {
+    description:
+      'Region of interest in screenshot pixels. With screenshot, only that region is captured. ' +
+      'With click, x/y are relative to the roi top-left.',
+  },
+);
+
 const ComputerParams = Type.Object({
   action: Type.Union([
     Type.Literal('screenshot'),
@@ -122,6 +173,7 @@ const ComputerParams = Type.Object({
     Type.Literal('drag'),
     Type.Literal('type'),
     Type.Literal('key'),
+    Type.Literal('batch'),
   ]),
   x: Type.Optional(Type.Number({ description: 'X coordinate in real screen pixels.' })),
   y: Type.Optional(Type.Number({ description: 'Y coordinate in real screen pixels.' })),
@@ -136,6 +188,12 @@ const ComputerParams = Type.Object({
   ),
   button: Type.Optional(Type.String()),
   clicks: Type.Optional(Type.Number()),
+  roi: Type.Optional(RegionParams),
+  actions: Type.Optional(
+    Type.Array(Type.Record(Type.String(), Type.Unknown()), {
+      description: 'For the batch action: the actions to run in order, each like a single action.',
+    }),
+  ),
 });
 
 interface Screen {
@@ -208,13 +266,120 @@ export function toRealCoordinates(
 }
 
 /**
+ * Read an optional `roi` argument. Throws on a present-but-malformed roi rather
+ * than ignoring it: the model asked to restrict an action to a region, and
+ * silently performing it on the whole screen is worse than a clear error.
+ */
+function parseRegionField(value: unknown, label: string): Region | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object with x, y, width and height`);
+  }
+  const r = value as Record<string, unknown>;
+  const x = Number(r.x);
+  const y = Number(r.y);
+  const width = Number(r.width);
+  const height = Number(r.height);
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height)
+  ) {
+    throw new Error(`${label} must have finite x, y, width and height`);
+  }
+  if (width < 0 || height < 0) {
+    throw new Error(`${label} cannot have negative width or height`);
+  }
+  return { x, y, width, height };
+}
+
+/**
+ * `coords()` for ROI-relative input. Same double check, same recovery philosophy:
+ * first against the box the coordinates are relative to (so a wrong click is
+ * caught before it becomes a real event), then in real pixels (so rounding after
+ * scaling cannot push it off the edge). The translation itself is `scaleRegion`,
+ * the region-native form of `toRealCoordinates`.
+ */
+function coordsInRoi(
+  args: Record<string, unknown>,
+  roi: Region,
+  view: Screen,
+  native: Screen,
+): { x: number; y: number; viewX: number; viewY: number } {
+  const x = Number(args.x);
+  const y = Number(args.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error('this action requires numeric x and y');
+  }
+  if (x < 0 || y < 0 || x >= roi.width || y >= roi.height) {
+    throw new Error(
+      `coordinates ${x},${y} fall outside the roi ${roi.width}x${roi.height} they are relative to`,
+    );
+  }
+  // Offsetting by the roi lands the point in the full screenshot space first —
+  // the space `view` measures — and one scaleRegion then performs exactly the
+  // screenshot-to-desktop translation `toRealCoordinates` performs for absolute
+  // clicks.
+  const viewX = roi.x + x;
+  const viewY = roi.y + y;
+  const scaled = scaleRegion(
+    { x: viewX, y: viewY, width: 0, height: 0 },
+    { x: 0, y: 0, width: view.width, height: view.height },
+    { x: 0, y: 0, width: native.width, height: native.height },
+  );
+  if (scaled.x < 0 || scaled.y < 0 || scaled.x >= native.width || scaled.y >= native.height) {
+    throw new Error(
+      `coordinates ${scaled.x},${scaled.y} fall outside the ${native.width}x${native.height} screen`,
+    );
+  }
+  return { x: scaled.x, y: scaled.y, viewX, viewY };
+}
+
+/** Actions that change the screen, and therefore deserve before/after verification. */
+function isMutatingAction(name: string): boolean {
+  return name === 'click' || name === 'drag' || name === 'type' || name === 'key';
+}
+
+/** Narrow `batch.actions` to a list of action records, or null when the shape is wrong. */
+function asActionList(value: unknown): Array<Record<string, unknown>> | null {
+  if (!Array.isArray(value)) return null;
+  const out: Array<Record<string, unknown>> = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return null;
+    out.push(item as Record<string, unknown>);
+  }
+  return out;
+}
+
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mimeType: string; data: string };
+
+interface ActionOutcome {
+  content: ContentBlock[];
+  details: Record<string, unknown>;
+  /**
+   * Where a click was expected to land, in screenshot pixels. Feeds the batch's
+   * verification pair (a 96x96 window around the point, matching the radius a
+   * standalone click verifies with).
+   */
+  at: { x: number; y: number } | null;
+}
+
+/**
  * `config` carries screenshot scaling and quality policy so that policy lives in
  * one place. The backend is told about it here, which is also what makes the
  * coordinate translation above possible.
+ *
+ * `gate` is the permission check for `batch` sub-actions (see `ActionGate`).
+ * Single actions do not re-check here: they already passed `Gate.check` in
+ * `beforeToolCall`, and asking twice would prompt the human twice.
  */
 export function createComputerTool(
   config: Config,
   backend: ScreenBackend,
+  gate?: ActionGate,
 ): AgentTool<typeof ComputerParams> {
   const scaling = { maxEdge: config.screenshotMaxEdge, quality: config.screenshotQuality };
   const rescalable = backend as ScreenBackend & {
@@ -222,8 +387,10 @@ export function createComputerTool(
   };
   rescalable.setScaling?.(config.screenshotMaxEdge, config.screenshotQuality);
 
-  // Size of the last image shown to the model. Until one exists, coordinates are
-  // assumed to be real pixels.
+  // Size of the full-frame capture the model's coordinates live in. Until one
+  // exists, coordinates are assumed to be real pixels. ROI crops deliberately do
+  // NOT change it: a crop keeps the capture's scale, so the model's roi-relative
+  // coordinates share this space already (see `captureRoi`).
   let view: { width: number; height: number } | null = null;
 
   /**
@@ -243,7 +410,12 @@ export function createComputerTool(
     action: () => Promise<void>,
     at?: { x: number; y: number },
   ): Promise<FrameDiff | null> => {
-    if (!config.verifyActions) return null;
+    if (!config.verifyActions) {
+      // The diff is what is optional, not the action: `PA_VERIFY_ACTIONS=0` buys
+      // back the two captures per action, it must not disable clicking.
+      await action();
+      return null;
+    }
     let before: Buffer;
     try {
       // Captured at the downscaled size on purpose: this frame is never shown to the
@@ -270,19 +442,391 @@ export function createComputerTool(
     return compareFrames(before, after, at ? { at, radius: 48 } : {});
   };
 
+  /**
+   * Run exactly one action. This is the single code path for both a standalone
+   * call and a batch item: the batch reuses it so no check (`coords`, text
+   * required, key required, …) can be skipped by going through `batch`.
+   *
+   * `verifyResult: false` defers post-action verification to the batch's single
+   * final pass — that is the whole point of batching, since a verify per action
+   * is two extra captures and a settle per action.
+   */
+  const runAction = async (
+    record: Record<string, unknown>,
+    opts: { verifyResult: boolean },
+  ): Promise<ActionOutcome> => {
+    /**
+     * Run one input action, wrapped in verification only when this action owns
+     * the verdict. The action ALWAYS runs: a batch item defers the diff to the
+     * batch's final pass, it does not defer the click itself.
+     */
+    const act = async (
+      action: () => Promise<void>,
+      at?: { x: number; y: number },
+    ): Promise<FrameDiff | null> => {
+      if (!opts.verifyResult) {
+        await action();
+        return null;
+      }
+      return verify(action, at);
+    };
+
+    switch (record.action) {
+      case 'screenshot': {
+        const roi = parseRegionField(record.roi, 'roi');
+        if (roi) {
+          const cropped = await captureRoi(backend, roi);
+          if (!view) {
+            // No full frame yet: reconstruct the capture scale from the crop's
+            // own ratio so later clicks translate correctly even when the very
+            // first thing the model asked for was a region.
+            const native = await backend.screenSize();
+            const scale = cropped.nativeWidth > 0 ? cropped.width / cropped.nativeWidth : 1;
+            view = {
+              width: Math.max(1, Math.round(native.width * scale)),
+              height: Math.max(1, Math.round(native.height * scale)),
+            };
+          }
+          log.debug('screenshot roi', {
+            ...cropped,
+            image: undefined,
+            roi,
+            croppedOk: !cropped.detail,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  `Screenshot ${cropped.width}x${cropped.height} of roi (${roi.x},${roi.y} ` +
+                  `${roi.width}x${roi.height}). Origin top-left of the roi.` +
+                  (cropped.detail ? ` ${cropped.detail}.` : ''),
+              },
+              {
+                type: 'image',
+                mimeType: cropped.mimeType,
+                data: cropped.image.toString('base64'),
+              },
+            ],
+            details: {
+              width: cropped.width,
+              height: cropped.height,
+              nativeWidth: cropped.nativeWidth,
+              nativeHeight: cropped.nativeHeight,
+              roi,
+              cropped: !cropped.detail,
+              ...scaling,
+            },
+            at: null,
+          };
+        }
+        const shot: Screenshot = await backend.screenshot();
+        view = { width: shot.width, height: shot.height };
+        const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
+        log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `Screenshot ${shot.width}x${shot.height}. Origin top-left.` +
+                (downscaled ? ` Real desktop is ${shot.nativeWidth}x${shot.nativeHeight}.` : ''),
+            },
+            { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
+          ],
+          details: {
+            width: shot.width,
+            height: shot.height,
+            nativeWidth: shot.nativeWidth,
+            nativeHeight: shot.nativeHeight,
+            ...scaling,
+          },
+          at: null,
+        };
+      }
+
+      case 'click': {
+        const native = await backend.screenSize();
+        const roi = parseRegionField(record.roi, 'roi');
+        const button = String(record.button ?? 'left');
+        const clicks = Number(record.clicks ?? 1);
+        if (roi) {
+          const p = coordsInRoi(record, roi, view ?? native, native);
+          // Verification looks at the point in screenshot space, same as the
+          // standalone path below: the comparison frames are captured at that
+          // geometry.
+          const at = { x: p.viewX, y: p.viewY };
+          const check = await act(() => backend.click(p.x, p.y, { button, clicks }), at);
+          log.info('click roi', { ...p, changed: check?.changed ?? null });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Clicked ${p.x},${p.y} (roi-relative ${Number(record.x)},${Number(record.y)})${
+                  check ? `\n${check.verdict}` : ''
+                }`,
+              },
+            ],
+            details: {
+              x: p.x,
+              y: p.y,
+              viewX: p.viewX,
+              viewY: p.viewY,
+              roi,
+              verified: check?.changed ?? null,
+              localRatio: check?.localRatio ?? null,
+            },
+            at,
+          };
+        }
+        const p = coords(record, view ?? native, native);
+        // The comparison frames are at the downscaled geometry, so the action point
+        // is scaled down with them rather than handed over in native pixels.
+        const at = view
+          ? {
+              x: Math.round((p.x * view.width) / native.width),
+              y: Math.round((p.y * view.height) / native.height),
+            }
+          : { x: p.x, y: p.y };
+        const check = await act(
+          () =>
+            backend.click(p.x, p.y, {
+              button,
+              clicks,
+            }),
+          at,
+        );
+        log.info('click', { ...p, changed: check?.changed ?? null });
+        return {
+          content: [
+            { type: 'text', text: `Clicked ${p.x},${p.y}${check ? `\n${check.verdict}` : ''}` },
+          ],
+          details: {
+            ...p,
+            verified: check?.changed ?? null,
+            localRatio: check?.localRatio ?? null,
+          },
+          at,
+        };
+      }
+
+      case 'move': {
+        const native = await backend.screenSize();
+        const p = coords(record, view ?? native, native);
+        // A move is an observation, not an action. Verifying it would cost two
+        // screenshots to learn that a hover sometimes does nothing, which is both
+        // true and useless.
+        await backend.move(p.x, p.y);
+        return {
+          content: [{ type: 'text', text: `Moved to ${p.x},${p.y}` }],
+          details: p,
+          at: null,
+        };
+      }
+
+      case 'drag': {
+        const native = await backend.screenSize();
+        const from = coords(record, view ?? native, native);
+        const to = coords({ x: record.toX, y: record.toY }, view ?? native, native);
+        const check = await act(() => backend.drag(from.x, from.y, to.x, to.y));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Dragged ${from.x},${from.y} to ${to.x},${to.y}${
+                check ? `\n${check.verdict}` : ''
+              }`,
+            },
+          ],
+          details: { from, to, verified: check?.changed ?? null },
+          at: null,
+        };
+      }
+
+      case 'type': {
+        const text = String(record.text ?? '');
+        if (!text) throw new Error('the type action requires text');
+        const check = await act(() => backend.type(text));
+        log.info('typed', { chars: text.length, changed: check?.changed ?? null });
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Typed ${text.length} characters${check ? `\n${check.verdict}` : ''}`,
+            },
+          ],
+          details: { chars: text.length, verified: check?.changed ?? null },
+          at: null,
+        };
+      }
+
+      case 'key': {
+        const key = String(record.key ?? '');
+        if (!key) throw new Error('the key action requires a key name');
+        const check = await act(() => backend.key(key));
+        return {
+          content: [{ type: 'text', text: `Pressed ${key}${check ? `\n${check.verdict}` : ''}` }],
+          details: { key, verified: check?.changed ?? null },
+          at: null,
+        };
+      }
+
+      case 'batch':
+        // A nested batch would smuggle ungated actions past the loop below.
+        throw new Error('an action inside a batch cannot be another batch');
+
+      default:
+        throw new Error(`unknown action: ${String(record.action)}`);
+    }
+  };
+
+  /**
+   * Run a list of actions in order inside ONE tool call.
+   *
+   * Three properties matter here and each one cost a bug in an earlier design:
+   *
+   * - ONE machine lock for the whole list. The caller's exclusive-tool wrapper
+   *   (the `machine` mutex in cli.ts) wraps this `execute` once, so the whole
+   *   batch runs inside a single acquisition — one mouse, one keyboard, no
+   *   interleaving with another conversation's tool call. Taking the lock per
+   *   item instead would interleave with other threads mid-sequence.
+   * - The SAME permission gate as a standalone action, once per item (see
+   *   `ActionGate`). A blocked or failed item is reported and the rest are
+   *   skipped: a half-applied sequence the model cannot see is worse than a
+   *   shorter one it can.
+   * - Post-action verification ONCE at the end, not per action: one settle, one
+   *   after-capture, one verdict line. Per-action pairs share those two frames
+   *   and differ only in the roi the verifier checks, which is what turns "did
+   *   anything move" into "did EACH action land where it should" without paying
+   *   two captures per action.
+   */
+  const runBatch = async (record: Record<string, unknown>) => {
+    const list = asActionList(record.actions);
+    if (!list || list.length === 0) {
+      throw new Error('the batch action requires a non-empty actions array');
+    }
+    const results: BatchItemResult[] = [];
+    const images: ContentBlock[] = [];
+    const targets: Array<{ at: { x: number; y: number } | null }> = [];
+    let before: Screenshot | null = null;
+    let cutAt = -1;
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i] ?? {};
+      const name = typeof item.action === 'string' ? item.action : 'unknown';
+
+      // The exact call shape `beforeToolCall` sends to `Gate.check`, so batch
+      // items are policed by the same rules as standalone actions rather than
+      // riding on the approval of the outer `batch`.
+      const decision = gate
+        ? await gate({ tool: 'computer', args: item, actor: 'batch' })
+        : {
+            verdict: 'deny' as const,
+            reason: 'no permission gate is wired to this tool, I will not run ungated actions',
+          };
+      if (decision.verdict !== 'allow') {
+        results.push({ index: i, action: name, ok: false, error: `blocked: ${decision.reason}` });
+        log.info('batch action blocked', { index: i, action: name, reason: decision.reason });
+        cutAt = i;
+        break;
+      }
+
+      try {
+        if (config.verifyActions && isMutatingAction(name) && before === null) {
+          before = await backend.screenshot();
+        }
+        const out = await runAction(item, { verifyResult: false });
+        results.push({ index: i, action: name, ok: true, result: out.details });
+        for (const block of out.content) {
+          if (block.type === 'image') images.push(block);
+        }
+        if (isMutatingAction(name)) targets.push({ at: out.at });
+      } catch (err) {
+        results.push({
+          index: i,
+          action: name,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        log.warn('batch action failed', { index: i, action: name, err });
+        cutAt = i;
+        break;
+      }
+    }
+
+    if (cutAt >= 0) {
+      for (let j = cutAt + 1; j < list.length; j++) {
+        const item = list[j] ?? {};
+        results.push({
+          index: j,
+          action: typeof item.action === 'string' ? item.action : 'unknown',
+          ok: false,
+          error: `skipped: action ${cutAt} did not complete`,
+        });
+      }
+    }
+
+    let verdict: BatchVerdict | null = null;
+    const beforeShot = before;
+    if (config.verifyActions && beforeShot && targets.length > 0) {
+      // Long enough for a repaint to land — once for the whole batch, which is
+      // where most of the saved latency lives (see `verify`).
+      await sleep(config.verifySettleMs);
+      const after = await backend.screenshot();
+      // Each pair shares the two frames and differs in the window it checks: a
+      // click's window is the 96x96 box around its point (radius 48, matching a
+      // standalone click), an untargeted action counts anywhere.
+      const pairs = targets.map((target) => ({
+        before: beforeShot,
+        after,
+        roi: target.at ? expand({ ...target.at, width: 0, height: 0 }, 48) : undefined,
+      }));
+      verdict = await verifyBatch(pairs);
+    }
+
+    const okCount = results.filter((r) => r.ok).length;
+    const text = [
+      `Batch ${list.length} actions: ${okCount} ok, ${results.length - okCount} not executed.`,
+      ...results.map((r) => {
+        const head = `[${r.index}] ${r.action}`;
+        if (r.ok) return `${head}: ok`;
+        if (r.error?.startsWith('skipped')) return `${head}: ${r.error}`;
+        return `${head}: FAILED — ${r.error ?? 'unknown error'}`;
+      }),
+      verdict ? verdict.reason : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return {
+      content: [{ type: 'text' as const, text }, ...images],
+      details: {
+        results,
+        verified: verdict
+          ? { done: verdict.done, changed: verdict.changed, total: verdict.total }
+          : null,
+        ...scaling,
+      },
+    };
+  };
+
   return {
     name: 'computer',
     label: 'Computer',
     description: [
       'Control the desktop. Actions: screenshot (returns the screen as an image),',
-      'click (x, y), move (x, y), drag (x,y to toX,toY), type (text), key (chord).',
+      'click (x, y), move (x, y), drag (x,y to toX,toY), type (text), key (chord),',
+      'batch (actions: [...]) runs several actions in one call, in order, and stops at the first failure.',
       'Coordinates are pixels in the screenshot you were shown, origin top-left.',
+      'Optional roi {x, y, width, height} on screenshot and click: screenshot then returns only',
+      'that region, and click x/y become relative to the roi top-left. Keep passing the same roi',
+      'to clicks after a roi screenshot.',
       'For key, use chords like "enter", "ctrl+s", "alt+F4", "shift+tab" — not symbols.',
       'Always screenshot first; never guess coordinates.',
       'Every click, drag, type and keypress returns a VERIFICACION line saying whether',
-      'the screen really changed. If it says it did not, do not repeat the action: take',
-      'a fresh screenshot and locate the element again, because the coordinates were',
-      'wrong.',
+      'the screen really changed (once for a whole batch). If it says it did not, do not',
+      'repeat the action: take a fresh screenshot and locate the element again, because the',
+      'coordinates were wrong.',
     ].join(' '),
     parameters: ComputerParams,
     // Sequential on purpose: two input actions in one batch can interleave and fight
@@ -291,120 +835,9 @@ export function createComputerTool(
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const record = args as unknown as Record<string, unknown>;
-
-      switch (args.action) {
-        case 'screenshot': {
-          const shot = await backend.screenshot();
-          view = { width: shot.width, height: shot.height };
-          const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
-          log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
-          return {
-            content: [
-              {
-                type: 'text',
-                text:
-                  `Screenshot ${shot.width}x${shot.height}. Origin top-left.` +
-                  (downscaled ? ` Real desktop is ${shot.nativeWidth}x${shot.nativeHeight}.` : ''),
-              },
-              { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
-            ],
-            details: {
-              width: shot.width,
-              height: shot.height,
-              nativeWidth: shot.nativeWidth,
-              nativeHeight: shot.nativeHeight,
-              ...scaling,
-            },
-          };
-        }
-
-        case 'click': {
-          const native = await backend.screenSize();
-          const p = coords(record, view ?? native, native);
-          // The comparison frames are at the downscaled geometry, so the action point
-          // is scaled down with them rather than handed over in native pixels.
-          const roi = view
-            ? {
-                x: Math.round((p.x * view.width) / native.width),
-                y: Math.round((p.y * view.height) / native.height),
-              }
-            : { x: p.x, y: p.y };
-          const check = await verify(
-            () =>
-              backend.click(p.x, p.y, {
-                button: String(record.button ?? 'left'),
-                clicks: Number(record.clicks ?? 1),
-              }),
-            roi,
-          );
-          log.info('click', { ...p, changed: check?.changed ?? null });
-          return {
-            content: [
-              { type: 'text', text: `Clicked ${p.x},${p.y}${check ? `\n${check.verdict}` : ''}` },
-            ],
-            details: {
-              ...p,
-              verified: check?.changed ?? null,
-              localRatio: check?.localRatio ?? null,
-            },
-          };
-        }
-
-        case 'move': {
-          const native = await backend.screenSize();
-          const p = coords(record, view ?? native, native);
-          // A move is an observation, not an action. Verifying it would cost two
-          // screenshots to learn that a hover sometimes does nothing, which is both
-          // true and useless.
-          await backend.move(p.x, p.y);
-          return { content: [{ type: 'text', text: `Moved to ${p.x},${p.y}` }], details: p };
-        }
-
-        case 'drag': {
-          const native = await backend.screenSize();
-          const from = coords(record, view ?? native, native);
-          const to = coords({ x: record.toX, y: record.toY }, view ?? native, native);
-          const check = await verify(() => backend.drag(from.x, from.y, to.x, to.y));
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Dragged ${from.x},${from.y} to ${to.x},${to.y}${check ? `\n${check.verdict}` : ''}`,
-              },
-            ],
-            details: { from, to, verified: check?.changed ?? null },
-          };
-        }
-
-        case 'type': {
-          const text = String(record.text ?? '');
-          if (!text) throw new Error('the type action requires text');
-          const check = await verify(() => backend.type(text));
-          log.info('typed', { chars: text.length, changed: check?.changed ?? null });
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Typed ${text.length} characters${check ? `\n${check.verdict}` : ''}`,
-              },
-            ],
-            details: { chars: text.length, verified: check?.changed ?? null },
-          };
-        }
-
-        case 'key': {
-          const key = String(record.key ?? '');
-          if (!key) throw new Error('the key action requires a key name');
-          const check = await verify(() => backend.key(key));
-          return {
-            content: [{ type: 'text', text: `Pressed ${key}${check ? `\n${check.verdict}` : ''}` }],
-            details: { key, verified: check?.changed ?? null },
-          };
-        }
-
-        default:
-          throw new Error(`unknown action: ${String(args.action)}`);
-      }
+      if (args.action === 'batch') return runBatch(record);
+      const out = await runAction(record, { verifyResult: true });
+      return { content: out.content, details: out.details };
     },
   };
 }

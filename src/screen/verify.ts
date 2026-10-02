@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { log } from '../log.js';
+import { clipRegion, type Region, scaleRegion } from './regions.js';
+import type { WindowsScreen } from './windows.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -310,4 +312,248 @@ function noChange(reason: string): FrameDiff {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * One captured frame. Structurally identical to what `WindowsScreen.screenshot()`
+ * returns (and to `ScreenShot` in tools/computer.ts) so the same buffer can travel
+ * from the backend into `compareFrames`/`verifyBatch` without conversion.
+ */
+export interface Screenshot {
+  image: Buffer;
+  mimeType: string;
+  /** Size of the image as returned to the model. Regions live in this space. */
+  width: number;
+  height: number;
+  /** Real desktop size the frame was taken from, for scaleRegion translations. */
+  nativeWidth: number;
+  nativeHeight: number;
+  /** Set when a requested ROI crop could not be performed and the full frame is returned instead. */
+  detail?: string;
+}
+
+export interface BatchPair {
+  before: Screenshot;
+  after: Screenshot;
+  /**
+   * Where this pair's action was expected to have an effect, in the pixel space
+   * of the pair's own frames. Absent means "anywhere counts", which is what an
+   * untargeted action like typing deserves.
+   */
+  roi?: Region;
+}
+
+export interface BatchVerdict {
+  /** At least one pair changed where it should, and none changed only elsewhere. */
+  done: boolean;
+  /** One line the model can act on. */
+  reason: string;
+  /** Pairs that left a footprint inside their own roi (or anywhere, when none given). */
+  changed: number;
+  total: number;
+}
+
+/**
+ * One verdict for a whole batch of before/after pairs.
+ *
+ * The batch tool needs this because N per-action verdict lines is exactly the
+ * token traffic the batch exists to remove: the model reads one sentence and
+ * decides once whether to proceed or re-observe. Done means "at least one pair
+ * changed AND no pair shows a regression", where a regression is a `movedAway`
+ * diff — the screen moved, but not under the roi that action was aiming at. A
+ * completely inert pair is NOT a regression: some actions (a keypress into an
+ * inert field) legitimately do nothing, and failing the whole batch for that
+ * would cry wolf once per run.
+ */
+export async function verifyBatch(pairs: BatchPair[]): Promise<BatchVerdict> {
+  if (pairs.length === 0) {
+    return {
+      done: false,
+      reason: 'VERIFICACION: no habia acciones que verificar en el lote.',
+      changed: 0,
+      total: 0,
+    };
+  }
+  let changed = 0;
+  let regressions = 0;
+  // The batch's pairs deliberately share the two frames and differ only in the
+  // window they watch. Diffing the same bytes twice would pay a PowerShell round
+  // trip for an answer already in hand, so equal (frames, window) pairs reuse
+  // the first result — `compareFrames` is deterministic for identical inputs.
+  const computed: Array<{ before: Buffer; after: Buffer; key: string; diff: FrameDiff }> = [];
+  for (const pair of pairs) {
+    const options: CompareOptions = {};
+    if (pair.roi) {
+      // The roi arrives as a rectangle and the comparer wants a point plus a
+      // radius: the centre with half the long side covers the same ground while
+      // keeping the existing local-diff machinery untouched.
+      const roi = pair.roi;
+      options.at = { x: roi.x + roi.width / 2, y: roi.y + roi.height / 2 };
+      options.radius = Math.max(roi.width, roi.height) / 2;
+    }
+    const key = options.at
+      ? `${options.at.x},${options.at.y},${options.radius ?? ''}`
+      : 'whole-frame';
+    const cached = computed.find(
+      (c) => c.before === pair.before.image && c.after === pair.after.image && c.key === key,
+    );
+    const diff = cached
+      ? cached.diff
+      : await compareFrames(pair.before.image, pair.after.image, options);
+    if (!cached) {
+      computed.push({ before: pair.before.image, after: pair.after.image, key, diff });
+    }
+    if (diff.changed && !diff.movedAway) changed++;
+    if (diff.movedAway) regressions++;
+  }
+  const done = changed >= 1 && regressions === 0;
+  return {
+    done,
+    reason: batchReason(done, changed, regressions, pairs.length),
+    changed,
+    total: pairs.length,
+  };
+}
+
+function batchReason(done: boolean, changed: number, regressions: number, total: number): string {
+  if (regressions > 0) {
+    return (
+      `VERIFICACION: ${regressions} de ${total} acciones del lote cambiaron la pantalla LEJOS de ` +
+      'donde se esperaba: has tocado el control equivocado o algo detras ha reaccionado. ' +
+      'Captura de nuevo y localiza los elementos antes de repetir el lote.'
+    );
+  }
+  if (changed === 0) {
+    return (
+      `VERIFICACION: la pantalla NO ha cambiado tras el lote (0 de ${total} acciones dejaron ` +
+      'huella). No repitas las mismas acciones: captura y busca los elementos de nuevo.'
+    );
+  }
+  if (done) {
+    return `VERIFICACION: el lote ha tenido efecto (${changed} de ${total} acciones dejaron huella).`;
+  }
+  return `VERIFICACION: sin cambios claros en el lote (${changed} de ${total}).`;
+}
+
+/**
+ * Capture just one region of the screen.
+ *
+ * `roi` is in the pixel space of the capture the backend returns (the model's
+ * screenshot space). The crop deliberately keeps that capture scale instead of
+ * resampling: after a ROI screenshot the model's coordinates must keep the SAME
+ * scale factor it was using before, or every subsequent click silently shifts.
+ * `nativeWidth`/`nativeHeight` carry the region's real desktop size so callers
+ * can translate with `scaleRegion` when they need real pixels.
+ *
+ * There is no native JPEG decoder in Node and this project adds no image
+ * dependency, so the crop goes through System.Drawing in PowerShell — the same
+ * mechanism `compareFrames` and `captureScript` already rely on. When that is
+ * not possible (Defender, session 0, a corrupt frame) the full capture comes
+ * back with a `detail` note instead of an exception: a missing crop degrades one
+ * screenshot, and a thrown error would kill the whole batch around it.
+ */
+export async function captureRoi(
+  screen: Pick<WindowsScreen, 'screenshot'>,
+  roi: Region,
+): Promise<Screenshot> {
+  let shot: Screenshot;
+  try {
+    shot = await screen.screenshot();
+  } catch (err) {
+    log.warn('roi capture failed', { err });
+    return {
+      image: Buffer.alloc(0),
+      mimeType: 'image/jpeg',
+      width: 0,
+      height: 0,
+      nativeWidth: 0,
+      nativeHeight: 0,
+      detail: `no pude capturar la pantalla para el ROI (${err instanceof Error ? err.message : String(err)})`,
+    };
+  }
+
+  const frame: Region = { x: 0, y: 0, width: shot.width, height: shot.height };
+  const crop = clipRegion(roi, frame);
+  if (!crop) {
+    return {
+      ...shot,
+      detail: 'el ROI no se pudo recortar: queda fuera de la captura, va la captura completa',
+    };
+  }
+  if (crop.width === frame.width && crop.height === frame.height && crop.x === 0 && crop.y === 0) {
+    return shot;
+  }
+
+  try {
+    const image = await cropJpeg(shot.image, crop);
+    // The crop's real desktop size: one scaleRegion call, same maths the click
+    // path uses in the other direction.
+    const native = scaleRegion(crop, frame, {
+      x: 0,
+      y: 0,
+      width: shot.nativeWidth,
+      height: shot.nativeHeight,
+    });
+    return {
+      image,
+      mimeType: 'image/jpeg',
+      width: crop.width,
+      height: crop.height,
+      nativeWidth: native.width,
+      nativeHeight: native.height,
+    };
+  } catch (err) {
+    log.warn('roi crop failed', { err });
+    return {
+      ...shot,
+      detail: `el ROI no se pudo recortar (${err instanceof Error ? err.message : String(err)}), va la captura completa`,
+    };
+  }
+}
+
+/** Crop one JPEG rectangle in PowerShell. Throws on failure; the caller degrades. */
+async function cropJpeg(input: Buffer, crop: Region): Promise<Buffer> {
+  const dir = mkdtempSync(join(tmpdir(), 'pa-crop-'));
+  const src = join(dir, 'in.jpg');
+  const out = join(dir, 'out.jpg');
+  try {
+    writeFileSync(src, input);
+    await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', buildCropScript(src, out, crop)],
+      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 20_000 },
+    );
+    if (!existsSync(out)) throw new Error('crop produced no file');
+    return readFileSync(out);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The PowerShell that performs the crop, as a pure function — same contract as
+ * `buildCompareScript`: inspectable and testable without a screen.
+ *
+ * DrawImage with explicit source/destination rectangles rather than `Bitmap.Clone`
+ * because Clone throws on indexed pixel formats that JPEG decoding can produce,
+ * and the failure would land in the caller's degrade path for no good reason.
+ */
+export function buildCropScript(fileIn: string, fileOut: string, crop: Region): string {
+  const x = Math.round(crop.x);
+  const y = Math.round(crop.y);
+  const w = Math.max(1, Math.round(crop.width));
+  const h = Math.max(1, Math.round(crop.height));
+  return `
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Drawing
+$src = [System.Drawing.Image]::FromFile('${fileIn.replace(/'/g, "''")}')
+$bmp = New-Object System.Drawing.Bitmap ${w}, ${h}
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.DrawImage($src, (New-Object System.Drawing.Rectangle(0, 0, ${w}, ${h})), (New-Object System.Drawing.Rectangle(${x}, ${y}, ${w}, ${h})), [System.Drawing.GraphicsUnit]::Pixel)
+$g.Dispose()
+$src.Dispose()
+$bmp.Save('${fileOut.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Jpeg)
+$bmp.Dispose()
+Write-Output 'ok'
+`;
 }

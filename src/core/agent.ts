@@ -5,6 +5,7 @@ import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
 import { DONE_TOOL_NAME, extractDoneSummary } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
+import { IterationBudget } from './budget.js';
 import { SYSTEM_PROMPT } from './prompt.js';
 import { createProviderHandle } from './provider.js';
 import {
@@ -262,6 +263,10 @@ export class PersonalAgent {
   #externalAbort = false;
   /** Tool call ids refused by the gate, so failures can be told apart. */
   readonly #gateBlockedIds = new Set<string>();
+  /** One iteration per tool call; shared with subagents via `budget.child()`. */
+  readonly #budget: IterationBudget;
+  /** False means the budget is refilled at the start of every `run()`. */
+  readonly #sharedBudget: boolean;
 
   private constructor(
     agent: Agent,
@@ -269,12 +274,16 @@ export class PersonalAgent {
     stream: boolean,
     retry: RetryPolicy,
     sessionId: string,
+    budget: IterationBudget,
+    sharedBudget: boolean,
   ) {
     this.#agent = agent;
     this.#config = config;
     this.#stream = stream;
     this.#retry = retry;
     this.#sessionId = sessionId;
+    this.#budget = budget;
+    this.#sharedBudget = sharedBudget;
   }
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
@@ -287,13 +296,26 @@ export class PersonalAgent {
     tools: AgentTool[],
     gate: Gate,
     actor: string,
-    opts: { stream?: boolean; sessionId?: string } = {},
+    opts: {
+      stream?: boolean;
+      sessionId?: string;
+      /**
+       * Iteration budget. `shared` (default true) keeps one counter for the whole
+       * agent life: every run and every subagent (`budget.child()`) spends from it.
+       * `shared: false` refills it at the start of each `run()` instead. Without
+       * this option the budget matches `config.maxToolCalls`, the existing hard
+       * ceiling, so the pressure warnings describe the same allowance.
+       */
+      iterationBudget?: { max: number; shared?: boolean };
+    } = {},
   ): Promise<PersonalAgent> {
     const { models, model } = await createProviderHandle(config);
     const stream = opts.stream ?? false;
     // The session id is captured per instance, never read from a module global: a
     // global meant every agent silently inherited the newest chat's approvals.
     const sessionId = opts.sessionId ?? 'default';
+    const budget = new IterationBudget(opts.iterationBudget?.max ?? config.maxToolCalls);
+    const sharedBudget = opts.iterationBudget?.shared ?? true;
     // Assigned before any tool call can run; the hooks below only fire inside a run.
     let personal!: PersonalAgent;
 
@@ -316,6 +338,9 @@ export class PersonalAgent {
       // no tool result is ever replayed because `replay: 'never'` is set below.
       maxRetryDelayMs: 30_000,
       beforeToolCall: async ({ toolCall, args }) => {
+        // Every tool call spends one iteration, blocked ones included: asking the
+        // gate for an unaffordable action is still one step of the task.
+        personal.budget.consume(1);
         const call: GateCall = {
           tool: toolCall.name,
           args: (args ?? {}) as Record<string, unknown>,
@@ -329,18 +354,43 @@ export class PersonalAgent {
         }
         return undefined;
       },
-      afterToolCall: async ({ toolCall, isError }) => {
+      afterToolCall: async ({ toolCall, isError, result }) => {
         log.debug('tool finished', { tool: toolCall.name, id: toolCall.id, isError });
-        return undefined;
+        // Budget pressure rides inside the tool result (`details.budgetPressure`)
+        // instead of as an extra conversation message: the model reads it as part
+        // of the outcome it just got, and the message format never changes.
+        const pressure = personal.budget.pressure();
+        if (!pressure) return undefined;
+        const details: unknown = result.details;
+        const base: Record<string, unknown> =
+          details !== null && typeof details === 'object' && !Array.isArray(details)
+            ? { ...(details as Record<string, unknown>) }
+            : details === undefined
+              ? {}
+              : { value: details };
+        return { details: { ...base, budgetPressure: pressure } };
       },
     });
 
-    personal = new PersonalAgent(agent, config, stream, DEFAULT_RETRY, sessionId);
+    personal = new PersonalAgent(
+      agent,
+      config,
+      stream,
+      DEFAULT_RETRY,
+      sessionId,
+      budget,
+      sharedBudget,
+    );
     return personal;
   }
 
   get sessionId(): string {
     return this.#sessionId;
+  }
+
+  /** Iteration budget; `remaining()` is the live count shared with subagents. */
+  get budget(): IterationBudget {
+    return this.#budget;
   }
 
   markGateBlocked(toolCallId: string): void {
@@ -387,6 +437,9 @@ export class PersonalAgent {
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
     this.#externalAbort = false;
+    // A non-shared budget is per-run by definition: each task gets a full
+    // allowance and cannot spend the previous task's leftovers.
+    if (!this.#sharedBudget) this.#budget.reset();
     const shared: AttemptState = {
       toolCalls: 0,
       blocked: 0,

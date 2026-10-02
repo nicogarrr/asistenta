@@ -1,4 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
 
@@ -15,6 +18,18 @@ import { stableStringify } from './utils.js';
  * middle: the human approves once and the answer is remembered for the session.
  */
 export type Verdict = 'allow' | 'deny' | 'ask';
+
+/**
+ * How wide one human approval is:
+ *
+ * - `once`    — only the exact call that was approved (the fingerprint memo).
+ * - `session` — every call to that tool for the current grant window.
+ * - `always`  — never ask again for that tool, even after a restart.
+ *
+ * Set explicitly via `Gate.setScope`; the level is a replacement, not a stack, so
+ * narrowing `always` down to `once` revokes the standing grant.
+ */
+export type ApprovalScope = 'once' | 'session' | 'always';
 
 export interface ToolCall {
   tool: string;
@@ -89,6 +104,14 @@ export interface GateOptions {
   fullControl?: boolean;
   /** Required to also auto-approve payment and credential calls in full control. */
   allowPayments?: boolean;
+  /**
+   * SQLite file where `always` approval scopes are persisted, so a standing human
+   * grant survives a restart. Injected rather than read from `paths.db` directly:
+   * tests build Gates that must never touch the real database (a persisted
+   * `always` for `shell` there would silently change what the tests assert).
+   * Omitted means scopes live in memory only.
+   */
+  dbPath?: string;
   approver?: Approver;
 }
 
@@ -103,6 +126,21 @@ interface Rule {
   reason: string;
   match: (call: ToolCall) => boolean;
 }
+
+/** A declared scope below `always`, kept per session. */
+interface ScopeEntry {
+  level: 'once' | 'session';
+  /** Epoch ms until which a `session` scope is live; null for `once`. */
+  until: number | null;
+}
+
+/** `always` scopes survive restarts in this table (see `GateOptions.dbPath`). */
+const SCOPE_TABLE = `CREATE TABLE IF NOT EXISTS approval_scopes (
+  scope_key  TEXT PRIMARY KEY,
+  tool       TEXT,
+  level      TEXT,
+  created_at INTEGER
+)`;
 
 function argString(args: Record<string, unknown>, key: string): string {
   const v = args[key];
@@ -124,6 +162,12 @@ export class Gate {
   readonly #fullControl: boolean;
   readonly #allowPayments: boolean;
   readonly #grantWindowMs: number;
+  /** SQLite file for `always` scopes; undefined means memory only. */
+  readonly #dbPath: string | undefined;
+  /** Tools with a standing `always` grant. Persisted when `dbPath` is set. */
+  readonly #alwaysAllow = new Set<string>();
+  /** sessionId -> tool -> declared non-always scope (see `setScope`). */
+  readonly #scopes = new Map<string, Map<string, ScopeEntry>>();
   /** sessionId -> (tool+args) approved. Cleared per session. */
   readonly #approved = new Map<string, Set<string>>();
   readonly #audit: Array<{
@@ -141,6 +185,10 @@ export class Gate {
     this.#fullControl = options.fullControl ?? false;
     this.#allowPayments = options.allowPayments ?? false;
     this.#grantWindowMs = options.grantWindowMs ?? 90_000;
+    this.#dbPath = options.dbPath;
+    // Standing grants from an earlier run are part of the policy, so they are
+    // loaded before anything can be checked against them.
+    this.#loadPersistedAlways();
     this.#rules = [
       {
         id: 'deny-tools',
@@ -253,17 +301,22 @@ export class Gate {
   #openGrantWindow(sessionId: string, tool: string): void {
     const window = this.#grantWindowMs;
     if (window <= 0 || tool === 'purchase') return;
+    // A declared `once` scope narrows an approval to its exact fingerprint:
+    // opening the trust window here would widen what the human agreed to.
+    if (this.#scopes.get(sessionId)?.get(tool)?.level === 'once') return;
     if (!this.#grants.has(sessionId)) this.#grants.set(sessionId, new Map());
     this.#grants.get(sessionId)?.set(tool, Date.now() + window);
   }
 
   /**
    * Drop every trust window and memo. Called when a task finishes, so approval
-   * scope is one task rather than forever.
+   * scope is one task rather than forever. `always` grants survive: they are a
+   * standing decision, not part of any one task.
    */
   clearSession(sessionId: string): void {
     this.#approved.delete(sessionId);
     this.#grants.delete(sessionId);
+    this.#scopes.delete(sessionId);
   }
 
   /** Tool -> epoch ms until which further calls to it are trusted. */
@@ -271,6 +324,88 @@ export class Gate {
 
   registerSession(sessionId: string): void {
     if (!this.#approved.has(sessionId)) this.#approved.set(sessionId, new Set());
+  }
+
+  /**
+   * Declare how wide one human approval for `tool` is (see {@link ApprovalScope}).
+   *
+   * The level replaces the previous one: narrowing `always` down to `once` must
+   * revoke the standing grant rather than keep it underneath, and a narrower scope
+   * also cancels trust already in flight.
+   */
+  setScope(sessionId: string, tool: string, scope: ApprovalScope): void {
+    this.#alwaysAllow.delete(tool);
+    this.#dropPersistedAlways(tool);
+    const perSession = this.#scopes.get(sessionId) ?? new Map<string, ScopeEntry>();
+    this.#scopes.set(sessionId, perSession);
+    this.#grants.get(sessionId)?.delete(tool);
+    if (scope === 'always') {
+      perSession.delete(tool);
+      this.#alwaysAllow.add(tool);
+      this.#persistAlways(tool);
+      return;
+    }
+    if (scope === 'session') {
+      // "The rest of this task" is exactly the grant window, not wall-clock forever.
+      perSession.set(tool, { level: 'session', until: Date.now() + this.#grantWindowMs });
+      return;
+    }
+    perSession.set(tool, { level: 'once', until: null });
+  }
+
+  /** The scope currently in force for `tool`, or 'unset' when none was declared. */
+  scopeFor(sessionId: string, tool: string): ApprovalScope | 'unset' {
+    if (this.#alwaysAllow.has(tool)) return 'always';
+    const entry = this.#scopes.get(sessionId)?.get(tool);
+    if (!entry) return 'unset';
+    if (entry.level === 'session') {
+      if (entry.until === null || Date.now() >= entry.until) {
+        this.#scopes.get(sessionId)?.delete(tool);
+        return 'unset';
+      }
+      return 'session';
+    }
+    return 'once';
+  }
+
+  /**
+   * One open-write-close pass on the scope database. No handle is kept between
+   * calls: approvals are rare and human-paced, and a second Gate over the same
+   * file (tests, a restarting daemon) must never wait on a lock this one forgot.
+   */
+  #withScopeDb<T>(fn: (db: DatabaseSync) => T): T | undefined {
+    if (!this.#dbPath) return undefined;
+    mkdirSync(dirname(this.#dbPath), { recursive: true });
+    const db = new DatabaseSync(this.#dbPath);
+    try {
+      db.exec(SCOPE_TABLE);
+      return fn(db);
+    } finally {
+      db.close();
+    }
+  }
+
+  #loadPersistedAlways(): void {
+    this.#withScopeDb((db) => {
+      const rows = db.prepare(`SELECT tool FROM approval_scopes WHERE level = 'always'`).all();
+      for (const row of rows) {
+        if (typeof row.tool === 'string') this.#alwaysAllow.add(row.tool);
+      }
+    });
+  }
+
+  #persistAlways(tool: string): void {
+    this.#withScopeDb((db) => {
+      db.prepare(
+        'INSERT OR REPLACE INTO approval_scopes (scope_key, tool, level, created_at) VALUES (?, ?, ?, ?)',
+      ).run(`always:${tool}`, tool, 'always', Date.now());
+    });
+  }
+
+  #dropPersistedAlways(tool: string): void {
+    this.#withScopeDb((db) => {
+      db.prepare('DELETE FROM approval_scopes WHERE scope_key = ?').run(`always:${tool}`);
+    });
   }
 
   async check(sessionId: string, call: ToolCall): Promise<Decision> {
@@ -295,6 +430,25 @@ export class Gate {
     for (const rule of this.#rules) {
       if (rule.verdict === 'deny' && rule.match(call)) {
         return this.#record(call, { verdict: 'deny', reason: rule.reason });
+      }
+    }
+
+    // Explicit human scopes (`setScope`) are consulted before the approver is
+    // asked: a standing grant the human already made is not a question. Deny ran
+    // first above, so a scope can never talk past the deny list.
+    //
+    // Money and credentials sit outside every scope, same rule as the grant
+    // window: an `always` grant the model could spend on `id_rsa` or a card
+    // number is a standing grant on everything those unlock.
+    if (!this.#isPaymentish(call) && !this.#isCredentialish(call)) {
+      if (this.#alwaysAllow.has(call.tool)) {
+        return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
+      }
+      if (this.scopeFor(sessionId, call.tool) === 'session') {
+        return this.#record(call, {
+          verdict: 'allow',
+          reason: 'within the session approval scope',
+        });
       }
     }
 
