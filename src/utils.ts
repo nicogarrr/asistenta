@@ -1,0 +1,71 @@
+/**
+ * Shared pure helpers with no dependencies, so any module can import them without
+ * creating cycles.
+ */
+
+/**
+ * Stable stringify for fingerprints and comparisons. Key order must not matter:
+ * the same action with keys in a different order is still the same action.
+ * (Unlike `JSON.stringify` with a replacer array, nested keys are never dropped.)
+ */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? '';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
+}
+
+/** Run a promise with a wall-clock ceiling. Rejects with `Error(message)` on timeout. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
+ * FIFO async mutex.
+ *
+ * Needed because the machine is shared state with exactly one mouse, one keyboard
+ * and one screen. Serialising whole turns (the previous design) also worked, but it
+ * made the agent answer one message at a time, which is precisely what a user does
+ * not want when they drop three unrelated things and expect three answers. Holding
+ * the lock only for the duration of a desktop tool call lets three conversations
+ * think at once and still guarantees that no two of them ever touch the mouse
+ * simultaneously.
+ *
+ * Strictly FIFO on purpose: a later caller that arrived later should not jump the
+ * queue, or a long browser task would starve a quick click forever.
+ */
+export class Mutex {
+  #tail: Promise<void> = Promise.resolve();
+  #pending = 0;
+
+  /** Callers currently waiting for the lock, excluding the holder. */
+  get queueLength(): number {
+    return this.#pending;
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    this.#pending++;
+    const previous = this.#tail;
+    let release!: () => void;
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      return await fn();
+    } finally {
+      this.#pending--;
+      release();
+    }
+  }
+}

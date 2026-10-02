@@ -1,0 +1,659 @@
+import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
+import { log } from '../log.js';
+import { Mutex, withTimeout } from '../utils.js';
+import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
+
+/**
+ * Telegram adapter.
+ *
+ * Telegram is the primary channel on purpose. It is the only major messenger with
+ * a first-class bot platform: no business verification, free, and its UI primitives
+ * (inline buttons, ephemeral group messages, editable drafts) map directly onto the
+ * approval flow this agent needs. WhatsApp's Business Platform terms have prohibited
+ * general-purpose AI assistants since January 2026, and unofficial clients get
+ * accounts banned, so it is not worth the risk here.
+ *
+ * Long polling only: no public URL and no webhook, so the daemon is not reachable
+ * from the network at all.
+ *
+ * Privacy is the allowlist, full stop. Telegram has no "private bot" switch — any
+ * account that finds the username can message it — so the adapter refuses everyone
+ * whose numeric id is not listed. Those ids are attested by Telegram's servers on
+ * every update and cannot be forged through the Bot API, which is what makes an
+ * allowlist sufficient here without a second ceremony.
+ */
+export interface TelegramOptions {
+  token: string;
+  /** Telegram numeric user ids allowed to talk to the agent. */
+  allowedUserIds: number[];
+  account?: string;
+  /** How long an approval stays answerable. */
+  approvalTtlMs?: number;
+}
+
+/**
+ * Minimum spacing between outbound calls, process-wide.
+ *
+ * The documented guidance is "in a single chat, avoid sending more than one message
+ * per second", with short bursts tolerated. 1100ms keeps a steady stream just inside
+ * the safe side of that, and being one global number rather than one per chat is
+ * deliberate: Telegram warns that parallel requests at a throttled peer lengthen the
+ * cooldown, and this adapter now answers several conversations at once.
+ */
+const MIN_GAP_MS = 1_100;
+
+/** Single gate key: the limiter is process-wide, not per chat. */
+const GLOBAL_KEY = 'global';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof GrammyError) return `${err.error_code} ${err.description}`;
+  if (err instanceof HttpError) return `http transport error: ${err.message}`;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * How long to wait before retrying a failed send, or null when retrying cannot help.
+ *
+ * A 4xx from Telegram is permanent (bad chat id, thread not found, message too old)
+ * and retrying it just burns the rate budget and delays the error. A 429 carries an
+ * explicit `retry_after` that must be obeyed exactly, without adding slack of our
+ * own. Everything else is transient.
+ */
+export function backoffFor(err: unknown, attempt: number): number | null {
+  if (err instanceof GrammyError) {
+    if (err.error_code === 429) {
+      const retryAfter = (err as { parameters?: { retry_after?: number } }).parameters?.retry_after;
+      return Math.max(1_000, (retryAfter ?? 1) * 1_000);
+    }
+    if (err.error_code >= 400 && err.error_code < 500) return null;
+    return Math.min(30_000, 2 ** attempt * 1_000);
+  }
+  if (err instanceof HttpError) return Math.min(30_000, 2 ** attempt * 1_000);
+  // Timeouts and socket resets are the documented failure mode of long polling over
+  // laptop wifi, so they get a couple of cheap retries before giving up.
+  return attempt < 3 ? Math.min(5_000, 2 ** attempt * 500) : null;
+}
+
+export class TelegramChannel implements ChannelAdapter {
+  readonly name = 'telegram';
+  readonly account: string;
+
+  readonly #bot: Bot;
+  readonly #options: Required<Omit<TelegramOptions, 'account'>>;
+  /** Approval id -> resolver, so an inline button can answer it. */
+  readonly #approvals = new Map<
+    string,
+    { resolve: (ok: boolean) => void; expires: number; chatId: string }
+  >();
+  #handlers: ChannelHandlers | null = null;
+  #ready = false;
+  /**
+   * One gate for every outbound call in the process.
+   *
+   * Telegram documents "avoid sending more than one message per second in a single
+   * chat", and separately warns that firing concurrent requests at a throttled peer
+   * makes the cooldown longer rather than shorter. That is exactly the shape of a
+   * parallel multi-conversation agent: without a single global gate, three threads
+   * answering at once multiply the penalty into a lockout. So sends are serialised
+   * process-wide and spaced, and `retry_after` is obeyed here rather than by each
+   * caller sleeping on its own.
+   */
+  readonly #sendGate = new Mutex();
+  /** chatId -> epoch ms of the last accepted send, to space out bursts. */
+  readonly #lastSentAt = new Map<string, number>();
+
+  constructor(options: TelegramOptions) {
+    this.account = options.account ?? 'main';
+    this.#options = {
+      token: options.token,
+      allowedUserIds: options.allowedUserIds,
+      approvalTtlMs: options.approvalTtlMs ?? 300_000,
+    };
+    this.#bot = new Bot(this.#options.token);
+  }
+
+  isReady(): boolean {
+    return this.#ready;
+  }
+
+  async start(handlers: ChannelHandlers): Promise<void> {
+    this.#handlers = handlers;
+    const bot = this.#bot;
+
+    bot.catch((err) => {
+      handlers.log('error', 'grammy error', { message: err.message });
+    });
+
+    bot.on('message', (ctx) => void this.#onMessage(ctx));
+    bot.on('callback_query:data', (ctx) => void this.#onCallback(ctx));
+
+    // Command menu in the Telegram UI, so the useful commands are discoverable
+    // without remembering them. Telegram caps this at 100 and orders as given.
+    void this.#bot.api
+      .setMyCommands([
+        { command: 'start', description: 'Saludar al asistente' },
+        { command: 'stop', description: 'Detener todo lo que esté en curso' },
+        { command: 'screen', description: 'Enviar una captura de la pantalla ahora' },
+        { command: 'watch', description: 'Ver la pantalla en directo: /watch 60 5' },
+        { command: 'topic', description: 'Abrir o cambiar de conversación: /topic renfe' },
+        { command: 'topics', description: 'Listar las conversaciones abiertas' },
+        { command: 'learn', description: 'Aprender una rutina: /learn compra, luego /learn end' },
+        { command: 'routine', description: 'Ejecutar una rutina guardada: /routine compra' },
+        { command: 'routines', description: 'Listar rutinas y horarios' },
+        { command: 'memory', description: 'Ver lo que el agente recuerda de ti' },
+        { command: 'voice', description: 'Activar o desactivar respuestas habladas: /voice off' },
+      ])
+      .catch(() => {});
+
+    void bot
+      .start({
+        onStart: (me) => {
+          this.#ready = true;
+          handlers.log('info', 'telegram connected', { username: me.username, id: me.id });
+        },
+      })
+      .catch((err: unknown) => {
+        this.#ready = false;
+        handlers.log('error', 'telegram polling stopped', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  async #onMessage(ctx: Context): Promise<void> {
+    const handlers = this.#handlers;
+    if (!handlers) return;
+    const msg = ctx.message;
+    const user = ctx.from;
+    if (!msg || !user) return;
+
+    const text = (msg.text ?? msg.caption ?? '').trim();
+
+    if (!this.#options.allowedUserIds.includes(user.id)) {
+      handlers.log('warn', 'unauthorised sender', { userId: user.id, username: user.username });
+      await ctx.reply('This assistant is private.').catch(() => {});
+      return;
+    }
+
+    const isGroup = ctx.chat?.type !== 'private';
+    if (isGroup && !isAddressedToBot(text, msg, ctx.me.username)) {
+      // Groups are read-only by default: the bot only acts when mentioned or
+      // replied to. Otherwise every group message would burn a computer-use run,
+      // and the reply would leak to members who are not allowlisted.
+      handlers.log('debug', 'group message without mention ignored', { chatId: ctx.chat?.id });
+      return;
+    }
+
+    // Voice notes are carried through as audio, not transcribed here. Transcription
+    // is CPU-bound and slow on first use (the model has to load from disk), and
+    // doing it in the message handler would block every other chat behind a
+    // multi-second model load. The turn downloads and transcribes it instead.
+    const voice = 'voice' in msg ? msg.voice : undefined;
+    const audio = 'audio' in msg ? msg.audio : undefined;
+    const note = 'video_note' in msg ? msg.video_note : undefined;
+    const incomingAudio = voice ?? audio ?? note;
+
+    const inbound: Inbound = {
+      channel: this.name,
+      account: this.account,
+      chatId: String(ctx.chat?.id ?? ''),
+      threadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
+      userId: String(user.id),
+      displayName: user.username ? `@${user.username}` : user.first_name,
+      text,
+      authorised: true,
+      isGroup,
+      messageId: String(msg.message_id),
+      receivedAt: new Date().toISOString(),
+      replyToMessageId: msg.reply_to_message ? String(msg.reply_to_message.message_id) : undefined,
+    };
+
+    if (incomingAudio) {
+      inbound.audioFileId = incomingAudio.file_id;
+      // Telegram reports the real codec on voice and audio, and the transcriber
+      // needs it: the bytes of an mp3 attachment decoded as opus give a fluent,
+      // wrong transcript, which is worse than saying "I cannot read that format".
+      // A video note has no mime type at all and is always ogg/opus.
+      const reported = (incomingAudio as { mime_type?: string }).mime_type;
+      inbound.audioMimeType = reported ?? 'audio/ogg';
+      inbound.audioDurationSeconds = incomingAudio.duration ?? undefined;
+      if (!inbound.text) inbound.text = '';
+    }
+
+    if (msg.photo?.length) {
+      const best = msg.photo[msg.photo.length - 1];
+      // Downloaded lazily inside the turn (see downloadPhoto): doing it here would
+      // reorder messages behind a slow download and stall before queueing.
+      if (best) inbound.photoFileId = best.file_id;
+    }
+
+    // A command with no text must still reach the handler: `/screen` and `/watch`
+    // are handled before the agent exists, and a caption-less photo needs its file
+    // id even though there is nothing to say about it.
+    if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId) return;
+
+    await handlers.onMessage(inbound);
+  }
+
+  /** Returns a refusal message when the sender may not act, else null. */
+  #authorise(userId: number, label: string, handlers: ChannelHandlers): string | null {
+    if (!this.#options.allowedUserIds.includes(userId)) {
+      handlers.log('warn', 'unauthorised sender', { userId, label });
+      return 'This assistant is private.';
+    }
+    return null;
+  }
+
+  async #onCallback(ctx: Context): Promise<void> {
+    const handlers = this.#handlers;
+    if (!handlers) return;
+    const data = ctx.callbackQuery?.data;
+    if (!data) return;
+    const [verb, ...rest] = data.split(':');
+    const id = rest.join(':');
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const refusal = this.#authorise(userId, ctx.from?.username ?? String(userId), handlers);
+    if (refusal) {
+      await ctx.answerCallbackQuery({ text: refusal, show_alert: false }).catch(() => {});
+      return;
+    }
+
+    const entry = this.#approvals.get(id);
+    if (!entry || entry.expires < Date.now()) {
+      await ctx.answerCallbackQuery({ text: 'That request is no longer pending.' }).catch(() => {});
+      return;
+    }
+
+    this.#approvals.delete(id);
+    entry.resolve(verb === 'approve');
+    await ctx
+      .answerCallbackQuery({ text: verb === 'approve' ? 'Approved.' : 'Denied.' })
+      .catch(() => {});
+  }
+
+  /** Publish an approval with inline buttons; resolves false on expiry. */
+  offerApproval(id: string, chatId: string, question: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (ok: boolean): void => {
+        if (settled) return;
+        settled = true;
+        this.#approvals.delete(id);
+        resolve(ok);
+      };
+      this.#approvals.set(id, {
+        resolve: settle,
+        expires: Date.now() + this.#options.approvalTtlMs,
+        chatId,
+      });
+      setTimeout(() => {
+        this.#approvals.delete(id);
+        settle(false);
+      }, this.#options.approvalTtlMs).unref();
+
+      void this.send({
+        channel: this.name,
+        account: this.account,
+        chatId,
+        text: question,
+        buttons: [
+          { label: 'Approve', action: `approve:${id}` },
+          { label: 'Deny', action: `deny:${id}` },
+        ],
+      }).catch(() => settle(false));
+    });
+  }
+
+  /** Resolve every pending approval in one chat as denied. Used by /stop. */
+  cancelForChat(chatId: string): void {
+    for (const [id, entry] of this.#approvals) {
+      if (entry.chatId === chatId) {
+        this.#approvals.delete(id);
+        entry.resolve(false);
+      }
+    }
+  }
+
+  /** Resolve every pending approval as denied. Used on shutdown. */
+  cancelApprovals(): void {
+    for (const [id, entry] of this.#approvals) {
+      this.#approvals.delete(id);
+      entry.resolve(false);
+    }
+  }
+
+  /**
+   * Send, returning the id of the first message sent.
+   *
+   * The id matters twice over: it is what makes an answer quote the exact message it
+   * answers instead of floating free in the chat, and it is the key that routes a
+   * later reply back to the same conversation.
+   */
+  async send(outbound: Outbound): Promise<string | null> {
+    const chatId = Number(outbound.chatId);
+    if (!Number.isFinite(chatId)) {
+      throw new Error(`invalid telegram chat id: ${outbound.chatId}`);
+    }
+
+    let firstId: string | null = null;
+
+    // Buttons ride on the first chunk only: repeating them on every chunk of a long
+    // message would produce duplicate approvals for the same request.
+    let first = true;
+    for (const chunk of chunkText(outbound.text, 4000)) {
+      const sent = await this.#throttled(() =>
+        withTimeout(
+          this.#bot.api.sendMessage(chatId, chunk, {
+            message_thread_id: outbound.threadId ? Number(outbound.threadId) : undefined,
+            reply_to_message_id: outbound.replyToMessageId
+              ? Number(outbound.replyToMessageId)
+              : undefined,
+            reply_markup:
+              first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
+          }),
+          20_000,
+          'sendMessage timed out',
+        ),
+      );
+      if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
+      first = false;
+    }
+
+    for (const image of outbound.images ?? []) {
+      await this.sendPhotoBytes(chatId, Buffer.from(image.data, 'base64'), outbound.threadId);
+    }
+
+    if (outbound.audio) {
+      await this.#sendAudio(chatId, outbound.audio);
+    }
+
+    return firstId;
+  }
+
+  /**
+   * Send a photo.
+   *
+   * Telegram enforces `width + height <= 10000` and `aspect ratio <= 20` on photos
+   * and answers anything else with `PHOTO_INVALID_DIMENSIONS`. A full-page browser
+   * screenshot can be 1280x11000, so this validates before sending and falls back to
+   * a document, which has no dimension rules and is not re-encoded. Without the
+   * fallback the user gets nothing for a valid-looking image.
+   */
+  /**
+   * Returns the id of the message it created. A live view needs that id to refresh the
+   * same bubble, and without it the only alternative is to leave a trail of photos.
+   */
+  async sendPhotoBytes(
+    chatId: number,
+    bytes: Buffer,
+    threadId?: string,
+    size?: { width: number; height: number },
+  ): Promise<string | null> {
+    const input = new InputFile(bytes);
+    const t = { message_thread_id: threadId ? Number(threadId) : undefined };
+    if (size && (size.width + size.height > 10_000 || size.width / size.height > 20)) {
+      log.warn('image geometry violates the photo limit, sending as a document instead', {
+        ...size,
+      });
+      const doc = await this.#throttled(() =>
+        withTimeout(this.#bot.api.sendDocument(chatId, input, t), 60_000, 'sendDocument timed out'),
+      );
+      return doc?.message_id ? String(doc.message_id) : null;
+    }
+    const sent = await this.#throttled(() =>
+      withTimeout(this.#bot.api.sendPhoto(chatId, input, t), 45_000, 'sendPhoto timed out'),
+    );
+    return sent?.message_id ? String(sent.message_id) : null;
+  }
+
+  /**
+   * Send a recording of the user's microphone as a voice note.
+   *
+   * Ogg/Opus is the native voice-note format and gets the waveform bubble; that is why
+   * the capture side encodes to ogg rather than mp3.
+   */
+  async sendVoiceBytes(
+    chatId: number,
+    bytes: Buffer,
+    threadId: string | undefined,
+    seconds: number,
+  ): Promise<void> {
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
+          message_thread_id: threadId ? Number(threadId) : undefined,
+          caption: `. ${Math.round(seconds)}s de microfono`.slice(0, 1024),
+        }),
+        60_000,
+        'sendVoice timed out',
+      ),
+    );
+  }
+
+  /**
+   * Replace the photo of a message we already sent.
+   *
+   * This is what makes a live view possible. Telegram has no streaming primitive a bot
+   * can use, and the documented send rate is about one message per second, so sending a
+   * frame every few seconds would leave a hundred permanent photos in the chat. Editing
+   * one message instead gives the user a single bubble that keeps updating in place -
+   * the thing that actually feels like watching - with none of the clutter and well
+   * inside the documented limits.
+   */
+  async editPhoto(chatId: string, messageId: string, bytes: Buffer): Promise<void> {
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageMedia(Number(chatId), Number(messageId), {
+          type: 'photo',
+          media: new InputFile(bytes),
+        }),
+        30_000,
+        'editMessageMedia timed out',
+      ),
+    );
+  }
+
+  /**
+   * Send a recorded screen clip.
+   *
+   * `sendVideo` is documented as MPEG4, and x264 in an mp4 container is exactly
+   * that. This is the only Bot API mechanism that gives real playback with seeking:
+   * streaming frames as photos is capped at one message per second and Telegram
+   * re-encodes every one of them, so a "live" screen over photos is neither live nor
+   * cheap. The 50MB upload cap is the only documented limit.
+   */
+  async sendVideo(
+    chatId: number,
+    bytes: Buffer,
+    durationSeconds: number,
+    caption: string,
+  ): Promise<void> {
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendVideo(chatId, new InputFile(bytes), {
+          caption: `${caption} (${Math.round(durationSeconds)}s)`.slice(0, 1024),
+          supports_streaming: true,
+        }),
+        120_000,
+        'sendVideo timed out',
+      ),
+    );
+  }
+
+  /**
+   * Serialise, space, and retry one API call.
+   *
+   * `retry_after` is obeyed exactly as Telegram documents it; 5xx and network errors
+   * get exponential backoff instead, because they carry no `retry_after` and
+   * retrying immediately just hits the same failing endpoint again.
+   */
+  async #throttled<T>(call: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.#sendGate.run(async () => {
+          const wait = (this.#lastSentAt.get(GLOBAL_KEY) ?? 0) + MIN_GAP_MS - Date.now();
+          if (wait > 0) await sleep(wait);
+          const value = await call();
+          // Stamped only on success: a call that never happened must not consume the
+          // spacing budget of the next one.
+          this.#lastSentAt.set(GLOBAL_KEY, Date.now());
+          return value;
+        });
+      } catch (err) {
+        const wait = backoffFor(err, attempt);
+        if (wait === null) throw err;
+        log.warn('telegram send failed, retrying', { attempt, wait, error: describeError(err) });
+        await sleep(wait);
+      }
+    }
+  }
+
+  /**
+   * Send synthesised speech.
+   *
+   * Documented since Bot API 7.3: `sendVoice` accepts ogg/opus, mp3 and m4a. A voice
+   * bubble is what the user expects back for a voice note; `sendAudio` would render
+   * the same bytes in the music player behind a title bar. The buffer is uploaded
+   * rather than passed by URL, because the URL path documents an ogg/1MB cap that
+   * would demote an mp3 to a plain attachment.
+   */
+  async #sendAudio(chatId: number, audio: ChannelAudio): Promise<void> {
+    const bytes = Buffer.from(audio.data, 'base64');
+    if (bytes.length === 0) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
+          caption: audio.durationSeconds ? `. ${Math.round(audio.durationSeconds)}s` : undefined,
+        }),
+        60_000,
+        'sendVoice timed out',
+      ),
+    ).catch((err: unknown) => {
+      // The text already went out, so a failed attachment is a degraded reply rather
+      // than a failed one. Log and move on.
+      log.warn('voice send failed', { error: describeError(err) });
+    });
+  }
+
+  /**
+   * Download any file by id: photos, voice notes, documents.
+   *
+   * Two-step by Bot API contract: `getFile` first for the real path, then the file
+   * endpoint. (The old code pasted the file_id where the path goes, so every photo
+   * silently 404'd.)
+   */
+  async downloadFile(fileId: string, limitBytes = 20_000_000): Promise<Buffer | null> {
+    const file = await withTimeout(
+      this.#bot.api.getFile(fileId),
+      15_000,
+      'getFile timed out',
+    ).catch(() => null);
+    if (!file?.file_path) return null;
+    const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    return withTimeout(
+      fetch(url).then(async (r) => {
+        if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
+        return buf;
+      }),
+      60_000,
+      'file download timed out',
+    ).catch(() => null);
+  }
+
+  /**
+   * Show that the bot is working on something. Telegram expires the indicator after
+   * about five seconds, so long tasks refresh it. It carries no content, which is
+   * what makes it safe to call blindly.
+   */
+  async action(
+    chatId: string,
+    action: 'typing' | 'upload_photo' | 'upload_voice' | 'upload_video' = 'typing',
+  ): Promise<void> {
+    const id = Number(chatId);
+    if (!Number.isFinite(id)) return;
+    await withTimeout(
+      this.#bot.api.sendChatAction(id, action),
+      15_000,
+      'sendChatAction timed out',
+    ).catch(() => {});
+  }
+
+  async stop(): Promise<void> {
+    this.#ready = false;
+    await this.#bot.stop().catch(() => {});
+  }
+
+  /**
+   * Photos go through the generic downloader. It stays a named method because the
+   * photo path is called on every image the user sends and a failure there has a
+   * different consequence (an image-less turn) than an audio failure.
+   */
+  async downloadPhoto(fileId: string): Promise<Buffer | null> {
+    return this.downloadFile(fileId, 20_000_000);
+  }
+}
+
+/**
+ * Matches `/stop`, with or without the `@botname` suffix Telegram appends in
+ * groups, and with or without trailing text. The old exact-match missed
+ * `/stop@asistenta_personal_bot` entirely.
+ */
+const STOP_COMMAND = /^\/stop(@\w+)?(\s|$)/i;
+export function isStopCommand(text: string): boolean {
+  return STOP_COMMAND.test(text.trim());
+}
+
+/**
+ * Whether a group message is addressed to the bot: an @mention of its username or
+ * a reply to one of its messages. Anything else in a group is someone else's
+ * conversation and must not start a run.
+ */
+export function isAddressedToBot(
+  text: string,
+  message: { reply_to_message?: unknown },
+  botUsername: string,
+): boolean {
+  if (text.includes(`@${botUsername}`)) return true;
+  const reply = message.reply_to_message as { from?: { is_bot?: boolean } } | undefined;
+  return reply?.from?.is_bot === true;
+}
+
+/**
+ * One button per entry, in order, with the action's own callback data verbatim.
+ *
+ * The previous version searched for a button whose `action` literally equalled
+ * 'approve', which never matched (actions are UUIDs), so it appended every button
+ * twice *and* prefixed all of them with `approve:` — which meant the Deny button
+ * approved. Callback data is passed through untouched and the decision is carried
+ * inside it, so there is exactly one place that decides approve vs deny.
+ */
+function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const b of buttons) {
+    kb.text(b.label, b.action);
+  }
+  return kb;
+}
+
+/**
+ * Telegram caps a message at 4096 chars, so longer text is split. Split on code
+ * points, not UTF-16 units: slicing mid-emoji produces a lone surrogate and a
+ * replacement character in the user's chat.
+ */
+export function chunkText(text: string, size: number): string[] {
+  const points = Array.from(text);
+  if (points.length <= size) return [text];
+  const out: string[] = [];
+  for (let i = 0; i < points.length; i += size) out.push(points.slice(i, i + size).join(''));
+  return out;
+}

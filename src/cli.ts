@@ -1,0 +1,2169 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { BrowserService } from './browser/service.js';
+import { ChannelRegistry } from './channels/registry.js';
+import { TelegramChannel } from './channels/telegram.js';
+import type { ChannelAudio, Inbound } from './channels/types.js';
+import { chatKey } from './channels/types.js';
+import { loadConfig } from './config.js';
+import { PersonalAgent } from './core/agent.js';
+import { Store } from './db.js';
+import { assertNotRunning, installLifecycle } from './lifecycle.js';
+import { log } from './log.js';
+import { AudioRecall } from './media/recall.js';
+import { MemoryStore } from './memory.js';
+import { ensureDirs, paths } from './paths.js';
+import { Gate } from './permissions.js';
+import { procedurePrompt, RoutineRunner, summarizeRoutine } from './routines.js';
+import {
+  captureCameraFrame,
+  consumeRecording,
+  listCaptureDevices,
+  recordCamera,
+  recordCameraWithMic,
+  recordMicrophone,
+  toPlayableAudio,
+} from './screen/media.js';
+import { ocrAvailable } from './screen/ocr.js';
+import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
+import { WindowsScreen } from './screen/windows.js';
+import { createBrowserTool } from './tools/browser.js';
+import { createCalendarTool } from './tools/calendar.js';
+import { createComputerTool } from './tools/computer.js';
+import { createDoneTool } from './tools/done.js';
+import { createFetchTool } from './tools/fetch.js';
+import { fsTools } from './tools/fs.js';
+import { createMediaTool } from './tools/media.js';
+import { createMemoryTool } from './tools/memory.js';
+import { createOcrTool } from './tools/ocr.js';
+import { createShellTool } from './tools/shell.js';
+import { createSystemTool, playAudioFile } from './tools/system.js';
+import { createWindowsTool, listWindows } from './tools/windows.js';
+import { Mutex } from './utils.js';
+import {
+  initVault,
+  unlock,
+  vaultDelete,
+  vaultExists,
+  vaultGet,
+  vaultList,
+  vaultSet,
+} from './vault.js';
+import { transcribeVoiceNote } from './voice/stt.js';
+import { createSapiTts } from './voice/tts.js';
+import { stripWakeWord, WakeWordListener } from './voice/wake.js';
+
+const USAGE = `personal-agent - a personal agent for your own PC
+
+Usage:
+  pa serve                run the daemon: Telegram, with approvals over chat
+  pa chat                 talk to the agent in the console
+  pa run "<prompt>"       run one prompt unattended (read-only tools, no prompts)
+  pa vault init           create the encrypted secret store
+  pa vault set <k> <v>    store a secret
+  pa vault get <k>        print one secret
+  pa vault list           list secret names (never values)
+  pa vault rm <k>         delete a secret
+  pa doctor               check the environment
+`;
+
+/**
+ * How long the wake-word listener stays deaf while audio comes out of the speakers.
+ *
+ * Generous on purpose. A three-minute song played through the same microphone the
+ * listener watches would wake on the song's own chorus, and an agent that talks back
+ * at itself is worse than one that ignores a wake word. The listener drops the audio
+ * it captures while suppressed rather than transcribing it, so the cost of overshooting
+ * is a slightly later wake, not a wrong one.
+ */
+const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
+
+/** A little longer than that, to cover the tail of the file and the daemon's own chatter. */
+const WAKE_TAIL_MS = 2_000;
+
+async function main(argv: string[]): Promise<number> {
+  const [command = 'chat', ...rest] = argv;
+
+  switch (command) {
+    case 'vault':
+      return vaultCommand(rest);
+    case 'doctor':
+      return doctorCommand();
+    case 'chat':
+      return chatCommand();
+    case 'serve':
+      return serveCommand();
+    case 'run':
+      return runCommand(rest.join(' '));
+    case '--help':
+    case '-h':
+    case 'help':
+      process.stdout.write(USAGE);
+      return 0;
+    default:
+      process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
+      return 2;
+  }
+}
+
+async function vaultCommand(args: string[]): Promise<number> {
+  ensureDirs();
+  const [sub, key, value] = args;
+
+  if (sub === 'init') {
+    await initVault();
+    process.stdout.write(`vault created at ${paths.vault}\n`);
+    return 0;
+  }
+  if (sub === 'set') {
+    if (!key || value === undefined) {
+      process.stderr.write('usage: pa vault set <key> <value>\n');
+      return 2;
+    }
+    await vaultSet(key, value);
+    process.stdout.write(`stored ${key}\n`);
+    return 0;
+  }
+  if (sub === 'get') {
+    if (!key) {
+      process.stderr.write('usage: pa vault get <key>\n');
+      return 2;
+    }
+    const v = await vaultGet(key);
+    if (v === undefined) {
+      process.stderr.write(`no such secret: ${key}\n`);
+      return 1;
+    }
+    process.stdout.write(`${v}\n`);
+    return 0;
+  }
+  if (sub === 'list') {
+    for (const k of await vaultList()) process.stdout.write(`${k}\n`);
+    return 0;
+  }
+  if (sub === 'rm') {
+    if (!key) {
+      process.stderr.write('usage: pa vault rm <key>\n');
+      return 2;
+    }
+    const removed = await vaultDelete(key);
+    process.stdout.write(removed ? `deleted ${key}\n` : `no such secret: ${key}\n`);
+    return removed ? 0 : 1;
+  }
+  process.stderr.write(USAGE);
+  return 2;
+}
+
+async function doctorCommand(): Promise<number> {
+  ensureDirs();
+  const lines: string[] = [];
+  lines.push(`node            ${process.version}`);
+  lines.push(`state dir       ${paths.state}`);
+  lines.push(`vault           ${vaultExists() ? 'present' : 'MISSING (pa vault init)'}`);
+
+  const key = await vaultGet('provider:apiKey').catch(() => undefined);
+  const envKey = process.env.OPENCODE_GO_API_KEY ? 'set' : 'unset';
+  lines.push(`provider key    ${key ? 'vault' : envKey}`);
+  lines.push(
+    `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
+  );
+
+  const screen = new WindowsScreen();
+  try {
+    const size = await screen.screenSize();
+    lines.push(`screen          ${size.width}x${size.height}`);
+    const shot = await screen.screenshot();
+    lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
+  } catch (err) {
+    lines.push(`screenshot      FAILED: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    await screen.dispose();
+  }
+
+  // Screen recording is what makes /watch work, and its absence is invisible until
+  // someone asks for a video of their screen.
+  lines.push(
+    `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'MISSING ffmpeg-static (/watch will not work)'}`,
+  );
+
+  // Voice is opt-in at the point of use, so the only useful question is whether the
+  // model is already cached. A cold cache means the first voice note pays a download.
+  const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
+  lines.push(
+    `voice stt       ${modelCached ? 'model cached' : 'model not downloaded yet (first voice note downloads it)'}`,
+  );
+  lines.push(`voice tts       windows SAPI (offline, free)`);
+
+  // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
+  // user asks to be filmed is a much worse answer than this line.
+  const devices = await listCaptureDevices().catch(() => ({ video: null, audio: null }));
+  lines.push(`camera          ${devices.video ?? 'MISSING (/camera will not work)'}`);
+  lines.push(`microphone      ${devices.audio ?? 'MISSING (/mic, wake word will not work)'}`);
+  lines.push(
+    `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
+      (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
+    })`,
+  );
+
+  const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
+  lines.push(
+    `browser         ${existsSync(chromiumDir) ? 'chromium installed' : 'MISSING (run: npx playwright install chromium)'}`,
+  );
+  lines.push(`cron            ${loadConfig().cron.length} schedule(s) from PA_CRON`);
+  lines.push(
+    `verify actions  ${loadConfig().verifyActions ? 'on (2 extra screenshots per input action)' : 'off'}`,
+  );
+
+  const windows = await listWindows().catch(() => []);
+  lines.push(
+    `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'none detected'}`,
+  );
+
+  process.stdout.write(`${lines.join('\n')}\n`);
+  return 0;
+}
+
+function hasPwsh(): boolean {
+  return (
+    existsSync(`${process.env.USERPROFILE}\\.local\\pwsh\\pwsh.exe`) ||
+    existsSync('C:\\Program Files\\PowerShell\\7\\pwsh.exe')
+  );
+}
+
+/**
+ * The vertical slice: one agent, console input, gate armed, tools registered.
+ * Everything else (channels, scheduler) plugs in behind this same shape.
+ */
+async function chatCommand(): Promise<number> {
+  ensureDirs();
+  const config = loadConfig();
+
+  if (!vaultExists()) {
+    process.stderr.write('no vault yet. run: pa vault init\n');
+    return 1;
+  }
+  await unlock();
+
+  // Refuse to run twice: a second instance sharing channel credentials gets logged out.
+  assertNotRunning(paths.state, 'agent');
+
+  const store = new Store();
+  store.sweepExpired();
+
+  const gate = new Gate({
+    allow: ['read', 'list', 'fetch', 'done'],
+    // Reading the screen and reading a public web page are not changes to the world, so
+    // approval. Acting on it does.
+    allowActions: ['computer:screenshot', 'computer:move'],
+    protectedPaths: [
+      `${process.env.USERPROFILE}\\.ssh`,
+      `${process.env.USERPROFILE}\\.aws`,
+      'C:\\Windows\\System32',
+    ],
+    maxAmountCents: 30_000,
+    // Console mode has a human at the keyboard, so asking is always possible.
+    approver: async (call, reason) => {
+      const answer = await askYesNo(`allow ${call.tool}? (${reason})`);
+      return answer;
+    },
+  });
+
+  const screen = new WindowsScreen();
+  const tools: AgentTool[] = [
+    ...fsTools,
+    createFetchTool(),
+    createDoneTool(),
+    createShellTool(config),
+    createComputerTool(config, screen),
+  ] as AgentTool[];
+
+  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId: 'local' });
+
+  const lifecycle = installLifecycle({
+    name: 'agent',
+    onShutdown: async () => {
+      await screen.dispose();
+      store.close();
+      log.info('shutdown complete');
+    },
+  });
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
+  rl.prompt();
+
+  for await (const line of rl) {
+    const text = line.trim();
+    if (text === '/quit' || text === '/exit') break;
+    if (!text) {
+      rl.prompt();
+      continue;
+    }
+    try {
+      const result = await agent.run(text);
+      log.info('turn done', {
+        tools: result.toolCalls,
+        blocked: result.blocked,
+        stopReason: result.stopReason,
+        error: result.error,
+      });
+    } catch (err) {
+      log.error('turn threw', { err });
+    }
+    rl.prompt();
+  }
+
+  rl.close();
+  lifecycle.stop('stdin-closed');
+  await lifecycle.done;
+  return 0;
+}
+
+async function askYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import('node:readline');
+  process.stdout.write(`${question} [y/N] `);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((r) => rl.question('', r));
+  rl.close();
+  return /^y(es)?$/i.test(answer.trim());
+}
+
+async function runCommand(prompt: string): Promise<number> {
+  if (!prompt.trim()) {
+    process.stderr.write('usage: pa run "<prompt>"\n');
+    return 2;
+  }
+  ensureDirs();
+  const config = loadConfig();
+  if (!vaultExists()) {
+    process.stderr.write('no vault yet. run: pa vault init\n');
+    return 1;
+  }
+  await unlock();
+
+  const store = new Store();
+  const gate = new Gate({
+    allow: ['read', 'list', 'fetch', 'done'],
+    // Reading the screen and reading a public web page are not changes to the world, so
+    // approval. Acting on it does.
+    allowActions: ['computer:screenshot', 'computer:move'],
+    protectedPaths: [
+      `${process.env.USERPROFILE}\\.ssh`,
+      `${process.env.USERPROFILE}\\.aws`,
+      'C:\\Windows\\System32',
+    ],
+    maxAmountCents: 30_000,
+    // Unattended one-shot run: there is no human at the keyboard, so anything that
+    // would need approval is refused rather than guessed at. Screenshot and read
+    // stay available, which is enough for reconnaissance without letting the agent
+    // change anything.
+    approver: undefined,
+  });
+  const screen = new WindowsScreen();
+  const tools = [
+    ...fsTools,
+    createFetchTool(),
+    createDoneTool(),
+    createShellTool(config),
+    createComputerTool(config, screen),
+  ] as AgentTool[];
+
+  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId: 'run' });
+  const result = await agent.run(prompt);
+
+  // The final answer goes to stdout as plain text so `pa run` is usable in a
+  // pipeline; the JSON log lines above it are the machine-readable channel.
+  if (result.text.trim()) process.stdout.write(`${result.text.trim()}\n`);
+  if (result.error) {
+    process.stderr.write(`run failed: ${result.error}\n`);
+  }
+
+  await screen.dispose();
+  store.close();
+  return result.error ? 1 : 0;
+}
+
+/**
+ * The daemon.
+ *
+ * One agent per authorised chat, kept in a map keyed by chat. That matters for two
+ * reasons: each chat has its own conversation history, and the gate's "approved
+ * once" memo is scoped per session, so approving a click in one chat never carries
+ * over to another.
+ *
+ * Serialised per chat. Two turns running concurrently in the same conversation
+ * would interleave tool calls against the same desktop cursor, which is exactly how
+ * an agent ends up clicking something it did not mean to.
+ */
+/**
+ * One conversation inside one chat.
+ *
+ * This is the type that makes "drop three unrelated things and get three answers"
+ * possible. A thread owns its own agent, its own gate, its own memory scope and its
+ * own browser profile, so nothing leaks sideways: an approval in one does not apply to
+ * another, and the transcript of one is not the context of another.
+ */
+interface Thread {
+  /** Stable key: chatKey + '#' + name. Also the browser profile and memory scope. */
+  key: string;
+  chatKey: string;
+  name: string;
+  agent: PersonalAgent;
+  gate: Gate;
+  /** Serialises turns inside this thread only. Threads run in parallel. */
+  tail: Promise<unknown>;
+  /** Bumped by /stop so a cancelled turn can tell it was cancelled. */
+  generation: number;
+  /** True while a turn is executing, not merely queued. */
+  active: boolean;
+  /** Short label shown by /topics. */
+  label: string;
+  createdAt: number;
+}
+
+/**
+ * Commands handled by the daemon itself rather than by the model.
+ *
+ * Parsed here, not in the adapter, because every one of them needs process state
+ * (the screen backend, the store, the thread map) that the transport must not know
+ * about. `null` means "not a command", and the text is then a normal message.
+ */
+interface ParsedCommand {
+  name: string;
+  args: string;
+}
+
+/**
+ * A short, low-content message is a follow-up, not a new task.
+ *
+ * This one heuristic is what makes the automatic threading usable. Without it, every
+ * message would start its own conversation and "sí" would arrive with no context at
+ * all. With it, "sí", "vale", "ahora hazlo" continue the conversation already in
+ * progress, while anything with real content becomes its own thread when one is
+ * already busy.
+ *
+ * It is a heuristic and that is stated plainly: a user who sends a bare "sí" as a
+ * new standalone request gets it attached to the previous thread, which is the
+ * behaviour they wanted anyway.
+ */
+export function looksLikeFollowUp(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) return true;
+  if (t.length > 16) return false;
+  if (/[?¿!]/.test(t)) return false;
+  return /^(s[ií]|si|sip|ok|okay|vale|claro|perfecto|hecho|listo|dale|adelante|sigue|contin[uú]a|ahora|nada|mismo|tambien|tambi[eé]n|bien|yes|yeah)[\s.,!]*$/i.test(
+    t,
+  );
+}
+
+export function parseCommand(text: string): ParsedCommand | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('/')) return null;
+  // Telegram appends @botname to commands in groups; the name is not part of the
+  // command, so it is stripped before anything else looks at the text.
+  const withoutSuffix = trimmed.replace(/^(\/\w+)@\w+/, '$1');
+  const space = withoutSuffix.indexOf(' ');
+  const name = (space < 0 ? withoutSuffix : withoutSuffix.slice(0, space)).slice(1).toLowerCase();
+  if (!/^[a-z_]{1,32}$/.test(name)) return null;
+  return { name, args: space < 0 ? '' : withoutSuffix.slice(space + 1).trim() };
+}
+
+/**
+ * The daemon.
+ *
+ * Conversations are threads, not chats. The user can drop several independent
+ * requests and each is answered in its own context, quoting the message it answers,
+ * which is the whole point: a chat-scoped agent can only ever hold one conversation,
+ * so a second request either contaminates the first or waits behind it.
+ *
+ * Two ordering rules, and the difference matters:
+ *
+ * - Turns inside one thread are serialised, so a conversation never talks over
+ *   itself.
+ * - Turns in *different* threads run concurrently, but every tool that touches the
+ *   machine (mouse, keyboard, shell, browser, writes) runs under one mutex. There is
+ *   exactly one cursor and one screen, so two conversations may think at the same
+ *   time but may never act at the same time.
+ */
+async function serveCommand(): Promise<number> {
+  ensureDirs();
+  const config = loadConfig();
+  if (!vaultExists()) {
+    process.stderr.write('no vault yet. run: pa vault init\n');
+    return 1;
+  }
+  await unlock();
+
+  const token = await vaultGet('telegram:botToken');
+  if (!token) {
+    process.stderr.write('no telegram token. run: pa vault set telegram:botToken <token>\n');
+    return 1;
+  }
+
+  const allowed = (await vaultGet('telegram:allowedUserIds'))
+    ?.split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (!allowed?.length) {
+    process.stderr.write('no allowed users. run: pa vault set telegram:allowedUserIds <id1,id2>\n');
+    return 1;
+  }
+
+  assertNotRunning(paths.state, 'agent');
+  const store = new Store();
+  store.sweepExpired();
+  const memory = new MemoryStore();
+
+  const telegram = new TelegramChannel({ token, allowedUserIds: allowed });
+  const registry = new ChannelRegistry();
+  registry.register(telegram);
+
+  const screen = new WindowsScreen();
+  const tts = createSapiTts();
+
+  /**
+   * One mutex for everything that moves the machine. Reasoning runs outside it;
+   * acting does not. A 90-second browser task therefore no longer blocks the user
+   * from asking a second question that only needs a sentence.
+   */
+  const machine = new Mutex();
+
+  const fullControl = (await vaultGet('agent:fullControl')) === 'true';
+  const ocrAvailability = await ocrAvailable().catch(() => false);
+  const voiceDefault = (await vaultGet('agent:voice')) !== 'off';
+
+  /**
+   * What the user sent us, kept only as Telegram handles.
+   *
+   * A voice note is transcribed and then, before this existed, thrown away. Two
+   * messages later "suéltame ese audio" had nothing to act on. `file_id`s stay
+   * downloadable, so remembering the handle is enough to play the audio again
+   * without keeping a copy of someone's voice on disk longer than the chat needs.
+   */
+  const recall = new AudioRecall();
+
+  /**
+   * The most recent chat that spoke.
+   *
+   * The wake word arrives with no chat attached - it is audio from a room, not a
+   * message - so it has to be answered somewhere. Whoever talked last is the only
+   * defensible guess: the daemon only serves allowed users, and answering a wake
+   * word into whatever chat happened to be last is what "always on" means.
+   */
+  let lastChat: { key: string; chatId: string; threadId?: string } | null = null;
+
+  /**
+   * Wake word listener. Null until it is built (it is created after the turn
+   * machinery it calls exists) and again after `/wake off`.
+   */
+  let wake: WakeWordListener | null = null;
+  let wakeWanted = (await vaultGet('agent:wake')) !== 'off';
+  const wakeWord = (await vaultGet('agent:wakeWord'))?.trim() || 'asistenta';
+
+  /**
+   * The live listener, or null.
+   *
+   * A function rather than the variable because the listener is only ever assigned
+   * from inside the closures that start and stop it, and the compiler's flow analysis
+   * would narrow the variable to `null` at every point in `serveCommand` that runs
+   * before those closures exist. Reading it through a call keeps the type honest
+   * instead of `as`-ing it away.
+   */
+  const currentWake = (): WakeWordListener | null => wake;
+
+  /**
+   * Run a body with the microphone handed over.
+   *
+   * The wake listener holds the capture device open continuously, which is the whole
+   * point of it and also exactly what stops a second recorder from opening. Anything
+   * that wants the microphone is given a turn: the listener is stopped, the body runs,
+   * and it comes back afterwards. Stopping rather than merely suppressing matters,
+   * because suppression drops audio but keeps the device claimed.
+   */
+  const withMicrophone = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const listener = wake;
+    const wasRunning = listener?.isRunning() ?? false;
+    if (wasRunning) await listener?.stop().catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      if (wasRunning) {
+        await listener
+          ?.start()
+          .catch((err: unknown) => log.warn('wake listener did not restart', { err }));
+      }
+    }
+  };
+
+  /**
+   * Browser sessions are per thread, because a persistent profile carries cookies.
+   * One browser shared between conversations would let a logged-in session in one
+   * thread be visible in another.
+   */
+  const browsers = new Map<string, BrowserService>();
+  const browserFor = (threadKey: string): BrowserService => {
+    const existing = browsers.get(threadKey);
+    if (existing) return existing;
+    const service = new BrowserService({
+      policy: {
+        // Full control has to reach the browser's own approval layer, not just the
+        // gate. The gate allowed every `browser` call and the user was still asked to
+        // approve youtube.com, because domain consent was a second, separate prompt
+        // the agent could not talk past. Same decision, both layers.
+        autoApprove: fullControl,
+        // Approval for a domain goes to the chat that asked for it, through the same
+        // inline buttons as any other gated action.
+        approve: async (scope, domain, reason) => {
+          const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
+          log.info('browser domain approval requested', { domain, chatId });
+          return telegram.offerApproval(randomUUID(), chatId, `¿Abro ${domain}?\n${reason}`);
+        },
+      },
+      timeoutMs: Math.min(config.toolTimeoutMs, 60_000),
+    });
+    browsers.set(threadKey, service);
+    return service;
+  };
+
+  const threads = new Map<string, Thread>();
+  /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
+  const messageThread = new Map<string, string>();
+
+  /**
+   * Retire conversations nobody has used for a while.
+   *
+   * Each thread holds a live agent with a full transcript and its own browser profile,
+   * so an always-on daemon that creates a thread per dropped message grows without
+   * bound: memory climbs all day and the daemon eventually slows down. Twenty is
+   * generous for one person (they would have to have twenty separate subjects going),
+   * and eviction is last-touched-first so the current conversation is never the one
+   * dropped.
+   *
+   * Memory, routines and the browser profile survive eviction on disk; only the
+   * in-memory agent goes, so returning to an old conversation restores it with its
+   * notes and its logged-in session still in place.
+   */
+  const MAX_THREADS = 20;
+  const evictIdleThreads = (): void => {
+    if (threads.size <= MAX_THREADS) return;
+    const idle = [...threads.values()]
+      .filter((t) => !t.active && t.name !== activeTopic.get(t.chatKey))
+      .sort((a, b) => a.createdAt - b.createdAt);
+    while (threads.size > MAX_THREADS && idle.length) {
+      const victim = idle.shift();
+      if (!victim) break;
+      threads.delete(victim.key);
+      // The browser profile stays on disk on purpose; only the live Chromium goes.
+      const service = browsers.get(victim.key);
+      if (service) {
+        void service.closeAll().catch(() => {});
+        browsers.delete(victim.key);
+      }
+      log.info('thread evicted', { thread: victim.key, remaining: threads.size });
+    }
+  };
+  /** chatKey -> explicitly selected thread name, set by /topic. */
+  const activeTopic = new Map<string, string>();
+  /** chatId -> thread currently recording steps for /learn. */
+  const learning = new Map<string, string>();
+  /** chatId -> whether to answer with a spoken reply. */
+  const voiceOn = new Map<string, boolean>();
+  /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
+  const statusOn = new Map<string, boolean>();
+  /** chatId -> running watch loop, so /watch can be started and stopped once. */
+  const watching = new Map<string, Promise<void>>();
+  /** chatId -> the live view refreshing one photo in place. */
+  const liveViews = new Map<string, { timer: NodeJS.Timeout; messageId: string }>();
+  const seenMessages = new Map<string, number>();
+
+  /**
+   * The message a thread is currently answering.
+   *
+   * A thread outlives any single message, so a tool that has to send something back
+   * to the chat (a photo, a clip, a live view) needs to know which message to quote.
+   * Recorded per turn in `runTurn`; the fallback is used only by a live view started
+   * from a tool call, where quoting the current turn's message is the right guess.
+   */
+  const threadInbound = new Map<string, Inbound>();
+
+  const inboundFor = (thread: Thread): Inbound => {
+    const live = threadInbound.get(thread.key);
+    if (live) return live;
+    const [channel, account, chatId, threadId] = thread.chatKey.split(':');
+    return {
+      channel: channel ?? 'telegram',
+      account: account ?? telegram.account,
+      chatId: chatId ?? '',
+      threadId: threadId || undefined,
+      userId: '',
+      text: '',
+      authorised: true,
+      messageId: `${thread.key}#tool`,
+      receivedAt: new Date().toISOString(),
+    };
+  };
+
+  const threadTools = (thread: Thread): AgentTool[] => {
+    const scope = () => thread.key;
+    const raw: AgentTool[] = [
+      ...fsTools,
+      createFetchTool(),
+      createDoneTool(),
+      createShellTool(config),
+      createComputerTool(config, screen),
+      createBrowserTool(browserFor(thread.key), scope),
+      createMemoryTool(memory, scope),
+      // Window and UI Automation inspection. Read-only, so it is not under the
+      // machine mutex: two conversations may both look at the window list at once.
+      createWindowsTool(),
+      // Reading the screen as text: the vision model cannot always read what it sees,
+      // and a control name it cannot read is a control it cannot click.
+      createOcrTool({
+        screenshotToFile: async () => {
+          const shot = await screen.screenshot();
+          const file = join(paths.voice, `ocr-${Date.now()}.jpg`);
+          writeFileSync(file, shot.image);
+          return file;
+        },
+        // Cached once per process: asking Windows whether it has an OCR engine costs a
+        // PowerShell round trip, and the answer does not change while we run.
+        ocrAvailable: async () => ocrAvailability,
+      }),
+      // What is in the calendar. Free, read-only and stale by design; see the tool.
+      createCalendarTool({
+        getUrl: () => vaultGet('calendar:icsUrl'),
+        fetchText: async (url) => {
+          const res = await fetch(url, { redirect: 'follow' });
+          if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
+          return res.text();
+        },
+      }),
+      // The machine itself: volume, mute, lock, and how it is doing.
+      createSystemTool(),
+      // Audio, camera and microphone in ordinary language. Everything here is also a
+      // slash command; the tool exists for "suéltame ese audio" and "grábame con mi
+      // voz", which are requests about an attachment rather than commands.
+      createMediaTool({
+        chatKey: thread.key,
+        recall,
+        downloadAudio: (fileId, limitBytes) => telegram.downloadFile(fileId, limitBytes),
+        chatId: thread.chatKey.split(':')[2] ?? '',
+        maxEdge: config.screenshotMaxEdge,
+        // Telegram's photo sender wants both dimensions together, and a caller that
+        // knows neither has nothing useful to say about the size anyway.
+        sendPhoto: (bytes, opts) => {
+          const chatId = Number(thread.chatKey.split(':')[2]);
+          const threadId = inboundFor(thread).threadId;
+          return opts?.width !== undefined && opts.height !== undefined
+            ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
+                width: opts.width,
+                height: opts.height,
+              })
+            : telegram.sendPhotoBytes(chatId, bytes, threadId);
+        },
+        sendVideo: (bytes, seconds, label) =>
+          telegram
+            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+            .then(() => true),
+        sendVoice: (bytes, seconds) =>
+          telegram
+            .sendVoiceBytes(
+              Number(thread.chatKey.split(':')[2]),
+              bytes,
+              inboundFor(thread).threadId,
+              seconds,
+            )
+            .then(() => true),
+        progress: (what) => telegram.action(inboundFor(thread).chatId, what),
+        live: {
+          start: (source, intervalSeconds) =>
+            startLiveViewFromThread(thread, source, intervalSeconds * 1000),
+          stop: () => stopLiveViewFromThread(thread),
+        },
+        withMicrophone,
+        // The speakers are the microphone's other half. Quieten the listener before
+        // the sound comes out or the agent answers its own playback.
+        beforePlayback: () => currentWake()?.suppress(PLAYBACK_SUPPRESS_MS),
+        afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
+      }),
+    ] as AgentTool[];
+
+    // Only the tools that move the machine take the mutex. Wrapping read-only tools
+    // would throw away the parallelism that makes multiple conversations worth having.
+    const exclusive = new Set(['computer', 'shell', 'browser', 'write', 'media']);
+    return raw.map((tool): AgentTool => {
+      if (!exclusive.has(tool.name)) return tool;
+      const inner = tool.execute.bind(tool);
+      return {
+        ...tool,
+        execute: (id, params, signal, onUpdate) =>
+          machine.run(() => inner(id, params, signal, onUpdate)),
+      };
+    });
+  };
+
+  /**
+   * One gate per conversation, because approval scope is per conversation: allowing
+   * a click in one thread must not let the next thread click without asking.
+   *
+   * The holder indirection exists because the gate is built before the agent it
+   * protects. The approver closure only ever fires inside a tool call, which cannot
+   * happen until the agent exists, so the assignment below is safe and a captured
+   * variable would only be a source of stale references.
+   */
+  const gateFor = (
+    threadKey: string,
+    chatId: string,
+    holder: { agent: PersonalAgent | null },
+  ): Gate =>
+    new Gate({
+      allow: ['read', 'list', 'fetch', 'done', 'memory'],
+      allowActions: ['computer:screenshot', 'computer:move'],
+      // Full control is opt-in via the vault, never a command-line flag, so it cannot
+      // be switched on by a stray script or a leftover shell history entry.
+      fullControl,
+      protectedPaths: [
+        `${process.env.USERPROFILE}\\.ssh`,
+        `${process.env.USERPROFILE}\\.aws`,
+        'C:\\Windows\\System32',
+      ],
+      maxAmountCents: 30_000,
+      grantWindowMs: 90_000,
+      // Approvals travel back over Telegram as inline buttons, and the idle watchdog
+      // is paused while one is parked: waiting for a human is not a stall.
+      approver: async (call, reason) => {
+        const id = randomUUID();
+        log.info('approval requested', { thread: threadKey, tool: call.tool, reason });
+        holder.agent?.setAwaitingApproval(true);
+        try {
+          return await telegram.offerApproval(
+            id,
+            chatId,
+            `¿Permito ${call.tool}?\n${reason}\n\nLo aprueba una vez.`,
+          );
+        } finally {
+          holder.agent?.setAwaitingApproval(false);
+        }
+      },
+    });
+
+  const getOrCreateThread = async (
+    chatKey_: string,
+    name: string,
+    label: string,
+  ): Promise<Thread> => {
+    const key = `${chatKey_}#${name}`;
+    const existing = threads.get(key);
+    if (existing) {
+      // Touching a thread on use is what keeps the current conversation from being the
+      // eviction candidate.
+      existing.createdAt = Date.now();
+      return existing;
+    }
+    const holder: { agent: PersonalAgent | null } = { agent: null };
+    const gate = gateFor(key, chatKey_.split(':')[2] ?? '', holder);
+    const thread: Thread = {
+      key,
+      chatKey: chatKey_,
+      name,
+      agent: null as unknown as PersonalAgent,
+      gate,
+      tail: Promise.resolve(),
+      generation: 0,
+      active: false,
+      label,
+      createdAt: Date.now(),
+    };
+    thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
+      sessionId: key,
+    });
+    threads.set(key, thread);
+    log.info('thread created', { thread: key });
+    evictIdleThreads();
+    return thread;
+  };
+
+  const defaultThread = async (chatKey_: string): Promise<Thread> =>
+    getOrCreateThread(chatKey_, 'main', 'principal');
+
+  /**
+   * Decide which conversation a message belongs to.
+   *
+   * Order matters and each step is a real user intent:
+   *
+   * 1. An explicit `/topic` wins: the user is saying where this goes.
+   * 2. A reply to one of our own messages continues that message's conversation.
+   *    This is the common case for "and now do X", and it is why every reply we send
+   *    is attached to the message it answers.
+   * 3. A real Telegram thread id is used as the conversation, so a user who has
+   *    topics enabled in the chat gets separate conversations for free.
+   * 4. Otherwise: a short acknowledgement continues the main conversation even while
+   *    it is busy, and anything with real content starts its own conversation when the
+   *    main one is already occupied. That last rule is what lets several tasks be in
+   *    flight at once without them mixing.
+   */
+  const resolveThread = async (inbound: Inbound): Promise<Thread> => {
+    const chatKey_ = chatKey(inbound);
+    const explicit = activeTopic.get(chatKey_);
+    if (explicit) return getOrCreateThread(chatKey_, explicit, explicit);
+
+    if (inbound.replyToMessageId) {
+      const mapped = messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`);
+      const found = mapped ? threads.get(mapped) : undefined;
+      if (found) return found;
+    }
+
+    if (inbound.threadId) {
+      return getOrCreateThread(chatKey_, `t${inbound.threadId}`, `hilo ${inbound.threadId}`);
+    }
+
+    const main = await defaultThread(chatKey_);
+    if (!main.active) return main;
+    if (looksLikeFollowUp(inbound.text)) return main;
+
+    // Its own conversation, named after the message that started it so the label is
+    // traceable. The label shown to the user is a trimmed version of the request.
+    const label = inbound.text.trim().slice(0, 40) || 'petición';
+    return getOrCreateThread(chatKey_, `m${inbound.messageId}`, label);
+  };
+
+  const say = async (
+    inbound: Inbound,
+    text: string,
+    opts: { audio?: ChannelAudio; images?: Inbound['images']; quote?: boolean } = {},
+  ): Promise<string | null> => {
+    return telegram
+      .send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId: inbound.chatId,
+        threadId: inbound.threadId,
+        // The answer quotes the message it answers. Without this, three concurrent
+        // conversations in one chat are unreadable: you cannot tell which reply
+        // belongs to which request.
+        replyToMessageId: opts.quote === false ? undefined : inbound.messageId,
+        text,
+        images: opts.images,
+        audio: opts.audio,
+      })
+      .catch((err: unknown) => {
+        log.warn('send failed', { err });
+        return null;
+      });
+  };
+
+  /**
+   * Reply with speech when the user spoke. The mirror policy: talking gets a spoken
+   * answer, typing gets text. Anything else is noise on a phone speaker.
+   */
+  const answer = async (thread: Thread, inbound: Inbound, text: string): Promise<void> => {
+    const wantsVoice = voiceOn.get(inbound.chatId) ?? voiceDefault;
+    let audio: ChannelAudio | undefined;
+    if (wantsVoice && inbound.audioFileId && text.trim()) {
+      try {
+        const spoken = await tts.speak(trimForSpeech(text));
+        audio = { mimeType: spoken.mimeType, data: spoken.data.toString('base64') };
+      } catch (err) {
+        log.warn('tts failed, sending text only', { err });
+      }
+    }
+    const id = await say(inbound, text, { audio });
+    if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
+  };
+
+  const lifecycle = installLifecycle({
+    name: 'agent',
+    onShutdown: async () => {
+      // Stop acting first: a click mid-flight must not survive the shutdown.
+      for (const thread of threads.values()) thread.agent.abort('external');
+      telegram.cancelApprovals();
+      const pending = [...threads.values()].map((t) => t.tail.catch(() => {}));
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+      routineRunner.stop();
+      // Release the microphone before anything else slow: an ffmpeg that is still
+      // holding the capture device would keep the next app (or the next start) from
+      // opening it.
+      await stopWake().catch(() => {});
+      // Every Chromium, or the next start refuses to claim the profile dir.
+      await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
+      await registry.stopAll();
+      await screen.dispose();
+      store.close();
+      log.info('daemon stopped', { threads: threads.size });
+    },
+  });
+
+  const routineRunner = new RoutineRunner({
+    store,
+    run: async (prompt, ctx) => {
+      // A scheduled routine answers into the chat it was learned in. It reuses the
+      // thread of that scope when one exists, so the conversation that created the
+      // routine also receives its output.
+      const [chatPart] = ctx.scope.split('#');
+      const chatId = chatPart?.split(':')[2] ?? '';
+      if (!chatId) return;
+      log.info('routine fired', { routine: ctx.routine.name, chatId });
+      await telegram
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId,
+          text: `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
+        })
+        .catch((err: unknown) => log.warn('routine send failed', { err }));
+    },
+  });
+  routineRunner.start();
+
+  // ---- commands -----------------------------------------------------------
+
+  const cmdScreen = async (inbound: Inbound, args = ''): Promise<void> => {
+    const sub = args.trim().split(/\s+/)[0] ?? '';
+    if (sub === 'live' || sub === 'on') {
+      const interval = Math.max(2, Math.min(30, Number(args.trim().split(/\s+/)[1]) || 5));
+      await startLiveView(inbound, 'screen', interval * 1000, 15 * 60 * 1000);
+      return;
+    }
+    if (sub === 'off' || sub === 'stop') {
+      stopLiveView(inbound.chatId);
+      await say(inbound, 'Vista en directo detenida.', { quote: true });
+      return;
+    }
+    await telegram.action(inbound.chatId, 'upload_photo');
+    const shot = await screen.screenshot();
+    const ok = await telegram
+      .sendPhotoBytes(Number(inbound.chatId), shot.image, inbound.threadId, {
+        width: shot.width,
+        height: shot.height,
+      })
+      .then(() => true)
+      .catch((err: unknown) => {
+        log.warn('screen send failed', { err });
+        return false;
+      });
+    await say(
+      inbound,
+      ok
+        ? `Captura de ahora mismo (${shot.width}x${shot.height}).`
+        : 'No he podido enviar la captura.',
+      { quote: true },
+    );
+  };
+
+  /**
+   * Record and send a clip.
+   *
+   * A clip rather than a frame stream: Telegram allows about one message per second
+   * in a chat and re-encodes photos, so frames would arrive at 1fps with compression
+   * artefacts and stay in the chat forever. One video is one message with a player.
+   */
+  const cmdWatch = async (inbound: Inbound, args: string): Promise<void> => {
+    const running = watching.get(inbound.chatId);
+    if (running && !args) {
+      watching.delete(inbound.chatId);
+      await say(inbound, 'Grabación detenida.', { quote: true });
+      return;
+    }
+    const parts = args.split(/\s+/).filter(Boolean);
+    const seconds = Math.max(1, Math.min(60, Number(parts[0]) || 20));
+    const fps = Math.max(1, Math.min(15, Number(parts[1]) || 8));
+
+    if (running) {
+      await say(inbound, 'Ya había una grabación en marcha; espera a que termine.', {
+        quote: true,
+      });
+      return;
+    }
+
+    const job = (async () => {
+      await say(inbound, `Grabando ${seconds}s⬦`, { quote: true });
+      try {
+        const recording = await recordScreen({
+          seconds,
+          fps,
+          maxEdge: config.screenshotMaxEdge,
+        });
+        const bytes = readFileSync(recording.file);
+        rmSync(recording.file, { force: true });
+        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Pantalla');
+        log.info('watch clip sent', { chatId: inbound.chatId, bytes: bytes.length });
+      } catch (err) {
+        await say(
+          inbound,
+          `No he podido grabar: ${err instanceof Error ? err.message : String(err)}`,
+          {
+            quote: true,
+          },
+        );
+      } finally {
+        watching.delete(inbound.chatId);
+      }
+    })();
+    watching.set(inbound.chatId, job);
+    await job;
+  };
+
+  const cmdTopic = async (inbound: Inbound, args: string): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const name = args.trim().split(/\s+/)[0] ?? '';
+    if (!name) {
+      const open = [...threads.values()].filter((t) => t.chatKey === chatKey_);
+      const current = activeTopic.get(chatKey_) ?? 'main';
+      await say(
+        inbound,
+        [
+          `Conversaciones abiertas: ${open.length}`,
+          ...open.map((t) => `- ${t.name}${t.name === current ? ' (activa)' : ''}: ${t.label}`),
+          '',
+          'Usa /topic <nombre> para abrir una conversación nueva y /topics para verlas.',
+        ].join('\n'),
+        { quote: true },
+      );
+      return;
+    }
+    activeTopic.set(chatKey_, name);
+    const thread = await getOrCreateThread(chatKey_, name, name);
+    messageThread.set(`${chatKey_}:${inbound.messageId}`, thread.key);
+    await say(
+      inbound,
+      `Conversación "${name}" lista. Lo que escribas va aquí; /topic main vuelve a la principal.`,
+      { quote: true },
+    );
+  };
+
+  const cmdTopics = async (inbound: Inbound): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const open = [...threads.values()].filter((t) => t.chatKey === chatKey_);
+    const current = activeTopic.get(chatKey_);
+    await say(
+      inbound,
+      [
+        `Conversaciones en este chat: ${open.length}`,
+        ...open.map(
+          (t) =>
+            `- ${t.name}${t.name === current ? ' (activa)' : ''}${t.active ? ' · trabajando' : ''}: ${t.label}`,
+        ),
+        '',
+        'Responde a cualquiera de mis mensajes para seguir esa conversación.',
+      ].join('\n'),
+      { quote: true },
+    );
+  };
+
+  /**
+   * Learn a routine.
+   *
+   * `/learn <name>` starts recording; the user then does the thing once with the agent
+   * watching; `/learn end` makes the agent write down the steps. Learning from a
+   * demonstration is the only version of "it learns" that is reliable: asking a model
+   * to invent steps it never performed produces plausible fiction.
+   */
+  const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const name = args.trim();
+    if (name.toLowerCase() === 'end') {
+      const recorded = learning.get(inbound.chatId);
+      if (!recorded) {
+        await say(inbound, 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.', {
+          quote: true,
+        });
+        return;
+      }
+      learning.delete(inbound.chatId);
+      await say(inbound, 'Resumiendo los pasos que acabas de hacer⬦', { quote: true });
+      const transcript = summarizeTranscript(thread.agent.messages);
+      const result = await thread.agent.run(
+        [
+          'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
+          transcript,
+          '',
+          'Escribe en español los pasos reutilizables, en tercera persona e imperativo breve,',
+          'uno por línea, sin numeración ni explicaciones. Empieza por el más general.',
+          'Si algún paso requiere una contraseña o un pago, escribe [PIDE CONFIRMACIÓN].',
+          'Si no se puede reutilizar, escribe una sola línea: NO REUTILIZABLE.',
+          'No escribas nada más: ni título, ni comentarios, ni código fences.',
+        ].join('\n'),
+      );
+      const steps = result.text.trim();
+      if (!steps) {
+        await say(inbound, 'No he podido resumir los pasos.', { quote: true });
+        return;
+      }
+      const routine = store.saveRoutine({
+        scope: thread.key,
+        name: recorded,
+        kind: 'procedure',
+        steps,
+      });
+      await say(
+        inbound,
+        [
+          `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+          '',
+          steps,
+        ].join('\n'),
+        { quote: true },
+      );
+      return;
+    }
+    if (!name) {
+      await say(inbound, 'Uso: /learn <nombre> para empezar, /learn end para cerrar.', {
+        quote: true,
+      });
+      return;
+    }
+    learning.set(inbound.chatId, name);
+    await say(
+      inbound,
+      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
+      { quote: true },
+    );
+  };
+
+  const cmdRoutine = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const name = args.trim().split(/\s+/)[0] ?? '';
+    if (!name) {
+      await say(inbound, 'Uso: /routine <nombre>. Mira /routines para la lista.', { quote: true });
+      return;
+    }
+    const routine =
+      store.getRoutine(thread.key, name) ?? store.getRoutine(`${thread.chatKey}#main`, name);
+    if (!routine) {
+      await say(inbound, `No tengo ninguna rutina llamada "${name}".`, { quote: true });
+      return;
+    }
+    const prompt =
+      routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
+    store.markRoutineRun(routine.scope, routine.name);
+    messageThread.set(`${chatKey(inbound)}:${inbound.messageId}`, thread.key);
+    await runTurn(thread, inbound, prompt, {});
+  };
+
+  const cmdRoutines = async (inbound: Inbound): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const list = store.listRoutines().filter((r) => r.scope.startsWith(chatKey_));
+    if (!list.length) {
+      await say(inbound, 'Todavía no hay rutinas. Graba una con /learn <nombre>.', {
+        quote: true,
+      });
+      return;
+    }
+    await say(
+      inbound,
+      [
+        `Rutinas: ${list.length}`,
+        ...list.map((r) =>
+          [
+            `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`,
+            summarizeRoutine(r),
+          ].join(': '),
+        ),
+      ].join('\n'),
+      { quote: true },
+    );
+  };
+
+  const cmdMemory = async (inbound: Inbound): Promise<void> => {
+    const entries = memory.all(chatKey(inbound));
+    const scopes = memory.scopes();
+    await say(
+      inbound,
+      entries.length
+        ? [
+            `Recuerdo ${entries.length} cosas:`,
+            ...entries.map((e) => `- [${e.id}] ${e.text}`),
+          ].join('\n')
+        : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`,
+      { quote: true },
+    );
+  };
+
+  const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
+    const want = args.trim().toLowerCase();
+    const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
+    const next = want === 'on' ? true : want === 'off' ? false : !current;
+    voiceOn.set(inbound.chatId, next);
+    await say(
+      inbound,
+      next ? 'Te contesto con voz cuando me hables por voz.' : 'Te contesto solo con texto.',
+      { quote: true },
+    );
+  };
+
+  const cmdStop = async (inbound: Inbound): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
+    let wasActive = 0;
+    for (const thread of mine) {
+      if (thread.active) wasActive++;
+      thread.generation++;
+      thread.agent.abort('external');
+      thread.tail = Promise.resolve();
+    }
+    telegram.cancelForChat(inbound.chatId);
+    // A live view keeps sending frames after the user asked to stop, and its photo
+    // would arrive after "Detenido." - exactly the class of ghost output /stop exists
+    // to prevent. The same goes for an in-flight recording.
+    stopLiveView(inbound.chatId);
+    for (const thread of mine) thread.gate.clearSession(thread.key);
+    log.info('stop requested', { chatId: inbound.chatId, wasActive, threads: mine.length });
+    await say(
+      inbound,
+      wasActive
+        ? `Detenido. ${wasActive} conversación(es) abortadas y la cola limpia.`
+        : 'No había nada en curso.',
+      { quote: true },
+    );
+  };
+
+  /**
+   * A live view: one photo in the chat, refreshed in place every few seconds.
+   *
+   * Deliberately one editable message rather than a stream of photos. A stream hits
+   * Telegram's documented one-message-per-second ceiling at the first frame and then
+   * leaves every frame in the chat forever; editing a single message feels more like
+   * watching, leaves the conversation readable afterwards, and is well inside the
+   * documented limits. This is the closest thing to a live feed the Bot API allows -
+   * there is no streaming primitive a bot can use.
+   */
+  const startLiveView = async (
+    inbound: Inbound,
+    source: 'screen' | 'camera',
+    intervalMs: number,
+    maxMs: number,
+    opts: { announce?: boolean } = {},
+  ): Promise<string> => {
+    const chatId = inbound.chatId;
+    const announce = opts.announce !== false;
+    const caption =
+      source === 'camera'
+        ? 'Camara en directo, se actualiza sola. /camera off para parar.'
+        : 'Pantalla en directo, se actualiza sola. /screen off para parar.';
+
+    if (liveViews.has(chatId)) {
+      // A second request must not silently replace the first view: two loops writing
+      // to two different messages both look like a broken feed.
+      const note = 'Ya hay una vista en directo. Para pararla, /screen off o /camera off.';
+      if (announce) await say(inbound, note, { quote: true });
+      return note;
+    }
+    const capture = async (): Promise<Buffer> =>
+      source === 'camera'
+        ? (await captureCameraFrame({ maxEdge: config.screenshotMaxEdge })).image
+        : (await screen.screenshot()).image;
+
+    let first: Buffer;
+    try {
+      first = await capture();
+    } catch (err) {
+      const note = `No he podido abrir la vista en directo: ${err instanceof Error ? err.message : String(err)}`;
+      if (announce) await say(inbound, note, { quote: true });
+      return note;
+    }
+    const id = await telegram.sendPhotoBytes(Number(chatId), first, inbound.threadId);
+    if (!id) {
+      const note = 'No he podido abrir la vista en directo.';
+      if (announce) await say(inbound, note, { quote: true });
+      return note;
+    }
+    if (announce) await say(inbound, caption, { quote: true });
+
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - started > maxMs) {
+        stopLiveView(chatId);
+        void say(inbound, 'La vista en directo ha terminado.', { quote: true });
+        return;
+      }
+      void capture()
+        .then((bytes) => telegram.editPhoto(chatId, id, bytes))
+        .catch((err: unknown) => {
+          // One missed frame is not worth stopping for: the next tick retries, and only
+          // a sustained failure is worth telling the user about.
+          log.debug('live view frame failed', { err });
+        });
+    }, intervalMs);
+    timer.unref();
+    liveViews.set(chatId, { timer, messageId: id });
+    return caption;
+  };
+
+  const stopLiveView = (chatId: string): void => {
+    const job = liveViews.get(chatId);
+    if (!job) return;
+    clearInterval(job.timer);
+    liveViews.delete(chatId);
+    log.info('live view stopped', { chatId });
+  };
+
+  /**
+   * Live views started from a tool call.
+   *
+   * `announce: false` because the model is about to tell the user in its own reply;
+   * a second Telegram message saying the same thing arrives before the answer and
+   * reads as the agent talking over itself.
+   */
+  const startLiveViewFromThread = async (
+    thread: Thread,
+    source: 'screen' | 'camera',
+    intervalMs: number,
+  ): Promise<string> =>
+    startLiveView(inboundFor(thread), source, intervalMs, 15 * 60 * 1000, { announce: false });
+
+  const stopLiveViewFromThread = async (thread: Thread): Promise<string> => {
+    const chatId = inboundFor(thread).chatId;
+    if (!liveViews.has(chatId)) return 'No hay ninguna vista en directo activa.';
+    stopLiveView(chatId);
+    return 'Vista en directo detenida.';
+  };
+
+  const cmdCamera = async (inbound: Inbound, args: string): Promise<void> => {
+    const parts = args.trim().split(/\s+/).filter(Boolean);
+    const sub = parts[0] ?? '';
+    if (sub === 'off' || sub === 'stop') {
+      stopLiveView(inbound.chatId);
+      await say(inbound, 'Camara apagada.', { quote: true });
+      return;
+    }
+    if (sub === 'on' || sub === 'live') {
+      const interval = Math.max(2, Math.min(30, Number(parts[1]) || 5));
+      await startLiveView(inbound, 'camera', interval * 1000, 15 * 60 * 1000);
+      return;
+    }
+    if (sub === 'clip' || sub === 'video') {
+      const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
+      await say(inbound, `Grabando ${seconds}s de camara...`, { quote: true });
+      const rec = await recordCamera({ seconds, fps: 10, maxEdge: config.screenshotMaxEdge });
+      const bytes = consumeRecording(rec.file);
+      await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara');
+      return;
+    }
+    // Camera with the microphone attached. One ffmpeg with two inputs, because two
+    // recordings stitched afterwards put the audio behind the video by however long
+    // the second spawn took, and the drift is instantly visible on anything with a
+    // voice in it.
+    if (sub === 'av' || sub === 'voz' || sub === 'convoz') {
+      const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
+      await say(inbound, `Grabando ${seconds}s de camara con tu voz...`, { quote: true });
+      try {
+        const rec = await recordCameraWithMic({
+          seconds,
+          fps: 10,
+          maxEdge: config.screenshotMaxEdge,
+        });
+        const bytes = consumeRecording(rec.file);
+        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara y voz');
+      } catch (err) {
+        await say(
+          inbound,
+          `No he podido grabar camara y microfono: ${err instanceof Error ? err.message : String(err)}`,
+          { quote: true },
+        );
+      }
+      return;
+    }
+    await telegram.action(inbound.chatId, 'upload_photo');
+    try {
+      const shot = await captureCameraFrame({ maxEdge: config.screenshotMaxEdge });
+      const ok = await telegram
+        .sendPhotoBytes(Number(inbound.chatId), shot.image, inbound.threadId, {
+          width: shot.width,
+          height: shot.height,
+        })
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('camera frame send failed', { err });
+          return false;
+        });
+      await say(
+        inbound,
+        ok ? 'Esto veo por la camara ahora mismo.' : 'No he podido enviar la foto.',
+        {
+          quote: true,
+        },
+      );
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido usar la camara: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+    }
+  };
+
+  const cmdMic = async (inbound: Inbound, args: string): Promise<void> => {
+    const seconds = Math.max(1, Math.min(60, Number(args.trim().split(/\s+/)[0]) || 10));
+    await say(inbound, `Escuchando ${seconds}s por el microfono...`, { quote: true });
+    try {
+      // Through withMicrophone: the wake listener holds the capture device open, and
+      // two recorders fighting over one microphone is a failure that looks like
+      // "your microphone is broken".
+      await withMicrophone(async () => {
+        const rec = await recordMicrophone({ seconds });
+        const bytes = consumeRecording(rec.file);
+        await telegram.action(inbound.chatId, 'upload_voice');
+        await telegram.sendVoiceBytes(Number(inbound.chatId), bytes, inbound.threadId, rec.seconds);
+      });
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido grabar el microfono: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+    }
+  };
+
+  /**
+   * Play an audio the user sent us, out of the PC speakers.
+   *
+   * The volume is a parameter because "let me hear it" and "let me hear it at full
+   * blast" are different requests and the difference is one number. The default is
+   * full volume: when someone sends an audio to their own PC from their phone, the
+   * reason is usually that they are not at the keyboard and want it loud enough to
+   * hear from wherever they are.
+   */
+  const cmdPlay = async (inbound: Inbound, args: string): Promise<void> => {
+    const first = args.trim().split(/\s+/)[0] ?? '';
+    const volume = first ? Math.max(0, Math.min(100, Number(first) || 100)) : 100;
+    const key = chatKey(inbound);
+
+    // The audio on this message if there is one, then the audio on the message the
+    // user replied to, then the last audio they sent in this chat. That order is the
+    // whole fix for "I send an audio, then type /play": the handle has to survive the
+    // turn, and Telegram's file_id does, as long as something remembers it.
+    const target = recall.resolve(key, {
+      own: inbound.audioFileId ? inbound.messageId : undefined,
+      replyTo: inbound.replyToMessageId,
+    });
+
+    if (!target) {
+      await say(
+        inbound,
+        'No tengo ningún audio tuyo guardado. Mandame uno y te lo suelto; también puedo ' +
+          'usar el último que me mandaste en cuanto llegue.',
+        { quote: true },
+      );
+      return;
+    }
+
+    await say(inbound, `Descargando y preparando el audio (volumen ${volume})...`, { quote: true });
+    let playable: string | null = null;
+    try {
+      const bytes = await telegram.downloadFile(target.fileId, 25_000_000);
+      if (!bytes) throw new Error('no he podido descargar el audio de Telegram');
+      playable = await toPlayableAudio(bytes, target.mimeType);
+      // The speakers are the wake microphone's other half.
+      currentWake()?.suppress(PLAYBACK_SUPPRESS_MS);
+      const res = await playAudioFile(playable, { volume });
+      currentWake()?.suppress(WAKE_TAIL_MS);
+      await say(
+        inbound,
+        res.ok
+          ? `Sonado ${res.seconds}s al volumen ${res.volumeSet}%. ` +
+              (res.volumeRestoredTo === null
+                ? 'El volumen se queda ahí.'
+                : `He vuelto a dejar el volumen como estaba (${res.volumeRestoredTo}%).`)
+          : `No he podido reproducirlo: ${res.detail}`,
+        { quote: true },
+      );
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido reproducir el audio: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+    } finally {
+      if (playable) rmSync(playable, { force: true });
+      currentWake()?.suppress(WAKE_TAIL_MS);
+    }
+  };
+
+  const cmdStatus = async (inbound: Inbound, args: string): Promise<void> => {
+    const want = args.trim().toLowerCase();
+    const current = statusOn.get(inbound.chatId) !== false;
+    const next = want === 'on' ? true : want === 'off' ? false : !current;
+    statusOn.set(inbound.chatId, next);
+    await say(
+      inbound,
+      next
+        ? 'Te voy contando como voy mientras trabajo.'
+        : 'Te aviso solo al final, sin avisos por el camino.',
+      { quote: true },
+    );
+  };
+
+  const cmdHelp = async (inbound: Inbound): Promise<void> => {
+    await say(
+      inbound,
+      [
+        'Habla conmigo normal y te contesto a cada mensaje por separado.',
+        '',
+        '/screen - captura ahora',
+        '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
+        '/topic <nombre> - abre una conversación; /topics para verlas',
+        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos',
+        '/routine <nombre> - repite una rutina',
+        '/routines - lista de rutinas',
+        '/memory - lo que recuerdo de ti',
+        '/voice on|off - contestar con voz',
+        '/wake on|off - escuchar mi nombre en el micrófono',
+        '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
+        '/play [volumen] - suena en el PC el último audio que me mandaste',
+        '/mic [segundos] - escuchar lo que oye el microfono',
+        '/watch live [segundos] - pantalla en directo (se actualiza sola)',
+        '/status on|off - avisarte de como voy mientras trabajo',
+        '/stop - para todo lo que esté corriendo',
+      ].join('\n'),
+      { quote: true },
+    );
+  };
+
+  /**
+   * One turn: prepare inputs (photo, voice), run, answer.
+   *
+   * Voice is transcribed here rather than in the adapter because the first
+   * transcription has to load the model from disk, which takes seconds. Doing it in
+   * the message handler would block every other conversation behind that load.
+   */
+  const runTurn = async (
+    thread: Thread,
+    inbound: Inbound,
+    text: string,
+    opts: { images?: Inbound['images'] },
+  ): Promise<void> => {
+    const generation = thread.generation;
+    thread.active = true;
+    // Which message this turn is answering, so a tool that sends something back can
+    // quote it. Replaced per turn, because one thread serves many messages.
+    threadInbound.set(thread.key, inbound);
+    let lastSummary = 'recibido';
+    const startedAt = Date.now();
+    let lastStatusAt = 0;
+    let finished = false;
+
+    // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
+    // is alive. It says "working" without inventing a progress report.
+    const typing = setInterval(() => {
+      if (finished) return;
+      void telegram.action(inbound.chatId, 'typing');
+    }, 4000);
+    typing.unref();
+
+    const status = setInterval(() => {
+      if (finished) return;
+      // The progress note is opt-out per chat: some people want to be told how it is
+      // going while it works, others want one message at the end and nothing between.
+      if (statusOn.get(inbound.chatId) === false) return;
+      const now = Date.now();
+      if (now - startedAt > 25_000 && now - lastStatusAt > 45_000) {
+        lastStatusAt = now;
+        void telegram
+          .send({
+            channel: 'telegram',
+            account: telegram.account,
+            chatId: inbound.chatId,
+            text: `Sigo en ello, ahora ${lastSummary}.`,
+          })
+          .catch(() => {});
+      }
+    }, 5000);
+    status.unref();
+
+    try {
+      let images = opts.images;
+      if (!images?.length && inbound.photoFileId) {
+        try {
+          const data = await telegram.downloadPhoto(inbound.photoFileId);
+          if (data)
+            images = [{ type: 'image', mimeType: 'image/jpeg', data: data.toString('base64') }];
+        } catch (err) {
+          log.warn('photo download failed', { err });
+        }
+      }
+
+      let prompt = text;
+      if (inbound.audioFileId) {
+        const bytes = await telegram.downloadFile(inbound.audioFileId);
+        if (!bytes) {
+          await say(inbound, 'No he podido descargar el audio.', { quote: true });
+          return;
+        }
+        await telegram.action(inbound.chatId, 'typing');
+        try {
+          const result = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
+          // Marked as a transcription so the model does not treat a misheard word as
+          // something the user typed, and so the reply can be spoken back.
+          prompt = `[Nota de voz transcrita] ${result.text}`;
+          log.info('voice transcribed', {
+            seconds: result.durationSeconds,
+            chars: result.text.length,
+          });
+          // Remembered with the handle, so "suéltame ese audio" two messages later
+          // has something to act on.
+          recall.setTranscript(chatKey(inbound), inbound.messageId, result.text);
+        } catch (err) {
+          await say(
+            inbound,
+            `No he entendido la nota de voz: ${err instanceof Error ? err.message : String(err)}`,
+            { quote: true },
+          );
+          return;
+        }
+      }
+
+      if (!prompt.trim() && !images?.length) {
+        await say(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });
+        return;
+      }
+
+      // Memory and routines are injected as a system message, so they read as
+      // standing context rather than as something the user just said.
+      thread.agent.attachContext(buildContextNote(thread, store, memory));
+
+      const result = await thread.agent.run(prompt, images, {
+        onToolCall: (info) => {
+          lastSummary = info.summary;
+        },
+      });
+
+      if (thread.generation !== generation) return;
+
+      log.info('task done', {
+        thread: thread.name,
+        toolCalls: result.toolCalls,
+        blocked: result.blocked,
+        toolErrors: result.toolErrors,
+        stopReason: result.stopReason,
+        failed: result.error !== null,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      });
+
+      const text2 =
+        result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
+      await answer(thread, inbound, text2);
+    } catch (err) {
+      log.error('turn threw', { thread: thread.name, err });
+      await say(inbound, `Algo falló: ${err instanceof Error ? err.message : String(err)}`, {
+        quote: true,
+      });
+    } finally {
+      finished = true;
+      thread.active = false;
+      clearInterval(typing);
+      clearInterval(status);
+      // Approval scope is one task: a memo or grant must never leak into the next
+      // turn, where the user has new context that the approval did not cover.
+      thread.gate.clearSession(thread.key);
+    }
+  };
+
+  // ---- wake word -----------------------------------------------------------
+
+  /** Monotonic id so every wake turn is traceable in the log and in /topics. */
+  let wakeCount = 0;
+
+  /**
+   * Answer a wake word.
+   *
+   * It runs through `runTurn` like any other message, with three deliberate
+   * differences: it goes to the main conversation of whoever talked last, it is
+   * marked as spoken rather than typed, and it forces a spoken answer. Everything
+   * else - the gate, the mutex, the threading, the machine lock - is the same code
+   * path, because a second way into the agent is a second thing that can skip the
+   * safety checks.
+   */
+  const handleWake = async (heard: string): Promise<void> => {
+    const chat = lastChat;
+    if (!chat) {
+      log.warn('wake word heard but nobody has talked yet', { heard });
+      return;
+    }
+    const request = stripWakeWord(heard, wakeWord);
+    if (!request) {
+      // "Asistenta" on its own is a check that it is listening, not a task. Saying so
+      // would answer every cough that sounded like the word.
+      log.info('wake word heard with no request', { heard });
+      return;
+    }
+    const inbound: Inbound = {
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: chat.chatId,
+      threadId: chat.threadId,
+      userId: String(chat.chatId),
+      displayName: 'palabra de activacion',
+      text: `[dicho en voz alta ante el microfono] ${request}`,
+      authorised: true,
+      messageId: `wake-${++wakeCount}`,
+      receivedAt: new Date().toISOString(),
+    };
+    log.info('wake word fired', { request, chatId: chat.chatId });
+    const thread = await getOrCreateThread(chat.key, 'main', 'principal');
+    messageThread.set(`${chat.key}:${inbound.messageId}`, thread.key);
+    // Spoken in, spoken out: nobody is looking at the chat to read a reply to a
+    // word they said to an empty room.
+    const wasVoice = voiceOn.get(chat.chatId);
+    voiceOn.set(chat.chatId, true);
+    try {
+      await runTurn(thread, inbound, inbound.text, {});
+    } finally {
+      if (wasVoice === undefined) voiceOn.delete(chat.chatId);
+      else voiceOn.set(chat.chatId, wasVoice);
+    }
+  };
+
+  /**
+   * Tell the last chat something about the wake word, with no message to quote.
+   *
+   * Separate from `say` because the wake word arrives with no inbound message: there is
+   * nothing to attach this to, and a fabricated id would make it look like a reply to
+   * something the user never wrote.
+   */
+  const notifyLastChat = async (text: string): Promise<void> => {
+    const chat = lastChat;
+    if (!chat) return;
+    await say(
+      {
+        channel: 'telegram',
+        account: telegram.account,
+        chatId: chat.chatId,
+        threadId: chat.threadId,
+        userId: String(chat.chatId),
+        text: '',
+        authorised: true,
+        messageId: 'wake-notice',
+        receivedAt: new Date().toISOString(),
+      },
+      text,
+      { quote: false },
+    );
+  };
+
+  const startWake = async (): Promise<void> => {
+    let told = false;
+    const listener = new WakeWordListener({
+      word: wakeWord,
+      onWake: (heard) => {
+        // Deliberately not awaited: a wake starts a whole turn, and the listener's
+        // job is done the moment it has handed the text over.
+        void handleWake(heard).catch((err: unknown) => log.error('wake turn failed', { err }));
+      },
+      onError: (err) => {
+        log.warn('wake listener error', { err });
+        // The listener stops itself when capture or transcription fails, and from the
+        // user's side a listener that stopped listening is indistinguishable from one
+        // that never started. Said once: the failure repeats until it is fixed.
+        if (told) return;
+        told = true;
+        void notifyLastChat(
+          `He dejado de escuchar "${wakeWord}": ${err.message}. Vuelve a activarlo con /wake on.`,
+        ).catch(() => {});
+      },
+    });
+    await listener.start();
+    wake = listener;
+    log.info('wake word listening', { word: wakeWord, ...listener.stats() });
+  };
+
+  const stopWake = async (): Promise<void> => {
+    const listener = wake;
+    if (!listener) return;
+    wake = null;
+    await listener.stop();
+    log.info('wake word stopped', listener.stats());
+  };
+
+  const cmdWake = async (inbound: Inbound, args: string): Promise<void> => {
+    const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+    const listening = currentWake()?.isRunning() ?? false;
+    const next = want === 'on' ? true : want === 'off' ? false : !listening;
+    try {
+      if (next) await startWake();
+      else await stopWake();
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido ${next ? 'activar' : 'desactivar'} la palabra: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+      return;
+    }
+    wakeWanted = next;
+    // Persisted, so "stop listening" survives a restart. Without this the daemon would
+    // grab the microphone again on the next boot and the user would have to remember
+    // to switch it off a second time.
+    await vaultSet('agent:wake', next ? 'on' : 'off').catch((err: unknown) => {
+      log.warn('wake preference not saved', { err });
+    });
+    const stats = currentWake()?.stats();
+    await say(
+      inbound,
+      next
+        ? `Escuchando "${wakeWord}" en el microfono. Dime "${wakeWord}, ..." y te hago caso.` +
+            (stats ? ` (ventanas oidas: ${stats.checks}, avisos: ${stats.wakeCount})` : '')
+        : `Dejo de escuchar "${wakeWord}".`,
+      { quote: true },
+    );
+  };
+
+  await registry.startAll({
+    onMessage: async (inbound) => {
+      if (!inbound.authorised) return;
+      const chatKey_ = chatKey(inbound);
+      log.info('message', {
+        chatId: inbound.chatId,
+        user: inbound.displayName,
+        chars: inbound.text.length,
+        hasPhoto: Boolean(inbound.photoFileId),
+        hasVoice: Boolean(inbound.audioFileId),
+      });
+
+      // Telegram delivers at-least-once; a redelivered update must not run the task
+      // twice. Bounded by a one hour TTL, which comfortably outlives a redelivery.
+      const dedupKey = `${chatKey_}:${inbound.messageId}`;
+      const seenAt = seenMessages.get(dedupKey);
+      if (seenAt !== undefined && Date.now() - seenAt < 3_600_000) {
+        log.info('duplicate update ignored', { messageId: inbound.messageId });
+        return;
+      }
+      seenMessages.set(dedupKey, Date.now());
+      if (seenMessages.size > 2000) {
+        const oldest = seenMessages.keys().next().value;
+        if (oldest !== undefined) seenMessages.delete(oldest);
+      }
+
+      // Where a wake word gets answered, and what "the last audio" means from now on.
+      lastChat = { key: chatKey_, chatId: inbound.chatId, threadId: inbound.threadId };
+
+      // Recorded before the command dispatch, because "/play" typed as the caption of
+      // an audio has to be able to find that audio by its own message id.
+      if (inbound.audioFileId) {
+        recall.record(chatKey_, {
+          fileId: inbound.audioFileId,
+          mimeType: inbound.audioMimeType ?? 'audio/ogg',
+          messageId: inbound.messageId,
+          durationSeconds: inbound.audioDurationSeconds,
+          caption: inbound.text.trim() || undefined,
+        });
+      }
+
+      const command = parseCommand(inbound.text);
+      if (command) {
+        // Commands bypass the agent entirely: they are the user's hands on the
+        // machine, not a task to delegate, and they must work even when every thread
+        // is busy or the provider is down.
+        switch (command.name) {
+          case 'stop':
+            return cmdStop(inbound);
+          case 'screen':
+            return cmdScreen(inbound, command.args);
+          case 'camera':
+            return cmdCamera(inbound, command.args);
+          case 'play':
+          case 'suena':
+          case 'toca':
+          case 'escucha':
+            return cmdPlay(inbound, command.args);
+          case 'mic':
+          case 'micro':
+            return cmdMic(inbound, command.args);
+          case 'watch':
+            return cmdWatch(inbound, command.args);
+          case 'topic':
+            return cmdTopic(inbound, command.args);
+          case 'topics':
+            return cmdTopics(inbound);
+          case 'routines':
+            return cmdRoutines(inbound);
+          case 'routine': {
+            const thread = await resolveThread(inbound);
+            return cmdRoutine(thread, inbound, command.args);
+          }
+          case 'learn': {
+            const thread = await resolveThread(inbound);
+            return cmdLearn(thread, inbound, command.args);
+          }
+          case 'memory':
+            return cmdMemory(inbound);
+          case 'voice':
+            return cmdVoice(inbound, command.args);
+          case 'wake':
+          case 'asistenta':
+            return cmdWake(inbound, command.args);
+          case 'status':
+            return cmdStatus(inbound, command.args);
+          case 'start':
+          case 'help':
+            return cmdHelp(inbound);
+          default:
+            // Unknown slash command: say so instead of silently running it as a task.
+            await say(inbound, `No conozco el comando /${command.name}. /help para ver la lista.`, {
+              quote: true,
+            });
+            return;
+        }
+      }
+
+      const thread = await resolveThread(inbound);
+      messageThread.set(dedupKey, thread.key);
+
+      // Serialise inside the thread only. Different threads run concurrently; the
+      // machine mutex inside the tools is what keeps them from colliding.
+      const gen = thread.generation;
+      const next = thread.tail.then(async () => {
+        if (thread.generation !== gen) return;
+        await runTurn(thread, inbound, inbound.text, {});
+      });
+      thread.tail = next.catch(() => {});
+    },
+    log: (level, msg, fields) => log[level](msg, fields ?? {}),
+  });
+
+  log.info('daemon ready', { allowed, threads: threads.size });
+
+  // Started last, and off the critical path: a machine with no microphone, or one
+  // where the device is already held by Teams, must still end up with a working
+  // Telegram daemon. A failure here is logged and reported in /wake, never thrown.
+  if (wakeWanted) {
+    await startWake().catch(async (err: unknown) => {
+      wakeWanted = false;
+      log.error('wake word could not start', { err });
+      if (lastChat) {
+        await say(
+          {
+            channel: 'telegram',
+            account: telegram.account,
+            chatId: lastChat.chatId,
+            threadId: lastChat.threadId,
+            userId: String(lastChat.chatId),
+            text: '',
+            authorised: true,
+            messageId: 'wake-start-failed',
+            receivedAt: new Date().toISOString(),
+          },
+          `No he podido escuchar la palabra "${wakeWord}": ${err instanceof Error ? err.message : String(err)}`,
+          { quote: true },
+        );
+      }
+    });
+  }
+
+  log.info('daemon running', {
+    wake: currentWake()?.isRunning() ?? false,
+    wakeWord,
+    rememberedAudio: recall.size,
+  });
+  await lifecycle.done;
+  return 0;
+}
+
+/**
+ * Text destined for speech.
+ *
+ * Markdown is read terribly aloud, and a 900-character answer becomes a 90-second
+ * voice note nobody asked for. Code blocks are dropped entirely and replaced by a
+ * marker, because a model quoting a stack trace at 2am on a phone is useless.
+ */
+export function trimForSpeech(text: string): string {
+  const cleaned = text
+    .replace(/```[\s\S]*?```/g, ' (bloque de codigo omitido) ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[*_#>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > 900 ? `${cleaned.slice(0, 900)}...` : cleaned;
+}
+
+/**
+ * The memory and routines the model should have in front of it this turn, as one
+ * short block.
+ *
+ * Bounded on purpose. A month of memories pasted into every prompt would cost
+ * thousands of tokens per message and would eventually crowd out the actual task, so
+ * the most recent entries are what is shown: the recent past is what a running
+ * conversation needs, and `recall` covers the rest.
+ */
+export function buildContextNote(
+  thread: { key: string; name: string },
+  store: Store,
+  memory: MemoryStore,
+): string {
+  const parts: string[] = [];
+  const entries = memory.all(thread.key).slice(-20);
+  if (entries.length) {
+    parts.push(`<memory>\n${entries.map((e) => `- ${e.text}`).join('\n')}\n</memory>`);
+  }
+  const routines = store.listRoutines(thread.key).filter((r) => r.enabled);
+  if (routines.length) {
+    parts.push(
+      `<routines>\n${routines
+        .map((r) => `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`)
+        .join('\n')}\n</routines>`,
+    );
+  }
+  parts.push(`<now>${new Date().toISOString().slice(0, 16).replace('T', ' ')}</now>`);
+  return parts.join('\n');
+}
+
+/**
+ * Flatten a transcript into text for the /learn summariser.
+ *
+ * Only the turns that describe actions: tool names and the model's own words. The
+ * user's messages are included because "haz la compra" is the intent the steps have
+ * to serve, but the tool *arguments* are not, because a typed password would be
+ * written into a routine that lives in the database forever.
+ */
+export function summarizeTranscript(messages: readonly unknown[]): string {
+  const lines: string[] = [];
+  for (const message of messages) {
+    const m = message as {
+      role?: string;
+      content?: unknown;
+      toolName?: string;
+    };
+    if (!m || typeof m !== 'object') continue;
+    if (m.role === 'user') {
+      const text = textOf(m.content);
+      if (text) lines.push(`usuario: ${text.slice(0, 300)}`);
+    } else if (m.role === 'assistant') {
+      const text = textOf(m.content);
+      if (text) lines.push(`agente: ${text.slice(0, 300)}`);
+    } else if (m.role === 'toolResult' || m.toolName) {
+      const name = (m as { toolName?: string }).toolName;
+      if (name) lines.push(`herramienta: ${name}`);
+    }
+  }
+  return lines.slice(-80).join('\n') || '(no hubo actividad)';
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b): b is { type: string; text: string } => {
+      const block = b as { type?: unknown; text?: unknown };
+      return block?.type === 'text' && typeof block.text === 'string';
+    })
+    .map((b) => b.text)
+    .join(' ');
+}
+
+// Set exitCode and let Node drain on its own. Calling process.exit() here trips a
+// libuv assertion on Windows ("!(handle->flags & UV_HANDLE_CLOSING)") because the
+// provider stream may still be tearing down its socket at that instant.
+main(process.argv.slice(2))
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((err) => {
+    log.error('fatal', { err });
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  });

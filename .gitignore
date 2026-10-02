@@ -1,0 +1,22 @@
+node_modules/
+dist/
+var/
+.data/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+test-results/
+coverage/
+
+# Local scratch: daemon output, probe screenshots, debugging scripts.
+serve.out
+serve.err
+*.png
+wa*.ps1
+cuahelper.ps1
+scale.ps1
+
+# Probe scripts kept out of the library on purpose.
+script/
