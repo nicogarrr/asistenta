@@ -55,6 +55,7 @@ import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { createComputerTool } from './tools/computer.js';
 import { createDoneTool } from './tools/done.js';
+import { createDownloadTool } from './tools/download.js';
 import { createFetchTool } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
@@ -835,6 +836,25 @@ async function serveCommand(): Promise<number> {
       }),
       // The machine itself: volume, mute, lock, and how it is doing.
       createSystemTool(),
+      // "Descarga este vídeo / pásame este PDF" with a link: yt-dlp for video sites, a
+      // direct fetch for PDFs, sent back to the chat as MP4 or document.
+      createDownloadTool({
+        sendVideo: (bytes, seconds, label) =>
+          telegram
+            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+            .then(() => true),
+        sendDocument: (bytes, filename, caption) =>
+          telegram
+            .sendDocumentBytes(
+              Number(thread.chatKey.split(':')[2]),
+              bytes,
+              filename,
+              caption,
+              inboundFor(thread).threadId,
+            )
+            .then(() => true),
+        progress: (what) => telegram.action(inboundFor(thread).chatId, what),
+      }),
       // Audio, camera and microphone in ordinary language. Everything here is also a
       // slash command; the tool exists for "suéltame ese audio" and "grábame con mi
       // voz", which are requests about an attachment rather than commands.

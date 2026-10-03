@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest';
+import { downloadPdf, explainYtdlpError, parsePublicUrl } from '../src/media/download.js';
+
+const pdfBytes = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n');
+
+function resp(body: Buffer | string, init: ResponseInit = {}): Response {
+  return new Response(typeof body === 'string' ? body : new Uint8Array(body), {
+    status: 200,
+    ...init,
+  });
+}
+
+describe('parsePublicUrl', () => {
+  it('accepts public http(s) and rejects local, private and other schemes', () => {
+    expect(parsePublicUrl('https://youtu.be/abc')).not.toBeNull();
+    expect(parsePublicUrl('http://localhost:3000/a.pdf')).toBeNull();
+    expect(parsePublicUrl('http://192.168.1.5/a.pdf')).toBeNull();
+    expect(parsePublicUrl('file:///etc/passwd')).toBeNull();
+    expect(parsePublicUrl('no es un enlace')).toBeNull();
+  });
+});
+
+describe('explainYtdlpError', () => {
+  it('maps common failures to Spanish reasons', () => {
+    expect(explainYtdlpError('ERROR: Unsupported URL: https://x')).toMatch(/ningún vídeo/);
+    expect(explainYtdlpError('ERROR: Private video. Sign in')).toMatch(/privado/);
+    expect(explainYtdlpError('ERROR: Video unavailable')).toMatch(/no está disponible/);
+    expect(explainYtdlpError('boom')).toMatch(/yt-dlp no pudo/);
+  });
+});
+
+describe('downloadPdf', () => {
+  it('returns the bytes and a filename for a real PDF', async () => {
+    const r = await downloadPdf('https://example.org/files/informe', async () =>
+      resp(pdfBytes, {
+        headers: { 'content-disposition': 'attachment; filename="Informe 2026.pdf"' },
+      }),
+    );
+    expect(r.ok && r.filename).toBe('Informe 2026.pdf');
+    expect(r.ok && r.bytes.equals(pdfBytes)).toBe(true);
+  });
+
+  it('refuses an HTML page served under a pdf name', async () => {
+    const r = await downloadPdf('https://example.org/a.pdf', async () =>
+      resp('<html>login</html>'),
+    );
+    expect(r).toMatchObject({ ok: false });
+    expect(!r.ok && r.reason).toMatch(/no devuelve un PDF/);
+  });
+
+  it('refuses a redirect to a private address', async () => {
+    const r = await downloadPdf('https://example.org/a.pdf', async () =>
+      resp('', { status: 302, headers: { location: 'http://127.0.0.1/secret.pdf' } }),
+    );
+    expect(!r.ok && r.reason).toMatch(/no permitida/);
+  });
+
+  it('refuses a declared size over the Telegram cap', async () => {
+    const r = await downloadPdf('https://example.org/a.pdf', async () =>
+      resp(pdfBytes, { headers: { 'content-length': String(60 * 1024 * 1024) } }),
+    );
+    expect(!r.ok && r.reason).toMatch(/50 MB/);
+  });
+});
