@@ -50,6 +50,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     cron: [],
     retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 },
     maxToolCalls: 10,
+    downloadCookiesBrowser: '',
     ...overrides,
   };
 }
