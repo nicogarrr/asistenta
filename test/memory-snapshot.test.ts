@@ -3,12 +3,12 @@
  * tool actions that expose both. Everything runs against a temp dir: a snapshot
  * that writes outside its dir is a bug worth failing over.
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { detectMemoryWorthy } from '../src/memory/nudges.js';
-import { MemorySnapshot } from '../src/memory/snapshot.js';
+import { looksLikeSecret, MemorySnapshot } from '../src/memory/snapshot.js';
 import { MemoryStore } from '../src/memory.js';
 import { createMemoryTool } from '../src/tools/memory.js';
 
@@ -88,6 +88,85 @@ describe('MemorySnapshot', () => {
     const snapshot = new MemorySnapshot({ dir, maxChars: 60 });
     snapshot.savePerfil('y'.repeat(250));
     expect(snapshot.load().perfil).toBe('y'.repeat(60));
+  });
+
+  it('appendEntry rechaza una entrada con secreto y no la escribe en el fichero', () => {
+    const snapshot = new MemorySnapshot({ dir });
+    const result = snapshot.appendEntry('perfil', 'mi contraseña de la banca es 1234');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('contraseña');
+    expect(result.error).toBeUndefined();
+    expect(snapshot.load().perfil).toBe('');
+    expect(readFileSync(join(dir, 'PERFIL.md'), 'utf8')).not.toContain('1234');
+    expect(readFileSync(join(dir, 'PERFIL.md'), 'utf8')).not.toContain('contraseña');
+  });
+
+  it('saveMemoria y savePerfil rechazan secretos y devuelven el motivo', () => {
+    const snapshot = new MemorySnapshot({ dir });
+    const perfil = snapshot.savePerfil('password: x');
+    expect(perfil.ok).toBe(false);
+    expect(perfil.reason).toContain('contraseña');
+    const memoria = snapshot.saveMemoria(`sk-${'a'.repeat(20)}`);
+    expect(memoria.ok).toBe(false);
+    expect(memoria.reason).toContain('token');
+    expect(snapshot.load()).toEqual({ memoria: '', perfil: '' });
+  });
+
+  it('un fallo de disco devuelve ok:false con error y no afirma éxito', () => {
+    // A file where a directory must be: every write under it fails for real.
+    writeFileSync(join(dir, 'bloqueo'), 'esto es un fichero, no un directorio', 'utf8');
+    const snapshot = new MemorySnapshot({ dir: join(dir, 'bloqueo', 'sub') });
+    const saved = snapshot.savePerfil('se llama Ana');
+    expect(saved.ok).toBe(false);
+    expect(saved.error).toBeTruthy();
+    expect(saved.reason).toBeUndefined();
+    const appended = snapshot.appendEntry('perfil', 'se llama Ana');
+    expect(appended.ok).toBe(false);
+    expect(appended.error).toBeTruthy();
+    expect(appended.reason).toBeUndefined();
+  });
+});
+
+describe('looksLikeSecret', () => {
+  it('detecta números de tarjeta de 13 a 19 dígitos', () => {
+    expect(looksLikeSecret('mi tarjeta es 4111 1111 1111 1111')).toContain('tarjeta');
+    expect(looksLikeSecret('4111-1111-1111-1111')).toContain('tarjeta');
+    expect(looksLikeSecret('1234567890123')).toContain('tarjeta');
+    expect(looksLikeSecret('el pedido 1234 tarda dos días')).toBeNull();
+  });
+
+  it('detecta contraseñas y tokens con valor, pero no menciones sin valor', () => {
+    expect(looksLikeSecret('password: x')).toContain('contraseña');
+    expect(looksLikeSecret('mi contraseña de la banca es 1234')).toContain('contraseña');
+    expect(looksLikeSecret('api_key=abc123')).toContain('contraseña');
+    expect(looksLikeSecret('token: lo que sea')).toContain('contraseña');
+    expect(looksLikeSecret('no me preguntes por contraseñas')).toBeNull();
+    expect(looksLikeSecret('las contraseñas son peligrosas de guardar')).toBeNull();
+    expect(looksLikeSecret('mi clave es simple de recordar')).toBeNull();
+  });
+
+  it('detecta claves privadas', () => {
+    expect(looksLikeSecret('-----BEGIN RSA PRIVATE KEY-----\nMIIEpq')).toContain('privada');
+    expect(looksLikeSecret('-----BEGIN PRIVATE KEY-----abc')).toContain('privada');
+  });
+
+  it('detecta tokens con forma conocida', () => {
+    expect(looksLikeSecret(`sk-${'a'.repeat(20)}`)).toContain('token');
+    expect(looksLikeSecret(`ghp_${'a'.repeat(20)}`)).toContain('GitHub');
+    expect(looksLikeSecret(`github_pat_${'a'.repeat(20)}`)).toContain('GitHub');
+    expect(looksLikeSecret(`xoxb-${'a'.repeat(12)}`)).toContain('Slack');
+    expect(looksLikeSecret(`AKIA${'A'.repeat(16)}`)).toContain('AWS');
+    expect(looksLikeSecret(`AIza${'a'.repeat(35)}`)).toContain('Google');
+    expect(
+      looksLikeSecret('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0'),
+    ).toContain('JWT');
+    expect(looksLikeSecret('123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaws')).toContain('Telegram');
+  });
+
+  it('devuelve null para texto normal', () => {
+    expect(looksLikeSecret('prefiero los videos en 1080p')).toBeNull();
+    expect(looksLikeSecret('se llama Ana y vive en Madrid')).toBeNull();
+    expect(looksLikeSecret('')).toBeNull();
   });
 });
 
@@ -227,6 +306,58 @@ describe('memory tool con snapshot', () => {
 
     const forgotten = await tool.execute('c8', { action: 'forget', id: String(entry?.id) });
     expect(forgotten.details).toMatchObject({ removed: true });
+  });
+});
+
+describe('memory tool reporta el resultado real', () => {
+  it('save_profile dice explícitamente que NO está guardado cuando el disco falla', async () => {
+    writeFileSync(join(dir, 'bloqueo'), 'esto es un fichero, no un directorio', 'utf8');
+    const snapshot = new MemorySnapshot({ dir: join(dir, 'bloqueo', 'sub') });
+    const tool = createMemoryTool(store, () => 'telegram:main:1', snapshot);
+    const failed = await tool.execute('e1', { action: 'save_profile', text: 'se llama Ana' });
+    expect(failed.isError).toBe(true);
+    expect(textOf(failed)).toContain('No está guardado');
+    expect(textOf(failed)).not.toContain('Guardado en tu perfil');
+  });
+
+  it('save_profile rechaza secretos con motivo y no dice que los guardó', async () => {
+    const snapshot = new MemorySnapshot({ dir });
+    const tool = createMemoryTool(store, () => 'telegram:main:1', snapshot);
+    const rejected = await tool.execute('e2', {
+      action: 'save_profile',
+      text: 'mi contraseña de la banca es 1234',
+    });
+    expect(rejected.isError).toBe(true);
+    expect(textOf(rejected)).toContain('No lo he guardado');
+    expect(textOf(rejected)).toContain('contraseña');
+    expect(textOf(rejected)).not.toContain('Guardado en tu perfil');
+    expect(snapshot.load().perfil).toBe('');
+  });
+
+  it('save_profile confirma solo cuando el snapshot escribió de verdad', async () => {
+    const snapshot = new MemorySnapshot({ dir });
+    const tool = createMemoryTool(store, () => 'telegram:main:1', snapshot);
+    const saved = await tool.execute('e3', { action: 'save_profile', text: 'se llama Ana' });
+    expect(saved.isError).toBeFalsy();
+    expect(textOf(saved)).toContain('Guardado en tu perfil');
+    expect(snapshot.load().perfil).toBe('se llama Ana');
+  });
+
+  it('remember rechaza secretos y no los deja en la memoria', async () => {
+    const snapshot = new MemorySnapshot({ dir });
+    const tool = createMemoryTool(store, () => 'telegram:main:1', snapshot);
+    const rejected = await tool.execute('e4', { action: 'remember', text: 'password: x' });
+    expect(rejected.isError).toBe(true);
+    expect(textOf(rejected)).toContain('No lo he guardado');
+    expect(textOf(rejected)).not.toContain('Recordado');
+    expect(store.all('telegram:main:1')).toHaveLength(0);
+    const refusedCard = await tool.execute('e5', {
+      action: 'remember',
+      text: 'mi tarjeta es 4111 1111 1111 1111',
+    });
+    expect(refusedCard.isError).toBe(true);
+    expect(textOf(refusedCard)).toContain('No lo he guardado');
+    expect(store.all('telegram:main:1')).toHaveLength(0);
   });
 });
 

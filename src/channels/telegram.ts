@@ -1,5 +1,5 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
-import { log } from '../log.js';
+import { log, redact } from '../log.js';
 import { Mutex, withTimeout } from '../utils.js';
 import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
 
@@ -29,6 +29,19 @@ export interface TelegramOptions {
   account?: string;
   /** How long an approval stays answerable. */
   approvalTtlMs?: number;
+}
+
+/**
+ * How wide one human approval is. Mirrors `ApprovalScope` in permissions.ts — the
+ * channel only reports what the human picked with the buttons, the gate is the
+ * one that applies it — so the two unions must stay identical.
+ */
+export type ApprovalScope = 'once' | 'session' | 'always';
+
+/** The human's answer to one approval prompt, with the scope they chose. */
+export interface ApprovalChoice {
+  approved: boolean;
+  scope: ApprovalScope;
 }
 
 /**
@@ -89,7 +102,7 @@ export class TelegramChannel implements ChannelAdapter {
   /** Approval id -> resolver, so an inline button can answer it. */
   readonly #approvals = new Map<
     string,
-    { resolve: (ok: boolean) => void; expires: number; chatId: string }
+    { resolve: (choice: ApprovalChoice) => void; expires: number; chatId: string }
   >();
   #handlers: ChannelHandlers | null = null;
   #ready = false;
@@ -255,8 +268,6 @@ export class TelegramChannel implements ChannelAdapter {
     if (!handlers) return;
     const data = ctx.callbackQuery?.data;
     if (!data) return;
-    const [verb, ...rest] = data.split(':');
-    const id = rest.join(':');
     const userId = ctx.from?.id;
     if (!userId) return;
 
@@ -266,28 +277,83 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
-    const entry = this.#approvals.get(id);
-    if (!entry || entry.expires < Date.now()) {
+    const parsed = parseApprovalCallback(data);
+    const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
+    if (!parsed || !entry || entry.expires < Date.now()) {
       await ctx.answerCallbackQuery({ text: 'That request is no longer pending.' }).catch(() => {});
       return;
     }
 
-    this.#approvals.delete(id);
-    entry.resolve(verb === 'approve');
-    await ctx
-      .answerCallbackQuery({ text: verb === 'approve' ? 'Approved.' : 'Denied.' })
-      .catch(() => {});
+    this.#approvals.delete(parsed.id);
+    // `deny:<id>` carries no scope of its own; parseApprovalCallback reports it as
+    // 'once', which is exactly the shape a refusal must have for the gate.
+    const choice: ApprovalChoice = {
+      approved: data.startsWith('approve:'),
+      scope: parsed.scope,
+    };
+    entry.resolve(choice);
+    // Only identifiers here: the question embeds the gate's `reason`, and a log
+    // line is not the place for whatever that quoted. `redact` covers the fields
+    // that must carry text (see offerApproval).
+    handlers.log('info', 'approval decided', {
+      id: parsed.id,
+      approved: choice.approved,
+      scope: choice.scope,
+    });
+    await this.#announceDecision(ctx, choice);
   }
 
-  /** Publish an approval with inline buttons; resolves false on expiry. */
-  offerApproval(id: string, chatId: string, question: string): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  /**
+   * Answer the press so Telegram stops spinning the button, then stamp the
+   * verdict over the question and clear its keyboard.
+   *
+   * The buttons must not outlive the decision they produced: a second press would
+   * only find an expired request and confuse the user. An explicit empty keyboard
+   * is what clears them, and the verdict text (not the toast) is what stays in the
+   * chat afterwards so "what did I just approve?" has a permanent answer.
+   */
+  async #announceDecision(ctx: Context, choice: ApprovalChoice): Promise<void> {
+    const label = decisionLabel(choice);
+    await ctx.answerCallbackQuery({ text: label }).catch(() => {});
+    const message = ctx.callbackQuery?.message;
+    if (!message) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageText(message.chat.id, message.message_id, label, {
+          reply_markup: { inline_keyboard: [] },
+        }),
+        20_000,
+        'editMessageText timed out',
+      ),
+    ).catch((err: unknown) => {
+      // The decision is already resolved and answered, so a failed stamp is a
+      // cosmetic miss and must never fail the turn that was waiting on it.
+      log.warn('approval stamp failed', { error: describeError(err), ...redact({ err }) });
+    });
+  }
+
+  /**
+   * Publish an approval with inline buttons; resolves with the scope the human
+   * picked, or as refused when it expires, is cancelled, or the send fails.
+   *
+   * `askScope` swaps the plain yes/no pair for the four-button prompt: the human
+   * answers not just "may I?" but "for how long?", which is what feeds
+   * `Gate.setScope` on the caller side. Without it the legacy two buttons stay,
+   * and any of their answers is reported as `scope: 'once'`.
+   */
+  offerApproval(
+    id: string,
+    chatId: string,
+    question: string,
+    opts?: { askScope?: boolean },
+  ): Promise<ApprovalChoice> {
+    return new Promise<ApprovalChoice>((resolve) => {
       let settled = false;
-      const settle = (ok: boolean): void => {
+      const settle = (choice: ApprovalChoice): void => {
         if (settled) return;
         settled = true;
         this.#approvals.delete(id);
-        resolve(ok);
+        resolve(choice);
       };
       this.#approvals.set(id, {
         resolve: settle,
@@ -296,19 +362,31 @@ export class TelegramChannel implements ChannelAdapter {
       });
       setTimeout(() => {
         this.#approvals.delete(id);
-        settle(false);
+        settle({ approved: false, scope: 'once' });
       }, this.#options.approvalTtlMs).unref();
+
+      // The question embeds the gate's `reason`, which may quote a credential the
+      // tool was about to touch. Redaction is the codebase's scrub for exactly
+      // that, and it is why the question itself is never logged any other way.
+      log.debug('approval offered', { id, chatId, ...redact({ question }) });
 
       void this.send({
         channel: this.name,
         account: this.account,
         chatId,
         text: question,
-        buttons: [
-          { label: 'Approve', action: `approve:${id}` },
-          { label: 'Deny', action: `deny:${id}` },
-        ],
-      }).catch(() => settle(false));
+        buttons: opts?.askScope
+          ? [
+              { label: 'Una vez', action: `approve:once:${id}` },
+              { label: 'Esta sesión', action: `approve:session:${id}` },
+              { label: 'Siempre', action: `approve:always:${id}` },
+              { label: 'Denegar', action: `deny:${id}` },
+            ]
+          : [
+              { label: 'Approve', action: `approve:${id}` },
+              { label: 'Deny', action: `deny:${id}` },
+            ],
+      }).catch(() => settle({ approved: false, scope: 'once' }));
     });
   }
 
@@ -317,7 +395,7 @@ export class TelegramChannel implements ChannelAdapter {
     for (const [id, entry] of this.#approvals) {
       if (entry.chatId === chatId) {
         this.#approvals.delete(id);
-        entry.resolve(false);
+        entry.resolve({ approved: false, scope: 'once' });
       }
     }
   }
@@ -326,7 +404,7 @@ export class TelegramChannel implements ChannelAdapter {
   cancelApprovals(): void {
     for (const [id, entry] of this.#approvals) {
       this.#approvals.delete(id);
-      entry.resolve(false);
+      entry.resolve({ approved: false, scope: 'once' });
     }
   }
 
@@ -687,6 +765,58 @@ export function parseMessageRef(
   if (!Number.isSafeInteger(chatNum) || chatNum === 0) return null;
   if (!Number.isSafeInteger(messageNum) || messageNum <= 0) return null;
   return { chatId: chatNum, messageId: messageNum };
+}
+
+/**
+ * Scoped approve payloads must be read before the legacy one, or `approve:once:x`
+ * would fall through and be mistaken for an id of `once:x`.
+ */
+const SCOPED_APPROVAL_PREFIXES: ReadonlyArray<readonly [string, ApprovalScope]> = [
+  ['approve:once:', 'once'],
+  ['approve:session:', 'session'],
+  ['approve:always:', 'always'],
+];
+
+/**
+ * Parse one inline-button callback payload into the approval it answers and the
+ * scope the human chose.
+ *
+ * Takes the four button payloads (`approve:once:<id>`, `approve:session:<id>`,
+ * `approve:always:<id>`, `deny:<id>`) plus the pre-scope `approve:<id>`, kept as
+ * `scope: 'once'` so buttons already sitting in a chat still work. `deny` has no
+ * scope of its own and is reported as `'once'`, which is exactly the shape a
+ * refusal takes downstream (`{ approved: false, scope: 'once' }`). The id is the
+ * rest of the payload verbatim, colons included, exactly as the old handler read
+ * it. Anything else is foreign callback data and returns null, so a stray button
+ * can never resolve somebody's pending approval by accident.
+ */
+export function parseApprovalCallback(data: string): { id: string; scope: ApprovalScope } | null {
+  for (const [prefix, scope] of SCOPED_APPROVAL_PREFIXES) {
+    if (data.startsWith(prefix)) {
+      const id = data.slice(prefix.length);
+      return id === '' ? null : { id, scope };
+    }
+  }
+  const verb = data.startsWith('approve:') ? 'approve' : data.startsWith('deny:') ? 'deny' : null;
+  if (!verb) return null;
+  const id = data.slice(verb.length + 1);
+  return id === '' ? null : { id, scope: 'once' };
+}
+
+/** Spanish verdicts, one per scope. */
+const DECISION_LABELS: Record<ApprovalScope, string> = {
+  once: '✅ Aprobado para esta vez',
+  session: '✅ Aprobado para esta sesión',
+  always: '✅ Aprobado siempre',
+};
+
+/**
+ * The verdict line, shared by the callback toast and the message stamp so the two
+ * can never disagree about what was decided. Spanish because it is user-facing.
+ */
+function decisionLabel(choice: ApprovalChoice): string {
+  if (!choice.approved) return '❌ Denegado';
+  return DECISION_LABELS[choice.scope];
 }
 
 /**

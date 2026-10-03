@@ -298,6 +298,51 @@ describe('batch execution', () => {
     expect(batchResults(result.details)[0]?.error).toMatch(/blocked/);
   });
 
+  it('says clearly that nothing ran and why when built without a gate', async () => {
+    // The regression this pins down: the real app builds the tool without a gate,
+    // and the batch then blocked on the first action with no explanation. The
+    // failure must be visible and actionable - a report naming the missing
+    // permission gate - not a confusing throw and not a silent cut.
+    const { backend, calls } = fakeBackend();
+    const tool = createComputerTool(makeConfig(), backend);
+    const result = await tool.execute('t1', {
+      action: 'batch',
+      actions: [
+        { action: 'type', text: 'a' },
+        { action: 'key', key: 'enter' },
+      ],
+    });
+    // Not a throw: a normal result that says nothing executed.
+    expect(calls).toEqual([]);
+    const first = result.content[0];
+    const text = first && first.type === 'text' ? first.text : '';
+    expect(text).toMatch(/falta el control de permisos/);
+    expect(text).toMatch(/ninguna de las 2 acciones se ha ejecutado/i);
+    const results = batchResults(result.details);
+    expect(results).toHaveLength(2);
+    for (const r of results) {
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/falta el control de permisos/);
+    }
+  });
+
+  it('runs every action when a gate is wired', async () => {
+    // The counterpart of the case above: with the gate wired - as the app must -
+    // the same batch reaches the backend in full and in order.
+    const { backend, calls } = fakeBackend();
+    const tool = createComputerTool(makeConfig(), backend, allowAll);
+    const result = await tool.execute('t1', {
+      action: 'batch',
+      actions: [
+        { action: 'type', text: 'a' },
+        { action: 'key', key: 'enter' },
+        { action: 'type', text: 'b' },
+      ],
+    });
+    expect(calls).toEqual(['type:a', 'key:enter', 'type:b']);
+    expect(batchResults(result.details).map((r) => r.ok)).toEqual([true, true, true]);
+  });
+
   it('interprets click coordinates relative to the roi and scales them down', async () => {
     const { backend, calls } = fakeBackend();
     const tool = createComputerTool(makeConfig(), backend, allowAll);

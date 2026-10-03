@@ -2,8 +2,8 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
-import type { MemorySnapshot } from '../memory/snapshot.js';
-import type { MemoryStore } from '../memory.js';
+import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
+import { looksLikeCredential, type MemoryStore } from '../memory.js';
 
 /**
  * Long-term memory as a tool.
@@ -21,6 +21,12 @@ import type { MemoryStore } from '../memory.js';
  * tool keeps working in contexts that only wired the per-chat store. A missing
  * snapshot is reported in the result, never thrown: a turn that dies over a
  * half-wired memory teaches the model to stop calling it.
+ *
+ * Writes report the truth. "Saved" is only said when the bytes are on disk:
+ * over a failed or refused write the answer says so out loud, because a
+ * cheerful "saved" over nothing is how someone loses a password they believed
+ * was stored away. Secrets are refused with a reason instead of being copied
+ * into a file the model re-reads every turn.
  */
 const MemoryParams = Type.Object({
   action: Type.Union([
@@ -64,6 +70,44 @@ function noSnapshot(): AgentToolResult {
   };
 }
 
+/**
+ * The store's own gate (src/memory.ts) knows shapes the snapshot filter does
+ * not — Luhn cards among them — so whatever it would refuse is refused here
+ * too, with the same phrasing as the snapshot filter: one story for the user.
+ */
+function credentialReason(text: string): string | null {
+  return looksLikeCredential(text) ? 'una contraseña, token o clave en texto plano' : null;
+}
+
+/** Refused write: nothing was stored, and the answer must never imply it was. */
+function refused(reason: string): AgentToolResult {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `No lo he guardado: parece contener ${reason}. Mejor no escribirlo aquí.`,
+      },
+    ],
+    details: { saved: false, rejected: true },
+    isError: true,
+  };
+}
+
+/** Failed write: the disk did not take it, so say it is not saved. */
+function writeFailed(error: string): AgentToolResult {
+  return {
+    content: [{ type: 'text', text: `No he podido guardarlo: ${error}. No está guardado.` }],
+    details: { saved: false, error },
+    isError: true,
+  };
+}
+
+/** Error text safe to echo: credential-shaped messages are dropped, not shown. */
+function safeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return looksLikeSecret(message) ? 'el disco rechazó la escritura' : message;
+}
+
 export function createMemoryTool(
   store: MemoryStore,
   scopeOf: () => string,
@@ -97,12 +141,25 @@ export function createMemoryTool(
         case 'remember': {
           const text = String(args.text ?? '').trim();
           if (!text) throw new Error('la acción remember necesita text');
-          const entry = store.remember(scope, text, { tags: args.tags ?? [] });
-          log.info('memory stored', { scope, id: entry.id });
-          return {
-            content: [{ type: 'text', text: `Recordado (${entry.id}): ${entry.text}` }],
-            details: { id: entry.id, date: entry.date, tags: entry.tags },
-          };
+          // Refused before the store sees it: a secret in memory is read back
+          // on every later turn, so it is kept out instead of stored anywhere.
+          const reason = looksLikeSecret(text) ?? credentialReason(text);
+          if (reason) {
+            log.info('memory refused a secret-looking entry', { scope, reason });
+            return refused(reason);
+          }
+          try {
+            const entry = store.remember(scope, text, { tags: args.tags ?? [] });
+            log.info('memory stored', { scope, id: entry.id });
+            return {
+              content: [{ type: 'text', text: `Recordado (${entry.id}): ${entry.text}` }],
+              details: { id: entry.id, date: entry.date, tags: entry.tags },
+            };
+          } catch (err) {
+            const error = safeError(err);
+            log.warn('memory store failed', { scope, err: error });
+            return writeFailed(error);
+          }
         }
 
         case 'recall': {
@@ -157,10 +214,21 @@ export function createMemoryTool(
           const text = String(args.text ?? '').trim();
           if (!text) throw new Error('la acción save_profile necesita text');
           if (!snapshot) return noSnapshot();
-          snapshot.appendEntry('perfil', text);
+          // The result is the ground truth of the write: "saved" is only said
+          // when the snapshot confirmed the bytes are on disk.
+          const result = snapshot.appendEntry('perfil', text);
+          if (!result.ok) {
+            if (result.reason) {
+              log.info('profile refused a secret-looking entry', { scope, reason: result.reason });
+              return refused(result.reason);
+            }
+            const error = result.error ?? 'el disco rechazó la escritura';
+            log.warn('profile store failed', { scope, err: error });
+            return writeFailed(error);
+          }
           log.info('profile stored', { scope });
           return {
-            content: [{ type: 'text', text: `Guardado en el perfil: ${text}` }],
+            content: [{ type: 'text', text: 'Guardado en tu perfil.' }],
             details: { saved: true },
           };
         }

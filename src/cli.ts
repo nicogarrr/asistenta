@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { DatabaseSync } from 'node:sqlite';
+import { pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { FollowupTracker } from './alerts/followups.js';
 import { ActionLog } from './audit/log.js';
 import { BrowserService } from './browser/service.js';
 import {
@@ -16,17 +19,23 @@ import { TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
+import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
+import { parseNatural } from './cron/scheduler.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
 import { AudioRecall } from './media/recall.js';
+import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
+import type { SessionHit } from './memory/sessions.js';
+import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
+import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate } from './permissions.js';
-import { procedurePrompt, RoutineRunner, summarizeRoutine } from './routines.js';
+import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -95,7 +104,7 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 /** A little longer than that, to cover the tail of the file and the daemon's own chatter. */
 const WAKE_TAIL_MS = 2_000;
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
 
   switch (command) {
@@ -283,15 +292,23 @@ async function chatCommand(): Promise<number> {
   });
 
   const screen = new WindowsScreen();
+  // The session every approval is scoped to. The computer tool's batch gate must
+  // use the SAME session the agent below is created with, or a batch's sub-actions
+  // would miss the approvals and grant windows the outer call already earned. With
+  // no gate at all the batch fails closed and runs nothing, which is exactly the
+  // bug this wiring prevents.
+  const sessionId = 'local';
   const tools: AgentTool[] = [
     ...fsTools,
     createFetchTool(),
     createDoneTool(),
     createShellTool(config),
-    createComputerTool(config, screen),
+    createComputerTool(config, screen, (call) =>
+      gate.check(sessionId, { ...call, actor: 'asistenta' }),
+    ),
   ] as AgentTool[];
 
-  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId: 'local' });
+  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
 
   const lifecycle = installLifecycle({
     name: 'agent',
@@ -373,15 +390,20 @@ async function runCommand(prompt: string): Promise<number> {
     approver: undefined,
   });
   const screen = new WindowsScreen();
+  // Same wiring as chatCommand: the batch gate has to share the agent's session so
+  // sub-actions see the same decisions, and an unwired gate blocks every batch.
+  const sessionId = 'run';
   const tools = [
     ...fsTools,
     createFetchTool(),
     createDoneTool(),
     createShellTool(config),
-    createComputerTool(config, screen),
+    createComputerTool(config, screen, (call) =>
+      gate.check(sessionId, { ...call, actor: 'asistenta' }),
+    ),
   ] as AgentTool[];
 
-  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId: 'run' });
+  const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
   const result = await agent.run(prompt);
 
   // The final answer goes to stdout as plain text so `pa run` is usable in a
@@ -528,6 +550,28 @@ async function serveCommand(): Promise<number> {
   const memory = new MemoryStore();
 
   /**
+   * Episodic memory, instincts, workstreams and follow-ups share one SQLite file,
+   * separate from the transcript `Store` owns.
+   *
+   * Separate because both `Store` and `SessionStore` define a table called
+   * `sessions` with different columns and neither can be edited here: on one
+   * connection the second `CREATE TABLE IF NOT EXISTS` silently no-ops and every
+   * write then fails on a missing column. Two files, two schemas, no collision.
+   * WAL so the four stores can share the one connection without locking each
+   * other out mid-turn.
+   */
+  const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
+  memoryDb.exec('PRAGMA journal_mode = WAL');
+  memoryDb.exec('PRAGMA busy_timeout = 5000');
+  const sessions = new SessionStore({ db: memoryDb });
+  const instincts = new InstinctStore({ db: memoryDb });
+  const workstreams = new WorkstreamStore({ db: memoryDb });
+  const followups = new FollowupTracker({ db: memoryDb });
+  // One sweep at boot: patterns the user stopped showing lose their weight and
+  // the ones that hit zero go, so old accidents cannot steer the daemon forever.
+  instincts.decay(90);
+
+  /**
    * The durable memory the model is shown at the start of every turn.
    *
    * Frozen on disk rather than assembled per message: a person should not have to
@@ -640,7 +684,15 @@ async function serveCommand(): Promise<number> {
         approve: async (scope, domain, reason) => {
           const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
           log.info('browser domain approval requested', { domain, chatId });
-          return telegram.offerApproval(randomUUID(), chatId, `¿Abro ${domain}?\n${reason}`);
+          // "Siempre" is the right answer for a site the user has already named: the
+          // domain is remembered across restarts, so the next visit is silent.
+          const choice = await telegram.offerApproval(
+            randomUUID(),
+            chatId,
+            `¿Abro ${domain}?\n${reason}`,
+            { askScope: true },
+          );
+          return choice.approved;
         },
       },
       timeoutMs: Math.min(config.toolTimeoutMs, 60_000),
@@ -734,7 +786,12 @@ async function serveCommand(): Promise<number> {
       createFetchTool(),
       createDoneTool(),
       createShellTool(config),
-      createComputerTool(config, screen),
+      // Each thread has its own gate and its own session key, so batch sub-actions
+      // are policed by THIS conversation's approvals and an unwired gate never
+      // silently blocks every batch.
+      createComputerTool(config, screen, (call) =>
+        thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
+      ),
       createBrowserTool(browserFor(thread.key), scope),
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
@@ -843,8 +900,11 @@ async function serveCommand(): Promise<number> {
     threadKey: string,
     chatId: string,
     holder: { agent: PersonalAgent | null },
-  ): Gate =>
-    new Gate({
+  ): Gate => {
+    // Assigned before the approver closes over it. The approver only ever runs
+    // inside a tool call, which cannot happen until the gate exists, so reading
+    // `gate` from inside it is safe and a holder indirection would only add noise.
+    const gate = new Gate({
       allow: ['read', 'list', 'fetch', 'done', 'memory'],
       allowActions: ['computer:screenshot', 'computer:move'],
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
@@ -858,22 +918,30 @@ async function serveCommand(): Promise<number> {
       maxAmountCents: 30_000,
       grantWindowMs: 90_000,
       // Approvals travel back over Telegram as inline buttons, and the idle watchdog
-      // is paused while one is parked: waiting for a human is not a stall.
+      // is paused while one is parked: waiting for a human is not a stall. The buttons
+      // also carry the scope: "siempre" must mean always, not once per task.
       approver: async (call, reason) => {
         const id = randomUUID();
         log.info('approval requested', { thread: threadKey, tool: call.tool, reason });
         holder.agent?.setAwaitingApproval(true);
+        const question = `¿Permito ${call.tool}?\n${reason}`;
         try {
-          return await telegram.offerApproval(
-            id,
-            chatId,
-            `¿Permito ${call.tool}?\n${reason}\n\nLo aprueba una vez.`,
-          );
+          const choice = await telegram.offerApproval(id, chatId, question, {
+            askScope: true,
+          });
+          if (choice.approved && choice.scope !== 'once') {
+            // Recorded before returning, so the very next call of the same tool in
+            // this task is already covered by the decision the user just made.
+            gate.setScope(threadKey, call.tool, choice.scope);
+          }
+          return choice.approved;
         } finally {
           holder.agent?.setAwaitingApproval(false);
         }
       },
     });
+    return gate;
+  };
 
   const getOrCreateThread = async (
     chatKey_: string,
@@ -1031,6 +1099,7 @@ async function serveCommand(): Promise<number> {
       await registry.stopAll();
       await screen.dispose();
       store.close();
+      memoryDb.close();
       log.info('daemon stopped', { threads: threads.size });
     },
   });
@@ -1270,6 +1339,36 @@ async function serveCommand(): Promise<number> {
     const routine =
       store.getRoutine(thread.key, name) ?? store.getRoutine(`${thread.chatKey}#main`, name);
     if (!routine) {
+      // Not a stored name, so it may be how a person asks for a new one:
+      // "/routine cada mañana a las 8 resumen del día". The Spanish schedule in
+      // the words becomes a real cron routine instead of "no such routine".
+      const parsed = parseNatural(args.trim());
+      if (parsed) {
+        const created = store.saveRoutine({
+          scope: thread.key,
+          name: routineNameFromPrompt(parsed.prompt),
+          kind: 'schedule',
+          prompt: parsed.prompt,
+          schedule: parsed.schedule,
+        });
+        // Live at once: a routine that only fires after a restart is one the user
+        // has to remember they asked for.
+        routineRunner.sync();
+        const live = routineRunner
+          .status()
+          .find((s) => s.scope === created.scope && s.name === created.name);
+        await say(
+          inbound,
+          [
+            `Rutina "${created.name}" programada con horario ${created.schedule}.`,
+            `Tarea: ${created.prompt}`,
+            `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
+            'La ves con /agenda; la repito cuando quieras con /routine.',
+          ].join('\n'),
+          { quote: true },
+        );
+        return;
+      }
       await say(inbound, `No tengo ninguna rutina llamada "${name}".`, { quote: true });
       return;
     }
@@ -1304,6 +1403,43 @@ async function serveCommand(): Promise<number> {
     );
   };
 
+  /**
+   * The scheduled half of the routines, with their next fire.
+   *
+   * The live runner is the source of truth for "when": it is what will actually
+   * fire, held first runs included. The store is the source of truth for what
+   * exists, so a routine that failed to register is still listed instead of
+   * silently missing from the agenda.
+   */
+  const cmdAgenda = async (inbound: Inbound): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const scheduled = store
+      .listRoutines()
+      .filter((r) => r.scope.startsWith(chatKey_) && r.kind === 'schedule');
+    if (!scheduled.length) {
+      await say(
+        inbound,
+        'No hay ninguna rutina programada. Crea una con /routine, por ejemplo: ' +
+          '/routine cada mañana a las 8 resumen del día.',
+        { quote: true },
+      );
+      return;
+    }
+    const live = new Map(routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));
+    const lines = scheduled.map((r) => {
+      const held = live.get(`${r.scope}\u0000${r.name}`);
+      const state = r.enabled ? '' : ' (desactivada)';
+      const running = held?.running ? ' [en curso]' : '';
+      return `- ${r.name}${state} [${r.schedule ?? 'sin horario'}] — próxima: ${nextRunLabel(
+        r.schedule,
+        held?.next ?? null,
+      )}${running}`;
+    });
+    await say(inbound, [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n'), {
+      quote: true,
+    });
+  };
+
   const cmdMemory = async (inbound: Inbound): Promise<void> => {
     const entries = memory.all(chatKey(inbound));
     const scopes = memory.scopes();
@@ -1317,6 +1453,71 @@ async function serveCommand(): Promise<number> {
         : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`,
       { quote: true },
     );
+  };
+
+  /** What the user said they would do, in the tracker's own Spanish summary. */
+  const cmdFollowups = async (inbound: Inbound): Promise<void> => {
+    const text = followups.safe(() => followups.summarize(), 'No he podido leer los pendientes.');
+    await say(inbound, text, { quote: true });
+  };
+
+  /**
+   * Retire a follow-up: the user saying "eso ya está" must actually stop the nudges.
+   *
+   * `resolve(id)` wants the tracker's opaque id (`date:<asunto>`), which nobody
+   * remembers, so the subject is accepted too when it matches exactly one pending
+   * note. A command you cannot type is not a command.
+   */
+  const cmdResolve = async (inbound: Inbound, args: string): Promise<void> => {
+    const want = args.trim();
+    if (!want) {
+      await say(
+        inbound,
+        'Uso: /resolver <id del pendiente>. Mira los pendientes con /pendientes.',
+        { quote: true },
+      );
+      return;
+    }
+    const needle = want.toLowerCase();
+    const matches = followups.safe(() => {
+      const pending = followups.list(undefined, 200).filter((f) => f.status === 'pending');
+      const byId = pending.filter((f) => f.id === want);
+      const found = byId.length
+        ? byId
+        : pending.filter((f) => f.subject.toLowerCase().includes(needle));
+      if (found.length === 1) {
+        const only = found[0];
+        if (only) followups.resolve(only.id);
+      }
+      return found;
+    }, []);
+    const only = matches[0];
+    if (matches.length === 1 && only) {
+      await say(inbound, `Resuelto: ${only.subject}`, { quote: true });
+      return;
+    }
+    await say(
+      inbound,
+      matches.length === 0
+        ? `No encuentro ningún pendiente que coincida con "${want}".`
+        : `Varios pendientes coinciden, dime cuál por su id:\n${matches
+            .map((f) => `- ${f.id}`)
+            .join('\n')}`,
+      { quote: true },
+    );
+  };
+
+  /** Search this conversation's past sessions, the way the model finds them. */
+  const cmdSearch = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const query = args.trim();
+    if (!query) {
+      await say(inbound, 'Uso: /buscar <texto> para buscar en conversaciones pasadas.', {
+        quote: true,
+      });
+      return;
+    }
+    const hits = followups.safe(() => sessions.search(query, thread.key), []);
+    await say(inbound, formatSessionHits(hits, query), { quote: true });
   };
 
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
@@ -1643,9 +1844,13 @@ async function serveCommand(): Promise<number> {
         '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
         '/topic <nombre> - abre una conversación; /topics para verlas',
         '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos',
-        '/routine <nombre> - repite una rutina',
+        '/routine <nombre> - repite una rutina; con horario en palabras crea una programada',
         '/routines - lista de rutinas',
+        '/agenda - rutinas programadas y su proxima ejecucion',
         '/memory - lo que recuerdo de ti',
+        '/pendientes - lo que te tengo que recordar',
+        '/resolver <id> - marca un pendiente como resuelto',
+        '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
@@ -1678,6 +1883,17 @@ async function serveCommand(): Promise<number> {
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
     let lastSummary = 'recibido';
+    // One episodic session per turn, closed in the finally below even when the
+    // turn was cancelled or failed: a turn that produced no answer still
+    // happened, and /buscar must be able to find it.
+    let sessionId = '';
+    safeRemember(() => {
+      sessionId = sessions.begin(thread.key, inbound.text.slice(0, 80));
+    });
+    /** Kept for the session summary the finally writes. */
+    let result: AgentRunResult | null = null;
+    /** Tool names in call order; two or more in a row is an observed sequence. */
+    const toolNames: string[] = [];
     const startedAt = Date.now();
     let lastStatusAt = 0;
     let finished = false;
@@ -1739,17 +1955,17 @@ async function serveCommand(): Promise<number> {
         }
         await telegram.action(inbound.chatId, 'typing');
         try {
-          const result = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
+          const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
-          prompt = `[Nota de voz transcrita] ${result.text}`;
+          prompt = `[Nota de voz transcrita] ${heard.text}`;
           log.info('voice transcribed', {
-            seconds: result.durationSeconds,
-            chars: result.text.length,
+            seconds: heard.durationSeconds,
+            chars: heard.text.length,
           });
           // Remembered with the handle, so "suéltame ese audio" two messages later
           // has something to act on.
-          recall.setTranscript(chatKey(inbound), inbound.messageId, result.text);
+          recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
         } catch (err) {
           await say(
             inbound,
@@ -1767,11 +1983,15 @@ async function serveCommand(): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(buildContextNote(thread, store, memory, snapshot));
+      thread.agent.attachContext(buildContextNote(thread, store, memory, snapshot, workstreams));
 
-      const result = await thread.agent.run(prompt, images, {
+      result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
           lastSummary = info.summary;
+          toolNames.push(info.tool);
+          // Mid-turn trail: a session that only holds the final answer cannot
+          // answer "what did you do first?" two days later.
+          safeRemember(() => sessions.addTurn(sessionId, 'assistant', info.summary));
         },
       });
 
@@ -1791,6 +2011,10 @@ async function serveCommand(): Promise<number> {
       const text2 =
         result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
       await answer(thread, inbound, text2);
+      // The answer itself joins the session record: it is what /buscar reads back
+      // when the user asks "what did you tell me about that?".
+      const finalText = result.text;
+      safeRemember(() => sessions.addTurn(sessionId, 'assistant', finalText));
 
       // What happened, kept where the user can ask about it later: "¿qué enviaste
       // anoche?" is a question about a past action, and without a record the honest
@@ -1803,12 +2027,28 @@ async function serveCommand(): Promise<number> {
         detail: `${result.toolCalls} tools, ${Math.round((Date.now() - startedAt) / 1000)}s`,
       });
 
+      // What this turn taught: a stated preference, and the tool sequence that
+      // actually happened. Successful turns only - a failed one is not a pattern
+      // worth repeating.
+      if (!result.error) {
+        for (const { pattern, category } of instinctsFromTurn(inbound.text, toolNames)) {
+          safeRemember(() => instincts.observe(pattern, category, thread.key));
+        }
+      }
+
       // A durable fact said out loud is worth offering to keep. The user should not
       // have to remember to ask: the moment they say "prefiero X" is the moment it
       // costs least to write it down.
       const nudge = detectMemoryWorthy(inbound.text);
       if (nudge.worth) {
         await say(inbound, nudge.suggestion, { quote: true }).catch(() => {});
+      }
+
+      // A promise with a date attached is a follow-up, not just a fact: "voy a
+      // pagar el seguro el viernes" is something to mention on Friday.
+      const promised = followupFromMessage(inbound.text);
+      if (promised) {
+        safeRemember(() => followups.track(thread.key, 'date', promised.subject, promised.dueAt));
       }
     } catch (err) {
       log.error('turn threw', { thread: thread.name, err });
@@ -1820,6 +2060,10 @@ async function serveCommand(): Promise<number> {
       thread.active = false;
       clearInterval(typing);
       clearInterval(status);
+      // The closing summary is what later searches read, so the session is closed
+      // even when the turn was cancelled or produced no answer at all.
+      const summary = result?.text.slice(0, 200) ?? '';
+      safeRemember(() => sessions.end(sessionId, summary));
       // The progress notes are scaffolding, not part of the conversation. Leaving
       // them turns a chat into a log of what the agent did instead of a dialogue, so
       // they go once the real answer has arrived. Best effort: a note Telegram will
@@ -2061,6 +2305,19 @@ async function serveCommand(): Promise<number> {
           }
           case 'memory':
             return cmdMemory(inbound);
+          case 'pendientes':
+          case 'followups':
+            return cmdFollowups(inbound);
+          case 'resolver':
+          case 'resolve':
+            return cmdResolve(inbound, command.args);
+          case 'buscar':
+          case 'search': {
+            const thread = await resolveThread(inbound);
+            return cmdSearch(thread, inbound, command.args);
+          }
+          case 'agenda':
+            return cmdAgenda(inbound);
           case 'voice':
             return cmdVoice(inbound, command.args);
           case 'wake':
@@ -2153,6 +2410,248 @@ export function trimForSpeech(text: string): string {
 }
 
 /**
+ * Best-effort write to the episodic memory.
+ *
+ * Memory bookkeeping must never be what fails a turn: a broken table is a log
+ * line, not an "Algo falló" in the middle of something the user asked for.
+ */
+function safeRemember(fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    log.warn('memory bookkeeping failed', { err });
+  }
+}
+
+/**
+ * Lowercase and strip accents, so "mañana" and "manana" match the same pattern.
+ * Only used for matching; stored text keeps the user's own spelling.
+ */
+function foldAccents(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * The four preference words the instinct category was designed for. Broader
+ * matching would record noise as instinct and dilute the confidence counts.
+ */
+const PREFERENCE_MARKERS = /\b(prefiero|me gusta\w*|siempre|nunca)\b/iu;
+
+/**
+ * Words that say "this has a date on it". Closed list on purpose: a follow-up
+ * guessed from an ordinary sentence is a nudge the user never asked for.
+ */
+const DATE_SIGNALS =
+  /\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|en \d{1,3} dias?|(?:el |al |los |cada )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b/;
+
+const WEEKDAYS: Record<string, number> = {
+  domingo: 0,
+  lunes: 1,
+  martes: 2,
+  miercoles: 3,
+  jueves: 4,
+  viernes: 5,
+  sabado: 6,
+};
+
+const DAY_MS = 86_400_000;
+
+/**
+ * "por la mañana" says when someone likes something, never when it is due. The
+ * phrase is dropped before date matching so "prefiero el café por la mañana"
+ * does not become a follow-up for tomorrow.
+ */
+function withoutTimeOfDay(folded: string): string {
+  return folded.replace(/\bpor la (?:manana|tarde|noche)\b/g, ' ');
+}
+
+/**
+ * When a promised thing is due, from the words around it.
+ *
+ * Deliberately rough: a follow-up that fires on the wrong day is still useful,
+ * and the tracker re-reports anything unresolved. Anything with a date we cannot
+ * place ("antes del día 12") is a promise all the same, and one week out is the
+ * honest default rather than dropping it.
+ */
+function estimateDueAt(text: string, now: number): number {
+  const folded = withoutTimeOfDay(foldAccents(text));
+  // "pasado mañana" is read first: both sentences contain the word "mañana".
+  if (/\bpasado ma[nñ]ana\b/.test(folded)) return now + 2 * DAY_MS;
+  if (/\bma[nñ]ana\b/.test(folded)) return now + DAY_MS;
+  const inN = /\ben (\d{1,3}) (dias?|semanas?)\b/.exec(folded);
+  if (inN) {
+    const n = Number(inN[1]);
+    return now + n * ((inN[2] ?? '').startsWith('semana') ? 7 * DAY_MS : DAY_MS);
+  }
+  const dayName = /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/.exec(folded)?.[1];
+  const target = dayName ? WEEKDAYS[dayName] : undefined;
+  if (target !== undefined) {
+    // Next occurrence, today included: "vence el viernes" said on a Friday is
+    // about today, not about a week from now.
+    const delta = (target - new Date(now).getDay() + 7) % 7;
+    return now + delta * DAY_MS;
+  }
+  return now + 7 * DAY_MS;
+}
+
+/**
+ * What this turn teaches the instinct store: a stated preference in the user's
+ * own words, and the tool sequence that actually happened. The raw text, not a
+ * paraphrase, so a repeated pattern raises its own confidence instead of forking
+ * into a near-duplicate.
+ */
+export function instinctsFromTurn(
+  userText: string,
+  toolNames: readonly string[],
+): Array<{ pattern: string; category: 'pref' | 'seq' }> {
+  const out: Array<{ pattern: string; category: 'pref' | 'seq' }> = [];
+  const said = userText.trim();
+  if (said && PREFERENCE_MARKERS.test(said)) {
+    out.push({ pattern: said.slice(0, 200), category: 'pref' });
+  }
+  // One tool call is an action; two or more in a row is a way of working.
+  if (toolNames.length >= 2) {
+    out.push({ pattern: toolNames.join(' -> '), category: 'seq' });
+  }
+  return out;
+}
+
+/**
+ * A promise with a date in it, shaped for the follow-up tracker.
+ *
+ * Detection reuses `detectMemoryWorthy` on purpose: the sentence worth keeping
+ * ("voy a pagar el seguro el viernes") is the sentence carrying the promise, and
+ * one detector keeps memory and follow-ups in step. A durable statement with no
+ * date at all is memory, not a follow-up, and comes back as null.
+ */
+export function followupFromMessage(
+  text: string,
+  now = Date.now(),
+): { subject: string; dueAt: number } | null {
+  const nudge = detectMemoryWorthy(text);
+  if (!nudge.worth || !DATE_SIGNALS.test(withoutTimeOfDay(foldAccents(text)))) return null;
+  // The clause the nudge already quoted is the best subject: it is what the user
+  // will recognise in /pendientes.
+  const first = nudge.suggestion.indexOf('"');
+  const last = nudge.suggestion.lastIndexOf('"');
+  const quoted = first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
+  const subject = (quoted || text.trim()).replace(/\s+/g, ' ').slice(0, 160);
+  return { subject, dueAt: estimateDueAt(text, now) };
+}
+
+/**
+ * Search hits as a short Spanish list. The title says which conversation, the
+ * snippet says why it matched; nothing else is worth the screen it takes.
+ */
+export function formatSessionHits(hits: readonly SessionHit[], query = ''): string {
+  if (!hits.length) {
+    return query
+      ? `No he encontrado nada sobre "${query}" en el historial de esta conversación.`
+      : 'No he encontrado nada en el historial de esta conversación.';
+  }
+  const lines = hits.map((h) => {
+    const day = new Date(h.at).toISOString().slice(0, 10);
+    const snippet = h.snippet.replace(/\s+/g, ' ').trim();
+    return `- ${h.title.trim() || 'sin título'} (${day}): ${snippet}`;
+  });
+  return [`Esto es lo que encontré (${hits.length}):`, ...lines].join('\n');
+}
+
+/**
+ * Words that carry the schedule rather than the task. Stripped before naming, so
+ * "cada mañana a las 8 resumen del día" becomes the routine "resumen" - the name
+ * the user then types back in /routine.
+ */
+const SCHEDULE_WORDS = new Set([
+  'a',
+  'al',
+  'cada',
+  'con',
+  'de',
+  'del',
+  'dia',
+  'dias',
+  'domingo',
+  'el',
+  'en',
+  'hora',
+  'horas',
+  'jueves',
+  'la',
+  'las',
+  'lo',
+  'los',
+  'lunes',
+  'manana',
+  'martes',
+  'mes',
+  'meses',
+  'miercoles',
+  'minuto',
+  'minutos',
+  'noche',
+  'para',
+  'por',
+  'proxima',
+  'que',
+  'sabado',
+  'semana',
+  'semanas',
+  'tarde',
+  'todos',
+  'un',
+  'una',
+  'viernes',
+  'y',
+]);
+
+export function routineNameFromPrompt(prompt: string): string {
+  const words = foldAccents(prompt)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w && !SCHEDULE_WORDS.has(w) && !/^\d+$/.test(w));
+  const slug = words
+    .slice(0, 6)
+    .join('-')
+    .replace(/[^a-z0-9-]/g, '');
+  return slug || 'rutina';
+}
+
+/** A local stamp with a rough distance, for the agenda and the creation reply. */
+export function formatNextRun(at: number, now = Date.now()): string {
+  const d = new Date(at);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const delta = at - now;
+  if (delta <= 0) return `${stamp} (ya)`;
+  // Whole units chosen before rounding, so half an hour never rounds up into
+  // "en 1 h" and reads wrong for the next thirty minutes.
+  if (delta >= 2 * DAY_MS) return `${stamp} (en ${Math.round(delta / DAY_MS)} d)`;
+  if (delta >= 3_600_000) return `${stamp} (en ${Math.round(delta / 3_600_000)} h)`;
+  return `${stamp} (en ${Math.max(1, Math.round(delta / 60_000))} min)`;
+}
+
+/**
+ * When a scheduled routine next fires, as text for the user. The live runner
+ * answers first because it knows about held first fires; a routine that never
+ * registered still gets an answer from its own cron expression.
+ */
+export function nextRunLabel(
+  schedule: string | null,
+  liveNext: string | null | undefined,
+  now = Date.now(),
+): string {
+  if (liveNext) {
+    const at = Date.parse(liveNext);
+    if (Number.isFinite(at)) return formatNextRun(at, now);
+  }
+  const check = schedule ? validateSchedule(schedule) : null;
+  return check?.ok ? check.next : 'sin próxima ejecución';
+}
+
+/**
  * The memory and routines the model should have in front of it this turn, as one
  * short block.
  *
@@ -2166,6 +2665,7 @@ export function buildContextNote(
   store: Store,
   memory: MemoryStore,
   snapshot?: MemorySnapshot,
+  workstreams?: WorkstreamStore,
 ): string {
   const parts: string[] = [];
 
@@ -2186,6 +2686,14 @@ export function buildContextNote(
         .map((r) => `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`)
         .join('\n')}\n</routines>`,
     );
+  }
+  // Open fronts of work, as the compact index the store writes for prompts.
+  // Gated on active ones: `index()` always answers with text, and a standing
+  // "nothing open" line would pay tokens on every turn to say nothing.
+  const openWork = workstreams?.active(thread.key) ?? [];
+  if (openWork.length) {
+    const ws = workstreams?.index(thread.key) ?? '';
+    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
   }
   parts.push(`<now>${new Date().toISOString().slice(0, 16).replace('T', ' ')}</now>`);
   return parts.join('\n');
@@ -2234,15 +2742,32 @@ function textOf(content: unknown): string {
     .join(' ');
 }
 
-// Set exitCode and let Node drain on its own. Calling process.exit() here trips a
-// libuv assertion on Windows ("!(handle->flags & UV_HANDLE_CLOSING)") because the
-// provider stream may still be tearing down its socket at that instant.
-main(process.argv.slice(2))
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((err) => {
-    log.error('fatal', { err });
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-    process.exitCode = 1;
-  });
+/**
+ * True only when node was asked to run THIS file. Tests import helpers from this
+ * module (see test/newfeatures.test.ts) and must not boot anything: the old
+ * unconditional call ran `main` on import, which walked into `assertNotRunning`
+ * and printed "another agent is already running" into every test run.
+ */
+function isEntrypoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const entryUrl = pathToFileURL(entry).href;
+  // Windows paths are case-insensitive and the drive letter's case depends on how
+  // the process was launched, so an exact URL match alone would miss its own entry.
+  return import.meta.url === entryUrl || import.meta.url.toLowerCase() === entryUrl.toLowerCase();
+}
+
+if (isEntrypoint()) {
+  // Set exitCode and let Node drain on its own. Calling process.exit() here trips a
+  // libuv assertion on Windows ("!(handle->flags & UV_HANDLE_CLOSING)") because the
+  // provider stream may still be tearing down its socket at that instant.
+  main(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      log.error('fatal', { err });
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    });
+}

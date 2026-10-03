@@ -13,6 +13,22 @@
  * The clock is injected. A scheduler that reads the real clock cannot be tested without
  * waiting for wall-clock minutes, which makes the tests slow and flaky; with a fake
  * clock a whole day of schedules runs in milliseconds.
+ *
+ * Times are local wall-clock, matching how `croner` reads the same expressions for
+ * `RoutineRunner`. Interpreting the fields in UTC would fire `0 8 * * *` at 08:00 UTC —
+ * 10:00 in Madrid during summer — while the routine it mirrors fired at 08:00 local, so
+ * `/agenda` and the real scheduler would disagree about what the user asked for.
+ *
+ * A job is bound to a local wall-clock time, not to an instant, so a daylight saving
+ * change must neither duplicate nor lose a firing:
+ * - When that wall time does not exist (the clock jumps 02:00 → 03:00), `new Date`
+ *   normalises 02:30 to 03:30 and the job runs there, once, instead of silently
+ *   skipping the day. A job must never just vanish.
+ * - When the wall time exists twice (03:00 → 02:00), `new Date` picks the first
+ *   occurrence and the job runs there, once; the repeated hour is not a second slot.
+ * - When two slots normalise onto the same instant (02:00 and 03:00 on a 02:00 → 03:00
+ *   day), the job runs once at that instant. Running twice would punish the user for a
+ *   clock change they did not schedule.
  */
 
 export interface CronJob {
@@ -45,7 +61,9 @@ const MIN_TICK_MS = 25;
 
 /** 0-6, Sunday = 0, matching cron's convention rather than Date.getDay()'s. */
 function cronDayOfWeek(date: Date): number {
-  return date.getUTCDay();
+  // Local, not UTC: the day-of-week cron names is the one the user sees on their
+  // calendar. (The numeric convention still matches Date.getDay().)
+  return date.getDay();
 }
 
 function parseField(raw: string, min: number, max: number): number[] | null {
@@ -105,7 +123,9 @@ interface ParsedSchedule {
  * Parse a cron expression into sets of allowed values.
  *
  * Six fields are accepted with a leading seconds field, five without. Both are common
- * enough that accepting only one would be a support ticket rather than a design.
+ * enough that accepting only one would be a support ticket rather than a design. The
+ * values are local wall-clock values: they are matched against local dates and times,
+ * never against UTC.
  */
 export function parseCronExpression(expr: string): ParsedSchedule | null {
   const fields = expr.trim().split(/\s+/);
@@ -142,41 +162,89 @@ export function parseCronExpression(expr: string): ParsedSchedule | null {
 }
 
 /**
- * The next time `schedule` matches at or after `from`, scanning minute by minute.
- *
- * Minute granularity rather than second: a cron entry is about when something happens
- * in a person's day, and nobody schedules a briefing at 08:00:17. Scanning one minute
- * at a time keeps the search bounded (366 * 24 * 60 worst case for a yearly job) and
- * the result is always aligned to a minute boundary, which is what the caller wants.
+ * Whether the local clock changes inside this calendar day: a daylight saving jump or a
+ * skipped midnight. On those days wall-clock order is not instant order — a nonexistent
+ * 02:30 normalises to 03:30 while a real 03:15 stays at 03:15 — so candidates have to be
+ * compared as instants instead of taken in scan order.
  */
-export function nextCronRun(schedule: ParsedSchedule, from: number): number | null {
-  const cursor = new Date(Math.ceil(from / MINUTE_MS) * MINUTE_MS);
-  const limit = from + 366 * 24 * 60 * MINUTE_MS;
+function clockChangesDuring(year: number, month: number, day: number): boolean {
+  const midnight = new Date(year, month, day, 0, 0, 0);
+  const nextMidnight = new Date(year, month, day + 1, 0, 0, 0);
+  return (
+    midnight.getHours() !== 0 ||
+    nextMidnight.getHours() !== 0 ||
+    midnight.getTimezoneOffset() !== nextMidnight.getTimezoneOffset()
+  );
+}
 
-  while (cursor.getTime() <= limit) {
-    if (
-      schedule.months.includes(cursor.getUTCMonth() + 1) &&
-      schedule.daysOfMonth.includes(cursor.getUTCDate()) &&
-      schedule.daysOfWeek.includes(cronDayOfWeek(cursor))
-    ) {
-      for (const hour of schedule.hours) {
-        for (const minute of schedule.minutes) {
-          const candidate = Date.UTC(
-            cursor.getUTCFullYear(),
-            cursor.getUTCMonth(),
-            cursor.getUTCDate(),
-            hour,
-            minute,
-            0,
-          );
-          if (candidate >= from && schedule.seconds.includes(new Date(candidate).getUTCSeconds())) {
-            return candidate;
-          }
-        }
+/**
+ * The earliest scheduled instant inside one local calendar day at or after `from`, or
+ * null when the day has none.
+ *
+ * Candidates are built with the local `Date(y, m, d, h, min, s)` constructor so they are
+ * wall-clock times in the user's zone. The DST normalisation that constructor performs
+ * (documented at the top of this file) is what keeps a job from firing twice or not at
+ * all when the clock changes.
+ */
+function firstRunOnDay(
+  schedule: ParsedSchedule,
+  year: number,
+  month: number,
+  day: number,
+  from: number,
+): number | null {
+  const exact = clockChangesDuring(year, month, day);
+  let best: number | null = null;
+  for (const hour of schedule.hours) {
+    for (const minute of schedule.minutes) {
+      for (const second of schedule.seconds) {
+        const candidate = new Date(year, month, day, hour, minute, second).getTime();
+        if (candidate < from) continue;
+        // On an ordinary day the scan is already in chronological order, so the first
+        // hit is the earliest and the loop can stop. Around a clock change the
+        // normalised times can be out of order, so every candidate is priced and the
+        // smallest wins: whichever slot the day offers first is the one that runs.
+        if (!exact) return candidate;
+        if (best === null || candidate < best) best = candidate;
       }
     }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-    cursor.setUTCHours(0, 0, 0, 0);
+  }
+  return best;
+}
+
+/**
+ * The next time `schedule` matches at or after `from`, scanning day by day.
+ *
+ * Day granularity rather than minute: a cron entry is about when something happens in a
+ * person's day, and the per-day slot sets are tiny, so pricing the candidates of a
+ * matching day is cheaper and clearer than walking 1440 minutes to reach them. The
+ * search stops after at most 366 days, which is what a yearly job needs.
+ */
+export function nextCronRun(schedule: ParsedSchedule, from: number): number | null {
+  const start = new Date(from);
+  let year = start.getFullYear();
+  let month = start.getMonth();
+  let day = start.getDate();
+  const limit = from + 366 * 24 * 60 * MINUTE_MS;
+
+  for (let scanned = 0; scanned <= 366; scanned++) {
+    // Noon anchors the day, not midnight: a few zones skip midnight on a DST day and
+    // normalise it into the next one, which would drop a day from the scan. Noon is
+    // never skipped, and its weekday is the weekday of the whole day.
+    const noon = new Date(year, month, day, 12, 0, 0);
+    if (noon.getTime() > limit) return null;
+    if (
+      schedule.months.includes(month + 1) &&
+      schedule.daysOfMonth.includes(day) &&
+      schedule.daysOfWeek.includes(cronDayOfWeek(noon))
+    ) {
+      const hit = firstRunOnDay(schedule, year, month, day, from);
+      if (hit !== null) return hit;
+    }
+    const nextNoon = new Date(year, month, day + 1, 12, 0, 0);
+    year = nextNoon.getFullYear();
+    month = nextNoon.getMonth();
+    day = nextNoon.getDate();
   }
   return null;
 }
@@ -322,9 +390,12 @@ export class PromptCron {
       if (!schedule) continue;
       const next = nextCronRun(schedule, now - MINUTE_MS);
       if (next === null) continue;
-      // Only fire when the next run is inside the minute we are in: anything later is
-      // the future, anything earlier already fired in a previous tick.
+      // Only fire when the next run is inside the minute we are in and has already
+      // been reached: anything later is the future (a slot at :30 must not fire on
+      // the first tick of the minute), anything earlier already fired in a previous
+      // tick.
       if (Math.floor(next / MINUTE_MS) !== minute) continue;
+      if (next > now) continue;
       if (this.#firedAt.get(job.id) === minute) continue;
       this.#firedAt.set(job.id, minute);
       try {

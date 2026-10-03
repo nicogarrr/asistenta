@@ -58,9 +58,16 @@ export type Action =
  * (core/agent.ts). A batch's sub-actions never reach that hook — they are
  * arguments inside one tool call — so the batch runs each one through this same
  * check instead of letting the approval of the outer `batch` cover them all.
- * When nothing is wired the batch fails closed rather than skipping the check.
+ * When nothing is wired the batch fails closed: nothing runs, and the report says
+ * so in one clear line rather than silently blocking on the first action.
  */
 export type ActionGate = (call: ToolCall) => Decision | Promise<Decision>;
+
+/**
+ * Why a batch ran nothing when the tool was built without a gate. One constant so
+ * the summary line and the per-item errors can never disagree about the reason.
+ */
+const NO_GATE_REASON = 'el lote no puede ejecutarse: falta el control de permisos';
 
 /** Fate of one action inside a `batch`, in the order they were requested. */
 export interface BatchItemResult {
@@ -705,6 +712,27 @@ export function createComputerTool(
     if (!list || list.length === 0) {
       throw new Error('the batch action requires a non-empty actions array');
     }
+    // An unwired gate is a wiring bug, not a permission decision, so the batch is
+    // refused before the first action rather than while running it: "blocked on
+    // item 0" hides what is actually wrong, and this report must be actionable.
+    if (!gate) {
+      const results: BatchItemResult[] = list.map((item, index) => ({
+        index,
+        action: typeof item.action === 'string' ? item.action : 'unknown',
+        ok: false,
+        error: `blocked: ${NO_GATE_REASON}`,
+      }));
+      log.warn('batch refused: no permission gate is wired', { actions: list.length });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `${NO_GATE_REASON}. Ninguna de las ${list.length} acciones se ha ejecutado.`,
+          },
+        ],
+        details: { results, verified: null, ...scaling },
+      };
+    }
     const results: BatchItemResult[] = [];
     const images: ContentBlock[] = [];
     const targets: Array<{ at: { x: number; y: number } | null }> = [];
@@ -718,12 +746,7 @@ export function createComputerTool(
       // The exact call shape `beforeToolCall` sends to `Gate.check`, so batch
       // items are policed by the same rules as standalone actions rather than
       // riding on the approval of the outer `batch`.
-      const decision = gate
-        ? await gate({ tool: 'computer', args: item, actor: 'batch' })
-        : {
-            verdict: 'deny' as const,
-            reason: 'no permission gate is wired to this tool, I will not run ungated actions',
-          };
+      const decision = await gate({ tool: 'computer', args: item, actor: 'batch' });
       if (decision.verdict !== 'allow') {
         results.push({ index: i, action: name, ok: false, error: `blocked: ${decision.reason}` });
         log.info('batch action blocked', { index: i, action: name, reason: decision.reason });

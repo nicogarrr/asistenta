@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FollowupTracker } from '../src/alerts/followups.js';
 import { ActionLog } from '../src/audit/log.js';
 import {
@@ -11,6 +11,18 @@ import {
   parseCronExpression,
   parseNatural,
 } from '../src/cron/scheduler.js';
+
+// The scheduler reads cron fields in local time, so expectations built with the local
+// `Date` constructor would silently pass for a UTC implementation on a UTC machine.
+// Pinning Europe/Madrid — UTC+2 in October 2026, with real DST changes in March and
+// October — makes the assertions mean the same thing on every machine.
+const ORIGINAL_TZ = process.env.TZ;
+process.env.TZ = 'Europe/Madrid';
+
+afterAll(() => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+});
 
 vi.mock('../src/log.js', () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -41,19 +53,77 @@ describe('parseCronExpression', () => {
 
 describe('nextCronRun', () => {
   const schedule = parseCronExpression('0 8 * * *');
-  const monday = Date.UTC(2026, 9, 5, 0, 0, 0);
+  const monday = new Date(2026, 9, 5, 0, 0, 0).getTime();
 
   it('finds the next matching minute and skips ahead when past', () => {
-    expect(nextCronRun(schedule as never, monday)).toBe(Date.UTC(2026, 9, 5, 8, 0, 0));
-    expect(nextCronRun(schedule as never, Date.UTC(2026, 9, 5, 9, 0, 0))).toBe(
-      Date.UTC(2026, 9, 6, 8, 0, 0),
+    expect(nextCronRun(schedule as never, monday)).toBe(new Date(2026, 9, 5, 8, 0, 0).getTime());
+    expect(nextCronRun(schedule as never, new Date(2026, 9, 5, 9, 0, 0).getTime())).toBe(
+      new Date(2026, 9, 6, 8, 0, 0).getTime(),
     );
   });
 
   it('honours the day of the week', () => {
     const mondayOnly = parseCronExpression('0 8 * * 1');
-    expect(nextCronRun(mondayOnly as never, Date.UTC(2026, 9, 2))).toBe(
-      Date.UTC(2026, 9, 5, 8, 0, 0),
+    expect(nextCronRun(mondayOnly as never, new Date(2026, 9, 2).getTime())).toBe(
+      new Date(2026, 9, 5, 8, 0, 0).getTime(),
+    );
+  });
+
+  it('fires when the local clock reads 8, not when UTC does', () => {
+    // The regression this guards: with UTC fields, "cada mañana a las 8" would
+    // fire at 08:00 UTC — 10:00 in Madrid — and the briefing would be two hours
+    // late against the routine it mirrors.
+    const at = nextCronRun(schedule as never, monday);
+    expect(at).not.toBeNull();
+    const local = new Date(at ?? 0);
+    expect(local.getHours()).toBe(8);
+    expect(local.getMinutes()).toBe(0);
+    expect(local.getDate()).toBe(5);
+    expect(local.getMonth()).toBe(9);
+    expect(local.getFullYear()).toBe(2026);
+  });
+});
+
+describe('nextCronRun con cambio de hora', () => {
+  // 2026 in Europe/Madrid: the clock jumps 02:00 → 03:00 on 29 March and back
+  // 03:00 → 02:00 on 25 October. The flag keeps the DST-only assertion honest
+  // on a machine that cannot pin the zone.
+  const gapDetected = new Date(2026, 2, 29, 2, 30).getHours() === 3;
+
+  it('un horario inexistente se normaliza hacia delante y no se pierde', () => {
+    // 02:30 is not a real instant on 29 March: `new Date` normalises it to 03:30
+    // and the job runs there — once — instead of silently skipping the day.
+    const schedule = parseCronExpression('30 2 * * *');
+    const at = nextCronRun(schedule as never, new Date(2026, 2, 29, 0, 0, 0).getTime());
+    expect(at).toBe(new Date(2026, 2, 29, 2, 30).getTime());
+    // Still that calendar day: a clock change must not swallow a firing.
+    expect(new Date(at ?? 0).getDate()).toBe(29);
+    // And once it has passed, the next run is the following day, not a second
+    // fire at the normalised time.
+    expect(nextCronRun(schedule as never, (at ?? 0) + 1000)).toBe(
+      new Date(2026, 2, 30, 2, 30).getTime(),
+    );
+  });
+
+  it('cuando la hora local se repite, el trabajo se ejecuta una sola vez', () => {
+    // On 25 October 02:30 exists twice. `new Date` binds the slot to the first
+    // occurrence; the repeated hour is not a second slot.
+    const schedule = parseCronExpression('30 2 * * *');
+    const at = nextCronRun(schedule as never, new Date(2026, 9, 25, 0, 0, 0).getTime());
+    expect(at).toBe(new Date(2026, 9, 25, 2, 30).getTime());
+    expect(nextCronRun(schedule as never, (at ?? 0) + 1000)).toBe(
+      new Date(2026, 9, 26, 2, 30).getTime(),
+    );
+  });
+
+  it.skipIf(!gapDetected)('dos horarios en el mismo instante se ejecutan una vez', () => {
+    // On 29 March both 02:00 and 03:00 normalise onto 03:00. The job runs once
+    // at that instant: the clock change must not duplicate the work.
+    const schedule = parseCronExpression('0 2,3 * * *');
+    const at = nextCronRun(schedule as never, new Date(2026, 2, 29, 0, 0, 0).getTime());
+    expect(at).toBe(new Date(2026, 2, 29, 2, 0).getTime());
+    expect(nextCronRun(schedule as never, (at ?? 0) + 1000)).toBe(
+      new Date(2026, 2, 30, 2, 0).getTime(),
     );
   });
 });
@@ -86,7 +156,7 @@ describe('parseNatural', () => {
 describe('PromptCron', () => {
   it('fires once per minute even across several ticks', async () => {
     const fired: string[] = [];
-    let now = Date.UTC(2026, 9, 5, 7, 59, 50);
+    let now = new Date(2026, 9, 5, 7, 59, 50).getTime();
     const cron = new PromptCron({
       jobs: [{ id: 'a', schedule: '0 8 * * *', prompt: 'p', chatId: '1' }],
       run: async (job) => {
@@ -96,9 +166,9 @@ describe('PromptCron', () => {
       tickMs: 50,
     });
     cron.start();
-    now = Date.UTC(2026, 9, 5, 8, 0, 10);
+    now = new Date(2026, 9, 5, 8, 0, 10).getTime();
     await new Promise((r) => setTimeout(r, 200));
-    now = Date.UTC(2026, 9, 5, 8, 0, 30);
+    now = new Date(2026, 9, 5, 8, 0, 30).getTime();
     await new Promise((r) => setTimeout(r, 200));
     cron.stop();
     expect(fired).toEqual(['a']);
@@ -106,7 +176,7 @@ describe('PromptCron', () => {
 
   it('reports the next run and keeps going after a job throws', async () => {
     const fired: string[] = [];
-    let now = Date.UTC(2026, 9, 5, 7, 0, 0);
+    let now = new Date(2026, 9, 5, 7, 0, 0).getTime();
     const cron = new PromptCron({
       jobs: [
         { id: 'a', schedule: '0 8 * * *', prompt: 'p', chatId: '1' },
@@ -119,12 +189,12 @@ describe('PromptCron', () => {
       now: () => now,
       tickMs: 50,
     });
-    expect(cron.nextRun('a')?.toISOString()).toBe('2026-10-05T08:00:00.000Z');
+    expect(cron.nextRun('a')?.getTime()).toBe(new Date(2026, 9, 5, 8, 0, 0).getTime());
     expect(cron.nextRun('bad')).toBeNull();
     expect(cron.size).toBe(2);
 
     cron.start();
-    now = Date.UTC(2026, 9, 5, 8, 0, 10);
+    now = new Date(2026, 9, 5, 8, 0, 10).getTime();
     await new Promise((r) => setTimeout(r, 250));
     cron.stop();
     // A throwing job does not silence the scheduler.

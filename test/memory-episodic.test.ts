@@ -114,6 +114,58 @@ describe('SessionStore', () => {
     expect(store.recent().map((s) => s.title)).toEqual(['tres', 'dos', 'uno']);
   });
 
+  it('encuentra por el cuerpo de los mensajes aunque título y resumen no lo citen', () => {
+    const store = new SessionStore({ db });
+    const id = store.begin('global', 'Seguimiento semanal');
+    store.addTurn(id, 'user', '¿qué hicimos con el gimnasio la semana pasada?');
+    store.addTurn(id, 'assistant', 'Fuimos el martes y el jueves');
+    store.end(id, 'Revisión de hábitos sin más novedades');
+
+    const hits = store.search('gimnasio');
+    expect(hits.map((h) => h.sessionId)).toEqual([id]);
+    // El fragmento sale del turno que coincide, no del resumen.
+    expect(hits[0]?.snippet).toContain('gimnasio');
+    expect(hits[0]?.snippet).toContain('semana pasada');
+  });
+
+  it('busca por tokens en cualquier orden: eso solo lo da el índice FTS', () => {
+    // Un LIKE '%gimnasio piernas%' exigiría el substring exacto; el índice
+    // encuentra las dos palabras en cualquier posición del turno. Este caso
+    // diferencia el camino FTS del fallback LIKE: si el índice no se usa,
+    // falla aquí.
+    const store = new SessionStore({ db });
+    const id = store.begin('global', 'Entrenamiento');
+    store.addTurn(id, 'user', 'hoy toca piernas, mañana gimnasio otra vez');
+    store.end(id, 'sin resumen');
+
+    expect(store.search('gimnasio piernas').map((h) => h.sessionId)).toEqual([id]);
+  });
+
+  it('prefiere el fragmento del turno cuando la sesión coincide en las dos fuentes', () => {
+    const store = new SessionStore({ db });
+    const id = store.begin('global', 'Rutina de gimnasio');
+    store.addTurn(id, 'user', 'hoy toca gimnasio de piernas');
+    store.end(id, 'Resumen genérico de la sesión');
+
+    const hits = store.search('gimnasio');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.snippet).toContain('piernas');
+  });
+
+  it('la búsqueda por el cuerpo de los mensajes respeta el scope', () => {
+    const store = new SessionStore({ db });
+    const a = store.begin('global', 'Notas sueltas');
+    store.addTurn(a, 'user', 'apuntar lo del gimnasio');
+    store.end(a, 'sin resumen');
+    const b = store.begin('trabajo', 'Notas sueltas');
+    store.addTurn(b, 'user', 'apuntar lo del gimnasio');
+    store.end(b, 'sin resumen');
+
+    expect(store.search('gimnasio', 'global').map((h) => h.sessionId)).toEqual([a]);
+    expect(store.search('gimnasio', 'trabajo').map((h) => h.sessionId)).toEqual([b]);
+    expect(store.search('gimnasio', 'otro')).toEqual([]);
+  });
+
   it('una consulta MATCH hostil no lanza, cae a resultados', () => {
     const store = new SessionStore({ db });
     const id = store.begin('global', 'Prueba');
@@ -135,6 +187,12 @@ describe('SessionStore', () => {
     expect(bySummary.map((h) => h.sessionId)).toEqual([id]);
     expect(bySummary[0]?.snippet).toContain('marzo');
     expect(store.search('factura', 'otro')).toEqual([]);
+
+    // Sin FTS5 el cuerpo de los mensajes también se busca, y el fragmento
+    // sigue saliendo del turno que coincide.
+    const byTurn = store.search('pagar');
+    expect(byTurn.map((h) => h.sessionId)).toEqual([id]);
+    expect(byTurn[0]?.snippet).toContain('pagar');
   });
 });
 
