@@ -702,6 +702,7 @@ async function serveCommand(): Promise<number> {
         },
       },
       timeoutMs: Math.min(config.toolTimeoutMs, 60_000),
+      channel: config.browserChannel,
     });
     browsers.set(threadKey, service);
     return service;

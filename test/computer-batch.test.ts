@@ -52,6 +52,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     maxToolCalls: 10,
     downloadCookiesBrowser: '',
     curlImpersonatePath: '',
+    browserChannel: 'chrome',
     ...overrides,
   };
 }
