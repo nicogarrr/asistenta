@@ -608,6 +608,29 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /**
+   * Send a file as a document (PDFs and anything else Telegram should not re-encode).
+   * The 50MB upload cap is the only documented limit; callers check it first.
+   */
+  async sendDocumentBytes(
+    chatId: number,
+    bytes: Buffer,
+    filename: string,
+    caption: string,
+    threadId?: string,
+  ): Promise<void> {
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendDocument(chatId, new InputFile(bytes, filename), {
+          caption: caption.slice(0, 1024),
+          message_thread_id: threadId ? Number(threadId) : undefined,
+        }),
+        120_000,
+        'sendDocument timed out',
+      ),
+    );
+  }
+
+  /**
    * Serialise, space, and retry one API call.
    *
    * `retry_after` is obeyed exactly as Telegram documents it; 5xx and network errors
@@ -696,7 +719,12 @@ export class TelegramChannel implements ChannelAdapter {
    */
   async action(
     chatId: string,
-    action: 'typing' | 'upload_photo' | 'upload_voice' | 'upload_video' = 'typing',
+    action:
+      | 'typing'
+      | 'upload_photo'
+      | 'upload_voice'
+      | 'upload_video'
+      | 'upload_document' = 'typing',
   ): Promise<void> {
     const id = Number(chatId);
     if (!Number.isFinite(id)) return;
