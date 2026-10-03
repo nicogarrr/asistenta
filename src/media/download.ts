@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { log } from '../log.js';
 import { isFetchable } from '../tools/fetch.js';
 import { COOKIE_BROWSERS } from './cookie-browsers.js';
@@ -24,7 +24,7 @@ const MAX_REDIRECTS = 5;
 export type DownloadResult =
   | { ok: true; kind: 'video'; bytes: Buffer; title: string; seconds: number; filename: string }
   | { ok: true; kind: 'pdf'; bytes: Buffer; title: string; seconds: 0; filename: string }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; status?: number; blocked?: boolean };
 
 /** Optional anti-bot helpers. Everything here is off or auto-detected; see config.ts. */
 export interface DownloadOptions {
@@ -32,6 +32,8 @@ export interface DownloadOptions {
   ytdlp?: string;
   /** Browser to read cookies from for yt-dlp (firefox, chrome, edge...). Empty = off. */
   cookiesFromBrowser?: string;
+  /** Path to curl-impersonate. Empty = look for it on PATH. */
+  curlImpersonatePath?: string;
 }
 
 // TODO(seguridad): isFetchable es un filtro léxico y yt-dlp sigue sus propias redirecciones
@@ -326,10 +328,10 @@ function safeDecode(s: string): string {
   }
 }
 
-export async function downloadPdf(
-  rawUrl: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<DownloadResult> {
+const BLOCK_STATUSES = new Set([403, 429, 503]);
+
+/** One full attempt (redirects, size cap, %PDF- check) through the given fetch. */
+async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<DownloadResult> {
   let url = parsePublicUrl(rawUrl);
   if (!url) return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
   const signal = AbortSignal.timeout(PDF_TIMEOUT_MS);
@@ -356,7 +358,15 @@ export async function downloadPdf(
       break;
     }
     if (!res) return { ok: false, reason: 'demasiadas redirecciones' };
-    if (!res.ok) return { ok: false, reason: `el sitio respondió con error ${res.status}` };
+    if (!res.ok) {
+      return {
+        ok: false,
+        reason: `el sitio respondió con error ${res.status}`,
+        status: res.status,
+        // A 403/429/503 or a Cloudflare mitigation header is usually an anti-bot wall.
+        blocked: BLOCK_STATUSES.has(res.status) || res.headers.has('cf-mitigated'),
+      };
+    }
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
       return {
@@ -399,6 +409,133 @@ export async function downloadPdf(
   }
 }
 
+/** Find curl-impersonate: the configured path, else `curl-impersonate(.exe)` on PATH. */
+export async function findCurlImpersonate(configured = ''): Promise<string | null> {
+  const exists = (f: string) =>
+    access(f).then(
+      () => true,
+      () => false,
+    );
+  if (configured.trim()) return (await exists(configured.trim())) ? configured.trim() : null;
+  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    for (const name of ['curl-impersonate.exe', 'curl-impersonate']) {
+      const candidate = join(dir, name);
+      if (await exists(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** curl-impersonate wants an exact version (the bare alias `chrome` is rejected, exit 43). */
+const CURL_TARGETS = ['chrome146', 'chrome136', 'chrome131', 'chrome124'];
+
+/**
+ * A `fetch`-shaped function backed by curl-impersonate, so the same redirect, size and
+ * %PDF- checks run unchanged. It never follows redirects itself: the caller revalidates
+ * every hop with isFetchable.
+ */
+export function curlImpersonateFetch(bin: string): typeof fetch {
+  return async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const dir = await mkdtemp(join(tmpdir(), 'asistenta-curl-'));
+    try {
+      const hdrFile = join(dir, 'headers.txt');
+      const bodyFile = join(dir, 'body.bin');
+      let code: number | 'ENOENT' = 1;
+      for (const target of CURL_TARGETS) {
+        const res = await run(
+          bin,
+          [
+            '--impersonate',
+            target,
+            '--silent',
+            '--show-error',
+            '--proto',
+            '=http,https',
+            '--max-time',
+            String(PDF_TIMEOUT_MS / 1000),
+            '--max-filesize',
+            String(MAX_UPLOAD_BYTES),
+            '-D',
+            hdrFile,
+            '-o',
+            bodyFile,
+            '--',
+            url,
+          ],
+          PDF_TIMEOUT_MS + 5_000,
+        );
+        code = res.code;
+        if (code !== 43) break; // 43: this build does not know that target, try an older one
+      }
+      if (code === 28) throw new Error('timeout');
+      if (code === 63) {
+        // Over --max-filesize: report it the way the size check already understands.
+        return new Response(null, {
+          status: 200,
+          headers: { 'content-length': String(MAX_UPLOAD_BYTES + 1) },
+        });
+      }
+      if (code !== 0) throw new Error(`curl-impersonate falló (${String(code)})`);
+      const head = await readFile(hdrFile, 'utf8');
+      // Several header blocks can appear (proxy, 100-continue): the last one is the answer.
+      const blocks = head.split(/\r?\n\r?\n/).filter((b) => /^HTTP\//.test(b.trim()));
+      const lines = (blocks[blocks.length - 1] ?? '').trim().split(/\r?\n/);
+      const status = Number(/^HTTP\/[\d.]+\s+(\d{3})/.exec(lines[0] ?? '')?.[1]);
+      if (!Number.isInteger(status) || status < 200 || status > 599) {
+        throw new Error('respuesta de curl-impersonate ilegible');
+      }
+      const headers = new Headers();
+      for (const line of lines.slice(1)) {
+        const i = line.indexOf(':');
+        if (i > 0) headers.append(line.slice(0, i).trim(), line.slice(i + 1).trim());
+      }
+      const body = await readFile(bodyFile).catch(() => Buffer.alloc(0));
+      const noBody = status === 204 || status === 205 || status === 304;
+      return new Response(noBody ? null : new Uint8Array(body), { status, headers });
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  };
+}
+
+export async function downloadPdf(
+  rawUrl: string,
+  fetchImpl: typeof fetch = fetch,
+  opts: { curlFetch?: typeof fetch | null; curlImpersonatePath?: string } = {},
+): Promise<DownloadResult> {
+  const first = await pdfAttempt(rawUrl, fetchImpl);
+  if (first.ok || !first.blocked) return first;
+
+  // An anti-bot wall answered. Retry once as a real Chrome would, if the tool is here.
+  let viaCurl = opts.curlFetch;
+  if (viaCurl === undefined) {
+    const bin = await findCurlImpersonate(opts.curlImpersonatePath);
+    viaCurl = bin ? curlImpersonateFetch(bin) : null;
+  }
+  if (!viaCurl) {
+    return {
+      ok: false,
+      status: first.status,
+      reason:
+        `el sitio bloquea las descargas automáticas (error ${first.status ?? '?'}, parece una protección anti-bot). ` +
+        'Puedo reintentarlo imitando a Chrome si instalas curl-impersonate ' +
+        '(https://github.com/lexiforest/curl-impersonate/releases) y pones su ruta en PA_CURL_IMPERSONATE o en el PATH; ' +
+        'si no, descárgalo tú y mándamelo',
+    };
+  }
+  const second = await pdfAttempt(rawUrl, viaCurl);
+  if (second.ok) return second;
+  if (second.blocked) {
+    return {
+      ok: false,
+      status: second.status,
+      reason: `el sitio sigue bloqueándome aunque imito a Chrome (error ${second.status ?? '?'}); seguramente pide un captcha o iniciar sesión, así que tendrás que descargarlo tú`,
+    };
+  }
+  return second;
+}
+
 const PDF_URL = /\.pdf(?:$|[?#])/i;
 
 /** Pick by link shape when the caller did not say: a .pdf path is a PDF, anything else a video. */
@@ -407,7 +544,8 @@ export async function downloadFromLink(
   kind: 'auto' | 'video' | 'pdf' = 'auto',
   opts: DownloadOptions = {},
 ): Promise<DownloadResult> {
-  const pdf = () => downloadPdf(rawUrl);
+  const pdf = () =>
+    downloadPdf(rawUrl, fetch, { curlImpersonatePath: opts.curlImpersonatePath ?? '' });
   const video = () =>
     downloadVideo(rawUrl, opts.ytdlp, { cookiesFromBrowser: opts.cookiesFromBrowser });
   if (kind === 'pdf') return pdf();

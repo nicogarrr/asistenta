@@ -856,6 +856,7 @@ async function serveCommand(): Promise<number> {
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
         options: {
           cookiesFromBrowser: config.downloadCookiesBrowser,
+          curlImpersonatePath: config.curlImpersonatePath,
         },
       }),
       // Audio, camera and microphone in ordinary language. Everything here is also a

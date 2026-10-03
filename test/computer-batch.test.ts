@@ -51,6 +51,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 },
     maxToolCalls: 10,
     downloadCookiesBrowser: '',
+    curlImpersonatePath: '',
     ...overrides,
   };
 }
