@@ -24,6 +24,9 @@ export type DownloadResult =
   | { ok: true; kind: 'pdf'; bytes: Buffer; title: string; seconds: 0; filename: string }
   | { ok: false; reason: string };
 
+// TODO(seguridad): isFetchable es un filtro léxico y yt-dlp sigue sus propias redirecciones
+// sin revalidar; un host público que resuelva a una IP interna pasaría. Mismo nivel que la
+// tool fetch. Endurecer resolviendo DNS y validando la IP.
 export function parsePublicUrl(raw: string): URL | null {
   let url: URL;
   try {
@@ -75,11 +78,15 @@ export function explainYtdlpError(stderr: string): string {
   if (/private|login|sign in|log in|authentication|cookies/.test(s))
     return 'el vídeo es privado o exige iniciar sesión, y no puedo descargarlo sin tu cuenta';
   if (/age[- ]restricted|confirm your age/.test(s)) return 'el vídeo tiene restricción de edad';
-  if (/not available|unavailable|removed|deleted|does not exist|404/.test(s))
+  if (
+    /video unavailable|not available|has been removed|was deleted|does not exist|http error 404/.test(
+      s,
+    )
+  )
     return 'el vídeo ya no está disponible';
   if (/geo|country|your location/.test(s)) return 'el vídeo está bloqueado en tu país';
   if (/drm/.test(s)) return 'el vídeo tiene protección DRM';
-  if (/429|too many requests|rate/.test(s))
+  if (/http error 429|too many requests|rate[- ]limit/.test(s))
     return 'el sitio me ha limitado por demasiadas peticiones; prueba en unos minutos';
   if (/timed out|timeout/.test(s)) return 'el sitio tardó demasiado en responder';
   if (/no video|no media|there is no video/.test(s)) return 'en ese enlace no hay vídeo';
@@ -258,7 +265,7 @@ export async function downloadPdf(
       ok: false,
       reason: /abort|timeout/i.test(msg)
         ? 'el sitio tardó demasiado en responder'
-        : `fallo de red: ${msg}`,
+        : 'fallo de red al descargar (el sitio no respondió bien)',
     };
   }
 }
@@ -273,8 +280,8 @@ export async function downloadFromLink(
   if (kind === 'pdf') return downloadPdf(rawUrl);
   if (kind === 'video') return downloadVideo(rawUrl);
   if (PDF_URL.test(rawUrl)) {
-    const pdf = await downloadPdf(rawUrl);
-    if (pdf.ok) return pdf;
+    // A .pdf link is a PDF: if it fails, say why instead of asking yt-dlp for a video.
+    return downloadPdf(rawUrl);
   }
   return downloadVideo(rawUrl);
 }

@@ -62,3 +62,18 @@ describe('downloadPdf', () => {
     expect(!r.ok && r.reason).toMatch(/50 MB/);
   });
 });
+
+describe('downloadFromLink', () => {
+  it('a .pdf link that fails reports the PDF reason, not a video one', async () => {
+    const { downloadFromLink } = await import('../src/media/download.js');
+    const r = await downloadFromLink('http://localhost/a.pdf');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).not.toMatch(/vídeo/);
+  });
+});
+
+describe('explainYtdlpError', () => {
+  it('does not read "rate" inside other words as rate limiting', () => {
+    expect(explainYtdlpError('ERROR: moderate quality generated')).not.toMatch(/limitado/);
+  });
+});
