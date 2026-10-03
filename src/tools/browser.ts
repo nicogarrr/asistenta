@@ -166,6 +166,60 @@ if (norm(got) !== norm(want)) {
 return 'filled ' + ${sel} + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
 }
 
+/**
+ * After an action, check whether the page is a bot challenge or captcha, and if so stop
+ * and hand it to the person. Returns text for the model to relay, or null on a normal page.
+ *
+ * The agent never tries to solve it: the first time, the user gets a screenshot in the
+ * chat and the page in a visible window of the same profile; later checks while it is
+ * still on screen only say that it is still waiting. The wording is honest about each
+ * step that did not work, and tells the model not to report the task as done.
+ */
+export async function challengeNote(
+  service: BrowserService,
+  scope: string,
+  sendImage?: (png: Buffer) => Promise<boolean>,
+): Promise<{ text: string; kind: string } | null> {
+  const found = await service.detectChallenge(scope);
+  if (!found) return null;
+  let host = found.url;
+  try {
+    host = new URL(found.url).hostname;
+  } catch {
+    // keep the raw url
+  }
+  const head = `captcha_detectado (${found.kind}) en ${host}. No intento saltármelo.`;
+  const tail =
+    'No digas que la tarea está hecha: sigue bloqueada hasta que el usuario lo resuelva y lo confirme; entonces haz snapshot para comprobar que ya no aparece.';
+  if (service.isVisible(scope)) {
+    return {
+      kind: found.kind,
+      text: `${head} Sigue en pantalla esperando a que el usuario lo resuelva. ${tail}`,
+    };
+  }
+  let sent = false;
+  if (sendImage) {
+    try {
+      const shot = await service.screenshot(scope);
+      sent = await sendImage(Buffer.from(shot.data, 'base64')).catch(() => false);
+    } catch {
+      sent = false;
+    }
+  }
+  const shown = await service.handToUser(scope);
+  const parts = [
+    head,
+    sent
+      ? 'He enviado una captura al usuario.'
+      : 'No pude enviar la captura al usuario; díselo tú.',
+    shown
+      ? 'He abierto la página en una ventana visible: debe resolverlo ahí y avisarte ("listo").'
+      : 'No pude abrir la ventana visible; dile que abra esa página él mismo.',
+    tail,
+  ];
+  return { kind: found.kind, text: parts.join(' ') };
+}
+
 export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
@@ -184,6 +238,12 @@ export function createBrowserTool(
       '3. action=click / fill / press with a selector from that snapshot.',
       '4. action=screenshot only when you need to see something a selector cannot',
       '   express (canvas, a video, a rendered image, an unexpected layout).',
+      '',
+      'CAPTCHAS: after open / click / press / snapshot the result may start with',
+      '"captcha_detectado". That means a human check (Cloudflare, reCAPTCHA, hCaptcha...) is',
+      'blocking the page. Do NOT try to solve or bypass it and do not retry in a loop: the',
+      'user has already been sent a screenshot and the page is open on their screen. Tell',
+      'them plainly that it is waiting for them, and continue only after they say it is done.',
       '',
       'action=media controls playback on any page with a video element. what=state',
       'reports what is playing, whether an advert is on screen and how many adverts have',
@@ -231,20 +291,25 @@ export function createBrowserTool(
           if (!url) throw new Error('la acción open necesita una url');
           const info = await service.open(scope, url, { visible: Boolean(record.visible) });
           log.info('browser open', { host: info.url, status: info.status });
+          const note = await challengeNote(service, scope, sendImage);
           return {
             content: [
               {
                 type: 'text',
-                text: `Opened ${info.url}\nTitle: ${info.title}\nHTTP ${info.status ?? '?'}`,
+                text: `${note ? `${note.text}\n` : ''}Opened ${info.url}\nTitle: ${info.title}\nHTTP ${info.status ?? '?'}`,
               },
             ],
-            details: info,
+            details: note ? { ...info, captcha: note.kind } : info,
           };
         }
 
         case 'snapshot': {
           const text = await service.snapshot(scope);
-          return { content: [{ type: 'text', text }], details: { lines: text.split('\n').length } };
+          const note = await challengeNote(service, scope, sendImage);
+          return {
+            content: [{ type: 'text', text: note ? `${note.text}\n${text}` : text }],
+            details: { lines: text.split('\n').length, ...(note ? { captcha: note.kind } : {}) },
+          };
         }
 
         case 'click': {
@@ -254,7 +319,11 @@ export function createBrowserTool(
             `await page.locator(${JSON.stringify(selector)}).first().click();
 return 'clicked ' + ${JSON.stringify(selector)};`,
           );
-          return { content: [{ type: 'text', text: text.text }], details: { selector } };
+          const note = await challengeNote(service, scope, sendImage);
+          return {
+            content: [{ type: 'text', text: note ? `${text.text}\n${note.text}` : text.text }],
+            details: { selector, ...(note ? { captcha: note.kind } : {}) },
+          };
         }
 
         case 'fill': {
@@ -273,7 +342,11 @@ return 'clicked ' + ${JSON.stringify(selector)};`,
             `await page.locator(${JSON.stringify(selector)}).first().press(${JSON.stringify(key)});
 return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(selector)};`,
           );
-          return { content: [{ type: 'text', text: text.text }], details: { selector, key } };
+          const note = await challengeNote(service, scope, sendImage);
+          return {
+            content: [{ type: 'text', text: note ? `${text.text}\n${note.text}` : text.text }],
+            details: { selector, key, ...(note ? { captcha: note.kind } : {}) },
+          };
         }
 
         case 'screenshot': {

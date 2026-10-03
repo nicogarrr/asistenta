@@ -62,8 +62,82 @@ export interface BrowserPolicy {
   adSkipIntervalMs?: number;
 }
 
+/**
+ * Which browser to drive. 'chrome' and 'msedge' are the ones installed on this PC (a
+ * real fingerprint, which anti-bot systems trust far more than Playwright's bundled
+ * Chromium); 'chromium' is the bundled copy.
+ */
+export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
+
+/** What a page shows, as far as telling a challenge from a normal page is concerned. */
+export interface ChallengeSignals {
+  url: string;
+  title: string;
+  text: string;
+  /** Sources of the iframes that are on screen (invisible ones are filtered out first). */
+  frames: string[];
+}
+
+export type ChallengeKind = 'cloudflare' | 'recaptcha' | 'hcaptcha' | 'verify_human';
+
+const CHALLENGE_TITLE =
+  /just a moment|un momento|attention required|verifying you are human|checking your browser|security check|comprobaci[oó]n de seguridad/i;
+const CHALLENGE_TEXT =
+  /verify you are human|verifying you are human|verifica que eres (?:un )?humano|are you a robot|i'?m not a robot|no soy un robot|press (?:&|and) hold|unusual traffic|tr[aá]fico inusual|complete the security check|checking if the site connection is secure/i;
+
+/**
+ * Decide from what a page shows whether a person has to step in. Pure, so it is tested
+ * without a browser.
+ *
+ * Conservative about frames on purpose: a page that merely embeds a Turnstile or
+ * reCAPTCHA widget in a form is not blocking anyone, so a captcha frame only counts
+ * when the page also reads like a challenge (title or text). Invisible frames are
+ * dropped before this is called.
+ */
+export function classifyChallenge(sig: ChallengeSignals): ChallengeKind | null {
+  const text = sig.text.slice(0, 3000);
+  const frames = sig.frames.map((f) => f.toLowerCase());
+  const titled = CHALLENGE_TITLE.test(sig.title);
+  const worded = CHALLENGE_TEXT.test(text);
+  const cloudflareFrame = frames.some((f) => f.includes('challenges.cloudflare.com'));
+  if (cloudflareFrame && (titled || worded)) return 'cloudflare';
+  if (titled && /cloudflare|cf-chl|ray id/i.test(text)) return 'cloudflare';
+  if (/google\.[a-z.]+\/sorry\//.test(sig.url)) return 'recaptcha';
+  if (frames.some((f) => f.includes('google.com/recaptcha') || f.includes('recaptcha.net'))) {
+    if (worded || titled) return 'recaptcha';
+  }
+  if (frames.some((f) => f.includes('hcaptcha.com')) && (worded || titled)) return 'hcaptcha';
+  if (titled || worded) return 'verify_human';
+  return null;
+}
+
+/** Runs inside the page, so it is a string: nothing from this module exists there. */
+const CHALLENGE_PROBE = `(() => {
+  const frames = [];
+  for (const f of document.querySelectorAll('iframe')) {
+    const r = f.getBoundingClientRect();
+    const src = f.src || '';
+    if (r.width < 30 || r.height < 30 || /size=invisible/.test(src)) continue;
+    frames.push(src);
+  }
+  return JSON.stringify({
+    url: location.href,
+    title: document.title || '',
+    text: ((document.body && document.body.innerText) || '').slice(0, 3000),
+    frames,
+  });
+})()`;
+
+/** True when Playwright could not start the requested installed browser because it is absent. */
+export function isMissingBrowserError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /distribution '[^']+' is not found|executable doesn't exist/i.test(msg);
+}
+
 export interface BrowserServiceOptions {
   policy: BrowserPolicy;
+  /** Default 'chromium', so a bare service behaves as before; the daemon passes config. */
+  channel?: BrowserChannel;
   /** Per-call ceiling for navigation and for evaluated code. */
   timeoutMs?: number;
   headless?: boolean;
@@ -107,6 +181,8 @@ interface Session {
    * sounding when nothing can be heard. Media has to run in a visible window.
    */
   visible: boolean;
+  /** The browser actually running; differs from the requested one after a fallback. */
+  channel: BrowserChannel;
   /** vm context holding `page`, `state` and what the agent put on it. */
   sandbox: vm.Context;
   /** Domains the human approved for this chat. */
@@ -171,11 +247,17 @@ export class BrowserService {
   constructor(options: BrowserServiceOptions) {
     this.#options = {
       policy: options.policy,
+      channel: options.channel ?? 'chromium',
       timeoutMs: options.timeoutMs ?? 45_000,
       headless: options.headless ?? true,
       profilesDir: options.profilesDir ?? paths.browser,
       viewport: options.viewport ?? { width: 1440, height: 900 },
     };
+  }
+
+  /** Whether this chat's browser window is on screen right now. */
+  isVisible(scope: string): boolean {
+    return this.#sessions.get(scope)?.visible ?? false;
   }
 
   /** Whether this chat has a live browser. Cheap: no filesystem, no launch. */
@@ -208,9 +290,12 @@ export class BrowserService {
 
     const dir = profileDirFor(scope, this.#options.profilesDir);
     mkdirSync(dir, { recursive: true });
-    const context = await chromium.launchPersistentContext(dir, {
+    const launchOptions = {
       headless: !wantVisible,
       viewport: this.#options.viewport,
+      // Playwright adds --enable-automation by default; it only draws an infobar and
+      // sets a flag sites can read, so it goes.
+      ignoreDefaultArgs: ['--enable-automation'],
       // Hiding the automation flag costs nothing and keeps sites from serving a
       // degraded "we think you are a bot" page to the agent's own browser.
       args: [
@@ -224,7 +309,8 @@ export class BrowserService {
       // Ceiling on the launch itself. Page timeouts are set separately below because
       // launchPersistentContext has no navigation-timeout option.
       timeout: this.#options.timeoutMs,
-    });
+    };
+    const { context, channel } = await this.#launch(scope, dir, launchOptions);
     context.setDefaultTimeout(this.#options.timeoutMs);
     context.setDefaultNavigationTimeout(this.#options.timeoutMs);
 
@@ -233,6 +319,7 @@ export class BrowserService {
       context,
       page,
       visible: wantVisible,
+      channel,
       // Code generation disabled: the sandbox may call the functions it is given, but
       // it cannot build new code from strings or wasm, which removes the eval/Function
       // side of the escape surface.
@@ -265,8 +352,90 @@ export class BrowserService {
 
     this.#installPolicy(scope, session);
     this.#startAdSkip(scope, session);
-    log.info('browser opened', { scope, headless: this.#options.headless });
+    log.info('browser opened', { scope, headless: this.#options.headless, channel });
     return session;
+  }
+
+  /**
+   * Start the browser, preferring the installed one.
+   *
+   * An installed Chrome/Edge gets its own profile directory (`<dir>-chrome`): a profile
+   * written by Playwright's bundled Chromium can be newer than the installed browser,
+   * and Chrome refuses or resets a profile from a newer version. The cost is that a
+   * session logged in under the old bundled profile does not carry over once.
+   * If the requested browser is not installed the bundled one starts instead, with the
+   * original profile, and the fallback is logged. Any other launch error is real and
+   * propagates (for example a profile lock held by another process).
+   */
+  async #launch(
+    scope: string,
+    dir: string,
+    launchOptions: Parameters<typeof chromium.launchPersistentContext>[1],
+  ): Promise<{ context: BrowserContext; channel: BrowserChannel }> {
+    const wanted = this.#options.channel;
+    if (wanted !== 'chromium') {
+      try {
+        const profile = `${dir}-${wanted}`;
+        mkdirSync(profile, { recursive: true });
+        const context = await chromium.launchPersistentContext(profile, {
+          ...launchOptions,
+          channel: wanted,
+        });
+        return { context, channel: wanted };
+      } catch (err) {
+        if (!isMissingBrowserError(err)) throw err;
+        log.warn('browser channel not installed, using bundled chromium', { scope, wanted });
+      }
+    }
+    return {
+      context: await chromium.launchPersistentContext(dir, launchOptions),
+      channel: 'chromium',
+    };
+  }
+
+  /**
+   * Is the current page a bot challenge or captcha that a person has to solve?
+   *
+   * Never tries to get past it: the answer exists so the caller can stop and hand the
+   * page to the user instead of pretending the task went through. Returns null for a
+   * normal page and also when the page cannot be inspected (mid-navigation), because a
+   * guess either way would be worse than saying nothing.
+   */
+  async detectChallenge(
+    scope: string,
+  ): Promise<{ kind: ChallengeKind; url: string; title: string } | null> {
+    const session = this.#sessions.get(scope);
+    if (!session) return null;
+    try {
+      // A click or open may still be mid-navigation; the challenge page itself loads fast.
+      await session.page.waitForLoadState('domcontentloaded', { timeout: 3_000 }).catch(() => {});
+      const raw = (await session.page.evaluate(CHALLENGE_PROBE)) as string;
+      const sig = JSON.parse(raw) as ChallengeSignals;
+      const kind = classifyChallenge(sig);
+      return kind ? { kind, url: sig.url, title: sig.title } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Put the current page in front of the user: same profile, visible window, same URL,
+   * so they can solve the challenge by hand and the clearance cookie lands in the
+   * profile the agent keeps using. Returns false when nothing could be reopened.
+   */
+  async handToUser(scope: string): Promise<boolean> {
+    const session = this.#sessions.get(scope);
+    if (!session) return false;
+    // Already on screen: reopening would reload the page under the user's hands.
+    if (session.visible) return true;
+    const url = session.page.url();
+    try {
+      await this.open(scope, url, { visible: true });
+      return true;
+    } catch (err) {
+      log.warn('browser could not be shown to the user', { scope, err });
+      return false;
+    }
   }
 
   // ---- grants that survive a restart ---------------------------------------
