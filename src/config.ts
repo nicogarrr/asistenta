@@ -47,6 +47,8 @@ export interface Config {
   maxToolCalls: number;
   /** Browser whose cookies yt-dlp may use (`firefox`, `chrome`...). Empty = off. */
   downloadCookiesBrowser: string;
+  /** Path to curl-impersonate for PDFs behind anti-bot walls. Empty = look on PATH. */
+  curlImpersonatePath: string;
 }
 
 /** Env var restricted to a fixed set of values. A typo is an error, not a silent default. */
@@ -140,6 +142,7 @@ export function loadConfig(): Config {
       ['', ...COOKIE_BROWSERS],
       '',
     ),
+    curlImpersonatePath: process.env.PA_CURL_IMPERSONATE?.trim() ?? '',
   };
   return cached;
 }
