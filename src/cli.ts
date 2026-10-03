@@ -854,6 +854,9 @@ async function serveCommand(): Promise<number> {
             )
             .then(() => true),
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
+        options: {
+          cookiesFromBrowser: config.downloadCookiesBrowser,
+        },
       }),
       // Audio, camera and microphone in ordinary language. Everything here is also a
       // slash command; the tool exists for "suéltame ese audio" and "grábame con mi

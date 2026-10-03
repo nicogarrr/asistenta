@@ -1,7 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
-import { downloadFromLink } from '../media/download.js';
+import { type DownloadOptions, downloadFromLink } from '../media/download.js';
 
 /**
  * "Descárgame este vídeo" / "pásame este PDF", with a link.
@@ -14,6 +14,8 @@ export interface DownloadToolDeps {
   sendVideo: (bytes: Buffer, seconds: number, label: string) => Promise<boolean>;
   sendDocument: (bytes: Buffer, filename: string, caption: string) => Promise<boolean>;
   progress?: (what: 'upload_video' | 'upload_document') => Promise<void>;
+  /** Anti-bot helpers from config (browser cookies for yt-dlp, curl-impersonate path). */
+  options?: DownloadOptions;
 }
 
 const Params = Type.Object({
@@ -44,7 +46,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
     parameters: Params,
     execute: async (_id, params) => {
       const kind = params.kind ?? 'auto';
-      const result = await downloadFromLink(params.url, kind);
+      const result = await downloadFromLink(params.url, kind, deps.options);
       if (!result.ok) {
         log.warn('download failed', { url: params.url, reason: result.reason });
         return ok(`No se pudo descargar: ${result.reason}.`, { ok: false });
