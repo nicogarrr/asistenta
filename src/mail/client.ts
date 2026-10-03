@@ -63,7 +63,12 @@ export async function loadAccount(): Promise<MailAccount | null> {
 function toMessage(
   raw: {
     uid: number;
-    envelope?: { from?: Array<{ address?: string }>; to?: Array<{ address?: string }>; subject?: string; date?: Date };
+    envelope?: {
+      from?: Array<{ address?: string }>;
+      to?: Array<{ address?: string }>;
+      subject?: string;
+      date?: Date;
+    };
     source?: Buffer | string;
     flags?: Set<string>;
   },
@@ -89,7 +94,11 @@ function toMessage(
 
   return {
     id: String(raw.uid),
-    from: envelope.from?.map((f) => f.address ?? '').filter(Boolean).join(', ') ?? '',
+    from:
+      envelope.from
+        ?.map((f) => f.address ?? '')
+        .filter(Boolean)
+        .join(', ') ?? '',
     to: (envelope.to ?? []).map((t) => t.address ?? '').filter(Boolean),
     subject: envelope.subject ?? '(sin asunto)',
     text: text.slice(0, 8000),
@@ -144,7 +153,9 @@ function searchCriteria(query: MailSearchQuery): Record<string, unknown> {
 
 function matchesFreeText(message: MailMessage, q: string): boolean {
   const needle = q.toLowerCase();
-  return message.subject.toLowerCase().includes(needle) || message.text.toLowerCase().includes(needle);
+  return (
+    message.subject.toLowerCase().includes(needle) || message.text.toLowerCase().includes(needle)
+  );
 }
 
 export async function searchMail(

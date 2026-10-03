@@ -69,6 +69,9 @@ export const GMAIL_SMTP_PORT = 465;
 export function redactSecrets(text: string): string {
   return text
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]')
-    .replace(/\b[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}\b/g, '[credencial]')
+    .replace(
+      /\b[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}[\s-]?[A-Za-z0-9]{4}\b/g,
+      '[credencial]',
+    )
     .replace(/(password|passwd|pwd|token|secret|api[_-]?key)\s*[:=]\s*\S+/gi, '$1: [redactado]');
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createMailTool } from '../src/tools/mail.js';
 import type { MailAccount, MailMessage } from '../src/mail/types.js';
 import { redactSecrets } from '../src/mail/types.js';
+import { createMailTool } from '../src/tools/mail.js';
 
 vi.mock('../src/log.js', () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -32,7 +32,10 @@ function message(overrides: Partial<MailMessage> = {}): MailMessage {
   };
 }
 
-function deps(overrides: Partial<Parameters<typeof createMailTool>[0]['client']> = {}, approvals: boolean[] = []) {
+function deps(
+  overrides: Partial<Parameters<typeof createMailTool>[0]['client']> = {},
+  approvals: boolean[] = [],
+) {
   return {
     requireApproval: vi.fn(async () => approvals.shift() ?? true),
     client: {
@@ -136,7 +139,10 @@ describe('createMailTool', () => {
   });
 
   it('asks for approval with the subject and recipients, never the body', async () => {
-    const requireApproval = vi.fn(async () => true);
+    // Typed as a two-argument mock: without the parameter list, vitest infers
+    // `[]` for the call tuple and indexing it at 1 is a type error even though
+    // the function really is called with (action, summary).
+    const requireApproval = vi.fn(async (_action: string, _summary: string) => true);
     const tool = createMailTool({ ...deps(), requireApproval });
     await tool.execute('m7', {
       action: 'send',

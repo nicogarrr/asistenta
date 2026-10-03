@@ -34,12 +34,18 @@ const MailParams = Type.Object({
     Type.Literal('mark_seen'),
     Type.Literal('folders'),
   ]),
-  limit: Type.Optional(Type.Number({ description: 'For list/search: how many, max 50. Default 10.' })),
-  id: Type.Optional(Type.String({ description: 'For read and mark_seen: the message id from list/search.' })),
+  limit: Type.Optional(
+    Type.Number({ description: 'For list/search: how many, max 50. Default 10.' }),
+  ),
+  id: Type.Optional(
+    Type.String({ description: 'For read and mark_seen: the message id from list/search.' }),
+  ),
   from: Type.Optional(Type.String({ description: 'For search: sender.' })),
   subject: Type.Optional(Type.String({ description: 'For search: subject contains.' })),
   q: Type.Optional(Type.String({ description: 'For search: free text over subject and body.' })),
-  sinceHours: Type.Optional(Type.Number({ description: 'For search: only messages from the last N hours.' })),
+  sinceHours: Type.Optional(
+    Type.Number({ description: 'For search: only messages from the last N hours.' }),
+  ),
   unreadOnly: Type.Optional(Type.Boolean({ description: 'For search/list: only unread.' })),
   to: Type.Optional(Type.String({ description: 'For send: comma separated recipients.' })),
   text: Type.Optional(Type.String({ description: 'For send: the body.' })),
@@ -64,7 +70,9 @@ function ok(text: string, details: Record<string, unknown> = {}) {
 
 /** One message as the model should read it: who, when, what about, and the body. */
 function formatMessage(message: MailMessage): string {
-  const when = message.at ? new Date(message.at).toISOString().slice(0, 16).replace('T', ' ') : 'fecha desconocida';
+  const when = message.at
+    ? new Date(message.at).toISOString().slice(0, 16).replace('T', ' ')
+    : 'fecha desconocida';
   return [
     `De: ${message.from || '(desconocido)'}`,
     `Asunto: ${message.subject}`,
@@ -88,7 +96,7 @@ export function createMailTool(deps: MailToolDeps): AgentTool<typeof MailParams>
     name: 'mail',
     label: 'Correo',
     description: [
-      'Read and send email on the user\'s own account.',
+      "Read and send email on the user's own account.",
       '',
       'action=list shows the newest mail. action=search filters by from/subject/q/sinceHours/',
       'unreadOnly. action=read fetches one message by id. action=mark_seen marks it read.',
@@ -151,7 +159,11 @@ export function createMailTool(deps: MailToolDeps): AgentTool<typeof MailParams>
           if (!id) throw new Error('la acción read necesita id');
           const message = await client.read(account, id);
           if (!message) return ok('No encuentro ese correo.', { found: false });
-          return ok(formatMessage(message), { found: true, from: message.from, seen: message.seen });
+          return ok(formatMessage(message), {
+            found: true,
+            from: message.from,
+            seen: message.seen,
+          });
         }
 
         case 'mark_seen': {
@@ -177,7 +189,10 @@ export function createMailTool(deps: MailToolDeps): AgentTool<typeof MailParams>
 
           // The summary is deliberately the subject and the recipients, never the
           // body: a confirmation dialog is not the place to paste the whole email.
-          const approved = await deps.requireApproval('mail:send', `Enviar "${subject}" a ${to.join(', ')}`);
+          const approved = await deps.requireApproval(
+            'mail:send',
+            `Enviar "${subject}" a ${to.join(', ')}`,
+          );
           if (!approved) {
             return ok('No enviado: no lo has aprobado.', { sent: false, approved: false });
           }

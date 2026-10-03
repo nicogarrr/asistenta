@@ -22,6 +22,7 @@ import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { parseNatural } from './cron/scheduler.js';
+import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
@@ -35,6 +36,7 @@ import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate } from './permissions.js';
+import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
 import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
 import {
   captureCameraFrame,
@@ -58,6 +60,7 @@ import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
+import { createRenfeTool } from './tools/renfe.js';
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
@@ -523,6 +526,8 @@ export function parseCommand(text: string): ParsedCommand | null {
 async function serveCommand(): Promise<number> {
   ensureDirs();
   const config = loadConfig();
+  const desktop = desktopEnabled();
+  if (!desktop) log.info('modo servidor: herramientas de escritorio Windows desactivadas');
   if (!vaultExists()) {
     process.stderr.write('no vault yet. run: pa vault init\n');
     return 1;
@@ -597,7 +602,7 @@ async function serveCommand(): Promise<number> {
   const machine = new Mutex();
 
   const fullControl = (await vaultGet('agent:fullControl')) === 'true';
-  const ocrAvailability = await ocrAvailable().catch(() => false);
+  const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
   const voiceDefault = (await vaultGet('agent:voice')) !== 'off';
 
   /**
@@ -625,7 +630,7 @@ async function serveCommand(): Promise<number> {
    * machinery it calls exists) and again after `/wake off`.
    */
   let wake: WakeWordListener | null = null;
-  let wakeWanted = (await vaultGet('agent:wake')) !== 'off';
+  let wakeWanted = desktop && (await vaultGet('agent:wake')) !== 'off';
   const wakeWord = (await vaultGet('agent:wakeWord'))?.trim() || 'asistenta';
 
   /**
@@ -781,9 +786,10 @@ async function serveCommand(): Promise<number> {
 
   const threadTools = (thread: Thread): AgentTool[] => {
     const scope = () => thread.key;
-    const raw: AgentTool[] = [
+    const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
+      createRenfeTool(),
       createDoneTool(),
       createShellTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions
@@ -792,7 +798,11 @@ async function serveCommand(): Promise<number> {
       createComputerTool(config, screen, (call) =>
         thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
       ),
-      createBrowserTool(browserFor(thread.key), scope),
+      createBrowserTool(browserFor(thread.key), scope, (png) =>
+        telegram
+          .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
+          .then(() => true),
+      ),
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
@@ -876,6 +886,7 @@ async function serveCommand(): Promise<number> {
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
     const exclusive = new Set(['computer', 'shell', 'browser', 'write', 'media']);
+    const raw = desktop ? all : all.filter((tool) => !DESKTOP_ONLY_TOOLS.has(tool.name));
     return raw.map((tool): AgentTool => {
       if (!exclusive.has(tool.name)) return tool;
       const inner = tool.execute.bind(tool);
@@ -1063,7 +1074,7 @@ async function serveCommand(): Promise<number> {
     const cleaned = cleanForTelegram(stripVoicePrefix(text.trim()));
     const short = shorten(cleaned);
     let audio: ChannelAudio | undefined;
-    if (wantsVoice && inbound.audioFileId && text.trim()) {
+    if (desktop && wantsVoice && inbound.audioFileId && text.trim()) {
       try {
         const spoken = await tts.speak(trimForSpeech(text));
         audio = { mimeType: spoken.mimeType, data: spoken.data.toString('base64') };
@@ -1129,6 +1140,10 @@ async function serveCommand(): Promise<number> {
   // ---- commands -----------------------------------------------------------
 
   const cmdScreen = async (inbound: Inbound, args = ''): Promise<void> => {
+    if (!desktop) {
+      await say(inbound, DESKTOP_OFF_MESSAGE, { quote: true });
+      return;
+    }
     const sub = args.trim().split(/\s+/)[0] ?? '';
     if (sub === 'live' || sub === 'on') {
       const interval = Math.max(2, Math.min(30, Number(args.trim().split(/\s+/)[1]) || 5));
@@ -2160,6 +2175,7 @@ async function serveCommand(): Promise<number> {
   };
 
   const startWake = async (): Promise<void> => {
+    if (!desktop) throw new Error('sin micrófono en modo servidor');
     let told = false;
     const listener = new WakeWordListener({
       word: wakeWord,
@@ -2278,17 +2294,19 @@ async function serveCommand(): Promise<number> {
           case 'screen':
             return cmdScreen(inbound, command.args);
           case 'camera':
-            return cmdCamera(inbound, command.args);
           case 'play':
           case 'suena':
           case 'toca':
           case 'escucha':
-            return cmdPlay(inbound, command.args);
           case 'mic':
           case 'micro':
-            return cmdMic(inbound, command.args);
           case 'watch':
-            return cmdWatch(inbound, command.args);
+            if (!desktop) return say(inbound, DESKTOP_OFF_MESSAGE, { quote: true }).then(() => {});
+            if (command.name === 'camera') return cmdCamera(inbound, command.args);
+            if (command.name === 'mic' || command.name === 'micro')
+              return cmdMic(inbound, command.args);
+            if (command.name === 'watch') return cmdWatch(inbound, command.args);
+            return cmdPlay(inbound, command.args);
           case 'topic':
             return cmdTopic(inbound, command.args);
           case 'topics':
@@ -2695,7 +2713,9 @@ export function buildContextNote(
     const ws = workstreams?.index(thread.key) ?? '';
     if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
   }
-  parts.push(`<now>${new Date().toISOString().slice(0, 16).replace('T', ' ')}</now>`);
+  // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
+  // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
+  parts.push(buildNowNote());
   return parts.join('\n');
 }
 

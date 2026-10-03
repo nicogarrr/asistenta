@@ -114,6 +114,12 @@ const BrowserParams = Type.Object({
     }),
   ),
   fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
+  send: Type.Optional(
+    Type.Boolean({
+      description:
+        'For screenshot: also send the image to the user in the chat. Use it when the user asks for a capture of what you are doing in the browser.',
+    }),
+  ),
   visible: Type.Optional(
     Type.Boolean({
       description:
@@ -124,9 +130,46 @@ const BrowserParams = Type.Object({
   ),
 });
 
+/**
+ * Script for action=fill that verifies what ended up in the field.
+ *
+ * Autocomplete widgets (Renfe's station boxes, for one) react to the typed text and
+ * can leave "MadridMadrid" or a stale suggestion in the input. A bare `fill` reports
+ * success anyway, and the agent then searched with a broken origin and gave up. Now
+ * the value is read back; when it differs it is cleared and typed again key by key
+ * once, and the result states the final value so the agent can see a mismatch
+ * instead of assuming it worked.
+ */
+export function buildFillScript(selector: string, value: string): string {
+  const sel = JSON.stringify(selector);
+  const val = JSON.stringify(value);
+  return `const loc = page.locator(${sel}).first();
+const want = ${val};
+const norm = (t) => String(t ?? '').trim().toLowerCase();
+await loc.fill(want);
+await page.waitForTimeout(300);
+let got = await loc.inputValue().catch(() => want);
+let retried = false;
+if (norm(got) !== norm(want)) {
+  retried = true;
+  await loc.fill('');
+  await loc.click();
+  await loc.press('Control+A');
+  await loc.press('Delete');
+  await loc.pressSequentially(want, { delay: 60 });
+  await page.waitForTimeout(500);
+  got = await loc.inputValue().catch(() => want);
+}
+if (norm(got) !== norm(want)) {
+  return 'ATENCIÓN: el campo ' + ${sel} + ' quedó con "' + got + '" en lugar de "' + want + '". Revisa el autocompletado antes de continuar.';
+}
+return 'filled ' + ${sel} + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
+}
+
 export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
+  sendImage?: (png: Buffer) => Promise<boolean>,
 ): AgentTool<typeof BrowserParams> {
   return {
     name: 'browser',
@@ -218,11 +261,7 @@ return 'clicked ' + ${JSON.stringify(selector)};`,
           const selector = requireSelector(record);
           const value = String(record.text ?? '');
           if (!value) throw new Error('la acción fill necesita text');
-          const text = await service.execJs(
-            scope,
-            `await page.locator(${JSON.stringify(selector)}).first().fill(${JSON.stringify(value)});
-return 'filled ' + ${JSON.stringify(selector)};`,
-          );
+          const text = await service.execJs(scope, buildFillScript(selector, value));
           return { content: [{ type: 'text', text: text.text }], details: { selector } };
         }
 
@@ -239,15 +278,28 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(selector)
 
         case 'screenshot': {
           const shot = await service.screenshot(scope, Boolean(record.fullPage));
+          // The user asked to SEE it: the image only reaches the model unless it is
+          // sent to the chat. The result says plainly whether it got there.
+          let delivery = '';
+          if (record.send) {
+            if (!sendImage) {
+              delivery = ' No se pudo enviar al usuario: este canal no admite imágenes.';
+            } else {
+              const ok = await sendImage(Buffer.from(shot.data, 'base64')).catch(() => false);
+              delivery = ok
+                ? ' Enviada al usuario.'
+                : ' ERROR: no se pudo enviar la imagen al usuario; díselo.';
+            }
+          }
           return {
             content: [
               {
                 type: 'text',
-                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}`,
+                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}.${delivery}`,
               },
               { type: 'image', mimeType: shot.mimeType, data: shot.data },
             ],
-            details: { fullPage: Boolean(record.fullPage) },
+            details: { fullPage: Boolean(record.fullPage), sent: delivery.includes('Enviada') },
           };
         }
 
