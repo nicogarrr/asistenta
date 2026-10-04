@@ -9,6 +9,7 @@ import {
   lessonDraft,
   lintSkill,
   recordLessons,
+  skillsIndex,
 } from '../src/skills/lessons.js';
 import { SkillStore } from '../src/skills/store.js';
 
@@ -91,5 +92,36 @@ describe('lintSkill', () => {
     const log = Array.from({ length: 8 }, (_, i) => `PR #${i + 1}`);
     expect(lintSkill({ steps: log, notes: [], whenToUse: 'x' }).join()).toMatch(/incidentes/);
     expect(lintSkill({ steps: ['a'], notes: [], whenToUse: ' ' }).join()).toMatch(/whenToUse/);
+  });
+});
+
+describe('skillsIndex', () => {
+  const sk = (id: string, whenToUse: string, updatedAt: number) => ({
+    id,
+    whenToUse,
+    description: 'desc',
+    updatedAt,
+  });
+
+  it('is empty without skills and lists newest first with one line each', () => {
+    expect(skillsIndex([])).toBe('');
+    const out = skillsIndex([sk('viejo', 'a', 1), sk('nuevo', 'b\nc', 2)]);
+    expect(out.startsWith('<skills>')).toBe(true);
+    expect(out.indexOf('nuevo')).toBeLessThan(out.indexOf('viejo'));
+    expect(out).toContain('- nuevo: b c');
+  });
+
+  it('caps the count and the line length, and says how many are left', () => {
+    const many = Array.from({ length: 25 }, (_, i) => sk(`s${i}`, 'x'.repeat(300), i));
+    const out = skillsIndex(many, 20);
+    expect(out.split('\n').filter((l) => l.startsWith('- '))).toHaveLength(20);
+    expect(out).toContain('(+5 más: skills list)');
+    for (const l of out.split('\n').filter((l) => l.startsWith('- '))) {
+      expect(l.length).toBeLessThan(130);
+    }
+  });
+
+  it('falls back to the description when whenToUse is empty', () => {
+    expect(skillsIndex([sk('a', '', 1)])).toContain('- a: desc');
   });
 });
