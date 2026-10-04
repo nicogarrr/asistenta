@@ -54,7 +54,7 @@ import {
 import { ocrAvailable } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { WindowsScreen } from './screen/windows.js';
-import { recordLessons } from './skills/lessons.js';
+import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
 import { createBrowserTool } from './tools/browser.js';
@@ -2265,7 +2265,9 @@ async function serveCommand(): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(buildContextNote(thread, store, memory, snapshot, workstreams));
+      thread.agent.attachContext(
+        buildContextNote(thread, store, memory, snapshot, workstreams, skills),
+      );
 
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
@@ -2972,6 +2974,7 @@ export function buildContextNote(
   memory: MemoryStore,
   snapshot?: MemorySnapshot,
   workstreams?: WorkstreamStore,
+  skills?: SkillStore,
 ): string {
   const parts: string[] = [];
 
@@ -3000,6 +3003,17 @@ export function buildContextNote(
   if (openWork.length) {
     const ws = workstreams?.index(thread.key) ?? '';
     if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
+  }
+  // What the agent already knows how to do (including its own lessons), as a
+  // one-line-each index; the steps load on demand with `skills read`.
+  if (skills) {
+    let index = '';
+    try {
+      index = skillsIndex(skills.list());
+    } catch (err) {
+      log.warn('skills index failed', { err: String(err) });
+    }
+    if (index) parts.push(index);
   }
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
