@@ -114,3 +114,24 @@ describe('mensajes de login, captcha y errores HTTP', () => {
     expect(!denied.ok && denied.reason).toMatch(/exige iniciar sesión/);
   });
 });
+
+describe('createDownloadTool onResult', () => {
+  it('reports only the host, never the full URL', async () => {
+    const { createDownloadTool } = await import('../src/tools/download.js');
+    const seen: { ok: boolean; host: string; reason?: string }[] = [];
+    const tool = createDownloadTool({
+      sendVideo: async () => true,
+      sendDocument: async () => true,
+      onResult: (r) => seen.push(r),
+    });
+    await tool.execute(
+      't',
+      { url: 'http://localhost/secret?token=abc' },
+      undefined as never,
+      undefined as never,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ ok: false, host: 'localhost' });
+    expect(JSON.stringify(seen)).not.toContain('token=abc');
+  });
+});

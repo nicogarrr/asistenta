@@ -26,14 +26,21 @@ export function buildWeeklySummary(i: WeeklyInput): string {
   });
   const turns = week.filter((e) => e.action === 'turn');
   const failed = turns.filter((e) => e.result === 'error').length;
+  const downloads = week.filter((e) => e.action === 'descarga');
+  const downloadsFailed = downloads.filter((e) => e.result === 'error').length;
   const changes = week.filter((e) => e.action === 'vigila_cambio').length;
   const lines = ['Resumen de la semana:'];
-  if (turns.length === 0 && changes === 0) {
+  if (turns.length === 0 && changes === 0 && downloads.length === 0) {
     lines.push('- No hemos hablado ni he detectado cambios esta semana.');
   } else {
     lines.push(
       `- Peticiones atendidas: ${turns.length}${failed ? ` (${failed} fallaron)` : ', todas sin error'}.`,
     );
+    if (downloads.length) {
+      lines.push(
+        `- Descargas: ${downloads.length - downloadsFailed} enviadas${downloadsFailed ? `, ${downloadsFailed} fallaron` : ''}.`,
+      );
+    }
     if (changes) lines.push(`- Cambios detectados en páginas vigiladas: ${changes}.`);
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);

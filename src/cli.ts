@@ -847,6 +847,14 @@ async function serveCommand(): Promise<number> {
       // "Descarga este vídeo / pásame este PDF" with a link: yt-dlp for video sites, a
       // direct fetch for PDFs, sent back to the chat as MP4 or document.
       createDownloadTool({
+        onResult: (r) =>
+          actions.record({
+            actor: 'asistenta',
+            action: 'descarga',
+            target: r.host,
+            result: r.ok ? 'ok' : 'error',
+            detail: r.ok ? r.kind : r.reason,
+          }),
         sendVideo: (bytes, seconds, label) =>
           telegram
             .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
