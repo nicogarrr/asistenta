@@ -101,7 +101,12 @@ export function headCommit(root: string): string {
  */
 export function commitAll(dir: string, message: string): void {
   // node_modules is the shared link from createSandbox, never part of the attempt.
-  git(dir, ['add', '-A', '--', '.', ':(exclude)node_modules']);
+  git(dir, ['add', '-A']);
+  try {
+    git(dir, ['reset', '-q', '--', 'node_modules']);
+  } catch {
+    // nothing of node_modules was staged
+  }
   if (git(dir, ['diff', '--cached', '--name-only']).trim() === '') return;
   git(dir, [
     '-c',
