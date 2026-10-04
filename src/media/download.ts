@@ -355,10 +355,10 @@ const LOGIN_BODY =
 export function explainNonPdfBody(head: string): string {
   const base = 'ese enlace no devuelve un PDF';
   if (CAPTCHA_BODY.test(head)) {
-    return `${base}: la página es un captcha o una comprobación anti-bot; ábrelo tú en el navegador, descárgalo y mándamelo`;
+    return `${base}: parece un captcha o una comprobación anti-bot; ábrelo tú en el navegador, descárgalo y mándamelo`;
   }
   if (LOGIN_BODY.test(head)) {
-    return `${base}: es una página de inicio de sesión; descárgalo tú con tu cuenta y mándamelo`;
+    return `${base}: parece una página de inicio de sesión; descárgalo tú con tu cuenta y mándamelo`;
   }
   return `${base} (es una página web, no un fichero)`;
 }
