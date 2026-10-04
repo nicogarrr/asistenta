@@ -13,6 +13,7 @@ import {
   type MediaState,
   mediaStateInPage,
 } from './ads.js';
+import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 
 /**
  * Real browser control, one persistent profile per chat.
@@ -821,6 +822,17 @@ export class BrowserService {
    * pending operation behind, which is exactly why the serialiser matters: one leaked
    * call must not end up queued in front of every later one.
    */
+  /** Type into an autocomplete field, pick a suggestion by text and verify the value. */
+  async autocomplete(
+    scope: string,
+    selector: string,
+    text: string,
+    option?: string,
+  ): Promise<ChooseResult> {
+    const session = await this.#session(scope);
+    return chooseSuggestion(session.page, selector, text, option);
+  }
+
   async execJs(scope: string, code: string, opts?: { visible?: boolean }): Promise<ExecJsResult> {
     const session = await this.#session(scope, { visible: opts?.visible });
     const script = new vm.Script(`(async () => {\n${code}\n})()`);

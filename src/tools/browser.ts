@@ -80,6 +80,7 @@ const BrowserParams = Type.Object({
     Type.Literal('snapshot'),
     Type.Literal('click'),
     Type.Literal('fill'),
+    Type.Literal('choose'),
     Type.Literal('press'),
     Type.Literal('screenshot'),
     Type.Literal('exec_js'),
@@ -103,7 +104,13 @@ const BrowserParams = Type.Object({
         'selector over coordinates; there are no coordinates here on purpose.',
     }),
   ),
-  text: Type.Optional(Type.String({ description: 'For fill.' })),
+  text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
+  option: Type.Optional(
+    Type.String({
+      description:
+        'For choose: the suggestion to pick, if not just the typed text (e.g. "Madrid Chamartín"). Needed when several suggestions match.',
+    }),
+  ),
   key: Type.Optional(Type.String({ description: 'For press, e.g. "Enter".' })),
   code: Type.Optional(
     Type.String({
@@ -236,6 +243,9 @@ export function createBrowserTool(
       '1. action=open with the url.',
       '2. action=snapshot to list the interactive elements and their selectors.',
       '3. action=click / fill / press with a selector from that snapshot.',
+      '   For autocomplete / combobox fields (stations, cities, addresses) use',
+      '   action=choose with selector + text (+ option to pick one of several): it types,',
+      '   reads the suggestions, picks one by text and reads the field back.',
       '4. action=screenshot only when you need to see something a selector cannot',
       '   express (canvas, a video, a rendered image, an unexpected layout).',
       '',
@@ -332,6 +342,20 @@ return 'clicked ' + ${JSON.stringify(selector)};`,
           if (!value) throw new Error('la acción fill necesita text');
           const text = await service.execJs(scope, buildFillScript(selector, value));
           return { content: [{ type: 'text', text: text.text }], details: { selector } };
+        }
+
+        // Autocomplete / combobox fields (stations, cities, addresses): types, reads the
+        // suggestions, picks one by text and reads the field back. Works on any page.
+        case 'choose': {
+          const selector = requireSelector(record);
+          const value = String(record.text ?? '');
+          if (!value) throw new Error('la acción choose necesita text');
+          const option = record.option === undefined ? undefined : String(record.option);
+          const r = await service.autocomplete(scope, selector, value, option);
+          return {
+            content: [{ type: 'text', text: r.message }],
+            details: { selector, ok: r.ok, value: r.value, suggestions: r.suggestions },
+          };
         }
 
         case 'press': {
