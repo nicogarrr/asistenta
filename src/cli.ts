@@ -83,6 +83,7 @@ import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
+import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
 
@@ -578,6 +579,7 @@ async function serveCommand(): Promise<number> {
   const workstreams = new WorkstreamStore({ db: memoryDb });
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
+  const weeklyState = new WeeklyState(memoryDb);
   // One sweep at boot: patterns the user stopped showing lose their weight and
   // the ones that hit zero go, so old accidents cannot steer the daemon forever.
   instincts.decay(90);
@@ -1566,6 +1568,14 @@ async function serveCommand(): Promise<number> {
     if (!w?.active) return;
     const outcome = await pageWatches.check(w, fetchPageText);
     const msg = describeChange(w, outcome);
+    if (outcome.kind === 'changed') {
+      actions.record({
+        actor: 'asistenta',
+        action: 'vigila_cambio',
+        target: w.label || w.url,
+        result: 'ok',
+      });
+    }
     if (msg) {
       await telegram
         .send({ channel: 'telegram', account: telegram.account, chatId: w.scope, text: msg })
@@ -1573,10 +1583,32 @@ async function serveCommand(): Promise<number> {
     }
   };
 
+  const weeklyText = (chatId: string): string =>
+    buildWeeklySummary({
+      entries: actions.recent(5000),
+      now: Date.now(),
+      pending: followups.safe(() => followups.summarize(), ''),
+      watching: pageWatches.list(chatId).length,
+    });
+
+  /** Domingo por la tarde, una vez por semana y chat. Solo datos propios de Asistenta. */
+  const sendWeeklyIfDue = async (chatId: string): Promise<void> => {
+    if (!isWeeklyDue(new Date(), weeklyState.lastSent(chatId))) return;
+    weeklyState.markSent(chatId, Date.now());
+    await telegram
+      .send({ channel: 'telegram', account: telegram.account, chatId, text: weeklyText(chatId) })
+      .catch((err: unknown) => log.warn('weekly summary failed', { err }));
+  };
+
+  const cmdResumen = async (inbound: Inbound): Promise<void> => {
+    await say(inbound, weeklyText(inbound.chatId), { quote: true });
+  };
+
   const PAGE_WATCH_EVERY_MS = 2 * 60 * 60 * 1000;
   const pageWatchTimer = setInterval(
     () => {
       for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
+      for (const userId of allowed) void sendWeeklyIfDue(String(userId));
     },
     10 * 60 * 1000,
   );
@@ -2016,6 +2048,7 @@ async function serveCommand(): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
         '/resolver <id> - marca un pendiente como resuelto',
+        '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
         '/estado - cómo estoy: herramientas, errores de hoy',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
@@ -2480,6 +2513,8 @@ async function serveCommand(): Promise<number> {
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
+          case 'resumen':
+            return cmdResumen(inbound);
           case 'estado':
             return cmdEstado(inbound);
           case 'vigila':
