@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { log } from '../log.js';
-import { isFetchable } from '../tools/fetch.js';
+import { isFetchable, isFetchableResolved } from '../tools/fetch.js';
 import { COOKIE_BROWSERS } from './cookie-browsers.js';
 
 /**
@@ -36,9 +36,9 @@ export interface DownloadOptions {
   curlImpersonatePath?: string;
 }
 
-// TODO(seguridad): isFetchable es un filtro léxico y yt-dlp sigue sus propias redirecciones
-// sin revalidar; un host público que resuelva a una IP interna pasaría. Mismo nivel que la
-// tool fetch. Endurecer resolviendo DNS y validando la IP.
+// parsePublicUrl es solo léxico; antes de descargar, cada URL pasa además por
+// isFetchableResolved (DNS: todas las IP deben ser públicas). Límite conocido: yt-dlp sigue
+// sus propias redirecciones sin revalidar y el cliente vuelve a resolver al conectar.
 export function parsePublicUrl(raw: string): URL | null {
   let url: URL;
   try {
@@ -202,7 +202,9 @@ export async function downloadVideo(
   opts: { cookiesFromBrowser?: string } = {},
 ): Promise<DownloadResult> {
   const url = parsePublicUrl(rawUrl);
-  if (!url) return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
+  if (!url || !(await isFetchableResolved(url.toString()))) {
+    return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
+  }
   const cookies = (COOKIE_BROWSERS as readonly string[]).includes(opts.cookiesFromBrowser ?? '')
     ? (opts.cookiesFromBrowser as string)
     : '';
@@ -333,7 +335,9 @@ const BLOCK_STATUSES = new Set([403, 429, 503]);
 /** One full attempt (redirects, size cap, %PDF- check) through the given fetch. */
 async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<DownloadResult> {
   let url = parsePublicUrl(rawUrl);
-  if (!url) return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
+  if (!url || !(await isFetchableResolved(url.toString()))) {
+    return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
+  }
   const signal = AbortSignal.timeout(PDF_TIMEOUT_MS);
   try {
     let res: Response | null = null;
@@ -350,7 +354,8 @@ async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<Down
         const loc = res.headers.get('location');
         if (!loc) return { ok: false, reason: 'el sitio redirige sin dar destino' };
         const next = parsePublicUrl(new URL(loc, url).toString());
-        if (!next) return { ok: false, reason: 'el enlace redirige a una dirección no permitida' };
+        if (!next || !(await isFetchableResolved(next.toString())))
+          return { ok: false, reason: 'el enlace redirige a una dirección no permitida' };
         url = next;
         res = null;
         continue;

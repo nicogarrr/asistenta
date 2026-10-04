@@ -1,3 +1,5 @@
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
@@ -130,6 +132,76 @@ export function isFetchable(url: string): boolean {
   );
 }
 
+/** Non-public ranges, checked on the *resolved* address (the lexical gate misses DNS names). */
+const PRIVATE_RANGES = new BlockList();
+for (const [net, bits] of [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+] as const) {
+  PRIVATE_RANGES.addSubnet(net, bits, 'ipv4');
+}
+for (const [net, bits] of [
+  ['::', 128],
+  ['::1', 128],
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['ff00::', 8],
+] as const) {
+  PRIVATE_RANGES.addSubnet(net, bits, 'ipv6');
+}
+
+/** True when the literal IP is public. IPv4-mapped IPv6 (::ffff:a.b.c.d) is judged as IPv4. */
+export function isPublicIp(ip: string): boolean {
+  const family = isIP(ip);
+  if (family === 0) return false;
+  if (family === 6) {
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+    if (mapped?.[1]) return isPublicIp(mapped[1]);
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip);
+    if (hex) {
+      const hi = Number.parseInt(hex[1] as string, 16);
+      const lo = Number.parseInt(hex[2] as string, 16);
+      return isPublicIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
+  }
+  return !PRIVATE_RANGES.check(ip, family === 6 ? 'ipv6' : 'ipv4');
+}
+
+export type HostResolver = (host: string) => Promise<string[]>;
+
+const defaultResolver: HostResolver = async (host) =>
+  (await dnsLookup(host, { all: true })).map((a) => a.address);
+
+/**
+ * Lexical gate plus DNS: every address the name resolves to must be public. Fails
+ * closed (a name that does not resolve is refused). Residual risk, stated honestly:
+ * the HTTP client resolves again at connect time, so a DNS-rebinding server can still
+ * answer differently the second time; and yt-dlp follows its own redirects.
+ */
+export async function isFetchableResolved(
+  url: string,
+  resolve: HostResolver = defaultResolver,
+): Promise<boolean> {
+  if (!isFetchable(url)) return false;
+  const host = new URL(url).hostname.replace(/^\[(.*)\]$/, '$1');
+  if (isIP(host)) return isPublicIp(host);
+  try {
+    const addrs = await resolve(host);
+    return addrs.length > 0 && addrs.every(isPublicIp);
+  } catch {
+    return false;
+  }
+}
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
 
@@ -143,7 +215,7 @@ export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof Fetc
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const url = args.url.trim();
-      if (!isFetchable(url)) {
+      if (!(await isFetchableResolved(url))) {
         throw new Error(
           `refusing to fetch ${url}: only public http(s) URLs are allowed, not local or private addresses`,
         );
@@ -160,7 +232,7 @@ export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof Fetc
         let current = url;
         let res: Response | null = null;
         for (let hop = 0; hop < 6; hop++) {
-          if (!isFetchable(current)) {
+          if (!(await isFetchableResolved(current))) {
             throw new Error(`refusing to fetch ${current}: not a public http(s) URL`);
           }
           const hopRes = await fetch(current, {
