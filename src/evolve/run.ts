@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Archive, isoWeek } from './archive.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
+import { cleanEnv } from './measure.js';
 
 /**
  * What the app calls: the weekly trigger, the /evolucion command and the proposer.
@@ -51,6 +52,22 @@ export function readHypotheses(stateDir: string): string[] {
  * files there. It is not the candidate: it may use the model credentials, the candidate
  * code never does (see measure.ts).
  */
+/**
+ * What the proposer inherits: the minimum to run, plus ONLY the variables the operator names
+ * in PA_EVOLVE_PROPOSER_PASS (comma-separated, e.g. the model key it needs). Not the whole
+ * environment, and not the user's home, so the proposer cannot read the vault or other keys
+ * by accident. The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
+ * untrusted input to the proposer; the guard checks what it writes, not what it was told.
+ */
+export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out = cleanEnv(env);
+  for (const name of (env.PA_EVOLVE_PROPOSER_PASS ?? '').split(',')) {
+    const k = name.trim();
+    if (k && env[k] !== undefined) out[k] = env[k];
+  }
+  return out;
+}
+
 export function proposerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): EvolveOptions['propose'] | null {
@@ -63,7 +80,7 @@ export function proposerFromEnv(
       windowsHide: true,
       shell: false,
       env: {
-        ...env,
+        ...proposerEnv(env),
         PA_EVOLVE_DIR: dir,
         PA_EVOLVE_HYPOTHESIS: hypothesis,
         PA_EVOLVE_ATTEMPT: String(attempt),

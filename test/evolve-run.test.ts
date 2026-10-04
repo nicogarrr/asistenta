@@ -122,7 +122,7 @@ describe('evolve: plumbing', () => {
       HOME: '/h',
     });
     expect(env.PATH).toBe('/bin');
-    expect(env.HOME).toBe('/h');
+    expect(env.HOME).toBeUndefined();
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.TELEGRAM_BOT_TOKEN).toBeUndefined();
     expect(env.PA_VAULT_KEY).toBeUndefined();

@@ -28,6 +28,9 @@ export interface Measurement {
   checksFailed: number;
   /** Wall-clock of the run. Used only to detect a machine that was too busy to measure. */
   durationMs: number;
+  /** Keys of the tests that passed / failed, when the runner reported them per test. */
+  passingTests?: string[];
+  failingTests?: string[];
   /** Set when the run could not produce a number at all. */
   error?: string;
 }
@@ -95,6 +98,20 @@ export function judge(
   const delta = after - base;
   const pct = base === 0 ? (after > 0 ? 100 : 0) : (delta / Math.abs(base)) * 100;
 
+  // Regression PER TEST, not by count: a change that fixes two tests and breaks one lowers
+  // the failure count and would otherwise pass. A test that passed before and does not pass
+  // now (failed, or vanished) is a regression whatever the totals say.
+  if (kernel.passingTests && candidate.passingTests) {
+    const now = new Set(candidate.passingTests);
+    const lost = kernel.passingTests.filter((t) => !now.has(t));
+    if (lost.length) {
+      return {
+        kind: 'discard',
+        delta,
+        reason: `regresión por test: ${lost.length} test(s) que pasaban ya no pasan (${lost.slice(0, 3).join('; ')}). No entra al kernel.`,
+      };
+    }
+  }
   if (candidate.failed > kernel.failed || candidate.checksFailed > kernel.checksFailed) {
     return {
       kind: 'discard',
@@ -136,6 +153,7 @@ export function judge(
  */
 export const FORBIDDEN = [
   'src/permissions.ts',
+  'src/cli.ts',
   'src/tools/checkout.ts',
   'src/tools/fetch.ts',
   'src/books/net.ts',

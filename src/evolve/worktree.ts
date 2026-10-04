@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -48,12 +48,17 @@ export function createSandbox(root: string, base: string, id: number, dir: strin
     throw new Error(`la rama ${branch} ya existe: no se reutiliza un intento anterior`);
   }
   git(root, ['worktree', 'add', '-b', branch, dir, base]);
-  // The sandbox has the sources but not the installed packages. The candidate cannot change
-  // package.json (forbidden), so sharing the kernel's node_modules is the same dependency set,
-  // and it is what lets vitest and tsx run at all in a fresh checkout.
+  // The sandbox has the sources but not the installed packages. It gets its OWN copy of the
+  // kernel's node_modules: a link would let a candidate write into the kernel's real
+  // dependencies, and commitAll leaves node_modules out of the diff on purpose, so the guard
+  // would never see it. A copy costs disk and time once a week and removes that hole.
   const modules = join(root, 'node_modules');
   if (existsSync(modules) && !existsSync(join(dir, 'node_modules'))) {
-    symlinkSync(modules, join(dir, 'node_modules'), 'junction');
+    cpSync(modules, join(dir, 'node_modules'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      errorOnExist: false,
+    });
   }
   return { dir, branch, kept: false };
 }
@@ -128,4 +133,16 @@ export function diffText(root: string, base: string, branch: string): string {
     windowsHide: true,
     maxBuffer: 32 * 1024 * 1024,
   });
+}
+
+/**
+ * Files in the sandbox that git ignores (other than node_modules). `git add -A` skips them, so
+ * they would be measured but never checked: a candidate could hide a file there.
+ */
+export function ignoredFiles(dir: string): string[] {
+  const out = git(dir, ['ls-files', '--others', '--ignored', '--exclude-standard']);
+  return out
+    .split('\n')
+    .map((f) => f.trim())
+    .filter((f) => f && !f.startsWith('node_modules/'));
 }

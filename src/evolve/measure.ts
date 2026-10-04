@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Measurement } from './score.js';
 
@@ -30,18 +33,55 @@ const SAFE_ENV = [
   'TEMP',
   'TMP',
   'TMPDIR',
-  'HOME',
-  'USERPROFILE',
-  'APPDATA',
-  'LOCALAPPDATA',
   'DISPLAY',
   'LANG',
   'CI',
 ];
-export function cleanEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+/**
+ * The user's home is NOT passed through: the vault file and the profile live under it. The
+ * candidate gets an empty throwaway home, so reading the user's real files from disk finds
+ * nothing.
+ */
+export function cleanEnv(env: NodeJS.ProcessEnv = process.env, home?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { CI: '1', NODE_ENV: 'test' };
   for (const k of SAFE_ENV) if (env[k] !== undefined) out[k] = env[k];
+  if (home) {
+    out.HOME = home;
+    out.USERPROFILE = home;
+    out.APPDATA = join(home, 'AppData', 'Roaming');
+    out.LOCALAPPDATA = join(home, 'AppData', 'Local');
+    out.XDG_CONFIG_HOME = join(home, '.config');
+    out.XDG_CACHE_HOME = join(home, '.cache');
+  }
   return out;
+}
+
+/** Per-test outcome from vitest's JSON report: keys of tests that passed and that failed. */
+export function parseJsonReport(text: string): {
+  passing: string[];
+  failing: string[];
+} | null {
+  try {
+    const j = JSON.parse(text) as {
+      testResults?: Array<{
+        name: string;
+        assertionResults?: Array<{ fullName?: string; title?: string; status: string }>;
+      }>;
+    };
+    const passing: string[] = [];
+    const failing: string[] = [];
+    for (const f of j.testResults ?? []) {
+      const file = f.name.replace(/\\/g, '/').replace(/^.*\/test\//, 'test/');
+      for (const a of f.assertionResults ?? []) {
+        const key = `${file}::${a.fullName ?? a.title ?? '?'}`;
+        if (a.status === 'passed') passing.push(key);
+        else if (a.status === 'failed') failing.push(key);
+      }
+    }
+    return { passing, failing };
+  } catch {
+    return null;
+  }
 }
 
 export interface MeasureOptions {
@@ -79,21 +119,34 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   let checks = 0;
   let checksFailed = 0;
 
+  const home = mkdtempSync(join(tmpdir(), 'evolve-home-'));
+  const reportFile = join(home, 'vitest-report.json');
+  let names: { passing: string[]; failing: string[] } | null = null;
   try {
-    const suite = await exec('npx', ['vitest', '--run', '--reporter=basic'], {
-      cwd,
-      timeout: timeoutMs,
-      windowsHide: true,
-      env: cleanEnv(),
-      maxBuffer: 32 * 1024 * 1024,
-    }).catch((err: { stdout?: string; stderr?: string }) => ({
+    const suite = await exec(
+      'npx',
+      ['vitest', '--run', '--reporter=basic', '--reporter=json', `--outputFile.json=${reportFile}`],
+      {
+        cwd,
+        timeout: timeoutMs,
+        windowsHide: true,
+        env: cleanEnv(process.env, home),
+        maxBuffer: 32 * 1024 * 1024,
+      },
+    ).catch((err: { stdout?: string; stderr?: string }) => ({
       stdout: err.stdout ?? '',
       stderr: err.stderr ?? '',
     }));
+    try {
+      names = parseJsonReport(readFileSync(reportFile, 'utf8'));
+    } catch {
+      names = null;
+    }
     const parsed = parseSuite(`${suite.stdout}\n${suite.stderr}`);
     passed = parsed.passed;
     failed = parsed.failed;
   } catch (err) {
+    rmSync(home, { recursive: true, force: true });
     return {
       passed: 0,
       failed: 0,
@@ -110,7 +163,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     cwd,
     timeout: timeoutMs,
     windowsHide: true,
-    env: cleanEnv(),
+    env: cleanEnv(process.env, home),
     maxBuffer: 8 * 1024 * 1024,
   }).catch((err: { stdout?: string; stderr?: string }) => ({
     stdout: err.stdout ?? '',
@@ -120,5 +173,13 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   checks = parsedChecks.passed;
   checksFailed = parsedChecks.failed;
 
-  return { passed, failed, checks, checksFailed, durationMs: Date.now() - started };
+  rmSync(home, { recursive: true, force: true });
+  return {
+    passed,
+    failed,
+    checks,
+    checksFailed,
+    durationMs: Date.now() - started,
+    ...(names ? { passingTests: names.passing, failingTests: names.failing } : {}),
+  };
 }

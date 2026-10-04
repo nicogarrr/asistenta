@@ -11,6 +11,7 @@ import {
   diffText,
   dropSandbox,
   headCommit,
+  ignoredFiles,
   isClean,
   repoRoot,
   type Sandbox,
@@ -131,6 +132,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         const forbidden = [
           ...touchesForbidden(touched),
           ...checkPatch(patch).map((v) => `${v.file} (${v.rule})`),
+          ...ignoredFiles(sandbox.dir).map((f) => `${f} (fichero ignorado por git)`),
         ];
         if (!touched.length) {
           const reason = 'el intento no cambió nada';

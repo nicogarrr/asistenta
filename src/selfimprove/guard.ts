@@ -46,6 +46,10 @@ const RELAX_PATTERNS: [RegExp, string][] = [
     /^\+.*(process\.env\.)?PA_(YOLO|NO_GATE|SKIP_)\w*/i,
     'anade un interruptor para saltarse el gate',
   ],
+  [
+    /^[+-].*\b(THREAD_ALLOW_TOOLS|BROWSER_FREE_ACTIONS|allowPayments|fullControl)\b/,
+    'toca las listas de herramientas libres o el modo de control total',
+  ],
   [/^-.*\b(requireApproval|offerApproval)\b/, 'elimina una peticion de aprobacion'],
 ];
 
