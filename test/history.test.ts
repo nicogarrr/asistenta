@@ -163,5 +163,7 @@ describe('injection hardening', () => {
     );
     expect(seen).toContain('PRIMERO');
     expect(seen).not.toContain(SUMMARY_WARNING);
+    // The previous summary sits inside a fenced block, like the transcript.
+    expect(seen.indexOf('\n<<<DATOS\n')).toBeLessThan(seen.indexOf('PRIMERO'));
   });
 });
