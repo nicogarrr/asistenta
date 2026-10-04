@@ -143,7 +143,12 @@ export function skillsIndex(
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, max)
     .map((s) => {
-      const hint = (s.whenToUse || s.description).replace(/\s+/g, ' ').trim();
+      // Plain one-line text: no <tags> or backticks, so a skill cannot close the <skills> block
+      // or pose as markup in the context note.
+      const hint = (s.whenToUse || s.description)
+        .replace(/[<>`]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       const clipped =
         hint.length > SKILLS_INDEX_LINE_CHARS
           ? `${hint.slice(0, SKILLS_INDEX_LINE_CHARS - 1)}…`
