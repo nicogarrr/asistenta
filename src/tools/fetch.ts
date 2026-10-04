@@ -126,9 +126,10 @@ export function isFetchable(url: string): boolean {
     /^169\.254\./.test(numeric) ||
     /^100\.(6[4-9]|[7-9]\d|1\d\d|2[0-5]\d)\./.test(numeric) ||
     numeric.startsWith('::ffff:127.') ||
-    numeric.startsWith('fc') ||
-    numeric.startsWith('fd') ||
-    numeric.startsWith('fe80:')
+    // IPv6 unique-local / link-local only for real IPv6 literals: a hostname such as
+    // fcbarcelona.com or fdic.gov is not an address. (Names are judged by DNS instead.)
+    (numeric.includes(':') &&
+      (numeric.startsWith('fc') || numeric.startsWith('fd') || numeric.startsWith('fe80:')))
   );
 }
 
