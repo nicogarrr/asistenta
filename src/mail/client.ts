@@ -244,6 +244,7 @@ export async function sendMail(account: MailAccount, req: SendRequest): Promise<
       to: req.to.join(', '),
       subject: req.subject,
       text: req.text,
+      ...(req.attachments?.length ? { attachments: req.attachments } : {}),
       ...(req.inReplyTo ? { inReplyTo: req.inReplyTo, references: req.inReplyTo } : {}),
     });
     log.info('mail sent', { to: req.to.length, subject: req.subject.length });
