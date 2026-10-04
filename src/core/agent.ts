@@ -101,6 +101,7 @@ export function describeToolStart(tool: string, args: unknown): string {
     }
     return 'leyendo una pagina web';
   }
+  if (tool === 'opengym') return 'consultando openGym';
   if (tool === 'read') return 'leyendo un fichero';
   if (tool === 'write') return 'guardando un fichero';
   if (tool === 'list') return 'mirando los ficheros';
