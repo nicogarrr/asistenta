@@ -68,6 +68,18 @@ export function assertNotRunning(stateDir: string, name: string): void {
     } catch {}
     return;
   }
+  // In a container the daemon is always PID 1, so the pid file left in the volume by
+  // the previous container names THIS process. It cannot be a second instance (we have
+  // not written our own file yet), so it is a leftover: reclaim it.
+  if (pid === process.pid) {
+    log.warn('pid file names this very process (container restart); reclaiming it', { pid });
+    for (const f of [stalePath(stateDir, name), pidFile]) {
+      try {
+        unlinkSync(f);
+      } catch {}
+    }
+    return;
+  }
   if (processAlive(pid)) {
     throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
   }
