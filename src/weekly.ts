@@ -16,6 +16,8 @@ export interface WeeklyInput {
   /** Texto de /pendientes ya resumido, o '' si no hay. */
   pending: string;
   watching: number;
+  /** Bloque extra ya redactado (p. ej. el resumen de gimnasio). */
+  extra?: string;
 }
 
 export function buildWeeklySummary(i: WeeklyInput): string {
@@ -44,6 +46,7 @@ export function buildWeeklySummary(i: WeeklyInput): string {
     if (changes) lines.push(`- Cambios detectados en páginas vigiladas: ${changes}.`);
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);
+  if (i.extra?.trim()) lines.push('', i.extra.trim());
   if (i.pending.trim()) lines.push('', i.pending.trim());
   return lines.join('\n');
 }

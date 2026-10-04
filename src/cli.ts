@@ -36,6 +36,8 @@ import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
+import { OpenGymError } from './opengym/client.js';
+import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate } from './permissions.js';
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
@@ -64,6 +66,7 @@ import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
+import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import { createRenfeTool } from './tools/renfe.js';
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
@@ -96,6 +99,8 @@ Usage:
   pa vault get <k>        print one secret
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
+  pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
+  pa opengym status       check the openGym connection
   pa doctor               check the environment
 `;
 
@@ -119,6 +124,8 @@ export async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'vault':
       return vaultCommand(rest);
+    case 'opengym':
+      return openGymCommand(rest);
     case 'doctor':
       return doctorCommand();
     case 'chat':
@@ -136,6 +143,44 @@ export async function main(argv: string[]): Promise<number> {
       process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
       return 2;
   }
+}
+
+async function openGymCommand(args: string[]): Promise<number> {
+  ensureDirs();
+  const [sub, a, b] = args;
+  try {
+    if (sub === 'pair') {
+      const code = b ?? a;
+      if (!code) {
+        process.stderr.write('uso: pa opengym pair [url] <código de 8 caracteres>\n');
+        return 2;
+      }
+      const host = await pairOpenGym(b ? a : undefined, code);
+      process.stdout.write(
+        `openGym emparejado (código canjeado en ${host}). El token está en el vault (opengym:token).\n`,
+      );
+      return 0;
+    }
+    if (sub === 'status') {
+      const client = await makeOpenGymClient();
+      if (!client) {
+        process.stdout.write(`${NOT_CONFIGURED}\n`);
+        return 1;
+      }
+      const { state, rev } = await client.getState();
+      process.stdout.write(
+        state
+          ? `conectado a openGym (revisión ${rev})\n`
+          : 'conectado, pero sin datos sincronizados\n',
+      );
+      return 0;
+    }
+  } catch (err) {
+    process.stderr.write(`${err instanceof OpenGymError ? err.message : String(err)}\n`);
+    return 1;
+  }
+  process.stderr.write('uso: pa opengym pair [url] <código> | pa opengym status\n');
+  return 2;
 }
 
 async function vaultCommand(args: string[]): Promise<number> {
@@ -596,6 +641,15 @@ async function serveCommand(): Promise<number> {
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
   const telegram = new TelegramChannel({ token, allowedUserIds: allowed });
+
+  /** Estado de openGym (solo lectura). Lanza OpenGymError con el motivo si no se puede. */
+  const gymDeps = {
+    load: async () => {
+      const client = await makeOpenGymClient();
+      if (!client) throw new OpenGymError('config', NOT_CONFIGURED);
+      return (await client.getState()).state;
+    },
+  };
   const registry = new ChannelRegistry();
   registry.register(telegram);
 
@@ -878,6 +932,7 @@ async function serveCommand(): Promise<number> {
       // Audio, camera and microphone in ordinary language. Everything here is also a
       // slash command; the tool exists for "suéltame ese audio" and "grábame con mi
       // voz", which are requests about an attachment rather than commands.
+      createOpenGymTool(gymDeps),
       createMediaTool({
         chatKey: thread.key,
         recall,
@@ -956,7 +1011,8 @@ async function serveCommand(): Promise<number> {
     // inside a tool call, which cannot happen until the gate exists, so reading
     // `gate` from inside it is safe and a holder indirection would only add noise.
     const gate = new Gate({
-      allow: ['read', 'list', 'fetch', 'done', 'memory'],
+      // 'opengym' es de solo lectura (no tiene ninguna acción que escriba).
+      allow: ['read', 'list', 'fetch', 'done', 'memory', 'opengym'],
       allowActions: ['computer:screenshot', 'computer:move'],
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
       // be switched on by a stray script or a leftover shell history entry.
@@ -1591,25 +1647,39 @@ async function serveCommand(): Promise<number> {
     }
   };
 
-  const weeklyText = (chatId: string): string =>
-    buildWeeklySummary({
+  const weeklyText = async (chatId: string): Promise<string> => {
+    // El bloque de gimnasio solo aparece si openGym está emparejado; si falla, lo dice.
+    const configured = await makeOpenGymClient().catch(() => null);
+    const extra = configured ? await gymAnswer(gymDeps, 'semana') : '';
+    return buildWeeklySummary({
+      extra,
       entries: actions.recent(5000),
       now: Date.now(),
       pending: followups.safe(() => followups.summarize(), ''),
       watching: pageWatches.list(chatId).length,
     });
+  };
 
   /** Domingo por la tarde, una vez por semana y chat. Solo datos propios de Asistenta. */
   const sendWeeklyIfDue = async (chatId: string): Promise<void> => {
     if (!isWeeklyDue(new Date(), weeklyState.lastSent(chatId))) return;
     weeklyState.markSent(chatId, Date.now());
     await telegram
-      .send({ channel: 'telegram', account: telegram.account, chatId, text: weeklyText(chatId) })
+      .send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId,
+        text: await weeklyText(chatId),
+      })
       .catch((err: unknown) => log.warn('weekly summary failed', { err }));
   };
 
+  const cmdGym = async (inbound: Inbound, what: GymKind): Promise<void> => {
+    await say(inbound, await gymAnswer(gymDeps, what), { quote: true });
+  };
+
   const cmdResumen = async (inbound: Inbound): Promise<void> => {
-    await say(inbound, weeklyText(inbound.chatId), { quote: true });
+    await say(inbound, await weeklyText(inbound.chatId), { quote: true });
   };
 
   const PAGE_WATCH_EVERY_MS = 2 * 60 * 60 * 1000;
@@ -2056,6 +2126,7 @@ async function serveCommand(): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
         '/resolver <id> - marca un pendiente como resuelto',
+        '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
         '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
         '/estado - cómo estoy: herramientas, errores de hoy',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
@@ -2521,6 +2592,12 @@ async function serveCommand(): Promise<number> {
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
+          case 'entreno_hoy':
+            return cmdGym(inbound, 'hoy');
+          case 'ultimo':
+            return cmdGym(inbound, 'ultimo');
+          case 'peso':
+            return cmdGym(inbound, 'peso');
           case 'resumen':
             return cmdResumen(inbound);
           case 'estado':
