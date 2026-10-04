@@ -35,7 +35,7 @@ export function isQaChatId(chatId: string | number): boolean {
  * encima de la lista blanca, no la defensa principal: ante la duda se deniega.
  */
 const MONEY =
-  /\b(pay\w*|paga\w*|pago\w*|purchas\w*|buy\w*|bought|checkout|subscri\w*|suscri\w*|compra\w*|tarjet\w*|card\w*|credit\w*|debit\w*|transfer\w*|bizum|paypal|factur\w*|invoice\w*|billing|iban|reserv\w*|book\w*|order\w*|pedid\w*|pedir|cobr\w*|charge\w*|euros?|eur|usd|gbp|dolar\w*|dollar\w*|libras?|glovo|uber|cabify|bolt|justeat|amazon|wallet|cripto\w*|crypto\w*|bitcoin|donat\w*|gift\w*)\b|[$\u00a3\u20ac]/;
+  /\b(pay\w*|paga\w*|pago\w*|purchas\w*|buy\w*|bought|checkout|subscri\w*|suscri\w*|compra\w*|tarjet\w*|card\w*|credit\w*|debit\w*|transfer\w*|bizum|paypal|factur\w*|invoice\w*|billing|iban|reserv\w*|book\w*|order\w*|pedid\w*|pedir|cobr\w*|charge\w*|euros?|eur|usd|gbp|dolar\w*|dollar\w*|libras?|glovo|uber|cabify|bolt|justeat|amazon|wallet|cripto\w*|crypto\w*|bitcoin|cart\w*|carrito\w*|basket\w*|abono\w*|donat\w*|gift\w*)\b|[$\u00a3\u20ac]/;
 
 /**
  * Herramientas que QA aprueba solas (lista blanca). Cualquier otra se deniega: lo no
