@@ -101,7 +101,14 @@ export function judge(
   // Regression PER TEST, not by count: a change that fixes two tests and breaks one lowers
   // the failure count and would otherwise pass. A test that passed before and does not pass
   // now (failed, or vanished) is a regression whatever the totals say.
-  if (kernel.passingTests && candidate.passingTests) {
+  if (!kernel.passingTests || !candidate.passingTests) {
+    return {
+      kind: 'discard',
+      delta,
+      reason: 'falta el informe por test en la base o en el candidato: no comparable, se descarta',
+    };
+  }
+  {
     const now = new Set(candidate.passingTests);
     const lost = kernel.passingTests.filter((t) => !now.has(t));
     if (lost.length) {

@@ -26,6 +26,8 @@ const run = (over: Partial<Measurement> = {}): Measurement => ({
   checks: 10,
   checksFailed: 0,
   durationMs: 60_000,
+  passingTests: ['t::a'],
+  failingTests: [] as string[],
   ...over,
 });
 

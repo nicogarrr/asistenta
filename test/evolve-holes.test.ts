@@ -15,6 +15,8 @@ const m = (over: Partial<Measurement> = {}): Measurement => ({
   checks: 10,
   checksFailed: 0,
   durationMs: 1000,
+  passingTests: ['t::a'],
+  failingTests: [],
   ...over,
 });
 
@@ -65,8 +67,23 @@ describe('regresion por test, no por conteo', () => {
   });
 });
 
+describe('fail-closed sin informe por test', () => {
+  it('sin informe en el candidato: descarte aunque mejore', () => {
+    const cand = m({ passed: 500 });
+    cand.passingTests = undefined;
+    const v = judge(m(), cand);
+    expect(v.kind).toBe('discard');
+    expect(v.reason).toMatch(/informe por test/);
+  });
+  it('sin informe en la base: descarte', () => {
+    const kernel = m();
+    kernel.passingTests = undefined;
+    expect(judge(kernel, m({ passed: 500 })).kind).toBe('discard');
+  });
+});
+
 describe('aislamiento del entorno', () => {
-  it('measure usa un HOME temporal, no el del usuario', () => {
+  it('measure no hereda HOME ni claves: usa un HOME temporal (no impide abrir rutas absolutas)', () => {
     const env = cleanEnv({ PATH: '/bin', HOME: '/home/real', APPDATA: 'C:\\real' }, '/tmp/h');
     expect(env.HOME).toBe('/tmp/h');
     expect(env.USERPROFILE).toBe('/tmp/h');
