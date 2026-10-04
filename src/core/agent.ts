@@ -3,6 +3,7 @@ import { Agent } from '@earendil-works/pi-agent-core';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
+import { actionLabel, type RunStep } from '../skills/lessons.js';
 import { DONE_TOOL_NAME, extractDoneSummary } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
@@ -37,6 +38,8 @@ export interface AgentRunResult {
   attempts: number;
   inputTokens: number;
   outputTokens: number;
+  /** Structured trail of the run (no tool output text), for learning from failures. */
+  steps: RunStep[];
 }
 
 /**
@@ -259,6 +262,8 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
  * putting an unbounded blob in every later call. About 6k tokens.
  */
 export const MAX_TOOL_RESULT_CHARS = 24_000;
+
+const MAX_TRACKED_STEPS = 200;
 
 /**
  * Cap the text parts of a tool result at `max` chars in total, keeping the head and
@@ -497,6 +502,8 @@ export class PersonalAgent {
       toolErrors: 0,
       inputTokens: 0,
       outputTokens: 0,
+      steps: [],
+      startActions: new Map(),
       fingerprints: [],
       sameTool: '',
       sameToolCount: 0,
@@ -555,6 +562,7 @@ export class PersonalAgent {
       if (event.type === 'tool_execution_start') {
         shared.toolCalls++;
         activeTools++;
+        shared.startActions.set(event.toolCallId, actionLabel(event.args));
         hooks?.onToolCall?.({
           tool: event.toolName,
           summary: describeToolStart(event.toolName, event.args),
@@ -608,6 +616,12 @@ export class PersonalAgent {
       }
       if (event.type === 'tool_execution_end') {
         activeTools = Math.max(0, activeTools - 1);
+        const action = shared.startActions.get(event.toolCallId) ?? '';
+        shared.startActions.delete(event.toolCallId);
+        const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
+        if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
+          shared.steps.push({ tool: event.toolName, action, ok: !event.isError });
+        }
         if (event.isError) {
           // A gate refusal and a tool that ran and failed are different failures
           // with different fixes; counting them together hid that.
@@ -686,6 +700,7 @@ export class PersonalAgent {
       toolCalls: shared.toolCalls,
       blocked: shared.blocked,
       toolErrors: shared.toolErrors,
+      steps: shared.steps,
       stopReason,
       error,
       attempts: 1,
@@ -744,6 +759,9 @@ interface AttemptState {
   toolErrors: number;
   inputTokens: number;
   outputTokens: number;
+  steps: RunStep[];
+  /** toolCallId -> action label, set at start and consumed at end. */
+  startActions: Map<string, string>;
   fingerprints: string[];
   /** Last tool executed, and how many times in a row. */
   sameTool: string;

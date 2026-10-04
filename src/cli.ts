@@ -54,6 +54,7 @@ import {
 import { ocrAvailable } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { WindowsScreen } from './screen/windows.js';
+import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
 import { createBrowserTool } from './tools/browser.js';
@@ -2277,6 +2278,11 @@ async function serveCommand(): Promise<number> {
       });
 
       if (thread.generation !== generation) return;
+
+      // Learn from this run's problems: a tool failed and another way then worked.
+      // Built from the structured trail only, saved straight into `lecciones`.
+      const learned = recordLessons(skills, result.steps, new Date().toISOString().slice(0, 10));
+      if (learned.length) log.info('lessons saved', { thread: thread.name, ids: learned });
 
       log.info('task done', {
         thread: thread.name,
