@@ -136,6 +136,20 @@ describe('chooseSuggestion on real pages', () => {
     expect(r2.value).toBe('Madrid-Chamartín');
   });
 
+  it('does not report success when the field ends up with an unrelated value', async () => {
+    await page.setContent(`<input id="d" autocomplete="off">
+<ul id="l" style="position:absolute;top:40px;margin:0"></ul>
+<script>
+const d = document.getElementById('d'), l = document.getElementById('l');
+d.addEventListener('input', () => { l.innerHTML = '<li>Madrid-Atocha</li>'; });
+l.addEventListener('mousedown', () => { d.value = 'Barcelona'; l.innerHTML = ''; });
+</script>`);
+    const r = await chooseSuggestion(page, '#d', 'Madrid', 'Madrid-Atocha', quick);
+    expect(r.ok).toBe(false);
+    expect(r.value).toBe('Barcelona');
+    expect(r.message).toContain('esperaba "Madrid-Atocha"');
+  });
+
   it('reports no suggestions instead of claiming a choice', async () => {
     await page.setContent(ARIA);
     const r = await chooseSuggestion(page, '#a', 'Narnia', undefined, quick);
@@ -157,5 +171,11 @@ describe('chooseSuggestion on real pages', () => {
     await page.fill('#a', 'basura previa');
     const r = await chooseSuggestion(page, '#a', 'Vigo', undefined, quick);
     expect(r.value).toBe('Vigo Urzaiz');
+  });
+});
+
+describe('pickSuggestion weak matches', () => {
+  it('a lone substring hit is weak, not chosen', () => {
+    expect(pickSuggestion('ana', ['Santana', 'Madrid'])).toEqual({ kind: 'weak', index: 0 });
   });
 });

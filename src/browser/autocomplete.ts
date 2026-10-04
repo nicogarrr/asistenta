@@ -40,6 +40,7 @@ function tierOf(wanted: string, option: string): MatchTier | null {
 export type Pick =
   | { kind: 'one'; index: number; tier: MatchTier }
   | { kind: 'ambiguous'; indexes: number[]; tier: MatchTier }
+  | { kind: 'weak'; index: number }
   | { kind: 'none' };
 
 /**
@@ -49,6 +50,8 @@ export type Pick =
 export function pickSuggestion(wanted: string, options: readonly string[]): Pick {
   for (const tier of TIERS) {
     const hits = options.flatMap((o, i) => (tierOf(wanted, o) === tier ? [i] : []));
+    // A lone substring hit ("ana" inside "Santana") is too weak to click unasked.
+    if (hits.length === 1 && tier === 'includes') return { kind: 'weak', index: hits[0] as number };
     if (hits.length === 1) return { kind: 'one', index: hits[0] as number, tier };
     if (hits.length > 1) return { kind: 'ambiguous', indexes: hits, tier };
   }
@@ -121,12 +124,9 @@ async function collectSuggestions(page: Page, selector: string): Promise<Candida
             'li, a, div, span, p, [class*=suggest i], [class*=option i], [class*=autocomplete i], [class*=result i], [class*=item i]',
           ),
         ).filter((el) => {
-          // Generic tags only count inside a floating popup (absolute/fixed ancestor);
-          // named list items count anywhere under the input.
-          const named = el.matches(
-            'li, [class*=suggest i], [class*=option i], [class*=autocomplete i], [class*=result i], [class*=item i]',
-          );
-          if (!named) {
+          // Without ARIA, only elements inside a floating popup (absolute/fixed ancestor)
+          // count: a static menu, footer or result list is not a suggestion dropdown.
+          {
             let p: Element | null = el.parentElement;
             let floating = false;
             while (p && p !== document.body) {
@@ -207,6 +207,15 @@ export async function chooseSuggestion(
       message: `Ninguna sugerencia coincide con "${option ?? text}". Opciones: ${names.map((n) => `"${n}"`).join(', ')}.`,
     };
   }
+  if (pick.kind === 'weak') {
+    const only = names[pick.index] as string;
+    return {
+      ok: false,
+      value: value0,
+      suggestions: names,
+      message: `Solo "${only}" contiene "${option ?? text}" y es una coincidencia floja. No la elijo sin confirmar: repite la acción con option="${only}" si es la correcta.`,
+    };
+  }
   if (pick.kind === 'ambiguous') {
     const shown = pick.indexes.map((i) => names[i]);
     return {
@@ -219,10 +228,12 @@ export async function chooseSuggestion(
     };
   }
   const chosen = names[pick.index] as string;
+  let usedKeyboard = false;
   try {
     await page.locator(`[${MARK}="${pick.index}"]`).first().click({ timeout: 4_000 });
   } catch {
     // A list that closes on blur or sits under an overlay: keyboard is the fallback.
+    usedKeyboard = true;
     for (let i = 0; i <= pick.index; i++) await input.press('ArrowDown');
     await input.press('Enter');
   }
@@ -237,16 +248,15 @@ export async function chooseSuggestion(
     };
   }
   // The field should now reflect the chosen suggestion, not only what was typed.
-  const reflects =
-    normalizeText(value).includes(normalizeText(chosen)) ||
-    normalizeText(chosen).includes(normalizeText(value)) ||
-    normalizeText(value) !== normalizeText(text);
+  const nv = normalizeText(value);
+  const nc = normalizeText(chosen);
+  const reflects = nv.includes(nc) || nc.includes(nv);
   if (!reflects) {
     return {
       ok: false,
       value,
       suggestions: names,
-      message: `ATENCIÓN: elegí "${chosen}" pero el campo sigue con "${value}" (lo que escribí). La selección no parece haberse aplicado.`,
+      message: `ATENCIÓN: el campo contiene "${value}" y esperaba "${chosen}"${usedKeyboard ? ' (la elección se hizo con el teclado porque el clic falló)' : ''}. La selección no se aplicó bien; no sigas con ese valor.`,
     };
   }
   return {
