@@ -22,6 +22,7 @@ import type {
   ScreenShot,
 } from '../src/tools/computer.js';
 import { createComputerTool } from '../src/tools/computer.js';
+import { isWindows } from './helpers/platform.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -433,7 +434,8 @@ function asScreenshot(image: Buffer): Screenshot {
   };
 }
 
-describe('verifyBatch', () => {
+// Paints frames with PowerShell and System.Drawing, so Windows only.
+describe.skipIf(!isWindows)('verifyBatch', () => {
   it('is done when a region changed', async () => {
     const empty = '$brush0 = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)';
     const typed = `
