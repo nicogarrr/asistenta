@@ -17,6 +17,17 @@ const asks = async (args: Record<string, unknown>, tool = 'browser') => {
 
 const click = (_target: string) => asks({ action: 'click', selector: '#b', _target });
 
+describe('prices alone do not ask', () => {
+  it('a shop page with visible prices but no payment URL lets clicks through', async () => {
+    expect(
+      await click('button | Anadir a la cesta @@ https://glovo.com/es/menu | Menu 4,50 €'),
+    ).toBe(false);
+    expect(
+      await click('button | Ver menu @@ https://ubereats.com/es/store/x | Total 12,00 €'),
+    ).toBe(false);
+  });
+});
+
 describe('payment buttons in English and generic wording ask', () => {
   it.each([
     'button | Place order',
@@ -27,7 +38,6 @@ describe('payment buttons in English and generic wording ask', () => {
     'a | Continuar @@ https://shop.es/pasarela',
     'button | Aceptar y continuar @@ https://shop.es/checkout/step3',
     'button | Next @@ https://shop.es/cart | Tu cesta',
-    'button | Next @@ https://shop.es/x | Resumen | [pagina con importe]',
   ])('asks: %s', async (t) => expect(await click(t)).toBe(true));
 
   it('Enter on a page with a payment signal asks', async () => {

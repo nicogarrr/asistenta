@@ -41,12 +41,6 @@ export async function describeTarget(
           typeof e.value === 'string' && e.tagName !== 'INPUT' ? e.value : '',
           label.trim().slice(0, 80),
         ];
-        // Money amount on the page: a "total" or a price in euros/dollars.
-        const body = document.body?.innerText ?? '';
-        const amount =
-          /(total|subtotal|importe)[^\n]{0,40}\d+[.,]\d{2}|\d+[.,]\d{2}\s?(€|eur\b|\$)/i.test(body)
-            ? '[pagina con importe]'
-            : '';
         // Element words first, then ' @@ ' and the places it leads to (form action, link,
         // page URL and title). The gate reads the element's words for "what does this do"
         // and the places only for money.
@@ -55,7 +49,6 @@ export async function describeTarget(
           (e as HTMLAnchorElement).href ?? '',
           location.href,
           document.title ?? '',
-          amount,
         ];
         return `${words.filter(Boolean).join(' | ')} @@ ${places.filter(Boolean).join(' | ')}`;
       },

@@ -602,10 +602,10 @@ const WEB_TOOLS = new Set(['browser', 'computer', 'shell']);
 
 /**
  * Page-level money signal: checkout/payment words in the URL or title, or an amount on
- * the page. On such a page any button or Enter asks, whatever the button says.
+ * (prices alone do not count: the agent reports them instead). On such a page any button or Enter asks, whatever the button says.
  */
 const PAGE_PAYMENT =
-  /(?<![\p{L}\p{N}])(checkout|pago|pagos|pasarela|cesta|carrito|pedido|order|orders|payment|pay|cart|basket|tramitar|tramitacion|facturacion|billing|tpv)(?![\p{L}\p{N}])|\[pagina con importe\]/u;
+  /(?<![\p{L}\p{N}])(checkout|pago|pagos|pasarela|cesta|carrito|pedido|order|orders|payment|pay|cart|basket|tramitar|tramitacion|facturacion|billing|tpv)(?![\p{L}\p{N}])/u;
 
 export function pageSaysMoney(places: string): boolean {
   return PAGE_PAYMENT.test(fold(places));
@@ -673,8 +673,6 @@ const PAYMENT_WORD_ES = new RegExp(
     'complete your order',
     'confirm order',
     'continuar al pago',
-    'carrito',
-    'cesta',
     'pasarela',
     'tramitar',
     'tramitacion',
