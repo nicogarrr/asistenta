@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { BrowserService } from '../browser/service.js';
 import { log, logHost } from '../log.js';
+import { isPaymentText } from '../permissions.js';
 
 /**
  * The browser tool.
@@ -231,7 +232,9 @@ export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
   sendImage?: (png: Buffer) => Promise<boolean>,
-): AgentTool<typeof BrowserParams> {
+): AgentTool<typeof BrowserParams> & {
+  gateHint: (args: Record<string, unknown>) => Promise<string>;
+} {
   return {
     name: 'browser',
     label: 'Browser',
@@ -291,6 +294,18 @@ export function createBrowserTool(
     // Sequential: the page is one shared object, and two actions in flight at once
     // race on the same navigation.
     executionMode: 'sequential',
+    // Read by the agent before the permission gate runs: the page's own words about the
+    // element the model is about to act on.
+    gateHint: async (args: Record<string, unknown>) => {
+      const action = String(args.action ?? '');
+      const selector = typeof args.selector === 'string' ? args.selector : '';
+      if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
+      const target = await service.describeTarget(scopeOf(), selector);
+      // Only for targets that read like money: the confirmation shows what is being paid.
+      if (!isPaymentText(target)) return target;
+      const summary = await service.summarisePage(scopeOf()).catch(() => '');
+      return summary ? `${target}\nRESUMEN DE LA PÁGINA:\n${summary}` : target;
+    },
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;

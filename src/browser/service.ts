@@ -14,6 +14,7 @@ import {
   mediaStateInPage,
 } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
+import { describeTarget, pageSummary } from './target.js';
 
 /**
  * Real browser control, one persistent profile per chat.
@@ -759,6 +760,18 @@ export class BrowserService {
    * screenshot and then targets elements by selector, which is what stops coordinate
    * guessing from being the default way to operate a page.
    */
+  /** What the element behind `selector` is and does, for the permission gate. */
+  async describeTarget(scope: string, selector: string): Promise<string> {
+    const session = await this.#session(scope);
+    return describeTarget(session.page, selector);
+  }
+
+  /** Amounts and address lines on the current page, for a payment confirmation. */
+  async summarisePage(scope: string): Promise<string> {
+    const session = await this.#session(scope);
+    return pageSummary(session.page);
+  }
+
   async snapshot(scope: string, limit = 120): Promise<string> {
     const session = await this.#session(scope);
     const raw = await session.page.evaluate((max: number) => {

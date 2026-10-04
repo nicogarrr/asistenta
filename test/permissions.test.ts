@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Gate, lexicalNormalize } from '../src/permissions.js';
+import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
 
 const allow = () => true;
 const deny = () => false;
@@ -172,4 +172,61 @@ describe('lexicalNormalize', () => {
     });
     expect(d.verdict).toBe('deny');
   });
+});
+
+describe('Gate: Spanish payment and credential wording', () => {
+  const asks = async (args: Record<string, unknown>) => {
+    let asked = false;
+    const gate = new Gate({
+      allow: ['browser'],
+      allowActions: ['browser:click'],
+      approver: () => {
+        asked = true;
+        return false;
+      },
+    });
+    await gate.check('s', { tool: 'browser', args, actor: 'asistenta' });
+    return asked;
+  };
+
+  it.each([
+    'Pagar ahora',
+    'Finalizar compra',
+    'Realizar pedido',
+    'Confirmar pedido',
+    'Añadir tarjeta de crédito',
+    'Pagar con TARJETA',
+    'Hacer una transferencia',
+    'PÁGAR',
+    'suscribirse',
+    'Bizum',
+  ])('asks for %s', async (text) => {
+    expect(await asks({ action: 'click', selector: `text=${text}` })).toBe(true);
+  });
+
+  it.each(['Ver menú', 'Siguiente', 'Madrid', 'Buscar trenes', 'abrir'])(
+    'does not mistake %s for money',
+    async (text) => {
+      expect(await asks({ action: 'click', selector: `text=${text}` })).toBe(false);
+    },
+  );
+
+  it('does not match inside longer words', async () => {
+    expect(await asks({ action: 'click', selector: 'text=Pagaré' })).toBe(false);
+    expect(await asks({ action: 'click', selector: 'text=cargoso' })).toBe(false);
+  });
+
+  it('English payment words still ask', async () => {
+    expect(await asks({ action: 'click', selector: 'text=Checkout' })).toBe(true);
+  });
+});
+
+describe('isEffectText', () => {
+  it.each(['Enviar', 'Publicar', 'Eliminar cuenta', 'Reservar mesa', 'Delete', 'CONFIRMAR'])(
+    'flags %s',
+    (t) => expect(isEffectText(t)).toBe(true),
+  );
+  it.each(['Ver más', 'Aceptar cookies', 'Siguiente', 'Sentido'])('ignores %s', (t) =>
+    expect(isEffectText(t)).toBe(false),
+  );
 });

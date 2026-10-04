@@ -231,6 +231,32 @@ export class Gate {
         match: (c) => CREDENTIAL_PATH.test(blobOf(c)),
       },
       {
+        id: 'ask-credential-field',
+        verdict: 'ask',
+        reason: 'touches a password, code or card field',
+        match: (c) => c.tool === 'browser' && BROWSER_CREDENTIAL.test(fold(blobOf(c))),
+      },
+      {
+        id: 'ask-browser-effect',
+        verdict: 'ask',
+        reason: 'the page element sends, publishes, deletes or books something',
+        match: (c) => {
+          if (c.tool !== 'browser') return false;
+          const action = argString(c.args, 'action');
+          if (!['click', 'press'].includes(action)) return false;
+          const target = argString(c.args, '_target');
+          const { element, places } = splitTarget(target);
+          // On a page that talks about money, any button or Enter asks.
+          const type = element.split(' | ')[1] ?? '';
+          const isButton =
+            action === 'press' ||
+            element.startsWith('button |') ||
+            (element.startsWith('input |') && ['submit', 'button', 'image'].includes(type));
+          if (isButton && pageSaysMoney(places)) return true;
+          return target.includes('[destino ilegible]') || isEffectText(element);
+        },
+      },
+      {
         id: 'ask-computer',
         verdict: 'ask',
         reason: 'drives the desktop',
@@ -266,11 +292,18 @@ export class Gate {
     // Card-shaped numbers, with spaces and dashes stripped first: `4111 1111 1111
     // 1111` is the same number as `4111111111111111`.
     const digits = blob.replace(/[\s-]/g, '');
-    return /\b\d{13,19}\b/.test(digits) || PAYMENT_WORD.test(blob);
+    return (
+      /\b\d{13,19}\b/.test(digits) ||
+      PAYMENT_WORD.test(blob) ||
+      (WEB_TOOLS.has(c.tool) && PAYMENT_WORD_ES.test(fold(blob)))
+    );
   }
 
   #isCredentialish(c: ToolCall): boolean {
-    return CREDENTIAL_PATH.test(blobOf(c));
+    const blob = blobOf(c);
+    return (
+      CREDENTIAL_PATH.test(blob) || (WEB_TOOLS.has(c.tool) && BROWSER_CREDENTIAL.test(fold(blob)))
+    );
   }
 
   #fingerprint(c: ToolCall): string {
@@ -536,6 +569,172 @@ export class Gate {
 
 const DESTRUCTIVE =
   /\b(rm\s+-[rf]|Remove-Item|rmdir|del\s+\/|format\s|certutil|New-ItemProperty|Set-ExecutionPolicy|reg\s+delete|diskpart|takeown|icacls|Invoke-Expression|iex\s|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))\b/i;
+
+/** Lowercase and strip accents, so "Crédito" and "credito" are the same word. */
+/**
+ * Browser actions that never ask on their own. The rules for money, credential fields
+ * and sending/deleting/booking elements are checked first and still ask; `exec_js`
+ * (arbitrary code in the page) is deliberately absent.
+ */
+export const BROWSER_FREE_ACTIONS = [
+  'open',
+  'snapshot',
+  'screenshot',
+  'back',
+  'close',
+  'media',
+  'click',
+  'fill',
+  'press',
+  'choose',
+].map((a) => `browser:${a}`);
+
+/** Splits a click hint into the element's own words and the places it leads to. */
+export function splitTarget(target: string): { element: string; places: string } {
+  const i = target.indexOf(' @@ ');
+  return i < 0
+    ? { element: target, places: '' }
+    : { element: target.slice(0, i), places: target.slice(i + 4) };
+}
+
+/** Tools where the Spanish money and credential vocabulary applies. */
+const WEB_TOOLS = new Set(['browser', 'computer', 'shell']);
+
+/**
+ * Page-level money signal: checkout/payment words in the URL or title, or an amount on
+ * the page. On such a page any button or Enter asks, whatever the button says.
+ */
+const PAGE_PAYMENT =
+  /(?<![\p{L}\p{N}])(checkout|pago|pagos|pasarela|cesta|carrito|pedido|order|orders|payment|pay|cart|basket|tramitar|tramitacion|facturacion|billing|tpv)(?![\p{L}\p{N}])|\[pagina con importe\]/u;
+
+export function pageSaysMoney(places: string): boolean {
+  return PAGE_PAYMENT.test(fold(places));
+}
+
+export function fold(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * Spanish payment vocabulary, matched on {@link fold}ed text. `\b` is not usable with
+ * non-ASCII letters, so the word edges are explicit. Deliberately broad: a false
+ * positive costs one prompt, a miss costs money.
+ */
+const PAYMENT_WORD_ES = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${[
+    'pagar',
+    'pagas',
+    'pago',
+    'pagos',
+    'paga',
+    'abonar',
+    'abono',
+    'comprar',
+    'compra',
+    'compras',
+    'pedir',
+    'pedido',
+    'pedidos',
+    'tarjeta',
+    'credito',
+    'debito',
+    'banco',
+    'bancaria',
+    'bancario',
+    'transferencia',
+    'transferir',
+    'factura',
+    'facturacion',
+    'suscribir',
+    'suscribirse',
+    'suscripcion',
+    'donar',
+    'donacion',
+    'propina',
+    'cobro',
+    'cargo',
+    'tpv',
+    'bizum',
+    'paypal',
+    'monedero',
+    'saldo',
+    'cvv',
+    'cvc',
+    'caducidad',
+    'finalizar',
+    'finish',
+    'order now',
+    'place order',
+    'place your order',
+    'complete order',
+    'complete your order',
+    'confirm order',
+    'continuar al pago',
+    'carrito',
+    'cesta',
+    'pasarela',
+    'tramitar',
+    'tramitacion',
+    'realizar pedido',
+    'confirmar pedido',
+    'contratar',
+    'alquilar',
+    'reservar',
+  ].join('|')})(?![\\p{L}\\p{N}])`,
+  'u',
+);
+
+/**
+ * Actions with a lasting effect that are not money: sending, publishing, deleting,
+ * booking. Used for browser clicks, where the target's own text says what it does.
+ */
+export const EFFECT_WORD = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${[
+    'enviar',
+    'envia',
+    'send',
+    'post',
+    'publicar',
+    'publica',
+    'eliminar',
+    'borrar',
+    'cancelar',
+    'confirmar',
+    'reserva',
+    'reservar',
+    'registrarse',
+    'darse de baja',
+    'publish',
+    'delete',
+    'remove',
+    'cancel',
+    'confirm',
+    'book',
+    'reserve',
+    'unsubscribe',
+    'sign up',
+  ].join('|')})(?![\\p{L}\\p{N}])`,
+  'u',
+);
+
+/**
+ * Password, one-time code and card-entry fields, judged from the element's own words
+ * (type, name, autocomplete) and the model's args. Matched on folded text.
+ */
+const BROWSER_CREDENTIAL =
+  /(?<![\p{L}\p{N}])(password|passwd|contrasena|clave de acceso|clave|pin|dni|nif|iban|passcode|otp|one-time-code|codigo de verificacion|current-password|new-password|cc-number|cc-csc|cc-exp|cc-name|card-number|numero de tarjeta|cvv|cvc)(?![\p{L}\p{N}])|type=["']?password/u;
+
+/** True when the text reads like money: used to decide what a prompt should show. */
+export function isPaymentText(text: string): boolean {
+  return PAYMENT_WORD.test(text) || PAYMENT_WORD_ES.test(fold(text));
+}
+
+export function isEffectText(text: string): boolean {
+  return EFFECT_WORD.test(fold(text));
+}
 
 const PAYMENT_WORD =
   /\b(card|credit|debit|bank|payment|pay|invoice|transfer|send|wire|withdraw|deposit|crypto|\bbtc\b|\beth\b|usdc|gift|iban|checkout|buy|purchase|subscribe|billing|buy\s+now|confirm\s+order)\b/i;

@@ -417,6 +417,16 @@ export class PersonalAgent {
           args: (args ?? {}) as Record<string, unknown>,
           actor,
         };
+        // A tool may describe what its call would act on (a page element's own text),
+        // so the gate judges the target and not only the model's selector. The hint is
+        // for the gate only; the tool still runs with the model's original args.
+        const hinter = tools.find((t) => t.name === toolCall.name) as
+          | { gateHint?: (a: Record<string, unknown>) => Promise<string> }
+          | undefined;
+        if (hinter?.gateHint) {
+          const hint = await hinter.gateHint(call.args).catch(() => '[destino ilegible]');
+          if (hint) call.args = { ...call.args, _target: hint };
+        }
         const decision = await gate.check(personal.sessionId, call);
         if (decision.verdict === 'deny') {
           log.info('tool blocked', { tool: call.tool, reason: decision.reason });
