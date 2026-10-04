@@ -8,6 +8,7 @@ import {
   parseTrainRow,
   parseTripDetail,
   renfeDate,
+  SAME_LIST_STABLE_READS,
 } from '../src/tools/renfe.js';
 
 const PAGE = `Selecciona tu viaje
@@ -201,6 +202,27 @@ describe('judgeDay', () => {
     const stale = judgeDay({ ...base, clicked: true, fingerprintBefore: 'a|b' });
     expect(stale).toMatchObject({ ok: false, reason: 'stale-list' });
     expect(judgeDay({ ...base, clicked: true, fingerprintBefore: 'x|y' })).toEqual({ ok: true });
+  });
+
+  it('misma lista + resumen nuevo: solo vale tras una espera larga (el resumen puede ir por delante)', () => {
+    const same = {
+      ...base,
+      clicked: true,
+      fingerprintBefore: 'a|b',
+      summaryBefore: '04',
+      summaryDay: '06',
+    };
+    expect(judgeDay({ ...same, stableReads: 0 })).toMatchObject({
+      ok: false,
+      reason: 'stale-list',
+    });
+    expect(judgeDay({ ...same, stableReads: SAME_LIST_STABLE_READS - 1 })).toMatchObject({
+      ok: false,
+    });
+    expect(judgeDay({ ...same, stableReads: SAME_LIST_STABLE_READS })).toEqual({ ok: true });
+    expect(
+      judgeDay({ ...base, clicked: true, fingerprintBefore: 'a|b', summaryBefore: '06' }),
+    ).toMatchObject({ ok: false, reason: 'stale-list' });
   });
 
   it('una lista vacia no vale', () => {

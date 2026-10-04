@@ -96,6 +96,8 @@ export function parseTrainRow(row: TrainRowInfo): {
   return out;
 }
 
+export const SAME_LIST_STABLE_READS = 5;
+
 export type DayVerdict =
   | { ok: true }
   | { ok: false; reason: 'unknown-day' | 'wrong-day' | 'stale-list'; message: string };
@@ -116,8 +118,13 @@ export function judgeDay(input: {
   summaryDay: string;
   clicked: boolean;
   fingerprintBefore: string;
+  /** Dia que decia el resumen antes de pulsar ('' si no se pudo leer). */
+  summaryBefore?: string;
+  /** Lecturas seguidas con la misma lista (0 = acaba de cambiar). */
+  stableReads?: number;
 }): DayVerdict {
   const { want, pressed, fingerprint, summaryDay, clicked, fingerprintBefore } = input;
+  const summaryBefore = input.summaryBefore ?? '';
   if (!pressed) {
     return {
       ok: false,
@@ -140,7 +147,26 @@ export function judgeDay(input: {
       message: `el resumen de Renfe dice el día ${summaryDay} y se pidió el ${wantDay}`,
     };
   }
-  if (clicked && fingerprint === fingerprintBefore) {
+  // Misma lista que antes solo es sospechosa si nada mas confirma el cambio: si el
+  // resumen ya dice el dia pedido y antes decia otro, la lista nueva puede ser igual
+  // de verdad (mismas salidas) y es valida.
+  const summaryConfirms = summaryDay !== '' && summaryBefore !== '' && summaryDay !== summaryBefore;
+  // El resumen puede actualizarse ANTES que la lista: "resumen nuevo + lista vieja" se
+  // parece a "mismas salidas". Para aceptarlo hace falta que la lista lleve quieta
+  // SAME_LIST_STABLE_READS lecturas (~1 s cada una) tras el clic.
+  if (
+    clicked &&
+    fingerprint === fingerprintBefore &&
+    summaryConfirms &&
+    (input.stableReads ?? 0) < SAME_LIST_STABLE_READS
+  ) {
+    return {
+      ok: false,
+      reason: 'stale-list',
+      message: 'la lista de Renfe sigue igual y aún no puedo confirmar que sea la del día pedido',
+    };
+  }
+  if (clicked && fingerprint === fingerprintBefore && !summaryConfirms) {
     return {
       ok: false,
       reason: 'stale-list',
@@ -325,14 +351,18 @@ export async function searchRenfe(args: {
           document.querySelector<HTMLElement>('button.day_cell[aria-pressed=true]')?.dataset
             .celldate ?? '';
         const labels = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            '#listaTrenesTBodyIda .selectedTren [aria-label^="Tren con salida"]',
-          ),
-        ).map((e) => e.getAttribute('aria-label') ?? '');
+          document.querySelectorAll<HTMLElement>('#listaTrenesTBodyIda .selectedTren'),
+        ).map((e) => (e.innerText ?? '').replace(/\s+/g, ' ').trim());
         const m = /Viaje de Ida\s*\n\s*\p{L}+\s+(\d{1,2})\s/u.exec(document.body.innerText);
         return { pressed, fingerprint: labels.join('|'), summaryDay: m?.[1] ?? '' };
       });
-    const before = await readState();
+    // Si el dia marcado ya es el pedido pero la lista aun esta vacia o cargando, se
+    // reintenta un poco antes de dar error.
+    let before = await readState();
+    for (let i = 0; i < 6 && before.pressed === want && !before.fingerprint; i++) {
+      await page.waitForTimeout(1_000);
+      before = await readState();
+    }
     let verdict = judgeDay({ want, ...before, clicked: false, fingerprintBefore: '' });
     if (!verdict.ok && verdict.reason === 'wrong-day') {
       const cell = page.locator(`button.day_cell[data-celldate="${want}"]:not(.disabledDay)`);
@@ -341,7 +371,20 @@ export async function searchRenfe(args: {
           `paso fecha: Renfe mostró el ${before.pressed} y el ${want} no está en su barra de días; no devuelvo trenes de otro día`,
         );
       }
-      await cell.first().click();
+      // La barra de dias es un carrusel: los dias lejanos existen en el DOM pero no se ven
+      // hasta avanzar con la flecha "siguiente dia" (sin esto el clic caduca).
+      const next = page.locator('#calendarioida .move_to_tomorrow').first();
+      for (let i = 0; i < 40 && !(await cell.first().isVisible()); i++) {
+        if (!(await next.isVisible().catch(() => false))) break;
+        await next.click({ timeout: 3_000 }).catch(() => undefined);
+        await page.waitForTimeout(250);
+      }
+      if (!(await cell.first().isVisible())) {
+        throw new StepError(
+          `paso fecha: el ${want} no se puede ver en la barra de días de Renfe; no devuelvo trenes de otro día`,
+        );
+      }
+      await cell.first().click({ timeout: 8_000 });
       // La marca del dia cambia al instante pero la lista recarga por AJAX: se espera a
       // que la lista CAMBIE y a que se quede quieta dos lecturas seguidas.
       let last = '';
@@ -350,9 +393,16 @@ export async function searchRenfe(args: {
         await page.waitForTimeout(1_000);
         const now = await readState().catch(() => null);
         if (!now) continue;
-        verdict = judgeDay({ want, ...now, clicked: true, fingerprintBefore: before.fingerprint });
-        stable = verdict.ok && now.fingerprint === last ? stable + 1 : 0;
+        stable = now.fingerprint === last ? stable + 1 : 0;
         last = now.fingerprint;
+        verdict = judgeDay({
+          want,
+          ...now,
+          stableReads: stable,
+          clicked: true,
+          fingerprintBefore: before.fingerprint,
+          summaryBefore: before.summaryDay,
+        });
         if (verdict.ok && stable >= 1) break;
       }
       if (!verdict.ok || stable < 1) {
