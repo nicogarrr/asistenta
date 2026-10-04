@@ -19,6 +19,12 @@ describe('scrubUrls', () => {
     expect(out).toContain('https://www.youtube.com/…');
     expect(out).toContain('http://x.es/…');
   });
+  it('descarta usuario y clave de la URL', () => {
+    const out = scrubUrls('fallo en https://user:pass@a.com/x y https://tok@b.com?z=1 fin');
+    expect(out).not.toMatch(/user|pass|tok@|z=1/);
+    expect(out).toContain('https://a.com/…');
+    expect(out).toContain('https://b.com/…');
+  });
   it('no toca texto sin enlaces', () => {
     expect(scrubUrls('sin enlaces: 49,90 €')).toBe('sin enlaces: 49,90 €');
   });

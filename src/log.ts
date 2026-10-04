@@ -37,7 +37,11 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
  * el mensaje de un Error. Se aplica a toda línea del registro.
  */
 export function scrubUrls(text: string): string {
-  return text.replace(/\b(https?:\/\/[^\s/"'\\<>?#]+)[^\s"'\\<>]*/gi, '$1/…');
+  // El userinfo (usuario:clave@) se descarta junto con la ruta y la query.
+  return text.replace(
+    /\b(https?:\/\/)(?:[^\s/"'\\<>?#@]*@)?([^\s/"'\\<>?#]+)[^\s"'\\<>]*/gi,
+    '$1$2/…',
+  );
 }
 
 export const log = {
