@@ -245,8 +245,15 @@ export class Gate {
           const action = argString(c.args, 'action');
           if (!['click', 'press'].includes(action)) return false;
           const target = argString(c.args, '_target');
-          // An element that could not be read is not assumed harmless.
-          return target.includes('[destino ilegible]') || isEffectText(target);
+          const { element, places } = splitTarget(target);
+          // On a page that talks about money, any button or Enter asks.
+          const type = element.split(' | ')[1] ?? '';
+          const isButton =
+            action === 'press' ||
+            element.startsWith('button |') ||
+            (element.startsWith('input |') && ['submit', 'button', 'image'].includes(type));
+          if (isButton && pageSaysMoney(places)) return true;
+          return target.includes('[destino ilegible]') || isEffectText(element);
         },
       },
       {
@@ -286,13 +293,17 @@ export class Gate {
     // 1111` is the same number as `4111111111111111`.
     const digits = blob.replace(/[\s-]/g, '');
     return (
-      /\b\d{13,19}\b/.test(digits) || PAYMENT_WORD.test(blob) || PAYMENT_WORD_ES.test(fold(blob))
+      /\b\d{13,19}\b/.test(digits) ||
+      PAYMENT_WORD.test(blob) ||
+      (WEB_TOOLS.has(c.tool) && PAYMENT_WORD_ES.test(fold(blob)))
     );
   }
 
   #isCredentialish(c: ToolCall): boolean {
     const blob = blobOf(c);
-    return CREDENTIAL_PATH.test(blob) || BROWSER_CREDENTIAL.test(fold(blob));
+    return (
+      CREDENTIAL_PATH.test(blob) || (WEB_TOOLS.has(c.tool) && BROWSER_CREDENTIAL.test(fold(blob)))
+    );
   }
 
   #fingerprint(c: ToolCall): string {
@@ -578,6 +589,28 @@ export const BROWSER_FREE_ACTIONS = [
   'choose',
 ].map((a) => `browser:${a}`);
 
+/** Splits a click hint into the element's own words and the places it leads to. */
+export function splitTarget(target: string): { element: string; places: string } {
+  const i = target.indexOf(' @@ ');
+  return i < 0
+    ? { element: target, places: '' }
+    : { element: target.slice(0, i), places: target.slice(i + 4) };
+}
+
+/** Tools where the Spanish money and credential vocabulary applies. */
+const WEB_TOOLS = new Set(['browser', 'computer', 'shell']);
+
+/**
+ * Page-level money signal: checkout/payment words in the URL or title, or an amount on
+ * the page. On such a page any button or Enter asks, whatever the button says.
+ */
+const PAGE_PAYMENT =
+  /(?<![\p{L}\p{N}])(checkout|pago|pagos|pasarela|cesta|carrito|pedido|order|orders|payment|pay|cart|basket|tramitar|tramitacion|facturacion|billing|tpv)(?![\p{L}\p{N}])|\[pagina con importe\]/u;
+
+export function pageSaysMoney(places: string): boolean {
+  return PAGE_PAYMENT.test(fold(places));
+}
+
 export function fold(text: string): string {
   return text
     .normalize('NFD')
@@ -632,6 +665,19 @@ const PAYMENT_WORD_ES = new RegExp(
     'cvc',
     'caducidad',
     'finalizar',
+    'finish',
+    'order now',
+    'place order',
+    'place your order',
+    'complete order',
+    'complete your order',
+    'confirm order',
+    'continuar al pago',
+    'carrito',
+    'cesta',
+    'pasarela',
+    'tramitar',
+    'tramitacion',
     'realizar pedido',
     'confirmar pedido',
     'contratar',
@@ -649,6 +695,8 @@ export const EFFECT_WORD = new RegExp(
   `(?<![\\p{L}\\p{N}])(${[
     'enviar',
     'envia',
+    'send',
+    'post',
     'publicar',
     'publica',
     'eliminar',
@@ -657,12 +705,8 @@ export const EFFECT_WORD = new RegExp(
     'confirmar',
     'reserva',
     'reservar',
-    'solicitar',
     'registrarse',
     'darse de baja',
-    'submit',
-    'send',
-    'post',
     'publish',
     'delete',
     'remove',
@@ -681,7 +725,7 @@ export const EFFECT_WORD = new RegExp(
  * (type, name, autocomplete) and the model's args. Matched on folded text.
  */
 const BROWSER_CREDENTIAL =
-  /(?<![\p{L}\p{N}])(password|passwd|contrasena|clave de acceso|passcode|otp|one-time-code|codigo de verificacion|current-password|new-password|cc-number|cc-csc|cc-exp|cc-name|card-number|numero de tarjeta|cvv|cvc)(?![\p{L}\p{N}])|type=["']?password/u;
+  /(?<![\p{L}\p{N}])(password|passwd|contrasena|clave de acceso|clave|pin|dni|nif|iban|passcode|otp|one-time-code|codigo de verificacion|current-password|new-password|cc-number|cc-csc|cc-exp|cc-name|card-number|numero de tarjeta|cvv|cvc)(?![\p{L}\p{N}])|type=["']?password/u;
 
 /** True when the text reads like money: used to decide what a prompt should show. */
 export function isPaymentText(text: string): boolean {
