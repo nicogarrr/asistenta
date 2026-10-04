@@ -109,9 +109,10 @@ describe('extractPrice con punto decimal y distintos formatos', () => {
     expect(extractPrice(text)).toBe(expected);
   });
 
-  it('un cambio 49.90 -> 45.90 se detecta (antes ambos eran 90,00 €)', () => {});
+  it('un cambio 49.90 -> 45.90 se detecta (antes ambos eran 90,00 €)', () => {
+    expect(extractPrice('Precio 49.90 €')).not.toBe(extractPrice('Precio 45.90 €'));
+  });
 });
-expect(extractPrice('Precio 49.90 €')).not.toBe(extractPrice('Precio 45.90 €'));
 
 describe('vigilar una palabra', () => {
   it('parsea palabra y nombre, con comillas tipográficas', () => {
@@ -139,7 +140,7 @@ describe('vigilar una palabra', () => {
     expect(o1).toEqual({ kind: 'changed', from: 'ausente', to: 'presente' });
     expect(describeChange(w, o1)).toContain('Ahora aparece "Agotado"');
     const o2 = await store.check(store.get(w.id) as typeof w, async () => 'ya hay');
-    expect(describeChange(w, o2)).toContain('Ya no aparece');
+    expect(describeChange(w, o2)).toContain('Ya no veo');
     expect(watchValue('Sin  habitación', 'habitacion')).toBe('presente');
   });
 

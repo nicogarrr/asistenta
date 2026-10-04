@@ -221,7 +221,7 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
   if (o.kind === 'changed' && w.keyword) {
     return o.to === 'presente'
       ? `Ahora aparece "${w.keyword}" en ${name}\n${w.url}`
-      : `Ya no aparece "${w.keyword}" en ${name}\n${w.url}`;
+      : `Ya no veo "${w.keyword}" en el texto que leo de ${name} (puede cargarse con JavaScript o estar bloqueado, compruébalo)\n${w.url}`;
   }
   if (o.kind === 'changed') {
     const textual = o.to.startsWith('texto:') || o.from.startsWith('texto:');
