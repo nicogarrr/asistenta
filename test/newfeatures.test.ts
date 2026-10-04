@@ -203,6 +203,7 @@ describe('BrowserService (live)', () => {
   const approvals: string[] = [];
   const service = new BrowserService({
     policy: {
+      allowPrivateHosts: true,
       approve: async (_scope, domain) => {
         approvals.push(domain);
         return true;
@@ -274,6 +275,7 @@ describe('BrowserService domain consent', () => {
   const make = (policy: { autoApprove?: boolean; adSkipIntervalMs?: number }, asked: string[]) =>
     new BrowserService({
       policy: {
+        allowPrivateHosts: true,
         ...policy,
         approve: async (_scope, domain) => {
           asked.push(domain);
@@ -362,6 +364,7 @@ describe('BrowserService advert skipping', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-ads-'));
   const service = new BrowserService({
     policy: {
+      allowPrivateHosts: true,
       autoApprove: true,
       // Fast enough that a test does not have to wait a second for one poll.
       adSkipIntervalMs: 250,

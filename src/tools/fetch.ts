@@ -118,6 +118,12 @@ export function isFetchable(url: string): boolean {
     host === 'localhost' ||
     host === '::1' ||
     host.endsWith('.localhost') ||
+    // Cloud metadata names and internal-only suffixes (the IP 169.254.169.254 is
+    // covered below; these are the names that resolve to it or to private hosts).
+    host === 'metadata' ||
+    host === 'metadata.google.internal' ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local') ||
     /^127\./.test(numeric) ||
     /^0\.0\.0\.0$/.test(numeric) ||
     /^10\./.test(numeric) ||

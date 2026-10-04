@@ -142,7 +142,7 @@ export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
     name: 'shell',
     label: 'Shell',
     description:
-      'Run a PowerShell command and return stdout, stderr and the exit code. Output beyond 64KB is truncated.',
+      'Run a PowerShell command and return stdout, stderr and the exit code. Long output keeps only the first and last 6KB of each stream, with a note of how much was omitted.',
     parameters: ShellParams,
     executionMode: 'sequential',
     execute: async (toolCallId, args, signal) => {

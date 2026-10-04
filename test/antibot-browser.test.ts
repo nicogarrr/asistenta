@@ -136,6 +136,7 @@ describe('BrowserService: challenge detection and installed-browser fallback (li
   function make(channel?: 'chrome' | 'chromium') {
     const s = new BrowserService({
       policy: {
+        allowPrivateHosts: true,
         approve: async (_scope, domain) => {
           approvals.push(domain);
           return true;
