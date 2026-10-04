@@ -18,6 +18,7 @@ import {
   retryDelay,
   sleep,
 } from './retry.js';
+import { ToolLoadout } from './toolset.js';
 
 /**
  * Owns one Agent instance with the permission gate wired into it.
@@ -361,10 +362,14 @@ export class PersonalAgent {
        * ceiling, so the pressure warnings describe the same allowance.
        */
       iterationBudget?: { max: number; shared?: boolean };
+      /** Keep browser/media out of the request until a message needs them (P8). */
+      deferTools?: boolean;
     } = {},
   ): Promise<PersonalAgent> {
     const { models, model } = await createProviderHandle(config);
     const stream = opts.stream ?? false;
+    const loadout = opts.deferTools ? new ToolLoadout(tools) : undefined;
+    let seenVersion = 0;
     // The session id is captured per instance, never read from a module global: a
     // global meant every agent silently inherited the newest chat's approvals.
     const sessionId = opts.sessionId ?? 'default';
@@ -377,7 +382,7 @@ export class PersonalAgent {
       initialState: {
         systemPrompt: buildSystemPrompt(opts.desktop ?? desktopEnabled()),
         model,
-        tools,
+        tools: loadout ? loadout.active() : tools,
       },
       streamFn: models.streamSimple.bind(models),
       sessionId: `pa-${sessionId}`,
@@ -385,6 +390,14 @@ export class PersonalAgent {
       // them per request (never in the stored transcript) is the difference between
       // a 20-step run costing 30k image tokens and costing 6k.
       transformContext: async (messages) => truncateOldImages(messages, 3),
+      // The model may ask for a deferred tool mid-run; the next request carries it.
+      prepareNextTurnWithContext: loadout
+        ? (ctx) => {
+            if (loadout.version === seenVersion) return undefined;
+            seenVersion = loadout.version;
+            return { context: { ...ctx.context, tools: loadout.active() } };
+          }
+        : undefined,
       // This provider is intermittently flaky: the identical request returns
       // "invalid request" one minute and succeeds the next. Retry the request, and
       // never retry a tool that already ran (that is what `replay: "never"` is for).
@@ -467,6 +480,7 @@ export class PersonalAgent {
         .join('')
         .trim();
     };
+    personal.#loadout = loadout;
     return personal;
   }
 
@@ -542,6 +556,7 @@ export class PersonalAgent {
       log.warn('history summary failed; keeping the full transcript', { err: String(err) });
     }
   }
+  #loadout?: ToolLoadout;
 
   /** Identity of the context-note message currently in the transcript. */
   #contextNotes = new WeakSet<object>();
@@ -581,6 +596,11 @@ export class PersonalAgent {
     };
     let attempt = 0;
     await this.#compact();
+    if (this.#loadout) {
+      const added = this.#loadout.loadFor(prompt);
+      if (added.length) log.info('tools loaded for this message', { added });
+      this.#agent.state.tools = this.#loadout.active();
+    }
     let result = await this.#attempt(prompt, images, hooks, shared);
 
     while (

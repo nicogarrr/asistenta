@@ -1085,6 +1085,7 @@ async function serveCommand(): Promise<number> {
     };
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
+      deferTools: true,
     });
     threads.set(key, thread);
     log.info('thread created', { thread: key });
