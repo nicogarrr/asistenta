@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   BrowserService,
-  chooseSuggestion,
   isSameName,
   normalizeText,
+  rankSuggestion,
   similarity,
 } from '../src/browser/service.js';
 import { createBrowserTool } from '../src/tools/browser.js';
@@ -152,6 +152,9 @@ describe('browser: fiabilidad en páginas reales', () => {
   const service = new BrowserService({
     policy: {
       autoApprove: true,
+      // The fixture server is on 127.0.0.1 and the browser refuses private addresses by
+      // default, which is the right default and useless here.
+      allowPrivateHosts: true,
       // The advert watcher is not what this file tests, and a poll every second would
       // click things on the test pages.
       adSkipIntervalMs: 0,
@@ -390,16 +393,16 @@ describe('las comparaciones que sostienen el rescate', () => {
 
   it('elige el exacto antes que el que lo contiene, y el más corto dentro de un nivel', () => {
     const opciones = ['(TODAS)', 'Madrid', 'Madrid-Chamartín'];
-    expect(opciones[chooseSuggestion(opciones, 'Madrid')]).toBe('Madrid');
-    expect(opciones[chooseSuggestion(opciones, 'madrid')]).toBe('Madrid');
+    expect(opciones[rankSuggestion(opciones, 'Madrid')]).toBe('Madrid');
+    expect(opciones[rankSuggestion(opciones, 'madrid')]).toBe('Madrid');
     // Sin exacto, se queda con el que empieza por lo pedido.
-    expect(opciones[chooseSuggestion(opciones, 'Madrid-Ch')]).toBe('Madrid-Chamartín');
-    expect(chooseSuggestion(opciones, 'Vigo')).toBe(-1);
+    expect(opciones[rankSuggestion(opciones, 'Madrid-Ch')]).toBe('Madrid-Chamartín');
+    expect(rankSuggestion(opciones, 'Vigo')).toBe(-1);
   });
 
   it('dentro de un mismo nivel gana el texto más corto', () => {
     const opciones = ['Barcelona Sants', 'Barcelona'];
-    expect(opciones[chooseSuggestion(opciones, 'Barcelona')]).toBe('Barcelona');
+    expect(opciones[rankSuggestion(opciones, 'Barcelona')]).toBe('Barcelona');
   });
 
   it('el rescate por parecido no hace clic con un parecido flojo', () => {

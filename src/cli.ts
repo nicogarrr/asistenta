@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,7 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { FollowupTracker } from './alerts/followups.js';
+import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
+import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
 import {
   cleanForTelegram,
@@ -14,6 +17,7 @@ import {
   shorten,
   stripVoicePrefix,
 } from './channels/formatters.js';
+import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
@@ -21,11 +25,14 @@ import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
+import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
 import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log, redact } from './log.js';
+import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
+import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
@@ -34,8 +41,10 @@ import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
+import { OpenGymError } from './opengym/client.js';
+import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
-import { Gate } from './permissions.js';
+import { BROWSER_FREE_ACTIONS, Gate } from './permissions.js';
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
 import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
 import {
@@ -50,18 +59,25 @@ import {
 import { ocrAvailable } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { WindowsScreen } from './screen/windows.js';
+import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
+import { formatStatus, summarizeLog } from './status.js';
+import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
 import { createDoneTool } from './tools/done.js';
-import { createFetchTool } from './tools/fetch.js';
+import { createDownloadTool } from './tools/download.js';
+import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
-
+import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
+// Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
+// report a booking it never made, which is the exact failure this project exists to
+// remove. The generic browser does the same job against any site.
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
@@ -79,6 +95,8 @@ import {
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
+import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
+import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
 
@@ -91,6 +109,8 @@ Usage:
   pa vault get <k>        print one secret
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
+  pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
+  pa opengym status       check the openGym connection
   pa doctor               check the environment
 `;
 
@@ -114,6 +134,8 @@ export async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'vault':
       return vaultCommand(rest);
+    case 'opengym':
+      return openGymCommand(rest);
     case 'doctor':
       return doctorCommand();
     case 'chat':
@@ -131,6 +153,44 @@ export async function main(argv: string[]): Promise<number> {
       process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
       return 2;
   }
+}
+
+async function openGymCommand(args: string[]): Promise<number> {
+  ensureDirs();
+  const [sub, a, b] = args;
+  try {
+    if (sub === 'pair') {
+      const code = b ?? a;
+      if (!code) {
+        process.stderr.write('uso: pa opengym pair [url] <código de 8 caracteres>\n');
+        return 2;
+      }
+      const host = await pairOpenGym(b ? a : undefined, code);
+      process.stdout.write(
+        `openGym emparejado (código canjeado en ${host}). El token está en el vault (opengym:token).\n`,
+      );
+      return 0;
+    }
+    if (sub === 'status') {
+      const client = await makeOpenGymClient();
+      if (!client) {
+        process.stdout.write(`${NOT_CONFIGURED}\n`);
+        return 1;
+      }
+      const { state, rev } = await client.getState();
+      process.stdout.write(
+        state
+          ? `conectado a openGym (revisión ${rev})\n`
+          : 'conectado, pero sin datos sincronizados\n',
+      );
+      return 0;
+    }
+  } catch (err) {
+    process.stderr.write(`${err instanceof OpenGymError ? err.message : String(err)}\n`);
+    return 1;
+  }
+  process.stderr.write('uso: pa opengym pair [url] <código> | pa opengym status\n');
+  return 2;
 }
 
 async function vaultCommand(args: string[]): Promise<number> {
@@ -290,7 +350,12 @@ export interface DaemonGateOptions {
    * `setScope` writes to disk before the tool call it just authorised even returns,
    * and the next call of the same tool is already covered.
    */
-  ask: (threadKey: string, tool: string, reason: string) => Promise<ApprovalChoice>;
+  ask: (
+    threadKey: string,
+    tool: string,
+    reason: string,
+    question?: string,
+  ) => Promise<ApprovalChoice>;
   /**
    * Told while a human is being asked, because the idle watchdog has to know that
    * waiting for a person is not a stall. Optional so callers without a watchdog can
@@ -326,8 +391,17 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
   // reference is live before any tool call can reach it. An approver cannot run before
   // the agent that owns this gate exists, so a holder indirection would be noise.
   const gate = new Gate({
-    allow: ['read', 'list', 'fetch', 'done', 'memory'],
-    allowActions: ['computer:screenshot', 'computer:move'],
+    // The whole read-only toolset rather than a hand-kept list, so a tool added on main
+    // is usable from a thread without editing this line.
+    allow: THREAD_ALLOW_TOOLS,
+    allowActions: [
+      'computer:screenshot',
+      'computer:move',
+      // Navigating and operating a page does not ask: the gate still asks first for
+      // money, credential fields and sending/deleting/booking elements, and exec_js
+      // (arbitrary code) is not in the list.
+      ...BROWSER_FREE_ACTIONS,
+    ],
     // Autonomous up to the last click. A purchase is a chain of ordinary browsing
     // actions, and asking about each of them is what stopped the Renfe flow before it
     // bought anything. The stage of a call is read from `checkoutStageOf`, a five-row
@@ -353,7 +427,12 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     approver: async (call, reason) => {
       options.onAwaiting?.(true);
       try {
-        const choice = await options.ask(options.threadKey, call.tool, reason);
+        const choice = await options.ask(
+          options.threadKey,
+          call.tool,
+          reason,
+          formatApprovalQuestion(call, reason),
+        );
         if (choice.approved && choice.scope !== 'once') {
           try {
             gate.setScope(options.threadKey, call.tool, choice.scope);
@@ -733,6 +812,8 @@ async function serveCommand(): Promise<number> {
   const instincts = new InstinctStore({ db: memoryDb });
   const workstreams = new WorkstreamStore({ db: memoryDb });
   const followups = new FollowupTracker({ db: memoryDb });
+  const pageWatches = new PageWatchStore(memoryDb);
+  const weeklyState = new WeeklyState(memoryDb);
   // One sweep at boot: patterns the user stopped showing lose their weight and
   // the ones that hit zero go, so old accidents cannot steer the daemon forever.
   instincts.decay(90);
@@ -748,7 +829,20 @@ async function serveCommand(): Promise<number> {
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
-  const telegram = new TelegramChannel({ token, allowedUserIds: allowed });
+  // Canal de QA solo en la sandbox (PA_QA_CHANNEL=1): mismo pipeline, entrada y salida por ficheros.
+  const telegram: TelegramChannel =
+    process.env.PA_QA_CHANNEL === '1'
+      ? new QaChannel({ token, allowedUserIds: allowed, dir: join(paths.state, 'qa') })
+      : new TelegramChannel({ token, allowedUserIds: allowed });
+
+  /** Estado de openGym (solo lectura). Lanza OpenGymError con el motivo si no se puede. */
+  const gymDeps = {
+    load: async () => {
+      const client = await makeOpenGymClient();
+      if (!client) throw new OpenGymError('config', NOT_CONFIGURED);
+      return (await client.getState()).state;
+    },
+  };
   const registry = new ChannelRegistry();
   registry.register(telegram);
 
@@ -862,6 +956,7 @@ async function serveCommand(): Promise<number> {
         },
       },
       timeoutMs: Math.min(config.toolTimeoutMs, 60_000),
+      channel: config.browserChannel,
     });
     browsers.set(threadKey, service);
     return service;
@@ -1023,9 +1118,69 @@ async function serveCommand(): Promise<number> {
       }),
       // The machine itself: volume, mute, lock, and how it is doing.
       createSystemTool(),
+      // "Descarga este vídeo / pásame este PDF" with a link: yt-dlp for video sites, a
+      // direct fetch for PDFs, sent back to the chat as MP4 or document.
+      // Free and public-domain books (Gutenberg, Internet Archive): search, download as
+      // EPUB, send to this chat and/or to the user's Kindle by email (approval each time).
+      createBookTool({
+        sendDocument: (bytes, filename, caption) =>
+          telegram
+            .sendDocumentBytes(
+              Number(thread.chatKey.split(':')[2]),
+              bytes,
+              filename,
+              caption,
+              inboundFor(thread).threadId,
+            )
+            .then(() => true),
+        saveKindleAddress: (address) => vaultSet(KINDLE_VAULT_KEY, address),
+        kindle: {
+          getAddress: async () => (await vaultGet(KINDLE_VAULT_KEY)) ?? null,
+          loadAccount: loadMailAccount,
+          send: sendMail,
+          requireApproval: async (_action, summary) => {
+            const choice = await telegram.offerApproval(
+              randomUUID(),
+              thread.chatKey.split(':')[2] ?? '',
+              `¿${summary}?`,
+            );
+            return choice.approved;
+          },
+        },
+      }),
+      createDownloadTool({
+        onResult: (r) =>
+          actions.record({
+            actor: 'asistenta',
+            action: 'descarga',
+            target: r.host,
+            result: r.ok ? 'ok' : 'error',
+            detail: r.ok ? r.kind : r.reason,
+          }),
+        sendVideo: (bytes, seconds, label) =>
+          telegram
+            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+            .then(() => true),
+        sendDocument: (bytes, filename, caption) =>
+          telegram
+            .sendDocumentBytes(
+              Number(thread.chatKey.split(':')[2]),
+              bytes,
+              filename,
+              caption,
+              inboundFor(thread).threadId,
+            )
+            .then(() => true),
+        progress: (what) => telegram.action(inboundFor(thread).chatId, what),
+        options: {
+          cookiesFromBrowser: config.downloadCookiesBrowser,
+          curlImpersonatePath: config.curlImpersonatePath,
+        },
+      }),
       // Audio, camera and microphone in ordinary language. Everything here is also a
       // slash command; the tool exists for "suéltame ese audio" and "grábame con mi
       // voz", which are requests about an attachment rather than commands.
+      createOpenGymTool(gymDeps),
       createMediaTool({
         chatKey: thread.key,
         recall,
@@ -1114,12 +1269,12 @@ async function serveCommand(): Promise<number> {
       onAwaiting: (waiting) => {
         holder.agent?.setAwaitingApproval(waiting);
       },
-      ask: async (key, tool, reason) => {
+      ask: async (key, tool, reason, question) => {
         log.info('approval requested', { thread: key, tool, reason });
         const choice = await telegram.offerApproval(
           randomUUID(),
           chatId,
-          `¿Permito ${tool}?\n${reason}`,
+          question ?? `¿Permito ${tool}?\n${reason}`,
           {
             askScope: true,
           },
@@ -1194,6 +1349,7 @@ async function serveCommand(): Promise<number> {
     };
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
+      deferTools: true,
     });
     threads.set(key, thread);
     log.info('thread created', { thread: key });
@@ -1717,6 +1873,171 @@ async function serveCommand(): Promise<number> {
     );
   };
 
+  /**
+   * Texto de una página pública, por el mismo camino (y el mismo control SSRF) que la tool
+   * fetch. La tool devuelve el texto dentro de una valla `<fetched_content>`; aquí se quita.
+   */
+  const fetchPageText = async (url: string): Promise<string> => {
+    const tool = createFetchTool(50_000);
+    const res = await tool.execute('pagewatch', { url, format: 'text' });
+    const raw = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    const m = /<fetched_content[^>]*>\n?([\s\S]*?)\n?<\/fetched_content>/.exec(raw);
+    return m?.[1] ?? raw;
+  };
+
+  /** /vigila <url> [nombre]: avisa cuando cambie el precio (o el texto) de una página. */
+  const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
+    const parsed = parseVigilaArgs(args);
+    const rawUrl = parsed?.url;
+    if (!parsed || !rawUrl) {
+      return void (await say(
+        inbound,
+        'Uso: /vigila <enlace> [nombre]. Te aviso si cambia el precio de la página. Con palabra=agotado (o palabra="sin stock") te aviso cuando esa palabra aparezca o desaparezca. /vigilando para ver la lista, /dejar_de_vigilar <id> para quitar una.',
+        { quote: true },
+      ));
+    }
+    if (!(await isFetchableResolved(rawUrl))) {
+      return void (await say(inbound, 'Solo puedo vigilar enlaces públicos http(s).', {
+        quote: true,
+      }));
+    }
+    try {
+      const w = pageWatches.add(inbound.chatId, rawUrl, parsed.label, parsed.keyword);
+      await say(
+        inbound,
+        `Vale, vigilo ${w.label || w.url} (id ${w.id})${w.keyword ? ` buscando "${w.keyword}"` : ''}. Miro cada 2 horas y te aviso si cambia.`,
+        {
+          quote: true,
+        },
+      );
+      void checkPageWatch(w.id);
+    } catch (err) {
+      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+    }
+  };
+
+  const cmdVigilando = async (inbound: Inbound): Promise<void> => {
+    const list = pageWatches.list(inbound.chatId);
+    const text = list.length
+      ? list
+          .map((w) => `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}`)
+          .join('\n')
+      : 'No vigilo ninguna página. Prueba /vigila <enlace>.';
+    await say(inbound, text, { quote: true });
+  };
+
+  const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
+    const id = args.trim();
+    const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
+    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : 'No encuentro ese id. Mira /vigilando.', {
+      quote: true,
+    });
+  };
+
+  const checkPageWatch = async (id: string): Promise<void> => {
+    const w = pageWatches.get(id);
+    if (!w?.active) return;
+    const outcome = await pageWatches.check(w, fetchPageText);
+    const msg = describeChange(w, outcome);
+    if (outcome.kind === 'changed') {
+      actions.record({
+        actor: 'asistenta',
+        action: 'vigila_cambio',
+        target: w.label || w.url,
+        result: 'ok',
+      });
+    }
+    if (msg) {
+      await telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId: w.scope, text: msg })
+        .catch((err: unknown) => log.warn('page watch notice failed', { err }));
+    }
+  };
+
+  const weeklyText = async (chatId: string): Promise<string> => {
+    // El bloque de gimnasio solo aparece si openGym está emparejado; si falla, lo dice.
+    const configured = await makeOpenGymClient().catch(() => null);
+    const extra = configured ? await gymAnswer(gymDeps, 'semana') : '';
+    return buildWeeklySummary({
+      extra,
+      entries: actions.recent(5000),
+      now: Date.now(),
+      pending: followups.safe(() => followups.summarize(), ''),
+      watching: pageWatches.list(chatId).length,
+    });
+  };
+
+  /** Domingo por la tarde, una vez por semana y chat. Solo datos propios de Asistenta. */
+  const sendWeeklyIfDue = async (chatId: string): Promise<void> => {
+    if (!isWeeklyDue(new Date(), weeklyState.lastSent(chatId))) return;
+    weeklyState.markSent(chatId, Date.now());
+    await telegram
+      .send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId,
+        text: await weeklyText(chatId),
+      })
+      .catch((err: unknown) => log.warn('weekly summary failed', { err }));
+  };
+
+  const cmdGym = async (inbound: Inbound, what: GymKind): Promise<void> => {
+    await say(inbound, await gymAnswer(gymDeps, what), { quote: true });
+  };
+
+  const cmdResumen = async (inbound: Inbound): Promise<void> => {
+    await say(inbound, await weeklyText(inbound.chatId), { quote: true });
+  };
+
+  const PAGE_WATCH_EVERY_MS = 2 * 60 * 60 * 1000;
+  const pageWatchTimer = setInterval(
+    () => {
+      for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
+      for (const userId of allowed) void sendWeeklyIfDue(String(userId));
+    },
+    10 * 60 * 1000,
+  );
+  pageWatchTimer.unref();
+
+  const startedAt = Date.now();
+
+  /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
+  const cmdEstado = async (inbound: Inbound): Promise<void> => {
+    const ytdlp = process.env.ASISTENTA_YTDLP || 'yt-dlp';
+    const ytdlpOk = await new Promise<boolean>((resolve) => {
+      execFile(ytdlp, ['--version'], { timeout: 5000, windowsHide: true }, (err) => resolve(!err));
+    });
+    const curl = await findCurlImpersonate(config.curlImpersonatePath).catch(() => null);
+    let logSummary: ReturnType<typeof summarizeLog> | null = null;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      logSummary = summarizeLog(readFileSync(join(paths.log, `${day}.jsonl`), 'utf8'));
+    } catch {
+      logSummary = null;
+    }
+    const text = formatStatus({
+      version: process.env.npm_package_version ?? 'dev',
+      node: process.version,
+      uptimeMs: Date.now() - startedAt,
+      tools: [
+        {
+          name: 'yt-dlp (vídeos)',
+          ok: ytdlpOk,
+          note: ytdlpOk ? undefined : 'no puedo descargar vídeos',
+        },
+        {
+          name: 'curl-impersonate (PDF protegidos)',
+          ok: curl !== null,
+          note: curl ? undefined : 'opcional; sin él algunos PDF con antibot fallan',
+        },
+        { name: 'ffmpeg (/watch)', ok: ffmpegAvailable() },
+      ],
+      log: logSummary,
+      pageWatches: pageWatches.list(inbound.chatId).length,
+    });
+    await say(inbound, text, { quote: true });
+  };
+
   /** What the user said they would do, in the tracker's own Spanish summary. */
   const cmdFollowups = async (inbound: Inbound): Promise<void> => {
     const text = followups.safe(() => followups.summarize(), 'No he podido leer los pendientes.');
@@ -2112,6 +2433,11 @@ async function serveCommand(): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
         '/resolver <id> - marca un pendiente como resuelto',
+        '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
+        '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
+        '/estado - cómo estoy: herramientas, errores de hoy',
+        '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
+        '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
         '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
@@ -2264,7 +2590,9 @@ async function serveCommand(): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(buildContextNote(thread, store, memory, snapshot, workstreams));
+      thread.agent.attachContext(
+        buildContextNote(thread, store, memory, snapshot, workstreams, skills),
+      );
 
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
@@ -2277,6 +2605,11 @@ async function serveCommand(): Promise<number> {
       });
 
       if (thread.generation !== generation) return;
+
+      // Learn from this run's problems: a tool failed and another way then worked.
+      // Built from the structured trail only, saved straight into `lecciones`.
+      const learned = recordLessons(skills, result.steps, new Date().toISOString().slice(0, 10));
+      if (learned.length) log.info('lessons saved', { thread: thread.name, ids: learned });
 
       log.info('task done', {
         thread: thread.name,
@@ -2622,6 +2955,22 @@ async function serveCommand(): Promise<number> {
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
+          case 'entreno_hoy':
+            return cmdGym(inbound, 'hoy');
+          case 'ultimo':
+            return cmdGym(inbound, 'ultimo');
+          case 'peso':
+            return cmdGym(inbound, 'peso');
+          case 'resumen':
+            return cmdResumen(inbound);
+          case 'estado':
+            return cmdEstado(inbound);
+          case 'vigila':
+            return cmdVigila(inbound, command.args);
+          case 'vigilando':
+            return cmdVigilando(inbound);
+          case 'dejar_de_vigilar':
+            return cmdDejarDeVigilar(inbound, command.args);
           case 'resolver':
           case 'resolve':
             return cmdResolve(inbound, command.args);
@@ -2980,6 +3329,7 @@ export function buildContextNote(
   memory: MemoryStore,
   snapshot?: MemorySnapshot,
   workstreams?: WorkstreamStore,
+  skills?: SkillStore,
 ): string {
   const parts: string[] = [];
 
@@ -3008,6 +3358,17 @@ export function buildContextNote(
   if (openWork.length) {
     const ws = workstreams?.index(thread.key) ?? '';
     if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
+  }
+  // What the agent already knows how to do (including its own lessons), as a
+  // one-line-each index; the steps load on demand with `skills read`.
+  if (skills) {
+    let index = '';
+    try {
+      index = skillsIndex(skills.list());
+    } catch (err) {
+      log.warn('skills index failed', { err: String(err) });
+    }
+    if (index) parts.push(index);
   }
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.

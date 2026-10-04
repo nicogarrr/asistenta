@@ -1,4 +1,7 @@
 import type { RetryPolicy } from './core/retry.js';
+import { COOKIE_BROWSERS } from './media/cookie-browsers.js';
+
+export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
 
 /**
  * Configuration is env-only and validated once, at startup, in `loadConfig()`.
@@ -44,6 +47,26 @@ export interface Config {
    * making progress, it is exploring; stop it and report instead of billing more.
    */
   maxToolCalls: number;
+  /**
+   * Which browser the `browser` tool drives. 'chrome' / 'msedge' use the one installed on
+   * this PC (a real fingerprint, far fewer anti-bot walls); 'chromium' is the copy bundled
+   * with Playwright. If the chosen one is not installed the tool falls back to 'chromium'.
+   */
+  browserChannel: BrowserChannel;
+  /** Browser whose cookies yt-dlp may use (`firefox`, `chrome`...). Empty = off. */
+  downloadCookiesBrowser: string;
+  /** Path to curl-impersonate for PDFs behind anti-bot walls. Empty = look on PATH. */
+  curlImpersonatePath: string;
+}
+
+/** Env var restricted to a fixed set of values. A typo is an error, not a silent default. */
+function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  const hit = allowed.find((a) => a === raw);
+  if (!hit)
+    throw new Error(`${name} must be one of ${allowed.join(', ')}, got ${JSON.stringify(raw)}`);
+  return hit;
 }
 
 function num(name: string, fallback: number): number {
@@ -121,6 +144,18 @@ export function loadConfig(): Config {
       maxDelayMs: num('PA_RETRY_MAX_MS', 20_000),
     },
     maxToolCalls: num('PA_MAX_TOOL_CALLS', 60),
+    browserChannel: oneOf<BrowserChannel>(
+      'PA_BROWSER_CHANNEL',
+      ['chrome', 'msedge', 'chromium'],
+      'chrome',
+    ),
+    // Off by default: it hands the browser's logged-in cookies to yt-dlp.
+    downloadCookiesBrowser: oneOf<string>(
+      'PA_DOWNLOAD_COOKIES_BROWSER',
+      ['', ...COOKIE_BROWSERS],
+      '',
+    ),
+    curlImpersonatePath: process.env.PA_CURL_IMPERSONATE?.trim() ?? '',
   };
   return cached;
 }

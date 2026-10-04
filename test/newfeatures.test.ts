@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { GrammyError } from 'grammy';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
@@ -164,13 +164,16 @@ describe('browser helpers', () => {
   });
 
   it('hashes the scope into a filesystem-safe profile path', () => {
-    const p = profileDirFor('telegram:main:8258546109#renfe', 'C:\\profiles');
-    expect(p.startsWith('C:\\profiles\\')).toBe(true);
-    expect(p.replace(/\\/g, '/')).toMatch(/^[A-Za-z]:\/profiles\/[0-9a-f]{24}$/);
+    // The base is built with the platform's own path rules: a hard-coded `C:\\profiles`
+    // is not an absolute path on Linux, which is why this used to fail there.
+    const base = join(tmpdir(), 'profiles');
+    const p = profileDirFor('telegram:main:8258546109#renfe', base);
+    expect(dirname(p)).toBe(base);
+    expect(basename(p)).toMatch(/^[0-9a-f]{24}$/);
     // A hostile scope must not be able to escape the profiles directory.
-    expect(profileDirFor('../../etc', 'C:\\profiles')).toMatch(
-      /^[A-Za-z]:\\profiles\\[0-9a-f]{24}$/,
-    );
+    const hostile = profileDirFor('../../etc', base);
+    expect(dirname(hostile)).toBe(base);
+    expect(basename(hostile)).toMatch(/^[0-9a-f]{24}$/);
   });
 
   it('summarises returned values instead of dumping internals', () => {
@@ -200,6 +203,7 @@ describe('BrowserService (live)', () => {
   const approvals: string[] = [];
   const service = new BrowserService({
     policy: {
+      allowPrivateHosts: true,
       approve: async (_scope, domain) => {
         approvals.push(domain);
         return true;
@@ -271,6 +275,7 @@ describe('BrowserService domain consent', () => {
   const make = (policy: { autoApprove?: boolean; adSkipIntervalMs?: number }, asked: string[]) =>
     new BrowserService({
       policy: {
+        allowPrivateHosts: true,
         ...policy,
         approve: async (_scope, domain) => {
           asked.push(domain);
@@ -359,6 +364,7 @@ describe('BrowserService advert skipping', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-ads-'));
   const service = new BrowserService({
     policy: {
+      allowPrivateHosts: true,
       autoApprove: true,
       // Fast enough that a test does not have to wait a second for one poll.
       adSkipIntervalMs: 250,

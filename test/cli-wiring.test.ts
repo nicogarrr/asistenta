@@ -25,6 +25,7 @@ import { parseNatural } from '../src/cron/scheduler.js';
 import { Store } from '../src/db.js';
 import { WorkstreamStore } from '../src/memory/workstreams.js';
 import { MemoryStore } from '../src/memory.js';
+import { SkillStore } from '../src/skills/store.js';
 
 const DAY_MS = 86_400_000;
 const SCOPE = 'telegram:main:42#main';
@@ -182,6 +183,40 @@ describe('next run labels', () => {
   it('falls back to the cron expression and to "no idea" when there is none', () => {
     expect(nextRunLabel('0 8 * * *', null, now)).toMatch(/^\d{4}-\d{2}-\d{2} .* UTC[+-]/);
     expect(nextRunLabel(null, null, now)).toBe('sin próxima ejecución');
+  });
+});
+
+describe('buildContextNote skills', () => {
+  it('adds the skills index only when there are skills, before the date note', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ctx-skills-'));
+    const skills = new SkillStore({ dir });
+    const empty = buildContextNote(
+      { key: SCOPE, name: 'main' },
+      store,
+      memory,
+      undefined,
+      undefined,
+      skills,
+    );
+    expect(empty).not.toContain('<skills>');
+    skills.save({
+      name: 'Pedir taxi',
+      description: 'taxi',
+      category: 'general',
+      whenToUse: 'cuando pida un taxi',
+      steps: ['abre la app'],
+    });
+    const note = buildContextNote(
+      { key: SCOPE, name: 'main' },
+      store,
+      memory,
+      undefined,
+      undefined,
+      skills,
+    );
+    expect(note).toContain('- pedir-taxi: cuando pida un taxi');
+    expect(note).not.toContain('abre la app');
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -5,8 +5,11 @@ import vm from 'node:vm';
 import { type BrowserContext, chromium, type Locator, type Page } from 'playwright';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
+import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
+import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 import { callPageAdClick, callPageMediaState, callPageScan, installPageScan } from './inpage.js';
+import { describeTarget, pageSummary } from './target.js';
 
 /**
  * Real browser control, one persistent profile per chat.
@@ -34,6 +37,11 @@ export interface BrowserPolicy {
   /** Hosts that are refused without asking. */
   deniedHosts?: string[];
   /**
+   * Allow localhost, private ranges and metadata hosts. Off by default and not wired to
+   * any config: it exists so tests can browse a local fixture server.
+   */
+  allowPrivateHosts?: boolean;
+  /**
    * Approve domains without asking.
    *
    * This is the browser half of "full control" and it exists because the gate was
@@ -57,8 +65,92 @@ export interface BrowserPolicy {
   adSkipIntervalMs?: number;
 }
 
+/**
+ * Which browser to drive. 'chrome' and 'msedge' are the ones installed on this PC (a
+ * real fingerprint, which anti-bot systems trust far more than Playwright's bundled
+ * Chromium); 'chromium' is the bundled copy.
+ */
+export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
+
+/** What a page shows, as far as telling a challenge from a normal page is concerned. */
+export interface ChallengeSignals {
+  url: string;
+  title: string;
+  text: string;
+  /** Sources of the iframes that are on screen (invisible ones are filtered out first). */
+  frames: string[];
+}
+
+export type ChallengeKind = 'cloudflare' | 'recaptcha' | 'hcaptcha' | 'verify_human';
+
+// Anchored to the start of the title: a real interstitial is titled "Just a moment...",
+// "Un momento...", "Attention Required! | Cloudflare". An article or product called
+// "Un momento para recordar" or "Security check-in tips" is not one.
+const CHALLENGE_TITLE =
+  /^\s*(?:just a moment|un momento|un instante|attention required|verifying you are human|checking your browser|security check|comprobaci[oó]n de seguridad)\s*(?:\.{2,}|…|!)?\s*(?:\|\s*cloudflare)?\s*$/i;
+/** A challenge page is nearly empty; a long page that merely mentions captchas is content. */
+const CHALLENGE_TEXT_MAX_LEN = 800;
+const CHALLENGE_TEXT =
+  /verify you are human|verifying you are human|verifica que eres (?:un )?humano|are you a robot|i'?m not a robot|no soy un robot|press (?:&|and) hold|unusual traffic|tr[aá]fico inusual|complete the security check|checking if the site connection is secure/i;
+
+/**
+ * Decide from what a page shows whether a person has to step in. Pure, so it is tested
+ * without a browser.
+ *
+ * Conservative about frames on purpose: a page that merely embeds a Turnstile or
+ * reCAPTCHA widget in a form is not blocking anyone, so a captcha frame only counts
+ * when the page also reads like a challenge (title or text). Invisible frames are
+ * dropped before this is called.
+ */
+export function classifyChallenge(sig: ChallengeSignals): ChallengeKind | null {
+  const text = sig.text.slice(0, 3000);
+  const frames = sig.frames.map((f) => f.toLowerCase());
+  // A title with a site suffix ("Un momento - Mi blog") is a page, not an interstitial.
+  const titled = CHALLENGE_TITLE.test(sig.title);
+  const captchaFrame = frames.some((f) =>
+    /challenges\.cloudflare\.com|recaptcha|hcaptcha\.com/.test(f),
+  );
+  const worded =
+    CHALLENGE_TEXT.test(text) && (sig.text.length <= CHALLENGE_TEXT_MAX_LEN || captchaFrame);
+  const cloudflareFrame = frames.some((f) => f.includes('challenges.cloudflare.com'));
+  if (cloudflareFrame && (titled || worded)) return 'cloudflare';
+  if (titled && /cloudflare|cf-chl|ray id/i.test(text)) return 'cloudflare';
+  if (/google\.[a-z.]+\/sorry\//.test(sig.url)) return 'recaptcha';
+  if (frames.some((f) => f.includes('google.com/recaptcha') || f.includes('recaptcha.net'))) {
+    if (worded || titled) return 'recaptcha';
+  }
+  if (frames.some((f) => f.includes('hcaptcha.com')) && (worded || titled)) return 'hcaptcha';
+  if (titled || worded) return 'verify_human';
+  return null;
+}
+
+/** Runs inside the page, so it is a string: nothing from this module exists there. */
+const CHALLENGE_PROBE = `(() => {
+  const frames = [];
+  for (const f of document.querySelectorAll('iframe')) {
+    const r = f.getBoundingClientRect();
+    const src = f.src || '';
+    if (r.width < 30 || r.height < 30 || /size=invisible/.test(src)) continue;
+    frames.push(src);
+  }
+  return JSON.stringify({
+    url: location.href,
+    title: document.title || '',
+    text: ((document.body && document.body.innerText) || '').slice(0, 3000),
+    frames,
+  });
+})()`;
+
+/** True when Playwright could not start the requested installed browser because it is absent. */
+export function isMissingBrowserError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /distribution '[^']+' is not found|executable doesn't exist/i.test(msg);
+}
+
 export interface BrowserServiceOptions {
   policy: BrowserPolicy;
+  /** Default 'chromium', so a bare service behaves as before; the daemon passes config. */
+  channel?: BrowserChannel;
   /** Per-call ceiling for navigation and for evaluated code. */
   timeoutMs?: number;
   headless?: boolean;
@@ -245,6 +337,8 @@ interface Session {
    * sounding when nothing can be heard. Media has to run in a visible window.
    */
   visible: boolean;
+  /** The browser actually running; differs from the requested one after a fallback. */
+  channel: BrowserChannel;
   /** vm context holding `page`, `state` and what the agent put on it. */
   sandbox: vm.Context;
   /** Domains the human approved for this chat. */
@@ -379,7 +473,7 @@ export function looksLikeCssSelector(value: string): boolean {
  * "Barcelona Sants": both contain the text, only one is the thing that was asked for.
  * Returns the index in `texts`, or -1 when nothing is close enough.
  */
-export function chooseSuggestion(texts: readonly string[], label: string): number {
+export function rankSuggestion(texts: readonly string[], label: string): number {
   const want = label.trim();
   const target = normalizeText(label);
   if (!target) return -1;
@@ -610,6 +704,7 @@ export class BrowserService {
   constructor(options: BrowserServiceOptions) {
     this.#options = {
       policy: options.policy,
+      channel: options.channel ?? 'chromium',
       timeoutMs: options.timeoutMs ?? 45_000,
       headless: options.headless ?? true,
       profilesDir: options.profilesDir ?? paths.browser,
@@ -659,9 +754,12 @@ export class BrowserService {
 
     const dir = profileDirFor(scope, this.#options.profilesDir);
     mkdirSync(dir, { recursive: true });
-    const context = await chromium.launchPersistentContext(dir, {
+    const launchOptions = {
       headless: !wantVisible,
       viewport: this.#options.viewport,
+      // Playwright adds --enable-automation by default; it only draws an infobar and
+      // sets a flag sites can read, so it goes.
+      ignoreDefaultArgs: ['--enable-automation'],
       // Hiding the automation flag costs nothing and keeps sites from serving a
       // degraded "we think you are a bot" page to the agent's own browser.
       args: [
@@ -675,7 +773,8 @@ export class BrowserService {
       // Ceiling on the launch itself. Page timeouts are set separately below because
       // launchPersistentContext has no navigation-timeout option.
       timeout: this.#options.timeoutMs,
-    });
+    };
+    const { context, channel } = await this.#launch(scope, dir, launchOptions);
     context.setDefaultTimeout(this.#options.timeoutMs);
     context.setDefaultNavigationTimeout(this.#options.timeoutMs);
 
@@ -687,6 +786,7 @@ export class BrowserService {
       context,
       page,
       visible: wantVisible,
+      channel,
       // Code generation disabled: the sandbox may call the functions it is given, but
       // it cannot build new code from strings or wasm, which removes the eval/Function
       // side of the escape surface.
@@ -719,8 +819,90 @@ export class BrowserService {
 
     this.#installPolicy(scope, session);
     this.#startAdSkip(scope, session);
-    log.info('browser opened', { scope, headless: this.#options.headless });
+    log.info('browser opened', { scope, headless: this.#options.headless, channel });
     return session;
+  }
+
+  /**
+   * Start the browser, preferring the installed one.
+   *
+   * An installed Chrome/Edge gets its own profile directory (`<dir>-chrome`): a profile
+   * written by Playwright's bundled Chromium can be newer than the installed browser,
+   * and Chrome refuses or resets a profile from a newer version. The cost is that a
+   * session logged in under the old bundled profile does not carry over once.
+   * If the requested browser is not installed the bundled one starts instead, with the
+   * original profile, and the fallback is logged. Any other launch error is real and
+   * propagates (for example a profile lock held by another process).
+   */
+  async #launch(
+    scope: string,
+    dir: string,
+    launchOptions: Parameters<typeof chromium.launchPersistentContext>[1],
+  ): Promise<{ context: BrowserContext; channel: BrowserChannel }> {
+    const wanted = this.#options.channel;
+    if (wanted !== 'chromium') {
+      try {
+        const profile = `${dir}-${wanted}`;
+        mkdirSync(profile, { recursive: true });
+        const context = await chromium.launchPersistentContext(profile, {
+          ...launchOptions,
+          channel: wanted,
+        });
+        return { context, channel: wanted };
+      } catch (err) {
+        if (!isMissingBrowserError(err)) throw err;
+        log.warn('browser channel not installed, using bundled chromium', { scope, wanted });
+      }
+    }
+    return {
+      context: await chromium.launchPersistentContext(dir, launchOptions),
+      channel: 'chromium',
+    };
+  }
+
+  /**
+   * Is the current page a bot challenge or captcha that a person has to solve?
+   *
+   * Never tries to get past it: the answer exists so the caller can stop and hand the
+   * page to the user instead of pretending the task went through. Returns null for a
+   * normal page and also when the page cannot be inspected (mid-navigation), because a
+   * guess either way would be worse than saying nothing.
+   */
+  async detectChallenge(
+    scope: string,
+  ): Promise<{ kind: ChallengeKind; url: string; title: string } | null> {
+    const session = this.#sessions.get(scope);
+    if (!session) return null;
+    try {
+      // A click or open may still be mid-navigation; the challenge page itself loads fast.
+      await session.page.waitForLoadState('domcontentloaded', { timeout: 3_000 }).catch(() => {});
+      const raw = (await session.page.evaluate(CHALLENGE_PROBE)) as string;
+      const sig = JSON.parse(raw) as ChallengeSignals;
+      const kind = classifyChallenge(sig);
+      return kind ? { kind, url: sig.url, title: sig.title } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Put the current page in front of the user: same profile, visible window, same URL,
+   * so they can solve the challenge by hand and the clearance cookie lands in the
+   * profile the agent keeps using. Returns false when nothing could be reopened.
+   */
+  async handToUser(scope: string): Promise<boolean> {
+    const session = this.#sessions.get(scope);
+    if (!session) return false;
+    // Already on screen: reopening would reload the page under the user's hands.
+    if (session.visible) return true;
+    const url = session.page.url();
+    try {
+      await this.open(scope, url, { visible: true });
+      return true;
+    } catch (err) {
+      log.warn('browser could not be shown to the user', { scope, err });
+      return false;
+    }
   }
 
   // ---- grants that survive a restart ---------------------------------------
@@ -885,6 +1067,17 @@ export class BrowserService {
       if (!host) return route.abort();
 
       const isDocument = request.isNavigationRequest() && request.resourceType() === 'document';
+      // Local and private destinations are refused before anything else, redirects
+      // and frames included. Subresources (images, scripts, xhr) are not covered:
+      // see the trade-off above.
+      if (
+        isDocument &&
+        !this.#options.policy.allowPrivateHosts &&
+        !(await isFetchableResolved(request.url()))
+      ) {
+        log.warn('browser navigation to a local or private address refused', { scope, host });
+        return route.abort();
+      }
       const blocked = denied.some((d) => domainCovers(d.trim(), host));
       if (blocked && isDocument) {
         log.warn('browser navigation to sensitive host refused', { scope, host });
@@ -967,6 +1160,16 @@ export class BrowserService {
   async open(scope: string, url: string, opts?: { visible?: boolean }): Promise<OpenResult> {
     const host = hostOf(url);
     if (!host) throw new Error(`no es una URL valida: ${url}`);
+
+    // Before the approval prompt: the user must never be asked "¿Abro localhost?"
+    // for something that would let the agent reach this machine's own services or
+    // the cloud metadata endpoint.
+    if (!this.#options.policy.allowPrivateHosts && !(await isFetchableResolved(url))) {
+      throw new Error(
+        `no abro ${host}: es una direccion local o privada (localhost, red interna, metadatos). ` +
+          'El navegador solo abre sitios publicos http(s).',
+      );
+    }
 
     const denied = [...(this.#options.policy.deniedHosts ?? []), ...DEFAULT_DENIED];
     const blocked = denied.find((d) => domainCovers(d.trim(), host));
@@ -1054,6 +1257,18 @@ export class BrowserService {
    * list, because "there are 4 suggestions open right now" is the fact that decides
    * the next action.
    */
+  /** What the element behind `selector` is and does, for the permission gate. */
+  async describeTarget(scope: string, selector: string): Promise<string> {
+    const session = await this.#session(scope);
+    return describeTarget(session.page, selector);
+  }
+
+  /** Amounts and address lines on the current page, for a payment confirmation. */
+  async summarisePage(scope: string): Promise<string> {
+    const session = await this.#session(scope);
+    return pageSummary(session.page);
+  }
+
   async snapshot(scope: string, limit = 120): Promise<string> {
     const scan = await this.elements(scope, limit);
     return formatSnapshot(scan);
@@ -1481,7 +1696,7 @@ export class BrowserService {
       );
     }
 
-    const at = chooseSuggestion(texts, label);
+    const at = rankSuggestion(texts, label);
     if (at < 0) {
       const listed = texts.map((t) => `"${t}"`).join(', ');
       return fail(
@@ -1605,6 +1820,17 @@ export class BrowserService {
    * pending operation behind, which is exactly why the serialiser matters: one leaked
    * call must not end up queued in front of every later one.
    */
+  /** Type into an autocomplete field, pick a suggestion by text and verify the value. */
+  async autocomplete(
+    scope: string,
+    selector: string,
+    text: string,
+    option?: string,
+  ): Promise<ChooseResult> {
+    const session = await this.#session(scope);
+    return chooseSuggestion(session.page, selector, text, option);
+  }
+
   async execJs(scope: string, code: string, opts?: { visible?: boolean }): Promise<ExecJsResult> {
     const session = await this.#session(scope, { visible: opts?.visible });
     const script = new vm.Script(`(async () => {\n${code}\n})()`);

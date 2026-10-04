@@ -15,6 +15,7 @@ import {
   verifyBatch,
 } from '../src/screen/verify.js';
 import { dpiScaleFor, listWindows } from '../src/tools/windows.js';
+import { isWindows } from './helpers/platform.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +84,8 @@ function asShot(image: Buffer): Screenshot {
 }
 
 describe('compareFrames (live)', () => {
-  it('reports no change between two identical frames', async () => {
+  // Paints frames with PowerShell and System.Drawing, so Windows only.
+  it.skipIf(!isWindows)('reports no change between two identical frames', async () => {
     const paint1 = `
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
 $g.FillRectangle($brush, 100, 100, 300, 80)`;
@@ -96,7 +98,8 @@ $g.FillRectangle($brush, 100, 100, 300, 80)`;
     expect(diff.verdict).toMatch(/NO ha cambiado/);
   });
 
-  it('reports a change when a block of text-like marks appears', async () => {
+  // Paints frames with PowerShell and System.Drawing, so Windows only.
+  it.skipIf(!isWindows)('reports a change when a block of text-like marks appears', async () => {
     // Ten glyph-like rectangles standing in for a typed line: contiguous, which is what
     // separates real content from noise.
     const empty = '$brush0 = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)';
@@ -112,57 +115,68 @@ for ($i = 0; $i -lt 10; $i++) { $g.FillRectangle($brush, 100 + $i*12, 200, 8, 20
     expect(diff.verdict).toMatch(/ha tenido efecto/);
   });
 
-  it('reports a big change when the whole frame is replaced', async () => {
-    // The other end of the scale. A low ratio must never be the only number the caller
-    // gets: "nothing happened" and "everything happened" have to be far apart.
-    const dark = '$brush0 = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)';
-    const white = `
+  it.skipIf(!isWindows)(
+    'reports a big change when the whole frame is replaced',
+    // Four painted frames through PowerShell and System.Drawing. It passes in about 6s
+    // alone and took 17s while the rest of the suite was competing for the same
+    // processes, so the default 5s budget is not the thing being measured here.
+    { timeout: 60_000 },
+    async () => {
+      // The other end of the scale. A low ratio must never be the only number the caller
+      // gets: "nothing happened" and "everything happened" have to be far apart.
+      const dark = '$brush0 = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)';
+      const white = `
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
 $g.FillRectangle($brush, 0, 0, 800, 600)`;
-    const quiet = await compareFrames(await paint('a.jpg', dark), await paint('b.jpg', dark));
-    const loud = await compareFrames(await paint('c.jpg', dark), await paint('d.jpg', white));
-    expect(quiet.ratio).toBeLessThan(0.0006);
-    expect(loud.ratio).toBeGreaterThan(0.5);
-    expect(loud.changed).toBe(true);
-    expect(loud.verdict).toMatch(/ha tenido efecto/);
-  });
+      const quiet = await compareFrames(await paint('a.png', dark), await paint('b.png', dark));
+      const loud = await compareFrames(await paint('c.png', dark), await paint('d.png', white));
+      expect(quiet.ratio).toBeLessThan(0.0006);
+      expect(loud.ratio).toBeGreaterThan(0.5);
+      expect(loud.changed).toBe(true);
+      expect(loud.verdict).toMatch(/ha tenido efecto/);
+    },
+  );
 
-  it('distinguishes a change at the action point from one far away', async () => {
-    // This is the case that separates "landed" from "missed", and the reason the
-    // comparison takes a point of interest at all.
-    //
-    // Frames are painted at 800x600 and compared on a grid derived from that aspect,
-    // so the point of interest is given in FRAME coordinates — the same space the model
-    // sees a screenshot in — and the comparer scales it into the grid itself.
-    const base = `
+  // Paints frames with PowerShell and System.Drawing, so Windows only.
+  it.skipIf(!isWindows)(
+    'distinguishes a change at the action point from one far away',
+    async () => {
+      // This is the case that separates "landed" from "missed", and the reason the
+      // comparison takes a point of interest at all.
+      //
+      // Frames are painted at 800x600 and compared on a grid derived from that aspect,
+      // so the point of interest is given in FRAME coordinates — the same space the model
+      // sees a screenshot in — and the comparer scales it into the grid itself.
+      const base = `
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
 $g.FillRectangle($brush, 400, 300, 200, 100)`;
-    const awayScript = `
+      const awayScript = `
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
 $g.FillRectangle($brush, 400, 300, 200, 100)
 $g.FillRectangle($brush, 600, 40, 160, 160)`;
-    const nearScript = `
+      const nearScript = `
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
 $g.FillRectangle($brush, 400, 300, 200, 100)
 $g.FillRectangle($brush, 560, 340, 80, 60)`;
-    const a = await paint('a.jpg', base);
-    const away = await paint('b.jpg', awayScript);
-    const here = await paint('c.jpg', nearScript);
+      const a = await paint('a.png', base);
+      const away = await paint('b.png', awayScript);
+      const here = await paint('c.png', nearScript);
 
-    // The action point is empty space at the bottom left; the response happened top
-    // right, so the agent pressed the wrong thing.
-    const remote = await compareFrames(a, away, { at: { x: 100, y: 500 }, radius: 40 });
-    expect(remote.changed).toBe(true);
-    expect(remote.movedAway).toBe(true);
-    expect(remote.verdict).toMatch(/lejos del punto|NADA se movio/);
+      // The action point is empty space at the bottom left; the response happened top
+      // right, so the agent pressed the wrong thing.
+      const remote = await compareFrames(a, away, { at: { x: 100, y: 500 }, radius: 40 });
+      expect(remote.changed).toBe(true);
+      expect(remote.movedAway).toBe(true);
+      expect(remote.verdict).toMatch(/lejos del punto|NADA se movio/);
 
-    // The action point sits on the block that appeared at 560..640 x 340..400.
-    // It overlaps the base rectangle rather than hiding inside it, or there would be
-    // nothing new to see.
-    const close = await compareFrames(a, here, { at: { x: 600, y: 370 }, radius: 40 });
-    expect(close.changed).toBe(true);
-    expect(close.movedAway).toBe(false);
-  });
+      // The action point sits on the block that appeared at 560..640 x 340..400.
+      // It overlaps the base rectangle rather than hiding inside it, or there would be
+      // nothing new to see.
+      const close = await compareFrames(a, here, { at: { x: 600, y: 370 }, radius: 40 });
+      expect(close.changed).toBe(true);
+      expect(close.movedAway).toBe(false);
+    },
+  );
 
   it('clamps impossible geometry instead of building a broken comparison', () => {
     const script = buildCompareScript('a.jpg', 'b.jpg', {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import {
   ocrAvailable,
   ocrImage,
 } from '../src/screen/ocr.js';
+import { isWindows } from './helpers/platform.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -168,7 +169,8 @@ describe('powershell scripts', () => {
  * bounding box, since a bounding box that is zero or outside the image is exactly what
  * makes the tool useless while still returning text.
  */
-describe('ocr end to end (live)', () => {
+// Needs PowerShell and the Windows OCR engine.
+describe.skipIf(!isWindows)('ocr end to end (live)', () => {
   it('reads a painted image and places the text inside it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-ocr-'));
     const image = join(dir, 'ocr-test.png');
@@ -261,17 +263,9 @@ describe('ocr failure paths', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-ocr-'));
     const fake = join(dir, 'fake.png');
     try {
-      rmSync(fake, { force: true });
-      await execFileAsync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `Set-Content -LiteralPath '${fake.replace(/'/g, "''")}' -Value 'esto no es una imagen' -Encoding ASCII`,
-        ],
-        { encoding: 'utf8', timeout: 20_000 },
-      );
+      // Plain file write: PowerShell is not needed to make a file that is not a PNG, and
+      // needing it made this test fail on every non-Windows machine.
+      writeFileSync(fake, 'esto no es una imagen', 'ascii');
       if (!(await ocrAvailable())) return;
       await expect(ocrImage(fake)).rejects.toThrow(/no he podido decodificar la imagen/);
     } finally {

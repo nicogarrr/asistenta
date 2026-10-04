@@ -6,6 +6,10 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 
 const MAX_READ_BYTES = 512 * 1024;
+/** Lines returned when the caller gives no `limit`; the result says how to page on. */
+export const DEFAULT_READ_LINES = 2000;
+/** Chars returned in one read, whatever the line count (one-line minified files). Kept under MAX_TOOL_RESULT_CHARS (24k) so the generic backstop never cuts a read result. */
+export const MAX_READ_CHARS = 22_000;
 
 const ReadParams = Type.Object({
   path: Type.String({ description: 'File path, absolute or relative to the working directory.' }),
@@ -62,15 +66,31 @@ export const readTool: AgentTool<typeof ReadParams> = {
 
     const start = Math.max(1, Math.trunc(args.offset ?? 1));
     const wanted =
-      args.limit === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.trunc(args.limit));
-    const end = Math.min(total, start - 1 + wanted);
-    const slice = allLines.slice(start - 1, end).join('\n');
+      args.limit === undefined ? DEFAULT_READ_LINES : Math.max(1, Math.trunc(args.limit));
+    let end = Math.min(total, start - 1 + wanted);
+    let slice = allLines.slice(start - 1, end).join('\n');
+    // A minified file is one giant line, so the line budget alone does not bound it.
+    if (slice.length > MAX_READ_CHARS) {
+      const lines = allLines.slice(start - 1, end);
+      let used = 0;
+      let n = 0;
+      for (const line of lines) {
+        if (n > 0 && used + line.length + 1 > MAX_READ_CHARS) break;
+        used += line.length + 1;
+        n++;
+      }
+      end = start - 1 + n;
+      slice = lines.slice(0, n).join('\n');
+      if (slice.length > MAX_READ_CHARS) {
+        slice = `${slice.slice(0, MAX_READ_CHARS)}\n[... línea cortada a ${MAX_READ_CHARS} caracteres ...]`;
+      }
+    }
 
     // The line budget is the real cost control. The old hard byte cap refused to
     // read anything over 512KB at all, which turned "look at line 9000 of this log"
     // into a shell pipeline; now a large file is paged instead of refused.
     if (size > MAX_READ_BYTES && args.limit === undefined && args.offset === undefined) {
-      log.warn('read of a large file with no range, returning a truncated head', {
+      log.warn('read of a large file with no range, returning only the first page', {
         path,
         bytes: size,
       });

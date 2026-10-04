@@ -62,9 +62,10 @@ describe('page-side scripts reach the browser', () => {
     dir = mkdtempSync(join(tmpdir(), 'pa-inpage-'));
     service = new BrowserService({
       policy: {
-        allowedDomains: [],
-        fullControl: true,
-        approve: async () => 'allow-once',
+        // The fixture is served from 127.0.0.1, which the policy refuses unless private
+        // hosts are allowed. Approving everything is fine here: nothing but localhost.
+        approve: async () => true,
+        allowPrivateHosts: true,
       },
       profilesDir: dir,
     });

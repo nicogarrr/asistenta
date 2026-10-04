@@ -3,11 +3,11 @@ import { Type } from 'typebox';
 import {
   type BrowserService,
   looksLikeCssSelector,
-  type PickResult,
   type TargetResult,
   type WaitResult,
 } from '../browser/service.js';
-import { log } from '../log.js';
+import { log, logHost } from '../log.js';
+import { isPaymentText } from '../permissions.js';
 
 /**
  * The browser tool.
@@ -86,6 +86,7 @@ const BrowserParams = Type.Object({
     Type.Literal('snapshot'),
     Type.Literal('click'),
     Type.Literal('fill'),
+    Type.Literal('choose'),
     Type.Literal('press'),
     Type.Literal('wait'),
     Type.Literal('wait_for'),
@@ -113,7 +114,13 @@ const BrowserParams = Type.Object({
         '"#buscar", and if the selector is stale they fall back to role, text and label.',
     }),
   ),
-  text: Type.Optional(Type.String({ description: 'For fill.' })),
+  text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
+  option: Type.Optional(
+    Type.String({
+      description:
+        'For choose: the suggestion to pick, if not just the typed text (e.g. "Madrid Chamartín"). Needed when several suggestions match.',
+    }),
+  ),
   key: Type.Optional(Type.String({ description: 'For press, e.g. "Enter".' })),
   with: Type.Optional(
     Type.String({
@@ -214,11 +221,67 @@ if (norm(got) !== norm(want)) {
 return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
 }
 
+/**
+ * After an action, check whether the page is a bot challenge or captcha, and if so stop
+ * and hand it to the person. Returns text for the model to relay, or null on a normal page.
+ *
+ * The agent never tries to solve it: the first time, the user gets a screenshot in the
+ * chat and the page in a visible window of the same profile; later checks while it is
+ * still on screen only say that it is still waiting. The wording is honest about each
+ * step that did not work, and tells the model not to report the task as done.
+ */
+export async function challengeNote(
+  service: BrowserService,
+  scope: string,
+  sendImage?: (png: Buffer) => Promise<boolean>,
+): Promise<{ text: string; kind: string } | null> {
+  const found = await service.detectChallenge(scope);
+  if (!found) return null;
+  let host = found.url;
+  try {
+    host = new URL(found.url).hostname;
+  } catch {
+    // keep the raw url
+  }
+  const head = `captcha_detectado (${found.kind}) en ${host}. No intento saltármelo.`;
+  const tail =
+    'No digas que la tarea está hecha: sigue bloqueada hasta que el usuario lo resuelva y lo confirme; entonces haz snapshot para comprobar que ya no aparece.';
+  if (service.isVisible(scope)) {
+    return {
+      kind: found.kind,
+      text: `${head} Sigue en pantalla esperando a que el usuario lo resuelva. ${tail}`,
+    };
+  }
+  let sent = false;
+  if (sendImage) {
+    try {
+      const shot = await service.screenshot(scope);
+      sent = await sendImage(Buffer.from(shot.data, 'base64')).catch(() => false);
+    } catch {
+      sent = false;
+    }
+  }
+  const shown = await service.handToUser(scope);
+  const parts = [
+    head,
+    sent
+      ? 'He enviado una captura al usuario.'
+      : 'No pude enviar la captura al usuario; díselo tú.',
+    shown
+      ? 'He abierto la página en una ventana visible: debe resolverlo ahí y avisarte ("listo").'
+      : 'No pude abrir la ventana visible; dile que abra esa página él mismo.',
+    tail,
+  ];
+  return { kind: found.kind, text: parts.join(' ') };
+}
+
 export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
   sendImage?: (png: Buffer) => Promise<boolean>,
-): AgentTool<typeof BrowserParams> {
+): AgentTool<typeof BrowserParams> & {
+  gateHint: (args: Record<string, unknown>) => Promise<string>;
+} {
   return {
     name: 'browser',
     label: 'Browser',
@@ -233,21 +296,23 @@ export function createBrowserTool(
       '   says so (retryFromRoot).',
       '2. action=snapshot to list the interactive elements. Each line gives the selector,',
       '   what kind of control it is, its ARIA role, the value a field currently holds, and',
-      '   its [index]. If there are suggestions open it says so at the top.',
+      '   its [index]. If a field has suggestions open it says so on that field line and at',
+      '   the top of the snapshot.',
       '3. action=click / fill / press with a selector from that snapshot. You may also pass',
       '   the visible text instead of a selector; it is resolved by role, then text, then',
       '   label, then by similarity, and a miss lists the closest things that do exist.',
       '4. action=screenshot only when you need to see something a selector cannot',
       '   express (canvas, a video, a rendered image, an unexpected layout).',
       '',
-      'DROPDOWNS AND AUTOCOMPLETE - USE action=pick, NOT fill plus a click:',
-      '  action=pick with="Madrid-Chamartín" from="#origen"',
-      'It focuses the field, waits for the suggestions to appear, reads them, presses the',
-      'one that matches and verifies the field really changed. If the label is not in the',
-      'list it comes back with the options that did appear, so you can retry with one of',
-      'them. It is safe to call twice. This is not optional on any site with a suggestion',
-      'box: those panels appear a few hundred milliseconds after the field is focused, and',
-      'reading the page too early is why an agent decides there is nothing to click.',
+      'DROPDOWNS AND AUTOCOMPLETE - USE action=choose, NOT fill plus a click:',
+      '  action=choose selector="#origen" text="Madrid"',
+      '  action=choose selector="#origen" text="Madrid" option="Madrid-Chamartin"',
+      'It types, waits for the suggestions to appear, picks the one that matches by text and',
+      'reads the field back to verify it. If several suggestions match it hands the list',
+      'back instead of guessing, so repeat it with option set to the one you want. It is',
+      'safe to call twice. This is not optional on any site with a suggestion box: those',
+      'panels appear a few hundred milliseconds after the field is focused, and reading the',
+      'page too early is why an agent decides there is nothing to click.',
       '',
       'WAITING - USE action=wait, NOT a blind sleep:',
       '  action=wait with="#results" timeoutMs=4000     (a CSS selector)',
@@ -260,10 +325,16 @@ export function createBrowserTool(
       'VISIBLE OR NOT - the user must never be left watching nothing:',
       'The browser is HEADLESS unless you pass visible: true, and a headless browser shows',
       'the user nothing at all. Pass visible: true on the first open whenever the user asked',
-      'you to do something they might want to see ("busca un tren", "resérvame esto", "hazlo',
-      'tú"), and keep it for the rest of the task. Every result repeats whether the window',
+      'you to do something they might want to see ("busca un tren", "reservame esto", "hazlo',
+      'tu"), and keep it for the rest of the task. Every result repeats whether the window',
       'is visible, so you can check instead of guessing. If it is headless and you want the',
       'user to see something, either reopen with visible: true or send a screenshot.',
+      '',
+      'CAPTCHAS: after open / click / press / snapshot the result may start with',
+      '"captcha_detectado". That means a human check (Cloudflare, reCAPTCHA, hCaptcha...) is',
+      'blocking the page. Do NOT try to solve or bypass it and do not retry in a loop: the',
+      'user has already been sent a screenshot and the page is open on their screen. Tell',
+      'them plainly that it is waiting for them, and continue only after they say it is done.',
       '',
       'action=media controls playback on any page with a video element. what=state',
       'reports what is playing, whether an advert is on screen and how many adverts have',
@@ -305,6 +376,18 @@ export function createBrowserTool(
     // Sequential: the page is one shared object, and two actions in flight at once
     // race on the same navigation.
     executionMode: 'sequential',
+    // Read by the agent before the permission gate runs: the page's own words about the
+    // element the model is about to act on.
+    gateHint: async (args: Record<string, unknown>) => {
+      const action = String(args.action ?? '');
+      const selector = typeof args.selector === 'string' ? args.selector : '';
+      if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
+      const target = await service.describeTarget(scopeOf(), selector);
+      // Only for targets that read like money: the confirmation shows what is being paid.
+      if (!isPaymentText(target)) return target;
+      const summary = await service.summarisePage(scopeOf()).catch(() => '');
+      return summary ? `${target}\nRESUMEN DE LA PÁGINA:\n${summary}` : target;
+    },
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;
@@ -315,25 +398,38 @@ export function createBrowserTool(
           if (!url) throw new Error('la acción open necesita una url');
           const info = await service.open(scope, url, { visible: Boolean(record.visible) });
           log.info('browser open', {
-            host: info.url,
+            host: logHost(info.url),
             status: info.status,
             retryFromRoot: info.retryFromRoot ?? false,
           });
+          const note = await challengeNote(service, scope, sendImage);
           const body = [`Opened ${info.url}\nTitle: ${info.title}\nHTTP ${info.status ?? '?'}`];
+          if (info.retryFromRoot) {
+            body.push('The deep url 404d, so this is the site root: navigate from here.');
+          }
           if (info.note) body.push(info.note);
+          if (note) body.unshift(note.text);
           return {
             content: [{ type: 'text', text: `${body.join('\n')}${visibleNote(info.visible)}` }],
-            details: info,
+            details: note ? { ...info, captcha: note.kind } : info,
           };
         }
 
         case 'snapshot': {
           const text = await service.snapshot(scope);
+          const note = await challengeNote(service, scope, sendImage);
           return {
             content: [
-              { type: 'text', text: `${text}${visibleNote(windowVisible(service, scope))}` },
+              {
+                type: 'text',
+                text: `${note ? `${note.text}\n` : ''}${text}${visibleNote(windowVisible(service, scope))}`,
+              },
             ],
-            details: { lines: text.split('\n').length, visible: windowVisible(service, scope) },
+            details: {
+              lines: text.split('\n').length,
+              visible: windowVisible(service, scope),
+              ...(note ? { captcha: note.kind } : {}),
+            },
           };
         }
 
@@ -342,14 +438,16 @@ export function createBrowserTool(
           const result = await service.clickTarget(scope, target, {
             timeoutMs: readTimeout(record),
           });
+          const note = await challengeNote(service, scope, sendImage);
+          const said = describeTarget(result, { done: 'clicked', missing: 'hacer clic en' });
           return {
             content: [
               {
                 type: 'text',
-                text: `${describeTarget(result, { done: 'clicked', missing: 'hacer clic en' })}${visibleNote(result.visible)}`,
+                text: `${note ? `${note.text}\n` : ''}${said}${visibleNote(result.visible)}`,
               },
             ],
-            details: { ...result },
+            details: { ...result, ...(note ? { captcha: note.kind } : {}) },
           };
         }
 
@@ -390,6 +488,20 @@ export function createBrowserTool(
           };
         }
 
+        // Autocomplete / combobox fields (stations, cities, addresses): types, reads the
+        // suggestions, picks one by text and reads the field back. Works on any page.
+        case 'choose': {
+          const selector = requireTarget(record);
+          const value = String(record.text ?? '');
+          if (!value) throw new Error('la acción choose necesita text');
+          const option = record.option === undefined ? undefined : String(record.option);
+          const r = await service.autocomplete(scope, selector, value, option);
+          return {
+            content: [{ type: 'text', text: r.message }],
+            details: { selector, ok: r.ok, value: r.value, suggestions: r.suggestions },
+          };
+        }
+
         case 'press': {
           const target = requireTarget(record);
           const key = String(record.key ?? 'Enter');
@@ -412,9 +524,15 @@ export function createBrowserTool(
             `await ${resolved.locatorJs}.press(${JSON.stringify(key)});
 return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.how)} + ' (${resolved.how})';`,
           );
+          const note = await challengeNote(service, scope, sendImage);
           return {
-            content: [{ type: 'text', text: `${text.text}${visibleNote(resolved.visible)}` }],
-            details: { ...resolved, key },
+            content: [
+              {
+                type: 'text',
+                text: `${note ? `${note.text}\n` : ''}${text.text}${visibleNote(resolved.visible)}`,
+              },
+            ],
+            details: { ...resolved, key, ...(note ? { captcha: note.kind } : {}) },
           };
         }
 
@@ -423,7 +541,7 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
           const { selector, text } = waitTarget(record);
           if (!selector && !text) {
             throw new Error(
-              'la acción wait necesita with= (un selector o el texto que esperas), ' +
+              'la accion wait necesita with= (un selector o el texto que esperas), ' +
                 'por ejemplo with="#resultados" o with="Sin resultados"',
             );
           }
@@ -434,29 +552,6 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
                 type: 'text',
                 text: `${describeWait(result)}${visibleNote(result.visible)}`,
               },
-            ],
-            details: { ...result },
-          };
-        }
-
-        case 'pick': {
-          const label = String(record.with ?? record.text ?? '').trim();
-          const from = String(record.from ?? record.selector ?? '').trim();
-          if (!label) {
-            throw new Error(
-              'la acción pick necesita la etiqueta a elegir en with=, por ejemplo with="Madrid"',
-            );
-          }
-          if (!from) {
-            throw new Error(
-              'la acción pick necesita el campo donde escribir en from=, por ejemplo from="#origen"',
-            );
-          }
-          const result = await service.pick(scope, { label, from, timeoutMs: readTimeout(record) });
-          log.info('browser pick', { label, from, ok: result.ok, chosen: result.chosen });
-          return {
-            content: [
-              { type: 'text', text: `${describePick(result)}${visibleNote(result.visible)}` },
             ],
             details: { ...result },
           };
@@ -691,19 +786,6 @@ function describeWait(result: WaitResult): string {
     return `"${result.waitedFor}" ha aparecido y es visible (${result.waitedMs}ms). Ya puedes actuar sobre él.`;
   }
   return result.reason ?? `"${result.waitedFor}" no ha aparecido.`;
-}
-
-/** Text for a pick, including the options that were on screen when it did not match. */
-function describePick(result: PickResult): string {
-  const head = result.alreadySet
-    ? `El campo ${result.field} ya decía "${result.value}". No he tocado nada.`
-    : result.ok
-      ? `Elegido "${result.chosen}" en ${result.field}. El campo quedó con "${result.value}" (${result.waitedMs}ms).`
-      : `No he podido elegir "${result.label}" en ${result.field}. ${result.reason ?? ''}`;
-  const options = result.options.length
-    ? `\nSugerencias que sí aparecen: [${result.options.map((o) => `"${o}"`).join(', ')}]`
-    : '';
-  return `${head}${options}`;
 }
 
 /**

@@ -5,7 +5,13 @@ import {
   parseKeyChord,
   splitAsciiSegments,
 } from '../src/screen/keys.js';
-import { decodeEntities, extractText, isFetchable } from '../src/tools/fetch.js';
+import {
+  decodeEntities,
+  extractText,
+  isFetchable,
+  isFetchableResolved,
+  isPublicIp,
+} from '../src/tools/fetch.js';
 
 describe('parseKeyChord', () => {
   it('maps named keys', () => {
@@ -119,6 +125,14 @@ describe('isFetchable', () => {
     expect(isFetchable('http://169.254.169.254/latest/meta-data/')).toBe(false);
   });
 
+  it('does not mistake hostnames starting with fc/fd/fe80 for IPv6 addresses', () => {
+    expect(isFetchable('https://fcbarcelona.com/')).toBe(true);
+    expect(isFetchable('https://fdic.gov/')).toBe(true);
+    expect(isFetchable('http://[fd12::1]/')).toBe(false);
+    expect(isFetchable('http://[fc00::1]/')).toBe(false);
+    expect(isFetchable('http://[fe80::1]/')).toBe(false);
+  });
+
   it('refuses non-http schemes', () => {
     expect(isFetchable('file:///C:/Windows/System32/config')).toBe(false);
     expect(isFetchable('ftp://example.com')).toBe(false);
@@ -163,5 +177,43 @@ describe('decodeEntities', () => {
 
   it('leaves unknown entities intact', () => {
     expect(decodeEntities('&notreal;')).toBe('&notreal;');
+  });
+});
+
+describe('isPublicIp / isFetchableResolved', () => {
+  it('classifies literal addresses, including mapped IPv6', () => {
+    expect(isPublicIp('8.8.8.8')).toBe(true);
+    expect(isPublicIp('2606:4700::1111')).toBe(true);
+    for (const ip of [
+      '127.0.0.1',
+      '10.1.2.3',
+      '100.64.0.1',
+      '169.254.169.254',
+      '::1',
+      'fd12::1',
+      'fe80::1',
+      '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '0.0.0.0',
+    ])
+      expect(isPublicIp(ip)).toBe(false);
+  });
+
+  it('refuses a public-looking name that resolves to an internal address', async () => {
+    const internal = async () => ['10.0.0.8'];
+    const mixed = async () => ['93.184.216.34', '127.0.0.1'];
+    const ok = async () => ['93.184.216.34'];
+    expect(await isFetchableResolved('https://evil.example/x', internal)).toBe(false);
+    expect(await isFetchableResolved('https://evil.example/x', mixed)).toBe(false);
+    expect(await isFetchableResolved('https://good.example/x', ok)).toBe(true);
+  });
+
+  it('fails closed when the name does not resolve, and checks IP literals without DNS', async () => {
+    const boom = async () => {
+      throw new Error('ENOTFOUND');
+    };
+    expect(await isFetchableResolved('https://nope.example/', boom)).toBe(false);
+    expect(await isFetchableResolved('http://[::ffff:127.0.0.1]/', boom)).toBe(false);
+    expect(await isFetchableResolved('http://8.8.8.8/', boom)).toBe(true);
   });
 });

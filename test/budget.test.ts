@@ -47,6 +47,12 @@ const CONFIG: Config = {
   cron: [],
   retry: { attempts: 1, baseDelayMs: 1, maxDelayMs: 1 },
   maxToolCalls: 20,
+  // Fields the config gained on main (browser channel, download cookies, curl
+  // impersonate). Defaults, so a test that does not care about them says so instead of
+  // silently omitting a required field.
+  browserChannel: 'chromium',
+  downloadCookiesBrowser: '',
+  curlImpersonatePath: '',
 };
 
 async function makeAgent(iterationBudget?: {
