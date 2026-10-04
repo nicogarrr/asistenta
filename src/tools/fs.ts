@@ -8,8 +8,8 @@ import { log } from '../log.js';
 const MAX_READ_BYTES = 512 * 1024;
 /** Lines returned when the caller gives no `limit`; the result says how to page on. */
 export const DEFAULT_READ_LINES = 2000;
-/** Chars returned in one read, whatever the line count (one-line minified files). */
-export const MAX_READ_CHARS = 40_000;
+/** Chars returned in one read, whatever the line count (one-line minified files). Kept under MAX_TOOL_RESULT_CHARS (24k) so the generic backstop never cuts a read result. */
+export const MAX_READ_CHARS = 22_000;
 
 const ReadParams = Type.Object({
   path: Type.String({ description: 'File path, absolute or relative to the working directory.' }),
