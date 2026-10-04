@@ -231,7 +231,9 @@ export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
   sendImage?: (png: Buffer) => Promise<boolean>,
-): AgentTool<typeof BrowserParams> {
+): AgentTool<typeof BrowserParams> & {
+  gateHint: (args: Record<string, unknown>) => Promise<string>;
+} {
   return {
     name: 'browser',
     label: 'Browser',
@@ -291,6 +293,14 @@ export function createBrowserTool(
     // Sequential: the page is one shared object, and two actions in flight at once
     // race on the same navigation.
     executionMode: 'sequential',
+    // Read by the agent before the permission gate runs: the page's own words about the
+    // element the model is about to act on.
+    gateHint: async (args: Record<string, unknown>) => {
+      const action = String(args.action ?? '');
+      const selector = typeof args.selector === 'string' ? args.selector : '';
+      if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
+      return service.describeTarget(scopeOf(), selector);
+    },
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;
