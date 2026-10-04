@@ -203,6 +203,20 @@ describe('judgeDay', () => {
     expect(judgeDay({ ...base, clicked: true, fingerprintBefore: 'x|y' })).toEqual({ ok: true });
   });
 
+  it('misma lista tras pulsar vale si el resumen confirma el cambio de dia', () => {
+    const v = judgeDay({
+      ...base,
+      clicked: true,
+      fingerprintBefore: 'a|b',
+      summaryBefore: '04',
+      summaryDay: '06',
+    });
+    expect(v).toEqual({ ok: true });
+    expect(
+      judgeDay({ ...base, clicked: true, fingerprintBefore: 'a|b', summaryBefore: '06' }),
+    ).toMatchObject({ ok: false, reason: 'stale-list' });
+  });
+
   it('una lista vacia no vale', () => {
     expect(judgeDay({ ...base, fingerprint: '' })).toMatchObject({ ok: false });
   });

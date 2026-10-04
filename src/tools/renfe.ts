@@ -116,8 +116,11 @@ export function judgeDay(input: {
   summaryDay: string;
   clicked: boolean;
   fingerprintBefore: string;
+  /** Dia que decia el resumen antes de pulsar ('' si no se pudo leer). */
+  summaryBefore?: string;
 }): DayVerdict {
   const { want, pressed, fingerprint, summaryDay, clicked, fingerprintBefore } = input;
+  const summaryBefore = input.summaryBefore ?? '';
   if (!pressed) {
     return {
       ok: false,
@@ -140,7 +143,11 @@ export function judgeDay(input: {
       message: `el resumen de Renfe dice el día ${summaryDay} y se pidió el ${wantDay}`,
     };
   }
-  if (clicked && fingerprint === fingerprintBefore) {
+  // Misma lista que antes solo es sospechosa si nada mas confirma el cambio: si el
+  // resumen ya dice el dia pedido y antes decia otro, la lista nueva puede ser igual
+  // de verdad (mismas salidas) y es valida.
+  const summaryConfirms = summaryDay !== '' && summaryBefore !== '' && summaryDay !== summaryBefore;
+  if (clicked && fingerprint === fingerprintBefore && !summaryConfirms) {
     return {
       ok: false,
       reason: 'stale-list',
@@ -325,14 +332,18 @@ export async function searchRenfe(args: {
           document.querySelector<HTMLElement>('button.day_cell[aria-pressed=true]')?.dataset
             .celldate ?? '';
         const labels = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            '#listaTrenesTBodyIda .selectedTren [aria-label^="Tren con salida"]',
-          ),
-        ).map((e) => e.getAttribute('aria-label') ?? '');
+          document.querySelectorAll<HTMLElement>('#listaTrenesTBodyIda .selectedTren'),
+        ).map((e) => (e.innerText ?? '').replace(/\s+/g, ' ').trim());
         const m = /Viaje de Ida\s*\n\s*\p{L}+\s+(\d{1,2})\s/u.exec(document.body.innerText);
         return { pressed, fingerprint: labels.join('|'), summaryDay: m?.[1] ?? '' };
       });
-    const before = await readState();
+    // Si el dia marcado ya es el pedido pero la lista aun esta vacia o cargando, se
+    // reintenta un poco antes de dar error.
+    let before = await readState();
+    for (let i = 0; i < 6 && before.pressed === want && !before.fingerprint; i++) {
+      await page.waitForTimeout(1_000);
+      before = await readState();
+    }
     let verdict = judgeDay({ want, ...before, clicked: false, fingerprintBefore: '' });
     if (!verdict.ok && verdict.reason === 'wrong-day') {
       const cell = page.locator(`button.day_cell[data-celldate="${want}"]:not(.disabledDay)`);
@@ -350,7 +361,13 @@ export async function searchRenfe(args: {
         await page.waitForTimeout(1_000);
         const now = await readState().catch(() => null);
         if (!now) continue;
-        verdict = judgeDay({ want, ...now, clicked: true, fingerprintBefore: before.fingerprint });
+        verdict = judgeDay({
+          want,
+          ...now,
+          clicked: true,
+          fingerprintBefore: before.fingerprint,
+          summaryBefore: before.summaryDay,
+        });
         stable = verdict.ok && now.fingerprint === last ? stable + 1 : 0;
         last = now.fingerprint;
         if (verdict.ok && stable >= 1) break;
