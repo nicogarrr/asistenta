@@ -266,7 +266,9 @@ export class Gate {
     // Card-shaped numbers, with spaces and dashes stripped first: `4111 1111 1111
     // 1111` is the same number as `4111111111111111`.
     const digits = blob.replace(/[\s-]/g, '');
-    return /\b\d{13,19}\b/.test(digits) || PAYMENT_WORD.test(blob);
+    return (
+      /\b\d{13,19}\b/.test(digits) || PAYMENT_WORD.test(blob) || PAYMENT_WORD_ES.test(fold(blob))
+    );
   }
 
   #isCredentialish(c: ToolCall): boolean {
@@ -536,6 +538,109 @@ export class Gate {
 
 const DESTRUCTIVE =
   /\b(rm\s+-[rf]|Remove-Item|rmdir|del\s+\/|format\s|certutil|New-ItemProperty|Set-ExecutionPolicy|reg\s+delete|diskpart|takeown|icacls|Invoke-Expression|iex\s|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))\b/i;
+
+/** Lowercase and strip accents, so "Crédito" and "credito" are the same word. */
+export function fold(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * Spanish payment vocabulary, matched on {@link fold}ed text. `\b` is not usable with
+ * non-ASCII letters, so the word edges are explicit. Deliberately broad: a false
+ * positive costs one prompt, a miss costs money.
+ */
+const PAYMENT_WORD_ES = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${[
+    'pagar',
+    'pagas',
+    'pago',
+    'pagos',
+    'paga',
+    'abonar',
+    'abono',
+    'comprar',
+    'compra',
+    'compras',
+    'pedir',
+    'pedido',
+    'pedidos',
+    'tarjeta',
+    'credito',
+    'debito',
+    'banco',
+    'bancaria',
+    'bancario',
+    'transferencia',
+    'transferir',
+    'factura',
+    'facturacion',
+    'suscribir',
+    'suscribirse',
+    'suscripcion',
+    'donar',
+    'donacion',
+    'propina',
+    'cobro',
+    'cargo',
+    'tpv',
+    'bizum',
+    'paypal',
+    'monedero',
+    'saldo',
+    'cvv',
+    'cvc',
+    'caducidad',
+    'finalizar',
+    'realizar pedido',
+    'confirmar pedido',
+    'contratar',
+    'alquilar',
+    'reservar',
+  ].join('|')})(?![\\p{L}\\p{N}])`,
+  'u',
+);
+
+/**
+ * Actions with a lasting effect that are not money: sending, publishing, deleting,
+ * booking. Used for browser clicks, where the target's own text says what it does.
+ */
+export const EFFECT_WORD = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${[
+    'enviar',
+    'envia',
+    'publicar',
+    'publica',
+    'eliminar',
+    'borrar',
+    'cancelar',
+    'confirmar',
+    'reserva',
+    'reservar',
+    'solicitar',
+    'registrarse',
+    'darse de baja',
+    'submit',
+    'send',
+    'post',
+    'publish',
+    'delete',
+    'remove',
+    'cancel',
+    'confirm',
+    'book',
+    'reserve',
+    'unsubscribe',
+    'sign up',
+  ].join('|')})(?![\\p{L}\\p{N}])`,
+  'u',
+);
+
+export function isEffectText(text: string): boolean {
+  return EFFECT_WORD.test(fold(text));
+}
 
 const PAYMENT_WORD =
   /\b(card|credit|debit|bank|payment|pay|invoice|transfer|send|wire|withdraw|deposit|crypto|\bbtc\b|\beth\b|usdc|gift|iban|checkout|buy|purchase|subscribe|billing|buy\s+now|confirm\s+order)\b/i;
