@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -48,6 +48,13 @@ export function createSandbox(root: string, base: string, id: number, dir: strin
     throw new Error(`la rama ${branch} ya existe: no se reutiliza un intento anterior`);
   }
   git(root, ['worktree', 'add', '-b', branch, dir, base]);
+  // The sandbox has the sources but not the installed packages. The candidate cannot change
+  // package.json (forbidden), so sharing the kernel's node_modules is the same dependency set,
+  // and it is what lets vitest and tsx run at all in a fresh checkout.
+  const modules = join(root, 'node_modules');
+  if (existsSync(modules) && !existsSync(join(dir, 'node_modules'))) {
+    symlinkSync(modules, join(dir, 'node_modules'), 'junction');
+  }
   return { dir, branch, kept: false };
 }
 
@@ -93,8 +100,9 @@ export function headCommit(root: string): string {
  * candidate is measured with the uncommitted working tree, and the guard sees nothing.
  */
 export function commitAll(dir: string, message: string): void {
-  git(dir, ['add', '-A']);
-  if (git(dir, ['status', '--porcelain']).trim() === '') return;
+  // node_modules is the shared link from createSandbox, never part of the attempt.
+  git(dir, ['add', '-A', '--', '.', ':(exclude)node_modules']);
+  if (git(dir, ['diff', '--cached', '--name-only']).trim() === '') return;
   git(dir, [
     '-c',
     'user.name=asistenta-evolve',
