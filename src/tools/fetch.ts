@@ -2,7 +2,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { log } from '../log.js';
+import { log, logHost } from '../log.js';
 
 /**
  * Read a web page, or fetch a URL the user pasted in chat.
@@ -261,7 +261,7 @@ export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof Fetc
 
         const contentType = res.headers.get('content-type') ?? '';
         const body = await res.text();
-        log.info('fetch', { url, status: res.status, bytes: body.length });
+        log.info('fetch', { host: logHost(url), status: res.status, bytes: body.length });
 
         const isHtml = contentType.includes('html') || /^\s*<!doctype html/i.test(body);
         const text = isHtml ? await extractText(body, args.format ?? 'markdown') : body;

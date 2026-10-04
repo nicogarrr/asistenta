@@ -1,7 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { BrowserService } from '../browser/service.js';
-import { log } from '../log.js';
+import { log, logHost } from '../log.js';
 
 /**
  * The browser tool.
@@ -290,7 +290,7 @@ export function createBrowserTool(
           const url = String(record.url ?? '');
           if (!url) throw new Error('la acción open necesita una url');
           const info = await service.open(scope, url, { visible: Boolean(record.visible) });
-          log.info('browser open', { host: info.url, status: info.status });
+          log.info('browser open', { host: logHost(info.url), status: info.status });
           const note = await challengeNote(service, scope, sendImage);
           return {
             content: [

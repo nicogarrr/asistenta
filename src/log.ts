@@ -59,3 +59,12 @@ export function redact(fields: Record<string, unknown>): Record<string, unknown>
   }
   return out;
 }
+
+/** Solo el host de un enlace, para el registro: la URL completa puede llevar tokens. */
+export function logHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'enlace-invalido';
+  }
+}
