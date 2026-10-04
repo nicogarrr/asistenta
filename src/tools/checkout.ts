@@ -10,6 +10,7 @@ import {
 } from '../commerce/profile.js';
 import { log, redact } from '../log.js';
 import type { PurchaseStage, ToolCall } from '../permissions.js';
+import { isPaymentText, pageSaysMoney } from '../permissions.js';
 import { buildFillScript } from './browser.js';
 
 /**
@@ -91,25 +92,58 @@ const PAYMENT_LABEL =
   /\b(pagar|abonar|cobrar|charge|paying|checkout\s+now|complete\s+(payment|purchase|order)|confirmar?\s+(el\s+)?pago|confirmar?\s+pedido|realizar\s+(el\s+)?pago|pagar\s+(el\s+)?pedido|finalizar\s+(la\s+)?compra|place\s+order|pay\s+now|buy\s+now|submit\s+(payment|order))\b/i;
 
 /**
+ * Buttons that lead to the payment screen without paying. Removed from a label before
+ * it is tested, so the shared money vocabulary does not refuse the one step the agent
+ * has to take to get the human to the payment screen.
+ */
+const PRE_PAYMENT_NAV =
+  /\b(continuar\s+al\s+pago|ir\s+al\s+paso\s+de\s+pago|pasar\s+al\s+pago)\b/gi;
+
+/**
  * Whether a button's label means "charge the card".
+ *
+ * One vocabulary: the gate's own money words (Spanish and English, folded), plus the
+ * narrower charge phrases above. A second, weaker list here is how "Comprar" and "Order
+ * now" got through while the gate asked about them everywhere else.
  *
  * Exported because this is the property the whole design rests on, and a property
  * nobody can assert is a comment.
  */
 export function looksLikePaymentSubmission(label: string): boolean {
-  return PAYMENT_LABEL.test(label);
+  const cleaned = label.replace(PRE_PAYMENT_NAV, ' ');
+  return PAYMENT_LABEL.test(cleaned) || isPaymentText(cleaned);
+}
+
+/** A price as the page shows it: the number, the currency symbol and both together. */
+export interface PriceText {
+  raw: string;
+  symbol: string;
+  text: string;
+}
+
+/** Prices visible in a block of page text with their own currency symbol, deduplicated. */
+export function extractPriceTexts(text: string, limit = 5): PriceText[] {
+  const re =
+    /(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)\s*(€|EUR|\$|£)|(€|EUR|\$|£)\s*(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)/gi;
+  const out: PriceText[] = [];
+  for (const match of text.matchAll(re)) {
+    const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0 ]/g, '');
+    if (!raw) continue;
+    const symbol =
+      (match[2] ?? match[3] ?? '').toUpperCase() === 'EUR' ? '€' : (match[2] ?? match[3] ?? '');
+    if (out.some((p) => p.raw === raw && p.symbol === symbol)) continue;
+    out.push({ raw, symbol, text: `${raw} ${symbol}` });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
-  const re =
-    /(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)\s*(?:€|EUR|\$|£)|(?:€|EUR|\$|£)\s*(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)/gi;
   const out: string[] = [];
-  for (const match of text.matchAll(re)) {
-    const raw = (match[1] ?? match[2] ?? '').replace(/[\u00a0 ]/g, '');
-    if (!raw) continue;
-    if (out.includes(raw)) continue;
-    out.push(raw);
+  for (const price of extractPriceTexts(text, limit * 2)) {
+    if (out.includes(price.raw)) continue;
+    out.push(price.raw);
     if (out.length >= limit) break;
   }
   return out;
@@ -123,10 +157,26 @@ export function extractPrices(text: string, limit = 5): string[] {
  * clicked nothing" and "fill_passenger printed no document" are the two tests that
  * matter, and neither can be written against a real browser.
  */
+export interface ElementInfo {
+  label: string;
+  button: boolean;
+  /** Labels of the submit buttons of the element's form; what Enter in a field would press. */
+  formSubmit: string;
+  /** Page URL and title. */
+  where: string;
+}
+
 export interface CheckoutPage {
   open(url: string): Promise<{ url: string; title: string }>;
   /** Accessible name of an element, read without touching it. */
   label(selector: string): Promise<string>;
+  /**
+   * Everything the page says about an element, read without touching it: every name it
+   * has (text, aria-label, aria-labelledby, title, value, alt), whether it is a button,
+   * the labels of the submit buttons of its form, and where it sits (URL and title).
+   * Optional so a page that only knows `label` still works; the tool then falls back to it.
+   */
+  inspect?(selector: string): Promise<ElementInfo>;
   fill(selector: string, value: string): Promise<void>;
   click(selector: string): Promise<void>;
   /** A key on an element, e.g. Enter to submit a search box that has no button. */
@@ -183,6 +233,63 @@ const name = await loc
 return name;`);
     },
 
+    async inspect(selector: string) {
+      const raw = await run(`const loc = page.locator(${q(selector)}).first();
+const here = page.url() + ' | ' + (await page.title().catch(() => ''));
+if ((await loc.count()) === 0) return JSON.stringify({ label: '', button: false, formSubmit: '', where: here });
+const info = await loc
+  .evaluate((el) => {
+    const own = (n) => {
+      if (!n || !n.getAttribute) return '';
+      const ids = (n.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean);
+      const labelled = ids.map((id) => (document.getElementById(id) || {}).textContent || '').join(' ');
+      const img = n.querySelector ? n.querySelector('img[alt]') : null;
+      return [
+        n.getAttribute('aria-label'),
+        labelled,
+        n.getAttribute('title'),
+        n.getAttribute('name'),
+        n.getAttribute('value'),
+        n.getAttribute('alt'),
+        img ? img.getAttribute('alt') : '',
+        n.textContent,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+        .trim()
+        .slice(0, 240);
+    };
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const button =
+      tag === 'button' ||
+      el.getAttribute('role') === 'button' ||
+      (tag === 'input' && ['submit', 'button', 'image'].includes(type));
+    const form = el.form || el.closest('form');
+    const subs = form
+      ? Array.from(
+          form.querySelectorAll(
+            "button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]",
+          ),
+        ).map(own)
+      : [];
+    return { label: own(el), button, formSubmit: subs.join(' | ').slice(0, 400) };
+  })
+  .catch(() => ({ label: '', button: false, formSubmit: '' }));
+return JSON.stringify({ ...info, where: here });`);
+      try {
+        const parsed = JSON.parse(raw) as ElementInfo;
+        return {
+          label: String(parsed.label ?? ''),
+          button: Boolean(parsed.button),
+          formSubmit: String(parsed.formSubmit ?? ''),
+          where: String(parsed.where ?? ''),
+        };
+      } catch {
+        return { label: '', button: false, formSubmit: '', where: '' };
+      }
+    },
+
     async fill(selector: string, value: string) {
       const report = await run(buildFillScript(selector, value));
       // buildFillScript's own message embeds what is in the field. For a passenger form
@@ -234,6 +341,8 @@ export interface CheckoutFlow {
   item: string | null;
   /** The price the page showed, kept so `confirm` can say it without re-reading. */
   price: string | null;
+  /** The same price with its currency symbol, as the page showed it. */
+  priceText: string | null;
   /** Where the flow is, for the log and the audit trail. Never a full URL with a token. */
   url: string | null;
   /** Set only by an approved `confirm`. Never by the model. */
@@ -241,7 +350,7 @@ export interface CheckoutFlow {
 }
 
 function freshFlow(): CheckoutFlow {
-  return { stage: 'browse', item: null, price: null, url: null, approved: null };
+  return { stage: 'browse', item: null, price: null, priceText: null, url: null, approved: null };
 }
 
 export interface CheckoutToolDeps {
@@ -322,13 +431,39 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
    * click has already happened. A button that reads as a charge is refused with a
    * message the model can act on: the human presses it.
    */
-  const refuseIfCharge = async (selector: string): Promise<void> => {
-    const label = await page.label(selector).catch(() => '');
-    if (!looksLikePaymentSubmission(label)) return;
-    throw new Error(
-      `no pulso "${label}": ese botón cobra el dinero y el pago lo hace la persona, no yo. ` +
-        'Dile al usuario que está todo listo y que pulse él.',
-    );
+  const refuseIfCharge = async (selector: string, enter = false): Promise<void> => {
+    let info: ElementInfo;
+    if (page.inspect) {
+      info = await page.inspect(selector).catch(() => ({
+        label: '',
+        button: false,
+        formSubmit: '',
+        where: '',
+      }));
+    } else {
+      info = {
+        label: await page.label(selector).catch(() => ''),
+        button: true,
+        formSubmit: '',
+        where: await page.url().catch(() => ''),
+      };
+    }
+    // Enter in a field presses the form's submit button, so that button's label counts.
+    const words = enter ? `${info.label} ${info.formSubmit}` : info.label;
+    if (looksLikePaymentSubmission(words)) {
+      throw new Error(
+        `no pulso "${(enter ? words : info.label).trim().slice(0, 80)}": eso cobra el dinero y el pago lo hace la persona, no yo. ` +
+          'Dile al usuario que está todo listo y que pulse él.',
+      );
+    }
+    // A page that talks about money (checkout, cart, order, payment in URL or title):
+    // any button or Enter there can be the charge, whatever it says.
+    if ((info.button || enter) && pageSaysMoney(info.where)) {
+      throw new Error(
+        'esta es una pagina de pago o de cesta y no pulso botones ni envio formularios aqui: ' +
+          'podrian cobrar. Dile al usuario que está todo listo y que continúe él.',
+      );
+    }
   };
 
   const advance = (stage: PurchaseStage): void => {
@@ -340,7 +475,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
     lines.push(flow.item ? `Producto: ${flow.item}.` : 'Producto: todavia no elegido.');
     lines.push(
       flow.price
-        ? `Importe visto en la pagina: ${flow.price}.`
+        ? `Importe visto en la pagina: ${flow.priceText ?? flow.price}.`
         : 'Importe: todavia no leido de la pagina.',
     );
     lines.push(
@@ -415,14 +550,18 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
             // The guard runs here too, not only on `select`: pressing Enter inside a box
             // on a payment page can submit the form, and "which button does this key
             // press" is not something this tool can know from the selector alone.
-            await refuseIfCharge(selector);
+            await refuseIfCharge(selector, true);
             await page.fill(selector, query);
             await page.press(selector, 'Enter');
           }
           advance('browse');
 
-          const prices = extractPrices(await page.text().catch(() => ''));
-          if (prices[0]) flow.price = prices[0];
+          const priced = extractPriceTexts(await page.text().catch(() => ''));
+          const prices = priced.map((p) => p.raw);
+          if (priced[0]) {
+            flow.price = priced[0].raw;
+            flow.priceText = priced[0].text;
+          }
           log.info('checkout search', redact({ host: url ? hostOfUrl(url) : null, prices }));
           return {
             content: [
@@ -445,8 +584,12 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
           await page.click(selector);
           const item = textOf(args.item);
           if (item) flow.item = item;
-          const prices = extractPrices(await page.text().catch(() => ''));
-          if (prices[0]) flow.price = prices[0];
+          const priced = extractPriceTexts(await page.text().catch(() => ''));
+          const prices = priced.map((p) => p.raw);
+          if (priced[0]) {
+            flow.price = priced[0].raw;
+            flow.priceText = priced[0].text;
+          }
           advance('browse');
           log.info('checkout select', { stage: flow.stage, hasItem: flow.item !== null });
           return {
@@ -534,11 +677,34 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
           }
 
           const visible = await page.text().catch(() => '');
-          const prices = extractPrices(visible);
+          const priced = extractPriceTexts(visible);
           const item = textOf(args.item) || flow.item;
           const declared = textOf(args.price);
-          const fromPage = prices[0] ?? null;
-          const amount = declared || flow.price || fromPage;
+          const stripped = (v: string) => v.replace(/€|EUR|\$|£/gi, '').replace(/[\u00a0\s]/g, '');
+          const declaredRaw = declared ? stripped(declared) : '';
+          const matched = declaredRaw ? priced.find((p) => p.raw === declaredRaw) : undefined;
+
+          // The amount shown is the page's own, with the symbol the page uses and where it
+          // came from. A figure only the model produced is said to be the model's.
+          let amount: string | null = null;
+          let source = '';
+          let mismatch = '';
+          if (matched) {
+            amount = matched.text;
+            source = 'leido en la pagina';
+          } else if (priced[0]) {
+            amount = priced[0].text;
+            source = 'leido en la pagina';
+            if (declared) {
+              mismatch = ` Ojo: tu lees ${declared} y la pagina muestra ${priced.map((p) => p.text).join(', ')}.`;
+            }
+          } else if (flow.priceText) {
+            amount = flow.priceText;
+            source = 'visto antes en la pagina';
+          } else if (declared) {
+            amount = declared;
+            source = 'declarado por mi, sin moneda ni confirmacion de la pagina';
+          }
 
           if (!amount) {
             return {
@@ -568,14 +734,10 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
             };
           }
 
-          const mismatch =
-            declared && fromPage && declared !== fromPage
-              ? ` Ojo: tu lees ${declared} y la pagina muestra ${fromPage}.`
-              : '';
           const summary = [
             `Voy a comprar: ${item}.`,
-            `Importe: ${amount} €.${mismatch}`,
-            `Vas a pagar ${amount} € y a aceptar las condiciones de esta web.`,
+            `Importe: ${amount} (${source}).${mismatch}`,
+            `Vas a pagar ${amount} y a aceptar las condiciones de esta web.`,
             'Yo NO pulso el boton de pagar: eso lo haces tu. Dime "si" y te dejo el navegador con la pantalla de pago abierta.',
           ].join(' ');
 
@@ -604,7 +766,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
               {
                 type: 'text',
                 text:
-                  `Confirmado: ${item}, ${amount} €. NO he pulsado ningun boton de pago ni ` +
+                  `Confirmado: ${item}, ${amount}. NO he pulsado ningun boton de pago ni ` +
                   'he escrito ninguna tarjeta: no puedo, y esa parte es tuya.' +
                   (shown
                     ? ' Te he dejado el navegador en pantalla con la pantalla de pago: pulsa tu el boton.'

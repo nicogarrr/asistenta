@@ -392,7 +392,11 @@ export class Gate {
   }
 
   #isCredentialish(c: ToolCall): boolean {
-    const blob = blobOf(c);
+    // checkout's `selectors` are CSS ids of the buyer's own form (#dni, #email): the
+    // field names are not a credential, and filling them is free by the owner's decision.
+    const blob = blobOf(
+      c.tool === 'checkout' ? { ...c, args: { ...c.args, selectors: undefined } } : c,
+    );
     return (
       CREDENTIAL_PATH.test(blob) || (WEB_TOOLS.has(c.tool) && BROWSER_CREDENTIAL.test(fold(blob)))
     );
@@ -680,7 +684,12 @@ export class Gate {
     };
 
     for (const rule of this.#rules) {
-      if (rule.verdict === 'allow' && rule.match(call) && askRule.id === 'ask-unlisted') {
+      if (
+        rule.verdict === 'allow' &&
+        !confirmation &&
+        rule.match(call) &&
+        askRule.id === 'ask-unlisted'
+      ) {
         this.#openGrantWindow(sessionId, call.tool);
         return this.#record(call, { verdict: 'allow', reason: rule.reason });
       }
@@ -763,8 +772,8 @@ export function splitTarget(target: string): { element: string; places: string }
     : { element: target.slice(0, i), places: target.slice(i + 4) };
 }
 
-/** Tools where the Spanish money and credential vocabulary applies. */
-const WEB_TOOLS = new Set(['browser', 'computer', 'shell']);
+/** Tools where the Spanish money and credential vocabulary applies (checkout drives a shop). */
+const WEB_TOOLS = new Set(['browser', 'computer', 'shell', 'checkout']);
 
 /**
  * Page-level money signal: checkout/payment words in the URL or title, or an amount on

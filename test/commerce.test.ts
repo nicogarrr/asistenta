@@ -88,6 +88,18 @@ class FakePage implements CheckoutPage {
     return this.opened[this.opened.length - 1] ?? 'about:blank';
   }
 
+  info = new Map<string, Record<string, unknown>>();
+  async inspect(selector: string) {
+    const i = this.info.get(selector) ?? {};
+    return {
+      label: this.labels.get(selector) ?? '',
+      button: false,
+      formSubmit: '',
+      where: `${await this.url()} | Fake`,
+      ...i,
+    } as never;
+  }
+
   async show() {
     this.shown = true;
     return true;
@@ -467,6 +479,21 @@ describe('checkout tool', () => {
       'Pay now',
       'Complete payment',
       'Place order',
+      'Comprar',
+      'Comprar ahora',
+      'Realizar pedido',
+      'Hacer pedido',
+      'Finalizar pedido',
+      'Confirmar compra',
+      'Order now',
+      'Tramitar pedido',
+      'Pedir ahora',
+      'Reservar',
+      'Contratar',
+      'Suscribirse',
+      'Pay',
+      'Buy',
+      'Pago con tarjeta',
     ]) {
       const page = new FakePage();
       page.labels.set('#btn', label);
@@ -477,6 +504,36 @@ describe('checkout tool', () => {
     }
   });
 
+  it('reads value, form submit and page for the charge check', async () => {
+    const page = new FakePage();
+    page.info.set('#s', { label: 'Pagar ahora', button: true });
+    const tool = toolWith(page, BUYER, async () => true);
+    await expect(call(tool, { action: 'select', selector: '#s' })).rejects.toThrow(/no pulso/);
+    // A search box whose form submits with a charge button: Enter is a press too.
+    page.info.set('#q', { label: 'Buscar', button: false, formSubmit: 'Comprar ahora' });
+    await expect(call(tool, { action: 'search', query: 'x', selector: '#q' })).rejects.toThrow(
+      /no/i,
+    );
+    expect(page.presses).toHaveLength(0);
+    // On a payment page a button is refused whatever it says.
+    await call(tool, { action: 'search', url: 'https://tienda.es/checkout/pago' });
+    page.info.set('#ok', { label: 'Aceptar', button: true });
+    await expect(call(tool, { action: 'select', selector: '#ok' })).rejects.toThrow(/no pulso/);
+  });
+
+  it('shows the amount with the symbol the page uses', async () => {
+    const page = new FakePage();
+    page.body = 'Total 45,20 $';
+    const seen: string[] = [];
+    const tool = toolWith(page, BUYER, async (_a, summary) => {
+      seen.push(summary);
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'tren', price: '45,20' });
+    expect(seen[0]).toContain('45,20 $');
+    expect(seen[0]).not.toContain('€');
+  });
+
   it('lets it press the buttons that lead to the payment screen', async () => {
     for (const label of [
       'Continuar',
@@ -484,7 +541,6 @@ describe('checkout tool', () => {
       'Ir al paso de pago',
       'Siguiente',
       'Elegir este tren',
-      'Pay with a different method',
     ]) {
       const page = new FakePage();
       page.labels.set('#btn', label);
@@ -497,7 +553,8 @@ describe('checkout tool', () => {
   it('classifies labels the same way whoever asks', () => {
     expect(looksLikePaymentSubmission('Pagar 45,20 €')).toBe(true);
     expect(looksLikePaymentSubmission('Continuar al pago')).toBe(false);
-    expect(looksLikePaymentSubmission('PayPal')).toBe(false);
+    // One vocabulary with the gate: a payment-method choice is the person's to make.
+    expect(looksLikePaymentSubmission('PayPal')).toBe(true);
     expect(looksLikePaymentSubmission('')).toBe(false);
   });
 
@@ -633,9 +690,9 @@ describe('a purchase from search to the payment screen', () => {
     page.labels.set('#tren', 'Elegir este tren');
     page.labels.set('#pagar', 'Pagar');
     page.body = 'Total 45,20 EUR';
-    const tool = toolWith(page, BUYER, async () => {
+    const tool = toolWith(page, BUYER, async (action) => {
       asked++;
-      askedFor.push('checkout:confirm');
+      askedFor.push(action);
       return true;
     });
 
@@ -652,6 +709,7 @@ describe('a purchase from search to the payment screen', () => {
     await run({ action: 'status' });
 
     // Browsing, choosing, filling and asking where we are: five calls, zero questions.
+    expect(askedFor).toEqual([]);
     expect(asked).toBe(0);
 
     // The last step is the only one that asks: once by the gate, once by the tool.

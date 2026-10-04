@@ -203,7 +203,7 @@ $g.FillRectangle($brush, 560, 340, 80, 60)`;
  * refused before it reaches a decoder, and the refusal names itself instead of being
  * summarised away.
  */
-describe('compareFrames refuses frames that are not images', () => {
+describe.skipIf(!isWindows)('compareFrames refuses frames that are not images', () => {
   it('says the frame was empty instead of blaming memory', async () => {
     const good = await paint(
       'a.jpg',
@@ -294,7 +294,7 @@ describe('compareFrames refuses frames that are not images', () => {
  * and by users, and a broken comparison is far more expensive than the odd directory
  * name that triggers it.
  */
-describe('compareFiles handles paths that are not simple', () => {
+describe.skipIf(!isWindows)('compareFiles handles paths that are not simple', () => {
   it('compares two real frames through a directory with spaces and accents', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-spaces-'));
     const nested = join(dir, 'mis capturas (2026) ñ');
@@ -359,23 +359,26 @@ describe('compareFiles handles paths that are not simple', () => {
   }, 40_000);
 });
 
-describe('verifyBatch reports an uncomparable batch as unknown, not as inert', () => {
-  it('never tells the model nothing happened when no comparison ran', async () => {
-    const good = await paint(
-      'a.jpg',
-      '$brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White); $g.FillRectangle($brush, 0, 0, 800, 600)',
-    );
-    const pairs: BatchPair[] = [
-      { before: asShot(Buffer.alloc(0)), after: asShot(good) },
-      { before: asShot(good), after: asShot(Buffer.alloc(0)) },
-    ];
-    const verdictOut = await verifyBatch(pairs);
-    expect(verdictOut.done).toBe(false);
-    expect(verdictOut.changed).toBe(0);
-    expect(verdictOut.reason).toMatch(/no he podido comparar NINGUNA/);
-    expect(verdictOut.reason).not.toMatch(/NO ha cambiado tras el lote/);
-  });
-});
+describe.skipIf(!isWindows)(
+  'verifyBatch reports an uncomparable batch as unknown, not as inert',
+  () => {
+    it('never tells the model nothing happened when no comparison ran', async () => {
+      const good = await paint(
+        'a.jpg',
+        '$brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White); $g.FillRectangle($brush, 0, 0, 800, 600)',
+      );
+      const pairs: BatchPair[] = [
+        { before: asShot(Buffer.alloc(0)), after: asShot(good) },
+        { before: asShot(good), after: asShot(Buffer.alloc(0)) },
+      ];
+      const verdictOut = await verifyBatch(pairs);
+      expect(verdictOut.done).toBe(false);
+      expect(verdictOut.changed).toBe(0);
+      expect(verdictOut.reason).toMatch(/no he podido comparar NINGUNA/);
+      expect(verdictOut.reason).not.toMatch(/NO ha cambiado tras el lote/);
+    });
+  },
+);
 
 describe('probe artifacts are cleaned up', () => {
   it('leaves no temporary frames behind', () => {

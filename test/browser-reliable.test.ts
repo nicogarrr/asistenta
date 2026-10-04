@@ -365,15 +365,19 @@ describe('browser: fiabilidad en páginas reales', () => {
       expect(clicked).toContain('headless');
     });
 
-    it('con visible: true la ventana está en pantalla y el resultado lo dice', async () => {
-      const result = await service.open(scope, `${base}/autocomplete`, { visible: true });
-      expect(result.visible).toBe(true);
-      expect(service.isVisible(scope)).toBe(true);
-      const snap = await call({ action: 'snapshot' });
-      expect(snap).toContain('VISIBLE');
-      // Leave the suite headless again for whatever runs next.
-      await service.close(scope);
-    });
+    // A visible window needs a display; a headless Linux box (CI, the sandbox) has none.
+    it.skipIf(process.platform === 'linux' && !process.env.DISPLAY)(
+      'con visible: true la ventana está en pantalla y el resultado lo dice',
+      async () => {
+        const result = await service.open(scope, `${base}/autocomplete`, { visible: true });
+        expect(result.visible).toBe(true);
+        expect(service.isVisible(scope)).toBe(true);
+        const snap = await call({ action: 'snapshot' });
+        expect(snap).toContain('VISIBLE');
+        // Leave the suite headless again for whatever runs next.
+        await service.close(scope);
+      },
+    );
   });
 });
 

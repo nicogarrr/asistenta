@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
+import { checkoutStageOf } from '../src/tools/checkout.js';
 
 const allow = () => true;
 const deny = () => false;
@@ -229,4 +230,41 @@ describe('isEffectText', () => {
   it.each(['Ver más', 'Aceptar cookies', 'Siguiente', 'Sentido'])('ignores %s', (t) =>
     expect(isEffectText(t)).toBe(false),
   );
+});
+
+describe('checkout in the gate', () => {
+  it('filling the buyer form by selector asks nothing', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      fullControl: true,
+      allowPayments: true,
+      allowUntilPayment: true,
+      stageOf: checkoutStageOf,
+      approver: async () => {
+        asked++;
+        return true;
+      },
+    });
+    await gate.check('s', {
+      tool: 'checkout',
+      args: { action: 'fill_passenger', selectors: { document: '#dni' } },
+      actor: 'u',
+    });
+    expect(asked).toBe(0);
+  });
+
+  it('an allow rule for checkout does not skip the confirm stage', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['checkout'],
+      allowUntilPayment: true,
+      stageOf: checkoutStageOf,
+      approver: async () => {
+        asked++;
+        return true;
+      },
+    } as never);
+    await gate.check('s', { tool: 'checkout', args: { action: 'confirm', item: 'x' }, actor: 'u' });
+    expect(asked).toBe(1);
+  });
 });

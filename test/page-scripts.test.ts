@@ -106,13 +106,17 @@ describe('page-side scripts reach the browser', () => {
     expect(snap).toMatch(/ABIERTO:\d+ opciones/);
   });
 
-  it('finds the page scripts in dist, so the built daemon can read them', () => {
-    // tsc only emits .ts. Without the copy step the built daemon starts fine and then
-    // fails on the first snapshot with ENOENT, which reads as a missing file rather than
-    // a missing build step.
-    for (const file of ['scan-page.js', 'ads-page.js']) {
-      expect(existsSync(join('src', 'browser', file))).toBe(true);
-      expect(existsSync(join('dist', 'browser', file))).toBe(true);
-    }
-  });
+  // Needs `npm run build` first; without a dist folder there is nothing to look in.
+  it.skipIf(!existsSync('dist'))(
+    'finds the page scripts in dist, so the built daemon can read them',
+    () => {
+      // tsc only emits .ts. Without the copy step the built daemon starts fine and then
+      // fails on the first snapshot with ENOENT, which reads as a missing file rather than
+      // a missing build step.
+      for (const file of ['scan-page.js', 'ads-page.js']) {
+        expect(existsSync(join('src', 'browser', file))).toBe(true);
+        expect(existsSync(join('dist', 'browser', file))).toBe(true);
+      }
+    },
+  );
 });
