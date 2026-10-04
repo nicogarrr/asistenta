@@ -1,8 +1,14 @@
-import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isQaChatId, looksLikeMoney, QA_CHAT_BASE, QaChannel } from '../src/channels/qa.js';
+import {
+  isQaChatId,
+  looksLikeMoney,
+  QA_CHAT_BASE,
+  QaChannel,
+  qaApproves,
+} from '../src/channels/qa.js';
 import type { Inbound } from '../src/channels/types.js';
 
 describe('canal de QA', () => {
@@ -20,6 +26,7 @@ describe('canal de QA', () => {
 
   it('entra por inbox, sale por outbox, aprueba lo no monetario y deniega el dinero', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'qa-'));
+    writeFileSync(join(dir, 'SANDBOX'), '');
     const ch = new QaChannel({ token: '1:x', allowedUserIds: [42], dir, pollMs: 20 });
     const got: Inbound[] = [];
     // El arranque real de Telegram necesita red; el canal de QA solo necesita el inbox.
@@ -53,5 +60,37 @@ describe('canal de QA', () => {
     expect(lines.map((l) => l.kind)).toEqual(['in', 'text', 'approval', 'approval']);
     await ch.stop();
     await started.catch(() => {});
+  });
+
+  it('deniega todo lo que huela a dinero o no se reconozca', () => {
+    const denied = [
+      '¿Permito download?\nQuiero hacer payments',
+      '¿Permito download?\nsubscription anual',
+      '¿Permito download?\nlas purchases del mes',
+      '¿Permito download?\nlas compras',
+      '¿Permito download?\n20 euros',
+      '¿Permito download?\npagar por Bizum',
+      '¿Permito download?\n500 USD',
+      '¿Permito download?\n50 $',
+      '¿Permito browser?\nBook the flight for $300',
+      '¿Permito download?\nun pedido de Glovo',
+      '¿Permito download?\nreservar el tren',
+      '¿Permito shell?\nejecutar yt-dlp',
+      '¿Permito computer?\nabrir una ventana',
+      '¿Permito herramienta_nueva?\nalgo',
+      'texto sin formato',
+    ];
+    for (const q of denied) expect(qaApproves(q), q).toBe(false);
+    const ok = [
+      '¿Permito download?\nDescargar un PDF de w3.org',
+      '¿Permito renfe?\nBuscar trenes Madrid-Barcelona',
+      '¿Abro www.renfe.com?\nBuscar horarios',
+    ];
+    for (const q of ok) expect(qaApproves(q), q).toBe(true);
+  });
+
+  it('se niega a arrancar sin el fichero marcador de sandbox', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qa-'));
+    expect(() => new QaChannel({ token: '1:x', allowedUserIds: [42], dir })).toThrow(/rechazado/);
   });
 });

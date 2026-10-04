@@ -30,12 +30,57 @@ export function isQaChatId(chatId: string | number): boolean {
   return Number.isFinite(n) && n >= QA_CHAT_BASE;
 }
 
+/**
+ * Palabras de dinero (sobre texto sin tildes y en minusculas). Es una red de seguridad
+ * encima de la lista blanca, no la defensa principal: ante la duda se deniega.
+ */
 const MONEY =
-  /\b(purchase|payment|pay|paypal|checkout|buy|card|iban|billing|invoice|subscribe|pago|pagar|pagas|compra|comprar|tarjeta|cobro|cobrar|suscrip\w*)\b|€|\beur\b/i;
+  /\b(pay\w*|paga\w*|pago\w*|purchas\w*|buy\w*|bought|checkout|subscri\w*|suscri\w*|compra\w*|tarjet\w*|card\w*|credit\w*|debit\w*|transfer\w*|bizum|paypal|factur\w*|invoice\w*|billing|iban|reserv\w*|book\w*|order\w*|pedid\w*|pedir|cobr\w*|charge\w*|euros?|eur|usd|gbp|dolar\w*|dollar\w*|libras?|glovo|uber|cabify|bolt|justeat|amazon|wallet|cripto\w*|crypto\w*|bitcoin|donat\w*|gift\w*)\b|[$\u00a3\u20ac]/;
 
-/** True si la peticion de aprobacion habla de dinero (se deniega siempre en QA). */
+/**
+ * Herramientas que QA aprueba solas (lista blanca). Cualquier otra se deniega: lo no
+ * reconocido nunca se aprueba. `shell`, `computer` y similares quedan fuera a proposito.
+ */
+export const QA_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  'download',
+  'fetch',
+  'read',
+  'list',
+  'memory',
+  'opengym',
+  'renfe',
+  'browser',
+  'skills',
+  'done',
+]);
+
+function normalise(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+/** Nombre de la herramienta de una pregunta de aprobacion ("¿Permito x?"), si lo hay. */
+export function toolOfQuestion(question: string): string | null {
+  const m = /^\u00bfPermito ([\w:.-]+)\?/.exec(question);
+  return m?.[1] ?? null;
+}
+
+/** True si el texto habla de dinero. */
 export function looksLikeMoney(call: { tool?: string } | null, question: string): boolean {
-  return call?.tool === 'purchase' || MONEY.test(question);
+  return call?.tool === 'purchase' || MONEY.test(normalise(question));
+}
+
+/**
+ * Decision de QA para una pregunta de aprobacion. Solo aprueba si se reconoce la
+ * herramienta (o es la pregunta de dominio del navegador) Y no huele a dinero.
+ */
+export function qaApproves(question: string): boolean {
+  if (looksLikeMoney(null, question)) return false;
+  const tool = toolOfQuestion(question);
+  if (tool) return QA_SAFE_TOOLS.has(tool.split(':')[0] ?? tool);
+  return question.startsWith('\u00bfAbro ');
 }
 
 export interface QaOptions extends TelegramOptions {
@@ -59,6 +104,13 @@ export class QaChannel extends TelegramChannel {
 
   constructor(options: QaOptions) {
     super(options);
+    // Anti-activacion accidental: solo en un entorno marcado como sandbox y nunca en
+    // Windows (la instancia real de Nico corre alli).
+    if (process.platform === 'win32' || !existsSync(join(options.dir, 'SANDBOX'))) {
+      throw new Error(
+        `PA_QA_CHANNEL=1 rechazado: falta el fichero marcador ${join(options.dir, 'SANDBOX')} o es Windows`,
+      );
+    }
     this.#dir = options.dir;
     this.#pollMs = options.pollMs ?? 1_000;
     this.#userId = String(options.allowedUserIds[0] ?? 0);
@@ -81,7 +133,13 @@ export class QaChannel extends TelegramChannel {
     this.#offset = statSync(inbox).size;
     this.#timer = setInterval(() => this.#poll(inbox), this.#pollMs);
     this.#timer.unref();
-    handlers.log('info', 'qa channel listening', { dir: this.#dir });
+    handlers.log(
+      'warn',
+      'CANAL DE QA ACTIVO (PA_QA_CHANNEL=1): aprobaciones automaticas salvo dinero',
+      {
+        dir: this.#dir,
+      },
+    );
     await super.start(handlers);
   }
 
@@ -99,6 +157,7 @@ export class QaChannel extends TelegramChannel {
       try {
         msg = JSON.parse(line) as { case?: string; text?: string };
       } catch {
+        this.#handlers?.log('warn', 'qa inbox: linea mal formada ignorada', { chars: line.length });
         continue;
       }
       if (!msg.case || !msg.text) continue;
@@ -130,7 +189,7 @@ export class QaChannel extends TelegramChannel {
   }
 
   override isReady(): boolean {
-    return true;
+    return super.isReady();
   }
 
   override async send(outbound: Outbound): Promise<string | null> {
@@ -233,9 +292,9 @@ export class QaChannel extends TelegramChannel {
     opts?: { askScope?: boolean },
   ): Promise<ApprovalChoice> {
     if (!isQaChatId(chatId)) return super.offerApproval(id, chatId, question, opts);
-    const denied = looksLikeMoney(null, question);
-    this.#out(chatId, { kind: 'approval', question, approved: !denied });
-    return Promise.resolve({ approved: !denied, scope: 'once' });
+    const approved = qaApproves(question);
+    this.#out(chatId, { kind: 'approval', question, approved });
+    return Promise.resolve({ approved, scope: 'once' });
   }
 
   override async stop(): Promise<void> {
