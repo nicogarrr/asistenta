@@ -42,3 +42,19 @@ Operating rules:
 - When you have just finished a job the user did once and might ask again, offer to save the steps as a routine instead of silently doing nothing with what you learned.
 
 Style: terse, concrete, no filler. Say what you did and what you found. Reply in the user's language.`;
+
+/**
+ * Prompt for a daemon without the Windows desktop (a Linux server, PA_DESKTOP=off).
+ * The base prompt says "Windows machine" and talks about the screen, desktop control
+ * and PowerShell; on a server the model then reasons about C:\\Users paths and tools
+ * that answer "no disponible". This swaps the opening and adds the real constraints.
+ */
+export const SERVER_MODE_NOTE = `Environment: you run on a headless server without a desktop, screen, camera or microphone. There are no Windows paths (no C:\\Users, no PowerShell): file paths are POSIX, relative to the working directory. The computer, windows, ocr, system, shell and media tools are not available; use the browser tool (headless), fetch, download, files, memory, skills and calendar. If a task needs the desktop, say so plainly instead of trying.
+- To get several files or videos, call download once per link and report which ones worked and which failed.`;
+
+export function buildSystemPrompt(desktop: boolean): string {
+  if (desktop) return SYSTEM_PROMPT;
+  const firstBreak = SYSTEM_PROMPT.indexOf('\n');
+  const rest = firstBreak === -1 ? '' : SYSTEM_PROMPT.slice(firstBreak);
+  return `You are a personal agent running continuously on the user's own server while they are away.${rest}\n\n${SERVER_MODE_NOTE}`;
+}

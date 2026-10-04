@@ -3,11 +3,12 @@ import { Agent } from '@earendil-works/pi-agent-core';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
+import { desktopEnabled } from '../platform.js';
 import { actionLabel, type RunStep } from '../skills/lessons.js';
 import { DONE_TOOL_NAME, extractDoneSummary } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
-import { SYSTEM_PROMPT } from './prompt.js';
+import { buildSystemPrompt } from './prompt.js';
 import { createProviderHandle } from './provider.js';
 import {
   DEFAULT_RETRY,
@@ -345,6 +346,8 @@ export class PersonalAgent {
     opts: {
       stream?: boolean;
       sessionId?: string;
+      /** Defaults to desktopEnabled(); false selects the server-mode prompt. */
+      desktop?: boolean;
       /**
        * Iteration budget. `shared` (default true) keeps one counter for the whole
        * agent life: every run and every subagent (`budget.child()`) spends from it.
@@ -366,7 +369,11 @@ export class PersonalAgent {
     let personal!: PersonalAgent;
 
     const agent = new Agent({
-      initialState: { systemPrompt: SYSTEM_PROMPT, model, tools },
+      initialState: {
+        systemPrompt: buildSystemPrompt(opts.desktop ?? desktopEnabled()),
+        model,
+        tools,
+      },
       streamFn: models.streamSimple.bind(models),
       sessionId: `pa-${sessionId}`,
       // Screenshots older than the latest few are stale by definition. Truncating

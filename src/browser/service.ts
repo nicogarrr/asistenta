@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { type BrowserContext, chromium, type Page } from 'playwright';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
+import { isFetchableResolved } from '../tools/fetch.js';
 import {
   AD_ARGS,
   type AdSkipResult,
@@ -38,6 +39,11 @@ export interface BrowserPolicy {
   approve(scope: string, domain: string, reason: string): Promise<boolean>;
   /** Hosts that are refused without asking. */
   deniedHosts?: string[];
+  /**
+   * Allow localhost, private ranges and metadata hosts. Off by default and not wired to
+   * any config: it exists so tests can browse a local fixture server.
+   */
+  allowPrivateHosts?: boolean;
   /**
    * Approve domains without asking.
    *
@@ -610,6 +616,17 @@ export class BrowserService {
       if (!host) return route.abort();
 
       const isDocument = request.isNavigationRequest() && request.resourceType() === 'document';
+      // Local and private destinations are refused before anything else, redirects
+      // and frames included. Subresources (images, scripts, xhr) are not covered:
+      // see the trade-off above.
+      if (
+        isDocument &&
+        !this.#options.policy.allowPrivateHosts &&
+        !(await isFetchableResolved(request.url()))
+      ) {
+        log.warn('browser navigation to a local or private address refused', { scope, host });
+        return route.abort();
+      }
       const blocked = denied.some((d) => domainCovers(d.trim(), host));
       if (blocked && isDocument) {
         log.warn('browser navigation to sensitive host refused', { scope, host });
@@ -689,6 +706,16 @@ export class BrowserService {
   ): Promise<{ url: string; title: string; status: number | null }> {
     const host = hostOf(url);
     if (!host) throw new Error(`no es una URL valida: ${url}`);
+
+    // Before the approval prompt: the user must never be asked "¿Abro localhost?"
+    // for something that would let the agent reach this machine's own services or
+    // the cloud metadata endpoint.
+    if (!this.#options.policy.allowPrivateHosts && !(await isFetchableResolved(url))) {
+      throw new Error(
+        `no abro ${host}: es una direccion local o privada (localhost, red interna, metadatos). ` +
+          'El navegador solo abre sitios publicos http(s).',
+      );
+    }
 
     const denied = [...(this.#options.policy.deniedHosts ?? []), ...DEFAULT_DENIED];
     const blocked = denied.find((d) => domainCovers(d.trim(), host));

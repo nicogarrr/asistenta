@@ -118,13 +118,19 @@ export function isFetchable(url: string): boolean {
     host === 'localhost' ||
     host === '::1' ||
     host.endsWith('.localhost') ||
+    // Cloud metadata names and internal-only suffixes (the IP 169.254.169.254 is
+    // covered below; these are the names that resolve to it or to private hosts).
+    host === 'metadata' ||
+    host === 'metadata.google.internal' ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local') ||
     /^127\./.test(numeric) ||
     /^0\.0\.0\.0$/.test(numeric) ||
     /^10\./.test(numeric) ||
     /^192\.168\./.test(numeric) ||
     /^172\.(1[6-9]|2\d|3[01])\./.test(numeric) ||
     /^169\.254\./.test(numeric) ||
-    /^100\.(6[4-9]|[7-9]\d|1\d\d|2[0-5]\d)\./.test(numeric) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(numeric) ||
     numeric.startsWith('::ffff:127.') ||
     // IPv6 unique-local / link-local only for real IPv6 literals: a hostname such as
     // fcbarcelona.com or fdic.gov is not an address. (Names are judged by DNS instead.)
@@ -160,6 +166,53 @@ for (const [net, bits] of [
   PRIVATE_RANGES.addSubnet(net, bits, 'ipv6');
 }
 
+/** Parse an IPv6 literal to its 16 bytes, or null when it is not one. */
+function ipv6Bytes(ip: string): number[] | null {
+  let text = ip.split('%')[0] ?? ip;
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted) {
+    const o = dotted.slice(1, 5).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    text = `${text.slice(0, dotted.index)}${(((o[0] as number) << 8) | (o[1] as number)).toString(16)}:${(((o[2] as number) << 8) | (o[3] as number)).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? head.length !== 8 : missing < 0) return null;
+  const groups = [...head, ...(halves.length === 2 ? Array(missing).fill('0') : []), ...tail];
+  const bytes: number[] = [];
+  for (const g of groups) {
+    const v = Number.parseInt(g, 16);
+    if (!Number.isFinite(v) || v < 0 || v > 0xffff) return null;
+    bytes.push(v >> 8, v & 255);
+  }
+  return bytes.length === 16 ? bytes : null;
+}
+
+/** IPv4 embedded in an IPv6 form that routes to it (compatible, NAT64, 6to4), if any. */
+function embeddedIpv4(ip: string): string | null {
+  const b = ipv6Bytes(ip);
+  if (!b) return null;
+  const quad = (i: number): string => `${b[i]}.${b[i + 1]}.${b[i + 2]}.${b[i + 3]}`;
+  const zeros = (n: number): boolean => b.slice(0, n).every((x) => x === 0);
+  // ::a.b.c.d (IPv4-compatible); :: and ::1 stay with the plain ranges below.
+  if (zeros(12) && b.slice(12).some((x) => x !== 0) && !(zeros(15) && b[15] === 1)) return quad(12);
+  // 64:ff9b::/96 (NAT64)
+  if (
+    b[0] === 0x00 &&
+    b[1] === 0x64 &&
+    b[2] === 0xff &&
+    b[3] === 0x9b &&
+    b.slice(4, 12).every((x) => x === 0)
+  )
+    return quad(12);
+  // 2002::/16 (6to4): the IPv4 sits in bytes 2-5
+  if (b[0] === 0x20 && b[1] === 0x02) return quad(2);
+  return null;
+}
+
 /** True when the literal IP is public. IPv4-mapped IPv6 (::ffff:a.b.c.d) is judged as IPv4. */
 export function isPublicIp(ip: string): boolean {
   const family = isIP(ip);
@@ -173,6 +226,10 @@ export function isPublicIp(ip: string): boolean {
       const lo = Number.parseInt(hex[2] as string, 16);
       return isPublicIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
     }
+  }
+  if (family === 6) {
+    const inner = embeddedIpv4(ip);
+    if (inner && !isPublicIp(inner)) return false;
   }
   return !PRIVATE_RANGES.check(ip, family === 6 ? 'ipv6' : 'ipv4');
 }
