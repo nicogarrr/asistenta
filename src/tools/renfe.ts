@@ -18,6 +18,88 @@ export interface RenfeTrain {
   llegada: string;
   duracion: string;
   precioDesde: string | null;
+  /** Tipo de tren que muestra Renfe (AVE, Avlo, Alvia...), si lo dice. */
+  tipo?: string;
+  /** "sin transbordo" o lo que diga Renfe sobre transbordos, si lo dice. */
+  transbordos?: string;
+  /** Renfe marca el tren como completo ("Tren Completo"). */
+  completo?: boolean;
+  /** Estaciones de salida y llegada, del detalle del trayecto de Renfe (best effort). */
+  estacionSalida?: string;
+  estacionLlegada?: string;
+  /** Paradas intermedias, de ese mismo detalle. */
+  paradas?: string[];
+}
+
+/**
+ * Texto de "Detalles del trayecto": cada parada es una hora HH:MM seguida de la
+ * estacion; los nombres de iconos (radio_button_checked, location_on) se ignoran.
+ * Sin al menos dos paradas no se afirma nada.
+ */
+export function parseTripDetail(text: string): {
+  estacionSalida: string;
+  estacionLlegada: string;
+  paradas: string[];
+  horaSalida: string;
+  horaLlegada: string;
+} | null {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && l !== 'radio_button_checked' && l !== 'location_on');
+  const stops: Array<{ hora: string; estacion: string }> = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    const hora = lines[i] ?? '';
+    const estacion = lines[i + 1] ?? '';
+    if (/^\d{2}:\d{2}$/.test(hora) && estacion && !/^\d{2}:\d{2}/.test(estacion)) {
+      stops.push({ hora, estacion });
+      i++;
+    }
+  }
+  if (stops.length < 2) return null;
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!first || !last) return null;
+  return {
+    estacionSalida: first.estacion,
+    estacionLlegada: last.estacion,
+    paradas: stops.slice(1, -1).map((s) => `${s.hora} ${s.estacion}`),
+    horaSalida: first.hora,
+    horaLlegada: last.hora,
+  };
+}
+
+/** Etiquetas de accesibilidad de una fila de tren en la lista de resultados de Renfe. */
+export interface TrainRowInfo {
+  labels: string[];
+  text: string;
+}
+
+/** Datos extra de una fila: lo que Renfe ya muestra y antes se tiraba. */
+export function parseTrainRow(row: TrainRowInfo): {
+  salida?: string;
+  tipo?: string;
+  transbordos?: string;
+  completo: boolean;
+} {
+  const out: { salida?: string; tipo?: string; transbordos?: string; completo: boolean } = {
+    completo: /tren completo/i.test(row.text),
+  };
+  for (const label of row.labels) {
+    const dep = /^Tren con salida a las (\d{2}:\d{2})/.exec(label);
+    if (dep) out.salida = dep[1];
+    const tipo = /^Tipo de tren:\s*(.+?)\.?$/.exec(label);
+    if (tipo) out.tipo = tipo[1]?.trim();
+    const trans = /^Tren (sin|con) Transbordo/i.exec(label);
+    if (trans) out.transbordos = `${trans[1]?.toLowerCase()} transbordo`;
+  }
+  return out;
+}
+
+/** YYYY-MM-DD -> DD/MM/YYYY, el formato de la barra de días y de los campos ocultos de Renfe. */
+export function renfeDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
 }
 
 /** Extrae los trenes del texto visible de la página de resultados. */
@@ -63,10 +145,14 @@ export function filterAfter(trains: RenfeTrain[], after: string | undefined): Re
 
 export function formatTrains(trains: RenfeTrain[]): string {
   return trains
-    .map(
-      (t) =>
-        `${t.salida} -> ${t.llegada} (${t.duracion})${t.precioDesde ? `, desde ${t.precioDesde}` : ', sin precio visible'}`,
-    )
+    .map((t) => {
+      const route =
+        t.estacionSalida && t.estacionLlegada ? ` ${t.estacionSalida} -> ${t.estacionLlegada}` : '';
+      const extra = [t.tipo, t.transbordos, t.completo ? 'COMPLETO' : '']
+        .filter(Boolean)
+        .join(', ');
+      return `${t.salida} -> ${t.llegada}${route} (${t.duracion})${t.precioDesde ? `, desde ${t.precioDesde}` : ', sin precio visible'}${extra ? ` [${extra}]` : ''}`;
+    })
     .join('\n');
 }
 
@@ -168,16 +254,113 @@ export async function searchRenfe(args: {
     } catch {
       throw new StepError('paso búsqueda: Renfe no cargó la página de resultados');
     }
+    // Renfe lista por defecto el dia de HOY (desde dentro de ~30 min) aunque se haya
+    // pedido otra fecha: el calendario del formulario no siempre la fija. La pagina de
+    // resultados dice que dia muestra, asi que se comprueba y, si no es el pedido, se
+    // pulsa ese dia en la barra de dias. Nunca se devuelve la lista de otro dia.
+    const want = renfeDate(args.date);
+    const shownDate = () =>
+      page.evaluate(
+        () =>
+          document.querySelector<HTMLElement>('button.day_cell[aria-pressed=true]')?.dataset
+            .celldate ??
+          document.querySelector<HTMLInputElement>('#filtroFechaSalida')?.value ??
+          '',
+      );
+    let shown = await shownDate();
+    if (shown !== want) {
+      const cell = page.locator(`button.day_cell[data-celldate="${want}"]:not(.disabledDay)`);
+      if ((await cell.count()) === 0) {
+        throw new StepError(
+          `paso fecha: Renfe mostró el ${shown || 'dia desconocido'} y el ${want} no está en su barra de días; no devuelvo trenes de otro día`,
+        );
+      }
+      await cell.first().click();
+      for (let i = 0; i < 20 && shown !== want; i++) {
+        await page.waitForTimeout(1_000);
+        shown = await shownDate().catch(() => '');
+      }
+      if (shown !== want) {
+        throw new StepError(
+          `paso fecha: Renfe sigue mostrando el ${shown || 'dia desconocido'} en vez del ${want}; no devuelvo trenes de otro día`,
+        );
+      }
+      await page.waitForTimeout(3_000);
+    }
     const text = await page.locator('body').innerText();
+    const rows: TrainRowInfo[] = await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>('#listaTrenesTBodyIda .selectedTren')).map(
+        (row) => ({
+          labels: Array.from(row.querySelectorAll<HTMLElement>('[aria-label]')).map(
+            (e) => e.getAttribute('aria-label') ?? '',
+          ),
+          text: row.innerText,
+        }),
+      ),
+    );
     const trains = parseRenfeResults(text);
+    for (const row of rows) {
+      const info = parseTrainRow(row);
+      const train = trains.find((t) => t.salida === info.salida);
+      if (!train) continue;
+      if (info.tipo) train.tipo = info.tipo;
+      if (info.transbordos) train.transbordos = info.transbordos;
+      if (info.completo) train.completo = true;
+    }
     if (trains.length === 0) {
       throw new StepError(
         'paso resultados: la página cargó pero no hay trenes legibles (¿sin servicio ese día?)',
       );
     }
     const filtered = filterAfter(trains, args.after);
+    // Estaciones: Renfe solo las da en "Ver detalles del trayecto", fila a fila. Se
+    // piden solo para los trenes que se van a devolver y es best effort: si falla, el
+    // tren sale sin estaciones y el texto no inventa ninguna.
+    const wanted = filtered.slice(0, Math.max(1, args.limit ?? 8));
+    for (const train of wanted) {
+      const idx = rows.findIndex((r) => parseTrainRow(r).salida === train.salida);
+      if (idx < 0) continue;
+      try {
+        const row = page.locator('#listaTrenesTBodyIda .selectedTren').nth(idx);
+        // Clicks por DOM: tras cerrar el modal anterior queda un telon que intercepta
+        // los clicks reales y la segunda fila daba timeout.
+        await row
+          .locator('.trenes')
+          .first()
+          .evaluate((el: HTMLElement) => el.click());
+        const link = row.getByText('Ver detalles del trayecto').first();
+        // El detalle de tarifas de la fila carga por AJAX tras abrirla.
+        await link.waitFor({ state: 'visible', timeout: 10_000 });
+        await link.evaluate((el: HTMLElement) => el.click());
+        const modal = page.locator('.modal:visible').filter({ hasText: 'Detalles del trayecto' });
+        await modal.first().waitFor({ state: 'visible', timeout: 8_000 });
+        const detail = parseTripDetail(await modal.first().innerText());
+        // El modal debe ser el de ESTE tren: si las horas no cuadran (un modal anterior
+        // aun abierto) no se asigna nada antes que dar estaciones de otro tren.
+        if (detail && detail.horaSalida === train.salida && detail.horaLlegada === train.llegada) {
+          train.estacionSalida = detail.estacionSalida;
+          train.estacionLlegada = detail.estacionLlegada;
+          train.paradas = detail.paradas;
+        }
+        await modal
+          .first()
+          .locator('.close')
+          .first()
+          .evaluate((el: HTMLElement) => el.click())
+          .catch(() => {});
+        await modal
+          .first()
+          .waitFor({ state: 'hidden', timeout: 5_000 })
+          .catch(() => {});
+      } catch (err) {
+        log.warn('renfe: detalle del trayecto no disponible', {
+          salida: train.salida,
+          err: String(err).slice(0, 120),
+        });
+      }
+    }
     log.info('renfe', { total: trains.length, shown: filtered.length });
-    return { trains: filtered.slice(0, Math.max(1, args.limit ?? 8)), total: trains.length };
+    return { trains: wanted, total: trains.length };
   } finally {
     await browser.close().catch(() => {});
   }
