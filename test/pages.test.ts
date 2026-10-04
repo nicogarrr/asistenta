@@ -88,3 +88,24 @@ describe('PageWatchStore', () => {
     expect(store.due(60_000)).toHaveLength(1);
   });
 });
+
+describe('extractPrice con punto decimal y distintos formatos', () => {
+  it.each([
+    ['49.90 €', '49,90 €'],
+    ['45.90 €', '45,90 €'],
+    ['49.90€', '49,90 €'],
+    ['€49.90', '49,90 €'],
+    ['EUR 49.90', '49,90 €'],
+    ['1.299,50 €', '1299,50 €'],
+    ['1,299.50 €', '1299,50 €'],
+    ['49,90 €', '49,90 €'],
+    ['1.299 €', '1299,00 €'],
+    ['49 €', '49,00 €'],
+  ])('%s -> %s', (text, expected) => {
+    expect(extractPrice(text)).toBe(expected);
+  });
+
+  it('un cambio 49.90 -> 45.90 se detecta (antes ambos eran 90,00 €)', () => {
+    expect(extractPrice('Precio 49.90 €')).not.toBe(extractPrice('Precio 45.90 €'));
+  });
+});

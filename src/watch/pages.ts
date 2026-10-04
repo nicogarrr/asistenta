@@ -37,16 +37,51 @@ export type CheckOutcome =
   | { kind: 'changed'; from: string; to: string }
   | { kind: 'error'; message: string; failures: number; notify: boolean };
 
-const PRICE =
-  /(?:(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s?(?:€|eur\b)|(?:€|eur\b)\s?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?)/i;
+const AMOUNT = String.raw`(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
+const PRICE = new RegExp(String.raw`(?:${AMOUNT}\s?(?:€|eur\b)|(?:€|eur\b)\s?${AMOUNT})`, 'i');
 
-/** Primer precio en euros del texto, normalizado ("1.299,5 €" -> "1299,50 €"), o null. */
+/**
+ * Number written with "." and/or "," -> [integer digits, cents], or null when the format is
+ * ambiguous (the caller then keeps the literal text instead of inventing a value).
+ * Both separators: the last one is the decimal mark. One separator repeated: thousands.
+ * One separator once: 1-2 digits after it = decimals, exactly 3 = thousands.
+ */
+export function parseAmount(raw: string): [string, string] | null {
+  const lastDot = raw.lastIndexOf('.');
+  const lastComma = raw.lastIndexOf(',');
+  let intPart = raw;
+  let dec = '';
+  if (lastDot >= 0 && lastComma >= 0) {
+    const pos = Math.max(lastDot, lastComma);
+    intPart = raw.slice(0, pos);
+    dec = raw.slice(pos + 1);
+  } else if (lastDot >= 0 || lastComma >= 0) {
+    const sep = lastDot >= 0 ? '.' : ',';
+    const pos = raw.lastIndexOf(sep);
+    const after = raw.slice(pos + 1);
+    const repeated = raw.indexOf(sep) !== pos;
+    if (repeated || after.length === 3) {
+      intPart = raw; // thousands only
+    } else if (after.length >= 1 && after.length <= 2) {
+      intPart = raw.slice(0, pos);
+      dec = after;
+    } else {
+      return null;
+    }
+  }
+  const whole = intPart.replace(/[.,]/g, '');
+  if (!/^\d+$/.test(whole) || (dec !== '' && !/^\d{1,2}$/.test(dec))) return null;
+  return [whole, dec.padEnd(2, '0') || '00'];
+}
+
+/** Primer precio en euros del texto, normalizado ("1.299,5 EUR" -> "1299,50 EUR"), o null. */
 export function extractPrice(text: string): string | null {
   const m = PRICE.exec(text);
   if (!m) return null;
-  const whole = (m[1] ?? m[3] ?? '').replace(/\./g, '');
-  const cents = (m[2] ?? m[4] ?? '00').padEnd(2, '0');
-  return `${whole},${cents} €`;
+  const parsed = parseAmount(m[1] ?? m[2] ?? '');
+  // Ambiguous format: keep exactly what the page wrote rather than a made-up number.
+  if (!parsed) return m[0].replace(/\s+/g, ' ').trim();
+  return `${parsed[0]},${parsed[1]} €`;
 }
 
 /** Valor que se compara entre lecturas. */
