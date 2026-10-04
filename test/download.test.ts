@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { downloadPdf, explainYtdlpError, parsePublicUrl } from '../src/media/download.js';
+import {
+  downloadPdf,
+  explainHttpStatus,
+  explainNonPdfBody,
+  explainYtdlpError,
+  parsePublicUrl,
+} from '../src/media/download.js';
 
 const pdfBytes = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n');
 
@@ -75,5 +81,36 @@ describe('downloadFromLink', () => {
 describe('explainYtdlpError', () => {
   it('does not read "rate" inside other words as rate limiting', () => {
     expect(explainYtdlpError('ERROR: moderate quality generated')).not.toMatch(/limitado/);
+  });
+});
+
+describe('mensajes de login, captcha y errores HTTP', () => {
+  it('tells login from captcha from a plain page', () => {
+    expect(explainNonPdfBody('<form><input type="password"></form>')).toMatch(/inicio de sesión/);
+    expect(explainNonPdfBody('<title>Just a moment...</title>')).toMatch(/captcha/);
+    expect(explainNonPdfBody('<h1>Hola</h1>')).toMatch(/página web/);
+    for (const t of ['x', '<form><input type="password">', 'captcha'])
+      expect(explainNonPdfBody(t)).toMatch(/no devuelve un PDF/);
+  });
+
+  it('explains HTTP statuses in Spanish', () => {
+    expect(explainHttpStatus(401)).toMatch(/iniciar sesión/);
+    expect(explainHttpStatus(404)).toMatch(/ya no existe/);
+    expect(explainHttpStatus(429)).toMatch(/demasiadas peticiones/);
+    expect(explainHttpStatus(502)).toMatch(/fallo/);
+    expect(explainHttpStatus(418)).toBe('el sitio respondió con error 418');
+  });
+
+  it('downloadPdf surfaces the login page and a 401', async () => {
+    const login = await downloadPdf(
+      'https://example.org/a.pdf',
+      async () => new Response('<html><input type="password"></html>', { status: 200 }),
+    );
+    expect(!login.ok && login.reason).toMatch(/inicio de sesión/);
+    const denied = await downloadPdf(
+      'https://example.org/b.pdf',
+      async () => new Response('no', { status: 401 }),
+    );
+    expect(!denied.ok && denied.reason).toMatch(/exige iniciar sesión/);
   });
 });

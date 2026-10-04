@@ -332,6 +332,37 @@ function safeDecode(s: string): string {
 
 const BLOCK_STATUSES = new Set([403, 429, 503]);
 
+/** Motivo en español para un error HTTP, para que el usuario sepa qué hacer. */
+export function explainHttpStatus(status: number): string {
+  if (status === 401)
+    return 'el enlace exige iniciar sesión (error 401); descárgalo tú con tu cuenta y mándamelo';
+  if (status === 403)
+    return 'el sitio me niega el acceso (error 403): puede exigir sesión o ser una protección anti-bot';
+  if (status === 404 || status === 410) return `ese enlace ya no existe (error ${status})`;
+  if (status === 429)
+    return 'el sitio me ha limitado por demasiadas peticiones (error 429); prueba en unos minutos';
+  if (status >= 500)
+    return `el sitio tiene un fallo ahora mismo (error ${status}); prueba más tarde`;
+  return `el sitio respondió con error ${status}`;
+}
+
+const CAPTCHA_BODY =
+  /just a moment|un momento\.\.\.|verify you are human|verifica que eres (?:un )?humano|captcha|are you a robot|no soy un robot|cf-chl|challenge-platform|attention required/i;
+const LOGIN_BODY =
+  /type=["']?password|iniciar sesi[oó]n|inicia sesi[oó]n|identif[ií]cate|sign in|log ?in\b|accede a tu cuenta/i;
+
+/** Qué es probablemente la página que llegó en lugar de un PDF. */
+export function explainNonPdfBody(head: string): string {
+  const base = 'ese enlace no devuelve un PDF';
+  if (CAPTCHA_BODY.test(head)) {
+    return `${base}: la página es un captcha o una comprobación anti-bot; ábrelo tú en el navegador, descárgalo y mándamelo`;
+  }
+  if (LOGIN_BODY.test(head)) {
+    return `${base}: es una página de inicio de sesión; descárgalo tú con tu cuenta y mándamelo`;
+  }
+  return `${base} (es una página web, no un fichero)`;
+}
+
 /** One full attempt (redirects, size cap, %PDF- check) through the given fetch. */
 async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<DownloadResult> {
   let url = parsePublicUrl(rawUrl);
@@ -366,7 +397,7 @@ async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<Down
     if (!res.ok) {
       return {
         ok: false,
-        reason: `el sitio respondió con error ${res.status}`,
+        reason: explainHttpStatus(res.status),
         status: res.status,
         // A 403/429/503 or a Cloudflare mitigation header is usually an anti-bot wall.
         blocked: BLOCK_STATUSES.has(res.status) || res.headers.has('cf-mitigated'),
@@ -396,10 +427,7 @@ async function pdfAttempt(rawUrl: string, fetchImpl: typeof fetch): Promise<Down
     const bytes = Buffer.concat(chunks);
     // Trust the bytes, not the header: sites serve HTML login pages with a pdf name.
     if (bytes.subarray(0, 1024).indexOf('%PDF-') === -1) {
-      return {
-        ok: false,
-        reason: 'ese enlace no devuelve un PDF (puede ser una página web o exigir iniciar sesión)',
-      };
+      return { ok: false, reason: explainNonPdfBody(bytes.subarray(0, 4096).toString('utf8')) };
     }
     const filename = filenameFrom(res.headers.get('content-disposition'), url);
     return { ok: true, kind: 'pdf', bytes, title: filename, seconds: 0, filename };
