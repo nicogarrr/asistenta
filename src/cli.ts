@@ -23,6 +23,7 @@ import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
+import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
 import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
@@ -1017,8 +1018,10 @@ async function serveCommand(): Promise<number> {
     // inside a tool call, which cannot happen until the gate exists, so reading
     // `gate` from inside it is safe and a holder indirection would only add noise.
     const gate = new Gate({
-      // 'opengym' es de solo lectura (no tiene ninguna acción que escriba).
-      allow: ['read', 'list', 'fetch', 'done', 'memory', 'opengym'],
+      // 'opengym' es de solo lectura (no tiene ninguna acción que escriba). El cargador
+      // de herramientas solo cambia cuáles se listan; browser/media siguen pasando por
+      // el gate una a una.
+      allow: THREAD_ALLOW_TOOLS,
       allowActions: ['computer:screenshot', 'computer:move'],
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
       // be switched on by a stray script or a leftover shell history entry.

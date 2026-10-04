@@ -23,7 +23,7 @@ export interface DeferredSpec {
 export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = {
   browser: {
     pattern:
-      /https?:\/\/|www\.|\b[\w-]+\.(com|es|org|net|io|eu|gob|cat)\b|web|p[áa]gina|navega|internet|reserva|compra|login|inicia(r)? sesi[óo]n|formulario|captcha|renfe|tren|vuelo|hotel|billete|cita|rellena|descarga/i,
+      /https?:\/\/|www\.|\b[\w-]+\.(com|es|org|net|io|eu|gob|cat)\b|web|p[áa]gina|navega|internet|google|youtube|amazon|booking|airbnb|wikipedia|busca en|mira en|reserva|compra|login|inicia(r)? sesi[óo]n|formulario|captcha|renfe|tren|vuelo|hotel|billete|cita|rellena|descarga/i,
     purpose: 'navegar por webs, rellenar formularios, elegir fechas y autocompletados',
   },
   media: {
@@ -36,6 +36,24 @@ export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = {
 const LoaderParams = Type.Object({
   nombre: Type.String({ description: 'Nombre de la herramienta a cargar.' }),
 });
+
+export const LOADER_TOOL_NAME = 'cargar_herramienta';
+
+/**
+ * Tools every Telegram thread may call without asking. The loader is here because it
+ * only changes which tools are listed; each call to browser/media still goes through
+ * the gate on its own. Without it the safety net asks the user (or is denied when
+ * nobody can approve) exactly when the keyword list missed.
+ */
+export const THREAD_ALLOW_TOOLS = [
+  'read',
+  'list',
+  'fetch',
+  'done',
+  'memory',
+  'opengym',
+  LOADER_TOOL_NAME,
+];
 
 export class ToolLoadout {
   readonly #base: AgentTool[];
@@ -90,7 +108,7 @@ export class ToolLoadout {
       .filter(([n]) => !this.#loaded.has(n))
       .map(([n, d]) => `${n} (${d.spec.purpose})`);
     return {
-      name: 'cargar_herramienta',
+      name: LOADER_TOOL_NAME,
       label: 'Cargar herramienta',
       description: `Activa una herramienta que aún no está disponible: ${pending.join('; ')}. Úsala si la necesitas y no la ves; queda disponible en el siguiente paso.`,
       parameters: LoaderParams,

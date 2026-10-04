@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { describe, expect, it } from 'vitest';
-import { ToolLoadout } from '../src/core/toolset.js';
+import { LOADER_TOOL_NAME, THREAD_ALLOW_TOOLS, ToolLoadout } from '../src/core/toolset.js';
+import { Gate } from '../src/permissions.js';
 
 const tool = (name: string) =>
   ({
@@ -55,5 +56,36 @@ describe('ToolLoadout', () => {
     l.load('browser');
     l.load('media');
     expect(names(l)).not.toContain('cargar_herramienta');
+  });
+});
+
+describe('loader and the permission gate', () => {
+  const noApprover = async () => {
+    throw new Error('the loader must not ask the user');
+  };
+
+  it('is allowed without asking under the real thread allow list', async () => {
+    const gate = new Gate({ allow: THREAD_ALLOW_TOOLS, approver: noApprover });
+    const d = await gate.check('s', {
+      tool: LOADER_TOOL_NAME,
+      args: { nombre: 'browser' },
+      actor: 'asistenta',
+    });
+    expect(d.verdict).toBe('allow');
+  });
+
+  it('does not open the tools it loads: browser still needs approval', async () => {
+    const gate = new Gate({ allow: THREAD_ALLOW_TOOLS, approver: async () => false });
+    const d = await gate.check('s', {
+      tool: 'browser',
+      args: { action: 'navigate', url: 'https://example.com' },
+      actor: 'asistenta',
+    });
+    expect(d.verdict).not.toBe('allow');
+  });
+
+  it('matches the usual sites without a TLD', () => {
+    const l = new ToolLoadout(all);
+    expect(l.loadFor('busca en google el precio del vuelo')).toEqual(['browser']);
   });
 });
