@@ -11,7 +11,7 @@
  * agent as autonomous as possible) into the `lecciones` category, where they can be
  * read, edited or deleted like any skill; `lintSkill` flags the ones that look off.
  */
-import type { SkillStore } from './store.js';
+import { type SkillStore, slugify } from './store.js';
 import type { SkillDraft } from './types.js';
 
 export const LESSON_CATEGORY = 'lecciones';
@@ -40,6 +40,9 @@ export function actionLabel(args: unknown): string {
   return typeof raw === 'string' && LABEL.test(raw) ? raw : '';
 }
 
+/** Look-and-bookkeeping tools: one of these working after a failure is not a way around it. */
+const TRIVIAL_FIXES = new Set(['read', 'list', 'memory', 'skills', 'done']);
+
 const key = (s: RunStep): string => (s.action ? `${s.tool}:${s.action}` : s.tool);
 
 /**
@@ -52,7 +55,7 @@ export function findRecoveries(steps: readonly RunStep[]): Recovery[] {
   steps.forEach((failed, i) => {
     if (failed.ok) return;
     for (const worked of steps.slice(i + 1, i + 1 + RECOVERY_WINDOW)) {
-      if (!worked.ok || key(worked) === key(failed) || worked.tool === 'done') continue;
+      if (!worked.ok || key(worked) === key(failed) || TRIVIAL_FIXES.has(worked.tool)) continue;
       out.set(`${key(failed)}>${key(worked)}`, { failed, worked });
       break;
     }
@@ -81,7 +84,24 @@ export function recordLessons(store: SkillStore, steps: readonly RunStep[], day:
   const ids: string[] = [];
   for (const r of findRecoveries(steps)) {
     try {
-      ids.push(store.save(lessonDraft(r, day)));
+      const draft = lessonDraft(r, day);
+      // A lesson seen again only gains the recurrence note: whatever the owner edited in
+      // its steps, description or whenToUse stays as it is.
+      const existing = store.read(slugify(draft.name));
+      ids.push(
+        store.save(
+          existing
+            ? {
+                name: existing.name,
+                description: existing.description,
+                category: existing.category,
+                whenToUse: existing.whenToUse,
+                steps: existing.steps,
+                notes: draft.notes,
+              }
+            : draft,
+        ),
+      );
     } catch {
       // A lesson that cannot be written is not worth failing the user's task.
     }

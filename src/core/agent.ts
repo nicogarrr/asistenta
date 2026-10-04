@@ -261,9 +261,9 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
  * a tool without one (or one whose caps add up, like a 50-message mail listing) from
  * putting an unbounded blob in every later call. About 6k tokens.
  */
-const MAX_TRACKED_STEPS = 200;
-
 export const MAX_TOOL_RESULT_CHARS = 24_000;
+
+const MAX_TRACKED_STEPS = 200;
 
 /**
  * Cap the text parts of a tool result at `max` chars in total, keeping the head and

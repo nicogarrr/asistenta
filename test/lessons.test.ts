@@ -92,4 +92,33 @@ describe('lintSkill', () => {
     expect(lintSkill({ steps: log, notes: [], whenToUse: 'x' }).join()).toMatch(/incidentes/);
     expect(lintSkill({ steps: ['a'], notes: [], whenToUse: ' ' }).join()).toMatch(/whenToUse/);
   });
+
+  it('does not count a trivial tool working as a way around a failure', () => {
+    expect(findRecoveries([bad('fetch'), ok('read'), ok('memory'), ok('done')])).toHaveLength(0);
+  });
+
+  it('on a repeat, keeps what the owner edited and only adds the recurrence note', () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'lessons2-'));
+    try {
+      const s2 = new SkillStore({ dir: dir2 });
+      const [id] = recordLessons(s2, [bad('fetch'), ok('browser', 'open')], '2026-10-04');
+      const first = s2.read(id as string);
+      s2.save({
+        name: first?.name ?? '',
+        description: 'editada a mano',
+        category: LESSON_CATEGORY,
+        whenToUse: 'cuando yo lo diga',
+        steps: ['paso editado'],
+        notes: [],
+      });
+      recordLessons(s2, [bad('fetch'), ok('browser', 'open')], '2026-10-05');
+      const again = s2.read(id as string);
+      expect(again?.steps).toEqual(['paso editado']);
+      expect(again?.description).toBe('editada a mano');
+      expect(again?.whenToUse).toBe('cuando yo lo diga');
+      expect(again?.notes.join()).toContain('2026-10-05');
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  });
 });
