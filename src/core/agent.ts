@@ -252,6 +252,46 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
   return out;
 }
 
+/**
+ * Backstop for any single tool result going back to the model. Individual tools keep
+ * their own, tighter caps (calendar 4k, fetch 20k, shell head+tail); this only stops
+ * a tool without one (or one whose caps add up, like a 50-message mail listing) from
+ * putting an unbounded blob in every later call. About 6k tokens.
+ */
+export const MAX_TOOL_RESULT_CHARS = 24_000;
+
+/**
+ * Cap the text parts of a tool result at `max` chars in total, keeping the head and
+ * the tail and saying how much was dropped. Images and other parts pass through.
+ * Returns undefined when nothing needed cutting, so the caller leaves the result alone.
+ */
+export function capToolResultText<T extends { type: string; text?: string }>(
+  content: readonly T[] | undefined,
+  max: number,
+): T[] | undefined {
+  if (!content) return undefined;
+  const total = content.reduce((n, p) => n + (p.type === 'text' ? (p.text?.length ?? 0) : 0), 0);
+  if (total <= max) return undefined;
+  let left = max;
+  return content.map((p) => {
+    if (p.type !== 'text' || p.text === undefined) return p;
+    const text = p.text;
+    if (text.length <= left) {
+      left -= text.length;
+      return p;
+    }
+    const keep = Math.max(0, left);
+    left = 0;
+    const tail = Math.floor(keep / 4);
+    const head = keep - tail;
+    const omitted = text.length - keep;
+    return {
+      ...p,
+      text: `${text.slice(0, head)}\n[... ${omitted} caracteres omitidos por límite de resultado; pide un trozo más concreto ...]\n${tail ? text.slice(text.length - tail) : ''}`,
+    };
+  });
+}
+
 export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
@@ -360,8 +400,9 @@ export class PersonalAgent {
         // Budget pressure rides inside the tool result (`details.budgetPressure`)
         // instead of as an extra conversation message: the model reads it as part
         // of the outcome it just got, and the message format never changes.
+        const capped = capToolResultText(result.content, MAX_TOOL_RESULT_CHARS);
         const pressure = personal.budget.pressure();
-        if (!pressure) return undefined;
+        if (!pressure) return capped ? { content: capped } : undefined;
         const details: unknown = result.details;
         const base: Record<string, unknown> =
           details !== null && typeof details === 'object' && !Array.isArray(details)
@@ -369,7 +410,10 @@ export class PersonalAgent {
             : details === undefined
               ? {}
               : { value: details };
-        return { details: { ...base, budgetPressure: pressure } };
+        return {
+          ...(capped ? { content: capped } : {}),
+          details: { ...base, budgetPressure: pressure },
+        };
       },
     });
 
@@ -414,11 +458,17 @@ export class PersonalAgent {
    */
   attachContext(note: string): void {
     if (!note.trim()) return;
-    this.#agent.state.messages = [
-      ...this.#agent.state.messages,
-      { role: 'system', content: note } as AgentMessage,
-    ];
+    // Replace, don't stack: each note is a full snapshot (memory, routines, date), so
+    // keeping the old ones only multiplies the same block per turn and leaves the
+    // model with several contradictory "now" values.
+    const msg = { role: 'system', content: note } as AgentMessage;
+    const kept = this.#agent.state.messages.filter((m) => !this.#contextNotes.has(m));
+    this.#contextNotes = new WeakSet<object>([msg]);
+    this.#agent.state.messages = [...kept, msg];
   }
+
+  /** Identity of the context-note message currently in the transcript. */
+  #contextNotes = new WeakSet<object>();
 
   get messages(): AgentMessage[] {
     return this.#agent.state.messages;
