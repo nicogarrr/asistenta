@@ -96,6 +96,63 @@ export function parseTrainRow(row: TrainRowInfo): {
   return out;
 }
 
+export type DayVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'unknown-day' | 'wrong-day' | 'stale-list'; message: string };
+
+/**
+ * ¿La lista que se ve es la del dia pedido? Pura para poder probarla.
+ * - sin dia marcado en la barra: "desconocido", nunca se supone (ni se usa el campo
+ *   oculto, que lleva la fecha pedida aunque la lista sea de otro dia);
+ * - dia marcado distinto del pedido: dia equivocado;
+ * - tras pulsar el dia, la lista tiene que haber cambiado respecto a la de antes: la
+ *   marca cambia al instante y la lista despues;
+ * - si el resumen "Viaje de Ida" dice otro dia del mes, tambien es dia equivocado.
+ */
+export function judgeDay(input: {
+  want: string;
+  pressed: string;
+  fingerprint: string;
+  summaryDay: string;
+  clicked: boolean;
+  fingerprintBefore: string;
+}): DayVerdict {
+  const { want, pressed, fingerprint, summaryDay, clicked, fingerprintBefore } = input;
+  if (!pressed) {
+    return {
+      ok: false,
+      reason: 'unknown-day',
+      message: 'no pude saber qué día muestra Renfe (la barra de días no marca ninguno)',
+    };
+  }
+  if (pressed !== want) {
+    return {
+      ok: false,
+      reason: 'wrong-day',
+      message: `Renfe muestra el ${pressed} en vez del ${want}`,
+    };
+  }
+  const wantDay = String(Number(want.slice(0, 2)));
+  if (summaryDay && String(Number(summaryDay)) !== wantDay) {
+    return {
+      ok: false,
+      reason: 'wrong-day',
+      message: `el resumen de Renfe dice el día ${summaryDay} y se pidió el ${wantDay}`,
+    };
+  }
+  if (clicked && fingerprint === fingerprintBefore) {
+    return {
+      ok: false,
+      reason: 'stale-list',
+      message: 'la lista de trenes de Renfe no cambió tras elegir el día',
+    };
+  }
+  if (!fingerprint) {
+    return { ok: false, reason: 'stale-list', message: 'la lista de trenes está vacía o cargando' };
+  }
+  return { ok: true };
+}
+
 /** YYYY-MM-DD -> DD/MM/YYYY, el formato de la barra de días y de los campos ocultos de Renfe. */
 export function renfeDate(iso: string): string {
   const [y, m, d] = iso.split('-');
@@ -259,33 +316,52 @@ export async function searchRenfe(args: {
     // resultados dice que dia muestra, asi que se comprueba y, si no es el pedido, se
     // pulsa ese dia en la barra de dias. Nunca se devuelve la lista de otro dia.
     const want = renfeDate(args.date);
-    const shownDate = () =>
-      page.evaluate(
-        () =>
+    // Lo que la pagina dice sobre el dia y sobre la lista, leido sin ningun fallback:
+    // el campo oculto filtroFechaSalida lleva la fecha PEDIDA aunque la lista sea de
+    // hoy, asi que no cuenta como prueba.
+    const readState = () =>
+      page.evaluate(() => {
+        const pressed =
           document.querySelector<HTMLElement>('button.day_cell[aria-pressed=true]')?.dataset
-            .celldate ??
-          document.querySelector<HTMLInputElement>('#filtroFechaSalida')?.value ??
-          '',
-      );
-    let shown = await shownDate();
-    if (shown !== want) {
+            .celldate ?? '';
+        const labels = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '#listaTrenesTBodyIda .selectedTren [aria-label^="Tren con salida"]',
+          ),
+        ).map((e) => e.getAttribute('aria-label') ?? '');
+        const m = /Viaje de Ida\s*\n\s*\p{L}+\s+(\d{1,2})\s/u.exec(document.body.innerText);
+        return { pressed, fingerprint: labels.join('|'), summaryDay: m?.[1] ?? '' };
+      });
+    const before = await readState();
+    let verdict = judgeDay({ want, ...before, clicked: false, fingerprintBefore: '' });
+    if (!verdict.ok && verdict.reason === 'wrong-day') {
       const cell = page.locator(`button.day_cell[data-celldate="${want}"]:not(.disabledDay)`);
       if ((await cell.count()) === 0) {
         throw new StepError(
-          `paso fecha: Renfe mostró el ${shown || 'dia desconocido'} y el ${want} no está en su barra de días; no devuelvo trenes de otro día`,
+          `paso fecha: Renfe mostró el ${before.pressed} y el ${want} no está en su barra de días; no devuelvo trenes de otro día`,
         );
       }
       await cell.first().click();
-      for (let i = 0; i < 20 && shown !== want; i++) {
+      // La marca del dia cambia al instante pero la lista recarga por AJAX: se espera a
+      // que la lista CAMBIE y a que se quede quieta dos lecturas seguidas.
+      let last = '';
+      let stable = 0;
+      for (let i = 0; i < 30; i++) {
         await page.waitForTimeout(1_000);
-        shown = await shownDate().catch(() => '');
+        const now = await readState().catch(() => null);
+        if (!now) continue;
+        verdict = judgeDay({ want, ...now, clicked: true, fingerprintBefore: before.fingerprint });
+        stable = verdict.ok && now.fingerprint === last ? stable + 1 : 0;
+        last = now.fingerprint;
+        if (verdict.ok && stable >= 1) break;
       }
-      if (shown !== want) {
+      if (!verdict.ok || stable < 1) {
         throw new StepError(
-          `paso fecha: Renfe sigue mostrando el ${shown || 'dia desconocido'} en vez del ${want}; no devuelvo trenes de otro día`,
+          `paso fecha: ${verdict.ok ? 'la lista de Renfe no terminó de cargar' : verdict.message}; no devuelvo trenes de otro día`,
         );
       }
-      await page.waitForTimeout(3_000);
+    } else if (!verdict.ok) {
+      throw new StepError(`paso fecha: ${verdict.message}; no devuelvo trenes de otro día`);
     }
     const text = await page.locator('body').innerText();
     const rows: TrainRowInfo[] = await page.evaluate(() =>
@@ -299,14 +375,17 @@ export async function searchRenfe(args: {
       ),
     );
     const trains = parseRenfeResults(text);
-    for (const row of rows) {
+    // Fila i de la pagina = tren i del texto; solo se asigna si la hora de salida
+    // coincide en esa posicion (dos trenes pueden salir a la misma hora).
+    trains.forEach((train, i) => {
+      const row = rows[i];
+      if (!row) return;
       const info = parseTrainRow(row);
-      const train = trains.find((t) => t.salida === info.salida);
-      if (!train) continue;
+      if (info.salida !== train.salida) return;
       if (info.tipo) train.tipo = info.tipo;
       if (info.transbordos) train.transbordos = info.transbordos;
       if (info.completo) train.completo = true;
-    }
+    });
     if (trains.length === 0) {
       throw new StepError(
         'paso resultados: la página cargó pero no hay trenes legibles (¿sin servicio ese día?)',
@@ -318,8 +397,9 @@ export async function searchRenfe(args: {
     // tren sale sin estaciones y el texto no inventa ninguna.
     const wanted = filtered.slice(0, Math.max(1, args.limit ?? 8));
     for (const train of wanted) {
-      const idx = rows.findIndex((r) => parseTrainRow(r).salida === train.salida);
-      if (idx < 0) continue;
+      const idx = trains.indexOf(train);
+      const rowInfo = rows[idx];
+      if (idx < 0 || !rowInfo || parseTrainRow(rowInfo).salida !== train.salida) continue;
       try {
         const row = page.locator('#listaTrenesTBodyIda .selectedTren').nth(idx);
         // Clicks por DOM: tras cerrar el modal anterior queda un telon que intercepta

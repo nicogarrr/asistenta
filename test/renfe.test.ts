@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterAfter,
   formatTrains,
+  judgeDay,
   madridDate,
   parseRenfeResults,
   parseTrainRow,
@@ -159,5 +160,50 @@ describe('formatTrains con los campos nuevos', () => {
     expect(out).toBe(
       '06:16 -> 09:24 Madrid-Puerta De Atocha-Almudena Grandes -> Barcelona-Sants (3 horas 8 minutos), desde 62,25 € [AVE, sin transbordo, COMPLETO]',
     );
+  });
+});
+
+describe('judgeDay', () => {
+  const base = {
+    want: '06/10/2026',
+    pressed: '06/10/2026',
+    fingerprint: 'a|b',
+    summaryDay: '06',
+    clicked: false,
+    fingerprintBefore: '',
+  };
+
+  it('acepta la lista del dia pedido', () => {
+    expect(judgeDay(base)).toEqual({ ok: true });
+  });
+
+  it('sin dia marcado es desconocido, no se supone', () => {
+    const v = judgeDay({ ...base, pressed: '' });
+    expect(v).toMatchObject({ ok: false, reason: 'unknown-day' });
+  });
+
+  it('dia marcado distinto es dia equivocado (hoy en vez de mañana)', () => {
+    expect(judgeDay({ ...base, pressed: '04/10/2026' })).toMatchObject({
+      ok: false,
+      reason: 'wrong-day',
+    });
+  });
+
+  it('el resumen con otro dia del mes tambien rechaza, aunque la barra diga el pedido', () => {
+    expect(judgeDay({ ...base, summaryDay: '04' })).toMatchObject({
+      ok: false,
+      reason: 'wrong-day',
+    });
+    expect(judgeDay({ ...base, summaryDay: '6' })).toEqual({ ok: true });
+  });
+
+  it('tras pulsar el dia la marca cambia antes que la lista: lista igual = no vale', () => {
+    const stale = judgeDay({ ...base, clicked: true, fingerprintBefore: 'a|b' });
+    expect(stale).toMatchObject({ ok: false, reason: 'stale-list' });
+    expect(judgeDay({ ...base, clicked: true, fingerprintBefore: 'x|y' })).toEqual({ ok: true });
+  });
+
+  it('una lista vacia no vale', () => {
+    expect(judgeDay({ ...base, fingerprint: '' })).toMatchObject({ ok: false });
   });
 });
