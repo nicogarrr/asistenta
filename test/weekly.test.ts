@@ -35,6 +35,27 @@ describe('buildWeeklySummary', () => {
   });
 });
 
+describe('descargas en el resumen', () => {
+  it('cuenta enviadas y fallidas', () => {
+    const text = buildWeeklySummary({
+      entries: [e(1, 'descarga'), e(1, 'descarga'), e(2, 'descarga', 'error'), e(10, 'descarga')],
+      now: NOW,
+      pending: '',
+      watching: 0,
+    });
+    expect(text).toContain('Descargas: 2 enviadas, 1 fallaron');
+  });
+  it('una semana solo con descargas no se dice vacía', () => {
+    const text = buildWeeklySummary({
+      entries: [e(1, 'descarga')],
+      now: NOW,
+      pending: '',
+      watching: 0,
+    });
+    expect(text).not.toContain('No hemos hablado');
+  });
+});
+
 describe('isWeeklyDue / WeeklyState', () => {
   it('is due Sunday from 18:00 local, once per week', () => {
     const sun18 = new Date(2026, 9, 4, 18, 5); // domingo 4 oct 2026

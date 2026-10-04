@@ -16,6 +16,11 @@ export interface DownloadToolDeps {
   progress?: (what: 'upload_video' | 'upload_document') => Promise<void>;
   /** Anti-bot helpers from config (browser cookies for yt-dlp, curl-impersonate path). */
   options?: DownloadOptions;
+  /**
+   * Called once per attempt with the outcome. Only the host is passed on, never the
+   * full URL: links often carry session tokens, and a log is the wrong place for them.
+   */
+  onResult?: (r: { ok: boolean; kind?: 'video' | 'pdf'; host: string; reason?: string }) => void;
 }
 
 const Params = Type.Object({
@@ -26,6 +31,14 @@ const Params = Type.Object({
     }),
   ),
 });
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'enlace no válido';
+  }
+}
 
 function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
@@ -49,6 +62,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
       const result = await downloadFromLink(params.url, kind, deps.options);
       if (!result.ok) {
         log.warn('download failed', { url: params.url, reason: result.reason });
+        deps.onResult?.({ ok: false, host: hostOf(params.url), reason: result.reason });
         return ok(`No se pudo descargar: ${result.reason}.`, { ok: false });
       }
       const mb = (result.bytes.length / 1024 / 1024).toFixed(1);
@@ -63,8 +77,15 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn('download send failed', { url: params.url, error: msg });
+        deps.onResult?.({
+          ok: false,
+          kind: result.kind,
+          host: hostOf(params.url),
+          reason: 'Telegram no aceptó el envío',
+        });
         return ok(`Descargado (${mb} MB) pero Telegram no aceptó el envío: ${msg}.`, { ok: false });
       }
+      deps.onResult?.({ ok: true, kind: result.kind, host: hostOf(params.url) });
       return ok(
         `Enviado ${result.kind === 'video' ? 'el vídeo' : 'el PDF'} "${result.title}" (${mb} MB).`,
         { ok: true, kind: result.kind, bytes: result.bytes.length },
