@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { FollowupTracker } from './alerts/followups.js';
 import { ActionLog } from './audit/log.js';
+import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
 import {
   cleanForTelegram,
@@ -29,6 +30,7 @@ import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
+import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -59,6 +61,7 @@ import { WindowsScreen } from './screen/windows.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
+import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { createComputerTool } from './tools/computer.js';
@@ -907,6 +910,34 @@ async function serveCommand(): Promise<number> {
       createSystemTool(),
       // "Descarga este vídeo / pásame este PDF" with a link: yt-dlp for video sites, a
       // direct fetch for PDFs, sent back to the chat as MP4 or document.
+      // Free and public-domain books (Gutenberg, Internet Archive): search, download as
+      // EPUB, send to this chat and/or to the user's Kindle by email (approval each time).
+      createBookTool({
+        sendDocument: (bytes, filename, caption) =>
+          telegram
+            .sendDocumentBytes(
+              Number(thread.chatKey.split(':')[2]),
+              bytes,
+              filename,
+              caption,
+              inboundFor(thread).threadId,
+            )
+            .then(() => true),
+        saveKindleAddress: (address) => vaultSet(KINDLE_VAULT_KEY, address),
+        kindle: {
+          getAddress: async () => (await vaultGet(KINDLE_VAULT_KEY)) ?? null,
+          loadAccount: loadMailAccount,
+          send: sendMail,
+          requireApproval: async (_action, summary) => {
+            const choice = await telegram.offerApproval(
+              randomUUID(),
+              thread.chatKey.split(':')[2] ?? '',
+              `¿${summary}?`,
+            );
+            return choice.approved;
+          },
+        },
+      }),
       createDownloadTool({
         onResult: (r) =>
           actions.record({

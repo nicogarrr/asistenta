@@ -52,6 +52,7 @@ export const THREAD_ALLOW_TOOLS = [
   'done',
   'memory',
   'opengym',
+  'book',
   LOADER_TOOL_NAME,
 ];
 
