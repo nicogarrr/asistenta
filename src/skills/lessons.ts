@@ -126,3 +126,31 @@ export function lintSkill(s: { steps: string[]; notes: string[]; whenToUse: stri
   if (!s.whenToUse.trim()) warnings.push('sin whenToUse: nadie sabrá cuándo aplicarla');
   return warnings;
 }
+
+export const SKILLS_INDEX_MAX = 20;
+export const SKILLS_INDEX_LINE_CHARS = 110;
+
+/**
+ * Level-zero index of the skills for the context note: one short line each, newest
+ * first, capped. Full steps stay behind `skills read`, so the model pays about
+ * 25 tokens per skill instead of the whole recipe, and still knows what exists.
+ */
+export function skillsIndex(
+  skills: readonly { id: string; whenToUse: string; description: string; updatedAt: number }[],
+  max = SKILLS_INDEX_MAX,
+): string {
+  const lines = [...skills]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, max)
+    .map((s) => {
+      const hint = (s.whenToUse || s.description).replace(/\s+/g, ' ').trim();
+      const clipped =
+        hint.length > SKILLS_INDEX_LINE_CHARS
+          ? `${hint.slice(0, SKILLS_INDEX_LINE_CHARS - 1)}…`
+          : hint;
+      return `- ${s.id}: ${clipped}`;
+    });
+  if (!lines.length) return '';
+  const more = skills.length > max ? `\n(+${skills.length - max} más: skills list)` : '';
+  return `<skills>\n${lines.join('\n')}${more}\n</skills>`;
+}
