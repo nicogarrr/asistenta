@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -48,6 +48,18 @@ export function createSandbox(root: string, base: string, id: number, dir: strin
     throw new Error(`la rama ${branch} ya existe: no se reutiliza un intento anterior`);
   }
   git(root, ['worktree', 'add', '-b', branch, dir, base]);
+  // The sandbox has the sources but not the installed packages. It gets its OWN copy of the
+  // kernel's node_modules: a link would let a candidate write into the kernel's real
+  // dependencies, and commitAll leaves node_modules out of the diff on purpose, so the guard
+  // would never see it. A copy costs disk and time once a week and removes that hole.
+  const modules = join(root, 'node_modules');
+  if (existsSync(modules) && !existsSync(join(dir, 'node_modules'))) {
+    cpSync(modules, join(dir, 'node_modules'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      errorOnExist: false,
+    });
+  }
   return { dir, branch, kept: false };
 }
 
@@ -85,4 +97,52 @@ export function isClean(root: string): boolean {
 
 export function headCommit(root: string): string {
   return git(root, ['rev-parse', 'HEAD']);
+}
+
+/**
+ * Commit whatever the proposer left in the sandbox, so what is checked and what is measured
+ * are the same thing. Without this the forbidden-file check looks at commits while the
+ * candidate is measured with the uncommitted working tree, and the guard sees nothing.
+ */
+export function commitAll(dir: string, message: string): void {
+  // node_modules is the shared link from createSandbox, never part of the attempt.
+  git(dir, ['add', '-A']);
+  try {
+    git(dir, ['reset', '-q', '--', 'node_modules']);
+  } catch {
+    // nothing of node_modules was staged
+  }
+  if (git(dir, ['diff', '--cached', '--name-only']).trim() === '') return;
+  git(dir, [
+    '-c',
+    'user.name=asistenta-evolve',
+    '-c',
+    'user.email=evolve@localhost',
+    'commit',
+    '-q',
+    '-m',
+    message,
+  ]);
+}
+
+/** The full unified diff of an attempt, for the guard's content rules and for the PR. */
+export function diffText(root: string, base: string, branch: string): string {
+  return execFileSync('git', ['diff', `${base}...${branch}`], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+}
+
+/**
+ * Files in the sandbox that git ignores (other than node_modules). `git add -A` skips them, so
+ * they would be measured but never checked: a candidate could hide a file there.
+ */
+export function ignoredFiles(dir: string): string[] {
+  const out = git(dir, ['ls-files', '--others', '--ignored', '--exclude-standard']);
+  return out
+    .split('\n')
+    .map((f) => f.trim())
+    .filter((f) => f && !f.startsWith('node_modules/'));
 }

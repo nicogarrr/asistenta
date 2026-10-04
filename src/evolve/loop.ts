@@ -1,12 +1,17 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkPatch } from '../selfimprove/guard.js';
 import { Archive, isoWeek } from './archive.js';
-import { measure } from './measure.js';
+import { measure as realMeasure } from './measure.js';
 import { comparable, judge, touchesForbidden } from './score.js';
 import {
   changedFiles,
+  commitAll,
   createSandbox,
+  diffText,
   dropSandbox,
   headCommit,
+  ignoredFiles,
   isClean,
   repoRoot,
   type Sandbox,
@@ -47,12 +52,14 @@ export interface EvolveOptions {
   /** Where the improvement comes from. Recorded, not trusted. */
   hypotheses?: () => Promise<string[]>;
   log?: (msg: string) => void;
+  /** Injected so the loop can run in tests without a real suite. */
+  measure?: typeof realMeasure;
 }
 
 export interface WeekReport {
   week: string;
   kernel: string;
-  baseline: Awaited<ReturnType<typeof measure>>;
+  baseline: Awaited<ReturnType<typeof realMeasure>>;
   attempts: Array<{
     hypothesis: string;
     try: number;
@@ -61,13 +68,17 @@ export interface WeekReport {
     reason: string;
   }>;
   promoted: boolean;
+  /** Branch and patch of the promoted attempt: the material for a normal PR. */
+  branch?: string;
+  patchFile?: string;
 }
 
 export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
   const root = opts.root ?? repoRoot();
   const maxTries = opts.maxTries ?? 3;
-  const minGainPct = opts.minGainPct ?? 1;
+  const minGainPct = opts.minGainPct ?? 5;
   const say = opts.log ?? (() => {});
+  const measure = opts.measure ?? realMeasure;
   const week = isoWeek();
   const archive = new Archive(join(opts.stateDir, 'evolve', 'attempts.jsonl'));
 
@@ -114,10 +125,33 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       try {
         await opts.propose(sandbox.dir, hypothesis, attempt);
 
+        // What is checked is what is measured: commit the working tree first.
+        commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
         const touched = changedFiles(root, kernel, sandbox.branch);
-        const forbidden = touchesForbidden(touched);
+        const patch = diffText(root, kernel, sandbox.branch);
+        const forbidden = [
+          ...touchesForbidden(touched),
+          ...checkPatch(patch).map((v) => `${v.file} (${v.rule})`),
+          ...ignoredFiles(sandbox.dir).map((f) => `${f} (fichero ignorado por git)`),
+        ];
+        if (!touched.length) {
+          const reason = 'el intento no cambió nada';
+          archive.add({
+            week,
+            kind: 'verdict',
+            hypothesis,
+            verdict: 'discard',
+            reason,
+            kernel,
+            candidate: sandbox.branch,
+            tries: attempt,
+          });
+          report.attempts.push({ hypothesis, try: attempt, verdict: 'discard', delta: 0, reason });
+          say(reason);
+          break;
+        }
         if (forbidden.length) {
-          const reason = `el intento toca ficheros que el bucle no puede tocar: ${forbidden.join(', ')}`;
+          const reason = `el intento toca ficheros o reglas que el bucle no puede tocar: ${forbidden.join(', ')}`;
           archive.add({
             week,
             kind: 'verdict',
@@ -161,20 +195,18 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         say(`${hypothesis} (intento ${attempt}): ${verdict.kind} — ${verdict.reason}`);
 
         if (verdict.kind === 'promote') {
-          // Merged as a normal commit on the real branch. The sandbox is kept so the diff
-          // can be inspected afterwards; the worktree is removed on the next run.
-          const { execFileSync } = await import('node:child_process');
-          execFileSync(
-            'git',
-            ['merge', '--no-ff', '-m', `evolucion: ${hypothesis}`, sandbox.branch],
-            {
-              cwd: root,
-              stdio: 'inherit',
-              windowsHide: true,
-            },
-          );
+          // Never merged here. A promoted attempt leaves a branch and a patch, and goes to
+          // the repo as a normal PR that is audited like any other change.
+          const dir = join(opts.stateDir, 'evolve');
+          mkdirSync(dir, { recursive: true });
+          const patchFile = join(dir, `promovido-${id}.patch`);
+          writeFileSync(patchFile, patch, 'utf8');
+          report.branch = sandbox.branch;
+          report.patchFile = patchFile;
           report.promoted = true;
-          say('Promovido al kernel.');
+          say(
+            `Candidato listo: rama ${sandbox.branch}, parche ${patchFile}. Va como PR con auditoría; no se ha mergeado nada.`,
+          );
           break;
         }
         if (verdict.kind === 'discard') break;
@@ -200,7 +232,7 @@ export function summarize(report: WeekReport): string {
       `- ${a.hypothesis} (intento ${a.try}): ${a.verdict}, ${a.delta >= 0 ? '+' : ''}${a.delta}. ${a.reason}`,
   );
   const tail = report.promoted
-    ? 'Algo entró en el kernel: revisa el commit antes de la próxima semana.'
-    : 'Nada entró en el kernel esta semana.';
+    ? `Hay un candidato (rama ${report.branch ?? '?'}): sale como PR y no entra sin auditoría.`
+    : 'Ningún candidato pasó la regla esta semana.';
   return [head, ...lines, tail].join('\n');
 }
