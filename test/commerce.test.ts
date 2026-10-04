@@ -534,6 +534,20 @@ describe('checkout tool', () => {
     expect(seen[0]).not.toContain('€');
   });
 
+  it('treats Confirmar, Ir a caja and a payment screen body as charges', async () => {
+    for (const label of ['Confirmar', 'Confirm', 'Ir a caja', 'Caja']) {
+      expect(looksLikePaymentSubmission(label), label).toBe(true);
+    }
+    const page = new FakePage();
+    page.info.set('#ok', { label: 'Aceptar', button: true });
+    page.body = 'Metodo de pago: numero de tarjeta';
+    const tool = toolWith(page, BUYER, async () => true);
+    await expect(call(tool, { action: 'select', selector: '#ok' })).rejects.toThrow(
+      /pagina de pago/,
+    );
+    expect(page.clicks).toHaveLength(0);
+  });
+
   it('lets it press the buttons that lead to the payment screen', async () => {
     for (const label of [
       'Continuar',

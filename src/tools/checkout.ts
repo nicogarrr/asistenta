@@ -10,7 +10,7 @@ import {
 } from '../commerce/profile.js';
 import { log, redact } from '../log.js';
 import type { PurchaseStage, ToolCall } from '../permissions.js';
-import { isPaymentText, pageSaysMoney } from '../permissions.js';
+import { fold, isPaymentText, pageSaysMoney } from '../permissions.js';
 import { buildFillScript } from './browser.js';
 
 /**
@@ -111,8 +111,25 @@ const PRE_PAYMENT_NAV =
  */
 export function looksLikePaymentSubmission(label: string): boolean {
   const cleaned = label.replace(PRE_PAYMENT_NAV, ' ');
-  return PAYMENT_LABEL.test(cleaned) || isPaymentText(cleaned);
+  return (
+    PAYMENT_LABEL.test(cleaned) || isPaymentText(cleaned) || CONFIRM_BUTTON.test(fold(cleaned))
+  );
 }
+
+/**
+ * "Confirmar" / "Confirm" on a button inside a purchase flow is the last click before the
+ * charge on most shops, so it counts as one here (the gate only sees it through the page).
+ */
+const CONFIRM_BUTTON =
+  /(?<![\p{L}\p{N}])(confirmar|confirmo|confirm|confirmacion)(?![\p{L}\p{N}])/u;
+
+/**
+ * What a payment screen says in its body when the URL and title say nothing: card fields,
+ * payment method, order summary. Specific phrases, not single words, so an ordinary shop
+ * page that mentions "comprar" does not lock the buttons.
+ */
+const PAGE_TEXT_PAYMENT =
+  /(?<![\p{L}\p{N}])(numero de (la )?tarjeta|datos de (la )?tarjeta|metodo de pago|forma de pago|resumen del pedido|total a pagar|importe a pagar|payment method|card number|order summary|billing address)(?![\p{L}\p{N}])/u;
 
 /** A price as the page shows it: the number, the currency symbol and both together. */
 export interface PriceText {
@@ -458,7 +475,10 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
     }
     // A page that talks about money (checkout, cart, order, payment in URL or title):
     // any button or Enter there can be the charge, whatever it says.
-    if ((info.button || enter) && pageSaysMoney(info.where)) {
+    if (
+      (info.button || enter) &&
+      (pageSaysMoney(info.where) || PAGE_TEXT_PAYMENT.test(fold(await page.text().catch(() => ''))))
+    ) {
       throw new Error(
         'esta es una pagina de pago o de cesta y no pulso botones ni envio formularios aqui: ' +
           'podrian cobrar. Dile al usuario que está todo listo y que continúe él.',
@@ -504,6 +524,8 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
       '4. action=status para saber en que punto estas.',
       '5. action=confirm cuando la pantalla muestre el importe. Ahi se para todo y se le',
       '   pregunta al usuario que dice y cuanto cuesta.',
+      '',
+      'Cita los importes tal como aparecen en la pagina (con su moneda); no inventes ni estimes cifras.',
       '',
       'Puedes navegar, buscar, elegir y rellenar sin preguntar NADA. No digas que necesitas',
       'aprobacion para abrir una web ni para buscar. La unica pregunta es la del pago.',
