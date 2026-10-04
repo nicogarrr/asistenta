@@ -56,7 +56,7 @@ import { createCalendarTool } from './tools/calendar.js';
 import { createComputerTool } from './tools/computer.js';
 import { createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
-import { createFetchTool } from './tools/fetch.js';
+import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
@@ -79,6 +79,7 @@ import {
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
+import { describeChange, PageWatchStore } from './watch/pages.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
 
@@ -573,6 +574,7 @@ async function serveCommand(): Promise<number> {
   const instincts = new InstinctStore({ db: memoryDb });
   const workstreams = new WorkstreamStore({ db: memoryDb });
   const followups = new FollowupTracker({ db: memoryDb });
+  const pageWatches = new PageWatchStore(memoryDb);
   // One sweep at boot: patterns the user stopped showing lose their weight and
   // the ones that hit zero go, so old accidents cannot steer the daemon forever.
   instincts.decay(90);
@@ -1495,6 +1497,87 @@ async function serveCommand(): Promise<number> {
     );
   };
 
+  /**
+   * Texto de una página pública, por el mismo camino (y el mismo control SSRF) que la tool
+   * fetch. La tool devuelve el texto dentro de una valla `<fetched_content>`; aquí se quita.
+   */
+  const fetchPageText = async (url: string): Promise<string> => {
+    const tool = createFetchTool(50_000);
+    const res = await tool.execute('pagewatch', { url, format: 'text' });
+    const raw = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    const m = /<fetched_content[^>]*>\n?([\s\S]*?)\n?<\/fetched_content>/.exec(raw);
+    return m?.[1] ?? raw;
+  };
+
+  /** /vigila <url> [nombre]: avisa cuando cambie el precio (o el texto) de una página. */
+  const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
+    const [rawUrl, ...rest] = args.split(/\s+/).filter(Boolean);
+    if (!rawUrl) {
+      return void (await say(
+        inbound,
+        'Uso: /vigila <enlace> [nombre]. Te aviso si cambia el precio de la página. /vigilando para ver la lista, /dejar_de_vigilar <id> para quitar una.',
+        { quote: true },
+      ));
+    }
+    if (!(await isFetchableResolved(rawUrl))) {
+      return void (await say(inbound, 'Solo puedo vigilar enlaces públicos http(s).', {
+        quote: true,
+      }));
+    }
+    try {
+      const w = pageWatches.add(inbound.chatId, rawUrl, rest.join(' '));
+      await say(
+        inbound,
+        `Vale, vigilo ${w.label || w.url} (id ${w.id}). Miro cada 2 horas y te aviso si cambia.`,
+        {
+          quote: true,
+        },
+      );
+      void checkPageWatch(w.id);
+    } catch (err) {
+      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+    }
+  };
+
+  const cmdVigilando = async (inbound: Inbound): Promise<void> => {
+    const list = pageWatches.list(inbound.chatId);
+    const text = list.length
+      ? list
+          .map((w) => `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}`)
+          .join('\n')
+      : 'No vigilo ninguna página. Prueba /vigila <enlace>.';
+    await say(inbound, text, { quote: true });
+  };
+
+  const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
+    const id = args.trim();
+    const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
+    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : 'No encuentro ese id. Mira /vigilando.', {
+      quote: true,
+    });
+  };
+
+  const checkPageWatch = async (id: string): Promise<void> => {
+    const w = pageWatches.get(id);
+    if (!w?.active) return;
+    const outcome = await pageWatches.check(w, fetchPageText);
+    const msg = describeChange(w, outcome);
+    if (msg) {
+      await telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId: w.scope, text: msg })
+        .catch((err: unknown) => log.warn('page watch notice failed', { err }));
+    }
+  };
+
+  const PAGE_WATCH_EVERY_MS = 2 * 60 * 60 * 1000;
+  const pageWatchTimer = setInterval(
+    () => {
+      for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
+    },
+    10 * 60 * 1000,
+  );
+  pageWatchTimer.unref();
+
   /** What the user said they would do, in the tracker's own Spanish summary. */
   const cmdFollowups = async (inbound: Inbound): Promise<void> => {
     const text = followups.safe(() => followups.summarize(), 'No he podido leer los pendientes.');
@@ -1890,6 +1973,8 @@ async function serveCommand(): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
         '/resolver <id> - marca un pendiente como resuelto',
+        '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
+        '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
         '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
@@ -2351,6 +2436,12 @@ async function serveCommand(): Promise<number> {
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
+          case 'vigila':
+            return cmdVigila(inbound, command.args);
+          case 'vigilando':
+            return cmdVigilando(inbound);
+          case 'dejar_de_vigilar':
+            return cmdDejarDeVigilar(inbound, command.args);
           case 'resolver':
           case 'resolve':
             return cmdResolve(inbound, command.args);
