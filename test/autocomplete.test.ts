@@ -150,6 +150,19 @@ l.addEventListener('mousedown', () => { d.value = 'Barcelona'; l.innerHTML = '';
     expect(r.message).toContain('esperaba "Madrid-Atocha"');
   });
 
+  it('does not accept the typed prefix as the chosen longer value', async () => {
+    await page.setContent(`<input id="e" autocomplete="off">
+<ul id="l" style="position:absolute;top:40px;margin:0"></ul>
+<script>
+const e = document.getElementById('e'), l = document.getElementById('l');
+e.addEventListener('input', () => { l.innerHTML = '<li>Madrid-Atocha</li>'; });
+l.addEventListener('mousedown', () => { l.innerHTML = ''; });
+</script>`);
+    const r = await chooseSuggestion(page, '#e', 'Madrid', 'Madrid-Atocha', quick);
+    expect(r.ok).toBe(false);
+    expect(r.value).toBe('Madrid');
+  });
+
   it('reports no suggestions instead of claiming a choice', async () => {
     await page.setContent(ARIA);
     const r = await chooseSuggestion(page, '#a', 'Narnia', undefined, quick);
