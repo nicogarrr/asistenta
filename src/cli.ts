@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,6 +27,7 @@ import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log } from './log.js';
+import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
@@ -51,6 +53,7 @@ import { ocrAvailable } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { WindowsScreen } from './screen/windows.js';
 import { SkillStore } from './skills/store.js';
+import { formatStatus, summarizeLog } from './status.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { createComputerTool } from './tools/computer.js';
@@ -1578,6 +1581,45 @@ async function serveCommand(): Promise<number> {
   );
   pageWatchTimer.unref();
 
+  const startedAt = Date.now();
+
+  /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
+  const cmdEstado = async (inbound: Inbound): Promise<void> => {
+    const ytdlp = process.env.ASISTENTA_YTDLP || 'yt-dlp';
+    const ytdlpOk = await new Promise<boolean>((resolve) => {
+      execFile(ytdlp, ['--version'], { timeout: 5000, windowsHide: true }, (err) => resolve(!err));
+    });
+    const curl = await findCurlImpersonate(config.curlImpersonatePath).catch(() => null);
+    let logSummary: ReturnType<typeof summarizeLog> | null = null;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      logSummary = summarizeLog(readFileSync(join(paths.log, `${day}.jsonl`), 'utf8'));
+    } catch {
+      logSummary = null;
+    }
+    const text = formatStatus({
+      version: process.env.npm_package_version ?? 'dev',
+      node: process.version,
+      uptimeMs: Date.now() - startedAt,
+      tools: [
+        {
+          name: 'yt-dlp (vídeos)',
+          ok: ytdlpOk,
+          note: ytdlpOk ? undefined : 'no puedo descargar vídeos',
+        },
+        {
+          name: 'curl-impersonate (PDF protegidos)',
+          ok: curl !== null,
+          note: curl ? undefined : 'opcional; sin él algunos PDF con antibot fallan',
+        },
+        { name: 'ffmpeg (/watch)', ok: ffmpegAvailable() },
+      ],
+      log: logSummary,
+      pageWatches: pageWatches.list(inbound.chatId).length,
+    });
+    await say(inbound, text, { quote: true });
+  };
+
   /** What the user said they would do, in the tracker's own Spanish summary. */
   const cmdFollowups = async (inbound: Inbound): Promise<void> => {
     const text = followups.safe(() => followups.summarize(), 'No he podido leer los pendientes.');
@@ -1973,6 +2015,7 @@ async function serveCommand(): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
         '/resolver <id> - marca un pendiente como resuelto',
+        '/estado - cómo estoy: herramientas, errores de hoy',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
         '/buscar <texto> - busca en conversaciones pasadas',
@@ -2436,6 +2479,8 @@ async function serveCommand(): Promise<number> {
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
+          case 'estado':
+            return cmdEstado(inbound);
           case 'vigila':
             return cmdVigila(inbound, command.args);
           case 'vigilando':
