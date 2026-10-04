@@ -82,7 +82,7 @@ import {
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
-import { describeChange, PageWatchStore } from './watch/pages.js';
+import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
 
@@ -1514,11 +1514,12 @@ async function serveCommand(): Promise<number> {
 
   /** /vigila <url> [nombre]: avisa cuando cambie el precio (o el texto) de una página. */
   const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
-    const [rawUrl, ...rest] = args.split(/\s+/).filter(Boolean);
-    if (!rawUrl) {
+    const parsed = parseVigilaArgs(args);
+    const rawUrl = parsed?.url;
+    if (!parsed || !rawUrl) {
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [nombre]. Te aviso si cambia el precio de la página. /vigilando para ver la lista, /dejar_de_vigilar <id> para quitar una.',
+        'Uso: /vigila <enlace> [nombre]. Te aviso si cambia el precio de la página. Con palabra=agotado (o palabra="sin stock") te aviso cuando esa palabra aparezca o desaparezca. /vigilando para ver la lista, /dejar_de_vigilar <id> para quitar una.',
         { quote: true },
       ));
     }
@@ -1528,10 +1529,10 @@ async function serveCommand(): Promise<number> {
       }));
     }
     try {
-      const w = pageWatches.add(inbound.chatId, rawUrl, rest.join(' '));
+      const w = pageWatches.add(inbound.chatId, rawUrl, parsed.label, parsed.keyword);
       await say(
         inbound,
-        `Vale, vigilo ${w.label || w.url} (id ${w.id}). Miro cada 2 horas y te aviso si cambia.`,
+        `Vale, vigilo ${w.label || w.url} (id ${w.id})${w.keyword ? ` buscando "${w.keyword}"` : ''}. Miro cada 2 horas y te aviso si cambia.`,
         {
           quote: true,
         },

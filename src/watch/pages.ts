@@ -29,6 +29,8 @@ export interface PageWatch {
   failures: number;
   createdAt: number;
   active: boolean;
+  /** Si hay palabra, se vigila su presencia en la página en vez del precio. */
+  keyword: string;
 }
 
 export type CheckOutcome =
@@ -86,8 +88,16 @@ export function extractPrice(text: string): string | null {
   return `${parsed[0]},${parsed[1]} €`;
 }
 
-/** Valor que se compara entre lecturas. */
-export function watchValue(text: string): string {
+const fold = (t: string): string =>
+  t
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+/** Valor que se compara entre lecturas. Con palabra: solo si aparece o no (sin mayúsculas ni tildes). */
+export function watchValue(text: string, keyword = ''): string {
+  if (keyword) return fold(text).includes(fold(keyword)) ? 'presente' : 'ausente';
   const price = extractPrice(text);
   if (price) return price;
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -109,6 +119,7 @@ function row(r: Record<string, unknown>): PageWatch {
     failures: Number(r.failures ?? 0),
     createdAt: Number(r.created_at ?? 0),
     active: Number(r.active ?? 1) === 1,
+    keyword: String(r.keyword ?? ''),
   };
 }
 
@@ -123,10 +134,15 @@ export class PageWatchStore {
       id TEXT PRIMARY KEY, scope TEXT NOT NULL, url TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
       last_value TEXT NOT NULL DEFAULT '', last_checked_at INTEGER NOT NULL DEFAULT 0,
       failures INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)`);
+    const cols = db.prepare('PRAGMA table_info(page_watches)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'keyword')) {
+      db.exec("ALTER TABLE page_watches ADD COLUMN keyword TEXT NOT NULL DEFAULT ''");
+    }
   }
 
-  add(scope: string, url: string, label = ''): PageWatch {
-    const existing = this.list(scope).find((w) => w.url === url);
+  add(scope: string, url: string, label = '', keyword = ''): PageWatch {
+    const kw = keyword.trim().slice(0, 60);
+    const existing = this.list(scope).find((w) => w.url === url && w.keyword === kw);
     if (existing) return existing;
     if (this.list(scope).length >= MAX_WATCHES_PER_SCOPE) {
       throw new Error(
@@ -135,8 +151,10 @@ export class PageWatchStore {
     }
     const id = randomUUID().slice(0, 8);
     this.db
-      .prepare('INSERT INTO page_watches (id, scope, url, label, created_at) VALUES (?,?,?,?,?)')
-      .run(id, scope, url, label.slice(0, 80), this.now());
+      .prepare(
+        'INSERT INTO page_watches (id, scope, url, label, created_at, keyword) VALUES (?,?,?,?,?,?)',
+      )
+      .run(id, scope, url, label.slice(0, 80), this.now(), kw);
     return this.get(id) as PageWatch;
   }
 
@@ -185,7 +203,7 @@ export class PageWatchStore {
         notify: failures === FAILURES_BEFORE_NOTICE,
       };
     }
-    const value = watchValue(text);
+    const value = watchValue(text, w.keyword);
     this.db
       .prepare(
         'UPDATE page_watches SET last_value = ?, failures = 0, last_checked_at = ? WHERE id = ?',
@@ -200,6 +218,11 @@ export class PageWatchStore {
 /** Mensaje en español para Telegram; honesto sobre qué se comparó. */
 export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
   const name = w.label || w.url;
+  if (o.kind === 'changed' && w.keyword) {
+    return o.to === 'presente'
+      ? `Ahora aparece "${w.keyword}" en ${name}\n${w.url}`
+      : `Ya no aparece "${w.keyword}" en ${name}\n${w.url}`;
+  }
   if (o.kind === 'changed') {
     const textual = o.to.startsWith('texto:') || o.from.startsWith('texto:');
     return textual
@@ -210,4 +233,28 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
     return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${o.message}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
   }
   return null;
+}
+
+export interface VigilaArgs {
+  url: string;
+  keyword: string;
+  label: string;
+}
+
+/**
+ * `<enlace> [palabra=agotado | palabra="sin stock"] [nombre libre]`. Acepta comillas
+ * tipográficas (el móvil las pone solo). Devuelve null si no hay enlace.
+ */
+export function parseVigilaArgs(args: string): VigilaArgs | null {
+  const trimmed = args.trim();
+  const m = /^(\S+)\s*(.*)$/s.exec(trimmed);
+  if (!m?.[1]) return null;
+  let rest = m[2] ?? '';
+  let keyword = '';
+  const kw = /palabra\s*=\s*(?:["“”«]([^"“”»]+)["“”»]|(\S+))/i.exec(rest);
+  if (kw) {
+    keyword = (kw[1] ?? kw[2] ?? '').trim();
+    rest = rest.replace(kw[0], ' ');
+  }
+  return { url: m[1], keyword, label: rest.replace(/\s+/g, ' ').trim() };
 }
