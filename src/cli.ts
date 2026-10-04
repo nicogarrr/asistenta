@@ -15,6 +15,7 @@ import {
   shorten,
   stripVoicePrefix,
 } from './channels/formatters.js';
+import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
@@ -641,7 +642,11 @@ async function serveCommand(): Promise<number> {
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
-  const telegram = new TelegramChannel({ token, allowedUserIds: allowed });
+  // Canal de QA solo en la sandbox (PA_QA_CHANNEL=1): mismo pipeline, entrada y salida por ficheros.
+  const telegram: TelegramChannel =
+    process.env.PA_QA_CHANNEL === '1'
+      ? new QaChannel({ token, allowedUserIds: allowed, dir: join(paths.state, 'qa') })
+      : new TelegramChannel({ token, allowedUserIds: allowed });
 
   /** Estado de openGym (solo lectura). Lanza OpenGymError con el motivo si no se puede. */
   const gymDeps = {
