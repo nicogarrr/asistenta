@@ -61,7 +61,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
       const kind = params.kind ?? 'auto';
       const result = await downloadFromLink(params.url, kind, deps.options);
       if (!result.ok) {
-        log.warn('download failed', { url: params.url, reason: result.reason });
+        log.warn('download failed', { host: hostOf(params.url), reason: result.reason });
         deps.onResult?.({ ok: false, host: hostOf(params.url), reason: result.reason });
         return ok(`No se pudo descargar: ${result.reason}.`, { ok: false });
       }
@@ -76,7 +76,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log.warn('download send failed', { url: params.url, error: msg });
+        log.warn('download send failed', { host: hostOf(params.url), error: msg.slice(0, 120) });
         deps.onResult?.({
           ok: false,
           kind: result.kind,
