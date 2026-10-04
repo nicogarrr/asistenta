@@ -250,7 +250,10 @@ export async function chooseSuggestion(
   // The field should now reflect the chosen suggestion, not only what was typed.
   const nv = normalizeText(value);
   const nc = normalizeText(chosen);
-  const reflects = nv.includes(nc) || nc.includes(nv);
+  // The field must hold the whole choice, or a form of it that differs from what was
+  // typed. "Madrid" left in the field after choosing "Madrid-Atocha" is only the typed
+  // prefix, not the choice.
+  const reflects = nv.includes(nc) || (nc.includes(nv) && nv !== normalizeText(text));
   if (!reflects) {
     return {
       ok: false,
