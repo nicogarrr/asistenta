@@ -29,6 +29,7 @@ import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
 import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
+import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
@@ -1985,6 +1986,56 @@ async function serveCommand(): Promise<number> {
     await say(inbound, await gymAnswer(gymDeps, what), { quote: true });
   };
 
+  let evolving = false;
+  const runEvolveCycle = async (chatId: string): Promise<void> => {
+    if (evolving) return;
+    evolving = true;
+    try {
+      const out = await runEvolution({
+        stateDir: paths.state,
+        log: (m) => log.info(`evolve: ${m}`),
+      });
+      await telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId, text: out.text })
+        .catch((err: unknown) => log.warn('evolve report failed', { err }));
+    } finally {
+      evolving = false;
+    }
+  };
+
+  /** Domingo de madrugada, una vez por semana. Solo se lanza si hay proponedor configurado. */
+  const evolveIfDue = async (chatId: string): Promise<void> => {
+    if (!process.env.PA_EVOLVE_PROPOSER) return;
+    if (!isEvolveDue(new Date(), weeklyState.lastSent('evolve'))) return;
+    weeklyState.markSent('evolve', Date.now());
+    await runEvolveCycle(chatId);
+  };
+
+  const cmdEvolucion = async (inbound: Inbound, args: string): Promise<void> => {
+    const a = args.trim();
+    if (/^idea\b/i.test(a)) {
+      try {
+        addHypothesis(paths.state, a.replace(/^idea\s*/i, ''));
+        await say(inbound, 'Anotada. La probará el próximo ciclo.', { quote: true });
+      } catch (err) {
+        await say(inbound, `No la he anotado: ${(err as Error).message}`, { quote: true });
+      }
+      return;
+    }
+    if (/^ahora$/i.test(a)) {
+      if (evolving) {
+        await say(inbound, 'Ya hay un ciclo en marcha.', { quote: true });
+        return;
+      }
+      await say(inbound, 'Lanzo un ciclo de auto-mejora. Tarda; te cuento al terminar.', {
+        quote: true,
+      });
+      void runEvolveCycle(inbound.chatId);
+      return;
+    }
+    await say(inbound, describeLast(paths.state), { quote: true });
+  };
+
   const cmdResumen = async (inbound: Inbound): Promise<void> => {
     await say(inbound, await weeklyText(inbound.chatId), { quote: true });
   };
@@ -1994,6 +2045,8 @@ async function serveCommand(): Promise<number> {
     () => {
       for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
+      const first = [...allowed][0];
+      if (first !== undefined) void evolveIfDue(String(first));
     },
     10 * 60 * 1000,
   );
@@ -2435,6 +2488,7 @@ async function serveCommand(): Promise<number> {
         '/resolver <id> - marca un pendiente como resuelto',
         '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
         '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
+        '/evolucion - estado de la auto-mejora semanal; /evolucion idea <texto> ⬦ /evolucion ahora',
         '/estado - cómo estoy: herramientas, errores de hoy',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
@@ -2963,6 +3017,8 @@ async function serveCommand(): Promise<number> {
             return cmdGym(inbound, 'peso');
           case 'resumen':
             return cmdResumen(inbound);
+          case 'evolucion':
+            return cmdEvolucion(inbound, command.args);
           case 'estado':
             return cmdEstado(inbound);
           case 'vigila':

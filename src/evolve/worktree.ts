@@ -86,3 +86,33 @@ export function isClean(root: string): boolean {
 export function headCommit(root: string): string {
   return git(root, ['rev-parse', 'HEAD']);
 }
+
+/**
+ * Commit whatever the proposer left in the sandbox, so what is checked and what is measured
+ * are the same thing. Without this the forbidden-file check looks at commits while the
+ * candidate is measured with the uncommitted working tree, and the guard sees nothing.
+ */
+export function commitAll(dir: string, message: string): void {
+  git(dir, ['add', '-A']);
+  if (git(dir, ['status', '--porcelain']).trim() === '') return;
+  git(dir, [
+    '-c',
+    'user.name=asistenta-evolve',
+    '-c',
+    'user.email=evolve@localhost',
+    'commit',
+    '-q',
+    '-m',
+    message,
+  ]);
+}
+
+/** The full unified diff of an attempt, for the guard's content rules and for the PR. */
+export function diffText(root: string, base: string, branch: string): string {
+  return execFileSync('git', ['diff', `${base}...${branch}`], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+}

@@ -17,6 +17,33 @@ import type { Measurement } from './score.js';
 
 const exec = promisify(execFile);
 
+/**
+ * The environment a candidate's code runs with. The candidate is code a model wrote, run by
+ * vitest and tsx, so it gets the minimum to run and nothing that opens an account: no API
+ * keys, no tokens, no vault or state paths.
+ */
+const SAFE_ENV = [
+  'PATH',
+  'Path',
+  'PATHEXT',
+  'SystemRoot',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'DISPLAY',
+  'LANG',
+  'CI',
+];
+export function cleanEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { CI: '1', NODE_ENV: 'test' };
+  for (const k of SAFE_ENV) if (env[k] !== undefined) out[k] = env[k];
+  return out;
+}
+
 export interface MeasureOptions {
   cwd: string;
   /** Full test suite. Off for a quick inner iteration. */
@@ -57,6 +84,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
       cwd,
       timeout: timeoutMs,
       windowsHide: true,
+      env: cleanEnv(),
       maxBuffer: 32 * 1024 * 1024,
     }).catch((err: { stdout?: string; stderr?: string }) => ({
       stdout: err.stdout ?? '',
@@ -82,6 +110,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     cwd,
     timeout: timeoutMs,
     windowsHide: true,
+    env: cleanEnv(),
     maxBuffer: 8 * 1024 * 1024,
   }).catch((err: { stdout?: string; stderr?: string }) => ({
     stdout: err.stdout ?? '',

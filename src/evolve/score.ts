@@ -137,9 +137,23 @@ export function judge(
 export const FORBIDDEN = [
   'src/permissions.ts',
   'src/tools/checkout.ts',
+  'src/tools/fetch.ts',
+  'src/books/net.ts',
+  'src/approval-text.ts',
   'src/vault.ts',
   'src/commerce/',
   'src/evolve/',
+  'src/selfimprove/',
+  'selfimprove/',
+  // The rule of measuring: tests and probes are what the loop is scored with, so it never
+  // edits them (adding tests inflates the count, deleting them hides a failure).
+  'test/',
+  'evolve/',
+  'vitest.config',
+  'biome.json',
+  'package.json',
+  'package-lock.json',
+  'tsconfig',
   '.github/',
   'deploy/',
 ];

@@ -61,6 +61,7 @@ const NARRATOR_LABELS = new Set([
   'respuesta',
   'summary',
   'resumen',
+  'evolucion',
   'prompt',
   'task',
   'tarea',
