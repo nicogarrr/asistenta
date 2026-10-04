@@ -10,10 +10,13 @@ import {
 import { isKindleAddress, safeFilename, sendToKindle } from '../src/books/kindle.js';
 import { allowedBookHost, downloadBook, sniff } from '../src/books/net.js';
 import {
+  isSpanish,
   pickFile,
   resolveArchive,
   searchArchive,
   searchGutenberg,
+  searchOpenLibrary,
+  searchWikisource,
   tidyAuthor,
 } from '../src/books/sources.js';
 import { createBookTool } from '../src/tools/book.js';
@@ -372,5 +375,96 @@ describe('book tool', () => {
     await expect(run(tool, { action: 'set_kindle', address: 'a@gmail.com' })).rejects.toThrow(
       /Kindle/,
     );
+  });
+});
+
+describe('castellano por defecto y fuentes nuevas', () => {
+  const json = (payload: unknown) => async () => payload;
+
+  it('reconoce castellano y no confunde un idioma desconocido con español', () => {
+    expect(isSpanish('spa')).toBe(true);
+    expect(isSpanish('es')).toBe(true);
+    expect(isSpanish('Español')).toBe(true);
+    // An empty or absent language is unknown, not Spanish: that is the whole point of
+    // the filter, so a catalogue that omits the field cannot sneak a book through.
+    expect(isSpanish('')).toBe(false);
+    expect(isSpanish(undefined)).toBe(false);
+    expect(isSpanish('eng')).toBe(false);
+  });
+
+  it('Open Library: solo deja hits en español con algo descargable', async () => {
+    const hits = await searchOpenLibrary(
+      'quien mato a ricardo',
+      json({
+        docs: [
+          // Spanish, public, with an Internet Archive id: the shape we can deliver.
+          {
+            title: 'La|下载',
+            author_name: ['Anónimo'],
+            language: ['spa'],
+            ia: ['aaa'],
+            ebook_access: 'public',
+          },
+          // English, even though the query was filtered: must not survive.
+          {
+            title: 'In English',
+            author_name: ['X'],
+            language: ['eng'],
+            ia: ['bbb'],
+            ebook_access: 'public',
+          },
+          // Spanish but lending only: we cannot hand that over.
+          {
+            title: 'Prestamo',
+            author_name: ['Y'],
+            language: ['spa'],
+            ia: ['ccc'],
+            ebook_access: 'borrowable',
+          },
+          // Spanish, public, but no file behind it.
+          { title: 'Sin nada', author_name: ['Z'], language: ['spa'], ebook_access: 'no_ebook' },
+        ],
+      }),
+      { language: 'spa' },
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.id).toBe('aaa');
+    expect(hits[0]?.source).toBe('openlibrary');
+  });
+
+  it('Open Library pide el idioma a la propia API, no solo al filtro posterior', async () => {
+    let asked = '';
+    await searchOpenLibrary(
+      'cervantes',
+      async (url) => {
+        asked = url;
+        return { docs: [] };
+      },
+      { language: 'spa' },
+    );
+    expect(asked).toContain('language=spa');
+  });
+
+  it('Wikisource: devuelve articulos como fuente española', async () => {
+    const hits = await searchWikisource(
+      'quien mato a ricardo',
+      json({
+        query: { search: [{ title: 'Historia del nuevo mundo' }, { title: '' }] },
+      }),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.language).toBe('spa');
+    expect(hits[0]?.files[0]?.url).toContain('es.wikisource.org');
+  });
+
+  it('el enlace directo exige https y se leen los bytes de verdad', async () => {
+    // A catalogue download must never leave the allow list...
+    expect(allowedBookHost('https://openlibrary.org/x.epub')).toBe(true);
+    expect(allowedBookHost('https://es.wikisource.org/wiki/X')).toBe(true);
+    expect(allowedBookHost('https://otro-sitio.example/x.epub')).toBe(false);
+    // ...but sniff is the last word on what the bytes are, allow list or not.
+    expect(sniff(Buffer.from('%PDF-1.7'))).toBe('pdf');
+    expect(sniff(Buffer.from('PK epub'))).toBe('epub');
+    expect(sniff(Buffer.from('<html>no soy un libro</html>'))).toBeNull();
   });
 });

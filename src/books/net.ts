@@ -1,9 +1,23 @@
 /**
  * Downloads for the book tool. The hosts are a fixed list, redirects are followed by
  * hand and re-checked on every hop, and the bytes must really be an EPUB or a PDF.
- * The model supplies an id, never a URL.
+ *
+ * The catalogue searches only ever produce ids, and every download goes through this
+ * allow list, so a compromised or edited catalogue response cannot redirect the agent
+ * at an arbitrary host. A link the user pastes himself is a different case: that is an
+ * explicit instruction, so it is checked for being a public https URL rather than being
+ * matched against a list, and the bytes still have to sniff as a real book.
  */
-const ALLOWED = ['gutenberg.org', 'archive.org', 'gutendex.com'];
+import { isFetchableResolved } from '../tools/fetch.js';
+
+const ALLOWED = [
+  'gutenberg.org',
+  'gutendex.com',
+  'archive.org',
+  'openlibrary.org',
+  'wikisource.org',
+  'es.wikisource.org',
+];
 export const MAX_BOOK_BYTES = 50 * 1024 * 1024;
 
 export function allowedBookHost(url: string): boolean {
@@ -15,6 +29,24 @@ export function allowedBookHost(url: string): boolean {
   }
   if (u.protocol !== 'https:') return false;
   return ALLOWED.some((h) => u.hostname === h || u.hostname.endsWith(`.${h}`));
+}
+
+/**
+ * Whether a user-supplied link may be fetched: public https only.
+ *
+ * Localhost, private ranges and metadata hosts are refused, which is the same rule the
+ * rest of the project follows, and it matters more here than elsewhere because a book
+ * link arrives from a chat message.
+ */
+export async function allowedDirectBookUrl(url: string): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  return isFetchableResolved(u.toString());
 }
 
 export type Fetcher = (url: string, init?: { redirect: 'manual' }) => Promise<Response>;
@@ -37,11 +69,29 @@ export async function downloadBook(
   url: string,
   fetcher: Fetcher = fetch,
   maxBytes = MAX_BOOK_BYTES,
+  opts: { direct?: boolean } = {},
 ): Promise<{ bytes: Buffer; kind: 'epub' | 'pdf' }> {
+  // A catalogue download must stay on the allow list on every hop. A link the user
+  // pasted is checked for being a public https URL instead, which is the whole reason
+  // it is allowed to leave the list at all.
+  const permitted = async (candidate: string): Promise<boolean> =>
+    opts.direct ? allowedDirectBookUrl(candidate) : allowedBookHost(candidate);
+
+  if (!(await permitted(url))) {
+    throw new Error(
+      opts.direct
+        ? 'ese enlace no es una dirección web pública https; no lo descargo'
+        : 'la descarga sale de las fuentes permitidas',
+    );
+  }
   let current = url;
   for (let hop = 0; hop < 6; hop++) {
-    if (!allowedBookHost(current))
-      throw new Error('la descarga redirige fuera de las fuentes permitidas');
+    if (!(await permitted(current)))
+      throw new Error(
+        opts.direct
+          ? 'el enlace redirige a una dirección que no es pública; no sigo'
+          : 'la descarga redirige fuera de las fuentes permitidas',
+      );
     const res = await fetcher(current, { redirect: 'manual' });
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location');
