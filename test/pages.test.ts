@@ -5,6 +5,7 @@ import {
   extractPrice,
   FAILURES_BEFORE_NOTICE,
   PageWatchStore,
+  parseVigilaArgs,
   watchValue,
 } from '../src/watch/pages.js';
 
@@ -110,5 +111,48 @@ describe('extractPrice con punto decimal y distintos formatos', () => {
 
   it('un cambio 49.90 -> 45.90 se detecta (antes ambos eran 90,00 €)', () => {
     expect(extractPrice('Precio 49.90 €')).not.toBe(extractPrice('Precio 45.90 €'));
+  });
+});
+
+describe('vigilar una palabra', () => {
+  it('parsea palabra y nombre, con comillas tipográficas', () => {
+    expect(parseVigilaArgs('https://a.es/p palabra=agotado Zapas')).toEqual({
+      url: 'https://a.es/p',
+      keyword: 'agotado',
+      label: 'Zapas',
+    });
+    expect(parseVigilaArgs('https://a.es/p palabra=“sin stock”')).toMatchObject({
+      keyword: 'sin stock',
+      label: '',
+    });
+    expect(parseVigilaArgs('https://a.es/p Solo nombre')).toMatchObject({
+      keyword: '',
+      label: 'Solo nombre',
+    });
+    expect(parseVigilaArgs('  ')).toBeNull();
+  });
+
+  it('avisa cuando aparece y cuando desaparece, ignorando tildes y mayúsculas', async () => {
+    const { store } = mk();
+    const w = store.add('c', 'https://a.es/p', 'Entradas', 'Agotado');
+    expect((await store.check(w, async () => 'Quedan plazas')).kind).toBe('baseline');
+    const o1 = await store.check(store.get(w.id) as typeof w, async () => 'AGOTADO');
+    expect(o1).toEqual({ kind: 'changed', from: 'ausente', to: 'presente' });
+    expect(describeChange(w, o1)).toContain('Ahora aparece "Agotado"');
+    const o2 = await store.check(store.get(w.id) as typeof w, async () => 'ya hay');
+    expect(describeChange(w, o2)).toContain('Ya no veo');
+    expect(watchValue('Sin  habitación', 'habitacion')).toBe('presente');
+  });
+
+  it('la misma URL con otra palabra es otra vigilancia, y la tabla antigua se migra', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(`CREATE TABLE page_watches (id TEXT PRIMARY KEY, scope TEXT NOT NULL, url TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '', last_value TEXT NOT NULL DEFAULT '', last_checked_at INTEGER NOT NULL DEFAULT 0,
+      failures INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)`);
+    const store = new PageWatchStore(db);
+    const a = store.add('c', 'https://a.es/', '', '');
+    const b = store.add('c', 'https://a.es/', '', 'agotado');
+    expect(a.id).not.toBe(b.id);
+    expect(store.list('c').map((w) => w.keyword)).toEqual(['', 'agotado']);
   });
 });
