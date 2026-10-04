@@ -299,6 +299,10 @@ export function capToolResultText<T extends { type: string; text?: string }>(
   });
 }
 
+/** A hung model must not hold the turn: the summary gives up and the history stays. */
+const SUMMARY_TIMEOUT_MS = 40_000;
+const SUMMARY_COOLDOWN_TURNS = 3;
+
 export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
@@ -450,7 +454,13 @@ export class PersonalAgent {
             { role: 'user', content: [{ type: 'text', text: prompt }], timestamp: Date.now() },
           ],
         },
-        { maxTokens: 1_200 },
+        {
+          maxTokens: 1_200,
+          signal: AbortSignal.any([
+            AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
+            personal.#summaryAbort.signal,
+          ]),
+        },
       );
       return reply.content
         .map((b) => (b.type === 'text' ? b.text : ''))
@@ -499,6 +509,10 @@ export class PersonalAgent {
   }
 
   #summarize?: Summarize;
+  /** Cancels an in-flight summary (/stop) so the turn does not wait on it. */
+  #summaryAbort = new AbortController();
+  /** After a failed summary, wait this many turns before trying again. */
+  #summaryCooldown = 0;
 
   /**
    * Replace the old part of a long transcript with a summary (P6). PA_COMPACT_TOKENS
@@ -508,16 +522,23 @@ export class PersonalAgent {
   async #compact(): Promise<void> {
     const trigger = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
     if (!this.#summarize || !Number.isFinite(trigger) || trigger <= 0) return;
+    if (this.#summaryCooldown > 0) {
+      this.#summaryCooldown--;
+      return;
+    }
+    this.#summaryAbort = new AbortController();
     try {
       const r = await compactHistory(this.#agent.state.messages, this.#summarize, {
         ...DEFAULT_COMPACTION,
         triggerTokens: trigger,
       });
+      if (!r.compacted && r.before > trigger) this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;
       if (r.compacted) {
         this.#agent.state.messages = r.messages;
         log.info('history summarised', { before: r.before, after: r.after });
       }
     } catch (err) {
+      this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;
       log.warn('history summary failed; keeping the full transcript', { err: String(err) });
     }
   }
@@ -799,6 +820,7 @@ export class PersonalAgent {
    */
   abort(scope: 'internal' | 'external' = 'internal'): void {
     if (scope === 'external') this.#externalAbort = true;
+    this.#summaryAbort.abort();
     this.#agent.abort();
   }
 }
