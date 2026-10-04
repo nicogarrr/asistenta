@@ -84,7 +84,7 @@ export type ChallengeKind = 'cloudflare' | 'recaptcha' | 'hcaptcha' | 'verify_hu
 // "Un momento...", "Attention Required! | Cloudflare". An article or product called
 // "Un momento para recordar" or "Security check-in tips" is not one.
 const CHALLENGE_TITLE =
-  /^\s*(?:just a moment|un momento|un instante|attention required|verifying you are human|checking your browser|security check\b(?!-)|comprobaci[oó]n de seguridad)\s*(?:\.{2,}|…|!|\||-|–|$)/i;
+  /^\s*(?:just a moment|un momento|un instante|attention required|verifying you are human|checking your browser|security check|comprobaci[oó]n de seguridad)\s*(?:\.{2,}|…|!)?\s*(?:\|\s*cloudflare)?\s*$/i;
 /** A challenge page is nearly empty; a long page that merely mentions captchas is content. */
 const CHALLENGE_TEXT_MAX_LEN = 800;
 const CHALLENGE_TEXT =
@@ -102,6 +102,7 @@ const CHALLENGE_TEXT =
 export function classifyChallenge(sig: ChallengeSignals): ChallengeKind | null {
   const text = sig.text.slice(0, 3000);
   const frames = sig.frames.map((f) => f.toLowerCase());
+  // A title with a site suffix ("Un momento - Mi blog") is a page, not an interstitial.
   const titled = CHALLENGE_TITLE.test(sig.title);
   const captchaFrame = frames.some((f) =>
     /challenges\.cloudflare\.com|recaptcha|hcaptcha\.com/.test(f),

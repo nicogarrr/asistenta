@@ -70,6 +70,13 @@ describe('classifyChallenge', () => {
     ).toBeNull();
   });
 
+  it('a title with a site suffix is not an interstitial', () => {
+    expect(classifyChallenge({ ...base, title: 'Un momento - Mi blog', text: 'Hola' })).toBeNull();
+    expect(
+      classifyChallenge({ ...base, title: 'Un momento – Diario de viaje', text: 'Hola' }),
+    ).toBeNull();
+  });
+
   it('still flags the short real interstitials', () => {
     expect(classifyChallenge({ ...base, title: 'Un momento...', text: 'Verificando' })).toBe(
       'verify_human',

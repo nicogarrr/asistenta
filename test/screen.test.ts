@@ -125,6 +125,14 @@ describe('isFetchable', () => {
     expect(isFetchable('http://169.254.169.254/latest/meta-data/')).toBe(false);
   });
 
+  it('does not mistake hostnames starting with fc/fd/fe80 for IPv6 addresses', () => {
+    expect(isFetchable('https://fcbarcelona.com/')).toBe(true);
+    expect(isFetchable('https://fdic.gov/')).toBe(true);
+    expect(isFetchable('http://[fd12::1]/')).toBe(false);
+    expect(isFetchable('http://[fc00::1]/')).toBe(false);
+    expect(isFetchable('http://[fe80::1]/')).toBe(false);
+  });
+
   it('refuses non-http schemes', () => {
     expect(isFetchable('file:///C:/Windows/System32/config')).toBe(false);
     expect(isFetchable('ftp://example.com')).toBe(false);
