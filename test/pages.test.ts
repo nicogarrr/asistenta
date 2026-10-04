@@ -101,6 +101,9 @@ describe('extractPrice con punto decimal y distintos formatos', () => {
     ['49,90 €', '49,90 €'],
     ['1.299 €', '1299,00 €'],
     ['49 €', '49,00 €'],
+    ['12,5€', '12,50 €'],
+    ['1,459 €', '1,459 €'],
+    ['1.2345 €', null],
   ])('%s -> %s', (text, expected) => {
     expect(extractPrice(text)).toBe(expected);
   });

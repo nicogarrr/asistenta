@@ -37,7 +37,7 @@ export type CheckOutcome =
   | { kind: 'changed'; from: string; to: string }
   | { kind: 'error'; message: string; failures: number; notify: boolean };
 
-const AMOUNT = String.raw`(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
+const AMOUNT = String.raw`(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
 const PRICE = new RegExp(String.raw`(?:${AMOUNT}\s?(?:€|eur\b)|(?:€|eur\b)\s?${AMOUNT})`, 'i');
 
 /**
@@ -60,7 +60,9 @@ export function parseAmount(raw: string): [string, string] | null {
     const pos = raw.lastIndexOf(sep);
     const after = raw.slice(pos + 1);
     const repeated = raw.indexOf(sep) !== pos;
-    if (repeated || after.length === 3) {
+    if (!repeated && sep === ',' && after.length === 3) {
+      return null; // "1,459": miles (inglés) o decimales (combustible): ambiguo
+    } else if (repeated || after.length === 3) {
       intPart = raw; // thousands only
     } else if (after.length >= 1 && after.length <= 2) {
       intPart = raw.slice(0, pos);
