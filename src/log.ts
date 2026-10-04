@@ -17,7 +17,7 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
   const rec = { ts: new Date().toISOString(), level, msg, ...fields };
   let line: string;
   try {
-    line = JSON.stringify(rec);
+    line = scrubUrls(JSON.stringify(rec));
   } catch {
     line = JSON.stringify({ ts: rec.ts, level, msg, note: 'fields were not serializable' });
   }
@@ -29,6 +29,15 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
   } catch {
     // Never let logging be the reason a turn dies.
   }
+}
+
+/**
+ * Enlaces http(s) dentro de un texto -> solo esquema y host. Una URL completa puede llevar
+ * tokens (query, ruta firmada) y no debe quedar en el registro: ni en stderr de yt-dlp ni en
+ * el mensaje de un Error. Se aplica a toda línea del registro.
+ */
+export function scrubUrls(text: string): string {
+  return text.replace(/\b(https?:\/\/[^\s/"'\\<>?#]+)[^\s"'\\<>]*/gi, '$1/…');
 }
 
 export const log = {
