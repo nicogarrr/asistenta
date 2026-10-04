@@ -1,12 +1,21 @@
 /**
- * Shared iteration budget for one agent run tree.
+ * Iteration budget for ONE task, shared by the agents working on that task.
  *
  * A run that keeps finding "one more useful step" never ends on its own, and the
  * existing hard ceiling (`maxToolCalls`) only fires after the fact. The budget is
- * the soft version: every tool call spends one iteration, the model is told how
- * much is left while there is still room to wrap up, and subagents spend from the
- * same counter instead of getting a fresh allowance each (a "delegating" agent
- * must not multiply its budget by spawning helpers).
+ * the soft version: every tool call spends one iteration and the model is told how
+ * much is left while there is still room to wrap up.
+ *
+ * Two scopes, and the distinction is the whole point:
+ *
+ * - Sharing (`child()`) is only within a task: a subagent delegated to by its
+ *   parent spends the parent's iterations, because delegation must not buy extra
+ *   allowance.
+ * - Across tasks there is NO sharing. The counter is a per-request safety ceiling
+ *   that the caller refills via `reset()`; a counter that carries leftovers from
+ *   the previous request turns a safety net into a late punishment — a user who
+ *   chatted all morning would start every afternoon task already at "quedan 2
+ *   pasos" for work that had not begun yet.
  */
 export class IterationBudget {
   readonly #max: number;
@@ -46,20 +55,24 @@ export class IterationBudget {
    * Three tramos, measured as the fraction of the original budget still available:
    * above 30% the agent is fine and must not be distracted; 10-30% it should start
    * closing; below 10% it must close now. The wording is Spanish because it is
-   * pasted into user-facing runs and read by the model as an instruction.
+   * pasted into user-facing runs and read by the model as an instruction, and it
+   * says "de esta tarea" on purpose: the count describes the task in flight, and a
+   * model that reads it as a daily allowance gives up on a two-step request it
+   * could have finished easily.
    */
   pressure(): string | null {
     const left = this.#counter.left;
     const fraction = this.#max === 0 ? 0 : left / this.#max;
     if (fraction > 0.3) return null;
     if (left <= 0) {
-      return `Se ha agotado el presupuesto de ${this.#max} iteraciones. Cierra la tarea con lo que tengas.`;
+      return `Se ha agotado el presupuesto de esta tarea: ${this.#max} pasos. Cierra con lo que tengas.`;
     }
-    const unit = left === 1 ? 'iteración' : 'iteraciones';
+    const noun = left === 1 ? 'queda 1 paso' : `quedan ${left} pasos`;
     if (fraction < 0.1) {
-      return `¡Atención! Quedan solo ${left} ${unit} de ${this.#max}. Cierra la tarea ya con lo que tengas.`;
+      const urgent = left === 1 ? 'queda solo 1 paso' : `quedan solo ${left} pasos`;
+      return `¡Atención! De esta tarea ${urgent} de ${this.#max}. Cierra ya con lo que tengas.`;
     }
-    return `Quedan ${left} ${unit} de ${this.#max}. Cierra la tarea con lo que tengas.`;
+    return `De esta tarea ${noun} de ${this.#max}. Cierra con lo que tengas.`;
   }
 
   /**
@@ -72,7 +85,13 @@ export class IterationBudget {
     return c;
   }
 
-  /** Restore the shared counter to the full budget (children see the reset too). */
+  /**
+   * Refill to the full budget (children see the reset too).
+   *
+   * Called at the start of every request, never mid-task: mid-task a refill would
+   * hand the model a fresh allowance for the same loop it was being squeezed out
+   * of.
+   */
   reset(): void {
     this.#counter.left = this.#max;
   }

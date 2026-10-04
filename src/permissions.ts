@@ -31,11 +31,39 @@ export type Verdict = 'allow' | 'deny' | 'ask';
  */
 export type ApprovalScope = 'once' | 'session' | 'always';
 
+/**
+ * Where a call sits in a purchase flow.
+ *
+ * The distinction exists because buying something is a long chain of actions that
+ * look exactly like the actions taken while merely browsing - open, type, click,
+ * next, next - and a gate that asks about each of them stops the flow on step one.
+ * That is not hypothetical: the Renfe flow died at "no pude continuar" with nothing
+ * bought and no reason the model could act on. What separates a purchase from
+ * browsing is one step at the very end, so the three moments are named here and the
+ * policy is written once, on top of them:
+ *
+ * - `browse`  — find the thing and choose it. No money moves.
+ * - `fill`    — put the buyer's details into the form. No money moves.
+ * - `confirm` — the charge, and the legal terms that come with it. The human is here.
+ *
+ * Declared by the caller and never inferred from the arguments. The gate cannot tell
+ * a "continue" click on a checkout page from the same click on a recipe site, and a
+ * heuristic that tried would be wrong in exactly the direction that costs money.
+ */
+export type PurchaseStage = 'browse' | 'fill' | 'confirm';
+
 export interface ToolCall {
   tool: string;
   args: Record<string, unknown>;
   /** Who asked: a Telegram user id, or 'local' for the console. */
   actor: string;
+  /**
+   * Where this call sits in a purchase flow, when the caller knows it.
+   *
+   * Ignored entirely unless the Gate was built with `allowUntilPayment`, so a caller
+   * cannot talk a stricter gate into a laxer policy by labelling its calls.
+   */
+  stage?: PurchaseStage;
 }
 
 export interface Decision {
@@ -105,6 +133,47 @@ export interface GateOptions {
   /** Required to also auto-approve payment and credential calls in full control. */
   allowPayments?: boolean;
   /**
+   * Autonomous up to the last click.
+   *
+   * With this on, a call that declares a purchase stage of `browse` or `fill` runs
+   * unattended: searching, choosing, filling the form and reaching the payment screen
+   * stop being questions, because a purchase is made of exactly the same clicks and
+   * typing as browsing, and asking about each one is what left the Renfe flow stuck
+   * before it bought anything.
+   *
+   * What survives it, and is not negotiable:
+   *
+   * - **`confirm` always asks.** Not through the memo, not through a scope, not
+   *   through `fullControl`, not through the grant window. Paying is the one step where
+   *   "the agent decided it was fine" is not good enough: the recovery is a dispute with
+   *   a bank rather than an undo. It asks whether or not the arguments happen to look
+   *   like money, because the calls that matter least are the ones that say nothing.
+   * - **Credentials.** Reading `id_rsa`, `vault.enc` or a card file still asks with no
+   *   override. What this mode allows is filling a form with values fetched *by name
+   *   from the vault*, not the model reading a file that happens to hold them.
+   * - **Money-shaped arguments.** A 13-19 digit number or the word "card" anywhere in
+   *   the arguments re-arms the payment rule, because a stage label is a claim and not
+   *   evidence.
+   * - **Destructive shell commands.** A `stage: 'browse'` label on
+   *   `Remove-Item -Recurse` must not walk past the one ask rule that outranks it.
+   * - **The deny list and protected paths**, which run before any of this.
+   *
+   * Off by default, so every gate built before this existed behaves identically.
+   */
+  allowUntilPayment?: boolean;
+  /**
+   * Resolve the purchase stage of a call the caller did not label itself.
+   *
+   * The agent runtime builds a `ToolCall` from `toolCall.name` plus the raw arguments
+   * and never sets `stage`, so a daemon that wants stage-aware behaviour needs one
+   * resolver instead of a patch in the agent core. Returning `undefined` is the safe
+   * answer and the default: the call then goes through the ordinary rules, which ask.
+   * A resolver that answered `browse` for an action it did not recognise would be an
+   * allow by omission, which is how a purchase tool ends up being driven through a
+   * stage nobody verified.
+   */
+  stageOf?: (call: ToolCall) => PurchaseStage | undefined;
+  /**
    * SQLite file where `always` approval scopes are persisted, so a standing human
    * grant survives a restart. Injected rather than read from `paths.db` directly:
    * tests build Gates that must never touch the real database (a persisted
@@ -161,6 +230,8 @@ export class Gate {
   readonly #approver: Approver | undefined;
   readonly #fullControl: boolean;
   readonly #allowPayments: boolean;
+  readonly #allowUntilPayment: boolean;
+  readonly #stageResolver: ((call: ToolCall) => PurchaseStage | undefined) | undefined;
   readonly #grantWindowMs: number;
   /** SQLite file for `always` scopes; undefined means memory only. */
   readonly #dbPath: string | undefined;
@@ -184,6 +255,8 @@ export class Gate {
     this.#approver = options.approver;
     this.#fullControl = options.fullControl ?? false;
     this.#allowPayments = options.allowPayments ?? false;
+    this.#allowUntilPayment = options.allowUntilPayment ?? false;
+    this.#stageResolver = options.stageOf;
     this.#grantWindowMs = options.grantWindowMs ?? 90_000;
     this.#dbPath = options.dbPath;
     // Standing grants from an earlier run are part of the policy, so they are
@@ -225,6 +298,17 @@ export class Gate {
         match: (c) => this.#isPaymentish(c),
       },
       {
+        // Documented here so the effective policy reads top to bottom, but decided in
+        // `check()`: the list is ordered deny-ask-allow, and an allow entry in it can
+        // never outrank an ask. A purchase flow is nothing but clicks and typing, so
+        // the generic "drives the desktop" and "not on the allow list" prompts would
+        // stop it on step one. See `#isPreflight` and the `allowUntilPayment` docs.
+        id: 'allow-preflight-stage',
+        verdict: 'allow',
+        reason: 'pre-payment stage of a purchase flow',
+        match: (c) => this.#isPreflight(c),
+      },
+      {
         id: 'ask-credential-file',
         verdict: 'ask',
         reason: 'reads a credential store',
@@ -263,14 +347,74 @@ export class Gate {
   #isPaymentish(c: ToolCall): boolean {
     if (c.tool === 'purchase') return true;
     const blob = blobOf(c);
-    // Card-shaped numbers, with spaces and dashes stripped first: `4111 1111 1111
-    // 1111` is the same number as `4111111111111111`.
-    const digits = blob.replace(/[\s-]/g, '');
+    // Card-shaped numbers, with spaces and dashes removed from *inside* a digit run
+    // first, so `4111 1111 1111 1111` is the same number as `4111111111111111`.
+    //
+    // Only between digits, never everywhere. Stripping every space also deletes the
+    // word boundaries the pattern needs, so the digits ended up glued to whatever
+    // argument preceded them (`select#x4111111111111111`) and `\b\d{13,19}\b` could
+    // only ever fire for an argument that was nothing but a card number on its own. The
+    // money rule was quietly inert on every multi-argument call.
+    const digits = blob.replace(/(?<=\d)[ -]+(?=\d)/g, '');
     return /\b\d{13,19}\b/.test(digits) || PAYMENT_WORD.test(blob);
   }
 
   #isCredentialish(c: ToolCall): boolean {
     return CREDENTIAL_PATH.test(blobOf(c));
+  }
+
+  /**
+   * The stage of a call: what the caller labelled it, or what the resolver made of it.
+   *
+   * An explicit `call.stage` wins over the resolver so a caller can override a tool's
+   * default mapping for one call (the computer batch gate, for one, hands sub-actions
+   * down as their own calls).
+   */
+  #stageOf(c: ToolCall): PurchaseStage | undefined {
+    return c.stage ?? this.#stageResolver?.(c);
+  }
+
+  /**
+   * A step that can run unattended on the way to a purchase: `browse` or `fill`.
+   *
+   * The exclusions are enumerated rather than assumed, because everything this returns
+   * true for skips the ask rules that used to catch it, and the only two things that
+   * may never be skipped are money and credentials:
+   *
+   * - `confirm` is never preflight. There is no third kind of step.
+   * - Money-shaped or credential-shaped arguments re-arm the ordinary rules. A stage
+   *   label is a claim; a card number is evidence.
+   * - A destructive shell command re-arms its own rule. Nothing about a purchase gives
+   *   `Remove-Item -Recurse` a pass.
+   */
+  #isPreflight(c: ToolCall): boolean {
+    if (!this.#allowUntilPayment) return false;
+    const stage = this.#stageOf(c);
+    if (stage !== 'browse' && stage !== 'fill') return false;
+    if (this.#isPaymentish(c) || this.#isCredentialish(c)) return false;
+    if (c.tool === 'shell' && DESTRUCTIVE.test(argString(c.args, 'command'))) return false;
+    return true;
+  }
+
+  /**
+   * The charge itself, as declared by the caller: a `confirm` stage.
+   *
+   * Every automatic allowance in `check()` refuses this. Not the fingerprint memo (so a
+   * second identical purchase asks again rather than riding the first approval), not
+   * `always`/`session` scopes, not `fullControl` with `allowPayments`, not the grant
+   * window. Paying is the one action where a reusable grant is a standing grant on the
+   * user's money.
+   *
+   * The money-shape of the arguments is deliberately *not* part of the test, even though
+   * `ask-payment` catches most of them. A purchase confirm whose arguments happen to say
+   * "tren Madrid-Barcelona 45,20" contains neither a card-shaped number nor any of the
+   * payment words, so requiring that shape would leave the exact call this feature exists
+   * for to be waved through by the memo. `confirm` means the charge; that is the whole
+   * meaning of the word in this table.
+   */
+  #isPaymentConfirmation(c: ToolCall): boolean {
+    if (!this.#allowUntilPayment) return false;
+    return this.#stageOf(c) === 'confirm';
   }
 
   #fingerprint(c: ToolCall): string {
@@ -287,6 +431,7 @@ export class Gate {
    */
   #withinGrantWindow(sessionId: string, call: ToolCall): boolean {
     if (call.tool !== 'computer') return false;
+    if (this.#isPaymentConfirmation(call)) return false;
     const until = this.#grants.get(sessionId)?.get(call.tool);
     if (until === undefined) return false;
     if (Date.now() >= until) {
@@ -413,8 +558,13 @@ export class Gate {
     const approved = this.#approved.get(sessionId);
     if (!approved) throw new Error(`gate session was not registered: ${sessionId}`);
 
+    // The charge is decided once, here, and every automatic allowance below refuses
+    // it. Read it early so the memo cannot resurrect an approval given for an earlier
+    // purchase of the same thing.
+    const confirmation = this.#isPaymentConfirmation(call);
+
     const fp = this.#fingerprint(call);
-    if (approved.has(fp)) {
+    if (approved.has(fp) && !confirmation) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -433,14 +583,26 @@ export class Gate {
       }
     }
 
+    // Rule `allow-preflight-stage`: a purchase gets to its own payment screen without
+    // asking. Checked here rather than in the loop that honours allow rules, because
+    // that loop only runs when no ask rule matched and a purchase flow trips the ask
+    // rules on every single click.
+    if (this.#isPreflight(call)) {
+      return this.#record(call, {
+        verdict: 'allow',
+        reason: 'pre-payment stage of a purchase flow',
+      });
+    }
+
     // Explicit human scopes (`setScope`) are consulted before the approver is
     // asked: a standing grant the human already made is not a question. Deny ran
     // first above, so a scope can never talk past the deny list.
     //
     // Money and credentials sit outside every scope, same rule as the grant
     // window: an `always` grant the model could spend on `id_rsa` or a card
-    // number is a standing grant on everything those unlock.
-    if (!this.#isPaymentish(call) && !this.#isCredentialish(call)) {
+    // number is a standing grant on everything those unlock. The charge itself sits
+    // outside them too, so "Siempre" on `checkout` never becomes "always pays".
+    if (!this.#isPaymentish(call) && !this.#isCredentialish(call) && !confirmation) {
       if (this.#alwaysAllow.has(call.tool)) {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
       }
@@ -458,9 +620,11 @@ export class Gate {
     // of a phone who can approve in seconds, and denying outright would make the
     // agent useless for any task that happens to touch a file with "payment" in
     // its name. Credentials have no override flag on purpose (see GateOptions).
+    // Neither has the charge: `allowPayments` is about a payment-shaped *command*,
+    // and it must not become the way to make `confirm` unattended.
     if (this.#fullControl) {
       const paymentish = call.tool === 'purchase' || this.#isPaymentish(call);
-      if ((!paymentish || this.#allowPayments) && !this.#isCredentialish(call)) {
+      if ((!paymentish || this.#allowPayments) && !this.#isCredentialish(call) && !confirmation) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
       }
     }

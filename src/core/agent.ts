@@ -251,6 +251,24 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
   return out;
 }
 
+/**
+ * Iteration-budget policy, resolved once at construction.
+ *
+ * Exported (and pure) so the default that decides whether the budget is refilled
+ * per request can be asserted directly: this default was once `shared: true`, and
+ * the bug it caused was invisible in production because nothing failed — the model
+ * simply gave up early, forever.
+ */
+export function resolveIterationBudget(
+  iterationBudget: { max: number; shared?: boolean } | undefined,
+  fallbackMax: number,
+): { budget: IterationBudget; sharedBudget: boolean } {
+  return {
+    budget: new IterationBudget(iterationBudget?.max ?? fallbackMax),
+    sharedBudget: iterationBudget?.shared ?? false,
+  };
+}
+
 export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
@@ -265,7 +283,11 @@ export class PersonalAgent {
   readonly #gateBlockedIds = new Set<string>();
   /** One iteration per tool call; shared with subagents via `budget.child()`. */
   readonly #budget: IterationBudget;
-  /** False means the budget is refilled at the start of every `run()`. */
+  /**
+   * False means the budget is refilled at the start of every `run()`, which is the
+   * default: a `PersonalAgent` outlives the conversation that created it, so one
+   * counter for its whole life is a daily quota wearing a safety net's clothes.
+   */
   readonly #sharedBudget: boolean;
 
   private constructor(
@@ -300,11 +322,23 @@ export class PersonalAgent {
       stream?: boolean;
       sessionId?: string;
       /**
-       * Iteration budget. `shared` (default true) keeps one counter for the whole
-       * agent life: every run and every subagent (`budget.child()`) spends from it.
-       * `shared: false` refills it at the start of each `run()` instead. Without
-       * this option the budget matches `config.maxToolCalls`, the existing hard
-       * ceiling, so the pressure warnings describe the same allowance.
+       * Iteration budget. `shared` defaults to FALSE, i.e. the budget is refilled
+       * at the start of every `run()`: it is a per-request safety ceiling, not a
+       * daily quota. The default used to be `true`, which kept one counter for the
+       * whole agent life, and that was wrong in a way nothing reported — a user who
+       * chatted through the morning had every afternoon request start with the
+       * model being told "de esta tarea quedan 2 pasos" for work that had not
+       * started. A ceiling that drags itself across requests stops being a safety
+       * net and becomes a delayed punishment, and the agent looks broken without
+       * any single failure to point at.
+       *
+       * `shared: true` is still available for a caller that deliberately wants a
+       * ceiling over a whole session (long autonomous jobs). Subagents are always
+       * shared via `budget.child()` regardless: delegation within one task must
+       * not multiply the allowance.
+       *
+       * Without this option the budget matches `config.maxToolCalls`, the existing
+       * hard ceiling, so the pressure warnings describe the same allowance.
        */
       iterationBudget?: { max: number; shared?: boolean };
     } = {},
@@ -314,8 +348,10 @@ export class PersonalAgent {
     // The session id is captured per instance, never read from a module global: a
     // global meant every agent silently inherited the newest chat's approvals.
     const sessionId = opts.sessionId ?? 'default';
-    const budget = new IterationBudget(opts.iterationBudget?.max ?? config.maxToolCalls);
-    const sharedBudget = opts.iterationBudget?.shared ?? true;
+    const { budget, sharedBudget } = resolveIterationBudget(
+      opts.iterationBudget,
+      config.maxToolCalls,
+    );
     // Assigned before any tool call can run; the hooks below only fire inside a run.
     let personal!: PersonalAgent;
 
@@ -358,7 +394,9 @@ export class PersonalAgent {
         log.debug('tool finished', { tool: toolCall.name, id: toolCall.id, isError });
         // Budget pressure rides inside the tool result (`details.budgetPressure`)
         // instead of as an extra conversation message: the model reads it as part
-        // of the outcome it just got, and the message format never changes.
+        // of the outcome it just got, and the message format never changes. It has
+        // to land here and not in a log — a warning the model cannot read is not a
+        // warning, it is just a counter nobody looks at.
         const pressure = personal.budget.pressure();
         if (!pressure) return undefined;
         const details: unknown = result.details;
@@ -391,6 +429,24 @@ export class PersonalAgent {
   /** Iteration budget; `remaining()` is the live count shared with subagents. */
   get budget(): IterationBudget {
     return this.#budget;
+  }
+
+  /** Iterations left in the current task. Exposed so callers (and tests) can see the ceiling. */
+  budgetRemaining(): number {
+    return this.#budget.remaining();
+  }
+
+  /**
+   * Start a task: refill the iteration budget unless this agent was built with a
+   * session-wide ceiling.
+   *
+   * Called by `run()` before every turn, and public so the policy can be exercised
+   * without a live provider. Split out of `run()` precisely because the interesting
+   * bug here is not "does the run work" but "does the SECOND run of the day start
+   * with a full allowance" — and that question has to be answerable in a test.
+   */
+  beginRun(): void {
+    if (!this.#sharedBudget) this.#budget.reset();
   }
 
   markGateBlocked(toolCallId: string): void {
@@ -426,7 +482,7 @@ export class PersonalAgent {
   /**
    * One turn, with retries for transient provider failures.
    *
-   * Budgets and loop history are scoped to the whole run, not per attempt: three
+   * The iteration budget is refilled by `beginRun()` and only spans this turn: three
    * attempts must not mean three times the tool budget, and a loop straddling two
    * attempts is still a loop. (Known limitation, documented: a retry re-sends the
    * same prompt, so it lands in the transcript as a repeated user message.)
@@ -437,9 +493,9 @@ export class PersonalAgent {
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
     this.#externalAbort = false;
-    // A non-shared budget is per-run by definition: each task gets a full
-    // allowance and cannot spend the previous task's leftovers.
-    if (!this.#sharedBudget) this.#budget.reset();
+    // Per-request ceiling by default: each task gets the full allowance and cannot
+    // spend the leftovers of whatever the user asked earlier.
+    this.beginRun();
     const shared: AttemptState = {
       toolCalls: 0,
       blocked: 0,

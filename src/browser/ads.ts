@@ -1,13 +1,12 @@
 /**
- * Advert skipping, in one place, used by two callers.
+ * Advert skipping, in one place.
  *
- * Two callers because there are two ways an advert has to be dealt with and the first
- * version only had one:
+ * Two entry points, both of which live in `ads-page.js` rather than here:
  *
- * - `clickSkipInPage`, called on a poll from `BrowserService`, presses the button the
- *   moment it appears. This is what actually stops the user watching a pre-roll: it
- *   does not wait for the model to notice, poll and call a tool, which takes a round
- *   trip and, on a six-second advert, arrives after the advert is over anyway.
+ * - a poll from `BrowserService` presses the button the moment it appears. This is what
+ *   actually stops the user watching a pre-roll: it does not wait for the model to
+ *   notice, poll and call a tool, which takes a round trip and, on a six-second advert,
+ *   arrives after the advert is over anyway.
  * - the `media` action in `tools/browser.ts`, which the model can call to report on an
  *   advert and to press the button on demand.
  *
@@ -15,14 +14,12 @@
  * skipper that works and a reporter that does not is worse than neither: the model
  * would report "no button to press" while the button was being pressed for it.
  *
- * `page.evaluate` is the reason everything below is written the way it is. Playwright
- * *serialises* the function body and runs it in the browser: the module scope around it
- * is gone, constants declared outside are undefined there, and so are the helper
- * functions. The first version passed a function that called `skipButtons()` and read
- * `AD_SELECTORS`, and every call died with `ReferenceError: skipButtons is not
- * defined` - a failure that only shows up at runtime, in the browser, and reads like a
- * Playwright bug rather than a scoping mistake. Everything the evaluated code needs is
- * therefore either inlined into the function body or passed as an argument.
+ * The code that runs in the page is plain JavaScript in `ads-page.js`, read at runtime
+ * and installed as a script, because page.evaluate serialises the function it is given
+ * and runs the source in the browser: the module scope is gone and so is every helper
+ * declared next to it. Bundled TypeScript made this worse rather than better, since
+ * esbuild renames those nested declarations and appends __name() calls that do not exist
+ * in the page. Nothing that runs in a page is written in this module.
  *
  * The CSS/text split is not cosmetic either. `button:has-text("Saltar")` is a
  * Playwright selector-engine extension, not a CSS selector: `document.querySelectorAll`
@@ -110,104 +107,3 @@ export const AD_ARGS: AdSkipArgs = {
  * inside the page: YouTube keeps every skip-button variant in the DOM and hides all but
  * one, so clicking blind would press a hidden button or the wrong player's.
  */
-export function clickSkipInPage(args: AdSkipArgs): AdSkipResult {
-  const { selectors, texts, adSelector } = args;
-  const fold = (s: string): string =>
-    s
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const visible = (el: Element): boolean => el instanceof HTMLElement && el.offsetParent !== null;
-
-  const found: HTMLElement[] = [];
-  const seen = new Set<HTMLElement>();
-
-  for (const selector of selectors) {
-    let nodes: NodeListOf<Element>;
-    try {
-      nodes = document.querySelectorAll(selector);
-    } catch {
-      // One bad selector must not take the whole skipper down: the next variant may
-      // work, and a page can carry a malformed rule or a browser extension can inject
-      // one.
-      continue;
-    }
-    for (const node of Array.from(nodes)) {
-      if (!visible(node) || seen.has(node as HTMLElement)) continue;
-      seen.add(node as HTMLElement);
-      found.push(node as HTMLElement);
-    }
-  }
-
-  for (const node of Array.from(document.querySelectorAll('button, [role="button"]'))) {
-    if (!visible(node) || seen.has(node as HTMLElement)) continue;
-    const label = fold((node as HTMLElement).innerText || node.textContent || '');
-    if (!label) continue;
-    if (!texts.some((hint) => label.startsWith(hint))) continue;
-    seen.add(node as HTMLElement);
-    found.push(node as HTMLElement);
-  }
-
-  let clicked = 0;
-  for (const button of found) {
-    try {
-      button.click();
-      clicked++;
-    } catch {
-      // A button that throws on click is not worth abandoning the rest of the list
-      // for: the next one may well work.
-    }
-  }
-  return { clicked, adShowing: !!document.querySelector(adSelector) };
-}
-
-/**
- * What is playing, for the model's own reporting.
- *
- * Same self-containment rule as `clickSkipInPage`: the skip-button count is computed
- * by the same inlined logic, so "there is nothing to press" here and "nothing was
- * pressed" in the skipper can never disagree.
- */
-export function mediaStateInPage(args: AdSkipArgs): MediaState {
-  const { selectors, texts, adSelector } = args;
-  const fold = (s: string): string =>
-    s
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const visible = (el: Element): boolean => el instanceof HTMLElement && el.offsetParent !== null;
-
-  let skipButtonsVisible = 0;
-  for (const selector of selectors) {
-    let nodes: NodeListOf<Element>;
-    try {
-      nodes = document.querySelectorAll(selector);
-    } catch {
-      continue;
-    }
-    for (const node of Array.from(nodes)) if (visible(node)) skipButtonsVisible++;
-  }
-  for (const node of Array.from(document.querySelectorAll('button, [role="button"]'))) {
-    if (!visible(node)) continue;
-    const label = fold((node as HTMLElement).innerText || node.textContent || '');
-    if (label && texts.some((hint) => label.startsWith(hint))) skipButtonsVisible++;
-  }
-
-  const v = document.querySelector('video');
-  return {
-    hasVideo: !!v,
-    playing: v ? !v.paused && !v.ended : false,
-    currentTime: v ? Math.round(v.currentTime) : 0,
-    duration: v && Number.isFinite(v.duration) ? Math.round(v.duration) : 0,
-    muted: v ? v.muted : null,
-    adShowing: !!document.querySelector(adSelector),
-    skipButtonsVisible,
-    title: document.title,
-  };
-}

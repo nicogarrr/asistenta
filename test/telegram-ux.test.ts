@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cleanForTelegram,
   formatAsList,
+  hasRichContent,
   progressMessage,
   resultLine,
   shorten,
@@ -35,7 +36,9 @@ describe('cleanForTelegram', () => {
       'Nombre - Estado',
       'Compra - hecha',
       '',
+      '```',
       'const x = 1;',
+      '```',
       '',
       '- primer punto',
       '- segundo punto',
@@ -49,7 +52,30 @@ describe('cleanForTelegram', () => {
   });
 
   it('never rewrites code inside a fence', () => {
-    expect(cleanForTelegram('```\n**no tocar** | a\n```')).toBe('**no tocar** | a');
+    expect(cleanForTelegram('```\n**no tocar** | a\n```')).toBe('```\n**no tocar** | a\n```');
+  });
+
+  it('keeps the fence markers and the language tag', () => {
+    // Telegram renders a fenced block as a copy-friendly code bubble; unwrapping it
+    // left the listing as an anonymous wall of lines that looked like a mistake.
+    expect(cleanForTelegram('```ts\nconst x: number = 1;\n```')).toBe(
+      '```ts\nconst x: number = 1;\n```',
+    );
+    expect(cleanForTelegram('~~~python\nprint(1)\n~~~')).toBe('~~~python\nprint(1)\n~~~');
+  });
+
+  it('keeps blank lines inside a fence, since PEP 8 asks for two', () => {
+    const python = [
+      '```python',
+      'def a():',
+      '    pass',
+      '',
+      '',
+      'def b():',
+      '    pass',
+      '```',
+    ].join('\n');
+    expect(cleanForTelegram(python)).toBe(python);
   });
 
   it('leaves prose alone', () => {
@@ -87,6 +113,177 @@ describe('shorten', () => {
     const body = result.text.slice(0, result.text.indexOf('…'));
     expect(long.startsWith(body)).toBe(true);
     expect(body).not.toMatch(/\s$/);
+  });
+
+  it('cuts long plain prose at a word boundary and adds the hint', () => {
+    const long = 'Esta es una frase normal y corriente, sin nada especial. '.repeat(40);
+    expect(long.length).toBeGreaterThan(2000);
+    const result = shorten(long);
+    expect(result.truncated).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(300);
+    expect(result.text.endsWith('…\nDime "más" para el detalle.')).toBe(true);
+    const body = result.text.slice(0, result.text.indexOf('…'));
+    expect(long.startsWith(body)).toBe(true);
+    expect(body).not.toMatch(/\s$/);
+  });
+
+  it('honours an explicit maxChars for plain text', () => {
+    const result = shorten('palabra '.repeat(250), { maxChars: 300 });
+    expect(result.truncated).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(300);
+    expect(result.text.length).toBeGreaterThan(250);
+  });
+
+  it('honours the chosen ceiling for the body plus the hint', () => {
+    const prose = 'Esta es una frase normal sin nada raro. '.repeat(60);
+    const tight = shorten(prose, { maxChars: 500, hardMaxChars: 1000 });
+    expect(tight.truncated).toBe(true);
+    expect(tight.text.length).toBeLessThanOrEqual(500);
+    expect(tight.text.endsWith('…\nDime "más" para el detalle.')).toBe(true);
+
+    // The very same reply only survives intact because of the generous ceiling, so
+    // the ceiling and not the prose budget is what is deciding here.
+    const code = [
+      'Explicación corta.',
+      '',
+      '```ts',
+      ...Array.from({ length: 80 }, (_, i) => `const valor${i} = "linea ${i}";`),
+      '```',
+    ].join('\n');
+    expect(shorten(code, { maxChars: 500, hardMaxChars: 1000 }).truncated).toBe(true);
+    expect(shorten(code, { maxChars: 500, hardMaxChars: 2500 }).truncated).toBe(false);
+  });
+});
+
+describe('shorten with code', () => {
+  it('does not cut a twenty line block', () => {
+    const lines = Array.from({ length: 18 }, (_, i) => `const valor${i} = "linea ${i}";`);
+    const code = ['```ts', ...lines, '```'].join('\n');
+    expect(code.length).toBeGreaterThan(300);
+    const result = shorten(code);
+    expect(result.truncated).toBe(false);
+    expect(result.text).toBe(code);
+    for (const line of lines) expect(result.text).toContain(line);
+  });
+
+  it('leaves a 3000 character block completely intact', () => {
+    // The regression: the old fixed 300 char cut kept the fence and three lines and
+    // threw the other 97 away, which is worse than sending the whole listing.
+    const body = Array.from(
+      { length: 95 },
+      (_, i) => `# linea ${String(i).padStart(3, '0')} del bloque de codigo`,
+    ).join('\n');
+    const code = `\`\`\`python\n${body}\n\`\`\``;
+    expect(code.length).toBeGreaterThan(3000);
+    expect(code.length).toBeLessThanOrEqual(3500);
+    const result = shorten(code);
+    expect(result.truncated).toBe(false);
+    expect(result.text).toBe(code);
+  });
+
+  it('cuts outside the block instead of halving it', () => {
+    const huge = Array.from(
+      { length: 200 },
+      (_, i) => `linea ${i} de un bloque de codigo bastante largo`,
+    ).join('\n');
+    const text = `Aquí va el bloque:\n\n\`\`\`ts\n${huge}\n\`\`\``;
+    expect(text.length).toBeGreaterThan(3500);
+    const result = shorten(text);
+    expect(result.truncated).toBe(true);
+    // At a paragraph break, before the fence: no dangling opening marker, and no
+    // half a code block pretending to be one.
+    expect(result.text).toBe('Aquí va el bloque:…\nDime "más" para el detalle.');
+    expect(result.text).not.toContain('```');
+  });
+
+  it('never cuts an indented block either', () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `    const valor${i} = ${i};`);
+    const indented = ['Explicación de la función:', ...lines].join('\n');
+    expect(indented.length).toBeGreaterThan(300);
+    const result = shorten(indented);
+    expect(result.truncated).toBe(false);
+    expect(result.text).toBe(indented);
+  });
+});
+
+describe('shorten with links', () => {
+  const longUrl = `https://example.com/reports/${'segment-'.repeat(20)}final?token=${'x'.repeat(40)}`;
+
+  it('keeps a long URL whole instead of cutting it at 300', () => {
+    const text = `Aquí tienes el informe completo:\n\n${longUrl}\n\nCuando lo abras ya lo vemos.`;
+    expect(text.length).toBeGreaterThan(300);
+    const result = shorten(text);
+    expect(result.truncated).toBe(false);
+    expect(result.text).toContain(longUrl);
+  });
+
+  it('keeps the URL whole when the rest of the reply is cut', () => {
+    const text = `${longUrl}\n\n${'Explicación larga del asunto. '.repeat(120)}`;
+    expect(text.length).toBeGreaterThan(3500);
+    const result = shorten(text);
+    expect(result.truncated).toBe(true);
+    expect(result.text).toContain(longUrl);
+    expect(result.text.length).toBeLessThanOrEqual(3500);
+  });
+
+  it('cuts around a URL that lands on the boundary, never inside it', () => {
+    const url = `https://example.com/${'a'.repeat(180)}`;
+    // Positioned so the limit falls in the middle of the URL.
+    const text = `${'palabra '.repeat(486)}${url} ${'palabra '.repeat(200)}`;
+    expect(text.length).toBeGreaterThan(3500);
+    const result = shorten(text);
+    expect(result.truncated).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(3500);
+    // Either the whole URL or none of it, never a dead fragment.
+    expect(result.text).not.toMatch(/https?:\/\//);
+    expect(result.text).not.toContain(url.slice(0, 40));
+  });
+
+  it('does not split an email address either', () => {
+    const address = `${'nombre.apellido'.repeat(6)}@empresa.example.com`;
+    const text = `Escríbele a ${address} para el aviso.`;
+    expect(text.length).toBeLessThan(300);
+    expect(shorten(text).text).toBe(text);
+  });
+});
+
+describe('hasRichContent', () => {
+  it('is false for ordinary prose', () => {
+    expect(hasRichContent('La compra está hecha y el pago se confirmó ayer.')).toBe(false);
+    expect(hasRichContent('Eeeeeeeeeeeeeeeeeeeeeeee')).toBe(false);
+    expect(hasRichContent('')).toBe(false);
+    // A long run of one letter is not an identifier, so it keeps the prose budget.
+    expect(hasRichContent('a'.repeat(300))).toBe(false);
+  });
+
+  it('is true for a fenced block', () => {
+    expect(hasRichContent('```js\nconst a = 1;\n```')).toBe(true);
+    expect(hasRichContent('Mira esto:\n\n~~~python\nprint(1)\n~~~')).toBe(true);
+    // An unclosed fence still means the model is writing code.
+    expect(hasRichContent('```\nconst a = 1;')).toBe(true);
+  });
+
+  it('is true for an indented block', () => {
+    expect(hasRichContent('    const a = 1;')).toBe(true);
+    expect(hasRichContent('\tconst a = 1;')).toBe(true);
+  });
+
+  it('is true for a URL', () => {
+    expect(hasRichContent('Mira https://example.com/x')).toBe(true);
+    expect(hasRichContent('Ver http://a.co')).toBe(true);
+  });
+
+  it('is true for a long path', () => {
+    expect(hasRichContent('/Users/nicoi/projects/personal-agent/src/channels/formatters.ts')).toBe(
+      true,
+    );
+    expect(hasRichContent('C:\\Users\\nicoi\\projects\\personal-agent\\src\\index.ts')).toBe(true);
+  });
+
+  it('is true for a long hex or base64 identifier', () => {
+    expect(hasRichContent('3f8a9c2b1d4e5f60718293a4b5c6d7e8f9012345')).toBe(true);
+    expect(hasRichContent('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+    expect(hasRichContent('aGVsbG8gd29ybGQhIGFuZCBtb3JlIHRleHQgaGVyZQ==')).toBe(true);
   });
 });
 

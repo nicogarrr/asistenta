@@ -224,28 +224,22 @@ describe('IterationBudget', () => {
     expect(budget.pressure()).toBeNull();
 
     budget.consume(4); // 30% left: no longer "plenty", so the warning starts here
-    expect(budget.pressure()).toBe(
-      'Quedan 6 iteraciones de 20. Cierra la tarea con lo que tengas.',
-    );
+    expect(budget.pressure()).toBe('De esta tarea quedan 6 pasos de 20. Cierra con lo que tengas.');
 
     budget.consume(3); // 15% left: the documented example
-    expect(budget.pressure()).toBe(
-      'Quedan 3 iteraciones de 20. Cierra la tarea con lo que tengas.',
-    );
+    expect(budget.pressure()).toBe('De esta tarea quedan 3 pasos de 20. Cierra con lo que tengas.');
 
     budget.consume(1); // 10% left: still the plain warning, urgency starts below
-    expect(budget.pressure()).toBe(
-      'Quedan 2 iteraciones de 20. Cierra la tarea con lo que tengas.',
-    );
+    expect(budget.pressure()).toBe('De esta tarea quedan 2 pasos de 20. Cierra con lo que tengas.');
 
     budget.consume(1); // 5% left
     expect(budget.pressure()).toBe(
-      '¡Atención! Quedan solo 1 iteración de 20. Cierra la tarea ya con lo que tengas.',
+      '¡Atención! De esta tarea queda solo 1 paso de 20. Cierra ya con lo que tengas.',
     );
 
     budget.consume(1); // nothing left
     expect(budget.pressure()).toBe(
-      'Se ha agotado el presupuesto de 20 iteraciones. Cierra la tarea con lo que tengas.',
+      'Se ha agotado el presupuesto de esta tarea: 20 pasos. Cierra con lo que tengas.',
     );
   });
 

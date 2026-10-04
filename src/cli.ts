@@ -15,7 +15,7 @@ import {
   stripVoicePrefix,
 } from './channels/formatters.js';
 import { ChannelRegistry } from './channels/registry.js';
-import { TelegramChannel } from './channels/telegram.js';
+import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
@@ -25,7 +25,7 @@ import { parseNatural } from './cron/scheduler.js';
 import { buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
-import { log } from './log.js';
+import { log, redact } from './log.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
@@ -53,6 +53,7 @@ import { WindowsScreen } from './screen/windows.js';
 import { SkillStore } from './skills/store.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
+import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
 import { createDoneTool } from './tools/done.js';
 import { createFetchTool } from './tools/fetch.js';
@@ -60,7 +61,7 @@ import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
-import { createRenfeTool } from './tools/renfe.js';
+
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
@@ -257,6 +258,127 @@ function hasPwsh(): boolean {
 }
 
 /**
+ * Where the standing human approvals are kept.
+ *
+ * Its own file rather than `paths.db`, for the same reason `memory.db` is separate
+ * from the transcript: `Store` holds a WAL connection open on `paths.db` for the
+ * whole process while the gate opens the file for the length of a single write, and
+ * a second writer with no busy timeout gets `SQLITE_BUSY` instead of waiting. That
+ * failure is silent and bad: raised inside the approver it converts the user's tap on
+ * "Siempre" into a refusal, and raised in the gate constructor it throws while a
+ * conversation is being created. A file nothing else writes to has neither problem.
+ */
+export function approvalsDbPath(stateDir: string = paths.state): string {
+  return join(stateDir, 'approvals.db');
+}
+
+export interface DaemonGateOptions {
+  /** The conversation these approvals belong to: `chatKey#thread`. */
+  threadKey: string;
+  /**
+   * File the `always` scopes are written to and read back from. Required rather than
+   * optional: forgetting it is precisely the bug this wiring exists to fix, and it is
+   * invisible from the outside - the daemon keeps asking forever and looks healthy.
+   */
+  dbPath: string;
+  /** Vault opt-in (`agent:fullControl`): unattended, except money and credentials. */
+  fullControl?: boolean;
+  /**
+   * Publish the question and wait for the human.
+   *
+   * The answer carries the scope, so the choice is applied here, where it arrives:
+   * `setScope` writes to disk before the tool call it just authorised even returns,
+   * and the next call of the same tool is already covered.
+   */
+  ask: (threadKey: string, tool: string, reason: string) => Promise<ApprovalChoice>;
+  /**
+   * Told while a human is being asked, because the idle watchdog has to know that
+   * waiting for a person is not a stall. Optional so callers without a watchdog can
+   * ignore it.
+   */
+  onAwaiting?: (waiting: boolean) => void;
+}
+
+/**
+ * The gate the daemon arms for a conversation.
+ *
+ * Extracted from the daemon's closure so the whole policy - the allow list, the
+ * protected paths, and above all the file the standing grants live in - can be
+ * exercised without a Telegram token and a desktop. The wiring is the part that
+ * breaks; the gate itself was fine.
+ *
+ * Approval scope has two widths, and the difference is the whole point of this file.
+ * `session` and `once` die with the turn (`clearSession` at the end of every turn),
+ * because approval scope is one task and never the next one. `always` is the user's
+ * standing decision about a tool, so it is written to `dbPath` keyed by tool alone:
+ * global, and read back by every conversation in every chat on the next run. Keying it
+ * per conversation instead would be indistinguishable to the user from not persisting
+ * it at all - the next message arrives in a new thread and asks again - and it would
+ * silently widen into a global grant the moment two threads shared a session id.
+ *
+ * `always` is never consulted for money or credentials; that exclusion lives in
+ * `Gate.check` and is not this file's to weaken. The same goes for the purchase charge:
+ * `allowUntilPayment` lets a purchase reach its payment screen unattended and stops
+ * there, because the one thing a standing grant must never be is "always pays".
+ */
+export function createDaemonGate(options: DaemonGateOptions): Gate {
+  // The approver closes over `gate`, which is the line being executed here, so the
+  // reference is live before any tool call can reach it. An approver cannot run before
+  // the agent that owns this gate exists, so a holder indirection would be noise.
+  const gate = new Gate({
+    allow: ['read', 'list', 'fetch', 'done', 'memory'],
+    allowActions: ['computer:screenshot', 'computer:move'],
+    // Autonomous up to the last click. A purchase is a chain of ordinary browsing
+    // actions, and asking about each of them is what stopped the Renfe flow before it
+    // bought anything. The stage of a call is read from `checkoutStageOf`, a five-row
+    // table in the tool itself, and the rules that survive this flag are in
+    // permissions.ts: money, credentials, the deny list and `confirm`, which always
+    // asks.
+    allowUntilPayment: true,
+    stageOf: checkoutStageOf,
+    fullControl: options.fullControl ?? false,
+    protectedPaths: [
+      `${process.env.USERPROFILE}\\.ssh`,
+      `${process.env.USERPROFILE}\\.aws`,
+      'C:\\Windows\\System32',
+    ],
+    maxAmountCents: 30_000,
+    grantWindowMs: 90_000,
+    // The load-bearing line. Without it every "Siempre" dies with the process and an
+    // always-on daemon re-asks for exactly what it was told never to ask again.
+    dbPath: options.dbPath,
+    // Approvals travel back over Telegram as inline buttons, and the idle watchdog is
+    // paused while one is parked. The buttons also carry the scope: "siempre" must
+    // mean always, not once per task.
+    approver: async (call, reason) => {
+      options.onAwaiting?.(true);
+      try {
+        const choice = await options.ask(options.threadKey, call.tool, reason);
+        if (choice.approved && choice.scope !== 'once') {
+          try {
+            gate.setScope(options.threadKey, call.tool, choice.scope);
+          } catch (err) {
+            // A grant that could not be written is a nuisance; losing the call the
+            // user just approved because of it would be a bug. Carry on, and say so:
+            // the next run will ask again rather than pretend the grant survived.
+            log.error('approval scope not saved', {
+              tool: call.tool,
+              scope: choice.scope,
+              dbPath: options.dbPath,
+              ...redact({ err }),
+            });
+          }
+        }
+        return choice.approved;
+      } finally {
+        options.onAwaiting?.(false);
+      }
+    },
+  });
+  return gate;
+}
+
+/**
  * The vertical slice: one agent, console input, gate armed, tools registered.
  * Everything else (channels, scheduler) plugs in behind this same shape.
  */
@@ -287,6 +409,10 @@ async function chatCommand(): Promise<number> {
       'C:\\Windows\\System32',
     ],
     maxAmountCents: 30_000,
+    // Reads the same standing grants the daemon writes, and nothing more: the console
+    // has no scope buttons, so it never records one. They apply here because "always"
+    // is a statement about the tool, not about the process that happened to ask.
+    dbPath: approvalsDbPath(),
     // Console mode has a human at the keyboard, so asking is always possible.
     approver: async (call, reason) => {
       const answer = await askYesNo(`allow ${call.tool}? (${reason})`);
@@ -390,6 +516,11 @@ async function runCommand(prompt: string): Promise<number> {
     // would need approval is refused rather than guessed at. Screenshot and read
     // stay available, which is enough for reconnaissance without letting the agent
     // change anything.
+    //
+    // No dbPath on purpose. `pa run` is documented as unattended and read-only: it has
+    // no approver, so a standing `always` for `shell` granted over Telegram would turn
+    // a deliberate refusal here into silent command execution. The standing grants
+    // belong to the modes where a human is present to make them.
     approver: undefined,
   });
   const screen = new WindowsScreen();
@@ -523,6 +654,28 @@ export function parseCommand(text: string): ParsedCommand | null {
  *   exactly one cursor and one screen, so two conversations may think at the same
  *   time but may never act at the same time.
  */
+/**
+ * Whether the user asked to be shown the screen, in this or any other wording.
+ *
+ * Deliberately generous. The cost of a false positive is one extra photo in the chat,
+ * and the cost of a false negative is the exact failure that kept happening: the user
+ * says "pásame una captura" and gets a paragraph about why there was nothing to show.
+ */
+export function wantsScreenshot(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return (
+    /\bcaptur|\bscreenshot|\bpantallazo|\bfoto\s+de\s+la\s+pantalla|\bque\s+se\s+ve\b|\bcomo\s+(?:se\s+ve|esta)\s+el\s+(?:pc|ordenador|portatil|monitor)\b/.test(
+      t,
+    ) ||
+    /\b(mandame|enviame|pasame|pasame|muestrame|ensename|sacame|ponme)\b[^.?]{0,30}\b(pantalla|captura|pc|ordenador|video)\b/.test(
+      t,
+    )
+  );
+}
+
 async function serveCommand(): Promise<number> {
   ensureDirs();
   const config = loadConfig();
@@ -553,6 +706,14 @@ async function serveCommand(): Promise<number> {
   const store = new Store();
   store.sweepExpired();
   const memory = new MemoryStore();
+  /**
+   * The one file the gates of every conversation read their standing approvals from.
+   *
+   * Computed once and shared: the point is that it is the same path for all of them.
+   * A per-thread file would make "Siempre" survive a restart while still asking again
+   * on the next message, which is exactly the behaviour that made the button useless.
+   */
+  const approvalsDb = approvalsDbPath();
 
   /**
    * Episodic memory, instincts, workstreams and follow-ups share one SQLite file,
@@ -789,20 +950,47 @@ async function serveCommand(): Promise<number> {
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
-      createRenfeTool(),
       createDoneTool(),
       createShellTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
-      // silently blocks every batch.
-      createComputerTool(config, screen, (call) =>
-        thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
+      // silently blocks every batch. `sendPhoto` is what lets the model put a
+      // capture in the user's chat instead of only in its own context: a
+      // screenshot the user cannot see is a screenshot nobody sent.
+      createComputerTool(
+        config,
+        screen,
+        (call) => thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
+        async (bytes, opts) => {
+          const chatId = Number(thread.chatKey.split(':')[2]);
+          const threadId = inboundFor(thread).threadId;
+          await telegram.action(thread.chatKey.split(':')[2] ?? '', 'upload_photo');
+          return telegram
+            .sendPhotoBytes(chatId, bytes, threadId, opts)
+            .then(() => true)
+            .catch((err: unknown) => {
+              log.warn('desktop screenshot send failed', { err });
+              return false;
+            });
+        },
       ),
       createBrowserTool(browserFor(thread.key), scope, (png) =>
         telegram
           .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
           .then(() => true),
       ),
+      // Buying something, from searching to the payment screen, with one question at
+      // the end and no way through it: `confirm` takes no selector and `select` refuses
+      // any button that reads as a charge. The buyer's details come from the vault by
+      // name and never reach the model's context - see commerce/profile.ts.
+      //
+      // The page is the thread's own browser, not a second one: a second Chromium would
+      // mean a second login session and a second set of domain approvals for the same
+      // site, and the flow would walk into a wall the user had to open twice.
+      createCheckoutTool({
+        page: createCheckoutPage(browserFor(thread.key), scope),
+        requireApproval: (action, summary) => askCheckout(thread, action, summary),
+      }),
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
@@ -885,7 +1073,7 @@ async function serveCommand(): Promise<number> {
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
-    const exclusive = new Set(['computer', 'shell', 'browser', 'write', 'media']);
+    const exclusive = new Set(['computer', 'shell', 'browser', 'checkout', 'write', 'media']);
     const raw = desktop ? all : all.filter((tool) => !DESKTOP_ONLY_TOOLS.has(tool.name));
     return raw.map((tool): AgentTool => {
       if (!exclusive.has(tool.name)) return tool;
@@ -902,56 +1090,79 @@ async function serveCommand(): Promise<number> {
    * One gate per conversation, because approval scope is per conversation: allowing
    * a click in one thread must not let the next thread click without asking.
    *
+   * `always` is the deliberate exception, and it is the reason this function passes
+   * `approvalsDb`: a standing grant is written to disk keyed by tool alone, so every
+   * conversation, and every future run of the daemon, reads it back. A per-thread
+   * grant would be indistinguishable from no grant at all - the next message opens a
+   * new thread and asks again - which is the bug that made the "Siempre" button a lie.
+   *
    * The holder indirection exists because the gate is built before the agent it
-   * protects. The approver closure only ever fires inside a tool call, which cannot
-   * happen until the agent exists, so the assignment below is safe and a captured
-   * variable would only be a source of stale references.
+   * protects, and the approver only fires inside a tool call, which cannot happen
+   * until the agent exists.
    */
   const gateFor = (
     threadKey: string,
     chatId: string,
     holder: { agent: PersonalAgent | null },
-  ): Gate => {
-    // Assigned before the approver closes over it. The approver only ever runs
-    // inside a tool call, which cannot happen until the gate exists, so reading
-    // `gate` from inside it is safe and a holder indirection would only add noise.
-    const gate = new Gate({
-      allow: ['read', 'list', 'fetch', 'done', 'memory'],
-      allowActions: ['computer:screenshot', 'computer:move'],
+  ): Gate =>
+    createDaemonGate({
+      threadKey,
+      dbPath: approvalsDb,
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
       // be switched on by a stray script or a leftover shell history entry.
       fullControl,
-      protectedPaths: [
-        `${process.env.USERPROFILE}\\.ssh`,
-        `${process.env.USERPROFILE}\\.aws`,
-        'C:\\Windows\\System32',
-      ],
-      maxAmountCents: 30_000,
-      grantWindowMs: 90_000,
-      // Approvals travel back over Telegram as inline buttons, and the idle watchdog
-      // is paused while one is parked: waiting for a human is not a stall. The buttons
-      // also carry the scope: "siempre" must mean always, not once per task.
-      approver: async (call, reason) => {
-        const id = randomUUID();
-        log.info('approval requested', { thread: threadKey, tool: call.tool, reason });
-        holder.agent?.setAwaitingApproval(true);
-        const question = `¿Permito ${call.tool}?\n${reason}`;
-        try {
-          const choice = await telegram.offerApproval(id, chatId, question, {
+      onAwaiting: (waiting) => {
+        holder.agent?.setAwaitingApproval(waiting);
+      },
+      ask: async (key, tool, reason) => {
+        log.info('approval requested', { thread: key, tool, reason });
+        const choice = await telegram.offerApproval(
+          randomUUID(),
+          chatId,
+          `¿Permito ${tool}?\n${reason}`,
+          {
             askScope: true,
-          });
-          if (choice.approved && choice.scope !== 'once') {
-            // Recorded before returning, so the very next call of the same tool in
-            // this task is already covered by the decision the user just made.
-            gate.setScope(threadKey, call.tool, choice.scope);
-          }
-          return choice.approved;
-        } finally {
-          holder.agent?.setAwaitingApproval(false);
-        }
+          },
+        );
+        return choice;
       },
     });
-    return gate;
+
+  /**
+   * The human confirmation a purchase stops for.
+   *
+   * Two layers ask about the charge on purpose and neither is the other: the gate asks
+   * because money always asks, and the tool asks because it is the only layer that
+   * knows what is being bought and for how much. A gate that can be misconfigured is
+   * not a reason to leave the charge to chance.
+   *
+   * The consequence is that the same purchase would put two identical questions in the
+   * chat, and a prompt you answer twice by reflex is a prompt you stop reading. So the
+   * answer is remembered for the turn, keyed by thread and by the exact question: the
+   * second layer reuses the first answer rather than asking again. Keyed by question and
+   * not by tool, so two different purchases in one turn still ask twice - which is the
+   * case where a second question is worth the interruption.
+   */
+  const purchaseAnswers = new Map<string, boolean>();
+  /** Telegram question with no scope buttons: "always pay" is not a thing. */
+  const askOncePerTurn = async (thread: Thread, summary: string): Promise<boolean> => {
+    const chatId = thread.chatKey.split(':')[2] ?? '';
+    thread.agent.setAwaitingApproval(true);
+    try {
+      const choice = await telegram.offerApproval(randomUUID(), chatId, summary);
+      return choice.approved;
+    } finally {
+      thread.agent.setAwaitingApproval(false);
+    }
+  };
+  const askCheckout = async (thread: Thread, action: string, summary: string): Promise<boolean> => {
+    const key = `${thread.key}:${action}:${summary}`;
+    const remembered = purchaseAnswers.get(key);
+    if (remembered !== undefined) return remembered;
+    log.info('approval requested', { thread: thread.key, tool: action });
+    const approved = await askOncePerTurn(thread, summary);
+    purchaseAnswers.set(key, approved);
+    return approved;
   };
 
   const getOrCreateThread = async (
@@ -1138,6 +1349,42 @@ async function serveCommand(): Promise<number> {
   routineRunner.start();
 
   // ---- commands -----------------------------------------------------------
+
+  /**
+   * Take a picture of the desktop and put it in the chat.
+   *
+   * Separate from `cmdScreen` because the command answers and this one only sends: it
+   * runs before the turn, on its own, and its failure must never take the turn down with
+   * it. That is why every step is caught and the caller only ever sees a promise that
+   * resolves regardless.
+   */
+  const sendScreenShot = async (inbound: Inbound, caption: string): Promise<boolean> => {
+    if (!desktop) return false;
+    try {
+      await telegram.action(inbound.chatId, 'upload_photo');
+      const shot = await screen.screenshot();
+      const sent = await telegram.sendPhotoBytes(
+        Number(inbound.chatId),
+        shot.image,
+        inbound.threadId,
+        { width: shot.width, height: shot.height },
+      );
+      if (!sent) return false;
+      await say(inbound, caption, { quote: true });
+      log.info('screenshot sent on request', {
+        chatId: inbound.chatId,
+        width: shot.width,
+        height: shot.height,
+      });
+      return true;
+    } catch (err) {
+      log.warn('screen capture failed', { err });
+      await say(inbound, 'No he podido hacer la captura ahora mismo.', { quote: true }).catch(
+        () => {},
+      );
+      return false;
+    }
+  };
 
   const cmdScreen = async (inbound: Inbound, args = ''): Promise<void> => {
     if (!desktop) {
@@ -1915,6 +2162,25 @@ async function serveCommand(): Promise<number> {
     /** The progress notes this turn sent, so they can be taken out of the chat at the end. */
     const progressIds: string[] = [];
 
+    /**
+     * A capture the user asked for is sent by the channel, not by the model.
+     *
+     * This used to be a rule in the system prompt, and it failed the same way every
+     * time: the model read "pass me a screenshot when you have it", decided it had
+     * something to do first, and the reply arrived with no picture and an excuse. A
+     * prompt rule is a request; this is the thing itself happening.
+     *
+     * So the daemon takes the picture and puts it in the chat before the turn even
+     * starts. The model can also send another one later (there is a `send` flag on the
+     * screenshot actions) but it can no longer forget the first one, and the user gets
+     * to see the machine while the agent is still working on it.
+     */
+    if (wantsScreenshot(inbound.text)) {
+      void sendScreenShot(inbound, 'Así está el PC ahora mismo.').catch((err: unknown) => {
+        log.warn('auto screenshot failed', { err });
+      });
+    }
+
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
     // is alive. It says "working" without inventing a progress report.
     const typing = setInterval(() => {
@@ -2034,9 +2300,36 @@ async function serveCommand(): Promise<number> {
       // What happened, kept where the user can ask about it later: "¿qué enviaste
       // anoche?" is a question about a past action, and without a record the honest
       // answer is "no sé".
+      //
+      // One line per action, not one per turn. A log of "turn, turn, turn" answers
+      // nothing: the whole point is that the user can read back what was actually
+      // done, which tool touched what, and whether it worked.
+      // One line per tool used, not one per call: ten clicks on one button are one
+      // fact ("clicked"), not ten lines of noise.
+      const used = [...new Set(toolNames)];
+      for (const name of used) {
+        actions.record({
+          actor: 'asistenta',
+          action: name,
+          target: thread.name,
+          result: result.error ? 'error' : 'ok',
+          // Summarised by a human, not a dump of arguments: an argument list can hold
+          // a password, a card number or a whole file, and this file lives on disk.
+          detail: summarizeToolUse(lastSummary),
+        });
+      }
+      // The reply itself, so "what did you tell me?" is answerable too.
       actions.record({
         actor: 'asistenta',
-        action: result.error ? 'turn' : 'turn',
+        action: 'reply',
+        target: thread.name,
+        result: result.error ? 'error' : 'ok',
+        detail: text2.slice(0, 80).replace(/\s+/g, ' '),
+      });
+      // A turn-level line, for counting. Never the only record of a turn.
+      actions.record({
+        actor: 'asistenta',
+        action: 'turn',
         target: thread.name,
         result: result.error ? 'error' : 'ok',
         detail: `${result.toolCalls} tools, ${Math.round((Date.now() - startedAt) / 1000)}s`,
@@ -2089,6 +2382,9 @@ async function serveCommand(): Promise<number> {
       // Approval scope is one task: a memo or grant must never leak into the next
       // turn, where the user has new context that the approval did not cover.
       thread.gate.clearSession(thread.key);
+      for (const key of purchaseAnswers.keys()) {
+        if (key.startsWith(`${thread.key}:`)) purchaseAnswers.delete(key);
+      }
     }
   };
 
@@ -2717,6 +3013,26 @@ export function buildContextNote(
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
   parts.push(buildNowNote());
   return parts.join('\n');
+}
+
+/**
+ * A short, human-readable description of one tool call, for the action log.
+ *
+ * Deliberately coarse. The log is a record of *what happened*, and the argument list
+ * of a tool call is the single most dangerous thing to write into a plaintext file:
+ * a shell command can carry a token, `mail send` carries a recipient, `fill` carries
+ * whatever the user is typing into a password box. Everything that reaches this log
+ * goes through `redact`, and the summary is capped, so a line in the log can be read
+ * aloud over Telegram without thinking about it first.
+ *
+ * The tool name alone is not enough ("browser, browser, browser"), so the last
+ * summary the agent reported is used as the detail when there is one.
+ */
+function summarizeToolUse(summary: string): string {
+  const detail = summary.replace(/\s+/g, ' ').slice(0, 120).trim();
+  // `redact` blanks any value that looks like a secret whatever the key is called,
+  // so passing the summary under a neutral key still gets it scrubbed.
+  return redact({ detail }).detail as string;
 }
 
 /**

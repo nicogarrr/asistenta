@@ -12,7 +12,7 @@
     "pa": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-page-scripts.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write --error-on-warnings .",
     "lint:check": "biome check --error-on-warnings .",

@@ -196,6 +196,14 @@ const ComputerParams = Type.Object({
   button: Type.Optional(Type.String()),
   clicks: Type.Optional(Type.Number()),
   roi: Type.Optional(RegionParams),
+  send: Type.Optional(
+    Type.Boolean({
+      description:
+        'For screenshot: also push the image to the user chat. Use it whenever they ' +
+        'asked for a capture, so the picture arrives in the chat and not only in your ' +
+        'context.',
+    }),
+  ),
   actions: Type.Optional(
     Type.Array(Type.Record(Type.String(), Type.Unknown()), {
       description: 'For the batch action: the actions to run in order, each like a single action.',
@@ -387,6 +395,7 @@ export function createComputerTool(
   config: Config,
   backend: ScreenBackend,
   gate?: ActionGate,
+  sendPhoto?: (bytes: Buffer, opts: { width: number; height: number }) => Promise<boolean>,
 ): AgentTool<typeof ComputerParams> {
   const scaling = { maxEdge: config.screenshotMaxEdge, quality: config.screenshotQuality };
   const rescalable = backend as ScreenBackend & {
@@ -483,6 +492,11 @@ export function createComputerTool(
         const roi = parseRegionField(record.roi, 'roi');
         if (roi) {
           const cropped = await captureRoi(backend, roi);
+          // The picture has to reach the chat, not just this context: the user asked
+          // for it, and an image they cannot see is an image nobody sent.
+          const sent = record.send
+            ? await sendPhoto?.(cropped.image, { width: cropped.width, height: cropped.height })
+            : undefined;
           if (!view) {
             // No full frame yet: reconstruct the capture scale from the crop's
             // own ratio so later clicks translate correctly even when the very
@@ -507,7 +521,12 @@ export function createComputerTool(
                 text:
                   `Screenshot ${cropped.width}x${cropped.height} of roi (${roi.x},${roi.y} ` +
                   `${roi.width}x${roi.height}). Origin top-left of the roi.` +
-                  (cropped.detail ? ` ${cropped.detail}.` : ''),
+                  (cropped.detail ? ` ${cropped.detail}.` : '') +
+                  (sent === undefined
+                    ? ''
+                    : sent
+                      ? ' Enviada al chat.'
+                      : ' No he podido enviarla al chat.'),
               },
               {
                 type: 'image',
@@ -522,6 +541,7 @@ export function createComputerTool(
               nativeHeight: cropped.nativeHeight,
               roi,
               cropped: !cropped.detail,
+              sent,
               ...scaling,
             },
             at: null,
@@ -531,13 +551,21 @@ export function createComputerTool(
         view = { width: shot.width, height: shot.height };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
+        const sent = record.send
+          ? await sendPhoto?.(shot.image, { width: shot.width, height: shot.height })
+          : undefined;
         return {
           content: [
             {
               type: 'text',
               text:
                 `Screenshot ${shot.width}x${shot.height}. Origin top-left.` +
-                (downscaled ? ` Real desktop is ${shot.nativeWidth}x${shot.nativeHeight}.` : ''),
+                (downscaled ? ` Real desktop is ${shot.nativeWidth}x${shot.nativeHeight}.` : '') +
+                (sent === undefined
+                  ? ''
+                  : sent
+                    ? ' Enviada al chat.'
+                    : ' No he podido enviarla al chat.'),
             },
             { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
           ],
@@ -546,6 +574,7 @@ export function createComputerTool(
             height: shot.height,
             nativeWidth: shot.nativeWidth,
             nativeHeight: shot.nativeHeight,
+            sent,
             ...scaling,
           },
           at: null,

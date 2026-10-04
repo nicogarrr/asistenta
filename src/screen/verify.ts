@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -8,6 +8,11 @@ import { clipRegion, type Region, scaleRegion } from './regions.js';
 import type { WindowsScreen } from './windows.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Marker the compare script puts on its one line of output. See `buildCompareScript`. */
+const RESULT_PREFIX = 'PA1';
+/** Marker every deliberate refusal inside the PowerShell script starts with. */
+const REFUSAL_PREFIX = 'pa-frame';
 
 /**
  * Did that action actually do anything?
@@ -32,7 +37,11 @@ const execFileAsync = promisify(execFile);
  *
  * The diff runs in PowerShell with System.Drawing rather than in Node because that
  * is what already decodes the JPEG in `WindowsScreen`: adding a native image
- * dependency to answer this question would cost more than the question.
+ * dependency to answer this question would cost more than the question. Keeping it
+ * is defensible because that path was measured, not assumed: it decoded all 221
+ * frames the live daemon had captured and answered in 1.4s. What was not defensible
+ * was trusting it with an unvalidated buffer and then paraphrasing whatever it
+ * complained about, which is where the "out of memory" came from.
  */
 export interface FrameDiff {
   /** Nothing perceptibly changed anywhere. */
@@ -45,6 +54,11 @@ export interface FrameDiff {
   movedAway: boolean;
   /** One line the model can act on. */
   verdict: string;
+  /**
+   * Set when no comparison was actually performed. The verdict then says the answer is
+   * unknown rather than that nothing changed, and callers that can retry should.
+   */
+  failed?: boolean;
 }
 
 export interface CompareOptions {
@@ -63,16 +77,144 @@ export async function compareFrames(
   after: Buffer,
   options: CompareOptions = {},
 ): Promise<FrameDiff> {
+  // Checked here, in Node, before anything is written. The decoder is a separate
+  // process and its only complaint about a frame with no image in it is
+  // "insufficient memory", so an unusable frame used to arrive at it unannounced and
+  // come back as a lie: "the screen did not change" for a comparison that never ran.
+  const problem =
+    frameProblem('captura anterior', before) ?? frameProblem('captura posterior', after);
+  if (problem) {
+    log.warn('frame compare skipped: the frame is not an image', {
+      problem,
+      beforeBytes: before.length,
+      afterBytes: after.length,
+      beforeHead: headBytes(before),
+      afterHead: headBytes(after),
+    });
+    return notCompared(problem);
+  }
+
   const dir = mkdtempSync(join(tmpdir(), 'pa-diff-'));
   const a = join(dir, 'a.jpg');
   const b = join(dir, 'b.jpg');
   try {
     writeFileSync(a, before);
     writeFileSync(b, after);
+    // The two frames travel to the decoder as paths, and something else on this
+    // machine (%TEMP% is scanned the moment a file appears there) can leave a file
+    // whose bytes are not all there yet. Comparing the written length against the
+    // buffer catches that before a PowerShell process is spent on it, and names it.
+    const writtenA = statSync(a).size;
+    const writtenB = statSync(b).size;
+    if (writtenA !== before.length || writtenB !== after.length) {
+      const problem2 = `no pude escribir las capturas en disco: esperaba ${before.length}/${after.length} bytes y hay ${writtenA}/${writtenB}. Otro proceso esta tocando %TEMP% en este momento.`;
+      log.warn('frame compare skipped: the frames did not land intact', {
+        problem: problem2,
+        beforeBytes: before.length,
+        afterBytes: after.length,
+        writtenA,
+        writtenB,
+      });
+      return notCompared(problem2);
+    }
     return await compareFiles(a, b, options);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** Why this buffer cannot be compared, in one Spanish sentence, or null if it can. */
+function frameProblem(label: string, buf: Buffer): string | null {
+  if (buf.length === 0) {
+    return `la ${label} llego vacia (0 bytes): el backend no devolvio ninguna imagen`;
+  }
+  // Only the signature is checked here, never the whole file: the decoder is better at
+  // this than we are, and it is a separate process that used to answer "insufficient
+  // memory" for anything it did not recognise. What is NOT its job is telling us it
+  // could not even tell what the bytes are.
+  //
+  // Several signatures, not just JPEG: `Screenshot.mimeType` is a string and Playwright
+  // and a browser screenshot both hand over PNG, which System.Drawing decodes perfectly.
+  // Refusing those would have been a regression dressed up as a fix.
+  const known = FORMATS.some(
+    (magic) => buf.length >= magic.length && buf.subarray(0, magic.length).equals(magic),
+  );
+  if (!known) {
+    return `la ${label} no es una imagen reconocible (${buf.length} bytes, empieza por ${headBytes(buf)}): no tiene la firma de ningun formato de imagen`;
+  }
+  // A JPEG that stops before its end marker was written incompletely. Comparing it
+  // anyway would produce a diff of a half-picture, which is worse than no answer.
+  if (
+    isJpeg(buf) &&
+    (buf.length < 4 || buf[buf.length - 2] !== 0xff || buf[buf.length - 1] !== 0xd9)
+  ) {
+    return `la ${label} esta incompleta (${buf.length} bytes, sin el marcador final del JPEG): la captura se corto`;
+  }
+  return null;
+}
+
+/** Signatures System.Drawing decodes. Short on purpose: three bytes tell a PNG from a JPEG from a wall of zeroes, which is the whole question being asked. */
+const FORMATS: Buffer[] = [
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  Buffer.from([0x47, 0x49, 0x46, 0x38]),
+  Buffer.from([0x42, 0x4d]),
+  Buffer.from([0x49, 0x49, 0x2a]),
+  Buffer.from([0x4d, 0x4d]),
+];
+
+function isJpeg(buf: Buffer): boolean {
+  return buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+}
+
+/** First bytes as hex plus printable ASCII: enough to tell PNG from text from a JPEG. */
+function headBytes(buf: Buffer): string {
+  const slice = buf.subarray(0, 8);
+  const hex = [...slice].map((v) => v.toString(16).padStart(2, '0')).join(' ');
+  const ascii = [...slice]
+    .map((v) => (v >= 0x20 && v < 0x7f ? String.fromCharCode(v) : '.'))
+    .join('');
+  return `${hex} ("${ascii}")`;
+}
+
+/**
+ * Refusals the compare script makes on purpose, each with the one sentence the model
+ * gets. The token is what PowerShell throws; the detail is bytes, paths and header
+ * hex, none of which need translating.
+ */
+const REFUSALS: Record<string, (detail: string) => string> = {
+  'missing-frame': (d) => `no encontre ${d}`,
+  'empty-frame': (d) => `${d}: no hay imagen que decodificar`,
+  'not-an-image': (d) => `${d}: no tiene la firma de ningun formato de imagen`,
+  'truncated-frame': (d) => `${d}: la captura esta a medias`,
+  undecodable: (d) => `${d}: ni Node ni System.Drawing la reconocen como una imagen`,
+};
+
+/** Pull the refusal out of PowerShell's stderr, if it is one of ours. */
+function readRefusal(stderr: string): string | null {
+  for (const raw of stderr.split(/\r?\n/)) {
+    const line = raw.trim();
+    const at = line.indexOf(`${REFUSAL_PREFIX}: `);
+    if (at < 0) continue;
+    const body = line.slice(at + REFUSAL_PREFIX.length + 2);
+    const sep = body.indexOf(' | ');
+    if (sep < 0) return body;
+    const token = body.slice(0, sep);
+    const detail = body.slice(sep + 3);
+    return REFUSALS[token] ? REFUSALS[token](detail) : detail;
+  }
+  return null;
+}
+
+/** The first line PowerShell printed that is not its own "at line N character 1" furniture. */
+function firstRealLine(stderr: string): string | null {
+  for (const raw of stderr.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^(En l[ií]nea|At line|\+ CategoryInfo|\s*\+ FullyQualifiedErrorId)/i.test(line)) continue;
+    return line;
+  }
+  return null;
 }
 
 export async function compareFiles(
@@ -81,7 +223,7 @@ export async function compareFiles(
   options: CompareOptions = {},
 ): Promise<FrameDiff> {
   if (!existsSync(fileA) || !existsSync(fileB))
-    return noChange('no pude comparar las dos capturas');
+    return notCompared('no existe una de las dos capturas en disco');
 
   let stdout: string;
   try {
@@ -92,13 +234,34 @@ export async function compareFiles(
     );
     stdout = out;
   } catch (err) {
-    log.warn('frame compare failed', { err });
-    return noChange('no pude comparar las dos capturas');
+    const stderr = stderrOf(err);
+    const refusal = readRefusal(stderr);
+    const reason = refusal ?? firstRealLine(stderr) ?? 'PowerShell termino sin decir por que';
+    // `err` alone is unreadable: it carries the whole generated script and a stderr that
+    // has already lost its accents to the console code page. The reason is broken out on
+    // its own so a grep for it is enough to find the cause.
+    log.warn('frame compare failed', { reason, stderr, err: { code: errCode(err) } });
+    return notCompared(reason);
   }
 
-  const m = /([\d.]+)\|([\d.]+)\|(-?\d+)\|(-?\d+)/.exec(stdout);
-  if (!m) return noChange('no pude interpretar la comparación');
+  const m = new RegExp(`${RESULT_PREFIX}\\|([\\d.]+)\\|([\\d.]+)\\|(-?\\d+)\\|(-?\\d+)`).exec(
+    stdout,
+  );
+  if (!m)
+    return notCompared(
+      `PowerShell termino bien pero no devolvio numeros (${JSON.stringify(stdout.slice(0, 120))})`,
+    );
   return verdict(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), options.at);
+}
+
+function stderrOf(err: unknown): string {
+  const e = err as { stderr?: unknown };
+  return typeof e.stderr === 'string' ? e.stderr : '';
+}
+
+function errCode(err: unknown): number | string | undefined {
+  const e = err as { code?: unknown };
+  return typeof e.code === 'number' || typeof e.code === 'string' ? e.code : undefined;
 }
 
 /**
@@ -108,6 +271,11 @@ export async function compareFiles(
  * in PowerShell because System.Drawing is what already decodes our JPEGs, and the
  * first version of this had a bug in exactly the part that is hardest to see from
  * the outside.
+ *
+ * Two conventions with the Node side. The single line of output is prefixed with
+ * `RESULT_PREFIX`, so a decode that produced nothing cannot be mistaken for a diff of
+ * zeroes. Every deliberate refusal throws `pa-frame: <token> | <detail>`, which
+ * `compareFiles` turns into one specific sentence instead of "the comparison failed".
  */
 export function buildCompareScript(
   fileA: string,
@@ -124,7 +292,47 @@ export function buildCompareScript(
   return `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
-$probe = [System.Drawing.Image]::FromFile('${fileA.replace(/'/g, "''")}')
+# Every deliberate refusal starts with ${REFUSAL_PREFIX}: and a token, so the caller can
+# say WHICH frame was unusable and WHY instead of repeating a generic failure.
+#
+# These checks exist because of the worst error message in this whole path.
+# [System.Drawing.Image]::FromFile reports a file with no decodable image as
+# OutOfMemoryException "Memoria insuficiente." — the same text a real out-of-memory
+# produces — which sent an entire debugging session after memory on a machine with
+# plenty of it. Reading the bytes first turns that shrug into a sentence: this file,
+# this many bytes, these first bytes. A file whose writer has not finished also lands
+# here, and gets the truncated/short answer rather than the decoder's.
+#
+# Several signatures, not just JPEG, because \`Screenshot.mimeType\` is a string and
+# browser captures arrive as PNG. The decoder is left to do what it is good at.
+function Open-Frame([string]$p, [string]$label) {
+  if (-not [System.IO.File]::Exists($p)) { throw '${REFUSAL_PREFIX}: missing-frame | la ' + $label + ' no esta en disco (' + $p + ')' }
+  $bytes = [System.IO.File]::ReadAllBytes($p)
+  $len = $bytes.Length
+  if ($len -lt 4) { throw '${REFUSAL_PREFIX}: empty-frame | la ' + $label + ' tiene ' + $len + ' bytes' }
+  $head = ''
+  for ($i = 0; $i -lt 4; $i++) { $head += $bytes[$i].ToString('x2') + ' ' }
+  $head = $head.Trim()
+  $known = ($bytes[0] -eq 0xff -and $bytes[1] -eq 0xd8) -or
+           ($bytes[0] -eq 0x89 -and $bytes[1] -eq 0x50) -or
+           ($bytes[0] -eq 0x47 -and $bytes[1] -eq 0x49) -or
+           ($bytes[0] -eq 0x42 -and $bytes[1] -eq 0x4d) -or
+           ($bytes[0] -eq 0x49 -and $bytes[1] -eq 0x49 -and $bytes[2] -eq 0x2a) -or
+           ($bytes[0] -eq 0x4d -and $bytes[1] -eq 0x4d)
+  if (-not $known) {
+    throw '${REFUSAL_PREFIX}: not-an-image | la ' + $label + ' tiene ' + $len + ' bytes y empieza por ' + $head
+  }
+  if ($bytes[0] -eq 0xff -and $bytes[1] -eq 0xd8 -and ($bytes[$len - 2] -ne 0xff -or $bytes[$len - 1] -ne 0xd9)) {
+    throw '${REFUSAL_PREFIX}: truncated-frame | la ' + $label + ' tiene ' + $len + ' bytes y le falta el marcador final del JPEG'
+  }
+  try {
+    return [System.Drawing.Image]::FromFile($p)
+  } catch {
+    throw '${REFUSAL_PREFIX}: undecodable | la ' + $label + ' tiene ' + $len + ' bytes y cabecera ' + $head + ' pero System.Drawing no la decodifico: ' + $_.Exception.Message
+  }
+}
+$probe = Open-Frame '${fileA.replace(/'/g, "''")}' 'captura anterior'
+$checkB = Open-Frame '${fileB.replace(/'/g, "''")}' 'captura posterior'
 # The comparison grid is derived from the FIRST frame's aspect ratio rather than being
 # a fixed 320x180. Hardcoding the grid stretches every frame that is not exactly 16:9,
 # and a stretched frame puts the region of interest somewhere other than where the
@@ -136,6 +344,7 @@ $scale = ${w} / [double]$long
 $W = [int][Math]::Max(16, [Math]::Round($probe.Width * $scale))
 $H = [int][Math]::Max(16, [Math]::Round($probe.Height * $scale))
 $probe.Dispose()
+$checkB.Dispose()
 function Load-Gray([string]$p) {
   $src = [System.Drawing.Image]::FromFile($p)
   $bmp = New-Object System.Drawing.Bitmap $W, $H
@@ -228,8 +437,8 @@ $ratio = $clustered / [double]$total
 $localRatio = $local / [double]$roiArea
 $cx = if ($clustered -gt 0) { [int]($sumX / $clustered) } else { -1 }
 $cy = if ($clustered -gt 0) { [int]($sumY / $clustered) } else { -1 }
-Write-Output "$ratio|$localRatio|$cx|$cy"
-`;
+Write-Output "${RESULT_PREFIX}|$ratio|$localRatio|$cx|$cy"
+  `;
 }
 
 /**
@@ -300,13 +509,28 @@ function pct(v: number): string {
   return `${Math.round(v * 1000) / 10}%`;
 }
 
-function noChange(reason: string): FrameDiff {
+/**
+ * The verdict for a comparison that never happened.
+ *
+ * This is deliberately NOT the same sentence as "the screen did not change", because
+ * that is the one thing this file must never say when it does not know. Telling the
+ * model an action was inert when the diff never ran is the same defect as the
+ * `verify()` that used to return null without acting: a false negative that pushes the
+ * agent into a retry loop it has no reason to be in. So the shape stays (callers branch
+ * on `changed`) and the sentence says plainly that the answer is unknown, names the
+ * reason, and tells the model what to do instead of guessing.
+ */
+function notCompared(reason: string): FrameDiff {
   return {
     changed: false,
     ratio: 0,
     localRatio: 0,
     movedAway: false,
-    verdict: `VERIFICACION: ${reason}.`,
+    failed: true,
+    verdict:
+      `VERIFICACION: no he podido comparar las capturas, asi que NO se puede saber si la accion ha tenido ` +
+      `efecto — no lo tomes como que no ha pasado nada. Motivo: ${reason}. ` +
+      'Haz una captura nueva y observa el estado actual antes de decidir si repites la accion.',
   };
 }
 
@@ -376,6 +600,7 @@ export async function verifyBatch(pairs: BatchPair[]): Promise<BatchVerdict> {
   }
   let changed = 0;
   let regressions = 0;
+  let uncomparable = 0;
   // The batch's pairs deliberately share the two frames and differ only in the
   // window they watch. Diffing the same bytes twice would pay a PowerShell round
   // trip for an answer already in hand, so equal (frames, window) pairs reuse
@@ -405,22 +630,46 @@ export async function verifyBatch(pairs: BatchPair[]): Promise<BatchVerdict> {
     }
     if (diff.changed && !diff.movedAway) changed++;
     if (diff.movedAway) regressions++;
+    if (diff.failed) uncomparable++;
   }
   const done = changed >= 1 && regressions === 0;
   return {
     done,
-    reason: batchReason(done, changed, regressions, pairs.length),
+    reason: batchReason(done, changed, regressions, pairs.length, uncomparable),
     changed,
     total: pairs.length,
   };
 }
 
-function batchReason(done: boolean, changed: number, regressions: number, total: number): string {
+function batchReason(
+  done: boolean,
+  changed: number,
+  regressions: number,
+  total: number,
+  uncomparable: number,
+): string {
   if (regressions > 0) {
     return (
       `VERIFICACION: ${regressions} de ${total} acciones del lote cambiaron la pantalla LEJOS de ` +
       'donde se esperaba: has tocado el control equivocado o algo detras ha reaccionado. ' +
       'Captura de nuevo y localiza los elementos antes de repetir el lote.'
+    );
+  }
+  // Counted before the "nothing happened" line below, because that line is a lie when
+  // the comparison never ran: the whole point of `notCompared` is that "I could not
+  // look" and "I looked and saw nothing" must never be the same sentence.
+  if (uncomparable === total) {
+    return (
+      `VERIFICACION: no he podido comparar NINGUNA de las ${total} acciones del lote, asi que no se puede ` +
+      'saber si han tenido efecto — no lo tomes como que no ha pasado nada. Mira el log del daemon para el ' +
+      'motivo exacto (captura vacia, bytes que no son una imagen, o captura incompleta) y captura de nuevo.'
+    );
+  }
+  if (changed === 0 && uncomparable > 0) {
+    return (
+      `VERIFICACION: de las ${total} acciones del lote, ${total - uncomparable} no dejaron huella y ` +
+      `${uncomparable} no se pudieron comparar (fallo al decodificar la captura, no ausencia de cambios). ` +
+      'No repitas el lote entero: captura y comprueba el estado actual.'
     );
   }
   if (changed === 0) {
