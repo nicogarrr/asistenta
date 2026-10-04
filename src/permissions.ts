@@ -231,6 +231,25 @@ export class Gate {
         match: (c) => CREDENTIAL_PATH.test(blobOf(c)),
       },
       {
+        id: 'ask-credential-field',
+        verdict: 'ask',
+        reason: 'touches a password, code or card field',
+        match: (c) => c.tool === 'browser' && BROWSER_CREDENTIAL.test(fold(blobOf(c))),
+      },
+      {
+        id: 'ask-browser-effect',
+        verdict: 'ask',
+        reason: 'the page element sends, publishes, deletes or books something',
+        match: (c) => {
+          if (c.tool !== 'browser') return false;
+          const action = argString(c.args, 'action');
+          if (!['click', 'press'].includes(action)) return false;
+          const target = argString(c.args, '_target');
+          // An element that could not be read is not assumed harmless.
+          return target.includes('[destino ilegible]') || isEffectText(target);
+        },
+      },
+      {
         id: 'ask-computer',
         verdict: 'ask',
         reason: 'drives the desktop',
@@ -272,7 +291,8 @@ export class Gate {
   }
 
   #isCredentialish(c: ToolCall): boolean {
-    return CREDENTIAL_PATH.test(blobOf(c));
+    const blob = blobOf(c);
+    return CREDENTIAL_PATH.test(blob) || BROWSER_CREDENTIAL.test(fold(blob));
   }
 
   #fingerprint(c: ToolCall): string {
@@ -540,6 +560,24 @@ const DESTRUCTIVE =
   /\b(rm\s+-[rf]|Remove-Item|rmdir|del\s+\/|format\s|certutil|New-ItemProperty|Set-ExecutionPolicy|reg\s+delete|diskpart|takeown|icacls|Invoke-Expression|iex\s|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))\b/i;
 
 /** Lowercase and strip accents, so "Crédito" and "credito" are the same word. */
+/**
+ * Browser actions that never ask on their own. The rules for money, credential fields
+ * and sending/deleting/booking elements are checked first and still ask; `exec_js`
+ * (arbitrary code in the page) is deliberately absent.
+ */
+export const BROWSER_FREE_ACTIONS = [
+  'open',
+  'snapshot',
+  'screenshot',
+  'back',
+  'close',
+  'media',
+  'click',
+  'fill',
+  'press',
+  'choose',
+].map((a) => `browser:${a}`);
+
 export function fold(text: string): string {
   return text
     .normalize('NFD')
@@ -637,6 +675,18 @@ export const EFFECT_WORD = new RegExp(
   ].join('|')})(?![\\p{L}\\p{N}])`,
   'u',
 );
+
+/**
+ * Password, one-time code and card-entry fields, judged from the element's own words
+ * (type, name, autocomplete) and the model's args. Matched on folded text.
+ */
+const BROWSER_CREDENTIAL =
+  /(?<![\p{L}\p{N}])(password|passwd|contrasena|clave de acceso|passcode|otp|one-time-code|codigo de verificacion|current-password|new-password|cc-number|cc-csc|cc-exp|cc-name|card-number|numero de tarjeta|cvv|cvc)(?![\p{L}\p{N}])|type=["']?password/u;
+
+/** True when the text reads like money: used to decide what a prompt should show. */
+export function isPaymentText(text: string): boolean {
+  return PAYMENT_WORD.test(text) || PAYMENT_WORD_ES.test(fold(text));
+}
 
 export function isEffectText(text: string): boolean {
   return EFFECT_WORD.test(fold(text));

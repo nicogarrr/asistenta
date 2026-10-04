@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { BrowserService } from '../browser/service.js';
 import { log, logHost } from '../log.js';
+import { isPaymentText } from '../permissions.js';
 
 /**
  * The browser tool.
@@ -299,7 +300,11 @@ export function createBrowserTool(
       const action = String(args.action ?? '');
       const selector = typeof args.selector === 'string' ? args.selector : '';
       if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
-      return service.describeTarget(scopeOf(), selector);
+      const target = await service.describeTarget(scopeOf(), selector);
+      // Only for targets that read like money: the confirmation shows what is being paid.
+      if (!isPaymentText(target)) return target;
+      const summary = await service.summarisePage(scopeOf()).catch(() => '');
+      return summary ? `${target}\nRESUMEN DE LA PÁGINA:\n${summary}` : target;
     },
     execute: async (_id, args) => {
       const scope = scopeOf();

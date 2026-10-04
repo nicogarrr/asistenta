@@ -55,3 +55,31 @@ export async function describeTarget(
     return UNREADABLE_TARGET;
   }
 }
+
+/**
+ * The lines of the page that a person deciding on a payment would look at: totals,
+ * amounts, delivery address. Taken from the page's own text, capped, and only read for
+ * targets that look like money so ordinary clicks stay cheap.
+ */
+export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string> {
+  try {
+    const lines = await page.evaluate(() => {
+      const re =
+        /(€|\beur\b|total|subtotal|env[ií]o|entrega|direcci[oó]n|calle|avenida|plaza|c\/)/i;
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const raw of document.body.innerText.split('\n')) {
+        const line = raw.replace(/\s+/g, ' ').trim();
+        if (!line || line.length > 110 || !re.test(line) || seen.has(line)) continue;
+        seen.add(line);
+        out.push(line);
+        if (out.length >= 10) break;
+      }
+      return out;
+    });
+    void timeoutMs;
+    return lines.join('\n');
+  } catch {
+    return '';
+  }
+}

@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { FollowupTracker } from './alerts/followups.js';
+import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
@@ -43,7 +44,7 @@ import { MemoryStore } from './memory.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
-import { Gate } from './permissions.js';
+import { BROWSER_FREE_ACTIONS, Gate } from './permissions.js';
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
 import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
 import {
@@ -1053,7 +1054,14 @@ async function serveCommand(): Promise<number> {
       // de herramientas solo cambia cuáles se listan; browser/media siguen pasando por
       // el gate una a una.
       allow: THREAD_ALLOW_TOOLS,
-      allowActions: ['computer:screenshot', 'computer:move'],
+      allowActions: [
+        'computer:screenshot',
+        'computer:move',
+        // Navigating and operating a page does not ask: the gate still asks first for
+        // money, credential fields and sending/deleting/booking elements, and exec_js
+        // (arbitrary code) is not listed.
+        ...BROWSER_FREE_ACTIONS,
+      ],
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
       // be switched on by a stray script or a leftover shell history entry.
       fullControl,
@@ -1071,7 +1079,7 @@ async function serveCommand(): Promise<number> {
         const id = randomUUID();
         log.info('approval requested', { thread: threadKey, tool: call.tool, reason });
         holder.agent?.setAwaitingApproval(true);
-        const question = `¿Permito ${call.tool}?\n${reason}`;
+        const question = formatApprovalQuestion(call, reason);
         try {
           const choice = await telegram.offerApproval(id, chatId, question, {
             askScope: true,
