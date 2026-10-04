@@ -80,8 +80,13 @@ export interface ChallengeSignals {
 
 export type ChallengeKind = 'cloudflare' | 'recaptcha' | 'hcaptcha' | 'verify_human';
 
+// Anchored to the start of the title: a real interstitial is titled "Just a moment...",
+// "Un momento...", "Attention Required! | Cloudflare". An article or product called
+// "Un momento para recordar" or "Security check-in tips" is not one.
 const CHALLENGE_TITLE =
-  /just a moment|un momento|attention required|verifying you are human|checking your browser|security check|comprobaci[oó]n de seguridad/i;
+  /^\s*(?:just a moment|un momento|un instante|attention required|verifying you are human|checking your browser|security check\b(?!-)|comprobaci[oó]n de seguridad)\s*(?:\.{2,}|…|!|\||-|–|$)/i;
+/** A challenge page is nearly empty; a long page that merely mentions captchas is content. */
+const CHALLENGE_TEXT_MAX_LEN = 800;
 const CHALLENGE_TEXT =
   /verify you are human|verifying you are human|verifica que eres (?:un )?humano|are you a robot|i'?m not a robot|no soy un robot|press (?:&|and) hold|unusual traffic|tr[aá]fico inusual|complete the security check|checking if the site connection is secure/i;
 
@@ -98,7 +103,11 @@ export function classifyChallenge(sig: ChallengeSignals): ChallengeKind | null {
   const text = sig.text.slice(0, 3000);
   const frames = sig.frames.map((f) => f.toLowerCase());
   const titled = CHALLENGE_TITLE.test(sig.title);
-  const worded = CHALLENGE_TEXT.test(text);
+  const captchaFrame = frames.some((f) =>
+    /challenges\.cloudflare\.com|recaptcha|hcaptcha\.com/.test(f),
+  );
+  const worded =
+    CHALLENGE_TEXT.test(text) && (sig.text.length <= CHALLENGE_TEXT_MAX_LEN || captchaFrame);
   const cloudflareFrame = frames.some((f) => f.includes('challenges.cloudflare.com'));
   if (cloudflareFrame && (titled || worded)) return 'cloudflare';
   if (titled && /cloudflare|cf-chl|ray id/i.test(text)) return 'cloudflare';

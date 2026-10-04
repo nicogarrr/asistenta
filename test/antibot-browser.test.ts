@@ -57,6 +57,32 @@ describe('classifyChallenge', () => {
     );
   });
 
+  it('does not flag articles that talk about captchas or have "un momento" in the title', () => {
+    const long = `${'Lorem ipsum dolor sit amet. '.repeat(60)} Cómo saber si eres un humano: verifica que eres un humano.`;
+    expect(
+      classifyChallenge({ ...base, title: 'Un momento para recordar - Blog', text: long }),
+    ).toBeNull();
+    expect(
+      classifyChallenge({ ...base, title: 'Cómo funciona un captcha', text: long }),
+    ).toBeNull();
+    expect(
+      classifyChallenge({ ...base, title: 'Security check-in tips', text: 'Hola' }),
+    ).toBeNull();
+  });
+
+  it('still flags the short real interstitials', () => {
+    expect(classifyChallenge({ ...base, title: 'Un momento...', text: 'Verificando' })).toBe(
+      'verify_human',
+    );
+    expect(
+      classifyChallenge({
+        ...base,
+        title: 'Attention Required! | Cloudflare',
+        text: 'Cloudflare Ray ID: 8a',
+      }),
+    ).toBe('cloudflare');
+  });
+
   it('leaves normal pages alone, including one that only embeds a widget', () => {
     expect(classifyChallenge(base)).toBeNull();
     expect(
