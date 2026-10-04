@@ -552,7 +552,8 @@ export class PersonalAgent {
         log.info('history summarised', { before: r.before, after: r.after });
       }
     } catch (err) {
-      this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;
+      // A /stop during the summary is the user's choice, not a failing model.
+      if (!this.#summaryAbort.signal.aborted) this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;
       log.warn('history summary failed; keeping the full transcript', { err: String(err) });
     }
   }
