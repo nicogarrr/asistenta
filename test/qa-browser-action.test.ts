@@ -31,6 +31,9 @@ describe('qaApproves: acciones del navegador', () => {
       'button | Book',
       'button | Contratar',
       'button | Donar 10 \u20ac',
+      'button | Buy',
+      'button | Submit order',
+      'button | Solicitar UberX',
     ]) {
       expect(qaApproves(q(el)), el).toBe(false);
     }
