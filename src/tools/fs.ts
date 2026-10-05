@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { recordAfterWrite, recordBeforeWrite } from '../undo.js';
 
 const MAX_READ_BYTES = 512 * 1024;
 /** Lines returned when the caller gives no `limit`; the result says how to page on. */
@@ -119,8 +120,10 @@ export const writeTool: AgentTool<typeof WriteParams> = {
   executionMode: 'sequential',
   execute: async (_id, args) => {
     const path = guardPath(args.path);
+    recordBeforeWrite(path);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, args.content, 'utf8');
+    recordAfterWrite(args.content);
     log.info('write', { path, bytes: args.content.length });
     return {
       content: [{ type: 'text', text: `Wrote ${args.content.length} bytes to ${args.path}` }],

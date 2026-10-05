@@ -93,6 +93,7 @@ import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile } from './tools/system.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
+import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
 import {
   initVault,
@@ -865,6 +866,7 @@ async function serveCommand(): Promise<number> {
    * WAL so the four stores can share the one connection without locking each
    * other out mid-turn.
    */
+  setUndoDir(join(paths.state, 'undo'));
   const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
   memoryDb.exec('PRAGMA journal_mode = WAL');
   memoryDb.exec('PRAGMA busy_timeout = 5000');
@@ -2620,6 +2622,7 @@ async function serveCommand(): Promise<number> {
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/memory - lo que recuerdo de ti',
         '/pendientes - lo que te tengo que recordar',
+        '/deshacer - repone el fichero que escribí por última vez como estaba antes',
         '/resolver <id> - marca un pendiente como resuelto',
         '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
         '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
@@ -3143,6 +3146,9 @@ async function serveCommand(): Promise<number> {
           }
           case 'memory':
             return cmdMemory(inbound);
+          case 'deshacer':
+          case 'undo':
+            return say(inbound, undoLast(), { quote: true }).then(() => {});
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);
