@@ -39,13 +39,16 @@ const MONEY =
 
 /**
  * Herramientas que QA aprueba solas (lista blanca). Cualquier otra se deniega: lo no
- * reconocido nunca se aprueba. `shell`, `computer` y similares quedan fuera a proposito.
+ * reconocido nunca se aprueba. `shell`, `computer` y similares quedan fuera a proposito. `write` entra porque la sandbox es un
+ * contenedor aislado y la herramienta ya queda contenida al directorio de trabajo (guardPath);
+ * en produccion sigue pidiendo permiso, esto solo cambia al aprobador de pruebas.
  */
 export const QA_SAFE_TOOLS: ReadonlySet<string> = new Set([
   'download',
   'fetch',
   'read',
   'list',
+  'write',
   'memory',
   'opengym',
   'renfe',
