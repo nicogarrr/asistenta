@@ -23,7 +23,7 @@ const exec = promisify(execFile);
 /**
  * The environment a candidate's code runs with. The candidate is code a model wrote, run by
  * vitest and tsx, so it gets the minimum to run and nothing that opens an account: no API
- * keys, no tokens, no vault or state paths.
+ * keys, no tokens, no inherited HOME (it does not stop reading absolute paths: same OS user).
  */
 const SAFE_ENV = [
   'PATH',

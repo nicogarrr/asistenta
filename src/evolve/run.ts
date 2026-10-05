@@ -55,8 +55,8 @@ export function readHypotheses(stateDir: string): string[] {
 /**
  * What the proposer inherits: the minimum to run, plus ONLY the variables the operator names
  * in PA_EVOLVE_PROPOSER_PASS (comma-separated, e.g. the model key it needs). Not the whole
- * environment, and not the user's home, so the proposer cannot read the vault or other keys
- * by accident. The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
+ * environment, and not the user's home, so it does not inherit HOME or other keys
+ * (it can still open absolute paths: same OS user). The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
  * untrusted input to the proposer; the guard checks what it writes, not what it was told.
  */
 export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
