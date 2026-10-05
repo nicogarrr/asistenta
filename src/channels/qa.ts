@@ -35,7 +35,16 @@ export function isQaChatId(chatId: string | number): boolean {
  * encima de la lista blanca, no la defensa principal: ante la duda se deniega.
  */
 const MONEY =
-  /\b(pay\w*|paga\w*|pago\w*|purchas\w*|buy\w*|bought|checkout|subscri\w*|suscri\w*|compra\w*|tarjet\w*|card\w*|credit\w*|debit\w*|transfer\w*|bizum|paypal|factur\w*|invoice\w*|billing|iban|reserv\w*|book\w*|order\w*|pedid\w*|pedir|cobr\w*|charge\w*|euros?|eur|usd|gbp|dolar\w*|dollar\w*|libras?|glovo|uber|cabify|bolt|justeat|amazon|wallet|cripto\w*|crypto\w*|bitcoin|cart\w*|carrito\w*|basket\w*|abono\w*|donat\w*|gift\w*)\b|[$\u00a3\u20ac]/;
+  /\b(pay\w*|paga\w*|pago\w*|purchas\w*|buy\w*|bought|checkout|subscri\w*|suscri\w*|compra\w*|tarjet\w*|card\w*|credit\w*|debit\w*|transfer\w*|bizum|paypal|factur\w*|invoice\w*|billing|iban|reserv\w*|book\w*|order\w*|pedid\w*|pedir|cobr\w*|charge\w*|euros?|eur|usd|gbp|dolar\w*|dollar\w*|libras?|wallet|cripto\w*|crypto\w*|bitcoin|abono\w*|donat\w*|gift\w*)\b|[$\u00a3\u20ac]/;
+
+/**
+ * Pagos de verdad, para las preguntas de dominio ("¿Abro x?"). Abrir un sitio nunca paga:
+ * el nombre del comercio (Glovo, Uber, Booking...) o la palabra "reservar" en el dominio no
+ * deben cerrar la puerta, o ningun flujo de compra llega a probarse. Solo se deniega si la
+ * propia pregunta habla de pagar.
+ */
+const PAYMENT_STRICT =
+  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card\w*|credit\w*|debit\w*|paypal|bizum|iban|cvv|cvc|wallet|transfer\w*|billing|factur\w*)\b/;
 
 /**
  * Herramientas que QA aprueba solas (lista blanca). Cualquier otra se deniega: lo no
@@ -81,6 +90,9 @@ export function looksLikeMoney(call: { tool?: string } | null, question: string)
  * herramienta (o es la pregunta de dominio del navegador) Y no huele a dinero.
  */
 export function qaApproves(question: string): boolean {
+  // Orden del dueño (nota de voz del 4 oct, relayada): en pruebas se abren todas las puertas; el dinero se para en el
+  // ultimo paso, no antes. El guardia de SSRF y las aprobaciones destructivas no pasan por aqui.
+  if (question.startsWith('\u00bfAbro ')) return !PAYMENT_STRICT.test(normalise(question));
   if (looksLikeMoney(null, question)) return false;
   const tool = toolOfQuestion(question);
   if (tool) return QA_SAFE_TOOLS.has(tool.split(':')[0] ?? tool);
