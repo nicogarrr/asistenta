@@ -10,6 +10,8 @@
  * testable without a token or a network.
  */
 
+import { log } from '../log.js';
+
 /** Appended when a reply is cut short, so the user knows more is available. */
 const DETAIL_HINT = 'Dime "más" para el detalle.';
 
@@ -36,6 +38,61 @@ const DEFAULT_MAX_CHARS = 300;
  * trailer and still travels as a single bubble.
  */
 const DEFAULT_HARD_MAX_CHARS = 3500;
+
+const EN_WORDS = new Set(
+  "the a an i i'll i've i'm it's is are was were be to of and or but not don't isn't doesn't can't let me my this that these those with for on in at by from as so if then now going need needs try trying tried stuck loop real actually think stop reset start starting checking check skill tool don't have has had will would should could here there what how why which about into out up down just directly first next again already still".split(
+    ' ',
+  ),
+);
+const ES_WORDS = new Set(
+  'el la los las un una unos unas de del que y o pero no es son fue ser en con por para al se su sus lo le les mi tu me te nos como mas más ya hay he ha han has este esta estos estas ese esa pude puedo quiero tengo dime'.split(
+    ' ',
+  ),
+);
+
+/** True when a sentence is English reasoning rather than Spanish prose. */
+function isEnglishSentence(sentence: string): boolean {
+  if (/[áéíóúñ¿¡]/i.test(sentence)) return false;
+  const words = sentence.toLowerCase().match(/[a-z']+/g) ?? [];
+  if (words.length < 4) return false;
+  let en = 0;
+  let es = 0;
+  for (const w of words) {
+    if (EN_WORDS.has(w)) en++;
+    if (ES_WORDS.has(w)) es++;
+  }
+  return en >= 2 && en > es * 2 && MONOLOGUE_MARKER.test(sentence);
+}
+
+/**
+ * Only first-person reasoning is dropped: plain English content (a product title, "out of
+ * stock", a quoted web result) can be the real answer and must reach the user untouched.
+ */
+const MONOLOGUE_MARKER =
+  /\b(?:I\x27ll|I\x27ve|I\x27m|I\x27d|I don\x27t|I do not|I need to|I should|I can\x27t|I will|I have been|let me|let\x27s|going to|stuck|loop|bogged|my approach|the skill)\b/i;
+
+/**
+ * Drop English reasoning sentences that leaked into a Spanish reply ("I'll start by
+ * checking...", "Let me go directly to..."). Leaked chunks arrive glued to the next
+ * sentence without a space, even mid-word, so a lowercase-to-Capital splice followed
+ * by an English-looking run also counts as a boundary. Never empties the reply: when
+ * nothing Spanish would remain, or the text carries code, it is returned untouched.
+ */
+export function dropEnglishMonologue(text: string): string {
+  if (text.includes('```')) return text;
+  const marked = text.replace(/([a-záéíóúñ])(?=[A-Z][a-z']+ [A-Za-z']+ [A-Za-z']+ )/g, '$1\uE000');
+  const parts = marked.split(/(?<=[.!?])\s*(?=[A-ZÁÉÍÓÚÑ¿¡])|\uE000/);
+  if (parts.length < 2) return text;
+  const dropped = parts.filter((part) => isEnglishSentence(part));
+  const kept = parts.filter((part) => !dropped.includes(part));
+  if (dropped.length === 0 || kept.length === 0) return text;
+  for (const part of dropped)
+    log.info('monologo en ingles descartado', { frase: part.trim().slice(0, 120) });
+  return kept
+    .map((part) => part.trim())
+    .join(' ')
+    .trim();
+}
 
 /** ``` or ~~~ fences, with an optional language tag. */
 const FENCE_LINE = /^\s*(?:```+|~~~+)\s*\w*\s*$/;
@@ -65,6 +122,7 @@ const TABLE_ROW = /^\s*\|.+\|\s*$/;
  * never rewritten: they are content, not markup.
  */
 export function cleanForTelegram(text: string): string {
+  text = dropEnglishMonologue(text);
   const out: string[] = [];
   let inFence = false;
   for (const rawLine of text.replace(/\r\n?/g, '\n').split('\n')) {
