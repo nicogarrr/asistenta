@@ -94,7 +94,7 @@ const BROWSER_ACTION_HEADER = '\u00bfPermito esta acci\u00f3n en el navegador?';
  * bloquear escribir ni anadir a la cesta. Una cesta no es un pago.
  */
 const PAYMENT_STEP =
-  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+(?:your\s+)?order|order\s+now|(?:hacer|enviar|tramitar)\s+(?:el\s+)?pedido|realizar\s+(?:el\s+)?pedido|pedir\w*|solicitar\s+(?:viaje|ride)|reserv\w*|book|book\s+now|contrat\w*|donar|donat\w*|finalizar\w*|confirm\w*|suscrib\w*|subscribe)\b/;
+  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+(?:your\s+)?order|order\s+now|(?:hacer|enviar|tramitar)\s+(?:el\s+)?pedido|realizar\s+(?:el\s+)?pedido|pedir\w*|reserv\w*|book|book\s+now|buy|submit\s+order|solicitar\s+\w+|contrat\w*|donar|donat\w*|finalizar\w*|confirm\w*|suscrib\w*|subscribe)\b/;
 
 function qaApprovesBrowserAction(question: string): boolean {
   const lines = normalise(question).split('\n');
