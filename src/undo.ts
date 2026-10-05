@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -7,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 
 /**
  * Deshacer: antes de que la herramienta `write` toque un fichero, guarda cómo estaba.
@@ -27,6 +28,15 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 let undoDir: string | undefined;
 let seq = 0;
+let lastDir: string | undefined;
+
+const sha = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
+
+/** Misma frontera que la herramienta write: nada fuera del directorio de trabajo. */
+function insideCwd(path: string): boolean {
+  const rel = relative(process.cwd(), path);
+  return !(rel.startsWith('..') || isAbsolute(rel));
+}
 
 export function setUndoDir(dir: string | undefined): void {
   undoDir = dir;
@@ -37,6 +47,8 @@ interface Meta {
   existed: boolean;
   at: string;
   tooBig?: boolean;
+  /** Hash de lo que escribió `write`: si el fichero ya no coincide, alguien lo tocó después. */
+  writtenSha?: string;
 }
 
 /** Llamar justo antes de escribir. Nunca lanza: deshacer no puede romper una escritura. */
@@ -47,6 +59,7 @@ export function recordBeforeWrite(path: string, now: Date = new Date()): void {
     const tooBig = existed && statSync(path).size > MAX_FILE_BYTES;
     const id = `${String(now.getTime()).padStart(13, '0')}-${String(seq++ % 1000).padStart(3, '0')}`;
     const dir = join(undoDir, id);
+    lastDir = dir;
     mkdirSync(dir, { recursive: true });
     const meta: Meta = { path, existed, at: now.toISOString(), ...(tooBig ? { tooBig } : {}) };
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta), 'utf8');
@@ -57,6 +70,19 @@ export function recordBeforeWrite(path: string, now: Date = new Date()): void {
     }
   } catch {
     // Mejor una escritura sin copia que una escritura que falla por la copia.
+  }
+}
+
+/** Llamar justo después de escribir: anota el hash de lo escrito para detectar cambios posteriores. */
+export function recordAfterWrite(content: string): void {
+  if (!undoDir || !lastDir) return;
+  try {
+    const f = join(lastDir, 'meta.json');
+    const meta = JSON.parse(readFileSync(f, 'utf8')) as Meta;
+    meta.writtenSha = sha(content);
+    writeFileSync(f, JSON.stringify(meta), 'utf8');
+  } catch {
+    // Sin hash, /deshacer se niega a tocar el fichero (ver undoLast).
   }
 }
 
@@ -74,6 +100,17 @@ export function undoLast(): string {
     rmSync(dir, { recursive: true, force: true });
     return 'La última copia estaba dañada y la he descartado. Prueba otra vez.';
   }
+  if (!insideCwd(meta.path)) {
+    return `No toco ${meta.path}: queda fuera del directorio de trabajo.`;
+  }
+  // Si el fichero ya no es lo que escribió `write`, reponerlo pisaría trabajo posterior.
+  const now =
+    existsSync(meta.path) && statSync(meta.path).isFile() ? readFileSync(meta.path) : null;
+  const expected = meta.writtenSha;
+  const changed = expected === undefined ? true : now !== null && sha(now) !== expected;
+  if (changed) {
+    return `No toco ${meta.path}: ha cambiado desde mi última escritura y deshacer pisaría ese cambio. Revísalo tú o dime qué hacer.`;
+  }
   if (meta.tooBig) {
     rmSync(dir, { recursive: true, force: true });
     return `No pude guardar la versión anterior de ${meta.path} (más de 5 MB), así que no puedo reponerla.`;
@@ -84,7 +121,7 @@ export function undoLast(): string {
     rmSync(dir, { recursive: true, force: true });
     return `He repuesto ${meta.path} a como estaba antes de la última escritura (${meta.at.slice(0, 16).replace('T', ' ')} UTC). Solo deshago lo que se escribió con la herramienta de ficheros; lo hecho por la shell no.`;
   }
-  rmSync(meta.path, { force: true });
+  if (now !== null) rmSync(meta.path, { force: true });
   rmSync(dir, { recursive: true, force: true });
   return `Ese fichero no existía antes: he borrado ${meta.path}, que se creó en la última escritura (${meta.at.slice(0, 16).replace('T', ' ')} UTC).`;
 }

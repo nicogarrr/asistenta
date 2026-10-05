@@ -2,14 +2,20 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { recordBeforeWrite, setUndoDir, undoLast } from '../src/undo.js';
+import { recordAfterWrite, recordBeforeWrite, setUndoDir, undoLast } from '../src/undo.js';
 
 let work = '';
+let cwd = '';
 beforeEach(() => {
+  cwd = process.cwd();
   work = mkdtempSync(join(tmpdir(), 'undo-'));
+  process.chdir(work);
   setUndoDir(join(work, 'undo'));
 });
-afterEach(() => setUndoDir(undefined));
+afterEach(() => {
+  setUndoDir(undefined);
+  process.chdir(cwd);
+});
 
 describe('deshacer la última escritura', () => {
   it('repone el contenido anterior de un fichero sobrescrito', () => {
@@ -17,6 +23,7 @@ describe('deshacer la última escritura', () => {
     writeFileSync(f, 'original');
     recordBeforeWrite(f);
     writeFileSync(f, 'estropeado');
+    recordAfterWrite('estropeado');
     expect(undoLast()).toContain('He repuesto');
     expect(readFileSync(f, 'utf8')).toBe('original');
   });
@@ -25,6 +32,7 @@ describe('deshacer la última escritura', () => {
     const f = join(work, 'nuevo.txt');
     recordBeforeWrite(f);
     writeFileSync(f, 'hola');
+    recordAfterWrite('hola');
     expect(undoLast()).toContain('no existía');
     expect(existsSync(f)).toBe(false);
   });
@@ -34,8 +42,10 @@ describe('deshacer la última escritura', () => {
     writeFileSync(f, 'v1');
     recordBeforeWrite(f);
     writeFileSync(f, 'v2');
+    recordAfterWrite('v2');
     recordBeforeWrite(f);
     writeFileSync(f, 'v3');
+    recordAfterWrite('v3');
     undoLast();
     expect(readFileSync(f, 'utf8')).toBe('v2');
     undoLast();
@@ -64,5 +74,37 @@ describe('deshacer la última escritura', () => {
     } finally {
       process.chdir(prev);
     }
+  });
+
+  it('no pisa un fichero que cambió después de la escritura', () => {
+    const f = join(work, 'e.txt');
+    writeFileSync(f, 'original');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'de write');
+    recordAfterWrite('de write');
+    writeFileSync(f, 'trabajo posterior del usuario');
+    expect(undoLast()).toContain('ha cambiado');
+    expect(readFileSync(f, 'utf8')).toBe('trabajo posterior del usuario');
+  });
+
+  it('no borra un fichero nuevo si alguien lo editó después', () => {
+    const f = join(work, 'f.txt');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'de write');
+    recordAfterWrite('de write');
+    writeFileSync(f, 'editado');
+    expect(undoLast()).toContain('ha cambiado');
+    expect(existsSync(f)).toBe(true);
+  });
+
+  it('no toca rutas fuera del directorio de trabajo', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'undo-out-'));
+    const f = join(outside, 'g.txt');
+    writeFileSync(f, 'ajeno');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'x');
+    recordAfterWrite('x');
+    expect(undoLast()).toContain('fuera del directorio');
+    expect(readFileSync(f, 'utf8')).toBe('x');
   });
 });
