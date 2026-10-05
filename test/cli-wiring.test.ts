@@ -14,6 +14,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildContextNote,
+  capturePageIfOpen,
   followupFromMessage,
   formatNextRun,
   formatSessionHits,
@@ -256,5 +257,34 @@ describe('buildContextNote workstreams', () => {
       workstreams,
     );
     expect(note).not.toContain('solo mio');
+  });
+});
+
+describe('capturePageIfOpen (captura sin escritorio)', () => {
+  it('devuelve la imagen de la página abierta del hilo', async () => {
+    const calls: string[] = [];
+    const service = {
+      isOpen: (scope: string) => scope === 'chat:1',
+      screenshot: async (scope: string) => {
+        calls.push(scope);
+        return { data: Buffer.from('PNGDATA').toString('base64') };
+      },
+    };
+    const png = await capturePageIfOpen(service, 'chat:1');
+    expect(png?.toString()).toBe('PNGDATA');
+    expect(calls).toEqual(['chat:1']);
+  });
+
+  it('no abre nada ni fotografía si no hay página abierta', async () => {
+    let shot = 0;
+    const service = {
+      isOpen: () => false,
+      screenshot: async () => {
+        shot++;
+        return { data: '' };
+      },
+    };
+    expect(await capturePageIfOpen(service, 'chat:2')).toBeNull();
+    expect(shot).toBe(0);
   });
 });
