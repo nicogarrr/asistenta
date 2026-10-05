@@ -17,6 +17,23 @@ export function isKindleAddress(address: string): boolean {
   return /^[A-Za-z0-9._%+-]+@(kindle\.com|free\.kindle\.com|kindle\.cn)$/i.test(address.trim());
 }
 
+/**
+ * Title as shown in the approval text. The title comes from a web catalogue, so it can
+ * carry line breaks, quotes or invisible characters that would make the question look
+ * like something else ("...\nAprobado: si"). One line, no control or bidi characters,
+ * no double quotes, capped.
+ */
+export function approvalTitle(title: string): string {
+  const clean = title
+    .normalize('NFC')
+    .replace(/[\p{C}\p{Zl}\p{Zp}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+/gu, ' ')
+    .replace(/["\u201c\u201d\u00ab\u00bb]+/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cut = [...clean].slice(0, 100).join('');
+  return cut.length < clean.length ? `${cut}...` : cut || 'libro';
+}
+
 export function safeFilename(title: string, ext: 'epub' | 'pdf'): string {
   const base = title
     .normalize('NFD')
@@ -55,7 +72,7 @@ export async function sendToKindle(
   if (!account) return { status: 'no-mail-account' };
   const approved = await deps.requireApproval(
     'book:kindle',
-    `Enviar "${book.title}" (${book.kind.toUpperCase()}) a tu Kindle ${to}, desde ${account.address}`,
+    `Enviar "${approvalTitle(book.title)}" (${book.kind.toUpperCase()}) a tu Kindle ${to}, desde ${account.address}`,
   );
   if (!approved) return { status: 'declined' };
   const result = await deps.send(account, {
