@@ -25,7 +25,13 @@ export interface Sandbox {
 }
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim();
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    // Listing ignored files of a sandbox that carries a copy of node_modules is far over the 1 MB default (ENOBUFS).
+    maxBuffer: 256 * 1024 * 1024,
+  }).trim();
 }
 
 /** Repo root, from this file's own location: src/evolve/ -> ../.. */
