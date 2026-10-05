@@ -90,6 +90,7 @@ describe('canal de QA', () => {
       '¿Permito browser?\nview cart',
       '¿Permito shell?\nejecutar yt-dlp',
       '¿Permito computer?\nabrir una ventana',
+      '¿Permito write?\nescribir 500 USD en pagos.txt',
       '¿Permito herramienta_nueva?\nalgo',
       'texto sin formato',
     ];
@@ -97,6 +98,7 @@ describe('canal de QA', () => {
     const ok = [
       '¿Permito download?\nDescargar un PDF de w3.org',
       '¿Permito renfe?\nBuscar trenes Madrid-Barcelona',
+      '¿Permito write?\nCrear pruebas/hola.txt',
       '¿Abro www.renfe.com?\nBuscar horarios',
     ];
     for (const q of ok) expect(qaApproves(q), q).toBe(true);
