@@ -106,6 +106,14 @@ const SAUCEDEMO_PASSWORD_REASON = 'motivo: touches a password, code or card fiel
 const SAUCEDEMO_PASSWORD_ELEMENT =
   /^elemento: input \u00b7 [^@]*\bpassword\b[^@]* @@ https:\/\/www\.saucedemo\.com\/(?: [|\u00b7] [^@]*)?$/;
 
+/**
+ * Boton "Confirm" de la libreta de direcciones de Glovo (data-test address-book-confirm-button):
+ * confirma la direccion de entrega, no la compra. Solo ese id en glovoapp.com; el resto de
+ * "Confirm" sigue denegado.
+ */
+const ADDRESS_CONFIRM_ELEMENT =
+  /^elemento: button [\u00b7|] button [\u00b7|] confirm [\u00b7|] address-book-confirm-button @@ https:\/\/glovoapp\.com\//;
+
 function qaApprovesBrowserAction(question: string): boolean {
   const lines = normalise(question).split('\n');
   // El "Elemento" real va primero; el "Motivo" real va el ultimo. Entre medias esta
@@ -114,6 +122,7 @@ function qaApprovesBrowserAction(question: string): boolean {
   const reason = [...lines].reverse().find((l) => l.startsWith('motivo:')) ?? '';
   if (!element || !reason) return false;
   if (reason === SAUCEDEMO_PASSWORD_REASON && SAUCEDEMO_PASSWORD_ELEMENT.test(element)) return true;
+  if (ADDRESS_CONFIRM_ELEMENT.test(element)) return !PAYMENT_STEP.test(reason);
   return !PAYMENT_STEP.test(element) && !PAYMENT_STEP.test(reason);
 }
 
