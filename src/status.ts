@@ -56,6 +56,8 @@ export interface StatusInfo {
   tools: { name: string; ok: boolean; note?: string }[];
   log: LogSummary | null;
   pageWatches: number;
+  /** Recordatorios puntuales que no pude entregar y descarté (texto ya legible). */
+  droppedReminders?: string[];
 }
 
 export function formatStatus(s: StatusInfo): string {
@@ -74,5 +76,6 @@ export function formatStatus(s: StatusInfo): string {
     for (const e of s.log.recentErrors) lines.push(`- ${e}`);
   }
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);
+  for (const d of s.droppedReminders ?? []) lines.push(`No pude avisarte de: ${d}`);
   return lines.join('\n');
 }

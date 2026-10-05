@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
@@ -289,4 +291,48 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
       return reply(`Recordatorio programado para ${stamp(when)} (hora local): ${text}.`);
     },
   };
+}
+
+/**
+ * A one-time reminder that could not be delivered for an hour is dropped (see
+ * settleOneShot). The drop used to leave only a log line, so the user never learned that
+ * "avísame a las 9" had not happened. It is written down here and /estado shows it.
+ */
+export function recordDroppedReminder(file: string, routineName: string, now = Date.now()): void {
+  const due = dueOfOneShot(routineName);
+  const label = routineName
+    .replace(REMINDER_ONCE_PREFIX, '')
+    .replace(/@\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '')
+    .trim()
+    .slice(0, 120);
+  const when = due
+    ? ` (era para el ${due.getDate()}/${due.getMonth() + 1} a las ${String(due.getHours()).padStart(2, '0')}:${String(due.getMinutes()).padStart(2, '0')})`
+    : '';
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify({ at: now, text: `${label}${when}` })}\n`, 'utf8');
+  } catch {
+    // The drop is already logged; failing to note it must not break the scheduler.
+  }
+}
+
+/** Dropped reminders from the last `days` days, newest last, at most `max`. */
+export function readDroppedReminders(file: string, now = Date.now(), days = 7, max = 5): string[] {
+  let raw = '';
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const line of raw.split('\n')) {
+    try {
+      const r = JSON.parse(line) as { at?: number; text?: string };
+      if (typeof r.at === 'number' && typeof r.text === 'string' && now - r.at <= days * 86_400_000)
+        out.push(r.text);
+    } catch {
+      // half-written line
+    }
+  }
+  return out.slice(-max);
 }

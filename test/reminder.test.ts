@@ -212,3 +212,33 @@ describe('reminder tool', () => {
     expect(store.listRoutines('tg:1:2')).toHaveLength(0);
   });
 });
+
+describe('dropped reminders are surfaced', () => {
+  it('se anotan y /estado los puede leer; los viejos no salen', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { formatStatus } = await import('../src/status.js');
+    const { readDroppedReminders, recordDroppedReminder } = await import(
+      '../src/tools/reminder.js'
+    );
+    const file = join(mkdtempSync(join(tmpdir(), 'dr-')), 'dropped.jsonl');
+    expect(readDroppedReminders(file)).toEqual([]);
+    const now = Date.parse('2026-10-05T10:00:00Z');
+    recordDroppedReminder(file, 'recordatorio-1: apagar el horno @2026-10-05 09:30', now);
+    recordDroppedReminder(file, 'recordatorio-1: viejo @2026-09-01 09:30', now - 20 * 86_400_000);
+    const got = readDroppedReminders(file, now);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toContain('apagar el horno');
+    const text = formatStatus({
+      version: 'x',
+      node: 'v',
+      uptimeMs: 1,
+      tools: [],
+      log: null,
+      pageWatches: 0,
+      droppedReminders: got,
+    });
+    expect(text).toContain('No pude avisarte de: apagar el horno');
+  });
+});
