@@ -756,6 +756,22 @@ export function wantsScreenshot(text: string): boolean {
   );
 }
 
+/**
+ * Without a desktop (a headless server) there is no screen to capture, but the
+ * thread may still have a browser page open: that page is what the user means by
+ * "pásame una captura" while a task runs in it. Null when there is nothing open, so
+ * the caller can fall back to telling the truth instead of launching a browser just
+ * to photograph a blank page.
+ */
+export async function capturePageIfOpen(
+  service: { isOpen(scope: string): boolean; screenshot(scope: string): Promise<{ data: string }> },
+  scope: string,
+): Promise<Buffer | null> {
+  if (!service.isOpen(scope)) return null;
+  const shot = await service.screenshot(scope);
+  return Buffer.from(shot.data, 'base64');
+}
+
 async function serveCommand(): Promise<number> {
   ensureDirs();
   const config = loadConfig();
@@ -1515,8 +1531,28 @@ async function serveCommand(): Promise<number> {
    * it. That is why every step is caught and the caller only ever sees a promise that
    * resolves regardless.
    */
-  const sendScreenShot = async (inbound: Inbound, caption: string): Promise<boolean> => {
-    if (!desktop) return false;
+  const sendScreenShot = async (
+    inbound: Inbound,
+    caption: string,
+    threadKey?: string,
+  ): Promise<boolean> => {
+    if (!desktop) {
+      // Headless: no desktop to photograph, but the page the task is working on counts.
+      const service = threadKey ? browsers.get(threadKey) : undefined;
+      if (!service || !threadKey) return false;
+      try {
+        const png = await capturePageIfOpen(service, threadKey);
+        if (!png) return false;
+        await telegram.action(inbound.chatId, 'upload_photo');
+        const sent = await telegram.sendPhotoBytes(Number(inbound.chatId), png, inbound.threadId);
+        if (!sent) return false;
+        await say(inbound, 'Así está la página del navegador ahora mismo.', { quote: true });
+        return true;
+      } catch (err) {
+        log.warn('browser page capture failed', { err });
+        return false;
+      }
+    }
     try {
       await telegram.action(inbound.chatId, 'upload_photo');
       const shot = await screen.screenshot();
@@ -2556,9 +2592,11 @@ async function serveCommand(): Promise<number> {
      * to see the machine while the agent is still working on it.
      */
     if (wantsScreenshot(inbound.text)) {
-      void sendScreenShot(inbound, 'Así está el PC ahora mismo.').catch((err: unknown) => {
-        log.warn('auto screenshot failed', { err });
-      });
+      void sendScreenShot(inbound, 'Así está el PC ahora mismo.', thread.key).catch(
+        (err: unknown) => {
+          log.warn('auto screenshot failed', { err });
+        },
+      );
     }
 
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
