@@ -99,6 +99,7 @@ describe('canal de QA', () => {
       '¿Permito download?\nDescargar un PDF de w3.org',
       '¿Permito renfe?\nBuscar trenes Madrid-Barcelona',
       '¿Permito write?\nCrear pruebas/hola.txt',
+      '¿Permito reminder?\nRecordatorio: apagar el horno',
       '¿Abro www.renfe.com?\nBuscar horarios',
     ];
     for (const q of ok) expect(qaApproves(q), q).toBe(true);

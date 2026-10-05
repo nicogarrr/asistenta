@@ -74,14 +74,14 @@ import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
+import { createOcrTool } from './tools/ocr.js';
+import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import {
   createReminderTool,
   isOneShotReminder,
   isReminder,
   reminderText,
 } from './tools/reminder.js';
-import { createOcrTool } from './tools/ocr.js';
-import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
 // remove. The generic browser does the same job against any site.

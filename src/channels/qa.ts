@@ -49,6 +49,7 @@ export const QA_SAFE_TOOLS: ReadonlySet<string> = new Set([
   'read',
   'list',
   'write',
+  'reminder',
   'memory',
   'opengym',
   'renfe',
