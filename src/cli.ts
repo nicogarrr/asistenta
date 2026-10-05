@@ -121,6 +121,7 @@ Usage:
   pa vault rm <k>         delete a secret
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
+  pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
   pa doctor               check the environment
 `;
 
@@ -148,6 +149,8 @@ export async function main(argv: string[]): Promise<number> {
       return openGymCommand(rest);
     case 'doctor':
       return doctorCommand();
+    case 'evolve':
+      return evolveCommand(rest);
     case 'chat':
       return chatCommand();
     case 'serve':
@@ -162,6 +165,31 @@ export async function main(argv: string[]): Promise<number> {
     default:
       process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
       return 2;
+  }
+}
+
+/**
+ * One self-improvement cycle, run by hand on a clean git checkout (the VM, a laptop).
+ *
+ * `/evolucion ahora` does the same from Telegram inside the daemon. This exists because the
+ * loop needs the repo (it works in git worktrees), which a packaged container does not have.
+ * Nothing it finds is merged: a promoted attempt is a branch and a patch for a normal PR.
+ */
+async function evolveCommand(args: string[]): Promise<number> {
+  ensureDirs();
+  const i = args.indexOf('--idea');
+  const idea = i >= 0 ? args.slice(i + 1).join(' ') : '';
+  try {
+    if (idea.trim()) addHypothesis(paths.state, idea);
+    const out = await runEvolution({
+      stateDir: paths.state,
+      log: (m) => process.stderr.write(`${m}\n`),
+    });
+    process.stdout.write(`${out.text}\n`);
+    return out.report || !process.env.PA_EVOLVE_PROPOSER ? 0 : 1;
+  } catch (err) {
+    process.stderr.write(`evolve: ${(err as Error).message}\n`);
+    return 1;
   }
 }
 
