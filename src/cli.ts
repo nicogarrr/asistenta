@@ -27,7 +27,7 @@ import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
-import { buildNowNote } from './datecontext.js';
+import { applyConfiguredTimeZone, buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
@@ -780,6 +780,7 @@ export async function capturePageIfOpen(
 }
 
 async function serveCommand(): Promise<number> {
+  applyConfiguredTimeZone();
   ensureDirs();
   const config = loadConfig();
   const desktop = desktopEnabled();

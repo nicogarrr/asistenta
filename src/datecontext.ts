@@ -19,6 +19,27 @@ export function localTimeZone(env: NodeJS.ProcessEnv = process.env): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+/**
+ * Makes the process clock agree with the zone the model is told about.
+ *
+ * `<now>` is built in `localTimeZone()` (PA_TIMEZONE), but croner, `new Date(y, m, d, h)`
+ * and the reminder tool all read the process zone. On a server in UTC with
+ * PA_TIMEZONE=Europe/Madrid a reminder for "11:42" fired at 11:42 UTC, two hours late.
+ * Setting TZ once at start-up (Node re-reads it at runtime) keeps every consumer on the
+ * same zone. Returns the zone applied, or null when PA_TIMEZONE is unset or invalid.
+ */
+export function applyConfiguredTimeZone(env: NodeJS.ProcessEnv = process.env): string | null {
+  const configured = env.PA_TIMEZONE?.trim();
+  if (!configured) return null;
+  try {
+    new Intl.DateTimeFormat('es-ES', { timeZone: configured });
+  } catch {
+    return null;
+  }
+  env.TZ = configured;
+  return configured;
+}
+
 interface LocalParts {
   year: number;
   month: number;
