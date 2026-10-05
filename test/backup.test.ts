@@ -59,4 +59,24 @@ describe('copia de seguridad nocturna', () => {
     expect(isBackupDue(new Date(2026, 9, 5, 15, 0), last)).toBe(false);
     expect(isBackupDue(new Date(2026, 9, 6, 3, 5), last)).toBe(true);
   });
+
+  it('un fallo a medias no pierde la copia buena ni deja una parcial', () => {
+    const dir = stateWithData();
+    const day = new Date(2026, 9, 5, 3);
+    const ok = runBackup({ stateDir: dir, now: day });
+    writeFileSync(join(dir, 'roto.db'), 'esto no es sqlite');
+    expect(() => runBackup({ stateDir: dir, now: day })).toThrow();
+    expect(readdirSync(join(dir, 'backups'))).toEqual(['2026-10-05']);
+    const copy = new DatabaseSync(join(ok.dir, 'memory.db'));
+    expect((copy.prepare('SELECT v FROM t').get() as { v: string }).v).toBe('hola');
+    copy.close();
+  });
+
+  it('PA_BACKUP_DIR: las copias van a otra carpeta', () => {
+    const dir = stateWithData();
+    const other = mkdtempSync(join(tmpdir(), 'bk-other-'));
+    const r = runBackup({ stateDir: dir, destDir: other, now: new Date(2026, 9, 5, 3) });
+    expect(r.dir).toBe(join(other, '2026-10-05'));
+    expect(existsSync(join(dir, 'backups'))).toBe(false);
+  });
 });

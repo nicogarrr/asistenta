@@ -2111,12 +2111,19 @@ async function serveCommand(): Promise<number> {
     await runEvolveCycle(chatId);
   };
 
-  /** Copia local diaria del estado (bases de datos y memoria), las últimas 7. */
-  const backupIfDue = (): void => {
+  /**
+   * Copia diaria del estado, las últimas 7. Solo cuenta como hecha si terminó bien: un
+   * fallo se reintenta en el siguiente tick (10 min) y se AVISA al usuario una vez al día,
+   * porque una copia que falla en silencio es peor que no tenerla.
+   */
+  const backupIfDue = async (chatId: string): Promise<void> => {
     if (!isBackupDue(new Date(), weeklyState.lastSent('backup'))) return;
-    weeklyState.markSent('backup', Date.now());
     try {
-      const r = runBackup({ stateDir: paths.state });
+      const r = runBackup({
+        stateDir: paths.state,
+        destDir: process.env.PA_BACKUP_DIR || undefined,
+      });
+      weeklyState.markSent('backup', Date.now());
       log.info('backup done', {
         dir: r.dir,
         databases: r.databases.length,
@@ -2124,6 +2131,16 @@ async function serveCommand(): Promise<number> {
       });
     } catch (err) {
       log.warn('backup failed', { err });
+      if (Date.now() - weeklyState.lastSent('backup-aviso') < 20 * 3_600_000) return;
+      weeklyState.markSent('backup-aviso', Date.now());
+      await telegram
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId,
+          text: `No he podido hacer la copia de seguridad de hoy (${(err as Error).message}). Lo reintento en unos minutos.`,
+        })
+        .catch((e: unknown) => log.warn('backup notice failed', { e }));
     }
   };
 
@@ -2163,7 +2180,7 @@ async function serveCommand(): Promise<number> {
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
-      backupIfDue();
+      if (first !== undefined) void backupIfDue(String(first));
     },
     10 * 60 * 1000,
   );

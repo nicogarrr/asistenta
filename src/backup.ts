@@ -1,13 +1,16 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Copia de seguridad nocturna del estado de Asistenta (bases de datos y memoria).
  *
- * Todo vive en un solo directorio y se pierde junto: un disco roto o un borrado por
- * error se llevan la memoria entera. Una copia diaria local, con las últimas 7, cuesta
- * unos KB y permite volver atrás. No copia el navegador, los modelos ni las capturas
+ * Todo vive en un solo directorio y se pierde junto: un borrado por error o una base
+ * corrupta se llevan la memoria entera. Una copia diaria, con las últimas 7, cuesta unos
+ * KB y permite volver atrás. Por defecto va al mismo disco (state/backups): eso NO protege
+ * de un disco roto ni de perder el PC; para eso `PA_BACKUP_DIR` apunta a otro disco o a
+ * una carpeta sincronizada. Para restaurar: parar Asistenta y copiar los .db y carpetas
+ * de la fecha elegida encima del directorio de estado. No copia el navegador, los modelos ni las capturas
  * (pesan y se regeneran) ni el vault: un duplicado del vault con la misma máquina no
  * protege nada y sí multiplica donde viven los secretos.
  */
@@ -43,26 +46,43 @@ export interface BackupResult {
   pruned: string[];
 }
 
-export function runBackup(opts: { stateDir: string; now?: Date; keep?: number }): BackupResult {
+export function runBackup(opts: {
+  stateDir: string;
+  /** Raíz de las copias. Por defecto `<stateDir>/backups`. */
+  destDir?: string;
+  now?: Date;
+  keep?: number;
+}): BackupResult {
   const now = opts.now ?? new Date();
   const keep = Math.max(1, opts.keep ?? KEEP_DEFAULT);
-  const root = join(opts.stateDir, 'backups');
+  const root = opts.destDir ?? join(opts.stateDir, 'backups');
   const dir = join(root, dayStamp(now));
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+  // Se copia a una carpeta temporal y solo al terminar sustituye a la del día: un fallo
+  // a medias no pierde la copia buena anterior ni deja una parcial contando como copia.
+  const tmp = `${dir}.tmp`;
+  mkdirSync(root, { recursive: true });
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp, { recursive: true });
 
   const databases: string[] = [];
-  for (const name of readdirSync(opts.stateDir)) {
-    if (!name.endsWith('.db')) continue;
-    copyDb(join(opts.stateDir, name), join(dir, name));
-    databases.push(name);
-  }
   const copiedDirs: string[] = [];
-  for (const name of ['memory', 'snapshot', 'skills']) {
-    const from = join(opts.stateDir, name);
-    if (!existsSync(from)) continue;
-    cpSync(from, join(dir, name), { recursive: true });
-    copiedDirs.push(name);
+  try {
+    for (const name of readdirSync(opts.stateDir)) {
+      if (!name.endsWith('.db')) continue;
+      copyDb(join(opts.stateDir, name), join(tmp, name));
+      databases.push(name);
+    }
+    for (const name of ['memory', 'snapshot', 'skills']) {
+      const from = join(opts.stateDir, name);
+      if (!existsSync(from)) continue;
+      cpSync(from, join(tmp, name), { recursive: true });
+      copiedDirs.push(name);
+    }
+    rmSync(dir, { recursive: true, force: true });
+    renameSync(tmp, dir);
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
   }
 
   const old = readdirSync(root)
