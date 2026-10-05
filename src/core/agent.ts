@@ -951,6 +951,14 @@ export class PersonalAgent {
   }
 
   /**
+   * Añade una instrucción del usuario a la ejecución en curso (/steer). El agente la lee
+   * antes de su siguiente paso; no para ni reinicia el run.
+   */
+  steer(text: string): void {
+    this.#agent.steer({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() });
+  }
+
+  /**
    * Abort the current run. `external` marks aborts that come from outside the run
    * itself (e.g. /stop): those skip the guard finalizer, because starting a fresh
    * reporting turn after the user said stop would be doing exactly what they
