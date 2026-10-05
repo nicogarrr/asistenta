@@ -64,6 +64,7 @@ import { WindowsScreen } from './screen/windows.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
+import { steerChat } from './steer.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
@@ -2305,6 +2306,17 @@ async function serveCommand(): Promise<number> {
     );
   };
 
+  /** /steer <instrucción>: corrige lo que está haciendo ahora mismo sin pararlo. */
+  const cmdSteer = async (inbound: Inbound, args: string): Promise<void> => {
+    const r = steerChat(threads.values(), chatKey(inbound), args);
+    const text = r.error
+      ? r.error
+      : r.sent === 0
+        ? 'No hay nada en marcha ahora mismo. Escríbemelo como un mensaje normal.'
+        : 'Anotado: lo leerá si aún le quedan pasos; si ya está terminando, repítemelo como mensaje normal.';
+    await say(inbound, text, { quote: true });
+  };
+
   const cmdStop = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -2621,6 +2633,7 @@ async function serveCommand(): Promise<number> {
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/memory - lo que recuerdo de ti',
+        '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
         '/pendientes - lo que te tengo que recordar',
         '/deshacer - repone el fichero que escribí por última vez como estaba antes',
         '/resolver <id> - marca un pendiente como resuelto',
@@ -3149,6 +3162,9 @@ async function serveCommand(): Promise<number> {
           case 'deshacer':
           case 'undo':
             return say(inbound, undoLast(), { quote: true }).then(() => {});
+          case 'steer':
+          case 'corrige':
+            return cmdSteer(inbound, command.args);
           case 'pendientes':
           case 'followups':
             return cmdFollowups(inbound);

@@ -712,32 +712,37 @@ export class PersonalAgent {
       sameToolCount: 0,
     };
     let attempt = 0;
-    await this.#compact();
-    if (this.#loadout) {
-      const added = this.#loadout.loadFor(prompt);
-      if (added.length) log.info('tools loaded for this message', { added });
-      this.#agent.state.tools = this.#loadout.active();
-    }
-    let result = await this.#attempt(prompt, images, hooks, shared);
+    try {
+      await this.#compact();
+      if (this.#loadout) {
+        const added = this.#loadout.loadFor(prompt);
+        if (added.length) log.info('tools loaded for this message', { added });
+        this.#agent.state.tools = this.#loadout.active();
+      }
+      let result = await this.#attempt(prompt, images, hooks, shared);
 
-    while (
-      attempt < this.#config.retry.attempts &&
-      !this.#externalAbort &&
-      isTransientProviderError(result.error)
-    ) {
-      attempt++;
-      const delay = retryDelay(attempt, this.#config.retry);
-      log.warn('retrying after a transient provider failure', {
-        attempt,
-        of: this.#config.retry.attempts,
-        delayMs: delay,
-        error: result.error?.slice(0, 120),
-      });
-      await sleep(delay);
-      result = await this.#attempt(prompt, images, hooks, shared);
-    }
+      while (
+        attempt < this.#config.retry.attempts &&
+        !this.#externalAbort &&
+        isTransientProviderError(result.error)
+      ) {
+        attempt++;
+        const delay = retryDelay(attempt, this.#config.retry);
+        log.warn('retrying after a transient provider failure', {
+          attempt,
+          of: this.#config.retry.attempts,
+          delayMs: delay,
+          error: result.error?.slice(0, 120),
+        });
+        await sleep(delay);
+        result = await this.#attempt(prompt, images, hooks, shared);
+      }
 
-    return { ...result, attempts: attempt + 1 };
+      return { ...result, attempts: attempt + 1 };
+    } finally {
+      // Un /steer que llegó tras el último paso no debe aplicarse al turno siguiente.
+      this.#agent.clearSteeringQueue();
+    }
   }
 
   async #attempt(
@@ -948,6 +953,14 @@ export class PersonalAgent {
       agent.state.tools = previousTools;
     }
     return summary.trim();
+  }
+
+  /**
+   * Añade una instrucción del usuario a la ejecución en curso (/steer). El agente la lee
+   * antes de su siguiente paso; no para ni reinicia el run.
+   */
+  steer(text: string): void {
+    this.#agent.steer({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() });
   }
 
   /**
