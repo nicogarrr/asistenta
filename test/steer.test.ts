@@ -1,3 +1,4 @@
+import { Agent } from '@earendil-works/pi-agent-core';
 import { describe, expect, it } from 'vitest';
 import { type SteerableThread, steerChat } from '../src/steer.js';
 
@@ -29,5 +30,17 @@ describe('/steer', () => {
     expect(steerChat(t, 'tg:1', '   ').error).toMatch(/Dime qué cambiar/);
     steerChat(t, 'tg:1', 'x'.repeat(5000));
     expect(got[0]?.length).toBe(2000);
+  });
+
+  it('la cola de steering del núcleo se puede vaciar (lo que hace run() al terminar)', () => {
+    const agent = new Agent({
+      streamFn: (() => {
+        throw new Error('no se llama');
+      }) as never,
+    });
+    agent.steer({ role: 'user', content: [{ type: 'text', text: 'cambia' }], timestamp: 1 });
+    expect(agent.hasQueuedMessages()).toBe(true);
+    agent.clearSteeringQueue();
+    expect(agent.hasQueuedMessages()).toBe(false);
   });
 });

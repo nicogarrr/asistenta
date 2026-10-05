@@ -2311,7 +2311,7 @@ async function serveCommand(): Promise<number> {
       ? r.error
       : r.sent === 0
         ? 'No hay nada en marcha ahora mismo. Escríbemelo como un mensaje normal.'
-        : 'Anotado: lo tendré en cuenta en el siguiente paso, sin parar lo que estoy haciendo.';
+        : 'Anotado: lo leerá si aún le quedan pasos; si ya está terminando, repítemelo como mensaje normal.';
     await say(inbound, text, { quote: true });
   };
 
