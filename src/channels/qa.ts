@@ -104,7 +104,7 @@ const PAYMENT_STEP =
  */
 const SAUCEDEMO_PASSWORD_REASON = 'motivo: touches a password, code or card field';
 const SAUCEDEMO_PASSWORD_ELEMENT =
-  /^elemento: input \u00b7 [^@]*\bpassword\b[^@]* @@ https:\/\/www\.saucedemo\.com\/(?: \| [^|@]*)?$/;
+  /^elemento: input \u00b7 [^@]*\bpassword\b[^@]* @@ https:\/\/www\.saucedemo\.com\/(?: [|\u00b7] [^@]*)?$/;
 
 function qaApprovesBrowserAction(question: string): boolean {
   const lines = normalise(question).split('\n');

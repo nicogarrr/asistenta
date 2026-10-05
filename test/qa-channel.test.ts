@@ -24,6 +24,15 @@ describe('canal de QA', () => {
     const reason = '\nMotivo: touches a password, code or card field';
     const sauce = `${head}Elemento: input \u00b7 password \u00b7 Password \u00b7 password @@ https://www.saucedemo.com/${reason}`;
     expect(qaApproves(sauce)).toBe(true);
+    // Con titulo de pagina (formatApprovalQuestion une los trozos con " \u00b7 "): tambien se aprueba.
+    expect(qaApproves(`${sauce.replace(reason, '')} \u00b7 Swag Labs${reason}`)).toBe(true);
+    expect(qaApproves(`${sauce.replace(reason, '')} | Swag Labs${reason}`)).toBe(true);
+    // El sufijo no puede traer otro "@@" ni "@" que cuele otra URL.
+    expect(
+      qaApproves(
+        `${sauce.replace(reason, '')} \u00b7 Swag Labs @@ https://pay.example.com/${reason}`,
+      ),
+    ).toBe(false);
     // Otro sitio, otro host que lo imita, o un campo de tarjeta: se deniega.
     expect(qaApproves(sauce.replace('www.saucedemo.com', 'www.otra-tienda.com'))).toBe(false);
     expect(
