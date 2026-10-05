@@ -80,6 +80,8 @@ import {
   createReminderTool,
   isOneShotReminder,
   isReminder,
+  readDroppedReminders,
+  recordDroppedReminder,
   reminderText,
   settleOneShot,
 } from './tools/reminder.js';
@@ -780,7 +782,11 @@ export async function capturePageIfOpen(
 }
 
 async function serveCommand(): Promise<number> {
-  applyConfiguredTimeZone();
+  if (!applyConfiguredTimeZone() && process.env.PA_TIMEZONE?.trim()) {
+    log.warn('PA_TIMEZONE is not a valid time zone: using the system one', {
+      value: process.env.PA_TIMEZONE,
+    });
+  }
   ensureDirs();
   const config = loadConfig();
   const desktop = desktopEnabled();
@@ -1542,6 +1548,7 @@ async function serveCommand(): Promise<number> {
           log.warn('one-time reminder dropped after an hour of failed delivery', {
             routine: ctx.routine.name,
           });
+          recordDroppedReminder(join(paths.state, 'dropped-reminders.jsonl'), ctx.routine.name);
         }
         routineRunner.sync();
       }
@@ -2151,6 +2158,7 @@ async function serveCommand(): Promise<number> {
       ],
       log: logSummary,
       pageWatches: pageWatches.list(inbound.chatId).length,
+      droppedReminders: readDroppedReminders(join(paths.state, 'dropped-reminders.jsonl')),
     });
     await say(inbound, text, { quote: true });
   };
