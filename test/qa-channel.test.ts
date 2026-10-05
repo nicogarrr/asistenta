@@ -90,6 +90,10 @@ describe('canal de QA', () => {
       '¿Permito shell?\nejecutar yt-dlp',
       '¿Permito computer?\nabrir una ventana',
       '¿Permito write?\nescribir 500 USD en pagos.txt',
+      '¿Permito browser?\nConfirmar viaje con Uber',
+      '¿Permito browser?\nSolicitar UberX',
+      '¿Permito browser?\nRequest ride',
+      '¿Permito browser?\nConfirm ride',
       '¿Permito herramienta_nueva?\nalgo',
       'texto sin formato',
     ];
