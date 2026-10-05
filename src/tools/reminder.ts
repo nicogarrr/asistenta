@@ -129,19 +129,35 @@ export function checkRepeating(expr: string): string | null {
   return null;
 }
 
+/** The time the user asked for, kept at the end of a one-shot's name (`... @YYYY-MM-DD HH:MM`). */
+export function dueOfOneShot(name: string): Date | null {
+  const m = /@(\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/.exec(name);
+  return m?.[1] ? parseLocalStamp(m[1]) : null;
+}
+
+/** A reminder that still cannot be delivered an hour after its time is dropped, not retried forever. */
+export const RETRY_MAX_AGE_MS = 60 * 60_000;
+
 /**
  * After a one-time reminder fired: delete it when it was delivered, otherwise move it
- * five minutes ahead so a Telegram failure does not make it vanish silently.
+ * five minutes ahead so a Telegram failure does not make it vanish silently. Past
+ * RETRY_MAX_AGE_MS (a blocked chat, say) it is dropped so it cannot retry forever; the
+ * caller logs that. Returns what happened.
  */
 export function settleOneShot(
   store: Pick<Store, 'deleteRoutine' | 'saveRoutine'>,
   routine: Pick<Routine, 'scope' | 'name' | 'prompt'>,
   delivered: boolean,
   now = Date.now(),
-): void {
+): 'deleted' | 'retry' | 'dropped' {
   if (delivered) {
     store.deleteRoutine(routine.scope, routine.name);
-    return;
+    return 'deleted';
+  }
+  const due = dueOfOneShot(routine.name);
+  if (due && now - due.getTime() > RETRY_MAX_AGE_MS) {
+    store.deleteRoutine(routine.scope, routine.name);
+    return 'dropped';
   }
   store.saveRoutine({
     scope: routine.scope,
@@ -150,6 +166,7 @@ export function settleOneShot(
     prompt: routine.prompt,
     schedule: onceCron(new Date(now + RETRY_MS)),
   });
+  return 'retry';
 }
 
 function nameFor(prefix: string, text: string, suffix = ''): string {

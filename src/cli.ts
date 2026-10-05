@@ -1536,7 +1536,12 @@ async function serveCommand(): Promise<number> {
       // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
       // instead of vanishing.
       if (isOneShotReminder(ctx.routine)) {
-        settleOneShot(store, ctx.routine, sent);
+        const outcome = settleOneShot(store, ctx.routine, sent);
+        if (outcome === 'dropped') {
+          log.warn('one-time reminder dropped after an hour of failed delivery', {
+            routine: ctx.routine.name,
+          });
+        }
         routineRunner.sync();
       }
     },

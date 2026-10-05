@@ -6,11 +6,13 @@ import { Store } from '../src/db.js';
 import { RoutineRunner } from '../src/routines.js';
 import {
   createReminderTool,
+  dueOfOneShot,
   isOneShotReminder,
   isReminder,
   MAX_REMINDERS_PER_CHAT,
   onceCron,
   parseLocalStamp,
+  RETRY_MAX_AGE_MS,
   RETRY_MS,
   reminderText,
   settleOneShot,
@@ -194,6 +196,19 @@ describe('reminder tool', () => {
     expect(again?.schedule).toBe(onceCron(new Date(NOW + RETRY_MS)));
     expect(again?.name).toBe(r.name);
     settleOneShot(store, r, true, NOW);
+    expect(store.listRoutines('tg:1:2')).toHaveLength(0);
+  });
+
+  it('si el envío falla durante más de una hora, el puntual se descarta y no reintenta siempre', async () => {
+    await run({ action: 'create', text: 'apagar el horno', in_minutes: 180 });
+    const [r] = store.listRoutines('tg:1:2');
+    if (!r) throw new Error('missing');
+    const due = dueOfOneShot(r.name);
+    expect(due?.getTime()).toBe(NOW + 180 * 60_000);
+    const dueMs = due?.getTime() ?? 0;
+    expect(settleOneShot(store, r, false, dueMs + 10 * 60_000)).toBe('retry');
+    expect(store.listRoutines('tg:1:2')).toHaveLength(1);
+    expect(settleOneShot(store, r, false, dueMs + RETRY_MAX_AGE_MS + 60_000)).toBe('dropped');
     expect(store.listRoutines('tg:1:2')).toHaveLength(0);
   });
 });
