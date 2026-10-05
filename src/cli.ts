@@ -9,6 +9,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
+import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
 import {
@@ -2110,6 +2111,22 @@ async function serveCommand(): Promise<number> {
     await runEvolveCycle(chatId);
   };
 
+  /** Copia local diaria del estado (bases de datos y memoria), las últimas 7. */
+  const backupIfDue = (): void => {
+    if (!isBackupDue(new Date(), weeklyState.lastSent('backup'))) return;
+    weeklyState.markSent('backup', Date.now());
+    try {
+      const r = runBackup({ stateDir: paths.state });
+      log.info('backup done', {
+        dir: r.dir,
+        databases: r.databases.length,
+        pruned: r.pruned.length,
+      });
+    } catch (err) {
+      log.warn('backup failed', { err });
+    }
+  };
+
   const cmdEvolucion = async (inbound: Inbound, args: string): Promise<void> => {
     const a = args.trim();
     if (/^idea\b/i.test(a)) {
@@ -2146,6 +2163,7 @@ async function serveCommand(): Promise<number> {
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
+      backupIfDue();
     },
     10 * 60 * 1000,
   );
