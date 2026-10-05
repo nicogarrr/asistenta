@@ -3,8 +3,8 @@ import { sameToolLimit } from '../src/core/agent.js';
 
 describe('sameToolLimit', () => {
   it('deja a un formulario del navegador rellenar sus campos y enviarlos (K13a)', () => {
-    // 5 campos + abrir + mirar + enviar ya pasaban de 10 llamadas seguidas a browser.
-    expect(sameToolLimit('browser')).toBeGreaterThanOrEqual(20);
+    // 5 campos + abrir + mirar + enviar pasaban de 10; en la bateria F1-F16 (5 oct) 4 runs de browser (Renfe, ALSA, Booking, mesa) chocaron con 25.
+    expect(sameToolLimit('browser')).toBeGreaterThanOrEqual(40);
   });
 
   it('mantiene el limite estricto del resto de herramientas', () => {

@@ -368,7 +368,7 @@ const SUMMARY_TIMEOUT_MS = 40_000;
 const SUMMARY_COOLDOWN_TURNS = 3;
 /** Calls in a row with the same tool before the run is stopped as a spiral. */
 export function sameToolLimit(tool: string): number {
-  return tool === 'browser' ? 25 : 10;
+  return tool === 'browser' ? 40 : 10;
 }
 
 export class PersonalAgent {
