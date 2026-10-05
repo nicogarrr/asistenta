@@ -51,6 +51,7 @@ export const THREAD_ALLOW_TOOLS = [
   'fetch',
   'done',
   'memory',
+  'reminder',
   'opengym',
   'book',
   LOADER_TOOL_NAME,

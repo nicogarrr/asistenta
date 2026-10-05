@@ -76,6 +76,13 @@ import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
 import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
+import {
+  createReminderTool,
+  isOneShotReminder,
+  isReminder,
+  reminderText,
+  settleOneShot,
+} from './tools/reminder.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
 // remove. The generic browser does the same job against any site.
@@ -1107,6 +1114,7 @@ async function serveCommand(): Promise<number> {
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
       createMemoryTool(memory, scope, snapshot),
+      createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createSkillsTool({ store: skills }),
       // Window and UI Automation inspection. Read-only, so it is not under the
       // machine mutex: two conversations may both look at the window list at once.
@@ -1509,14 +1517,28 @@ async function serveCommand(): Promise<number> {
       const chatId = chatPart?.split(':')[2] ?? '';
       if (!chatId) return;
       log.info('routine fired', { routine: ctx.routine.name, chatId });
-      await telegram
+      const reminder = isReminder(ctx.routine);
+      const sent = await telegram
         .send({
           channel: 'telegram',
           account: telegram.account,
           chatId,
-          text: `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
+          text: reminder
+            ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
+            : `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
         })
-        .catch((err: unknown) => log.warn('routine send failed', { err }));
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('routine send failed', { err });
+          return false;
+        });
+      // A one-time reminder is a cron pinned to a date: it would fire again next year.
+      // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
+      // instead of vanishing.
+      if (isOneShotReminder(ctx.routine)) {
+        settleOneShot(store, ctx.routine, sent);
+        routineRunner.sync();
+      }
     },
   });
   routineRunner.start();
