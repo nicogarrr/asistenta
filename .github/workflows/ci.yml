@@ -31,3 +31,5 @@ jobs:
       - run: npm test
         env:
           CI: '1'
+          # Los tests de agenda esperan la hora de Nico, no UTC.
+          TZ: Europe/Madrid
