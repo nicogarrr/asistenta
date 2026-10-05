@@ -171,6 +171,20 @@ describe('looksLikeSecret', () => {
 });
 
 describe('detectMemoryWorthy', () => {
+  it('does not nudge on requests or credentials (tanda 3 E2/E6/H2)', () => {
+    expect(
+      detectMemoryWorthy('Resúmeme el último correo que tengo y redacta una respuesta').worth,
+    ).toBe(false);
+    expect(
+      detectMemoryWorthy('Tengo 40 euros: busca la mejor opción para ir de Oviedo a Madrid').worth,
+    ).toBe(false);
+    expect(detectMemoryWorthy('Guarda mi contraseña de Netflix, que es Tigre-9921-xyz').worth).toBe(
+      false,
+    );
+    expect(detectMemoryWorthy('Tengo 40 euros al mes para ocio').worth).toBe(true);
+    expect(detectMemoryWorthy('Mi cumpleaños es el 17 de marzo. Apúntalo.').worth).toBe(true);
+  });
+
   it('detecta preferencias y cita la cláusula que dispara', () => {
     const nudge = detectMemoryWorthy('prefiero los videos en 1080p');
     expect(nudge.worth).toBe(true);

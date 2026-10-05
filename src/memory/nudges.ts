@@ -16,6 +16,8 @@
  * user can see in the wording of the nudge.
  */
 
+import { looksLikeCredential } from '../memory.js';
+
 export interface MemoryNudge {
   worth: boolean;
   /** Spanish, quoting the clause that triggered it. Empty when `worth` is false. */
@@ -39,7 +41,7 @@ const CATEGORIES: RegExp[][] = [
   [/\bprefiero\b/iu, /\bme gustan?\b/iu, /\bodio\b/iu, /\bsiempre\b/iu, /\bnunca\b/iu],
   // Dato personal.
   [
-    /\btengo\s/iu,
+    /(?<!\bque\s)\btengo\s/iu, // not "el correo que tengo"
     /\bmi\s+[\p{L}\p{N}_]+\s+es\b/iu,
     /\bvivo en\b/iu,
     /\btrabajo en\b/iu,
@@ -92,6 +94,15 @@ const GREETINGS = new Set([
 const QUESTION_START =
   /^(?:qué|cómo|cuándo|dónde|quién|cuál|cuánto|cuántos|cuántas|por qué|puedes|podrías|podrias|sabes|dime|what|how|when|where|why|who|which|can you|could you|would you|do you)\b/iu;
 
+/**
+ * A request, not a statement about the user: "resúmeme el último correo que
+ * tengo" or "tengo 40 euros: busca el mejor tren" is a task. Asking to file it
+ * in the profile interrupts a user who only wanted the task done. The verb may
+ * open the region or follow a clause mark ("tengo 40 euros: busca ...").
+ */
+const REQUEST_VERB =
+  '(?:resúmeme|resume|resumen|busca|búscame|dame|dime|haz|hazme|crea|créame|abre|ábreme|envía|envíame|manda|mándame|redacta|escribe|recuérdame|pon|ponme|lista|cancela|mira|llévame|reserva|compra|ayúdame|revisa|calcula|compara|traduce|explícame|genera|prepara|organiza)';
+const REQUEST_REGION = new RegExp(`(?:^|[:,;]\\s*)${REQUEST_VERB}(?![\\p{L}])`, 'iu');
 /** Where a quote cuts. Commas too: a quote is what the user recognises. */
 const CLAUSE_MARK = /[.!?,;:…¡¿\n]/;
 
@@ -161,6 +172,7 @@ function suggest(clause: string): string {
 export function detectMemoryWorthy(text: string): MemoryNudge {
   const trimmed = text.trim();
   if (trimmed.length < MIN_CHARS) return NOTHING;
+  if (looksLikeCredential(trimmed)) return NOTHING;
   const words = trimmed.toLowerCase().match(/[\p{L}]+/gu);
   if (words && words.length > 0 && words.every((word) => GREETINGS.has(word))) return NOTHING;
 
@@ -169,6 +181,7 @@ export function detectMemoryWorthy(text: string): MemoryNudge {
     for (const pattern of patterns) {
       for (const region of regions) {
         if (region.question && !STRONG_AFFIRMATION.test(region.text)) continue;
+        if (REQUEST_REGION.test(region.text)) continue;
         const match = pattern.exec(region.text);
         if (!match) continue;
         return { worth: true, suggestion: suggest(clauseAround(region.text, match)) };
