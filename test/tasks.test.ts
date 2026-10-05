@@ -3,6 +3,7 @@ import {
   actionFingerprint,
   describeToolStart,
   detectLoop,
+  pruneOldToolResults,
   shouldGuardFingerprint,
   truncateOldImages,
 } from '../src/core/agent.js';
@@ -171,5 +172,40 @@ describe('progress summaries', () => {
       expect(phrase).not.toMatch(/_/);
       expect(phrase).not.toMatch(/screenshot|running|taking|clicking/);
     }
+  });
+});
+
+describe('pruneOldToolResults', () => {
+  const result = (n: number, size: number) => ({
+    role: 'toolResult',
+    toolCallId: `c${n}`,
+    content: [{ type: 'text', text: `R${n}:${'x'.repeat(size)}` }],
+    timestamp: n,
+  });
+
+  it('shrinks old large results, keeps the newest whole and leaves small ones', () => {
+    const messages = [result(1, 5000), result(2, 100), result(3, 5000), result(4, 5000)] as never[];
+    const out = pruneOldToolResults(messages, 2) as Array<{ content: Array<{ text: string }> }>;
+    expect(out[0]?.content[0]?.text.length).toBeLessThan(500);
+    expect(out[0]?.content[0]?.text).toContain('resultado antiguo omitido');
+    expect(out[1]?.content[0]?.text.length).toBe(103); // small: untouched
+    expect(out[2]?.content[0]?.text.length).toBe(5003); // within the newest two
+    expect(out[3]?.content[0]?.text.length).toBe(5003);
+  });
+
+  it('keeps every message in place and never touches user or assistant text', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'y'.repeat(9000) }], timestamp: 0 },
+      result(1, 5000),
+      result(2, 5000),
+    ] as never[];
+    const out = pruneOldToolResults(messages, 1) as Array<{ role: string; content: unknown[] }>;
+    expect(out.map((m) => m.role)).toEqual(['user', 'toolResult', 'toolResult']);
+    expect((out[0]?.content[0] as { text: string }).text.length).toBe(9000);
+  });
+
+  it('is a no-op when there are few results', () => {
+    const messages = [result(1, 5000)] as never[];
+    expect(pruneOldToolResults(messages)).toEqual(messages);
   });
 });

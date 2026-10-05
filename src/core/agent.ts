@@ -259,6 +259,51 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
 }
 
 /**
+ * Shrink old, large tool results in the request context.
+ *
+ * A page snapshot or a mail listing can be up to MAX_TOOL_RESULT_CHARS (~6k tokens) and the
+ * model has normally already acted on it a few steps later, yet it rides along in every
+ * request until the LLM summary compacts it. The newest `keepRecent` tool results stay
+ * whole; older ones over `minChars` keep their first `headChars` and say how much was
+ * dropped, so the model knows to ask again instead of guessing. Small results (done, errors,
+ * one-line confirmations) are never touched, and the message itself stays in place so the
+ * call/result pairing is intact. Like truncateOldImages, it only rewrites the request copy.
+ */
+export function pruneOldToolResults(
+  messages: AgentMessage[],
+  keepRecent = 6,
+  minChars = 2000,
+  headChars = 300,
+): AgentMessage[] {
+  let seen = 0;
+  const out: AgentMessage[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || typeof message !== 'object') continue;
+    const m = message as { role?: unknown; content?: unknown };
+    if (m.role !== 'toolResult' || !Array.isArray(m.content)) {
+      out.unshift(message);
+      continue;
+    }
+    seen++;
+    if (seen <= keepRecent) {
+      out.unshift(message);
+      continue;
+    }
+    const content = (m.content as Array<{ type?: unknown; text?: unknown }>).map((block) => {
+      if (block?.type !== 'text' || typeof block.text !== 'string') return block;
+      if (block.text.length <= minChars) return block;
+      return {
+        ...block,
+        text: `${block.text.slice(0, headChars)}\n[resultado antiguo omitido: ${block.text.length - headChars} caracteres; vuelve a pedirlo si lo necesitas]`,
+      };
+    });
+    out.unshift({ ...(message as object), content } as AgentMessage);
+  }
+  return out;
+}
+
+/**
  * Iteration-budget policy, resolved once at construction.
  *
  * Exported (and pure) so the default that decides whether the budget is refilled
@@ -424,7 +469,7 @@ export class PersonalAgent {
       // Screenshots older than the latest few are stale by definition. Truncating
       // them per request (never in the stored transcript) is the difference between
       // a 20-step run costing 30k image tokens and costing 6k.
-      transformContext: async (messages) => truncateOldImages(messages, 3),
+      transformContext: async (messages) => truncateOldImages(pruneOldToolResults(messages), 3),
       // The model may ask for a deferred tool mid-run; the next request carries it.
       prepareNextTurnWithContext: loadout
         ? (ctx) => {
