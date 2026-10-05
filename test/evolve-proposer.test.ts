@@ -21,7 +21,7 @@ describe('evolve-proposer', () => {
     expect(() => extractJson('sin json')).toThrow();
   });
 
-  it('solo permite rutas relativas bajo src/ y test/', () => {
+  it('solo permite rutas relativas bajo src/ (test/ no)', () => {
     const d = tree();
     expect(safePath(d, 'src/a.ts')?.rel).toBe('src/a.ts');
     for (const bad of [

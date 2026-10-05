@@ -17,7 +17,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-const ALLOWED_ROOTS = ['src/', 'test/'];
+// test/ is off limits on purpose: the loop rejects any candidate that touches it (the tests
+// are the measuring stick), so letting the model edit them would only produce discards.
+const ALLOWED_ROOTS = ['src/'];
 const MAX_FILES = 4;
 const MAX_FILE_CHARS = 24_000;
 const MAX_EDITS = 8;
@@ -32,7 +34,7 @@ export function extractJson(text) {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-/** A path the proposer may touch: relative, inside src/ or test/, no traversal. */
+/** A path the proposer may touch: relative, inside src/, no traversal. */
 export function safePath(dir, rel) {
   if (typeof rel !== 'string' || !rel || rel.includes('\0')) return null;
   const norm = rel.replace(/\\/g, '/');
@@ -88,7 +90,7 @@ async function chat(messages) {
 
 const SYSTEM =
   'Eres un ingeniero que mejora un agente personal en TypeScript. Haces UN cambio pequeño, ' +
-  'seguro y verificable. Solo puedes editar ficheros bajo src/ y test/. No toques ficheros de ' +
+  'seguro y verificable. Solo puedes editar ficheros bajo src/. NO toques ni añadas tests (test/): los tests son la vara de medir y el sistema descarta cualquier cambio que los toque. No toques ficheros de ' +
   'seguridad, aprobaciones, credenciales ni la propia auto-mejora. Todo cambio de comportamiento ' +
   'lleva un test nuevo. Respondes SOLO con JSON.';
 
@@ -96,7 +98,7 @@ async function main() {
   const dir = process.cwd();
   const idea = process.env.PA_EVOLVE_HYPOTHESIS || '';
   if (!idea.trim()) throw new Error('sin hipótesis');
-  const files = execFileSync('git', ['ls-files', 'src', 'test'], { cwd: dir, encoding: 'utf8' })
+  const files = execFileSync('git', ['ls-files', 'src'], { cwd: dir, encoding: 'utf8' })
     .split('\n')
     .filter(Boolean);
 
@@ -126,7 +128,7 @@ async function main() {
       { role: 'system', content: SYSTEM },
       {
         role: 'user',
-        content: `Idea: ${JSON.stringify(idea)} (intento ${process.env.PA_EVOLVE_ATTEMPT || '1'}).\n\n${bodies}\n\nDevuelve {"edits":[{"file":"src/...","search":"texto EXACTO existente, único en el fichero","replace":"texto nuevo"}]}. Máximo ${MAX_EDITS} ediciones. Añade o ajusta un test en test/ si cambia el comportamiento.`,
+        content: `Idea: ${JSON.stringify(idea)} (intento ${process.env.PA_EVOLVE_ATTEMPT || '1'}).\n\n${bodies}\n\nDevuelve {"edits":[{"file":"src/...","search":"texto EXACTO existente, único en el fichero","replace":"texto nuevo"}]}. Máximo ${MAX_EDITS} ediciones.`,
       },
     ]),
   );
