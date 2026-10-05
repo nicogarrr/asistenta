@@ -85,6 +85,27 @@ export function looksLikeMoney(call: { tool?: string } | null, question: string)
   return call?.tool === 'purchase' || MONEY.test(normalise(question));
 }
 
+const BROWSER_ACTION_HEADER = '\u00bfPermito esta acci\u00f3n en el navegador?';
+
+/**
+ * Pasos de pago de verdad en la pregunta de una accion del navegador: tarjeta, checkout,
+ * confirmar o finalizar la compra. Solo se miran en la linea "Elemento" y en el "Motivo";
+ * el bloque "Datos de la pagina" trae precios en euros de cualquier tienda y no debe
+ * bloquear escribir ni anadir a la cesta. Una cesta no es un pago.
+ */
+const PAYMENT_STEP =
+  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+(?:your\s+)?order|order\s+now|(?:hacer|enviar|tramitar)\s+(?:el\s+)?pedido|realizar\s+(?:el\s+)?pedido|pedir\w*|solicitar\s+(?:viaje|ride)|reserv\w*|book|book\s+now|contrat\w*|donar|donat\w*|finalizar\w*|confirm\w*|suscrib\w*|subscribe)\b/;
+
+function qaApprovesBrowserAction(question: string): boolean {
+  const lines = normalise(question).split('\n');
+  // El "Elemento" real va primero; el "Motivo" real va el ultimo. Entre medias esta
+  // "Datos de la pagina", que es texto de la web y puede traer lineas "motivo:" falsas.
+  const element = lines.find((l) => l.startsWith('elemento:')) ?? '';
+  const reason = [...lines].reverse().find((l) => l.startsWith('motivo:')) ?? '';
+  if (!element || !reason) return false;
+  return !PAYMENT_STEP.test(element) && !PAYMENT_STEP.test(reason);
+}
+
 /**
  * Decision de QA para una pregunta de aprobacion. Solo aprueba si se reconoce la
  * herramienta (o es la pregunta de dominio del navegador) Y no huele a dinero.
@@ -93,6 +114,7 @@ export function qaApproves(question: string): boolean {
   // Orden del dueño (WhatsApp del 5 oct, relayada, con la regla de parar antes de pagar; y nota de voz del 4 oct): en pruebas se abren todas las puertas; el dinero se para en el
   // ultimo paso, no antes. El guardia de SSRF y las aprobaciones destructivas no pasan por aqui.
   if (question.startsWith('\u00bfAbro ')) return !PAYMENT_STRICT.test(normalise(question));
+  if (question.startsWith(BROWSER_ACTION_HEADER)) return qaApprovesBrowserAction(question);
   if (looksLikeMoney(null, question)) return false;
   const tool = toolOfQuestion(question);
   if (tool) return QA_SAFE_TOOLS.has(tool.split(':')[0] ?? tool);
