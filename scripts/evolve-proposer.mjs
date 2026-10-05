@@ -91,8 +91,7 @@ async function chat(messages) {
 const SYSTEM =
   'Eres un ingeniero que mejora un agente personal en TypeScript. Haces UN cambio pequeño, ' +
   'seguro y verificable. Solo puedes editar ficheros bajo src/. NO toques ni añadas tests (test/): los tests son la vara de medir y el sistema descarta cualquier cambio que los toque. No toques ficheros de ' +
-  'seguridad, aprobaciones, credenciales ni la propia auto-mejora. Todo cambio de comportamiento ' +
-  'lleva un test nuevo. Respondes SOLO con JSON.';
+  'seguridad, aprobaciones, credenciales ni la propia auto-mejora. Respondes SOLO con JSON.';
 
 async function main() {
   const dir = process.cwd();
