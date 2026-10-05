@@ -13,11 +13,24 @@ import type { Page } from 'playwright';
  */
 export const UNREADABLE_TARGET = '[destino ilegible]';
 
+/**
+ * One retry with a longer wait: a page that is still settling after the previous fill or
+ * click makes the first read time out, and the user then gets asked about an element
+ * the page would have described a second later. If the retry also fails the result is
+ * still UNREADABLE, so the gate keeps failing closed.
+ */
 export async function describeTarget(
   page: Page,
   selector: string,
   timeoutMs = 2_000,
+  retryTimeoutMs = 4_000,
 ): Promise<string> {
+  const first = await describeOnce(page, selector, timeoutMs);
+  if (first !== UNREADABLE_TARGET) return first;
+  return describeOnce(page, selector, retryTimeoutMs);
+}
+
+async function describeOnce(page: Page, selector: string, timeoutMs: number): Promise<string> {
   try {
     const loc = page.locator(selector).first();
     const text = await loc.evaluate(
