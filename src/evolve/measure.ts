@@ -120,7 +120,11 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   let checksFailed = 0;
 
   const home = mkdtempSync(join(tmpdir(), 'evolve-home-'));
-  const reportFile = join(home, 'vitest-report.json');
+  // The report goes to its own directory with an unpredictable name, not into the home the
+  // candidate's tests run with. Same OS user, so this is a mitigation, not a wall: the report
+  // is also cross-checked against the runner's own summary line below.
+  const reportDir = mkdtempSync(join(tmpdir(), 'evolve-rep-'));
+  const reportFile = join(reportDir, `r-${Math.random().toString(36).slice(2)}.json`);
   let names: { passing: string[]; failing: string[] } | null = null;
   try {
     const suite = await exec(
@@ -143,10 +147,18 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
       names = null;
     }
     const parsed = parseSuite(`${suite.stdout}\n${suite.stderr}`);
+    // A report that disagrees with the summary line is not trusted.
+    if (
+      names &&
+      (names.passing.length !== parsed.passed || names.failing.length !== parsed.failed)
+    ) {
+      names = null;
+    }
     passed = parsed.passed;
     failed = parsed.failed;
   } catch (err) {
     rmSync(home, { recursive: true, force: true });
+    rmSync(reportDir, { recursive: true, force: true });
     return {
       passed: 0,
       failed: 0,
@@ -174,12 +186,26 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   checksFailed = parsedChecks.failed;
 
   rmSync(home, { recursive: true, force: true });
+  rmSync(reportDir, { recursive: true, force: true });
+  if (!names) {
+    // Fail closed: without a per-test report the regression check cannot run, and falling
+    // back to counts would let a change that fixes two tests and breaks one through.
+    return {
+      passed,
+      failed,
+      checks,
+      checksFailed,
+      durationMs: Date.now() - started,
+      error: 'falta el informe por test (o no coincide con el resumen): no comparable',
+    };
+  }
   return {
     passed,
     failed,
     checks,
     checksFailed,
     durationMs: Date.now() - started,
-    ...(names ? { passingTests: names.passing, failingTests: names.failing } : {}),
+    passingTests: names.passing,
+    failingTests: names.failing,
   };
 }

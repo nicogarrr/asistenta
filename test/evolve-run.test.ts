@@ -20,6 +20,8 @@ const m = (over: Partial<Measurement> = {}): Measurement => ({
   checks: 10,
   checksFailed: 0,
   durationMs: 1000,
+  passingTests: ['t::a'],
+  failingTests: [],
   ...over,
 });
 
