@@ -366,6 +366,11 @@ export function capToolResultText<T extends { type: string; text?: string }>(
 /** A hung model must not hold the turn: the summary gives up and the history stays. */
 const SUMMARY_TIMEOUT_MS = 40_000;
 const SUMMARY_COOLDOWN_TURNS = 3;
+/** Calls in a row with the same tool before the run is stopped as a spiral. */
+export function sameToolLimit(tool: string): number {
+  return tool === 'browser' ? 25 : 10;
+}
+
 export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
@@ -781,13 +786,14 @@ export class PersonalAgent {
         // has different arguments. This is the browser spiral: each exec_js payload is
         // unique text, so the fingerprint guard can never see the repetition, and the
         // user watched twenty near-identical browser calls before asking for help.
-        // Ten in a row is longer than any real browser flow of open/look/click/act.
+        // Ten in a row is longer than any real flow with other tools. A browser form is
+        // one call per field plus the submit, so the browser gets a wider limit.
         if (shared.sameTool === event.toolName) shared.sameToolCount++;
         else {
           shared.sameTool = event.toolName;
           shared.sameToolCount = 1;
         }
-        if (!guardReason && shared.sameToolCount > 10) {
+        if (!guardReason && shared.sameToolCount > sameToolLimit(event.toolName)) {
           guardReason =
             'Te detuve porque llevas demasiadas acciones seguidas con la misma herramienta ' +
             'sin avanzar. Describe al usuario lo que ves ahora mismo, que has intentado y ' +
