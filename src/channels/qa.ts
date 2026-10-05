@@ -96,6 +96,16 @@ const BROWSER_ACTION_HEADER = '\u00bfPermito esta acci\u00f3n en el navegador?';
 const PAYMENT_STEP =
   /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+(?:your\s+)?order|order\s+now|(?:hacer|enviar|tramitar)\s+(?:el\s+)?pedido|realizar\s+(?:el\s+)?pedido|pedir\w*|reserv\w*|book|book\s+now|buy|submit\s+order|solicitar\s+\w+|contrat\w*|donar|donat\w*|finalizar\w*|confirm\w*|suscrib\w*|subscribe)\b/;
 
+/**
+ * Login de la tienda publica de pruebas saucedemo.com (usuario y contrasena publicos,
+ * dados en el prompt de la bateria). Es la unica excepcion al "no tocar credenciales"
+ * del arnes: el campo ha de ser un input password y la pagina, la de saucedemo. La
+ * politica del bot no cambia: en uso real ese campo sigue preguntando.
+ */
+const SAUCEDEMO_PASSWORD_REASON = 'motivo: touches a password, code or card field';
+const SAUCEDEMO_PASSWORD_ELEMENT =
+  /^elemento: input \u00b7 [^@]*\bpassword\b[^@]* @@ https:\/\/www\.saucedemo\.com\/(?: \| [^|@]*)?$/;
+
 function qaApprovesBrowserAction(question: string): boolean {
   const lines = normalise(question).split('\n');
   // El "Elemento" real va primero; el "Motivo" real va el ultimo. Entre medias esta
@@ -103,6 +113,7 @@ function qaApprovesBrowserAction(question: string): boolean {
   const element = lines.find((l) => l.startsWith('elemento:')) ?? '';
   const reason = [...lines].reverse().find((l) => l.startsWith('motivo:')) ?? '';
   if (!element || !reason) return false;
+  if (reason === SAUCEDEMO_PASSWORD_REASON && SAUCEDEMO_PASSWORD_ELEMENT.test(element)) return true;
   return !PAYMENT_STEP.test(element) && !PAYMENT_STEP.test(reason);
 }
 

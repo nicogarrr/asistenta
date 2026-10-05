@@ -19,6 +19,28 @@ describe('canal de QA', () => {
     expect(isQaChatId('abc')).toBe(false);
   });
 
+  it('el arnes solo aprueba la contrasena del login de saucedemo.com, nada mas', () => {
+    const head = '\u00bfPermito esta acci\u00f3n en el navegador?\n';
+    const reason = '\nMotivo: touches a password, code or card field';
+    const sauce = `${head}Elemento: input \u00b7 password \u00b7 Password \u00b7 password @@ https://www.saucedemo.com/${reason}`;
+    expect(qaApproves(sauce)).toBe(true);
+    // Otro sitio, otro host que lo imita, o un campo de tarjeta: se deniega.
+    expect(qaApproves(sauce.replace('www.saucedemo.com', 'www.otra-tienda.com'))).toBe(false);
+    expect(
+      qaApproves(sauce.replace('https://www.saucedemo.com/', 'https://www.saucedemo.com.evil.io/')),
+    ).toBe(false);
+    expect(qaApproves(sauce.replace('password \u00b7 Password \u00b7 password', 'cc-number'))).toBe(
+      false,
+    );
+    expect(qaApproves(sauce.replace('Elemento: input', 'Elemento: button'))).toBe(false);
+    // Un nombre de campo que trae su propio "@@" no puede colar otra URL.
+    expect(
+      qaApproves(
+        `${head}Elemento: input \u00b7 password @@ https://www.saucedemo.com/ @@ https://pay.example.com/${reason}`,
+      ),
+    ).toBe(false);
+  });
+
   it('detecta peticiones de dinero para denegarlas', () => {
     expect(looksLikeMoney(null, '¿Permito shell?\nPagar el billete con la tarjeta')).toBe(true);
     expect(looksLikeMoney({ tool: 'purchase' }, 'x')).toBe(true);
