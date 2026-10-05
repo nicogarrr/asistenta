@@ -94,14 +94,15 @@ const BROWSER_ACTION_HEADER = '\u00bfPermito esta acci\u00f3n en el navegador?';
  * bloquear escribir ni anadir a la cesta. Una cesta no es un pago.
  */
 const PAYMENT_STEP =
-  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+order|realizar\s+(el\s+)?pedido|finalizar\w*|confirm\w*|reservar|book\s+now|suscrib\w*|subscribe)\b/;
+  /\b(pay\w*|paga\w*|pago\w*|checkout|tarjet\w*|card|cards|credit\w*|debit\w*|cvv|cvc|iban|bizum|paypal|wallet|comprar|compra\s+ya|buy\s+now|purchase|place\s+(?:your\s+)?order|order\s+now|(?:hacer|enviar|tramitar)\s+(?:el\s+)?pedido|realizar\s+(?:el\s+)?pedido|pedir\w*|solicitar\s+(?:viaje|ride)|reserv\w*|book|book\s+now|contrat\w*|donar|donat\w*|finalizar\w*|confirm\w*|suscrib\w*|subscribe)\b/;
 
 function qaApprovesBrowserAction(question: string): boolean {
   const lines = normalise(question).split('\n');
-  const pick = (prefix: string): string => lines.find((l) => l.startsWith(prefix)) ?? '';
-  const element = pick('elemento:');
-  const reason = pick('motivo:');
-  if (!element) return false;
+  // El "Elemento" real va primero; el "Motivo" real va el ultimo. Entre medias esta
+  // "Datos de la pagina", que es texto de la web y puede traer lineas "motivo:" falsas.
+  const element = lines.find((l) => l.startsWith('elemento:')) ?? '';
+  const reason = [...lines].reverse().find((l) => l.startsWith('motivo:')) ?? '';
+  if (!element || !reason) return false;
   return !PAYMENT_STEP.test(element) && !PAYMENT_STEP.test(reason);
 }
 
