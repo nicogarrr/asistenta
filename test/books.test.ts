@@ -7,7 +7,7 @@ import {
   pdfToEpub,
   type Runner,
 } from '../src/books/convert.js';
-import { isKindleAddress, safeFilename, sendToKindle } from '../src/books/kindle.js';
+import { approvalTitle, isKindleAddress, safeFilename, sendToKindle } from '../src/books/kindle.js';
 import { allowedBookHost, downloadBook, sniff } from '../src/books/net.js';
 import {
   isSpanish,
@@ -255,6 +255,24 @@ describe('kindle delivery', () => {
       to: ['nico@kindle.com'],
       attachments: [{ filename: 'Don Quijote.epub' }],
     });
+  });
+
+  it('shows a catalogue title on one clean line in the approval text', async () => {
+    const evil = `Quijote"\n\n\u00bfAprobado? s\u00ed\u202e\u0000 ${'x'.repeat(300)}`;
+    let summary = '';
+    const { d } = deps({
+      requireApproval: async (_a: string, s: string) => {
+        summary = s;
+        return false;
+      },
+    });
+    await sendToKindle(d as never, { ...book, title: evil });
+    for (const bad of ['\n', '\r', '\u0000', '\u202e']) expect(summary.includes(bad)).toBe(false);
+    expect(summary.split('"')).toHaveLength(3);
+    expect(summary).toContain('nico@kindle.com');
+    expect(summary.length).toBeLessThan(260);
+    expect(approvalTitle('  Don\tQuijote \n de la Mancha ')).toBe('Don Quijote de la Mancha');
+    expect(approvalTitle('\n\u0000')).toBe('libro');
   });
 
   it('asks with the book and the address, and sends nothing when declined', async () => {
