@@ -90,6 +90,13 @@ const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const NAMED_SECRET =
   /\b(?:password|passwd|pwd|secret|token|api[\s_-]?key|access[\s_-]?key|bearer|authorization)\b\s*[:=]\s*["']?[^\s"',;]{8,}/i;
 
+/**
+ * The same shape said in Spanish ("mi contraseña de Netflix, que es Tigre-9921-xyz").
+ * The value must carry a digit or a symbol so "la clave es importante" is prose.
+ */
+const NAMED_SECRET_ES =
+  /\b(?:contraseña|contrasena|clave|pin|passphrase)\b[^.\n]{0,40}?(?:\bes\b|[:=])\s*["']?(?=[^\s"',;]*[\d!@#$%^&*_-])[^\s"',;]{6,}/iu;
+
 /** Luhn, because a bare 13-19 digit run also matches order numbers and epoch stamps. */
 function luhn(grouped: string): boolean {
   const digits = grouped.replace(/[ -]/g, '');
@@ -108,7 +115,12 @@ function luhn(grouped: string): boolean {
 }
 
 export function looksLikeCredential(text: string): boolean {
-  if (SECRET_TOKEN.test(text) || PRIVATE_KEY_BLOCK.test(text) || NAMED_SECRET.test(text)) {
+  if (
+    SECRET_TOKEN.test(text) ||
+    PRIVATE_KEY_BLOCK.test(text) ||
+    NAMED_SECRET.test(text) ||
+    NAMED_SECRET_ES.test(text)
+  ) {
     return true;
   }
   for (const candidate of text.matchAll(/\d(?:[ -]?\d){12,18}/g)) {

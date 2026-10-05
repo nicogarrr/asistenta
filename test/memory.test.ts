@@ -278,6 +278,17 @@ describe('MemoryStore', () => {
       store.remember('s', 'the wifi password is written on the router sticker').id,
     ).toBeTruthy();
     expect(looksLikeCredential('order 1234567890123456789 shipped')).toBe(false);
+    // Spanish phrasing of the same thing is refused too.
+    expect(looksLikeCredential('Guarda mi contraseña de Netflix, que es Tigre-9921-xyz')).toBe(
+      true,
+    );
+    expect(looksLikeCredential('mi clave: abc12345')).toBe(true);
+    expect(looksLikeCredential('el pin es 4821')).toBe(false);
+    expect(looksLikeCredential('la clave es importante para el equipo')).toBe(false);
+    expect(looksLikeCredential('mi contraseña es difícil de recordar')).toBe(false);
+    expect(() => store.remember('s', 'mi contraseña de Netflix es Tigre-9921-xyz')).toThrow(
+      /credential/,
+    );
   });
 
   it('refuses empty, multiline and oversized memories', () => {
