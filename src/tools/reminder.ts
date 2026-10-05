@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import { Cron } from 'croner';
 import { Type } from 'typebox';
 import type { Routine, Store } from '../db.js';
 import { validateSchedule } from '../routines.js';
@@ -25,6 +26,15 @@ export const REMINDER_ONCE_PREFIX = 'recordatorio-1:';
  */
 export const MIN_REMINDER_MS = 2 * 60_000;
 const MAX_TEXT = 200;
+/**
+ * The pinned cron has no year field, so a date further than this would fire a year
+ * early (and the daemon would delete it). 330 days leaves a margin for leap years.
+ */
+export const MAX_AHEAD_MS = 330 * 86_400_000;
+/** A repeating reminder may not fire more often than this: the model must not be able to flood a chat. */
+export const MIN_REPEAT_MS = 60 * 60_000;
+export const MAX_REMINDERS_PER_CHAT = 30;
+export const RETRY_MS = 5 * 60_000;
 
 export function isReminder(r: Pick<Routine, 'name'>): boolean {
   return r.name.startsWith(REMINDER_PREFIX) || r.name.startsWith(REMINDER_ONCE_PREFIX);
@@ -100,6 +110,48 @@ export function onceCron(d: Date): string {
   return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
 }
 
+/**
+ * Repeating schedules: five fields only (no seconds) and at least an hour between any
+ * two of the next firings, so "* * * * *" or "0,1 8 * * *" is refused.
+ */
+export function checkRepeating(expr: string): string | null {
+  const fields = expr.trim().split(/\s+/).filter(Boolean);
+  if (fields.length !== 5) {
+    return 'Un recordatorio repetido usa 5 campos (min hora día mes díaSemana), sin segundos.';
+  }
+  const runs = new Cron(fields.join(' '), { paused: true }).nextRuns(8);
+  for (let i = 1; i < runs.length; i++) {
+    const gap = (runs[i]?.getTime() ?? 0) - (runs[i - 1]?.getTime() ?? 0);
+    if (gap < MIN_REPEAT_MS) {
+      return 'Un recordatorio repetido no puede dispararse más de una vez por hora.';
+    }
+  }
+  return null;
+}
+
+/**
+ * After a one-time reminder fired: delete it when it was delivered, otherwise move it
+ * five minutes ahead so a Telegram failure does not make it vanish silently.
+ */
+export function settleOneShot(
+  store: Pick<Store, 'deleteRoutine' | 'saveRoutine'>,
+  routine: Pick<Routine, 'scope' | 'name' | 'prompt'>,
+  delivered: boolean,
+  now = Date.now(),
+): void {
+  if (delivered) {
+    store.deleteRoutine(routine.scope, routine.name);
+    return;
+  }
+  store.saveRoutine({
+    scope: routine.scope,
+    name: routine.name,
+    kind: 'schedule',
+    prompt: routine.prompt,
+    schedule: onceCron(new Date(now + RETRY_MS)),
+  });
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
 }
@@ -163,12 +215,21 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
 
+      if (mine().length >= MAX_REMINDERS_PER_CHAT) {
+        return reply(
+          `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`,
+          true,
+        );
+      }
+
       if (args.schedule !== undefined) {
         const check = validateSchedule(args.schedule);
         if (!check.ok) return reply(`Horario no válido: ${check.error}`, true);
+        const tooOften = checkRepeating(args.schedule);
+        if (tooOften) return reply(tooOften, true);
         deps.store.saveRoutine({
           scope,
-          name: nameFor(REMINDER_PREFIX, text),
+          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]`),
           kind: 'schedule',
           prompt: text,
           schedule: args.schedule.trim(),
@@ -191,6 +252,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
       if (when.getTime() - now() < MIN_REMINDER_MS) {
         return reply(
           `Eso es ahora o ya pasó (${stamp(when)}). El mínimo son 2 minutos desde ahora; dime otra hora.`,
+          true,
+        );
+      }
+      if (when.getTime() - now() > MAX_AHEAD_MS) {
+        return reply(
+          'Solo puedo programar recordatorios puntuales a menos de 11 meses vista (el planificador no guarda el año). Dime una fecha más cercana.',
           true,
         );
       }

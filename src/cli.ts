@@ -81,6 +81,7 @@ import {
   isOneShotReminder,
   isReminder,
   reminderText,
+  settleOneShot,
 } from './tools/reminder.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
@@ -1517,7 +1518,7 @@ async function serveCommand(): Promise<number> {
       if (!chatId) return;
       log.info('routine fired', { routine: ctx.routine.name, chatId });
       const reminder = isReminder(ctx.routine);
-      await telegram
+      const sent = await telegram
         .send({
           channel: 'telegram',
           account: telegram.account,
@@ -1526,10 +1527,16 @@ async function serveCommand(): Promise<number> {
             ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
             : `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
         })
-        .catch((err: unknown) => log.warn('routine send failed', { err }));
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('routine send failed', { err });
+          return false;
+        });
       // A one-time reminder is a cron pinned to a date: it would fire again next year.
+      // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
+      // instead of vanishing.
       if (isOneShotReminder(ctx.routine)) {
-        store.deleteRoutine(ctx.routine.scope, ctx.routine.name);
+        settleOneShot(store, ctx.routine, sent);
         routineRunner.sync();
       }
     },

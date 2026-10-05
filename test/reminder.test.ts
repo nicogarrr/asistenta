@@ -8,9 +8,12 @@ import {
   createReminderTool,
   isOneShotReminder,
   isReminder,
+  MAX_REMINDERS_PER_CHAT,
   onceCron,
   parseLocalStamp,
+  RETRY_MS,
   reminderText,
+  settleOneShot,
 } from '../src/tools/reminder.js';
 
 let dir = '';
@@ -133,5 +136,64 @@ describe('reminder tool', () => {
     expect(live?.next).toBeTruthy();
     expect(new Date(live?.next ?? '').getHours()).toBe(13);
     runner.stop();
+  });
+
+  it('rechaza fechas puntuales a más de 11 meses (el cron no tiene año)', async () => {
+    expect((await run({ action: 'create', text: 'x', at: '2027-12-25T09:00' })).isError).toBe(true);
+    expect((await run({ action: 'create', text: 'x', in_minutes: 600_000 })).isError).toBe(true);
+    expect((await run({ action: 'create', text: 'x', at: '2027-06-01T09:00' })).isError).toBe(
+      false,
+    );
+    expect(store.listRoutines('tg:1:2')).toHaveLength(1);
+  });
+
+  it('un recordatorio repetido no puede inundar el chat: 5 campos y al menos 1 h entre disparos', async () => {
+    for (const schedule of [
+      '* * * * *',
+      '0 * * * * *',
+      '* * * * * *',
+      '*/15 * * * *',
+      '0,5 8 * * *',
+    ]) {
+      expect((await run({ action: 'create', text: 'spam', schedule })).isError, schedule).toBe(
+        true,
+      );
+    }
+    expect(store.listRoutines('tg:1:2')).toHaveLength(0);
+    expect((await run({ action: 'create', text: 'ok', schedule: '0 * * * *' })).isError).toBe(
+      false,
+    );
+    expect((await run({ action: 'create', text: 'ok2', schedule: '30 8 * * 1' })).isError).toBe(
+      false,
+    );
+  });
+
+  it('dos repetidos con el mismo texto y distinto horario no se pisan', async () => {
+    await run({ action: 'create', text: 'revisar correos', schedule: '30 8 * * 1' });
+    await run({ action: 'create', text: 'revisar correos', schedule: '0 18 * * 5' });
+    expect(store.listRoutines('tg:1:2')).toHaveLength(2);
+  });
+
+  it('tiene un tope de recordatorios por chat', async () => {
+    for (let i = 0; i < MAX_REMINDERS_PER_CHAT; i++) {
+      expect((await run({ action: 'create', text: `r${i}`, at: '2026-10-07T09:00' })).isError).toBe(
+        false,
+      );
+    }
+    expect((await run({ action: 'create', text: 'uno más', at: '2026-10-07T10:00' })).isError).toBe(
+      true,
+    );
+  });
+
+  it('un puntual entregado se borra; si el envío falló se reprograma en 5 min y no desaparece', async () => {
+    await run({ action: 'create', text: 'apagar el horno', in_minutes: 180 });
+    const [r] = store.listRoutines('tg:1:2');
+    if (!r) throw new Error('missing');
+    settleOneShot(store, r, false, NOW);
+    const [again] = store.listRoutines('tg:1:2');
+    expect(again?.schedule).toBe(onceCron(new Date(NOW + RETRY_MS)));
+    expect(again?.name).toBe(r.name);
+    settleOneShot(store, r, true, NOW);
+    expect(store.listRoutines('tg:1:2')).toHaveLength(0);
   });
 });
