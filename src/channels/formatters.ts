@@ -10,6 +10,8 @@
  * testable without a token or a network.
  */
 
+import { log } from '../log.js';
+
 /** Appended when a reply is cut short, so the user knows more is available. */
 const DETAIL_HINT = 'Dime "más" para el detalle.';
 
@@ -59,8 +61,15 @@ function isEnglishSentence(sentence: string): boolean {
     if (EN_WORDS.has(w)) en++;
     if (ES_WORDS.has(w)) es++;
   }
-  return en >= 2 && en > es * 2;
+  return en >= 2 && en > es * 2 && MONOLOGUE_MARKER.test(sentence);
 }
+
+/**
+ * Only first-person reasoning is dropped: plain English content (a product title, "out of
+ * stock", a quoted web result) can be the real answer and must reach the user untouched.
+ */
+const MONOLOGUE_MARKER =
+  /\b(?:I\x27ll|I\x27ve|I\x27m|I\x27d|I don\x27t|I do not|I need to|I should|I can\x27t|I will|I have been|let me|let\x27s|going to|stuck|loop|bogged|my approach|the skill)\b/i;
 
 /**
  * Drop English reasoning sentences that leaked into a Spanish reply ("I'll start by
@@ -74,8 +83,11 @@ export function dropEnglishMonologue(text: string): string {
   const marked = text.replace(/([a-záéíóúñ])(?=[A-Z][a-z']+ [A-Za-z']+ [A-Za-z']+ )/g, '$1\uE000');
   const parts = marked.split(/(?<=[.!?])\s*(?=[A-ZÁÉÍÓÚÑ¿¡])|\uE000/);
   if (parts.length < 2) return text;
-  const kept = parts.filter((part) => !isEnglishSentence(part));
-  if (kept.length === parts.length || kept.length === 0) return text;
+  const dropped = parts.filter((part) => isEnglishSentence(part));
+  const kept = parts.filter((part) => !dropped.includes(part));
+  if (dropped.length === 0 || kept.length === 0) return text;
+  for (const part of dropped)
+    log.info('monologo en ingles descartado', { frase: part.trim().slice(0, 120) });
   return kept
     .map((part) => part.trim())
     .join(' ')

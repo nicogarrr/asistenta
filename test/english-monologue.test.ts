@@ -22,6 +22,13 @@ describe('dropEnglishMonologue', () => {
     const code = '```\nLet me go to the page and check this\n```\nHecho.';
     expect(dropEnglishMonologue(code)).toBe(code);
   });
+  it('keeps legitimate English content (titles, out of stock)', () => {
+    const real =
+      'Resultado: The Pragmatic Programmer is out of stock in the store. Alternativa: 25,90 € en Casa del Libro.';
+    expect(dropEnglishMonologue(real)).toBe(real);
+    const title = 'Libro: The Lord of the Rings and the Return of the King. Precio: 12,50 €.';
+    expect(dropEnglishMonologue(title)).toBe(title);
+  });
   it('is applied by cleanForTelegram', () => {
     expect(
       cleanForTelegram(
