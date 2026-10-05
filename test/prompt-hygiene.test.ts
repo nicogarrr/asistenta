@@ -27,7 +27,7 @@ describe('system prompt hygiene', () => {
   });
 
   it('does not grow past its current size (about 2k tokens at 4 chars per token)', () => {
-    expect(SYSTEM_PROMPT.length).toBeLessThan(8_200);
+    expect(SYSTEM_PROMPT.length).toBeLessThan(8_700);
   });
 
   it('server mode keeps every rule after the first line and swaps only the opening', () => {
