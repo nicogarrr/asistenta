@@ -64,8 +64,15 @@ describe('extractReading', () => {
     expect(r.inStock).toBe(false);
   });
   it('lee Offer anidado en BuyAction (MediaMarkt) y AggregateOffer', () => {
-    const html = `<script type="application/ld+json">{"@type":"BuyAction","object":{"@type":"Product","offers":{"@type":"AggregateOffer","lowPrice":"99.5","priceCurrency":"EUR"}}}</script>`;
+    const html = `<script type="application/ld+json">{"@type":"BuyAction","object":{"@type":"Product","offers":{"@type":"AggregateOffer","lowPrice":"99.5","priceCurrency":"EUR","offerCount":1}}}</script>`;
     expect(extractReading('mediamarkt', html).cents).toBe(9950);
+  });
+  it('AggregateOffer: lowPrice solo con un único vendedor (offerCount 1)', () => {
+    const agg = (extra: string) =>
+      `<script type="application/ld+json">{"@type":"Product","offers":{"@type":"AggregateOffer","lowPrice":"99.5","priceCurrency":"EUR"${extra}}}</script>`;
+    expect(extractReading('mediamarkt', agg('')).cents).toBeNull();
+    expect(extractReading('mediamarkt', agg(',"offerCount":3')).cents).toBeNull();
+    expect(extractReading('mediamarkt', agg(',"offerCount":1')).cents).toBe(9950);
   });
   it('JSON-LD roto se ignora; meta y microdatos sirven de respaldo', () => {
     const html = `<script type="application/ld+json">{roto</script><meta property="product:price:amount" content="79.90">`;

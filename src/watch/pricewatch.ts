@@ -161,7 +161,9 @@ function jsonLd(html: string): { cents: number | null; inStock: boolean | null }
       if (!typeIncludes(n, 'Offer') && !typeIncludes(n, 'AggregateOffer')) continue;
       const cur = n.priceCurrency;
       if (typeof cur === 'string' && cur.toUpperCase() !== 'EUR') continue;
-      const p = parseMachinePrice(n.price ?? n.lowPrice);
+      // lowPrice de un AggregateOffer puede mezclar vendedores externos: solo si hay una única oferta.
+      const single = Number(n.offerCount) === 1;
+      const p = parseMachinePrice(n.price ?? (single ? n.lowPrice : undefined));
       if (p === null) continue;
       if (cents === null) {
         cents = p;
