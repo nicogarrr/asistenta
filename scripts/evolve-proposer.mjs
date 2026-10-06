@@ -1,4 +1,8 @@
-#!/usr/bin/env node
+// No shebang, on purpose. Node runs this fine without one, and the loop invokes it as
+// `node <file>`, which never needed it. esbuild does not: it rejects the leading `!` with
+// `SyntaxError: Invalid or unexpected token`, and the test that imports this module goes
+// through esbuild, so the shebang made the test fail on a file that works. Put the shebang
+// in a wrapper if you want to execute this directly as a command.
 // @ts-check
 /**
  * Proposer for the self-improvement loop (PA_EVOLVE_PROPOSER=scripts/evolve-proposer.mjs).

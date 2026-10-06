@@ -46,7 +46,14 @@ beforeEach(() => {
   store = new Store(join(dir, 'db.sqlite'));
   syncs = 0;
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+// The store has to be closed before the directory goes. It runs SQLite in WAL mode, so
+// the handle on db.sqlite is still open when the unlink runs, and Windows refuses with
+// EBUSY where Linux would quietly let it go. Closing first also checkpoints the WAL, so
+// the temp directory really is empty when force-recurse deletes it.
+afterEach(() => {
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe('reminder tool', () => {
   it('crea un recordatorio a una hora local y lo dice con la hora exacta', async () => {

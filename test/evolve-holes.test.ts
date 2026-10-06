@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -84,11 +92,16 @@ describe('fail-closed sin informe por test', () => {
 
 describe('aislamiento del entorno', () => {
   it('measure no hereda HOME ni claves: usa un HOME temporal (no impide abrir rutas absolutas)', () => {
-    const env = cleanEnv({ PATH: '/bin', HOME: '/home/real', APPDATA: 'C:\\real' }, '/tmp/h');
-    expect(env.HOME).toBe('/tmp/h');
-    expect(env.USERPROFILE).toBe('/tmp/h');
-    expect(String(env.APPDATA)).toContain('/tmp/h');
-    expect(String(env.LOCALAPPDATA)).toContain('/tmp/h');
+    // Compared through join, not a literal. cleanEnv builds these with path.join, so on
+    // Windows they come out with backslashes and a hardcoded forward slash fails on the
+    // one platform the agent actually runs on.
+    const home = join(tmpdir(), 'h');
+    const env = cleanEnv({ PATH: '/bin', HOME: '/home/real', APPDATA: 'C:\\real' }, home);
+    expect(env.HOME).toBe(home);
+    expect(env.USERPROFILE).toBe(home);
+    expect(env.APPDATA).toBe(join(home, 'AppData', 'Roaming'));
+    expect(env.LOCALAPPDATA).toBe(join(home, 'AppData', 'Local'));
+    // The point of the test: the real HOME is nowhere in the child environment.
     expect(JSON.stringify(env)).not.toContain('/home/real');
   });
   it('el proponente solo recibe lo que el operador nombra', () => {
@@ -162,9 +175,9 @@ describe('sandbox', () => {
       measure: async () => m(),
     });
     expect(isLink).toBe(false);
-    expect(
-      execFileSync('cat', [join(root, 'node_modules', 'pkg', 'i.js')], { encoding: 'utf8' }),
-    ).toBe('orig');
+    // readFileSync rather than shelling out to `cat`: there is no cat on Windows, and the
+    // assertion is about the file's contents, not about being able to print it.
+    expect(readFileSync(join(root, 'node_modules', 'pkg', 'i.js'), 'utf8')).toBe('orig');
   });
 
   it('un fichero ignorado por git cuenta como violacion', async () => {
