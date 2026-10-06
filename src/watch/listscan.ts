@@ -50,10 +50,14 @@ export function isExcluded(title: string): boolean {
 
 /** Gama alta de tablets: solo estas fichas se vigilan en los listados de la categoría `tablets`. */
 const PREMIUM_TABLET =
-  /\b(ipad (pro|air)|galaxy tab s\d+|tab s\d+ (ultra|fe|plus)|surface pro|xiaomi pad [67]|oneplus pad|matepad (pro|11\.5)|yoga tab|legion tab|lenovo tab p1\d|pixel tablet)\b/;
+  /\b(ipad (pro|air)|galaxy tab s(8|9|1\d)|surface pro|xiaomi pad [67]|oneplus pad|matepad (pro|11\.5)|yoga tab (13|pro)|legion tab|lenovo tab p1[23]|pixel tablet)\b/;
+/** Accesorios y variantes de gama media que comparten nombre con los modelos de gama alta. */
+const NOT_A_TABLET =
+  /\b(teclado|keyboard|lapiz|pencil|cubierta|cover|folio|combo touch|funda|case|lite|fe)\b/;
 
 export function isPremiumTablet(title: string): boolean {
-  return PREMIUM_TABLET.test(norm(title));
+  const t = norm(title);
+  return PREMIUM_TABLET.test(t) && !NOT_A_TABLET.test(t);
 }
 
 const UNIT = /^\d+(gb|tb|hz|w|kg|mah|mp|l|cm|mm|pulgadas|k|bar|rpm|db|mhz|ghz|v)$/;

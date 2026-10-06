@@ -352,6 +352,21 @@ describe('foco en tablets de gama alta', () => {
     expect(isPremiumTablet('Xiaomi Pad 6 128 GB')).toBe(true);
     expect(isPremiumTablet('Apple iPad 10.ª generación 64 GB')).toBe(false);
     expect(isPremiumTablet('Samsung Galaxy Tab A9 64 GB')).toBe(false);
+    for (const t of [
+      'Apple Magic Keyboard para iPad Pro 13"',
+      'Apple Pencil Pro para iPad Pro',
+      'Teclado Logitech Combo Touch para iPad Pro 11',
+      'Microsoft Surface Pro Signature Keyboard',
+      'Book Cover para Samsung Galaxy Tab S9',
+      'Apple Smart Folio para iPad Pro',
+      'Samsung Galaxy Tab S6 Lite 64 GB',
+      'Samsung Galaxy Tab S9 FE 128 GB',
+      'Lenovo Tab P11 128 GB',
+      'Lenovo Yoga Tab 11 256 GB',
+    ])
+      expect(isPremiumTablet(t), t).toBe(false);
+    expect(isPremiumTablet('Lenovo Tab P12 Pro 256 GB')).toBe(true);
+    expect(isPremiumTablet('Samsung Galaxy Tab S10 Ultra 512 GB')).toBe(true);
   });
 
   it('scan.focus deja solo la categoría y falla si no existe', () => {
