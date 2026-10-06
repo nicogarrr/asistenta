@@ -901,7 +901,28 @@ export class BrowserService {
       return true;
     } catch (err) {
       log.warn('browser could not be shown to the user', { scope, err });
+      // The headless window was closed to make room for the visible one. Without a
+      // display the visible launch fails and leaves the conversation with no browser
+      // (and sometimes a profile lock), so put the headless one back, best effort.
+      await this.#restoreHeadless(scope, url);
       return false;
+    }
+  }
+
+  async #restoreHeadless(scope: string, url: string): Promise<void> {
+    if (this.#sessions.has(scope)) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await this.open(scope, url, { visible: false });
+        return;
+      } catch (err) {
+        log.warn('browser could not be restored after a failed visible launch', {
+          scope,
+          attempt,
+          err,
+        });
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
   }
 
