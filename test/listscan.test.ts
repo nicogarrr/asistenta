@@ -311,6 +311,20 @@ describe('scanOnce', () => {
     expect(t.fetched).toEqual([]);
   });
 
+  it('candidato ya enviado a ficha: enfriamiento de 8 h', async () => {
+    const t = setup(
+      { 'https://www.mediamarkt.es/es/category/tv.html': { status: 200, html: tv(100) } },
+      { listings: [LISTS[0] as Listing], pagesPerRun: 1 },
+    );
+    t.store.record('m:tu65m73hauxxc', 'amazon', 50000);
+    t.store.record('m:tu65m73hauxxc', 'fnac', 50000);
+    expect((await scanOnce(t.deps())).candidates).toHaveLength(1);
+    t.advance(MIN_GAP_MS);
+    expect((await scanOnce(t.deps())).candidates).toHaveLength(0);
+    t.advance(8 * 3600 * 1000);
+    expect((await scanOnce(t.deps())).candidates).toHaveLength(1);
+  });
+
   it('máximo de candidatos por pasada, los más baratos primero', async () => {
     const items = [1, 2, 3].map((i) => ({
       name: `TV Modelo ABC${i}000XYZ`,

@@ -353,6 +353,8 @@ export interface ScanSummary {
 
 export const NO_CARDS_BEFORE_OFF = 3;
 const RECORD_EVERY_MS = 3 * 3600 * 1000;
+/** Un candidato ya enviado a ficha no se vuelve a proponer durante este tiempo. */
+export const CANDIDATE_COOLDOWN_MS = 8 * 3600 * 1000;
 
 interface Job {
   store: StoreId;
@@ -508,8 +510,10 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
   }
   out.blockedStores = [...blocked];
   out.candidates = [...cands.values()]
+    .filter((c) => d.now() - d.store.getMeta(`cand:${c.key}|${c.store}`) >= CANDIDATE_COOLDOWN_MS)
     .sort((a, b) => b.dropPct - a.dropPct)
     .slice(0, Math.max(0, d.maxCandidates));
+  for (const c of out.candidates) d.store.setMeta(`cand:${c.key}|${c.store}`, d.now());
   return out;
 }
 

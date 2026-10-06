@@ -141,7 +141,11 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
     const blockedHosts = new Set<string>(scan?.blockedStores ?? []);
     if (products.length > 0) {
       if (candidates.length > 0) await d.sleep(MIN_GAP_MS);
-      const v = await runOnce({ ...common, products });
+      const v = await runOnce({
+        ...common,
+        products,
+        dailyCap: sc.enabled ? sc.dailyRequestsPerStore : undefined,
+      });
       bump(store, `stat:${today}:alerts`, v.alerts);
       for (const h of v.blockedStores) blockedHosts.add(h);
       d.log.info('pricewatch verificacion', { ...v });
