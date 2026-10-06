@@ -25,6 +25,7 @@ export const ABS_PRICE_CENTS = 1500;
 export const ABS_MEDIAN_CENTS = 10_000;
 export const BLOCK_MS = 6 * 3600 * 1000;
 export const REALERT_MS = 24 * 3600 * 1000;
+export const EMPTY_RUNS_BEFORE_NOTICE = 3;
 
 const ASIN = /^[A-Z0-9]{10}$/;
 
@@ -36,18 +37,27 @@ export function productUrl(asin: string): string {
   return `https://www.amazon.es/dp/${asin}`;
 }
 
-/** "1.299,50 €" / "12,34€" -> céntimos; null si el formato es ambiguo. */
+/**
+ * "1.299,50 €" / "12,34€" -> céntimos. Formato español estricto: sin cifra, punto o coma
+ * pegados delante y nada numérico entre el importe y el €. "12.50 €" o "1,299.50 €" (otro
+ * formato) dan null en vez de un precio equivocado.
+ */
 export function parseEuroCents(raw: string): number | null {
-  const m = raw.match(/(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d{1,2}))?\s?€/);
+  const m = raw.match(/(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s?€/);
   if (!m?.[1]) return null;
   const euros = Number(m[1].replace(/\./g, ''));
   const cents = m[2] ? Number(m[2].padEnd(2, '0')) : 0;
   return euros * 100 + cents;
 }
 
-/** Precio visible de la ficha: primer `a-offscreen` (el precio a pagar). null = no legible. */
+const PRICE_BLOCK =
+  /id="(?:corePrice_feature_div|corePriceDisplay_desktop_feature_div|apex_desktop)"/;
+
+/** Precio del bloque principal de la ficha (no recomendados): primer `a-offscreen` dentro de él. null = no legible. */
 export function extractPriceCents(html: string): number | null {
-  const m = html.match(/class="a-offscreen"[^>]*>\s*([^<]+?)\s*</);
+  const at = html.search(PRICE_BLOCK);
+  if (at < 0) return null;
+  const m = html.slice(at, at + 4000).match(/class="a-offscreen"[^>]*>\s*([^<]+?)\s*</);
   return m?.[1] ? parseEuroCents(m[1]) : null;
 }
 
@@ -154,6 +164,21 @@ export class AmazonStore {
     return row?.v ?? 0;
   }
 
+  emptyRuns(): number {
+    const row = this.db.prepare("SELECT v FROM amazon_meta WHERE k = 'empty_runs'").get() as
+      | { v: number }
+      | undefined;
+    return row?.v ?? 0;
+  }
+
+  setEmptyRuns(n: number): void {
+    this.db
+      .prepare(
+        "INSERT INTO amazon_meta (k, v) VALUES ('empty_runs', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+      )
+      .run(n);
+  }
+
   block(): void {
     this.db
       .prepare(
@@ -186,7 +211,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
     out.stopped = 'already-blocked';
     return out;
   }
-  const gap = Math.max(d.gapMs, MIN_GAP_MS);
+  const gap = Number.isFinite(d.gapMs) ? Math.max(d.gapMs, MIN_GAP_MS) : MIN_GAP_MS;
   const asins = [...new Set(d.asins.filter(isAsin))];
   for (const [i, asin] of asins.entries()) {
     if (i > 0) await d.sleep(gap);
@@ -216,5 +241,58 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
       out.alerts++;
     }
   }
+  if (asins.length > 0) {
+    const empty = out.checked === 0 ? d.store.emptyRuns() + 1 : 0;
+    d.store.setEmptyRuns(empty);
+    if (empty === EMPTY_RUNS_BEFORE_NOTICE) {
+      await d.notify(
+        `Amazon-watch: ${empty} pasadas seguidas sin ninguna lectura de precio. La vigilancia puede estar rota (cambio de página o bloqueo).`,
+      );
+    }
+  }
   return out;
+}
+
+export interface WatchConfig {
+  enabled: boolean;
+  asins: string[];
+  gapMs: number;
+  telegram: { enabled: boolean; chatId: string; tokenFile: string };
+}
+
+/** Valida la config tal cual viene del JSON; lanza con un mensaje claro si un tipo no cuadra. */
+export function parseConfig(raw: unknown): WatchConfig {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    throw new Error('config: se esperaba un objeto');
+  const c = raw as Record<string, unknown>;
+  if (c.enabled !== undefined && typeof c.enabled !== 'boolean')
+    throw new Error('config: enabled debe ser true/false');
+  const asins = c.asins ?? [];
+  if (!Array.isArray(asins) || !asins.every((a) => typeof a === 'string')) {
+    throw new Error('config: asins debe ser una lista de textos');
+  }
+  const gap = c.gapSeconds ?? 30;
+  if (typeof gap !== 'number' || !Number.isFinite(gap) || gap < 0) {
+    throw new Error('config: gapSeconds debe ser un número >= 0');
+  }
+  const t = c.telegram ?? {};
+  if (typeof t !== 'object' || t === null || Array.isArray(t))
+    throw new Error('config: telegram debe ser un objeto');
+  const tg = t as Record<string, unknown>;
+  for (const k of ['chatId', 'tokenFile'] as const) {
+    if (tg[k] !== undefined && typeof tg[k] !== 'string')
+      throw new Error(`config: telegram.${k} debe ser texto`);
+  }
+  if (tg.enabled !== undefined && typeof tg.enabled !== 'boolean')
+    throw new Error('config: telegram.enabled debe ser true/false');
+  return {
+    enabled: c.enabled === true,
+    asins,
+    gapMs: gap * 1000,
+    telegram: {
+      enabled: tg.enabled === true,
+      chatId: typeof tg.chatId === 'string' ? tg.chatId : '',
+      tokenFile: typeof tg.tokenFile === 'string' ? tg.tokenFile : '',
+    },
+  };
 }

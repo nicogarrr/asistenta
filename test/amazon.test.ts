@@ -7,6 +7,7 @@ import {
   extractPriceCents,
   isBlockedPage,
   MIN_GAP_MS,
+  parseConfig,
   parseEuroCents,
   runOnce,
 } from '../src/watch/amazon.js';
@@ -24,11 +25,20 @@ describe('parseo de precio', () => {
     expect(parseEuroCents('12,3€')).toBe(1230);
     expect(parseEuroCents('sin precio')).toBeNull();
   });
+  it('rechaza otros formatos en vez de adivinar', () => {
+    expect(parseEuroCents('12.50 €')).toBeNull();
+    expect(parseEuroCents('1,299.50 €')).toBeNull();
+    expect(parseEuroCents('1.299.50 €')).toBeNull();
+  });
   it('toma el primer a-offscreen y null si no hay', () => {
     expect(
-      extractPriceCents('<span class="a-offscreen">24,99&nbsp;€</span>'.replace('&nbsp;', ' ')),
+      extractPriceCents(
+        '<div id="corePrice_feature_div"><span class="a-offscreen">24,99 €</span></div>',
+      ),
     ).toBe(2499);
     expect(extractPriceCents('<html>nada</html>')).toBeNull();
+    // un a-offscreen fuera del bloque del precio principal (recomendados) no cuenta
+    expect(extractPriceCents('<span class="a-offscreen">9,99 €</span>')).toBeNull();
   });
 });
 
@@ -66,7 +76,12 @@ describe('bloqueo', () => {
   it('reconoce captcha y 429/503', () => {
     expect(isBlockedPage(200, '<form action="/errors/validateCaptcha">')).toBe(true);
     expect(isBlockedPage(503, '')).toBe(true);
-    expect(isBlockedPage(200, '<span class="a-offscreen">1,00 €</span>')).toBe(false);
+    expect(
+      isBlockedPage(
+        200,
+        '<div id="corePrice_feature_div"><span class="a-offscreen">1,00 €</span></div>',
+      ),
+    ).toBe(false);
   });
 });
 
@@ -97,7 +112,7 @@ describe('runOnce', () => {
   };
   const page = (eurText: string) => ({
     status: 200,
-    html: `<span class="a-offscreen">${eurText}</span>`,
+    html: `<div id="corePrice_feature_div"><span class="a-offscreen">${eurText}</span></div>`,
   });
 
   it('fuerza 30 s entre páginas aunque la config pida menos, e ignora ASIN inválidos', async () => {
@@ -144,5 +159,37 @@ describe('runOnce', () => {
     const { deps, sent } = setup({ B000000001: page('1,00 €') });
     await runOnce(deps(['B000000001']));
     expect(sent).toEqual([]);
+  });
+
+  it('gapMs no numérico cae al mínimo de 30 s, no a 0', async () => {
+    const { deps, sleeps } = setup({ B000000001: page('10,00 €'), B000000002: page('10,00 €') });
+    await runOnce(deps(['B000000001', 'B000000002'], Number.NaN));
+    expect(sleeps).toEqual([MIN_GAP_MS]);
+  });
+
+  it('avisa una vez tras 3 pasadas seguidas sin ninguna lectura', async () => {
+    const { deps, sent } = setup({ B000000001: { status: 200, html: '<html>sin precio</html>' } });
+    for (let i = 0; i < 4; i++) await runOnce(deps(['B000000001']));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('3 pasadas seguidas');
+  });
+});
+
+describe('parseConfig', () => {
+  it('aplica valores por defecto y solo enabled=true activa', () => {
+    const c = parseConfig({ enabled: true, asins: ['B000000001'] });
+    expect(c.enabled).toBe(true);
+    expect(c.gapMs).toBe(30_000);
+    expect(c.telegram.enabled).toBe(false);
+    expect(parseConfig({}).enabled).toBe(false);
+  });
+  it('rechaza tipos erróneos en vez de degradar en silencio', () => {
+    expect(() => parseConfig({ enabled: 'yes' })).toThrow(/enabled/);
+    expect(() => parseConfig({ asins: 'B000000001' })).toThrow(/asins/);
+    expect(() => parseConfig({ asins: [1] })).toThrow(/asins/);
+    expect(() => parseConfig({ gapSeconds: 'rápido' })).toThrow(/gapSeconds/);
+    expect(() => parseConfig({ gapSeconds: -5 })).toThrow(/gapSeconds/);
+    expect(() => parseConfig({ telegram: { chatId: 123 } })).toThrow(/chatId/);
+    expect(() => parseConfig([])).toThrow(/objeto/);
   });
 });
