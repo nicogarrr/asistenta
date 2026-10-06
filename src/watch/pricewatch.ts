@@ -392,6 +392,29 @@ export class PriceStore {
       .run(product, store, this.now(), cents);
   }
 
+  getMeta(k: string): number {
+    return this.get(k);
+  }
+
+  setMeta(k: string, v: number): void {
+    this.set(k, v);
+  }
+
+  /** Marca de tiempo de la última lectura de (producto, tienda); 0 si no hay. */
+  lastTs(product: string, store: StoreId): number {
+    const row = this.db
+      .prepare('SELECT MAX(ts) AS t FROM price_readings WHERE product = ? AND store = ?')
+      .get(product, store) as { t: number | null };
+    return row.t ?? 0;
+  }
+
+  /** Borra lecturas de más de 35 días. */
+  prune(): void {
+    this.db
+      .prepare('DELETE FROM price_readings WHERE ts < ?')
+      .run(this.now() - 35 * 24 * 3600 * 1000);
+  }
+
   private get(k: string): number {
     const row = this.db.prepare('SELECT v FROM price_meta WHERE k = ?').get(k) as
       | { v: number }
@@ -434,6 +457,8 @@ export class PriceStore {
 
 export interface Product {
   name: string;
+  /** Texto para mostrar en la alerta (por defecto, name). */
+  label?: string;
   urls: Partial<Record<StoreId, string>>;
 }
 
@@ -460,6 +485,7 @@ export interface RunSummary {
 
 interface Item {
   product: string;
+  label: string;
   store: StoreId;
   url: string;
 }
@@ -473,7 +499,7 @@ function buildItems(products: Product[]): Item[] {
       const url = toUrl(s, ref);
       if (!url) continue;
       const list = byStore.get(s) ?? [];
-      list.push({ product: p.name, store: s, url });
+      list.push({ product: p.name, label: p.label ?? p.name, store: s, url });
       byStore.set(s, list);
     }
   }
@@ -577,7 +603,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
     )
       continue;
     await d.notify(
-      alertText(it.product, it.store, it.url, suspicion, ex2.inStock, new Date(d.now())),
+      alertText(it.label, it.store, it.url, suspicion, ex2.inStock, new Date(d.now())),
     );
     d.store.markAlerted(it.product, it.store, ex2.cents);
     out.alerts++;
