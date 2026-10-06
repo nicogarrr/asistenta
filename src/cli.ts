@@ -109,6 +109,7 @@ import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
+import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
@@ -2188,6 +2189,14 @@ async function serveCommand(): Promise<number> {
     10 * 60 * 1000,
   );
   pageWatchTimer.unref();
+
+  // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
+  // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
+  startPricewatchLoop({
+    configPath: process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json'),
+    stateDir: paths.state,
+    log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
+  });
 
   const startedAt = Date.now();
 
