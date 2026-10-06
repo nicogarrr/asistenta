@@ -48,6 +48,18 @@ export function isExcluded(title: string): boolean {
   return EXCLUDED.test(norm(title));
 }
 
+/** Gama alta de tablets: solo estas fichas se vigilan en los listados de la categoría `tablets`. */
+const PREMIUM_TABLET =
+  /\b(ipad (pro|air)|galaxy tab s(8|9|1\d)|surface pro|xiaomi pad [67]|oneplus pad|matepad (pro|11\.5)|yoga tab (13|pro)|legion tab|lenovo tab p1[23]|pixel tablet)\b/;
+/** Accesorios y variantes de gama media que comparten nombre con los modelos de gama alta. */
+const NOT_A_TABLET =
+  /\b(teclado|keyboard|lapiz|pencil|cubierta|cover|folio|combo touch|funda|case|lite|fe)\b/;
+
+export function isPremiumTablet(title: string): boolean {
+  const t = norm(title);
+  return PREMIUM_TABLET.test(t) && !NOT_A_TABLET.test(t);
+}
+
 const UNIT = /^\d+(gb|tb|hz|w|kg|mah|mp|l|cm|mm|pulgadas|k|bar|rpm|db|mhz|ghz|v)$/;
 
 /** Código de modelo (p. ej. TU65M73HAUXXC) para emparejar el mismo producto entre tiendas. */
@@ -179,6 +191,10 @@ export function extractCards(store: StoreId, html: string, base: string): Card[]
 }
 
 export const DEFAULT_LISTINGS: Listing[] = [
+  ['tablets', 'mediamarkt', 'https://www.mediamarkt.es/es/category/tablets-169.html', 4],
+  ['tablets', 'mediamarkt', 'https://www.mediamarkt.es/es/category/tablets-android-171.html', 2],
+  ['tablets', 'amazon', 'https://www.amazon.es/s?k=ipad+pro+galaxy+tab+s', 2],
+  ['tablets', 'pccomponentes', 'https://www.pccomponentes.com/tablets', 2],
   ['televisores', 'mediamarkt', 'https://www.mediamarkt.es/es/category/televisores-399.html', 3],
   ['móviles', 'mediamarkt', 'https://www.mediamarkt.es/es/category/smartphones-263.html', 3],
   ['portátiles', 'mediamarkt', 'https://www.mediamarkt.es/es/category/port%C3%A1tiles-153.html', 3],
@@ -482,6 +498,7 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
     d.store.setMeta(`nocards:${job.store}`, 0);
     for (const c of cards) {
       if (isExcluded(c.title)) continue;
+      if (job.listing.category === 'tablets' && !isPremiumTablet(c.title)) continue;
       out.cards++;
       const key = modelKey(c.title) ?? `u:${job.store}:${new URL(c.url).pathname}`;
       const ref = referenceFor(
@@ -539,6 +556,8 @@ export function parseScanConfig(raw: unknown): ScanConfig {
     throw new Error('scan debe ser un objeto');
   if (s.enabled !== undefined && typeof s.enabled !== 'boolean')
     throw new Error('scan.enabled debe ser true o false');
+  if (s.focus !== undefined && typeof s.focus !== 'string')
+    throw new Error('scan.focus debe ser el nombre de una categoría');
   let listings = DEFAULT_LISTINGS;
   if (s.listings !== undefined) {
     if (!Array.isArray(s.listings)) throw new Error('scan.listings debe ser una lista');
@@ -555,6 +574,12 @@ export function parseScanConfig(raw: unknown): ScanConfig {
         pages: intIn(l.pages, `listings[${i}].pages`, 1, 1, 5),
       };
     });
+  }
+  if (s.focus !== undefined) {
+    const focus = s.focus;
+    listings = listings.filter((l) => l.category === focus);
+    if (listings.length === 0)
+      throw new Error(`scan.focus: no hay listados de la categoría ${focus}`);
   }
   return {
     enabled: s.enabled === true,
