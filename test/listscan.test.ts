@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractCards,
   isExcluded,
+  isPremiumTablet,
   type Listing,
   modelKey,
   pageUrl,
@@ -341,5 +342,57 @@ describe('scanOnce', () => {
     }
     const r = await scanOnce(t.deps());
     expect(r.candidates.map((c: { cents: number }) => c.cents)).toEqual([1000, 2000]);
+  });
+});
+
+describe('foco en tablets de gama alta', () => {
+  it('solo cuentan los modelos tope de gama', () => {
+    expect(isPremiumTablet('Apple iPad Pro 13" M4 256 GB')).toBe(true);
+    expect(isPremiumTablet('Samsung Galaxy Tab S9 Ultra 5G')).toBe(true);
+    expect(isPremiumTablet('Xiaomi Pad 6 128 GB')).toBe(true);
+    expect(isPremiumTablet('Apple iPad 10.ª generación 64 GB')).toBe(false);
+    expect(isPremiumTablet('Samsung Galaxy Tab A9 64 GB')).toBe(false);
+  });
+
+  it('scan.focus deja solo la categoría y falla si no existe', () => {
+    const c = parseScanConfig({ scan: { focus: 'tablets' } });
+    expect(c.listings.length).toBeGreaterThan(0);
+    expect(c.listings.every((l) => l.category === 'tablets')).toBe(true);
+    expect(() => parseScanConfig({ scan: { focus: 'zapatos' } })).toThrow(/focus/);
+    expect(() => parseScanConfig({ scan: { focus: 3 } })).toThrow(/focus/);
+  });
+
+  it('en el listado de tablets una ficha básica no se registra ni da candidato', async () => {
+    const html = ldList([
+      { name: 'Apple iPad 10.ª generación 64 GB', price: 20, url: `${MM}ipad10.html` },
+      { name: 'Apple iPad Pro 11 M4 256GB MVV83TY', price: 20, url: `${MM}ipadpro.html` },
+    ]);
+    const db = new DatabaseSync(':memory:');
+    const st = new PriceStore(db, () => 10 * DAY);
+    const seen: string[] = [];
+    const lst: Listing[] = [
+      {
+        store: 'mediamarkt',
+        category: 'tablets',
+        url: 'https://www.mediamarkt.es/es/category/tablets-169.html',
+        pages: 1,
+      },
+    ];
+    const r = await scanOnce({
+      store: st,
+      listings: lst,
+      minDropPct: 70,
+      pagesPerRun: 1,
+      dailyCap: 100,
+      maxCandidates: 5,
+      gapMs: MIN_GAP_MS,
+      now: () => 10 * DAY,
+      random: () => 0,
+      fetchPage: async () => ({ status: 200, html }),
+      robotsAllows: async () => true,
+      sleep: async () => {},
+      notify: async (x: string) => void seen.push(x),
+    });
+    expect(r.cards).toBe(1);
   });
 });
