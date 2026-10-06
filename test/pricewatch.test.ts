@@ -293,6 +293,31 @@ describe('runOnce', () => {
     expect(t.store.blockedUntil('www.amazon.es')).toBe(10 * DAY + 2 * 60_000 + 5 * 60_000);
   });
 
+  it('dailyCap: las fichas cuentan en el tope diario del host y se salta al llegar', async () => {
+    const t = setup({ [URLS.amazon]: page('100.00') });
+    await runOnce({
+      ...t.deps(),
+      dailyCap: 2,
+      products: [
+        { name: 'A', urls: { amazon: URLS.amazon } },
+        { name: 'B', urls: { amazon: URLS.amazon } },
+        { name: 'C', urls: { amazon: URLS.amazon } },
+      ],
+    });
+    expect(t.fetched).toHaveLength(2);
+    expect(t.store.getMeta('reqs:www.amazon.es:1970-01-11')).toBe(2);
+    const free = setup({ [URLS.amazon]: page('100.00') });
+    await runOnce({
+      ...free.deps(),
+      products: [
+        { name: 'A', urls: { amazon: URLS.amazon } },
+        { name: 'B', urls: { amazon: URLS.amazon } },
+        { name: 'C', urls: { amazon: URLS.amazon } },
+      ],
+    });
+    expect(free.fetched).toHaveLength(3);
+  });
+
   it('robots.txt prohibido: no se lee', async () => {
     const t = setup({ [URLS.amazon]: page('100.00') });
     const r = await runOnce(t.deps({ robotsAllows: async () => false }));

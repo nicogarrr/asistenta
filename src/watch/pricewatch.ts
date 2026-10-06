@@ -473,6 +473,8 @@ export interface RunDeps {
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
   notify: (text: string) => Promise<void>;
+  /** Tope diario de peticiones por host (compartido con el barrido); sin valor, sin tope. */
+  dailyCap?: number;
 }
 
 export interface RunSummary {
@@ -521,6 +523,10 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
   const blocked = new Set<string>();
   const items = buildItems(d.products);
 
+  const overCap = (host: string): boolean =>
+    d.dailyCap !== undefined &&
+    d.store.getMeta(`reqs:${host}:${new Date(d.now()).toISOString().slice(0, 10)}`) >= d.dailyCap;
+
   const throttle = async (host: string): Promise<void> => {
     const last = lastReq.get(host);
     if (last !== undefined) {
@@ -533,6 +539,10 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
     url: string,
   ): Promise<{ status: number; html: string } | null> => {
     await throttle(host);
+    if (d.dailyCap !== undefined) {
+      const k = `reqs:${host}:${new Date(d.now()).toISOString().slice(0, 10)}`;
+      d.store.setMeta(k, d.store.getMeta(k) + 1);
+    }
     try {
       const page = await d.fetchPage(url);
       lastReq.set(host, d.now());
@@ -555,6 +565,10 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
       continue;
     }
     if (!(await d.robotsAllows(it.url))) {
+      out.skipped++;
+      continue;
+    }
+    if (overCap(host)) {
       out.skipped++;
       continue;
     }
@@ -587,6 +601,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
       continue;
     }
     if (ex.inStock === false || d.store.alertedRecently(it.product, it.store)) continue;
+    if (overCap(host)) continue;
     const again = await get(host, it.url);
     if (!again || isBlockedPage(again.status, again.html)) {
       if (again) {
