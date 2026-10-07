@@ -11,8 +11,7 @@ a tiendas bloqueadas.
 
 Cada document/script/xhr/fetch autorizado consume presupuesto diario y pasa robots.
 Recursos externos, imágenes y media se bloquean. Límite por tienda invariable;
-las páginas con JS pueden consumirlo antes y quedarse pausadas. Relectura de robots
-es comprobación operativa aparte, cacheada por proceso. No borrar historial sqlite.
+las páginas con JS pueden consumirlo antes y quedarse pausadas. Robots también consume el presupuesto y se cachea por proceso hasta el cambio de día. No borrar historial sqlite.
 
 Para que los avisos usen el bot principal si el token del vigilante falla401 o falta:
 `telegram.useMainBotFallback: true` en pricewatch.json, junto con enabled/chatId.
@@ -27,6 +26,9 @@ ni Telegram operativo. Silencio no es prueba de ausencia de errores de precio.
 La primera ejecución del lector nuevo reinicia solo las pausas por listado vacío
 de esas tres tiendas. Conserva presupuesto del día, historial y backoff de captcha.
 No resetear repetidamente: si vuelve a fallar la tienda se pausa de nuevo.
-Las páginas respetan gapSeconds (mínimo30s); sus recursos internos consumen presupuesto. El contador es
-conservador: el documento también consume la reserva del scanner, por lo que el
-lector puede agotarse antes del techo, nunca después.
+Las páginas respetan gapSeconds (mínimo30s); sus recursos internos consumen presupuesto.
+No hay doble cuenta del documento: el lector reserva cada petición antes de emitirla.
+
+## Corrección de robots y presupuesto
+
+Robots no verificable (HTTP no 2xx, red, redirección) pausa la tienda con backoff. Solo respuestas válidas se cachean hasta el cambio de día. Robots, documentos y subrequests autorizados comparten el mismo contador reservado antes de emitir la petición. El scanner y la verificación no añaden otra cuenta si el lector gestiona el presupuesto.

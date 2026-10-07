@@ -357,6 +357,7 @@ export interface ScanDeps {
   gapMs: number;
   now: () => number;
   random: () => number;
+  managesRequestBudget?: boolean;
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -467,6 +468,8 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
       const need = gap * (1 + 0.2 * d.random()) - (d.now() - last);
       if (need > 0) await d.sleep(need);
     }
+    const reqKey = `reqs:${host}:${dayKey(d.now())}`;
+    if (!d.managesRequestBudget) d.store.setMeta(reqKey, d.store.getMeta(reqKey) + 1);
     let page: { status: number; html: string } | null = null;
     try {
       page = await d.fetchPage(job.url);
@@ -474,8 +477,6 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
       page = null;
     }
     lastReq.set(host, d.now());
-    const reqKey = `reqs:${host}:${dayKey(d.now())}`;
-    d.store.setMeta(reqKey, d.store.getMeta(reqKey) + 1);
     out.pages++;
     if (!page) {
       out.failures++;

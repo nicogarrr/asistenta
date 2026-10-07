@@ -470,6 +470,7 @@ export interface RunDeps {
   minDropPct: number;
   now: () => number;
   random: () => number;
+  managesRequestBudget?: boolean;
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -540,7 +541,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
     url: string,
   ): Promise<{ status: number; html: string } | null> => {
     await throttle(host);
-    if (d.dailyCap !== undefined) {
+    if (d.dailyCap !== undefined && !d.managesRequestBudget) {
       const k = `reqs:${host}:${new Date(d.now()).toISOString().slice(0, 10)}`;
       d.store.setMeta(k, d.store.getMeta(k) + 1);
     }

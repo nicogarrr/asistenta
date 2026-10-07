@@ -21,6 +21,7 @@ import { curlImpersonateFetch, findCurlImpersonate } from '../media/download.js'
 import { type Candidate, parseScanConfig, type ScanSummary, scanOnce } from './listscan.js';
 import {
   hostOf,
+  isBlockedPage,
   MIN_GAP_MS,
   PriceStore,
   type Product,
@@ -79,6 +80,7 @@ export interface CycleDeps {
   readConfig: () => unknown;
   openDb: () => DatabaseSync;
   makeNotify: (cfg: ReturnType<typeof parseConfig>) => (text: string) => Promise<void>;
+  managesRequestBudget?: boolean;
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -163,6 +165,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
       random: d.random,
       sleep: d.sleep,
       notify,
+      managesRequestBudget: d.managesRequestBudget,
       robotsAllows: d.robotsAllows,
       fetchPage: d.fetchPage,
     };
@@ -231,8 +234,6 @@ export function cycleMinutesOf(raw: unknown): number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 10 && v <= 1440 ? v : 30;
 }
 
-const robotsCache = new Map<string, string>();
-
 export function realDeps(
   configPath: string,
   dbPath: string,
@@ -241,6 +242,32 @@ export function realDeps(
   mainBotToken = '',
 ): CycleDeps {
   const browser = new PublicPriceBrowser();
+  const robotsCache = new Map<string, { text: string; day: string }>();
+  const reserve = (url: string): boolean => {
+    const db = deps.openDb();
+    try {
+      const store = new PriceStore(db, deps.now);
+      const host = hostOf(url);
+      if (store.blockedUntil(host) > deps.now()) return false;
+      const cap = parseScanConfig(deps.readConfig()).dailyRequestsPerStore;
+      const key = `reqs:${host}:${dayStr(deps.now())}`;
+      if (store.getMeta(key) >= cap) return false;
+      store.setMeta(key, store.getMeta(key) + 1);
+      return true;
+    } finally {
+      db.close();
+    }
+  };
+  const pauseRobots = (host: string): false => {
+    const db = deps.openDb();
+    try {
+      new PriceStore(db, deps.now).block(host);
+    } finally {
+      db.close();
+    }
+    log.warn('pricewatch: robots no verificable, tienda en pausa', { host });
+    return false;
+  };
   const deps: CycleDeps = {
     readConfig: () => JSON.parse(readFileSync(configPath, 'utf8')) as unknown,
     openDb: () => new DatabaseSync(dbPath),
@@ -262,39 +289,44 @@ export function realDeps(
         log,
       });
     },
+    managesRequestBudget: true,
     fetchPage: async (url) => {
-      if (!usesPublicBrowser(url)) return fetchTolerant(url, deps.sleep, log);
+      if (!usesPublicBrowser(url)) {
+        if (!(await deps.robotsAllows(url)) || !reserve(url)) return { status: 0, html: '' };
+        return fetchTolerant(url, deps.sleep, log);
+      }
       return browser.read(url, async (requestUrl) => {
         if (!(await deps.robotsAllows(requestUrl))) return false;
-        const db = deps.openDb();
-        try {
-          const store = new PriceStore(db, deps.now);
-          const cap = parseScanConfig(deps.readConfig()).dailyRequestsPerStore;
-          const key = `reqs:${hostOf(requestUrl)}:${dayStr(deps.now())}`;
-          if (store.getMeta(key) >= cap) return false;
-          store.setMeta(key, store.getMeta(key) + 1);
-          return true;
-        } finally {
-          db.close();
-        }
+        return reserve(requestUrl);
       });
     },
     closeCycle: () => browser.close(),
     robotsAllows: async (url) => {
       const host = hostOf(url);
-      if (!robotsCache.has(host)) {
+      const db = deps.openDb();
+      try {
+        if (new PriceStore(db, deps.now).blockedUntil(host) > deps.now()) return false;
+      } finally {
+        db.close();
+      }
+      const cached = robotsCache.get(host);
+      if (!cached || cached.day !== dayStr(deps.now())) {
+        if (!reserve(url)) return false;
         try {
           const res = await fetch(`https://${host}/robots.txt`, {
             headers: HEADERS,
+            redirect: 'error',
             signal: AbortSignal.timeout(15_000),
           });
-          robotsCache.set(host, res.ok ? await res.text() : '');
+          const text = await res.text();
+          if (!res.ok || isBlockedPage(res.status, text)) return pauseRobots(host);
+          robotsCache.set(host, { text, day: dayStr(deps.now()) });
         } catch {
-          robotsCache.set(host, '');
+          return pauseRobots(host);
         }
       }
       const u = new URL(url);
-      return !robotsDisallows(robotsCache.get(host) ?? '', u.pathname + u.search);
+      return !robotsDisallows(robotsCache.get(host)?.text ?? '', u.pathname + u.search);
     },
     sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
     now: Date.now,
