@@ -122,6 +122,16 @@ function reportText(store: PriceStore, day: number, when: number): string {
     .join('\n');
 }
 
+export function resetPublicReaderPause(store: PriceStore, day: string): void {
+  // Upgrade only the parser/no-card pause; preserve real 403 backoff and request budget.
+  if (store.getMeta('public_reader_v1') > 0) return;
+  for (const id of ['amazon', 'mediamarkt', 'pccomponentes'] as const) {
+    store.setMeta(`nocards_off:${id}:${day}`, 0);
+    store.setMeta(`nocards:${id}`, 0);
+  }
+  store.setMeta('public_reader_v1', 1);
+}
+
 export async function runCycle(d: CycleDeps): Promise<CycleResult> {
   const raw = d.readConfig();
   const cfg = parseConfig(raw);
@@ -132,6 +142,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
   try {
     const store = new PriceStore(db, d.now);
     store.prune();
+    resetPublicReaderPause(store, dayStr(d.now()));
     const notify = d.makeNotify(cfg);
     const today = dayNum(d.now());
     const last = store.getMeta('report_day');

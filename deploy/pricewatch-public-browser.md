@@ -23,3 +23,10 @@ principal. No fallback en403,429 o errores de red, para evitar duplicados.
 Verificar en el PC: log `pricewatch barrido` (pages/cards/failures/blocked/noCards),
 y recepción del aviso por el bot elegido. Daemon vivo no implica tiendas legibles
 ni Telegram operativo. Silencio no es prueba de ausencia de errores de precio.
+
+La primera ejecución del lector nuevo reinicia solo las pausas por listado vacío
+de esas tres tiendas. Conserva presupuesto del día, historial y backoff de captcha.
+No resetear repetidamente: si vuelve a fallar la tienda se pausa de nuevo.
+Las páginas respetan gapSeconds (mínimo30s); sus recursos internos consumen presupuesto. El contador es
+conservador: el documento también consume la reserva del scanner, por lo que el
+lector puede agotarse antes del techo, nunca después.
