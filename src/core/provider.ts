@@ -21,6 +21,29 @@ import { vaultGet } from '../vault.js';
 export interface ProviderHandle {
   models: MutableModels;
   model: Model<string>;
+  /** Stream function for the agent: adds the per-conversation session header Go requires. */
+  streamFn: MutableModels['streamSimple'];
+  /** The model with the Go client headers for one session (identity for other endpoints). */
+  modelFor: (sessionId?: string) => Model<string>;
+}
+
+/** Identifies this client to OpenCode Go (own user agent, never a generic SDK name). */
+export const CLIENT_USER_AGENT = 'asistenta/1.0';
+
+/** True for the OpenCode Go endpoint, which documents the client + session-header rules. */
+export function isGoEndpoint(baseUrl: string): boolean {
+  return /\/zen\/go(\/|$)/.test(baseUrl);
+}
+
+/**
+ * OpenCode Go asks API clients to send their own user agent and a stable session id
+ * in `x-opencode-session` for each conversation (https://opencode.ai/docs/go/).
+ * Without it the endpoint answers 400 MissingSessionID. Only added for Go.
+ */
+export function goHeaders(sessionId: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'User-Agent': CLIENT_USER_AGENT };
+  if (sessionId) headers['x-opencode-session'] = sessionId;
+  return headers;
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
@@ -62,12 +85,19 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   if (!model) {
     throw new Error(`model ${config.provider}/${config.model} not registered`);
   }
+  const go = isGoEndpoint(config.baseUrl);
+  const modelFor = (sessionId?: string): Model<string> =>
+    go
+      ? ({ ...model, headers: { ...model.headers, ...goHeaders(sessionId) } } as Model<string>)
+      : model;
+  const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
+    models.streamSimple(go ? modelFor(options?.sessionId) : m, context, options);
   log.info('provider ready', {
     provider: config.provider,
     model: config.model,
     baseUrl: config.baseUrl,
   });
-  return { models, model };
+  return { models, model, streamFn, modelFor };
 }
 
 async function resolveApiKey(): Promise<string> {
