@@ -19,7 +19,28 @@
   }
 
   function visible(el) {
-    return el instanceof HTMLElement && el.offsetParent !== null;
+    if (!(el instanceof HTMLElement)) return false;
+    var style = global.getComputedStyle(el);
+    var rect = el.getBoundingClientRect();
+    return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0 &&
+      rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 &&
+      rect.top < global.innerHeight && rect.left < global.innerWidth;
+  }
+
+  function actionable(el) {
+    return visible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+  }
+
+  function matchesSkip(el, args) {
+    var labels = [el.getAttribute('aria-label'), el.textContent, el.getAttribute('title')];
+    for (var l = 0; l < labels.length; l++) {
+      var label = fold(labels[l] || '');
+      if (!label) continue;
+      for (var t = 0; t < args.texts.length; t++) {
+        if (label.indexOf(fold(args.texts[t])) === 0) return true;
+      }
+    }
+    return false;
   }
 
   function clickSkip(args) {
@@ -35,7 +56,7 @@
       }
       for (var j = 0; j < nodes.length; j++) {
         var el = nodes[j];
-        if (!visible(el)) continue;
+        if (!actionable(el)) continue;
         if (seen.indexOf(el) !== -1) continue;
         seen.push(el);
         found.push(el);
@@ -44,16 +65,7 @@
 
     var matched = [];
     for (var k = 0; k < found.length; k++) {
-      var label = fold(found[k].textContent || found[k].getAttribute('aria-label') || '');
-      if (!label) continue;
-      var startsWithHint = false;
-      for (var t = 0; t < args.texts.length; t++) {
-        if (label.indexOf(fold(args.texts[t])) === 0) {
-          startsWithHint = true;
-          break;
-        }
-      }
-      if (!startsWithHint) continue;
+      if (!matchesSkip(found[k], args)) continue;
       matched.push(found[k]);
     }
 
@@ -62,7 +74,7 @@
       try {
         var adNodes = global.document.querySelectorAll(args.adSelector);
         for (var a = 0; a < adNodes.length; a++) {
-          if (visible(adNodes[a])) {
+          if (adNodes[a] instanceof HTMLElement && global.getComputedStyle(adNodes[a]).display !== 'none' && global.getComputedStyle(adNodes[a]).visibility !== 'hidden') {
             adShowing = true;
             break;
           }
@@ -95,17 +107,7 @@
         continue;
       }
       for (var j = 0; j < nodes.length; j++) {
-        if (!visible(nodes[j])) continue;
-        var label = fold(nodes[j].textContent || nodes[j].getAttribute('aria-label') || '');
-        if (!label) continue;
-        var startsWithHint = false;
-        for (var t = 0; t < args.texts.length; t++) {
-          if (label.indexOf(fold(args.texts[t])) === 0) {
-            startsWithHint = true;
-            break;
-          }
-        }
-        if (startsWithHint) skipButtonsVisible++;
+        if (actionable(nodes[j]) && matchesSkip(nodes[j], args)) skipButtonsVisible++;
       }
     }
 
@@ -114,7 +116,7 @@
       try {
         var adNodes = global.document.querySelectorAll(args.adSelector);
         for (var a = 0; a < adNodes.length; a++) {
-          if (visible(adNodes[a])) {
+          if (adNodes[a] instanceof HTMLElement && global.getComputedStyle(adNodes[a]).display !== 'none' && global.getComputedStyle(adNodes[a]).visibility !== 'hidden') {
             adShowing = true;
             break;
           }
