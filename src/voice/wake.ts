@@ -53,7 +53,7 @@ import { Mutex, withTimeout } from '../utils.js';
 import { WHISPER_SAMPLE_RATE } from './audio.js';
 
 /** Same checkpoint as `src/voice/stt.ts`, and for the same reason: `whisper-*.en` cannot do Spanish. */
-const DEFAULT_MODEL = 'onnx-community/whisper-base';
+const DEFAULT_MODEL = 'onnx-community/whisper-small';
 
 /**
  * Default wake word. The user's word for their assistant, in Spanish.
