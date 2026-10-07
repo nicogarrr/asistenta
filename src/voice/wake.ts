@@ -623,6 +623,9 @@ export class WakeWordListener {
    */
   #lastHeard = '';
 
+  /** Last non-matching transcript already logged, so a noisy room does not repeat itself. */
+  #loggedHeard = '';
+
   constructor(opts: WakeWordOptions = {}) {
     this.#word = opts.word ?? DEFAULT_WORD;
     this.#sensitivity = Math.max(0, Math.min(1, opts.sensitivity ?? DEFAULT_SENSITIVITY));
@@ -789,9 +792,10 @@ export class WakeWordListener {
         // routine, because whisper has no idea "chochi" is a word and will happily
         // transcribe it as something else.
         this.#lastHeard = text;
-        this.#reportError(
-          new Error(`no he oido la palabra de activacion; he transcrito: "${text}"`),
-        );
+        if (text !== this.#loggedHeard) {
+          this.#loggedHeard = text;
+          log.info('wake word oida', { heard: text, word: this.#word });
+        }
         return;
       }
 

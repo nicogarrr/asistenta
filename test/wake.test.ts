@@ -2,6 +2,7 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { log } from '../src/log.js';
 import {
   matchesWakeWord,
   normaliseForMatch,
@@ -413,6 +414,57 @@ describe('WakeWordListener failure paths', () => {
     await waitFor(() => !listener.isRunning(), 1_000);
     expect(errors.map((err) => err.message)).toContain('la captura de audio se detuvo');
     expect(capture.startCalls).toBe(1);
+    await listener.stop();
+  });
+
+  it('logs what it heard when the transcript is not the wake word, without reporting an error', async () => {
+    // A custom word like "chochi" is what whisper cannot spell: without this the
+    // listener is silently mute and a working microphone looks broken.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const errors: Error[] = [];
+    const capture = new FakeCapture();
+    const listener = new WakeWordListener({
+      capture,
+      transcriber: async () => 'que es eso',
+      checkIntervalMs: 100,
+      onError: (err) => {
+        errors.push(err);
+      },
+    });
+    await listener.start();
+    capture.push(tone(0.2, 0.5));
+    await waitFor(() => listener.stats().checks > 0, 1_000);
+    await waitFor(() => info.mock.calls.length > 0, 1_000);
+
+    expect(info.mock.calls.map((call) => call[0])).toContain('wake word oida');
+    expect(listener.stats().lastHeard).toBe('que es eso');
+    // Routine, not a failure: routing it through onError made the daemon tell
+    // the user it had stopped listening, and silenced later real errors.
+    expect(errors).toEqual([]);
+    info.mockRestore();
+    await listener.stop();
+  });
+
+  it('does not repeat an unchanged non-matching transcript in the log', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    let heard = 'hola que tal';
+    const capture = new FakeCapture();
+    const listener = new WakeWordListener({
+      capture,
+      transcriber: async () => heard,
+      checkIntervalMs: 100,
+    });
+    await listener.start();
+    capture.push(tone(0.2, 0.5));
+    await waitFor(() => info.mock.calls.length === 1, 1_000);
+    heard = 'otra cosa distinta';
+    capture.push(tone(0.2, 0.5));
+    await waitFor(() => info.mock.calls.length === 2, 1_000);
+    await wait(300);
+
+    expect(info.mock.calls.filter((call) => call[0] === 'wake word oida')).toHaveLength(2);
+    expect(listener.stats().lastHeard).toBe('otra cosa distinta');
+    info.mockRestore();
     await listener.stop();
   });
 
