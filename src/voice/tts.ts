@@ -18,6 +18,7 @@ import { encodeMp3, resampleLinear, wavToPcm } from './audio.js';
 const execFileAsync = promisify(execFile);
 
 export interface TtsAudio {
+  durationSeconds: number;
   data: Buffer;
   mimeType: 'audio/mpeg' | 'audio/wav';
   format: 'mp3' | 'wav';
@@ -154,12 +155,14 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
         );
 
         const decoded = wavToPcm(readFileSync(wavFile));
+        const durationSeconds = decoded.samples.length / decoded.sampleRate;
         // Resampled to 16k before mp3: SAPI writes 22.05kHz, and encoding that
         // rate costs ~25% more bytes for no audible gain, since nothing above
         // 8kHz matters for intelligibility of speech.
         const pcm = resampleLinear(decoded.samples, decoded.sampleRate, MP3_SAMPLE_RATE);
 
         return {
+          durationSeconds,
           data: encodeMp3(pcm, MP3_SAMPLE_RATE, MP3_KBPS),
           mimeType: 'audio/mpeg',
           format: 'mp3',

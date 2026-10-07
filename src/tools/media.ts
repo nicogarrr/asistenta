@@ -12,7 +12,7 @@ import {
   toPlayableAudio,
 } from '../screen/media.js';
 import { recordScreen } from '../screen/recorder.js';
-import { playAudioFile } from './system.js';
+import { playAudioFile, playbackRestoreText } from './system.js';
 
 /**
  * Audio, camera and microphone, in ordinary language.
@@ -258,7 +258,9 @@ async function playReceived(deps: MediaToolDeps, volume: number) {
     });
   }
 
-  const bytes = await deps.downloadAudio(audio.fileId, MAX_PLAY_BYTES);
+  const bytes =
+    deps.recall.read(deps.chatKey, audio.messageId) ??
+    (await deps.downloadAudio(audio.fileId, MAX_PLAY_BYTES));
   if (!bytes) {
     return ok('Telegram ya no me deja descargar ese audio. Vuelve a mandármelo y lo reproduzco.', {
       played: false,
@@ -273,17 +275,18 @@ async function playReceived(deps: MediaToolDeps, volume: number) {
     deps.beforePlayback?.();
     const res = await playAudioFile(playable, { volume });
     if (!res.ok) {
-      return ok(`No he podido sacarlo por los altavoces: ${res.detail}`, {
-        played: false,
-        reason: res.detail,
-        seconds: res.seconds,
-      });
+      return ok(
+        `No he podido sacarlo por los altavoces: ${res.detail}. ${playbackRestoreText(res)}`,
+        {
+          played: false,
+          reason: res.detail,
+          seconds: res.seconds,
+        },
+      );
     }
     return ok(
-      `Sonado ${res.seconds}s al volumen ${res.volumeSet}% (audio recibido ${agoLabel(audio.at, deps.recall.now())}). ` +
-        (res.volumeRestoredTo === null
-          ? 'El volumen se queda ahí.'
-          : `He dejado el volumen como estaba (${res.volumeRestoredTo}%).`),
+      `El reproductor completó ${res.seconds}s al volumen ${res.volumeSet}%; no puedo confirmar que se haya oído en la habitación (audio recibido ${agoLabel(audio.at, deps.recall.now())}). ` +
+        playbackRestoreText(res),
       {
         played: true,
         seconds: res.seconds,

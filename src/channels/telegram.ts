@@ -669,12 +669,21 @@ export class TelegramChannel implements ChannelAdapter {
    */
   async #sendAudio(chatId: number, audio: ChannelAudio): Promise<void> {
     const bytes = Buffer.from(audio.data, 'base64');
-    if (bytes.length === 0) return;
+    if (bytes.length === 0) {
+      log.warn('voice output rejected: empty bytes');
+      return;
+    }
+    const duration = audio.durationSeconds;
     await this.#throttled(() =>
       withTimeout(
-        this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
-          caption: audio.durationSeconds ? `. ${Math.round(audio.durationSeconds)}s` : undefined,
-        }),
+        this.#bot.api.sendVoice(
+          chatId,
+          new InputFile(bytes, audio.mimeType === 'audio/wav' ? 'voice.wav' : 'voice.mp3'),
+          {
+            duration: duration && duration > 0 ? Math.ceil(duration) : undefined,
+            caption: audio.durationSeconds ? `. ${Math.round(audio.durationSeconds)}s` : undefined,
+          },
+        ),
         60_000,
         'sendVoice timed out',
       ),

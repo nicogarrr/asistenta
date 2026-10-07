@@ -1,22 +1,9 @@
-/**
- * What the user sent us, remembered well enough to act on later.
- *
- * The gap this closes is specific and was the most annoying bug in the first
- * build: a voice note arrives, it is transcribed, the turn ends, and the bytes are
- * gone. Two messages later the user says "suéltame ese audio" or "/play", and the
- * only handle left is a `file_id` that nothing remembered. Telegram's `file_id` is
- * stable and can be re-downloaded for as long as the bot token is valid, so the id
- * alone is enough to play the audio again - there is no need to keep the file on
- * disk, and keeping it would be exactly the kind of thing that should not survive
- * the turn.
- *
- * Per chat rather than global: one person's "the last audio" is not another's, and a
- * shared group must not mix them up.
- *
- * Bounded twice over. A TTL because "the last audio" from six hours ago is a
- * different request from the one the user just made, and a per-chat cap because an
- * always-on daemon that remembers everything eventually remembers a great deal.
- */
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+/** Audio handles and optional local originals, isolated per chat and bounded by
+ * the same TTL and per-chat cap. The local original survives a daemon restart
+ * so replay does not depend on another Telegram download. */
 
 /** One audio the user sent, as far as we still care about it. */
 export interface ReceivedAudio {
@@ -36,6 +23,7 @@ export interface ReceivedAudio {
 }
 
 export interface AudioRecallOptions {
+  directory?: string;
   /** Audios kept per chat. */
   perChat?: number;
   /** How long an audio stays eligible. */
@@ -50,6 +38,8 @@ const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_PER_CHAT = 10;
 
 export class AudioRecall {
+  #expiryTimer?: ReturnType<typeof setTimeout>;
+  readonly #directory?: string;
   readonly #perChat: number;
   readonly #ttlMs: number;
   readonly #now: () => number;
@@ -60,6 +50,35 @@ export class AudioRecall {
     this.#perChat = Math.max(1, Math.trunc(opts.perChat ?? DEFAULT_PER_CHAT));
     this.#ttlMs = Math.max(0, Math.trunc(opts.ttlMs ?? DEFAULT_TTL_MS));
     this.#now = opts.now ?? Date.now;
+    this.#directory = opts.directory;
+    if (this.#directory) {
+      mkdirSync(this.#directory, { recursive: true, mode: 0o700 });
+      try {
+        const saved = JSON.parse(
+          readFileSync(join(this.#directory, 'index.json'), 'utf8'),
+        ) as Array<[string, ReceivedAudio[]]>;
+        for (const [chat, entries] of saved) {
+          if (typeof chat === 'string' && Array.isArray(entries)) {
+            const valid = entries.filter(
+              (a) =>
+                typeof a.messageId === 'string' &&
+                typeof a.fileId === 'string' &&
+                typeof a.mimeType === 'string' &&
+                Number.isFinite(a.at),
+            );
+            this.#byChat.set(chat, valid);
+            this.#prune(valid, chat);
+            while (valid.length > this.#perChat) {
+              const removed = valid.pop();
+              if (removed) this.#remove(chat, removed.messageId);
+            }
+          }
+        }
+      } catch {
+        /* No index yet, or corrupt index: do not expose guessed audio. */
+      }
+    }
+    this.#sweep();
   }
 
   /**
@@ -68,6 +87,7 @@ export class AudioRecall {
    * further up; a redelivery must not push the same note down the list.
    */
   record(chatKey: string, audio: Omit<ReceivedAudio, 'at'> & { at?: number }): ReceivedAudio {
+    this.#sweep();
     const entry: ReceivedAudio = { ...audio, at: audio.at ?? this.#now() };
     const list = this.#writable(chatKey);
     const existing = list.findIndex((a) => a.messageId === entry.messageId);
@@ -76,10 +96,17 @@ export class AudioRecall {
       const merged = { ...list[existing], ...entry } as ReceivedAudio;
       list.splice(existing, 1);
       list.unshift(merged);
+      this.#save();
+      this.#scheduleExpiry();
       return merged;
     }
     list.unshift(entry);
-    if (list.length > this.#perChat) list.length = this.#perChat;
+    while (list.length > this.#perChat) {
+      const removed = list.pop();
+      if (removed) this.#remove(chatKey, removed.messageId);
+    }
+    this.#save();
+    this.#scheduleExpiry();
     return entry;
   }
 
@@ -88,6 +115,7 @@ export class AudioRecall {
     for (const audio of this.#live(chatKey)) {
       if (audio.messageId === messageId) {
         audio.transcript = transcript;
+        this.#save();
         return;
       }
     }
@@ -161,6 +189,66 @@ export class AudioRecall {
    * Does not create a list for an unknown chat: a reader asking about a chat nobody
    * has spoken in should not allocate anything.
    */
+  #scheduleExpiry(): void {
+    if (this.#expiryTimer) clearTimeout(this.#expiryTimer);
+    let earliest = Infinity;
+    for (const list of this.#byChat.values())
+      for (const a of list) earliest = Math.min(earliest, a.at + this.#ttlMs);
+    if (earliest !== Infinity) {
+      this.#expiryTimer = setTimeout(() => this.#sweep(), Math.max(1, earliest - this.#now() + 1));
+      this.#expiryTimer.unref?.();
+    }
+  }
+  #sweep(): void {
+    for (const [chat, list] of this.#byChat) this.#prune(list, chat);
+    if (this.#directory) {
+      const expected = new Set<string>();
+      for (const [chat, list] of this.#byChat)
+        for (const a of list) {
+          const path = this.#path(chat, a.messageId);
+          if (path) expected.add(path);
+        }
+      for (const name of readdirSync(this.#directory)) {
+        const path = join(this.#directory, name);
+        if (name.endsWith('.audio') && !expected.has(path)) rmSync(path, { force: true });
+      }
+      this.#save();
+    }
+    this.#scheduleExpiry();
+  }
+
+  #path(chat: string, message: string): string | null {
+    if (!this.#directory) return null;
+    return join(
+      this.#directory,
+      createHash('sha256').update(`${chat}\0${message}`).digest('hex') + '.audio',
+    );
+  }
+  #remove(chat: string, message: string): void {
+    const path = this.#path(chat, message);
+    if (path) rmSync(path, { force: true });
+  }
+  #save(): void {
+    if (!this.#directory) return;
+    const path = join(this.#directory, 'index.json');
+    writeFileSync(path + '.tmp', JSON.stringify([...this.#byChat]), { mode: 0o600 });
+    renameSync(path + '.tmp', path);
+  }
+  retain(chat: string, message: string, bytes: Buffer): void {
+    if (!this.byMessage(chat, message) || bytes.length === 0 || bytes.length > 25_000_000) return;
+    const path = this.#path(chat, message);
+    if (path) writeFileSync(path, bytes, { mode: 0o600 });
+  }
+  read(chat: string, message: string): Buffer | null {
+    if (!this.byMessage(chat, message)) return null;
+    const path = this.#path(chat, message);
+    try {
+      return path ? readFileSync(path) : null;
+    } catch {
+      return null;
+    }
+  }
+
   #live(chatKey: string): ReceivedAudio[] {
     const list = this.#byChat.get(chatKey);
     if (!list) return [];
@@ -173,6 +261,7 @@ export class AudioRecall {
     const existing = this.#byChat.get(chatKey);
     if (existing) {
       this.#prune(existing, chatKey);
+      this.#byChat.set(chatKey, existing);
       return existing;
     }
     const list: ReceivedAudio[] = [];
@@ -182,7 +271,10 @@ export class AudioRecall {
 
   #prune(list: ReceivedAudio[], chatKey: string): void {
     const cutoff = this.#now() - this.#ttlMs;
-    while (list.length && (list[list.length - 1]?.at ?? 0) < cutoff) list.pop();
+    while (list.length && (list[list.length - 1]?.at ?? 0) < cutoff) {
+      const removed = list.pop();
+      if (removed) this.#remove(chatKey, removed.messageId);
+    }
     if (!list.length) this.#byChat.delete(chatKey);
   }
 }
