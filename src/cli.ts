@@ -2193,6 +2193,7 @@ async function serveCommand(): Promise<number> {
   // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
   // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
   startPricewatchLoop({
+    mainBotToken: token,
     configPath: process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json'),
     stateDir: paths.state,
     log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },

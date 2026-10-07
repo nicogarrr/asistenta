@@ -25,9 +25,17 @@ export function startPricewatchLoop(opts: {
   deps?: CycleDeps;
   setTimer?: (fn: () => void, ms: number) => { unref?: () => void; clear: () => void };
   firstDelayMs?: number;
+  mainBotToken?: string;
 }): LoopHandle {
   const deps =
-    opts.deps ?? realDeps(opts.configPath, join(opts.stateDir, 'pricewatch.sqlite'), opts.log);
+    opts.deps ??
+    realDeps(
+      opts.configPath,
+      join(opts.stateDir, 'pricewatch.sqlite'),
+      opts.log,
+      false,
+      opts.mainBotToken,
+    );
   const setTimer =
     opts.setTimer ??
     ((fn, ms) => {

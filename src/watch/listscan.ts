@@ -453,6 +453,10 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
   for (const job of jobs) {
     const host = hostOf(job.url);
     if (blocked.has(host) || stopped.has(job.store)) continue;
+    if (d.store.getMeta(`reqs:${host}:${dayKey(d.now())}`) >= d.dailyCap) {
+      if (!out.capped.includes(STORES[job.store].name)) out.capped.push(STORES[job.store].name);
+      continue;
+    }
     if (d.store.blockedUntil(host) > d.now()) {
       blocked.add(host);
       continue;
