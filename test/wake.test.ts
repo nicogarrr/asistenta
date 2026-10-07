@@ -199,7 +199,14 @@ describe('WakeWordListener energy gate', () => {
     capture.push(silence(1));
     await wait(350);
     expect(transcriber).not.toHaveBeenCalled();
-    expect(listener.stats()).toEqual({ checks: 0, wakeCount: 0, lastWakeAt: null, suppressed: 0 });
+    expect(listener.stats()).toEqual({
+      checks: 0,
+      wakeCount: 0,
+      lastWakeAt: null,
+      suppressed: 0,
+      // Nothing reached the transcriber, so there is nothing to report having heard.
+      lastHeard: '',
+    });
     await listener.stop();
   });
 

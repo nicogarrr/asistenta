@@ -614,6 +614,14 @@ export class WakeWordListener {
   #lastWakeAt: string | null = null;
   #suppressed = 0;
   #consecutiveFailures = 0;
+  /**
+   * Last transcript that did not contain the wake word.
+   *
+   * A custom word is the normal case, not the exception: whisper has no vocabulary for
+   * "chochi" and will transcribe it as whatever is phonetically nearest, so the listener
+   * needs to be able to show what it actually heard instead of staying silent.
+   */
+  #lastHeard = '';
 
   constructor(opts: WakeWordOptions = {}) {
     this.#word = opts.word ?? DEFAULT_WORD;
@@ -638,11 +646,18 @@ export class WakeWordListener {
    * silent is healthy, not a hang), `suppressed` counts checks dropped because
    * the agent was speaking, `wakeCount`/`lastWakeAt` report detections.
    */
-  stats(): { checks: number; wakeCount: number; lastWakeAt: string | null; suppressed: number } {
+  stats(): {
+    checks: number;
+    wakeCount: number;
+    lastWakeAt: string | null;
+    suppressed: number;
+    lastHeard: string;
+  } {
     return {
       checks: this.#checks,
       wakeCount: this.#wakeCount,
       lastWakeAt: this.#lastWakeAt,
+      lastHeard: this.#lastHeard,
       suppressed: this.#suppressed,
     };
   }
@@ -768,7 +783,17 @@ export class WakeWordListener {
       // stop() during the transcription: the result is stale, discard it.
       if (!this.#running) return;
       this.#checks++;
-      if (!matchesWakeWord(text, this.#word, this.#sensitivity)) return;
+      if (!matchesWakeWord(text, this.#word, this.#sensitivity)) {
+        // Why the word did not fire is otherwise invisible: the listener stays silent and
+        // the user concludes the microphone is broken. A custom wake word makes this
+        // routine, because whisper has no idea "chochi" is a word and will happily
+        // transcribe it as something else.
+        this.#lastHeard = text;
+        this.#reportError(
+          new Error(`no he oido la palabra de activacion; he transcrito: "${text}"`),
+        );
+        return;
+      }
 
       this.#wakeCount++;
       this.#lastWakeAt = new Date().toISOString();

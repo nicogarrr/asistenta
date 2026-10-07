@@ -3082,7 +3082,10 @@ async function serveCommand(): Promise<number> {
       inbound,
       next
         ? `Escuchando "${wakeWord}" en el microfono. Dime "${wakeWord}, ..." y te hago caso.` +
-            (stats ? ` (ventanas oidas: ${stats.checks}, avisos: ${stats.wakeCount})` : '')
+            (stats
+              ? ` (ventanas oidas: ${stats.checks}, avisos: ${stats.wakeCount}` +
+                `${stats.lastHeard ? `, lo ultimo que he oido: "${stats.lastHeard}"` : ''})`
+              : '')
         : `Dejo de escuchar "${wakeWord}".`,
       { quote: true },
     );
