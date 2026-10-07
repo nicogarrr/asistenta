@@ -94,6 +94,21 @@ describe('filtros y clave de modelo', () => {
   });
 });
 
+describe('separadores dentro de codigos largos', () => {
+  it('conserva la identidad exacta de un codigo separado por guion', () => {
+    expect(modelKey('Samsung TU65-M73HAUXXC Mini LED')).toBe('m:tu65m73hauxxc');
+    expect(modelKey('Samsung TU65‑M73HAUXXC Mini LED')).toBe('m:tu65m73hauxxc');
+    expect(modelKey('Samsung TU65M73HAUXXC Mini LED')).toBe('m:tu65m73hauxxc');
+    expect(modelKey('Samsung TU55-M73HAUXXC Mini LED')).toBe('m:tu55m73hauxxc');
+  });
+  it('no une capacidades, marcas, palabras ni modelos cortos', () => {
+    expect(modelKey('Smart TV 55-120Hz 32GB')).toBeNull();
+    expect(modelKey('A55 móvil')).toBeNull();
+    expect(modelKey('Samsung-TU65M73HAUXXC')).toBe('m:tu65m73hauxxc');
+    expect(modelKey('TU65-smart')).toBeNull();
+  });
+});
+
 describe('paginación y config', () => {
   const l = (store: Listing['store'], url: string): Listing => ({
     store,

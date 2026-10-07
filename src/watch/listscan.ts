@@ -64,7 +64,16 @@ const UNIT = /^\d+(gb|tb|hz|w|kg|mah|mp|l|cm|mm|pulgadas|k|bar|rpm|db|mhz|ghz|v)
 
 /** Código de modelo (p. ej. TU65M73HAUXXC) para emparejar el mismo producto entre tiendas. */
 export function modelKey(title: string): string | null {
-  const tokens = norm(title).split(/[^a-z0-9]+/);
+  // Une solo dos fragmentos alfanumericos de un codigo largo con guion.
+  // No une marcas con modelos, capacidades ni palabras de descripcion.
+  const normalized = norm(title).replace(
+    /\b([a-z]{1,5}\d{2,4})[-‐‑]([a-z][a-z0-9]{4,12})\b/g,
+    (raw, left: string, right: string) => {
+      const joined = left + right;
+      return /\d/.test(right) && joined.length <= 18 && !UNIT.test(right) ? joined : raw;
+    },
+  );
+  const tokens = normalized.split(/[^a-z0-9]+/);
   let best: string | null = null;
   for (const t of tokens) {
     if (t.length < 6 || t.length > 18) continue;
