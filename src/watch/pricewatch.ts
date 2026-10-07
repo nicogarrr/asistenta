@@ -329,7 +329,8 @@ export function alertText(
   });
   return [
     `Posible error de precio (sospecha, sin confirmar): ${name}`,
-    `${STORES[store].name}: ${eur(s.cents)}, bajó de ${eur(s.ref.cents)} (${s.dropPct} % menos).`,
+    `${STORES[store].name}: ${eur(s.cents)} (${s.dropPct} % menos que la referencia).`,
+    `${s.ref.kind === 'propia' ? 'Precio habitual observado' : 'Referencia en otras tiendas'}: ${eur(s.ref.cents)}.`,
     `Referencia: ${s.ref.detail} (${s.ref.kind}).`,
     `Stock: ${inStock === true ? 'en stock' : 'sin confirmar'}. Leído ${when}.`,
     url,
