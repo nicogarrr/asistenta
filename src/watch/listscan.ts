@@ -64,7 +64,13 @@ const UNIT = /^\d+(gb|tb|hz|w|kg|mah|mp|l|cm|mm|pulgadas|k|bar|rpm|db|mhz|ghz|v)
 
 /** Código de modelo (p. ej. TU65M73HAUXXC) para emparejar el mismo producto entre tiendas. */
 export function modelKey(title: string): string | null {
-  const tokens = norm(title).split(/[^a-z0-9]+/);
+  const lower = norm(title);
+  // Solo reconstruye la familia Samsung TUxx-MxxH... documentada por
+  // nuestros casos. Otros separadores quedan por URL, no por sufijo comun.
+  if (/\btu\d{2}(?:\s*\/\s*|\s+)m\d{2}h[a-z0-9]+\b/.test(lower)) return null;
+  if (/\ba\d{2}[-‐‑]android\d+\b/.test(lower)) return null;
+  const normalized = lower.replace(/\b(tu\d{2})[-‐‑](m\d{2}h[a-z0-9]{3,9})\b/g, '$1$2');
+  const tokens = normalized.split(/[^a-z0-9]+/);
   let best: string | null = null;
   for (const t of tokens) {
     if (t.length < 6 || t.length > 18) continue;
