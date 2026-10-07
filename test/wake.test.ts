@@ -166,8 +166,9 @@ describe('matchesWakeWord', () => {
 
   it('admits one-edit near-misses only below sensitivity 0.85', () => {
     // "ordenado" is a real word ("he ordenado la mesa"); the false-positive
-    // bias keeps it out of the default tier even one edit from the wake word.
-    expect(matchesWakeWord('ordenado', 'ordenador')).toBe(false);
+    // bias keeps it out of the truncation tier even one edit from the wake word.
+    // The default is the phonetic tier, so near-misses are in by default.
+    expect(matchesWakeWord('ordenado', 'ordenador', 0.85)).toBe(false);
     expect(matchesWakeWord('ordenado', 'ordenador', 0.7)).toBe(true);
     expect(matchesWakeWord('ordinador', 'ordenador', 0.7)).toBe(true);
     // Two edits ("ordenar" drops "do") stays out even at the loosest tier.
@@ -220,11 +221,12 @@ describe('matchesWakeWord phonetic tier', () => {
     expect(matchesWakeWord('Chuchis', 'chochi', SCORE_PHONETIC)).toBe(false);
   });
 
-  it('keeps the phonetic tier below the default sensitivity', () => {
-    // The default stays at the truncation tier: the phonetic fold is coarse
-    // enough that "chico"-class words must not wake the agent by accident.
-    expect(matchesWakeWord('Chocchi', 'chochi')).toBe(false);
-    expect(matchesWakeWord('Chocchi', 'chochi', SCORE_PHONETIC)).toBe(true);  });
+  it('includes the phonetic tier at the default sensitivity', () => {
+    // The default IS the phonetic tier: a custom word is the normal case, and
+    // whisper spells it "Choci"/"Chocchi" — both fold to "koki", same as "chochi".
+    expect(matchesWakeWord('Chocchi', 'chochi')).toBe(true);
+    expect(matchesWakeWord('Choci', 'chochi')).toBe(true);
+  });
 
   it('still matches the exact word at the default sensitivity', () => {
     expect(matchesWakeWord('Chochi reproduce Jingle Bells', 'chochi')).toBe(true);

@@ -87,7 +87,14 @@ const SCORE_NEAR = 0.7;
  * rejecting real words that merely start alike ("chico", "chocolate").
  */
 export const SCORE_PHONETIC = 0.55;
-const DEFAULT_SENSITIVITY = SCORE_TRUNCATED;
+/**
+ * Default sensitivity: the phonetic tier. A custom word is the normal case, not
+ * the exception — whisper has no vocabulary for "chochi" and spells it "Choci",
+ * "Chuchis" or "Chocchi", all beyond one edit. The phonetic tier catches the
+ * first two by exact fold equality; real words that merely sound alike
+ * ("coche"->"koke", "chico"->"kiko") fold differently and stay out.
+ */
+const DEFAULT_SENSITIVITY = SCORE_PHONETIC;
 
 /**
  * Whisper's short-clip truncation is exactly two characters on the documented
