@@ -231,7 +231,7 @@ export function extractReading(store: StoreId, html: string): Extraction {
 
 export function isBlockedPage(status: number, html: string): boolean {
   if (status === 403 || status === 429 || status === 503) return true;
-  return /validateCaptcha|Introduce los caracteres|Enter the characters you see|api-services-support@amazon|cf-chl-|Just a moment\.\.\.|px-captcha|captcha-delivery\.com|geo\.captcha-delivery|Incapsula incident/i.test(
+  return /validateCaptcha|Introduce los caracteres|Enter the characters you see|api-services-support@amazon|cf-chl-|Just a moment\.\.\.|px-captcha|triggerInterstitialChallenge|bm-verify|akamai.*challenge|captcha-delivery\.com|geo\.captcha-delivery|Incapsula incident/i.test(
     html,
   );
 }
@@ -642,7 +642,7 @@ export interface WatchConfig {
   products: Product[];
   gapMs: number;
   minDropPct: number;
-  telegram: { enabled: boolean; chatId: string; tokenFile: string };
+  telegram: { enabled: boolean; chatId: string; tokenFile: string; useMainBotFallback: boolean };
 }
 
 /** Valida la config tal cual viene del JSON; lanza con un mensaje claro si un tipo no cuadra. */
@@ -692,6 +692,8 @@ export function parseConfig(raw: unknown): WatchConfig {
     if (tg[k] !== undefined && typeof tg[k] !== 'string')
       throw new Error(`config: telegram.${k} debe ser texto`);
   }
+  if (tg.useMainBotFallback !== undefined && typeof tg.useMainBotFallback !== 'boolean')
+    throw new Error('config: telegram.useMainBotFallback debe ser true/false');
   if (tg.enabled !== undefined && typeof tg.enabled !== 'boolean')
     throw new Error('config: telegram.enabled debe ser true/false');
   return {
@@ -701,6 +703,7 @@ export function parseConfig(raw: unknown): WatchConfig {
     minDropPct: drop,
     telegram: {
       enabled: tg.enabled === true,
+      useMainBotFallback: tg.useMainBotFallback === true,
       chatId: typeof tg.chatId === 'string' ? tg.chatId : '',
       tokenFile: typeof tg.tokenFile === 'string' ? tg.tokenFile : '',
     },

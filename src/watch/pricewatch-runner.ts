@@ -1,3 +1,5 @@
+import { PublicPriceBrowser, usesPublicBrowser } from './pricewatch-browser.js';
+import { pricewatchNotifier } from './pricewatch-notify.js';
 /**
  * Un ciclo completo del vigilante de precios: barrido de listados (capa A) + verificación en
  * ficha de los candidatos y de los productos fijos de la config (capa B). Lo usan el bucle
@@ -12,11 +14,9 @@
  * El token NUNCA va en la config ni en logs: solo en `tokenFile` o en PRICEWATCH_TG_TOKEN.
  */
 
-import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { promisify } from 'node:util';
-import { log as appLog, logHost } from '../log.js';
+import { logHost } from '../log.js';
 import { curlImpersonateFetch, findCurlImpersonate } from '../media/download.js';
 import { type Candidate, parseScanConfig, type ScanSummary, scanOnce } from './listscan.js';
 import {
@@ -38,34 +38,6 @@ const HEADERS = {
   accept: 'text/html,application/xhtml+xml',
 };
 
-/**
- * Anti-bot fallbacks for the scanner, tried in order when a plain fetch is refused.
- *
- * Amazon answers 403 to anything that does not look like a browser TLS handshake, so the
- * scanner needed the same machinery the download tool already had. These are the two
- * things that actually move the needle, and both are optional: with neither installed the
- * watcher still runs and simply pauses the store that refused it, which is honest and is
- * what it used to do with every store.
- */
-const FALLBACKS: Array<{ name: string; make: () => Promise<typeof fetch | null> }> = [
-  {
-    name: 'curl-impersonate',
-    make: async () => {
-      const bin = await findCurlImpersonate(process.env.PA_CURL_IMPERSONATE ?? '');
-      return bin ? curlImpersonateFetch(bin) : null;
-    },
-  },
-  {
-    // yt-dlp carries a full browser stack, so it can read pages a bare fetch cannot. Only
-    // used as a last resort and only for HTML: it is slow and it writes to disk.
-    name: 'ytdlp',
-    make: async () => {
-      if (!(await hasYtdlp())) return null;
-      return ytdlpHtmlFetch;
-    },
-  },
-];
-
 /** Wait before retry n (1-based): 5s, 20s, 60s, 120s, then held at 120s. */
 export function backoffMs(attempt: number): number {
   return Math.min(120_000, 5_000 * 4 ** (attempt - 1));
@@ -79,121 +51,24 @@ export function backoffMs(attempt: number): number {
  */
 export const BACKOFF_STATUS = new Set([403, 429, 503]);
 
-/**
- * Fetch a page the way a person would, falling back when a store refuses.
- *
- * Each fallback is resolved lazily and cached, so a machine without curl-impersonate does
- * not pay for probing it on every single request, and a machine with it only pays once.
- * Retries are bounded and give up with the last status rather than hanging the cycle: the
- * loop runs unattended, and a watcher that never returns is worse than one that reports.
- */
-async function fetchTolerant(
+/** One HTTP client, no retry after refusal. Store backoff belongs to the scanner. */
+export async function fetchTolerant(
   url: string,
-  sleep: (ms: number) => Promise<void>,
+  _sleep: (ms: number) => Promise<void>,
   log: CycleLog,
 ): Promise<{ status: number; html: string }> {
-  const attempts = 4;
-  let last: { status: number; html: string } = { status: 0, html: '' };
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    for (const fallback of FALLBACKS) {
-      const f = await resolveFallback(fallback);
-      if (!f) continue;
-      try {
-        const res = await f(url, {
-          headers: HEADERS,
-          redirect: 'follow',
-          signal: AbortSignal.timeout(30_000),
-        });
-        last = { status: res.status, html: await res.text() };
-        if (!BACKOFF_STATUS.has(res.status)) return last;
-      } catch (err) {
-        last = { status: 0, html: '' };
-        log.warn('pricewatch: peticion fallida', {
-          url: logHost(url),
-          how: fallback.name,
-          err: (err as Error).message.slice(0, 120),
-        });
-      }
-    }
-    if (!BACKOFF_STATUS.has(last.status)) return last;
-    if (attempt === attempts) break;
-    const wait = backoffMs(attempt);
-    log.info('pricewatch: reintento con espera creciente', {
-      url: logHost(url),
-      status: last.status,
-      esperaMs: wait,
-      intento: attempt,
-    });
-    await sleep(wait);
-  }
-  return last;
-}
-
-/** Resolved once per process: probing for a binary on every request would be silly. */
-const resolved = new Map<string, typeof fetch | null>();
-
-/**
- * execFile rejects on a non-zero exit, which is normal here (yt-dlp exits non-zero on a
- * page it refuses). promisify's type hides the code, so the shape is declared by hand
- * rather than casting the result at every call site.
- */
-const run = promisify(execFile) as unknown as (
-  cmd: string,
-  args: string[],
-  opts?: { timeout?: number; maxBuffer?: number },
-) => Promise<{ code: number; stdout: string; stderr: string }>;
-
-async function resolveFallback(f: {
-  name: string;
-  make: () => Promise<typeof fetch | null>;
-}): Promise<typeof fetch | null> {
-  if (!resolved.has(f.name)) {
-    try {
-      resolved.set(f.name, await f.make());
-    } catch {
-      resolved.set(f.name, null);
-    }
-  }
-  return resolved.get(f.name) ?? null;
-}
-
-let ytdlpPath: string | null | undefined;
-async function hasYtdlp(): Promise<boolean> {
-  if (ytdlpPath !== undefined) return ytdlpPath !== null;
+  // One HTTP request only. A refusal never triggers another client/identity.
+  // Store-level backoff and caps are owned by scanOnce/runOnce.
   try {
-    const res = await run('yt-dlp', ['--version'], { timeout: 10_000 });
-    ytdlpPath = res.code === 0 ? 'yt-dlp' : null;
+    const bin = await findCurlImpersonate(process.env.PA_CURL_IMPERSONATE ?? '');
+    const client = bin ? curlImpersonateFetch(bin) : fetch;
+    const res = await client(url, { headers: HEADERS, signal: AbortSignal.timeout(30_000) });
+    return { status: res.status, html: await res.text() };
   } catch {
-    ytdlpPath = null;
+    log.warn('pricewatch: petición fallida', { url: logHost(url) });
+    return { status: 0, html: '' };
   }
-  return ytdlpPath !== null;
 }
-
-/**
- * Read a page through yt-dlp, which brings its own browser stack.
- *
- * Last resort and deliberately narrow: yt-dlp exists to download media, so this only asks
- * it to dump the page, and only `--no-check-certificates` free of extra flags. It is
- * slower than fetch and it spawns a process, so it runs only after curl-impersonate has
- * already been refused.
- */
-const ytdlpHtmlFetch: typeof fetch = async (input) => {
-  const url = String(input);
-  const res = await run('yt-dlp', ['--simulate', '--dump-single-json', url], {
-    timeout: 60_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (res.code !== 0) return new Response('', { status: 502 });
-  let payload: { webpage_content?: string };
-  try {
-    payload = JSON.parse(res.stdout) as { webpage_content?: string };
-  } catch {
-    return new Response('', { status: 502 });
-  }
-  const html = payload.webpage_content ?? '';
-  return new Response(html, { status: html ? 200 : 204 });
-};
 
 export interface CycleLog {
   info: (msg: string, fields?: Record<string, unknown>) => void;
@@ -210,6 +85,7 @@ export interface CycleDeps {
   now: () => number;
   random: () => number;
   log: CycleLog;
+  closeCycle?: () => Promise<void>;
 }
 
 export interface CycleResult {
@@ -246,6 +122,16 @@ function reportText(store: PriceStore, day: number, when: number): string {
     .join('\n');
 }
 
+export function resetPublicReaderPause(store: PriceStore, day: string): void {
+  // Upgrade only the parser/no-card pause; preserve real 403 backoff and request budget.
+  if (store.getMeta('public_reader_v1') > 0) return;
+  for (const id of ['amazon', 'mediamarkt', 'pccomponentes'] as const) {
+    store.setMeta(`nocards_off:${id}:${day}`, 0);
+    store.setMeta(`nocards:${id}`, 0);
+  }
+  store.setMeta('public_reader_v1', 1);
+}
+
 export async function runCycle(d: CycleDeps): Promise<CycleResult> {
   const raw = d.readConfig();
   const cfg = parseConfig(raw);
@@ -256,6 +142,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
   try {
     const store = new PriceStore(db, d.now);
     store.prune();
+    resetPublicReaderPause(store, dayStr(d.now()));
     const notify = d.makeNotify(cfg);
     const today = dayNum(d.now());
     const last = store.getMeta('report_day');
@@ -334,6 +221,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
     return { ran: true, cycleMinutes, scan };
   } finally {
     db.close();
+    await d.closeCycle?.();
   }
 }
 
@@ -350,8 +238,10 @@ export function realDeps(
   dbPath: string,
   log: CycleLog,
   stdoutOnly = false,
+  mainBotToken = '',
 ): CycleDeps {
-  return {
+  const browser = new PublicPriceBrowser();
+  const deps: CycleDeps = {
     readConfig: () => JSON.parse(readFileSync(configPath, 'utf8')) as unknown,
     openDb: () => new DatabaseSync(dbPath),
     makeNotify: (cfg) => {
@@ -364,26 +254,32 @@ export function realDeps(
       const token = (
         process.env.PRICEWATCH_TG_TOKEN ?? (t.tokenFile ? readTokenFile(t.tokenFile) : '')
       ).trim();
-      if (!token) {
-        log.warn('pricewatch: telegram.enabled pero sin token legible (tokenFile)');
-        return out;
-      }
-      return async (text) => {
-        await out(text);
-        try {
-          const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ chat_id: t.chatId, text, disable_web_page_preview: true }),
-          });
-          if (!res.ok) log.warn('pricewatch: telegram sendMessage falló', { status: res.status });
-        } catch {
-          log.warn('pricewatch: telegram sendMessage sin conexión');
-        }
-      };
+      return pricewatchNotifier({
+        token,
+        mainBotToken: t.useMainBotFallback ? mainBotToken : '',
+        chatId: t.chatId,
+        out,
+        log,
+      });
     },
-    fetchPage: async (url) =>
-      fetchTolerant(url, (ms) => new Promise<void>((r) => setTimeout(r, ms)), log),
+    fetchPage: async (url) => {
+      if (!usesPublicBrowser(url)) return fetchTolerant(url, deps.sleep, log);
+      return browser.read(url, async (requestUrl) => {
+        if (!(await deps.robotsAllows(requestUrl))) return false;
+        const db = deps.openDb();
+        try {
+          const store = new PriceStore(db, deps.now);
+          const cap = parseScanConfig(deps.readConfig()).dailyRequestsPerStore;
+          const key = `reqs:${hostOf(requestUrl)}:${dayStr(deps.now())}`;
+          if (store.getMeta(key) >= cap) return false;
+          store.setMeta(key, store.getMeta(key) + 1);
+          return true;
+        } finally {
+          db.close();
+        }
+      });
+    },
+    closeCycle: () => browser.close(),
     robotsAllows: async (url) => {
       const host = hostOf(url);
       if (!robotsCache.has(host)) {
@@ -405,6 +301,7 @@ export function realDeps(
     random: Math.random,
     log,
   };
+  return deps;
 }
 
 function readTokenFile(path: string): string {

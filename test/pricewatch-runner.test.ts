@@ -1,10 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import { PriceStore } from '../src/watch/pricewatch.js';
 import { startPricewatchLoop } from '../src/watch/pricewatch-loop.js';
 import {
   BACKOFF_STATUS,
   type CycleDeps,
   cycleMinutesOf,
+  resetPublicReaderPause,
   runCycle,
 } from '../src/watch/pricewatch-runner.js';
 
@@ -216,4 +218,25 @@ describe('reintento con espera creciente', () => {
     expect(backoffMs(4)).toBe(120_000);
     expect(backoffMs(9)).toBe(120_000);
   });
+});
+
+it('public reader upgrade retries no-card pauses once, without clearing real blocks/history/budget', () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new PriceStore(db, () => 123456);
+  store.setMeta('nocards_off:amazon:2026-10-07', 1);
+  store.setMeta('nocards:amazon', 3);
+  store.setMeta('reqs:www.amazon.es:2026-10-07', 169);
+  store.setMeta('nocards_off:fnac:2026-10-07', 1);
+  store.block('www.amazon.es');
+  const until = store.blockedUntil('www.amazon.es');
+  resetPublicReaderPause(store, '2026-10-07');
+  expect(store.getMeta('nocards_off:amazon:2026-10-07')).toBe(0);
+  expect(store.getMeta('nocards:amazon')).toBe(0);
+  expect(store.getMeta('reqs:www.amazon.es:2026-10-07')).toBe(169);
+  expect(store.getMeta('nocards_off:fnac:2026-10-07')).toBe(1);
+  expect(store.blockedUntil('www.amazon.es')).toBe(until);
+  store.setMeta('nocards_off:amazon:2026-10-07', 1);
+  resetPublicReaderPause(store, '2026-10-07');
+  expect(store.getMeta('nocards_off:amazon:2026-10-07')).toBe(1);
+  db.close();
 });
