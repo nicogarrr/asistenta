@@ -124,8 +124,8 @@ export function loadConfig(): Config {
   }
   cached = {
     provider: process.env.PA_PROVIDER ?? 'opencode-go',
-    model: process.env.PA_MODEL ?? 'longcat-2.5-preview-free',
-    baseUrl: process.env.PA_BASE_URL ?? 'https://opencode.ai/zen/go/v1',
+    model: process.env.PA_MODEL ?? 'space-bunny-free',
+    baseUrl: process.env.PA_BASE_URL ?? 'https://opencode.ai/zen/v1',
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),
     runTimeoutMs: num('PA_RUN_TIMEOUT_MS', 900_000),
     idleTimeoutMs: num('PA_IDLE_TIMEOUT_MS', 180_000),

@@ -35,6 +35,11 @@ export function isGoEndpoint(baseUrl: string): boolean {
   return /\/zen\/go(\/|$)/.test(baseUrl);
 }
 
+/** True for any OpenCode endpoint (Zen or Go): both document the own-UA + session rules. */
+export function isOpenCodeEndpoint(baseUrl: string): boolean {
+  return /^https:\/\/opencode\.ai\/zen(\/|$)/.test(baseUrl);
+}
+
 /**
  * OpenCode Go asks API clients to send their own user agent and a stable session id
  * in `x-opencode-session` for each conversation (https://opencode.ai/docs/go/).
@@ -85,7 +90,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   if (!model) {
     throw new Error(`model ${config.provider}/${config.model} not registered`);
   }
-  const go = isGoEndpoint(config.baseUrl);
+  const go = isOpenCodeEndpoint(config.baseUrl);
   const modelFor = (sessionId?: string): Model<string> =>
     go
       ? ({ ...model, headers: { ...model.headers, ...goHeaders(sessionId) } } as Model<string>)

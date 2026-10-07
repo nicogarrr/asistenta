@@ -5,6 +5,7 @@ import {
   createProviderHandle,
   goHeaders,
   isGoEndpoint,
+  isOpenCodeEndpoint,
 } from '../src/core/provider.js';
 
 describe('OpenCode Go client rules', () => {
@@ -20,11 +21,14 @@ describe('OpenCode Go client rules', () => {
     resetConfigForTests();
   });
 
-  it('defaults to the Go endpoint with the free LongCat model', () => {
+  it('defaults to the Zen endpoint with the free space-bunny model', () => {
+    // Measured 2026-10-07: space-bunny-free answers 200 on zen/v1 (~2 s) and 400
+    // "Model is unavailable" on zen/go/v1; LongCat only runs on Go and is slow.
     const c = loadConfig();
-    expect(c.baseUrl).toBe('https://opencode.ai/zen/go/v1');
-    expect(c.model).toBe('longcat-2.5-preview-free');
-    expect(isGoEndpoint(c.baseUrl)).toBe(true);
+    expect(c.baseUrl).toBe('https://opencode.ai/zen/v1');
+    expect(c.model).toBe('space-bunny-free');
+    expect(isGoEndpoint(c.baseUrl)).toBe(false);
+    expect(isOpenCodeEndpoint(c.baseUrl)).toBe(true);
   });
 
   it('only treats the Go path as Go', () => {
@@ -40,12 +44,17 @@ describe('OpenCode Go client rules', () => {
     expect(goHeaders(undefined)).toEqual({ 'User-Agent': CLIENT_USER_AGENT });
   });
 
-  it('modelFor adds headers on Go and none on Zen', async () => {
-    const go = await createProviderHandle(loadConfig());
-    expect(go.modelFor('pa-1').headers?.['x-opencode-session']).toBe('pa-1');
-    process.env.PA_BASE_URL = 'https://opencode.ai/zen/v1';
-    resetConfigForTests();
+  it('modelFor adds the client headers on Zen and on Go, none elsewhere', async () => {
     const zen = await createProviderHandle(loadConfig());
-    expect(zen.modelFor('pa-1').headers?.['x-opencode-session']).toBeUndefined();
+    expect(zen.modelFor('pa-1').headers?.['x-opencode-session']).toBe('pa-1');
+    expect(zen.modelFor('pa-1').headers?.['User-Agent']).toBe(CLIENT_USER_AGENT);
+    process.env.PA_BASE_URL = 'https://opencode.ai/zen/go/v1';
+    resetConfigForTests();
+    const go = await createProviderHandle(loadConfig());
+    expect(go.modelFor('pa-2').headers?.['x-opencode-session']).toBe('pa-2');
+    process.env.PA_BASE_URL = 'https://example.test/v1';
+    resetConfigForTests();
+    const other = await createProviderHandle(loadConfig());
+    expect(other.modelFor('pa-3').headers?.['x-opencode-session']).toBeUndefined();
   });
 });
