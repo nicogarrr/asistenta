@@ -3025,6 +3025,10 @@ async function serveCommand(): Promise<number> {
     let told = false;
     const listener = new WakeWordListener({
       word: wakeWord,
+      // Whisper has no vocabulary for a custom word: "Chochi" came back as
+      // "Choci", "Chuchis", "Chocchi" or dropped entirely. The initial prompt
+      // gives it a spelling to copy instead of one to invent.
+      initialPrompt: wakeWord,
       onWake: (heard) => {
         // Deliberately not awaited: a wake starts a whole turn, and the listener's
         // job is done the moment it has handed the text over.

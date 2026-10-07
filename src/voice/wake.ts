@@ -386,13 +386,25 @@ export interface WakeWordOptions {
    * the local whisper checkpoint. Tests inject a fake rather than vi.mock-ing
    * the model, which would also drag the ONNX runtime into the suite.
    */
-  transcriber?: (samples: Float32Array) => Promise<string>;
+  transcriber?: (samples: Float32Array, initialPrompt?: string) => Promise<string>;
+  /**
+   * Whisper `initial_prompt`: biases the decoder toward these words. Set it to a
+   * custom wake word so whisper copies the spelling instead of inventing one.
+   * Ignored by injected transcribers, which is what the tests use.
+   */
+  initialPrompt?: string;
 }
 
 /** The pipeline type, kept structural so the heavy import stays inside a function. */
 type WakeAsrPipeline = (
   audio: Float32Array,
-  options: { language: string; task: string; chunk_length_s: number; stride_length_s: number },
+  options: {
+    language: string;
+    task: string;
+    chunk_length_s: number;
+    stride_length_s: number;
+    initial_prompt?: string;
+  },
 ) => Promise<{ text: string }>;
 
 let pipelineMemo: Promise<WakeAsrPipeline> | null = null;
@@ -427,8 +439,19 @@ function loadWakePipeline(model: string): Promise<WakeAsrPipeline> {
   return pipelineMemo;
 }
 
-/** Stage 2: the default transcriber. Forced Spanish, for the reasons in stt.ts. */
-async function defaultTranscriber(samples: Float32Array): Promise<string> {
+/**
+ * Stage 2: the default transcriber. Forced Spanish, for the reasons in stt.ts.
+ *
+ * `initialPrompt` is whisper's own hint: it biases the decoder toward those words
+ * instead of letting it spell a custom wake word by ear. Measured on this machine,
+ * "Chochi reproduce Jingle Bells" came back as "Choci", "Chuchis", "Chocchi" or
+ * with the word dropped entirely ("reproduce Jingle Bells"); with the prompt set
+ * to the wake word itself, whisper has a spelling to copy.
+ */
+async function defaultTranscriber(
+  samples: Float32Array,
+  initialPrompt?: string,
+): Promise<string> {
   const pipe = await loadWakePipeline(DEFAULT_MODEL);
   const output = await withTimeout(
     pipe(samples, {
@@ -436,6 +459,7 @@ async function defaultTranscriber(samples: Float32Array): Promise<string> {
       task: 'transcribe',
       chunk_length_s: 30,
       stride_length_s: 5,
+      ...(initialPrompt ? { initial_prompt: initialPrompt } : {}),
     }),
     TRANSCRIBE_TIMEOUT_MS,
     `whisper did not finish a wake check within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
@@ -655,7 +679,8 @@ export class WakeWordListener {
   #onWake: ((heard: string) => void | Promise<void>) | undefined;
   #onError: ((err: Error) => void) | undefined;
   #capture: WakeCapture;
-  #transcriber: (samples: Float32Array) => Promise<string>;
+  #transcriber: (samples: Float32Array, initialPrompt?: string) => Promise<string>;
+  #initialPrompt: string | undefined;
 
   #lock = new Mutex();
   #ring = new SampleRing(WHISPER_SAMPLE_RATE * WINDOW_SECONDS);
@@ -691,6 +716,7 @@ export class WakeWordListener {
     this.#onError = opts.onError;
     this.#capture = opts.capture ?? new FfmpegMicCapture();
     this.#transcriber = opts.transcriber ?? defaultTranscriber;
+    this.#initialPrompt = opts.initialPrompt;
   }
 
   isRunning(): boolean {
@@ -821,7 +847,7 @@ export class WakeWordListener {
 
       let text: string;
       try {
-        text = await this.#transcriber(window);
+        text = await this.#transcriber(window, this.#initialPrompt);
         this.#consecutiveFailures = 0;
       } catch (err) {
         this.#consecutiveFailures++;

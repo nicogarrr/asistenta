@@ -231,6 +231,31 @@ describe('matchesWakeWord phonetic tier', () => {
   });
 });
 
+describe('WakeWordListener initial prompt', () => {
+  it('passes the wake word to the transcriber as a spelling hint', async () => {
+    // Whisper invents a spelling for a custom word ("Choci", "Chuchis", "Chocchi")
+    // or drops it entirely. The initial prompt is the only lever that gives it a
+    // spelling to copy, so it must reach the transcriber on every check.
+    const seen: (string | undefined)[] = [];
+    const capture = new FakeCapture();
+    const listener = new WakeWordListener({
+      capture,
+      word: 'chochi',
+      initialPrompt: 'chochi',
+      transcriber: async (_samples, prompt) => {
+        seen.push(prompt);
+        return ' Chochi reproduce Jingle Bells';
+      },
+      checkIntervalMs: 100,
+    });
+    await listener.start();
+    capture.push(tone(0.2, 0.5));
+    await waitFor(() => seen.length > 0, 1_000);
+    expect(seen).toEqual(['chochi']);
+    await listener.stop();
+  });
+});
+
 describe('WakeWordListener phonetic wake', () => {
   it('wakes on a phonetic misspelling of a custom word', async () => {
     // End to end: the transcript whisper actually produced, through the real
