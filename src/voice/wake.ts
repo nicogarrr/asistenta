@@ -78,6 +78,15 @@ const DEFAULT_WORD = 'asistenta';
 const SCORE_EXACT = 1;
 const SCORE_TRUNCATED = 0.85;
 const SCORE_NEAR = 0.7;
+/**
+ * Phonetic tier, for words whisper has no vocabulary for. A custom wake word
+ * ("chochi") is not Spanish, so whisper spells it by ear: measured on this
+ * machine, "Chochi reproduce Jingle Bells" came back as "Choci", "Chuchis" and
+ * "Chocchi" — all two or more edits away, beyond the one-edit tier. Folding both
+ * sides to a rough Spanish phonetic shape makes those the same token while still
+ * rejecting real words that merely start alike ("chico", "chocolate").
+ */
+export const SCORE_PHONETIC = 0.55;
 const DEFAULT_SENSITIVITY = SCORE_TRUNCATED;
 
 /**
@@ -170,7 +179,42 @@ export function normaliseForMatch(text: string): string {
     .trim();
 }
 
-/** Levenshtein capped at one edit, without building the full matrix. */
+/**
+ * Rough Spanish phonetic folding, so a word whisper has never seen still matches.
+ *
+ * "Chochi" comes back as "Choci", "Chuchis" or "Chocchi"; folded, all of them are
+ * "kochi". The folds are the ones Spanish actually does: ch/c/qu -> k, g/j -> j,
+ * b/v -> b, y/ll -> i, h silent, z/c(e,i) -> s, double letters collapsed. It is
+ * deliberately coarse — this tier only exists for custom words, and the
+ * false-positive bias is carried by requiring the whole token to fold equal, not
+ * by any prefix or substring rule.
+ */
+function phoneticFold(token: string): string {
+  let out = '';
+  let prev = '';
+  for (const raw of token) {
+    const ch = raw;
+    let folded = ch;
+    if (ch === 'h') continue;
+    if (ch === 'c') folded = 'k';
+    else if (ch === 'g') folded = 'j';
+    else if (ch === 'v') folded = 'b';
+    else if (ch === 'y' || ch === 'l') folded = 'i';
+    else if (ch === 'z') folded = 's';
+    else if (ch === 'q') folded = 'k';
+    if (folded === prev) continue;
+    out += folded;
+    prev = folded;
+  }
+  return out;
+}
+
+/**
+ * Levenshtein capped at one edit, without building the full matrix.
+ *
+ * Deletion and substitution only: an insertion is the same edit seen from the
+ * other side, and callers always pass the shorter string first.
+ */
 function withinOneEdit(heard: string, target: string): boolean {
   if (heard.length === target.length) {
     let diffs = 0;
@@ -187,6 +231,8 @@ function withinOneEdit(heard: string, target: string): boolean {
   while (i < heard.length && heard[i] === target[i]) i++;
   return heard.slice(i) === target.slice(i + 1);
 }
+
+
 
 /**
  * How well one heard token matches one target token, as a tier score.
@@ -210,6 +256,13 @@ function tokenScore(heard: string, target: string): number {
   ) {
     return SCORE_NEAR;
   }
+  // Custom words only: whisper spells "chochi" as "choci"/"chocchi", both beyond
+  // one edit. Folding both sides to a Spanish phonetic shape makes them equal;
+  // real words that merely sound alike ("chico", "coche") fold differently.
+  // Exact equality only: a one-edit tolerance on the folded form matches "coche".
+  if (phoneticFold(heard) === phoneticFold(target)) {
+    return SCORE_PHONETIC;
+  }
   return 0;
 }
 
@@ -220,7 +273,8 @@ function tokenScore(heard: string, target: string): number {
  * phrase ("el ordenador"), which then must appear as consecutive tokens.
  * `sensitivity` is the minimum tier score (see the tier constants): 1.0 exact
  * phrase only, 0.85 also "ordenad"-style truncations, 0.7 also one-edit
- * near-misses; values outside 0..1 clamp and nothing below 0.7 exists.
+ * near-misses, 0.55 also the phonetic tier for custom words; values outside
+ * 0..1 clamp and nothing below 0.55 exists.
  */
 export function matchesWakeWord(
   text: string,

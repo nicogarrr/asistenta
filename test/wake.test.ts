@@ -6,6 +6,7 @@ import { log } from '../src/log.js';
 import {
   matchesWakeWord,
   normaliseForMatch,
+  SCORE_PHONETIC,
   type WakeCapture,
   WakeWordListener,
 } from '../src/voice/wake.js';
@@ -186,6 +187,71 @@ describe('matchesWakeWord', () => {
     expect(matchesWakeWord('el un ordenador', 'el ordenador')).toBe(false);
     expect(matchesWakeWord('ordenador', 'el ordenador')).toBe(false);
     expect(matchesWakeWord('el ordenad', 'el ordenador', 0.85)).toBe(true);
+  });
+});
+
+describe('matchesWakeWord phonetic tier', () => {
+  // These are the transcripts whisper actually returned for "Chochi reproduce
+  // Jingle Bells" on this machine, from the daemon log. Both fold to the same
+  // Spanish phonetic shape as "chochi" ("koki"), which is why the one-edit tier
+  // never fired but the phonetic tier does.
+  it.each(['Choci', 'Chocchi'])(
+    'matches the custom word "%s" at the phonetic tier',
+    (heard) => {
+      expect(matchesWakeWord(heard, 'chochi', SCORE_PHONETIC)).toBe(true);
+    },
+  );
+
+  it('does not match a transcription two edits away even phonetically', () => {
+    // "Chuchis" folds to "kukis", two edits from "koki". The phonetic tier is
+    // for spelling drift, not a blanket "sounds vaguely similar".
+    expect(matchesWakeWord('Chuchis', 'chochi', SCORE_PHONETIC)).toBe(false);
+  });
+
+  it('does not match real words that merely sound alike', () => {
+    for (const heard of ['chico', 'chocolate', 'chiste', 'chivo', 'coche', 'choti']) {
+      expect(matchesWakeWord(heard, 'chochi', SCORE_PHONETIC)).toBe(false);
+    }
+  });
+
+  it('does not match a transcription two edits away even phonetically', () => {
+    // "Chuchis" folds to "kukis", two edits from "koki". The phonetic tier is
+    // for spelling drift, not a blanket "sounds vaguely similar".
+    expect(matchesWakeWord('Chuchis', 'chochi', SCORE_PHONETIC)).toBe(false);
+  });
+
+  it('keeps the phonetic tier below the default sensitivity', () => {
+    // The default stays at the truncation tier: the phonetic fold is coarse
+    // enough that "chico"-class words must not wake the agent by accident.
+    expect(matchesWakeWord('Chocchi', 'chochi')).toBe(false);
+    expect(matchesWakeWord('Chocchi', 'chochi', SCORE_PHONETIC)).toBe(true);  });
+
+  it('still matches the exact word at the default sensitivity', () => {
+    expect(matchesWakeWord('Chochi reproduce Jingle Bells', 'chochi')).toBe(true);
+  });
+});
+
+describe('WakeWordListener phonetic wake', () => {
+  it('wakes on a phonetic misspelling of a custom word', async () => {
+    // End to end: the transcript whisper actually produced, through the real
+    // listener, must start a turn. This is the regression the log exposed.
+    const capture = new FakeCapture();
+    const wakes: string[] = [];
+    const listener = new WakeWordListener({
+      capture,
+      word: 'chochi',
+      sensitivity: SCORE_PHONETIC,
+      transcriber: async () => ' Chocchi',
+      checkIntervalMs: 100,
+      onWake: (heard) => {
+        wakes.push(heard);
+      },
+    });
+    await listener.start();
+    capture.push(tone(0.2, 0.5));
+    await waitFor(() => listener.stats().wakeCount === 1, 1_000);
+    expect(wakes).toEqual([' Chocchi']);
+    await listener.stop();
   });
 });
 
