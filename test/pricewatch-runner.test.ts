@@ -1,7 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { startPricewatchLoop } from '../src/watch/pricewatch-loop.js';
-import { type CycleDeps, cycleMinutesOf, runCycle } from '../src/watch/pricewatch-runner.js';
+import {
+  BACKOFF_STATUS,
+  type CycleDeps,
+  cycleMinutesOf,
+  runCycle,
+} from '../src/watch/pricewatch-runner.js';
 
 const DAY = 86_400_000;
 const MM = 'https://www.mediamarkt.es/es/category/tv.html';
@@ -187,5 +192,28 @@ describe('startPricewatchLoop', () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(timers).toEqual([1, 30 * 60_000]);
     expect(s.warns).toContain('pricewatch: ciclo fallido');
+  });
+});
+
+describe('reintento con espera creciente', () => {
+  it('un 403 cuenta como rechazo, no como pagina que no existe', () => {
+    // The bug this prevents: a 403 read as "no cards" made the scanner report a store as
+    // broken by JavaScript rendering, when the truth was that it refused the request.
+    expect(BACKOFF_STATUS.has(403)).toBe(true);
+    expect(BACKOFF_STATUS.has(429)).toBe(true);
+    expect(BACKOFF_STATUS.has(503)).toBe(true);
+    // A 404 is a real answer and must not be retried: the page is gone.
+    expect(BACKOFF_STATUS.has(404)).toBe(false);
+    expect(BACKOFF_STATUS.has(200)).toBe(false);
+  });
+
+  it('la espera crece entre intentos y se topa', async () => {
+    const { backoffMs } = await import('../src/watch/pricewatch-runner.js');
+    expect(backoffMs(1)).toBe(5_000);
+    expect(backoffMs(2)).toBe(20_000);
+    expect(backoffMs(3)).toBe(80_000);
+    // Capped, or a stubborn store would hold the whole cycle for minutes.
+    expect(backoffMs(4)).toBe(120_000);
+    expect(backoffMs(9)).toBe(120_000);
   });
 });
