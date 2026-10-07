@@ -165,10 +165,36 @@ describe('referencia y detección', () => {
       new Date(10 * DAY),
     );
     expect(t).toContain('Posible error de precio');
-    expect(t).toContain('MediaMarkt: 20,00 €, bajó de 100,00 € (80 % menos)');
+    expect(t).toContain('MediaMarkt: 20,00 € (80 % menos que la referencia)');
+    expect(t).toContain('Referencia en otras tiendas: 100,00 €');
+    expect(t).not.toContain('bajó de');
+    expect(t).not.toContain('Precio habitual observado');
     expect(t).toContain('cruzada');
     expect(t).toContain('en stock');
     expect(t).toContain('https://www.mediamarkt.es/x');
+  });
+});
+
+describe('precio habitual observado', () => {
+  it('identifica la mediana propia sin presentarla como precio previo', () => {
+    const s = detect(
+      2000,
+      { cents: 10000, kind: 'propia', detail: 'mediana de 5 lecturas en 3 días' },
+      70,
+    );
+    if (!s) throw new Error('sin sospecha');
+    const t = alertText(
+      'Producto',
+      'mediamarkt',
+      'https://www.mediamarkt.es/x',
+      s,
+      null,
+      new Date(10 * DAY),
+    );
+    expect(t).toContain('Precio habitual observado: 100,00 €');
+    expect(t).toContain('mediana de 5 lecturas en 3 días');
+    expect(t).not.toContain('bajó de');
+    expect(t).not.toContain('Referencia en otras tiendas');
   });
 });
 
