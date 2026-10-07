@@ -109,6 +109,20 @@ describe('separadores dentro de codigos largos', () => {
   });
 });
 
+describe('identidad fragmentada falla cerrada', () => {
+  it('no usa un sufijo compartido por dos tamaños con barra o espacio', () => {
+    for (const size of ['55', '65']) {
+      for (const separator of ['/', ' ']) {
+        expect(modelKey(`Samsung TU${size}${separator}M73HAUXXC ${size} pulgadas`)).toBeNull();
+      }
+    }
+  });
+  it('no convierte sistema operativo y capacidad en codigo de modelo', () => {
+    expect(modelKey('Samsung A55-Android14 128GB')).toBeNull();
+    expect(modelKey('Samsung A55-Android14 256GB')).toBeNull();
+  });
+});
+
 describe('paginación y config', () => {
   const l = (store: Listing['store'], url: string): Listing => ({
     store,
