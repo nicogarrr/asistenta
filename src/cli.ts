@@ -92,7 +92,7 @@ import {
 // remove. The generic browser does the same job against any site.
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
-import { createSystemTool, playAudioFile } from './tools/system.js';
+import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
@@ -924,15 +924,9 @@ async function serveCommand(): Promise<number> {
   const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
   const voiceDefault = (await vaultGet('agent:voice')) !== 'off';
 
-  /**
-   * What the user sent us, kept only as Telegram handles.
-   *
-   * A voice note is transcribed and then, before this existed, thrown away. Two
-   * messages later "suéltame ese audio" had nothing to act on. `file_id`s stay
-   * downloadable, so remembering the handle is enough to play the audio again
-   * without keeping a copy of someone's voice on disk longer than the chat needs.
-   */
-  const recall = new AudioRecall();
+  // Originals are kept in private state/media for the recall TTL and chat cap.
+  // Handles and originals survive restart; no other chat can resolve them.
+  const recall = new AudioRecall({ directory: join(paths.state, 'media', 'received') });
 
   /**
    * The most recent chat that spoke.
@@ -1509,7 +1503,11 @@ async function serveCommand(): Promise<number> {
     if (desktop && wantsVoice && inbound.audioFileId && text.trim()) {
       try {
         const spoken = await tts.speak(trimForSpeech(text));
-        audio = { mimeType: spoken.mimeType, data: spoken.data.toString('base64') };
+        audio = {
+          mimeType: spoken.mimeType,
+          data: spoken.data.toString('base64'),
+          durationSeconds: spoken.durationSeconds,
+        };
       } catch (err) {
         log.warn('tts failed, sending text only', { err });
       }
@@ -2586,8 +2584,11 @@ async function serveCommand(): Promise<number> {
     await say(inbound, `Descargando y preparando el audio (volumen ${volume})...`, { quote: true });
     let playable: string | null = null;
     try {
-      const bytes = await telegram.downloadFile(target.fileId, 25_000_000);
+      const bytes =
+        recall.read(key, target.messageId) ??
+        (await telegram.downloadFile(target.fileId, 25_000_000));
       if (!bytes) throw new Error('no he podido descargar el audio de Telegram');
+      recall.retain(key, target.messageId, bytes);
       playable = await toPlayableAudio(bytes, target.mimeType);
       // The speakers are the wake microphone's other half.
       currentWake()?.suppress(PLAYBACK_SUPPRESS_MS);
@@ -2596,11 +2597,9 @@ async function serveCommand(): Promise<number> {
       await say(
         inbound,
         res.ok
-          ? `Sonado ${res.seconds}s al volumen ${res.volumeSet}%. ` +
-              (res.volumeRestoredTo === null
-                ? 'El volumen se queda ahí.'
-                : `He vuelto a dejar el volumen como estaba (${res.volumeRestoredTo}%).`)
-          : `No he podido reproducirlo: ${res.detail}`,
+          ? `El reproductor completó ${res.seconds}s al volumen ${res.volumeSet}%. No puedo confirmar que se haya oído en la habitación. ` +
+              playbackRestoreText(res)
+          : `No he podido reproducirlo: ${res.detail}. ${playbackRestoreText(res)}`,
         { quote: true },
       );
     } catch (err) {
@@ -2777,6 +2776,7 @@ async function serveCommand(): Promise<number> {
           await say(inbound, 'No he podido descargar el audio.', { quote: true });
           return;
         }
+        recall.retain(chatKey(inbound), inbound.messageId, bytes);
         await telegram.action(inbound.chatId, 'typing');
         try {
           const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });

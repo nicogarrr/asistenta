@@ -42,13 +42,14 @@ export interface SystemStatus {
   localIp: string | null;
 }
 
-async function ps(script: string, timeoutMs = 20_000): Promise<string> {
+async function ps(script: string, timeoutMs = 20_000, strict = false): Promise<string> {
   const { stdout } = await execFileAsync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script],
     { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
   ).catch((err: unknown) => {
     log.warn('system helper failed', { err });
+    if (strict) throw err;
     return { stdout: '' };
   });
   return stdout;
@@ -72,16 +73,23 @@ if (-not ('PaVol' -as [type])) {
 `;
 
 export async function getVolume(): Promise<VolumeState> {
-  const out = await ps(`${VOL_LIB}
+  const out = await ps(
+    `${VOL_LIB}
 $v = [uint32]0
-[PaVol]::waveOutGetVolume([IntPtr]::Zero, [ref]$v) | Out-Null
+$hr = [PaVol]::waveOutGetVolume([IntPtr]::Zero, [ref]$v)
+if ($hr -ne 0) { throw "volume read failed $hr" }
 $left = $v -band 0xFFFF
 $right = ($v -shr 16) -band 0xFFFF
 $level = [int][Math]::Round((($left + $right) / 2.0) / 65535 * 100)
-Write-Output ("$level|" + $(if ($left -eq 0 -and $right -eq 0) { '1' } else { '0' }))`);
+Write-Output ("$level|" + $(if ($left -eq 0 -and $right -eq 0) { '1' } else { '0' }))`,
+    20_000,
+    true,
+  );
+  if (!/^(?:100|[1-9]?\d)\|[01]$/.test(out.trim()))
+    throw new Error('no se pudo leer el volumen del dispositivo');
   const [levelText, mutedText] = out.trim().split('|');
   return {
-    level: Math.max(0, Math.min(100, Number(levelText) || 0)),
+    level: Number(levelText),
     muted: mutedText === '1',
   };
 }
@@ -89,11 +97,16 @@ Write-Output ("$level|" + $(if ($left -eq 0 -and $right -eq 0) { '1' } else { '0
 export async function setVolume(level: number): Promise<VolumeState> {
   const v = Math.max(0, Math.min(100, Math.trunc(level)));
   const raw = Math.round((v / 100) * 65535) & 0xffff;
-  const out = await ps(`${VOL_LIB}
+  const out = await ps(
+    `${VOL_LIB}
 $raw = [uint32]${raw}
 $packed = [uint32](([uint64]$raw -shl 16) -bor [uint64]$raw)
 $hr = [PaVol]::waveOutSetVolume([IntPtr]::Zero, $packed)
-Write-Output ("set hr=$hr")`);
+if ($hr -ne 0) { throw "volume write failed $hr" }
+Write-Output ("set hr=$hr")`,
+    20_000,
+    true,
+  );
   // Read back rather than trusting the value we sent: the call reports success even
   // when the device refuses, and a set that silently did nothing is exactly the
   // failure this tool exists to avoid reporting as done.
@@ -146,7 +159,17 @@ export interface PlaybackResult {
   seconds: number;
   volumeSet: number;
   volumeRestoredTo: number | null;
+  restoreStatus: 'not-requested' | 'restored' | 'failed';
   detail: string;
+}
+
+export function playbackRestoreText(
+  result: Pick<PlaybackResult, 'restoreStatus' | 'volumeRestoredTo'>,
+): string {
+  if (result.restoreStatus === 'failed')
+    return 'No he podido verificar la restauración del volumen. Puede seguir alto; revísalo en el PC.';
+  if (result.restoreStatus === 'not-requested') return 'No se solicitó restaurar el volumen.';
+  return `He dejado el volumen como estaba (${result.volumeRestoredTo}%).`;
 }
 
 export async function playAudioFile(
@@ -164,33 +187,60 @@ export async function playAudioFile(
   const before = await getVolume();
   const target =
     opts.volume === undefined ? 100 : Math.max(0, Math.min(100, Math.trunc(opts.volume)));
-  await setVolume(target);
+  let out: string;
+  let restored: number | null = null;
+  let restoreStatus: PlaybackResult['restoreStatus'] =
+    opts.restoreVolume === false ? 'not-requested' : 'failed';
+  try {
+    const applied = await setVolume(target);
+    if (applied.level !== target)
+      throw new Error(`no se pudo verificar el volumen: pedido ${target}, leído ${applied.level}`);
 
-  // MCI takes the file through its extension, so an .ogg would fail: the caller is
-  // expected to hand over something Windows can decode (mp3, wav, wma). The error is
-  // surfaced rather than swallowed, because "nothing played" is not an acceptable
-  // outcome to report as success.
-  const out = await ps(
-    `
+    // MCI takes the file through its extension, so an .ogg would fail: the caller is
+    // expected to hand over something Windows can decode (mp3, wav, wma). The error is
+    // surfaced rather than swallowed, because "nothing played" is not an acceptable
+    // outcome to report as success.
+    out = await ps(
+      `
 if (-not ('PaMci' -as [type])) {
-  Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public class PaMci{[DllImport("winmm.dll",CharSet=CharSet.Unicode)]public static extern int mciSendString(string c,StringBuilder r,int l,IntPtr h);}'
+  Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public class PaMci{[DllImport("winmm.dll")]public static extern uint waveOutGetNumDevs();[DllImport("winmm.dll",CharSet=CharSet.Unicode)]public static extern int mciSendString(string c,StringBuilder r,int l,IntPtr h);}'
 }
+if ([PaMci]::waveOutGetNumDevs() -eq 0) { Write-Output 'no audio output device'; exit }
 $alias = 'pa' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $open = [PaMci]::mciSendString('open "' + '${file.replace(/'/g, "''")}' + '" alias ' + $alias, $null, 0, [IntPtr]::Zero)
 if ($open -ne 0) { Write-Output ("open failed " + $open); exit }
 # 0..1000 on the MCI scale, on top of the system volume we just set.
-[PaMci]::mciSendString('setaudio ' + $alias + ' volume to 1000', $null, 0, [IntPtr]::Zero) | Out-Null
+$volumeResult = [PaMci]::mciSendString('setaudio ' + $alias + ' volume to 1000', $null, 0, [IntPtr]::Zero)
+if ($volumeResult -ne 0) { [PaMci]::mciSendString('close ' + $alias, $null, 0, [IntPtr]::Zero) | Out-Null; Write-Output ('volume failed ' + $volumeResult); exit }
 $start = Get-Date
-[PaMci]::mciSendString('play ' + $alias + ' wait', $null, 0, [IntPtr]::Zero) | Out-Null
+$play = [PaMci]::mciSendString('play ' + $alias + ' wait', $null, 0, [IntPtr]::Zero)
 $elapsed = [int]((Get-Date) - $start).TotalSeconds
 [PaMci]::mciSendString('close ' + $alias, $null, 0, [IntPtr]::Zero) | Out-Null
+if ($play -ne 0) { Write-Output ("play failed " + $play); exit }
 Write-Output ("played " + $elapsed)
 `,
-    300_000,
-  );
-
-  const restore = opts.restoreVolume === false ? null : before.level;
-  if (restore !== null) await setVolume(restore);
+      300_000,
+      true,
+    );
+  } catch (err) {
+    out = err instanceof Error ? err.message : String(err);
+  } finally {
+    if (opts.restoreVolume !== false) {
+      try {
+        const state = await setVolume(before.level);
+        if (state.level === before.level) {
+          restored = state.level;
+          restoreStatus = 'restored';
+        } else
+          log.warn('audio volume restore could not be verified', {
+            wanted: before.level,
+            got: state.level,
+          });
+      } catch (err) {
+        log.warn('audio volume restore failed', { err });
+      }
+    }
+  }
 
   const played = /played (\d+)/.exec(out);
   const detail = played ? '' : out.trim() || 'MCI no devolvio nada';
@@ -198,7 +248,8 @@ Write-Output ("played " + $elapsed)
     ok: Boolean(played),
     seconds: played ? Number(played[1]) : 0,
     volumeSet: target,
-    volumeRestoredTo: restore,
+    volumeRestoredTo: restored,
+    restoreStatus,
     detail,
   };
 }
