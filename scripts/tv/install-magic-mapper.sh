@@ -18,7 +18,7 @@ wget -q "$BASE/start_magic_mapper" -O start_magic_mapper
 chmod +x /var/lib/webosbrew/init.d/start_magic_mapper
 REMOTE
 # Nuestra config: boton -> webhook de la asistenta. Se renderiza con la IP real.
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 sed "s/__ASISTENTA_URL__/http:\/\/$LAPTOP:8765\/tv\/button/" "$SCRIPT_DIR/../../config/tv/magic_mapper_config.json" \
   | ssh "$USER@$TV" "cat > /home/root/magic_mapper_config.json"
 ssh "$USER@$TV" "/var/lib/webosbrew/init.d/start_magic_mapper restart || /var/lib/webosbrew/init.d/start_magic_mapper start"

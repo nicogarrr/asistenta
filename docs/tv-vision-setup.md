@@ -22,9 +22,13 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
    - Escribe /var/lib/webosbrew/init.d/tailscaled (run-parts; nombre sin puntos).
    - Lo arranca y verifica pidof. Verificar desde la VM: `tailscale status | grep -i lgwebostv`.
 2. **PicCap**: `sh scripts/tv/install-piccap.sh 192.168.1.237`
-   - Instala org.webosbrew.piccap desde repo.webosbrew.org via hbchannel.service.
-   - Verifica en listLaunchPoints. UI: esperar elevate; configurar receptor =
-     100.108.180.24:19400 (flatbuffers HyperHDR en la VM).
+   - Instala por ID via hbchannel.service (el servicio resuelve el paquete del
+     repo oficial; no fijamos URL de IPK para no acoplar a un formato cambiante).
+   - Instalacion asincrona: el script sondea listLaunchPoints hasta 90 s; si no
+     aparece, se instala desde la UI de Homebrew (camino manual documentado).
+   - UI: esperar elevate; configurar receptor = IP tailscale de la VM AL EJECUTAR
+     (`tailscale ip -4` en la VM; a 12/10 era 100.108.180.24, VERIFICAR), puerto
+     flatbuffers 19400 (HyperHDR en la VM).
 3. **Receptor de frames (VM, EUR0)**: HyperHDR/Hyperion en docker en la VM.
    - NOTA HONESTA: imagen docker concreta N/D hasta verificar en Docker Hub al
      ejecutar (candidatas: hyperion-project/hyperion.ng; HyperHDR no publica
@@ -38,6 +42,14 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      :8765/tv/button que despierte a la asistenta. Hoy NO existe superficie HTTP
      (telegram es long-polling). Hasta tenerlo, el boton no hace nada - config lista.
 5. **Apagar la tele** (orden de Nico) y reportar que quedo instalado.
+
+## Semantica exclusive_mode (verificado upstream 12/10)
+magic_mapper toma control exclusivo del dispositivo de entrada del mando pero solo
+intercepta los botones MAPEADOS; los demas se reenvian al dispositivo de salida.
+Riesgos upstream: si un boton no mapeado se comporta raro, ajustar
+output_device_name o poner exclusive_mode=false (entonces no se pueden sobreescribir
+botones con funcion). OJO: los botones 0-9 tienen long-press (acceso rapido) -
+mapear "0" elimina su long-press. ir_input_enabled queda en false (no tocamos IR).
 
 ## Que boton usar (decidir con Nico)
 Los botones de color YA tienen funciones utiles en la config de ejemplo (OLED light,
