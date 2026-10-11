@@ -119,6 +119,7 @@ async function withImap<T>(
   account: MailAccount,
   folder: string,
   fn: (client: ImapFlow) => Promise<T>,
+  deadlineMs?: number,
 ): Promise<T> {
   const client = new ImapFlow({
     host: account.imapHost,
@@ -128,15 +129,40 @@ async function withImap<T>(
     logger: false,
     socketTimeout: 30_000,
   });
+  let timer: NodeJS.Timeout | undefined;
   try {
-    await client.connect();
-    const lock = await client.getMailboxLock(folder);
-    try {
-      return await fn(client);
-    } finally {
-      lock.release();
-    }
+    const work = (async (): Promise<T> => {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        return await fn(client);
+      } finally {
+        lock.release();
+      }
+    })();
+    if (deadlineMs === undefined) return await work;
+    // Deadline duro, no de inactividad: un servidor que gotea bytes derrota el
+    // socketTimeout. Al vencer se cierra el socket y la operación MUERE aquí —
+    // no queda una conexión colgada apilándose tras el barrido que la abandonó.
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        client.close();
+        reject(new Error(`imap: más de ${deadlineMs} ms sin respuesta`));
+      }, deadlineMs);
+      timer.unref?.();
+      work.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err: unknown) => {
+          clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      );
+    });
   } finally {
+    if (timer) clearTimeout(timer);
     await client.logout().catch(() => {});
   }
 }
@@ -162,27 +188,33 @@ export async function searchMail(
   account: MailAccount,
   query: MailSearchQuery,
   limit = 20,
+  deadlineMs?: number,
 ): Promise<MailMessage[]> {
-  return withImap(account, 'INBOX', async (client) => {
-    const uids = await client.search(searchCriteria(query), { uid: true });
-    const list = Array.isArray(uids) ? uids : [];
-    // Newest first: a mailbox search is almost always "what came in recently", and
-    // IMAP hands back uids in ascending order.
-    const picked = list.slice(-Math.max(1, limit)).reverse();
-    const found: MailMessage[] = [];
-    for (const uid of picked) {
-      const raw = await client.fetchOne(
-        String(uid),
-        { uid: true, envelope: true, source: true, flags: true },
-        { uid: true },
-      );
-      if (!raw) continue;
-      const message = toMessage(raw as never, 'INBOX');
-      if (query.q && !matchesFreeText(message, query.q)) continue;
-      found.push(message);
-    }
-    return found;
-  });
+  return withImap(
+    account,
+    'INBOX',
+    async (client) => {
+      const uids = await client.search(searchCriteria(query), { uid: true });
+      const list = Array.isArray(uids) ? uids : [];
+      // Newest first: a mailbox search is almost always "what came in recently", and
+      // IMAP hands back uids in ascending order.
+      const picked = list.slice(-Math.max(1, limit)).reverse();
+      const found: MailMessage[] = [];
+      for (const uid of picked) {
+        const raw = await client.fetchOne(
+          String(uid),
+          { uid: true, envelope: true, source: true, flags: true },
+          { uid: true },
+        );
+        if (!raw) continue;
+        const message = toMessage(raw as never, 'INBOX');
+        if (query.q && !matchesFreeText(message, query.q)) continue;
+        found.push(message);
+      }
+      return found;
+    },
+    deadlineMs,
+  );
 }
 
 export async function readMail(account: MailAccount, id: string): Promise<MailMessage | null> {

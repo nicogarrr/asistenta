@@ -1750,6 +1750,11 @@ async function serveCommand(): Promise<number> {
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
+      // El vigilante se para en el PRIMER statement: desde aquí no salen avisos
+      // nuevos durante todo el cierre. Su drain (acotado por el timeout de la
+      // agenda) corre en paralelo con el resto del apagado y se espera justo
+      // antes de cerrar las bases de datos.
+      const vigilanteDrain = vigilante.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
       telegram.cancelApprovals();
@@ -1764,11 +1769,6 @@ async function serveCommand(): Promise<number> {
       // opening it.
       await stopWake().catch(() => {});
       // Every Chromium, or the next start refuses to claim the profile dir.
-      // stopped YA, antes de cerrar nada más: desde aquí no salen avisos nuevos.
-      // El drain corre en paralelo con el apagado del resto y se espera antes de
-      // cerrar las bases de datos — una entrega confirmada queda persistida, y el
-      // timeout de la agenda acota cuánto puede tardar como máximo.
-      const vigilanteDrain = vigilante.stop();
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
@@ -1861,7 +1861,8 @@ async function serveCommand(): Promise<number> {
             if (!account) return [];
             // Tres días hacia atrás: el extractor solo propone fechas futuras, y un
             // buzón entero por barrido es ruido y tiempo de IMAP.
-            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30);
+            // Deadline duro: un IMAP colgado no se apila entre barridos.
+            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30, 20_000);
           },
           followups: () => followups.list(undefined, 200),
         }),
