@@ -312,10 +312,13 @@ export function matchesWakeWord(
  * The part of a heard sentence that is not the wake word.
  *
  * What the listener hands over is a whole window of speech - "Asistenta, pon algo de
- * jazz en YouTube" - and the agent needs the instruction, not the address. Matching
- * is delegated to the same token scoring as `matchesWakeWord`, so the two never
- * disagree about what counted as the wake word: it would be strange for the listener
- * to fire on a phrase and then leave that phrase in the prompt.
+ * jazz en YouTube" - and the agent needs the instruction, not the address. Scoring
+ * is shared with `matchesWakeWord`, but the default bar is stricter (truncation
+ * tier) than the listener's (phonetic tier): detection is recall-biased because
+ * whisper mangles custom words, while stripping is precision-biased because a
+ * one-edit slip like "Asistena" mid-sentence is more likely real speech than the
+ * address. Silently eating the command up to a slip is worse than leaving a stray
+ * word for the model, which copes with the stray word.
  *
  * The *last* occurrence is removed rather than the first. "Asistenta, pon X, y luego
  * Asistena para" has a real command after the second address, and dropping only the
@@ -323,11 +326,7 @@ export function matchesWakeWord(
  * because silently returning an empty request is worse than passing on a stray
  * word.
  */
-export function stripWakeWord(
-  text: string,
-  word: string,
-  sensitivity = DEFAULT_SENSITIVITY,
-): string {
+export function stripWakeWord(text: string, word: string, sensitivity = SCORE_TRUNCATED): string {
   // The original tokens, and their accent-folded counterparts. Splitting on the same
   // boundary `normaliseForMatch` uses keeps the two lists the same length, which is
   // what lets a match found in the folded text be reported against the text as it was
