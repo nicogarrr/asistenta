@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -93,6 +93,9 @@ import {
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
+import { createTvTool } from './tools/tv.js';
+import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
+import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
@@ -528,6 +531,111 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
  * The vertical slice: one agent, console input, gate armed, tools registered.
  * Everything else (channels, scheduler) plugs in behind this same shape.
  */
+/**
+ * Cableado de la tool `tv` al cliente SSAP real.
+ *
+ * La emparejacion vive en el vault (tv:host / tv:clientKey / tv:secure), escrita
+ * por `pa tv setup`. Si no hay pairing, TODAS las acciones fallan aqui con un
+ * mensaje que el modelo puede leer, en vez de romper el arranque del agente: la
+ * tele es opcional y su ausencia no puede tumbar el resto.
+ */
+function tvToolDeps(store: Store): TvToolDeps {
+  const frameDir = join(paths.screenshots, 'tv');
+  mkdirSync(frameDir, { recursive: true });
+  const STATE_KEY = 'tv:lastLook';
+
+  const paired = async (): Promise<{
+    host: string;
+    clientKey: string;
+    allowPlaintext: boolean;
+  }> => {
+    const host = await vaultGet('tv:host');
+    const clientKey = await vaultGet('tv:clientKey');
+    if (!host || !clientKey) {
+      throw new Error(
+        'La tele no esta emparejada. Emparejala una vez con: pa tv setup <ip-de-la-television>',
+      );
+    }
+    return { host, clientKey, allowPlaintext: (await vaultGet('tv:secure')) === '0' };
+  };
+
+  return {
+    shot: async () => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      const image = await tvScreenshot(host, clientKey, { allowPlaintext });
+      return { image, mimeType: 'image/jpeg' };
+    },
+    foreground: async () => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      const res = await tvRequest(
+        host,
+        clientKey,
+        'com.webos.applicationManager/getForegroundAppInfo',
+        {},
+        { allowPlaintext },
+      );
+      const p = res as { appId?: string; appCategory?: string[] };
+      return { appId: p.appId ?? 'desconocida', category: p.appCategory ?? [] };
+    },
+    apps: async () => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      const res = await tvRequest(
+        host,
+        clientKey,
+        'com.webos.applicationManager/listLaunchPoints',
+        {},
+        { allowPlaintext },
+      );
+      const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
+      return points.map((p) => ({ id: p.id, title: p.title }));
+    },
+    launch: async (id) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvRequest(host, clientKey, 'system.launcher/launch', { id }, { allowPlaintext });
+    },
+    key: async (name) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvKey(host, clientKey, name, { allowPlaintext });
+    },
+    toast: async (message) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvToast(host, clientKey, message, { allowPlaintext });
+    },
+    power: async (on) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      if (on) {
+        await tvRequest(
+          host,
+          clientKey,
+          'com.webos.service.tvpower/power/turnOnScreen',
+          {},
+          { allowPlaintext },
+        );
+        return;
+      }
+      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
+    },
+    saveFrame: (bytes) => {
+      const file = join(frameDir, `tv-${Date.now()}.jpg`);
+      writeFileSync(file, bytes);
+      return file;
+    },
+    getState: () => {
+      const raw = store.kvGet(STATE_KEY);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as TvMemoryState;
+      } catch {
+        // kv corrupto: se descarta en silencio y se vuelve a mirar la tele.
+        return null;
+      }
+    },
+    setState: (state) => {
+      store.kvSet(STATE_KEY, JSON.stringify(state));
+    },
+  };
+}
+
 async function chatCommand(): Promise<number> {
   ensureDirs();
   const config = loadConfig();
@@ -1309,6 +1417,13 @@ async function serveCommand(): Promise<number> {
         afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
       }),
     ] as AgentTool[];
+
+    // La tele LG se mira y se controla por SSAP (src/tv). Las acciones de solo
+    // lectura NO entran en el mutex: mirar la tele no mueve la maquina y puede ir
+    // en paralelo con una captura del escritorio. El estado de la ultima mirada
+    // se guarda en la tabla kv de la Store, para que el agente sepa que habia en
+    // pantalla sin volver a despertar la tele.
+    all.push(createTvTool(tvToolDeps(store)));
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
