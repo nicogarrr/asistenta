@@ -7,13 +7,24 @@
  *
  * Red: la tele vive en la LAN de casa y en el tailnet. Asistenta corre en la
  * misma LAN, asi que el default es LAN primero y tailnet de fallback - el
- * nodo tailscale de la tele se cae tras cada reinicio y tarda en volver. Se
- * prueba cada endpoint en orden con timeout corto y se recuerda el ultimo
- * que respondio.
+ * nodo tailscale de la tele se cae tras cada reinicio y tarda en volver.
  *
- * Auth: Glasshouse sin token configurado acepta todo; con token, Bearer o
- * ?k=. El token (si existe) vive en el vault (tv:glasshouseToken), nunca en
- * config ni en logs.
+ * Reglas de reintento (auditor #104 r1):
+ * - Las LECTURAS (GET) son idempotentes: cualquier error de red permite
+ *   probar el siguiente endpoint.
+ * - Las ESCRITURAS (POST /api/control) NO: solo se prueba el siguiente
+ *   endpoint cuando la conexion NUNCA se establecio (ECONNREFUSED y familia
+ *   - la accion no pudo llegar a la tele). Un timeout o reset tras el envio
+ *   es AMBIGUO (la tele pudo aplicar la accion sin contestar): se para ahi
+ *   con GlasshouseAmbiguousError, sin reintento ni failover, para no
+ *   duplicar la accion.
+ * - Un rechazo (ok:false, 401/403/4xx/5xx) es RESPUESTA de la tele: se
+ *   propaga y nunca habilita fallback a otro transporte.
+ *
+ * Auth: Glasshouse sin token configurado acepta todo; con token, Bearer.
+ * El token (si existe) vive en el vault (tv:glasshouseToken). Ningun mensaje
+ * de error incluye el cuerpo de la peticion, headers, ni texto del servidor
+ * sin sanear: un servidor que reflejara el Bearer no lo filtra a logs.
  *
  * API verificada contra la fuente (rorygallagher2024/glasshouse, server/lib/
  * routes.js + controls.js, 11 oct 2026): POST /api/control exige Content-Type
@@ -74,7 +85,38 @@ export function assertGlasshouseEndpoint(raw: string): string {
 
 const ACTION_NAME = /^[a-zA-Z][a-zA-Z0-9]*$/;
 
+/** Codigos de "la conexion nunca se establecio": la accion NO llego a la tele. */
+const CONNECT_FAILURE_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+]);
+
 export class GlasshouseError extends Error {}
+
+/**
+ * Glasshouse no esta ahi en ningun endpoint (todas las conexiones fallaron
+ * ANTES de enviar nada). Es el UNICO error ante el que tiene sentido un
+ * fallback de transporte (p.ej. SSAP): la tele no recibio la orden.
+ */
+export class GlasshouseUnavailableError extends GlasshouseError {}
+
+/**
+ * Escritura enviada sin respuesta (timeout/reset tras el envio): la tele pudo
+ * aplicar la accion. PROHIBIDO reintentar o cambiar de transporte: duplicaria
+ * la orden. El caller informa y deja decidir al usuario.
+ */
+export class GlasshouseAmbiguousError extends GlasshouseError {}
+
+/** Clasifica un fallo de fetch: connect = nunca llego; ambiguous = pudo llegar. */
+function classifyNetworkError(err: unknown): 'connect' | 'ambiguous' {
+  const anyErr = err as { name?: string; code?: string; cause?: { code?: string } } | null;
+  const code = anyErr?.cause?.code ?? anyErr?.code;
+  if (code && CONNECT_FAILURE_CODES.has(code)) return 'connect';
+  return 'ambiguous';
+}
 
 export class GlasshouseClient {
   private readonly endpoints: string[];
@@ -95,10 +137,21 @@ export class GlasshouseClient {
   }
 
   /**
+   * Texto del servidor saneado antes de entrar en un error/log: sin el token
+   * (un servidor que lo reflejara no lo filtra), sin control chars y corto.
+   */
+  private sanitize(text: unknown): string {
+    let s = String(text ?? '');
+    if (this.token) s = s.split(this.token).join('[redacted]');
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: justo es lo que se quita
+    s = s.replace(/[\u0000-\u001F]/g, '');
+    return s.slice(0, 200);
+  }
+
+  /**
    * POST /api/control {action, value}. Un ok:false es una RESPUESTA de la
    * tele (accion desconocida, power deshabilitado...): se propaga como error
-   * legible, NO se reintenta en otro endpoint. Solo un fallo de RED
-   * (timeout, connection refused) salta al siguiente endpoint.
+   * legible, NO se reintenta en otro endpoint ni habilita fallbacks.
    */
   async control(
     action: string,
@@ -108,7 +161,7 @@ export class GlasshouseClient {
       throw new GlasshouseError(`Accion Glasshouse no valida: ${JSON.stringify(action)}.`);
     }
     const body = JSON.stringify(value === undefined ? { action } : { action, value });
-    const res = await this.request('POST', '/api/control', body);
+    const res = await this.request('POST', '/api/control', false, body);
     let parsed: GlasshouseControlResult;
     try {
       parsed = JSON.parse(res) as GlasshouseControlResult;
@@ -119,14 +172,16 @@ export class GlasshouseClient {
       throw new GlasshouseError('Respuesta de Glasshouse sin campo ok booleano.');
     }
     if (!parsed.ok) {
-      throw new GlasshouseError(`La tele rechazo ${action}: ${parsed.error ?? 'sin detalle'}.`);
+      throw new GlasshouseError(
+        `La tele rechazo ${action}: ${this.sanitize(parsed.error) || 'sin detalle'}.`,
+      );
     }
     return parsed;
   }
 
   /** GET JSON de un endpoint de lectura (/api/stats, /api/apps, ...). */
   async getJson(path: '/api/stats' | '/api/apps' | '/api/caps' | '/api/privacy'): Promise<unknown> {
-    const res = await this.request('GET', path);
+    const res = await this.request('GET', path, true);
     try {
       return JSON.parse(res) as unknown;
     } catch {
@@ -140,11 +195,22 @@ export class GlasshouseClient {
     return h;
   }
 
-  private async request(method: 'GET' | 'POST', path: string, body?: string): Promise<string> {
+  /**
+   * Una peticion contra los endpoints en orden (sticky primero). Solo se pasa
+   * al siguiente endpoint cuando la conexion NO llego a establecerse; en
+   * escrituras (idempotent=false), un fallo ambiguo (timeout/reset) para el
+   * mundo ahi.
+   */
+  private async request(
+    method: 'GET' | 'POST',
+    path: string,
+    idempotent: boolean,
+    body?: string,
+  ): Promise<string> {
     const order = this.endpoints.map((_, i) => (this.sticky + i) % this.endpoints.length);
-    const networkErrors: string[] = [];
+    const connectFailures: string[] = [];
     for (const idx of order) {
-      const base = this.endpoints[idx];
+      const base = this.endpoints[idx] as string; // orden derivado de indices validos
       try {
         const res = await this.fetchImpl(`${base}${path}`, {
           method,
@@ -161,18 +227,25 @@ export class GlasshouseClient {
         if (!res.ok) {
           // Respuesta HTTP: la tele esta ahi; un 401/403/404/415 lo decide el
           // servidor, no se arregla saltando de endpoint.
-          const text = (await res.text()).slice(0, 300);
+          const text = this.sanitize(await res.text());
           throw new GlasshouseError(`Glasshouse HTTP ${res.status} en ${base}: ${text}`);
         }
         this.sticky = idx;
         return await res.text();
       } catch (err) {
         if (err instanceof GlasshouseError) throw err;
-        networkErrors.push(`${base}: ${err instanceof Error ? err.message : String(err)}`);
+        const kind = classifyNetworkError(err);
+        if (kind === 'ambiguous' && !idempotent) {
+          throw new GlasshouseAmbiguousError(
+            `La orden se envio a ${base} pero la tele no confirmo (timeout/corte tras el envio). ` +
+              'Pudo haberse aplicado: NO se reintenta automaticamente. Comprueba la tele antes de repetirla.',
+          );
+        }
+        connectFailures.push(base);
       }
     }
-    throw new GlasshouseError(
-      `Glasshouse inalcanzable en todos los endpoints (${networkErrors.join(' | ')}). ` +
+    throw new GlasshouseUnavailableError(
+      `Glasshouse inalcanzable en todos los endpoints (${connectFailures.join(', ')}). ` +
         'La tele puede estar apagada del todo o fuera de la red.',
     );
   }

@@ -3,8 +3,10 @@ import type { TvToolDeps } from '../src/tools/tv.js';
 import { createTvTool } from '../src/tools/tv.js';
 import {
   assertGlasshouseEndpoint,
+  GlasshouseAmbiguousError,
   GlasshouseClient,
   GlasshouseError,
+  GlasshouseUnavailableError,
 } from '../src/tv/glasshouse.js';
 
 /* ---------- endpoint guard ---------- */
@@ -38,7 +40,12 @@ describe('assertGlasshouseEndpoint', () => {
 type FetchCall = { url: string; init?: RequestInit };
 
 function mockFetch(
-  handlers: ((url: string) => { status?: number; body?: string; throwNet?: boolean })[],
+  handlers: ((url: string) => {
+    status?: number;
+    body?: string;
+    throwNet?: boolean;
+    connect?: boolean;
+  })[],
 ) {
   const calls: FetchCall[] = [];
   const fetchImpl = (async (url: unknown, init?: RequestInit) => {
@@ -46,12 +53,24 @@ function mockFetch(
     calls.push({ url: u, init });
     for (const h of handlers) {
       const r = h(u);
-      if (r.throwNet) throw new Error('connect ECONNREFUSED');
+      if (r.throwNet) throw r.connect ? connectRefused() : responseLost();
       return new Response(r.body ?? '{"ok":true}', { status: r.status ?? 200 });
     }
     return new Response('{"ok":true}', { status: 200 });
   }) as unknown as typeof fetch;
   return { calls, fetchImpl };
+}
+
+/** Error de "conexion nunca establecida" (la orden NO llego a la tele). */
+function connectRefused(): Error {
+  const e = new Error('connect ECONNREFUSED');
+  (e as Error & { code?: string }).code = 'ECONNREFUSED';
+  return e;
+}
+
+/** Error de "enviado pero sin respuesta" (resultado ambiguo). */
+function responseLost(): Error {
+  return new TypeError('response lost after server applied action');
 }
 
 describe('GlasshouseClient.control', () => {
@@ -92,7 +111,7 @@ describe('GlasshouseClient.control', () => {
       () => {
         const fail = first;
         first = false;
-        return fail ? { throwNet: true } : { body: '{"ok":true}' };
+        return fail ? { throwNet: true, connect: true } : { body: '{"ok":true}' };
       },
     ]);
     const c = new GlasshouseClient({
@@ -111,12 +130,13 @@ describe('GlasshouseClient.control', () => {
     expect(s0.url).toBe('http://100.126.88.124:8080/api/control');
   });
 
-  it('todos los endpoints caidos: error que nombra la tele', async () => {
-    const { fetchImpl } = mockFetch([() => ({ throwNet: true })]);
+  it('todos los endpoints caidos: UnavailableError que nombra la tele', async () => {
+    const { fetchImpl } = mockFetch([() => ({ throwNet: true, connect: true })]);
     const c = new GlasshouseClient({
       endpoints: ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'],
       fetchImpl,
     });
+    await expect(c.control('mute', true)).rejects.toThrow(GlasshouseUnavailableError);
     await expect(c.control('mute', true)).rejects.toThrow(/inalcanzable|apagada/);
   });
 
@@ -141,6 +161,95 @@ describe('GlasshouseClient.control', () => {
     const { fetchImpl } = mockFetch([() => ({ body: '<html>dashboard</html>' })]);
     const c = new GlasshouseClient({ endpoints: ['http://192.168.1.237:8080'], fetchImpl });
     await expect(c.control('toast', 'hola')).rejects.toThrow(/JSON/);
+  });
+});
+
+/* ---------- repros del auditor #104 r1 (fetch mockeado, sin red) ---------- */
+
+describe('GlasshouseClient - reglas de mutacion (auditor r1)', () => {
+  it('POST con respuesta perdida NO repite ni hace failover (auditor verbatim)', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      throw new TypeError('response lost after server applied action');
+    }) as unknown as typeof fetch;
+    const c = new GlasshouseClient({
+      endpoints: ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'],
+      fetchImpl,
+    });
+    await expect(c.control('powerOff')).rejects.toThrow(GlasshouseAmbiguousError);
+    expect(calls).toBe(1);
+  });
+
+  it('el servidor no puede reflejar el Bearer en la excepcion (auditor verbatim)', async () => {
+    const c = new GlasshouseClient({
+      endpoints: ['http://192.168.1.237:8080'],
+      token: 'synthetic-secret',
+      fetchImpl: (async () =>
+        new Response('Bearer synthetic-secret', { status: 403 })) as unknown as typeof fetch,
+    });
+    let message = '';
+    try {
+      await c.control('powerOff');
+    } catch (e) {
+      message = String(e);
+    }
+    expect(message).not.toContain('synthetic-secret');
+    expect(message).toContain('403');
+  });
+
+  it('ok:false con token reflejado tampoco lo filtra', async () => {
+    const c = new GlasshouseClient({
+      endpoints: ['http://192.168.1.237:8080'],
+      token: 'synthetic-secret',
+      fetchImpl: (async () =>
+        new Response('{"ok":false,"error":"bad token synthetic-secret"}', {
+          status: 200,
+        })) as unknown as typeof fetch,
+    });
+    let message = '';
+    try {
+      await c.control('toast', 'hola');
+    } catch (e) {
+      message = String(e);
+    }
+    expect(message).not.toContain('synthetic-secret');
+    expect(message).toContain('rechazo');
+  });
+
+  it('un toggle (playPause) con respuesta ambigua tampoco se repite', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      throw responseLost();
+    }) as unknown as typeof fetch;
+    const c = new GlasshouseClient({
+      endpoints: ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'],
+      fetchImpl,
+    });
+    await expect(c.control('media', 'playPause')).rejects.toThrow(GlasshouseAmbiguousError);
+    expect(calls).toBe(1);
+  });
+
+  it('GET si puede saltar de endpoint tras un timeout (lectura idempotente)', async () => {
+    let n = 0;
+    const fetchImpl = (async () => {
+      n++;
+      if (n === 1) throw responseLost();
+      return new Response('{"volume":13}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const c = new GlasshouseClient({
+      endpoints: ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'],
+      fetchImpl,
+    });
+    const r = (await c.getJson('/api/stats')) as { volume: number };
+    expect(r.volume).toBe(13);
+    expect(n).toBe(2);
+  });
+
+  it('UnavailableError y AmbiguousError son GlasshouseError (catch generico vale)', () => {
+    expect(new GlasshouseUnavailableError('x')).toBeInstanceOf(GlasshouseError);
+    expect(new GlasshouseAmbiguousError('x')).toBeInstanceOf(GlasshouseError);
   });
 });
 

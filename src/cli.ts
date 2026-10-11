@@ -96,7 +96,7 @@ import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/sy
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
 import { createTvTool } from './tools/tv.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
-import { GlasshouseClient } from './tv/glasshouse.js';
+import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
@@ -624,7 +624,12 @@ function tvToolDeps(store: Store): TvToolDeps {
         await (await ghClient()).control('launchApp', id);
         return;
       } catch (err) {
-        log.info('tv launch: Glasshouse no disponible, pruebo SSAP', { err: String(err) });
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv launch: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
       await tvRequest(host, clientKey, 'system.launcher/launch', { id }, { allowPlaintext });
@@ -638,7 +643,12 @@ function tvToolDeps(store: Store): TvToolDeps {
         await (await ghClient()).control('toast', message);
         return;
       } catch (err) {
-        log.info('tv toast: Glasshouse no disponible, pruebo SSAP', { err: String(err) });
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv toast: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
       await tvToast(host, clientKey, message, { allowPlaintext });
@@ -650,7 +660,12 @@ function tvToolDeps(store: Store): TvToolDeps {
         await (await ghClient()).control(on ? 'powerOn' : 'powerOff');
         return;
       } catch (err) {
-        log.info('tv power: Glasshouse no disponible, pruebo SSAP', { err: String(err) });
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv power: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
       if (on) {
