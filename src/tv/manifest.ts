@@ -3,13 +3,15 @@
  *
  * SIN firma: la firma test-signing-cert de LG (appId com.lge.test, serial
  * 2f930e2d...) que los clientes open source copiaban de bscpylgtv esta en la
- * blacklist de LG desde el firmware 43.x (CVE-2023-6317): la tele rechaza el
- * pairing con 403 "blacklisted certificate detected". Este es el fix oficial
+ * blacklist de LG en firmwares recientes (CVE-2023-6317; observado en 43.x,
+ * depende de modelo/firmware): la tele rechaza el pairing con 403
+ * "blacklisted certificate detected". Este es el fix oficial
  * de aiowebostv >= 0.9.2: manifiesto sin firmar con TODOS los permisos en el
  * array `permissions` externo. Verificado contra la tele real (pairing, toast
  * y launch OK, 11 oct 2026).
  *
- * Consecuencia documentada: sin firma la tele NO concede WRITE_SETTINGS. Para
+ * Consecuencia documentada: sin firma la tele puede NO conceder WRITE_SETTINGS
+ * ni READ_UPDATE_INFO (depende de modelo/firmware). Para
  * ajustes de imagen haria falta el truco createAlert onClick/onfail ->
  * luna://com.webos.settingsservice/setSystemSettings, o el puerto 9761
  * (IP Control). Decidido por main bajo preferencias de Nico (cero terminal /
