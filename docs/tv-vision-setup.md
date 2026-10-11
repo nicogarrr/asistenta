@@ -39,9 +39,15 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      imagen oficial - confirmar). El puerto a abrir: 19400 (flatbuffers).
    - Pieza pendiente (diseno propio): como la asistenta lee frames del receptor
      (poll de la API JSON del receptor o suscripcion flatbuffers). Va en su propia PR.
-4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop>`
+4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop> --button <boton>`
+   - El boton EXIGE flag explicito del operador (decision del owner en ejecucion;
+     sin --button el script aborta). Candidatos: 0-9 (pierden long-press), guide, info.
+   - Staging en el fs propio de cada destino, backup de los 4, rollback automatico
+     ante cualquier fallo post-backup + script de rollback remoto real
+     (/home/root/mm-rollback-<ts>.sh).
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
      (:8765/tv/button-health) no responde - el boton NO se activa sin listener.
+   - Rollback tailscaled: script remoto real /home/root/tailscaled-autostart-rollback-<ts>.sh.
    - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
    - Boton mapeado: "0" por defecto (ver seccion siguiente) -> curl al webhook.
    - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta
@@ -60,9 +66,9 @@ mapear "0" elimina su long-press. ir_input_enabled queda en false (no tocamos IR
 ## Que boton usar (decidir con Nico)
 Los botones de color YA tienen funciones utiles en la config de ejemplo (OLED light,
 eye comfort) - NO tocarlos sin permiso. Candidatos de la lista oficial de botones:
-"0"-"9", "guide", "info", "exit"... Proponemos "0" como HIPOTESIS A CONFIRMAR con Nico (N/D si su mando le da uso;
-ademas mapear 0-9 elimina su long-press - verificado upstream). NO ejecutar el
-paso 4 hasta tener: boton decidido + listener :8765/tv/button desplegado. Cambiarlo = editar la clave de config/tv/magic_mapper_config.json
+"0"-"9", "guide", "info", "exit"... El boton se decide EN EJECUCION via --button (N/D cual; candidatos: 0-9 con
+caveat long-press verificado upstream, guide, info). El paso 4 exige ademas el
+listener :8765/tv/button desplegado (preflight duro). Cambiarlo = editar la clave de config/tv/magic_mapper_config.json
 y volver a desplegar (restart del script).
 
 ## Rollback

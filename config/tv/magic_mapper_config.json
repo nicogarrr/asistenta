@@ -5,7 +5,7 @@
     "ir_input_enabled": false,
     "ir_exclusive_mode": true
   },
-  "0": {
+  "__BUTTON__": {
     "function": "curl",
     "inputs": {
       "url": "__ASISTENTA_URL__"
