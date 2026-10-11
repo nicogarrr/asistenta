@@ -22,10 +22,14 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
    - Escribe /var/lib/webosbrew/init.d/tailscaled (run-parts; nombre sin puntos).
    - Lo arranca y verifica pidof. Verificar desde la VM: `tailscale status | grep -i lgwebostv`.
 2. **PicCap**: `sh scripts/tv/install-piccap.sh 192.168.1.237`
-   - Release observada: 0.5.3 (GitHub releases, URL + version reales); el sha256
-     del IPK se calcula AL EJECUTAR descargandolo (hbchannel EXIGE ipkUrl+ipkHash).
-   - Instalacion asincrona con suscripcion real al progreso y verificacion final
-     en listLaunchPoints; si no aparece, camino manual por la UI de Homebrew.
+    - Release 0.5.3: URL verificada por API y digest OFICIAL sha256
+     ad6b06766cea01dbe8ea0ac9dbbbd9c1a6c030e72df6cd96214199f50d38e486 - el
+     script descarga, hashea y ABORTA si no coincide.
+   - hbchannel exige ipkUrl+ipkHash; completion real = finished:true /
+     statusText Finished. (statusValue 30 es solo el packageInstall interno).
+   - Prerequisito webOS >= 4.0 FAIL-CLOSED: si os_info.json falta o es ilegible,
+     aborta. Verificacion final: launchPoints + getAppInfo version 0.5.3.
+   - Si el install no llega a finished: camino manual por la UI de Homebrew.
    - UI: esperar elevate; configurar receptor = IP tailscale de la VM AL EJECUTAR
      (`tailscale ip -4` en la VM; a 12/10 era 100.108.180.24, VERIFICAR), puerto
      flatbuffers 19400 (HyperHDR en la VM).
@@ -36,6 +40,8 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
    - Pieza pendiente (diseno propio): como la asistenta lee frames del receptor
      (poll de la API JSON del receptor o suscripcion flatbuffers). Va en su propia PR.
 4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop>`
+   - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
+     (:8765/tv/button-health) no responde - el boton NO se activa sin listener.
    - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
    - Boton mapeado: "0" por defecto (ver seccion siguiente) -> curl al webhook.
    - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta
@@ -61,9 +67,11 @@ y volver a desplegar (restart del script).
 
 ## Rollback
 - piccap: luna-send luna://org.webosbrew.hbchannel.service/uninstall '{"id":"org.webosbrew.piccap"}'
-- magic_mapper: stop del servicio + restaurar desde /home/root/mm-backup-<ts>/
-  (el instalador guarda TODOS los ficheros vivos previos ahi) + start. Si no
-  habia instalacion previa: stop + rm de los 4 ficheros desplegados.
+ - magic_mapper: el instalador hace rollback AUTOMATICO si el start/verify falla
+  tras el backup. Manual: stop + restaurar los 4 ficheros desde
+  /home/root/mm-backup-<ts>/ a sus rutas + start (comando exacto impreso por el
+  script al desplegar). Sin instalacion previa: stop + rm de los 4.
+- tailscaled: umount /etc/resolv.conf + kill + restaurar init .bak-<ts> (o rm).
 - tailscaled init: rm /var/lib/webosbrew/init.d/tailscaled (el daemon corriendo se mata con pidof/kill).
 
 ## Fuentes (verificadas 12/10 01:17)
