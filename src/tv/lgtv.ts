@@ -486,7 +486,8 @@ const TV_KEY_NAMES = new Set([
  * exige mismo host que la tele pareada, esquema ws/wss y puerto conocido; el
  * nombre de tecla sale de una whitelist (un nombre con CRLF inyectaria
  * botones arbitrarios en el protocolo); y NUNCA se resuelve si el socket se
- * cerro o fallo antes de tiempo (sin "tecla enviada" falsa).
+ * cerro o fallo antes de tiempo. El margen de consumo empieza SOLO tras un
+ * open+send exitoso: si el handshake no abre, no hay exito que reportar.
  */
 export async function tvKey(
   host: string,
@@ -514,23 +515,15 @@ export async function tvKey(
   await new Promise<void>((resolve, reject) => {
     const ws = new WebSocket(socketUrl, { rejectUnauthorized: false });
     let settled = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       fail(new Error('timeout enviando la tecla'));
     }, 5000);
-    // La tele no responde nada: se da margen al consumo y se cierra. Si el
-    // socket se cierra o falla ANTES de ese margen, la tecla no se confirma.
-    const grace = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      ws.close();
-      resolve();
-    }, 800);
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      clearTimeout(grace);
+      if (grace) clearTimeout(grace);
       ws.close();
       reject(err);
     };
@@ -539,7 +532,18 @@ export async function tvKey(
         ws.send(`type:button\nname:${keyName}\n\n`);
       } catch {
         fail(new Error('no se pudo enviar la tecla'));
+        return;
       }
+      // La tele no responde nada: se da margen al consumo SOLO tras el envio
+      // y se cierra. Si el socket se cierra o falla antes, la tecla no se
+      // confirma.
+      grace = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        ws.close();
+        resolve();
+      }, 800);
     });
     ws.on('error', () => fail(new Error('no se pudo enviar la tecla')));
     ws.on('close', () => {
@@ -567,9 +571,12 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
  * Endurecimiento (auditor, 11 oct): el imageUri viene de RED y solo se
  * descarga si apunta a la propia tele (mismo host, https, puerto conocido,
  * sin credenciales); los redirects NO se siguen; status 200 y content-type
- * de imagen son obligatorios; la firma JPEG/PNG se valida completa y con
- * tamano minimo; y hay timeout total con abort. El TLS sin verificar queda
- * acotado a la IP de la tele pareada, como el resto del cliente.
+ * de imagen son obligatorios; se comprueba la firma JPEG/PNG completa y un
+ * tamano minimo (firma comprobada, contenido NO decodificado: no se afirma
+ * que sea una imagen valida); y hay un timeout TOTAL externo (no el de
+ * inactividad del socket) con cleanup de request y response en todas las
+ * salidas. El TLS sin verificar queda acotado a la IP de la tele pareada,
+ * como el resto del cliente.
  */
 export async function tvScreenshot(
   host: string,
@@ -582,59 +589,67 @@ export async function tvScreenshot(
   if (!uri) throw new Error('La tele devolvio un imageUri no valido para la captura.');
   const timeoutMs = deps.shotTimeoutMs ?? 10_000;
   const bytes = await new Promise<Buffer>((resolve, reject) => {
-    const req = https.get(uri, { rejectUnauthorized: false }, (r) => {
+    let done = false;
+    let response: { destroy(): void } | undefined;
+    let req: ReturnType<typeof https.get>;
+    const finish = (err?: Error, buf?: Buffer) => {
+      if (done) return;
+      done = true;
+      clearTimeout(totalTimer);
+      if (err) {
+        response?.destroy();
+        req.destroy();
+        reject(err);
+        return;
+      }
+      resolve(buf as Buffer);
+    };
+    // Timeout TOTAL desde el inicio: un servidor goteando bytes resetearia
+    // el timeout de inactividad del socket y retendria la descarga a vida.
+    const totalTimer = setTimeout(() => {
+      finish(new Error(`timeout de ${timeoutMs / 1000}s descargando la captura`));
+    }, timeoutMs);
+    req = https.get(uri, { rejectUnauthorized: false }, (r) => {
+      response = r;
       const status = r.statusCode ?? 0;
       const type = String(r.headers['content-type'] ?? '');
       // Un 3xx cae aqui: los redirects NUNCA se siguen (destino de red).
       if (status !== 200) {
         r.resume();
-        reject(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
+        finish(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
         return;
       }
       if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
         r.resume();
-        reject(
+        finish(
           new Error(`content-type inesperado en la captura: ${sanitizeTvText(type) || 'ausente'}`),
         );
         return;
       }
       const chunks: Buffer[] = [];
       let total = 0;
-      let done = false;
-      const fail = (err: Error) => {
-        if (done) return;
-        done = true;
-        r.destroy();
-        reject(err);
-      };
       r.on('data', (c: Buffer) => {
         total += c.length;
         if (total > MAX_SHOT_BYTES) {
-          fail(new Error('la captura supera el tamano maximo'));
+          finish(new Error('la captura supera el tamano maximo'));
           return;
         }
         chunks.push(c);
       });
-      r.on('end', () => {
-        if (done) return;
-        done = true;
-        resolve(Buffer.concat(chunks));
-      });
-      r.on('aborted', () => fail(new Error('la descarga de la captura fue abortada')));
-      r.on('error', () => fail(new Error('no se pudo descargar la captura')));
-    });
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`timeout de ${timeoutMs / 1000}s descargando la captura`));
+      r.on('end', () => finish(undefined, Buffer.concat(chunks)));
+      r.on('aborted', () => finish(new Error('la descarga de la captura fue abortada')));
+      r.on('error', () => finish(new Error('no se pudo descargar la captura')));
     });
     req.on('error', (err: unknown) => {
-      reject(err instanceof Error ? err : new Error('no se pudo descargar la captura'));
+      finish(err instanceof Error ? err : new Error('no se pudo descargar la captura'));
     });
   });
   // JPG y PNG empiezan por su firma COMPLETA: una respuesta HTML de error o
   // una respuesta de 2 bytes no deben guardarse como si fueran una imagen.
+  // Se comprueba la firma, no se decodifica el contenido.
   const hasMagic = (magic: number[]): boolean => magic.every((b, i) => bytes[i] === b);
   if (bytes.length < MIN_SHOT_BYTES || (!hasMagic(JPEG_MAGIC) && !hasMagic(PNG_MAGIC))) {
-    throw new Error('la tele no devolvio una imagen valida');
+    throw new Error('la captura no tiene firma JPEG/PNG completa');
   }
   return bytes;
 }

@@ -176,8 +176,20 @@ export async function tvCommand(args: string[]): Promise<number> {
         await new Promise((r) => setTimeout(r, 2500));
       }
       const bytes = await tvScreenshot(host, clientKey, deps);
-      writeFileSync(out, bytes);
-      process.stdout.write(`Captura guardada en ${out} (${bytes.length} bytes).\n`);
+      try {
+        // Sin --force, 'wx' falla si el fichero aparecio durante la descarga
+        // (TOCTOU): nunca se sobrescribe algo creado mientras tanto.
+        writeFileSync(out, bytes, force ? undefined : { flag: 'wx' });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          process.stderr.write(`pa tv shot: ${out} ya existe; usa --force para sobrescribir.\n`);
+          return 2;
+        }
+        throw err;
+      }
+      process.stdout.write(
+        `Captura guardada en ${out} (${bytes.length} bytes; firma comprobada, no decodificada).\n`,
+      );
       return 0;
     }
     case 'key': {

@@ -159,7 +159,7 @@ describe('tvScreenshot endurecido', () => {
       imageUri: `https://${TV_HOST}:3001/capture.jpg`,
     });
     await expect(mod.tvScreenshot(TV_HOST, 'k', { factory, commandTimeoutMs: 50 })).rejects.toThrow(
-      /imagen valida/,
+      /firma JPEG\/PNG/,
     );
   });
 
