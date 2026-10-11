@@ -622,11 +622,16 @@ export async function tvScreenshot(
           finish(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
           return;
         }
-        if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
+        // La tele sirve el framebuffer SIN cabecera content-type, asi que
+        // "ausente" es lo normal y no puede tratarse como error. Solo se
+        // rechaza un content-type PRESENTE y que no sea imagen: una respuesta
+        // HTML o JSON con status 200 no debe pasar por aqui. La garantia real
+        // la da la firma JPEG/PNG de los bytes, que se comprueba al final.
+        if (type && !type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
           r.resume();
           finish(
             new Error(
-              `content-type inesperado en la captura: ${sanitizeTvText(type) || 'ausente'}`,
+              `content-type inesperado en la captura: ${sanitizeTvText(type)}`,
             ),
           );
           return;
