@@ -40,6 +40,11 @@ export function isOpenCodeEndpoint(baseUrl: string): boolean {
   return /^https:\/\/opencode\.ai\/zen(\/|$)/.test(baseUrl);
 }
 
+/** True for the OpenRouter endpoint. */
+export function isOpenRouterEndpoint(baseUrl: string): boolean {
+  return /^https:\/\/openrouter\.ai(\/|$)/.test(baseUrl);
+}
+
 /**
  * OpenCode Go asks API clients to send their own user agent and a stable session id
  * in `x-opencode-session` for each conversation (https://opencode.ai/docs/go/).
@@ -52,7 +57,7 @@ export function goHeaders(sessionId: string | undefined): Record<string, string>
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
-  const key = await resolveApiKey();
+  const key = await resolveApiKey(config.baseUrl);
 
   const models = createModels({
     authContext: {
@@ -105,7 +110,19 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   return { models, model, streamFn, modelFor };
 }
 
-async function resolveApiKey(): Promise<string> {
+async function resolveApiKey(baseUrl: string): Promise<string> {
+  if (isOpenRouterEndpoint(baseUrl)) {
+    // Nunca la clave de OpenCode contra OpenRouter: seria un 401 y una fuga
+    // del secreto a un tercero. Solo vault provider:openrouterKey o
+    // OPENROUTER_API_KEY, con error claro si falta.
+    const fromVault = await vaultGet('provider:openrouterKey');
+    if (fromVault) return fromVault;
+    const fromEnv = process.env.OPENROUTER_API_KEY;
+    if (fromEnv) return fromEnv;
+    throw new Error(
+      'no OpenRouter API key: run `pa vault set provider:openrouterKey <key>` or set OPENROUTER_API_KEY',
+    );
+  }
   const fromVault = await vaultGet('provider:apiKey');
   if (fromVault) return fromVault;
   const fromEnv = process.env.OPENCODE_GO_API_KEY;

@@ -11,6 +11,8 @@ export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
  * here — those live in the vault (see vault.ts) and are fetched at point of use.
  */
 export interface Config {
+  /** Named provider preset: 'opencode' (default) or 'openrouter'. */
+  providerPreset?: string;
   /** Provider id, matching the id in the pi-ai provider registry. */
   provider: string;
   model: string;
@@ -122,10 +124,32 @@ export function loadConfig(): Config {
       );
     }
   }
+  // Preset de proveedor: OpenCode Zen free es el default; 'openrouter' conmuta
+  // todos los defaults a OpenRouter (PA_PROVIDER/PA_MODEL/PA_BASE_URL siguen
+  // pudiendo anular cada valor por encima del preset elegido).
+  const providerPreset = process.env.PA_PROVIDER_PRESET ?? 'opencode';
+  if (!['opencode', 'openrouter'].includes(providerPreset)) {
+    throw new Error(
+      `PA_PROVIDER_PRESET must be 'opencode' or 'openrouter', got ${JSON.stringify(providerPreset)}`,
+    );
+  }
+  const presetDefaults =
+    providerPreset === 'openrouter'
+      ? {
+          provider: 'openrouter',
+          model: 'thinkingmachines/inkling-small:free',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        }
+      : {
+          provider: 'opencode-go',
+          model: 'space-bunny-free',
+          baseUrl: 'https://opencode.ai/zen/v1',
+        };
   cached = {
-    provider: process.env.PA_PROVIDER ?? 'opencode-go',
-    model: process.env.PA_MODEL ?? 'space-bunny-free',
-    baseUrl: process.env.PA_BASE_URL ?? 'https://opencode.ai/zen/v1',
+    providerPreset,
+    provider: process.env.PA_PROVIDER ?? presetDefaults.provider,
+    model: process.env.PA_MODEL ?? presetDefaults.model,
+    baseUrl: process.env.PA_BASE_URL ?? presetDefaults.baseUrl,
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),
     runTimeoutMs: num('PA_RUN_TIMEOUT_MS', 900_000),
     idleTimeoutMs: num('PA_IDLE_TIMEOUT_MS', 180_000),
