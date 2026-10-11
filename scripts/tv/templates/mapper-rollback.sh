@@ -4,8 +4,8 @@
 # para el servicio, exige proceso no-vivo (pgrep tri-estado: 0=vivo, 1=muerto,
 # otro=aborta) y restaura con fallos visibles. Si algo no cuadra, ABORTA sin tocar nada.
 set -e
-ROOT="${MM_ROOT:-/home/root}"
-INITD="${MM_INITD:-/var/lib/webosbrew/init.d}"
+ROOT="${MM_ROOT:-/home/root}"  # MM_ROOT ya unificado con los tests
+INITD="${INITD:-/var/lib/webosbrew/init.d}"
 BK="__BK__"
 abort() { echo "ROLLBACK ABORTA: $1" >&2; exit 1; }
 mm_alive() {

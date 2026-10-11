@@ -80,9 +80,14 @@ TS=$(date +%Y%m%d-%H%M%S)
 BK=/home/root/mm-backup-$TS
 FILES="/home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper"
 mkdir -p "$BK"
+# BACKUP_BLOCK_START (cubierto por test-tv-rollback-mock.sh, caso "cp del instalador roto")
 for f in $FILES; do
-  if [ -e "$f" ]; then cp -a "$f" "$BK/" && basename "$f" >> "$BK/.mlist"; fi
+  if [ -e "$f" ]; then
+    cp -a "$f" "$BK/" || { echo "backup fallo en $f - aborto ANTES de stop/rename"; exit 1; }
+    basename "$f" >> "$BK/.mlist"
+  fi
 done
+# BACKUP_BLOCK_END
 # MANIFEST: lo respaldado, o EMPTY si no habia instalacion previa (distingue
 # "sin instalacion" de "backup perdido" en el rollback).
 if [ -f "$BK/.mlist" ]; then mv "$BK/.mlist" "$BK/MANIFEST"; else echo EMPTY > "$BK/MANIFEST"; fi
