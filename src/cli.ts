@@ -123,6 +123,7 @@ Usage:
   pa vault get <k>        print one secret
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
+  pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
@@ -143,6 +144,8 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 /** A little longer than that, to cover the tail of the file and the daemon's own chatter. */
 const WAKE_TAIL_MS = 2_000;
 
+import { booksSetupCommand } from './books/setup-cli.js';
+
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
 
@@ -151,6 +154,18 @@ export async function main(argv: string[]): Promise<number> {
       return vaultCommand(rest);
     case 'opengym':
       return openGymCommand(rest);
+    case 'books':
+      if (rest[0] !== 'setup') {
+        process.stderr.write('uso: pa books setup' + '\n');
+        return 2;
+      }
+      try {
+        await booksSetupCommand();
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+      return new Promise<number>(() => {});
     case 'doctor':
       return doctorCommand();
     case 'evolve':

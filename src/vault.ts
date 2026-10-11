@@ -240,11 +240,52 @@ export async function unlock(): Promise<void> {
   await loadMap();
 }
 
+// Cola de escritura por proceso: loadMap + mutacion + saveMap es UNA
+// operacion. Sin ella, dos escrituras concurrentes del mismo proceso cargan
+// el mismo mapa viejo y la segunda pierde las claves de la primera (con el
+// backend DPAPI, async, basta un await en medio).
+let writeChain: Promise<void> = Promise.resolve();
+
+function runWriteExclusive<T>(op: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(op);
+  writeChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function vaultSet(key: string, value: string): Promise<void> {
-  const map = await loadMap();
-  map[key] = value;
-  cache.set(key, value);
-  await saveMap(map);
+  return runWriteExclusive(async () => {
+    const map = await loadMap();
+    map[key] = value;
+    await saveMap(map);
+    // Cache SOLO tras escritura durable: si saveMap falla, vaultGet no debe
+    // devolver un valor que nunca llego al disco.
+    cache.set(key, value);
+  });
+}
+
+/**
+ * Set several keys in ONE load+save: the batch either lands together or not
+ * at all (single file write). Use it for values that are only meaningful as a
+ * group (e.g. mail:address + mail:password), so a failure mid-write never
+ * leaves half a pair confirmed. Serialized against other writes in THIS
+ * process via the shared write queue; writers in OTHER processes are not
+ * serialized (shared vault).
+ */
+export async function vaultSetMany(entries: Record<string, string>): Promise<void> {
+  return runWriteExclusive(async () => {
+    const map = await loadMap();
+    for (const [key, value] of Object.entries(entries)) {
+      map[key] = value;
+    }
+    await saveMap(map);
+    // Cache SOLO tras escritura durable (misma regla que vaultSet).
+    for (const [key, value] of Object.entries(entries)) {
+      cache.set(key, value);
+    }
+  });
 }
 
 export async function vaultGet(key: string): Promise<string | undefined> {
@@ -254,12 +295,14 @@ export async function vaultGet(key: string): Promise<string | undefined> {
 }
 
 export async function vaultDelete(key: string): Promise<boolean> {
-  const map = await loadMap();
-  if (!(key in map)) return false;
-  delete map[key];
-  cache.delete(key);
-  await saveMap(map);
-  return true;
+  return runWriteExclusive(async () => {
+    const map = await loadMap();
+    if (!(key in map)) return false;
+    delete map[key];
+    await saveMap(map);
+    cache.delete(key);
+    return true;
+  });
 }
 
 /** Keys only, never values, so listing cannot leak a secret into a transcript. */

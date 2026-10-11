@@ -31,6 +31,14 @@ export function escapeHtml(text: string): string {
     .replaceAll('"', '&quot;');
 }
 
+/** Formato de app password de Google: 16 letras (se muestran en grupos de 4). */
+export function validGmailInputs(address: string, appPassword: string): boolean {
+  return (
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim()) &&
+    /^[a-z]{16}$/i.test(appPassword.replaceAll(' ', ''))
+  );
+}
+
 export function validCredentialFormats(apiId: string, apiHash: string): boolean {
   // Sin \n posible: los formatos no lo admiten.
   return /^\d{1,12}$/.test(apiId) && /^[a-f0-9]{32}$/i.test(apiHash);
@@ -61,6 +69,12 @@ input,button{font-size:1rem;padding:.5rem;margin:.25rem 0;width:100%}</style></h
 <label>api_id <input name="api_id" inputmode="numeric" autocomplete="off"></label>
 <label>api_hash <input name="api_hash" autocomplete="off"></label>
 <button>Guardar y pedir codigo</button>
+</form>
+<h2>Correo para enviar al Kindle</h2>
+<form method="post" action="/gmail?k=TOKEN">
+<label>Tu Gmail <input name="gmail_address" type="email" autocomplete="off"></label>
+<label>App password de Google (16 letras) <input name="app_password" type="password" autocomplete="off"></label>
+<button>Verificar y guardar correo</button>
 </form>
 <form method="post" action="/login?k=TOKEN">
 <label>Codigo de Telegram <input name="code" inputmode="numeric" autocomplete="one-time-code"></label>
@@ -93,6 +107,10 @@ export interface SetupDeps {
   token: string;
   port: number;
   phone?: string;
+  /** Verifica el app password contra SMTP de Gmail ANTES de guardar (lanza si falla). */
+  verifySmtp: (address: string, appPassword: string) => Promise<void>;
+  /** Guarda la cuenta en el vault local de asistenta (0600). */
+  saveMail: (address: string, appPassword: string) => Promise<void>;
 }
 
 export function makeSetupHandler(deps: SetupDeps) {
@@ -111,7 +129,13 @@ export function makeSetupHandler(deps: SetupDeps) {
     return run;
   };
   const render = (res: ServerResponse, msg: string, status = 200) => {
-    res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+    res.writeHead(status, {
+      'content-type': 'text/html; charset=utf-8',
+      // La pagina lleva el token en la URL y secretos en formularios: nada
+      // de cache del navegador ni de referrer que los filtre a terceros.
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    });
     res.end(PAGE.replaceAll('TOKEN', deps.token).replace('MSG', escapeHtml(msg)));
   };
   return (req: IncomingMessage, res: ServerResponse): void => {
@@ -150,6 +174,36 @@ export function makeSetupHandler(deps: SetupDeps) {
             process.env.BOOKS_TG_API_HASH = apiHash;
             await (await deps.getFlow({ fresh: true })).requestCode(phone);
             render(res, 'Codigo pedido: revisa Telegram en tu movil.');
+          } else if (path === '/gmail') {
+            const address = (form.gmail_address ?? '').trim();
+            const appPassword = (form.app_password ?? '').replaceAll(' ', '');
+            if (!validGmailInputs(address, appPassword)) {
+              render(res, 'Formato invalido: Gmail y app password de 16 letras.', 400);
+              return;
+            }
+            try {
+              await deps.verifySmtp(address, appPassword);
+            } catch {
+              render(
+                res,
+                'Google rechazo el inicio de sesion SMTP: revisa que sea un app password de ESTA cuenta (necesita 2FA activo).',
+                502,
+              );
+              return;
+            }
+            try {
+              await deps.saveMail(address, appPassword);
+            } catch {
+              // Error generico: el detalle del vault puede llevar datos
+              // sensibles y NO vuelve al navegador.
+              render(
+                res,
+                'No se pudo guardar el correo en el vault local. Intentalo de nuevo.',
+                500,
+              );
+              return;
+            }
+            render(res, 'Correo verificado y guardado.');
           } else if (path === '/login') {
             await (await deps.getFlow()).complete(
               (form.code ?? '').trim(),
@@ -167,7 +221,13 @@ export function makeSetupHandler(deps: SetupDeps) {
   };
 }
 
-export function startSetupServer(port = 8377): { server: Server; token: string; url: string } {
+export function startSetupServer(port = 8377): {
+  server: Server;
+  token: string;
+  url: string;
+  /** Resuelve cuando el puerto escucha DE VERDAD; rechaza (p.ej. EADDRINUSE) si no. */
+  ready: Promise<void>;
+} {
   const token = generateSetupToken();
   // Sin LoginFlow aqui: sin credenciales configuradas todavia, construirlo
   // lanzaria error y la pagina nunca abriria (huevo-y-gallina).
@@ -191,7 +251,33 @@ export function startSetupServer(port = 8377): { server: Server; token: string; 
     }
     return flow;
   };
-  const server = createServer(makeSetupHandler({ getFlow, token, port }));
+  const server = createServer(
+    makeSetupHandler({
+      getFlow,
+      token,
+      port,
+      verifySmtp: async (address, appPassword) => {
+        const { verifyGmailSmtp } = await import('./setup-gmail.js');
+        await verifyGmailSmtp(address, appPassword);
+      },
+      saveMail: async (address, appPassword) => {
+        const { vaultSetMany } = await import('../vault.js');
+        // Una sola escritura para la pareja: nunca queda address nueva con
+        // password vieja. Limite honesto: escritores de OTRO proceso sobre
+        // el vault compartido no se serializan con esta operacion.
+        await vaultSetMany({ 'mail:address': address, 'mail:password': appPassword });
+      },
+    }),
+  );
+  // Anunciar la URL antes del listening prometia un server que podia no
+  // existir: ready separa "creado" de "escuchando".
+  const ready = new Promise<void>((resolve, reject) => {
+    server.once('listening', () => resolve());
+    server.once('error', reject);
+  });
+  // Si el llamador ignora ready, que un fallo de listen no explote como
+  // unhandledRejection: quien lo espera sigue recibiendo el rechazo.
+  void ready.catch(() => undefined);
   server.listen(port, '127.0.0.1');
-  return { server, token, url: `http://127.0.0.1:${port}/?k=${token}` };
+  return { server, token, url: `http://127.0.0.1:${port}/?k=${token}`, ready };
 }
