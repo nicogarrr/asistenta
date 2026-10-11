@@ -8,9 +8,10 @@ disparadores: hasta que no se cumplen, no se construye.
 
 1. **Router de peticiones por niveles 1-4** (complejidad/coste): clasifica cada
    peticion y elige el esfuerzo segun el nivel, con el punto de extension
-   preparado para elegir modelo cuando haya varios gratuitos. Aprobado con
-   clasificador heuristico local (sin LLM, determinista, coste 0,
-   audit-loggeado, override por prefijo).
+   preparado para elegir modelo cuando haya varios gratuitos. Router aprobado
+   por Nico; implementacion heuristica local (sin LLM, determinista, coste 0,
+   audit-loggeada, override por prefijo) seleccionada por el equipo dentro de
+   la regla de coste 0.
 2. **Verificacion con checklist + receipt antes de dar nada por listo**, y
    **spec antes de codigo**, dentro del ciclo semanal de auto-mejora
    (evolve): complementa score.ts; "listo" sin prueba verificable no cuenta y
