@@ -32,10 +32,11 @@ export function createDocsTool(
     description: [
       'Full-text memory of every document the user forwarded (PDF, text) and every',
       'voice note transcript, searchable long after it arrived.',
-      'action=search finds the passages matching the query words; action=list shows',
-      'what this chat has on the shelf.',
+      'action=search finds the passages matching ALL the query words; action=list',
+      'shows what this chat has on the shelf.',
       'Answer from the quoted passages and name the document and date. If nothing',
-      'matches, say it is not in the memory - do not reconstruct from imagination.',
+      'matches, say you did not FIND it - never that it does not exist: the search',
+      'needs every word to appear, and a long document may only be partially indexed.',
     ].join('\n'),
     parameters: DocsParams,
     executionMode: 'parallel',
@@ -51,7 +52,10 @@ export function createDocsTool(
               content: [
                 {
                   type: 'text',
-                  text: 'Nada en la memoria documental coincide con eso. El documento puede no haber llegado nunca, o ser de un tipo que no se pudo leer.',
+                  // "No encontrado", nunca "no existe": el AND de términos y la
+                  // indexación parcial de documentos largos pueden dejar fuera
+                  // algo que sí llegó.
+                  text: 'No he encontrado nada con esas palabras. Puede estar escrito de otra forma, no haber llegado nunca, o ser de un tipo que no se pudo leer.',
                 },
               ],
               details: { count: 0 },
@@ -77,7 +81,10 @@ export function createDocsTool(
                 type: 'text',
                 text: docs.length
                   ? docs
-                      .map((d) => `- ${d.title} (${d.mimeType}, ${d.chunks} fragmentos)`)
+                      .map(
+                        (d) =>
+                          `- ${d.title} (${d.mimeType}, ${d.chunks} fragmentos${d.truncated ? ', indexado parcial' : ''})`,
+                      )
                       .join('\n')
                   : 'Este chat todavía no tiene documentos en la memoria.',
               },

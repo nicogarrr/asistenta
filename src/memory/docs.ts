@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
@@ -12,15 +12,15 @@ import { withTimeout } from '../utils.js';
  * the source material itself, so the answer can quote the document instead of
  * a paraphrase nobody verified.
  *
- * Scope is per chat key, like the note memory: a document from one chat is
- * never surfaced in another. Photos are not here on purpose: a photo goes
- * straight to the model's eyes in its own turn, and an index of unreviewed
- * vision descriptions would quote guesses as if they were the document.
+ * Scope is per thread key, like the note memory: a document from one chat is
+ * never surfaced in another, and the doc id itself is derived from the scope,
+ * so the same file forwarded to two chats lives twice and deleting one never
+ * touches the other.
  */
 
 /** One forwarded document, as the channel describes it. */
 export interface IncomingDocument {
-  /** Telegram file_id or equivalent: only used to build a stable id. */
+  /** Telegram file_id or equivalent: only feeds the stable id, never a path. */
   fileId: string;
   /** File name the sender gave it ("contrato-alquiler.pdf"). */
   name?: string;
@@ -32,7 +32,12 @@ export interface IndexedDocument {
   title: string;
   mimeType: string;
   chunks: number;
+  /** Characters actually indexed — never the pre-truncation figure. */
   chars: number;
+  /** True when part of the document did not fit (length or chunk cap). The
+   * caller says "partially indexed" out loud; claiming full coverage of a
+   * truncated contract is how someone misses the clause on the last page. */
+  truncated: boolean;
 }
 
 export interface DocSearchHit {
@@ -52,6 +57,10 @@ export interface DocMemoryOptions {
   directory: string;
   /** Injected clock, so retention tests do not sleep. */
   now?: () => number;
+  /** Test-only: swap the pdfjs loader to exercise timeouts without a real PDF. */
+  pdfjsLoader?: () => Promise<PdfjsLike>;
+  /** Test-only: shorten the extraction budget so timeout tests stay fast. */
+  extractTimeoutMs?: number;
 }
 
 /** A document bigger than this extracts more noise than signal in one pass. */
@@ -59,9 +68,18 @@ const MAX_TEXT_CHARS = 1_000_000;
 /** Chunk size tuned so a chunk answers a question on its own. */
 const CHUNK_CHARS = 1500;
 const MAX_CHUNKS_PER_DOC = 400;
-/** Extraction of one document never burns more than this. */
+/** Extraction of one document never burns more than this, loading included. */
 const EXTRACT_TIMEOUT_MS = 60_000;
 const DEFAULT_SEARCH_LIMIT = 8;
+
+/** The id is scoped on purpose: the same file_id forwarded to two chats must
+ * produce two rows, or reindexing in one chat would silently delete the
+ * other's memory. Telegram message ids are per-chat, so audio gets the same
+ * treatment — unscoped, message 42 of chat B would evict message 42 of chat A.
+ */
+function docIdFor(scope: string, kind: string, ref: string): string {
+  return createHash('sha256').update(`${scope}${kind}${ref}`).digest('hex').slice(0, 16);
+}
 
 /** Split on paragraph boundaries, then hard-wrap whatever still overflows. */
 export function chunkText(text: string, chunkChars = CHUNK_CHARS): string[] {
@@ -92,20 +110,37 @@ export function chunkText(text: string, chunkChars = CHUNK_CHARS): string[] {
   return chunks.slice(0, MAX_CHUNKS_PER_DOC);
 }
 
-/** pdfjs-dist is heavy (~5 MB wasm-less but still), so it loads on first PDF,
- * not at daemon start: a daemon whose user never forwards a PDF never pays it.
- * Text that pdfjs cannot get (scanned image PDFs) comes back empty and the
- * caller reports that honestly instead of pretending the index saw something.
- */
-async function extractPdfText(bytes: Buffer): Promise<string> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+/** The slice of pdfjs we use, structural so tests can stub the loader. */
+interface PdfjsLike {
+  getDocument(opts: { data: Uint8Array }): {
+    promise: Promise<{
+      numPages: number;
+      getPage(n: number): Promise<{
+        getTextContent(): Promise<{ items: Array<{ str?: string }> }>;
+        cleanup(): void;
+      }>;
+    }>;
+    destroy(): Promise<void>;
+  };
+}
+
+async function defaultPdfjsLoader(): Promise<PdfjsLike> {
+  return (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as PdfjsLike;
+}
+
+/** pdfjs-dist is heavy (~5 MB), so it loads on first PDF, not at daemon start.
+ * The timeout wraps the WHOLE job - loading and the per-page loop - and the
+ * finally destroys the task either way: without the destroy, a hostile or
+ * huge PDF keeps burning CPU after the caller has already given up. */
+async function extractPdfText(
+  bytes: Buffer,
+  loader: () => Promise<PdfjsLike>,
+  timeoutMs: number,
+): Promise<string> {
+  const pdfjs = await loader();
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
-  const doc = await withTimeout(
-    loadingTask.promise,
-    EXTRACT_TIMEOUT_MS,
-    'pdf extraction timed out',
-  );
-  try {
+  const work = (async () => {
+    const doc = await loadingTask.promise;
     const parts: string[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
@@ -114,8 +149,11 @@ async function extractPdfText(bytes: Buffer): Promise<string> {
       page.cleanup();
     }
     return parts.join('\n\n');
+  })();
+  try {
+    return await withTimeout(work, timeoutMs, 'pdf extraction timed out');
   } finally {
-    await loadingTask.destroy();
+    await loadingTask.destroy().catch(() => {});
   }
 }
 
@@ -135,22 +173,30 @@ export function canExtract(mimeType?: string): boolean {
   );
 }
 
-export async function extractText(bytes: Buffer, mimeType?: string): Promise<string> {
+export async function extractText(
+  bytes: Buffer,
+  mimeType?: string,
+  pdfjsLoader?: () => Promise<PdfjsLike>,
+  timeoutMs = EXTRACT_TIMEOUT_MS,
+): Promise<string> {
   if (!mimeType) return '';
   const mime = mimeType.toLowerCase();
-  if (mime === 'application/pdf') return extractPdfText(bytes);
+  if (mime === 'application/pdf')
+    return extractPdfText(bytes, pdfjsLoader ?? defaultPdfjsLoader, timeoutMs);
   if (canExtract(mimeType)) return bytes.toString('utf8');
   return '';
 }
 
-/** The sqlite FTS5 store. One instance per daemon; the per-chat scoping is a
- * column, not a file, because the per-chat note memory already proved that a
- * scope argument the caller supplies beats a file per chat you forget to open.
+/** The sqlite FTS5 store. The scope argument the caller supplies is the ONLY
+ * notion of audience: index and search must receive the same scope string
+ * (the runtime passes the thread key on both paths) or nothing is findable.
  */
 export class DocMemory {
   readonly #db: DatabaseSync;
   readonly #directory: string;
   readonly #now: () => number;
+  readonly #pdfjsLoader?: () => Promise<PdfjsLike>;
+  readonly #extractTimeoutMs: number;
 
   constructor(options: DocMemoryOptions) {
     mkdirSync(options.directory, { recursive: true });
@@ -163,6 +209,7 @@ export class DocMemory {
         mime_type TEXT NOT NULL,
         chars INTEGER NOT NULL,
         chunks INTEGER NOT NULL,
+        truncated INTEGER NOT NULL DEFAULT 0,
         at INTEGER NOT NULL
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS doc_chunks USING fts5(
@@ -175,36 +222,62 @@ export class DocMemory {
     `);
     this.#directory = options.directory;
     this.#now = options.now ?? Date.now;
+    this.#pdfjsLoader = options.pdfjsLoader;
+    this.#extractTimeoutMs = options.extractTimeoutMs ?? EXTRACT_TIMEOUT_MS;
   }
 
-  /** Index one downloaded document. Returns null when there was no readable
-   * text (scanned PDF, empty file) so the caller can say so instead of
-   * claiming a memory it does not have. */
+  /** Index one downloaded document under a scope. Returns null when there was
+   * no readable text (scanned PDF, empty file) so the caller says so instead
+   * of claiming a memory it does not have. Reindexing the same (scope, file)
+   * replaces it in one transaction: readers never see a half-swapped doc. */
   async index(
-    chatKey: string,
+    scope: string,
     doc: IncomingDocument,
     bytes: Buffer,
   ): Promise<IndexedDocument | null> {
-    const text = (await extractText(bytes, doc.mimeType)).slice(0, MAX_TEXT_CHARS);
-    const chunks = chunkText(text);
+    const extracted = await extractText(
+      bytes,
+      doc.mimeType,
+      this.#pdfjsLoader,
+      this.#extractTimeoutMs,
+    );
+    const sliced = extracted.slice(0, MAX_TEXT_CHARS);
+    const chunks = chunkText(sliced);
     if (!chunks.length) return null;
-    const docId = createHash('sha256').update(doc.fileId).digest('hex').slice(0, 16);
+    const indexedChars = chunks.reduce((n, c) => n + c.length, 0);
+    const truncated = extracted.length > sliced.length || indexedChars < sliced.trim().length;
+    const docId = docIdFor(scope, 'doc', doc.fileId);
     const title = doc.name?.trim() || doc.fileId;
     const at = this.#now();
-    this.#db.prepare('DELETE FROM docs WHERE doc_id = ?').run(docId);
-    this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
-    this.#db
-      .prepare(
-        'INSERT INTO docs (doc_id, chat_key, title, mime_type, chars, chunks, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      )
-      .run(docId, chatKey, title, doc.mimeType ?? 'unknown', text.length, chunks.length, at);
-    const insertChunk = this.#db.prepare(
-      'INSERT INTO doc_chunks (text, doc_id, chat_key, title, at) VALUES (?, ?, ?, ?, ?)',
-    );
-    for (const chunk of chunks) insertChunk.run(chunk, docId, chatKey, title, at);
+    this.#db.exec('BEGIN');
     try {
-      const { writeFileSync } = await import('node:fs');
-      writeFileSync(join(this.#directory, `${docId}.txt`), text);
+      this.#db.prepare('DELETE FROM docs WHERE doc_id = ?').run(docId);
+      this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
+      this.#db
+        .prepare(
+          'INSERT INTO docs (doc_id, chat_key, title, mime_type, chars, chunks, truncated, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          docId,
+          scope,
+          title,
+          doc.mimeType ?? 'unknown',
+          indexedChars,
+          chunks.length,
+          truncated ? 1 : 0,
+          at,
+        );
+      const insertChunk = this.#db.prepare(
+        'INSERT INTO doc_chunks (text, doc_id, chat_key, title, at) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const chunk of chunks) insertChunk.run(chunk, docId, scope, title, at);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    try {
+      writeFileSync(join(this.#directory, `${docId}.txt`), sliced);
     } catch (err) {
       log.warn('doc memory mirror write failed', {
         error: err instanceof Error ? err.message : String(err),
@@ -215,7 +288,8 @@ export class DocMemory {
       title,
       mimeType: doc.mimeType ?? 'unknown',
       chunks: chunks.length,
-      chars: text.length,
+      chars: indexedChars,
+      truncated,
     };
   }
 
@@ -223,39 +297,58 @@ export class DocMemory {
    * same shelf as documents. The title is what the user said alongside, or a
    * bare marker; never an invented summary. */
   indexTranscript(
-    chatKey: string,
+    scope: string,
     messageId: string,
     transcript: string,
     caption?: string,
   ): IndexedDocument | null {
     const chunks = chunkText(transcript);
     if (!chunks.length) return null;
-    const docId = createHash('sha256').update(`audio:${messageId}`).digest('hex').slice(0, 16);
+    const indexedChars = chunks.reduce((n, c) => n + c.length, 0);
+    const truncated = indexedChars < transcript.trim().length;
+    const docId = docIdFor(scope, 'audio', messageId);
     const title = caption?.trim() ? `audio: ${caption.trim()}` : `audio ${messageId}`;
     const at = this.#now();
-    this.#db.prepare('DELETE FROM docs WHERE doc_id = ?').run(docId);
-    this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
-    this.#db
-      .prepare(
-        'INSERT INTO docs (doc_id, chat_key, title, mime_type, chars, chunks, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      )
-      .run(docId, chatKey, title, 'audio/transcript', transcript.length, chunks.length, at);
-    const insertChunk = this.#db.prepare(
-      'INSERT INTO doc_chunks (text, doc_id, chat_key, title, at) VALUES (?, ?, ?, ?, ?)',
-    );
-    for (const chunk of chunks) insertChunk.run(chunk, docId, chatKey, title, at);
+    this.#db.exec('BEGIN');
+    try {
+      this.#db.prepare('DELETE FROM docs WHERE doc_id = ?').run(docId);
+      this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
+      this.#db
+        .prepare(
+          'INSERT INTO docs (doc_id, chat_key, title, mime_type, chars, chunks, truncated, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          docId,
+          scope,
+          title,
+          'audio/transcript',
+          indexedChars,
+          chunks.length,
+          truncated ? 1 : 0,
+          at,
+        );
+      const insertChunk = this.#db.prepare(
+        'INSERT INTO doc_chunks (text, doc_id, chat_key, title, at) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const chunk of chunks) insertChunk.run(chunk, docId, scope, title, at);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
     return {
       docId,
       title,
       mimeType: 'audio/transcript',
       chunks: chunks.length,
-      chars: transcript.length,
+      chars: indexedChars,
+      truncated,
     };
   }
 
-  /** FTS5 search, always scoped to one chat. An empty or over-broad query
-   * returns nothing rather than the whole shelf. */
-  search(chatKey: string, query: string, limit = DEFAULT_SEARCH_LIMIT): DocSearchHit[] {
+  /** FTS5 search, always scoped. An empty or over-broad query returns nothing
+   * rather than the whole shelf. */
+  search(scope: string, query: string, limit = DEFAULT_SEARCH_LIMIT): DocSearchHit[] {
     const trimmed = query.trim();
     if (trimmed.length < 2) return [];
     // Quote each term so user punctuation never becomes FTS syntax. Terms are
@@ -272,7 +365,7 @@ export class DocMemory {
          ORDER BY score
          LIMIT ?`,
       )
-      .all(match, chatKey, limit) as Array<{
+      .all(match, scope, limit) as Array<{
       doc_id: string;
       title: string;
       at: number;
@@ -288,18 +381,19 @@ export class DocMemory {
     }));
   }
 
-  /** What this chat has on the shelf, newest first. */
-  list(chatKey: string, limit = 20): IndexedDocument[] {
+  /** What this scope has on the shelf, newest first. */
+  list(scope: string, limit = 20): IndexedDocument[] {
     const rows = this.#db
       .prepare(
-        'SELECT doc_id, title, mime_type, chunks, chars FROM docs WHERE chat_key = ? ORDER BY at DESC LIMIT ?',
+        'SELECT doc_id, title, mime_type, chunks, chars, truncated FROM docs WHERE chat_key = ? ORDER BY at DESC LIMIT ?',
       )
-      .all(chatKey, limit) as Array<{
+      .all(scope, limit) as Array<{
       doc_id: string;
       title: string;
       mime_type: string;
       chunks: number;
       chars: number;
+      truncated: number;
     }>;
     return rows.map((r) => ({
       docId: r.doc_id,
@@ -307,6 +401,7 @@ export class DocMemory {
       mimeType: r.mime_type,
       chunks: r.chunks,
       chars: r.chars,
+      truncated: r.truncated === 1,
     }));
   }
 

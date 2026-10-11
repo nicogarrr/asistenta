@@ -1782,6 +1782,7 @@ async function serveCommand(): Promise<number> {
       await vigilanteDrain;
       store.close();
       memoryDb.close();
+      docMemory.close();
       log.info('daemon stopped', { threads: threads.size });
     },
   });
@@ -3092,8 +3093,11 @@ async function serveCommand(): Promise<number> {
             if (!bytes) {
               documentNote = `[Documento reenviado: ${label}. Telegram no devolvió el archivo.]`;
             } else {
+              // The thread key is the memory scope everywhere: the documents
+              // tool reads with () => thread.key, so indexing MUST use the
+              // same string or nothing is findable even in the same chat.
               const indexed = await docMemory.index(
-                chatKey(inbound),
+                thread.key,
                 {
                   fileId: inbound.documentFileId,
                   name: inbound.documentName,
@@ -3102,7 +3106,9 @@ async function serveCommand(): Promise<number> {
                 bytes,
               );
               documentNote = indexed
-                ? `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
+                ? indexed.truncated
+                  ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
+                  : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
                 : `[Documento reenviado: ${label}. No tenía texto extraíble (los PDF escaneados son imágenes, no texto).]`;
             }
           } catch (err) {
@@ -3134,12 +3140,7 @@ async function serveCommand(): Promise<number> {
           // has something to act on.
           recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
           try {
-            docMemory.indexTranscript(
-              chatKey(inbound),
-              inbound.messageId,
-              heard.text,
-              inbound.text,
-            );
+            docMemory.indexTranscript(thread.key, inbound.messageId, heard.text, inbound.text);
           } catch (err) {
             // The transcript is already in the turn and in the short-term recall;
             // losing only its long-term index must not kill the turn.

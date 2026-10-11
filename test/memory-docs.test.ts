@@ -79,6 +79,24 @@ describe('canExtract / extractText', () => {
     expect(text).toMatch(/permanencia/);
     expect(text).toMatch(/doce meses/);
   });
+
+  it('times out a PDF whose loading never resolves, and destroys the task', async () => {
+    let destroyed = false;
+    const hangingLoader = async () => ({
+      getDocument: () => ({
+        promise: new Promise<never>(() => {}),
+        destroy: async () => {
+          destroyed = true;
+        },
+      }),
+    });
+    const start = Date.now();
+    await expect(
+      extractText(Buffer.from('%PDF-1.4'), 'application/pdf', hangingLoader, 500),
+    ).rejects.toThrow(/timed out/);
+    expect(Date.now() - start).toBeLessThan(10_000);
+    expect(destroyed).toBe(true);
+  });
 });
 
 describe('DocMemory', () => {
@@ -105,20 +123,57 @@ describe('DocMemory', () => {
     );
     expect(doc).not.toBeNull();
     expect(doc!.title).toBe('contrato.pdf');
+    expect(doc!.truncated).toBe(false);
     const hits = mem.search('chat-a', 'desistimiento');
     expect(hits).toHaveLength(1);
     expect(hits[0]!.docId).toBe(doc!.docId);
     expect(hits[0]!.snippet).toMatch(/«desistimiento»/i);
   });
 
-  it('keeps chats isolated', async () => {
+  it('keeps scopes isolated even for the same forwarded file', async () => {
+    const a = await mem.index(
+      'chat-a',
+      { fileId: 'shared', name: 'doc-a.txt', mimeType: 'text/plain' },
+      Buffer.from('contenido almendra'),
+    );
+    const b = await mem.index(
+      'chat-b',
+      { fileId: 'shared', name: 'doc-b.txt', mimeType: 'text/plain' },
+      Buffer.from('contenido almendra'),
+    );
+    expect(a!.docId).not.toBe(b!.docId);
+    // Reindexing in B must not evict A's copy.
     await mem.index(
       'chat-b',
-      { fileId: 'f2', name: 'secreto.txt', mimeType: 'text/plain' },
-      Buffer.from('la palabra es aguacate'),
+      { fileId: 'shared', name: 'doc-b.txt', mimeType: 'text/plain' },
+      Buffer.from('contenido nuevo nuez'),
     );
-    expect(mem.search('chat-a', 'aguacate')).toHaveLength(0);
-    expect(mem.search('chat-b', 'aguacate')).toHaveLength(1);
+    expect(mem.search('chat-a', 'almendra')).toHaveLength(1);
+    expect(mem.search('chat-b', 'almendra')).toHaveLength(0);
+    expect(mem.search('chat-b', 'nuez')).toHaveLength(1);
+  });
+
+  it('scopes audio ids too: same message id in two chats is two audios', async () => {
+    const a = mem.indexTranscript('chat-a', '42', 'audio cacahuete de a');
+    const b = mem.indexTranscript('chat-b', '42', 'audio pistacho de b');
+    expect(a!.docId).not.toBe(b!.docId);
+    expect(mem.search('chat-a', 'cacahuete')).toHaveLength(1);
+    expect(mem.search('chat-b', 'pistacho')).toHaveLength(1);
+  });
+
+  it('reports truncation honestly: indexed chars, not extracted chars', async () => {
+    const big = Buffer.from('z'.repeat(610_009));
+    const doc = await mem.index(
+      'chat-a',
+      { fileId: 'big', name: 'largo.txt', mimeType: 'text/plain' },
+      big,
+    );
+    expect(doc).not.toBeNull();
+    expect(doc!.truncated).toBe(true);
+    expect(doc!.chars).toBeLessThanOrEqual(400 * 1500);
+    expect(doc!.chars).toBeLessThan(610_009);
+    // And the shelf says so.
+    expect(mem.list('chat-a').find((d) => d.title === 'largo.txt')!.truncated).toBe(true);
   });
 
   it('returns null when there is no readable text', async () => {
@@ -171,10 +226,6 @@ describe('DocMemory', () => {
     const hits = mem.search('chat-a', 'festivos');
     expect(hits).toHaveLength(1);
     expect(hits[0]!.docId).toBe(doc!.docId);
-  });
-
-  it('lists what the chat has, newest first', async () => {
-    expect(mem.list('chat-a').length).toBeGreaterThanOrEqual(3);
   });
 
   it('mirrors extracted text to disk', async () => {
