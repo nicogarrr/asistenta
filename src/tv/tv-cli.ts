@@ -4,8 +4,13 @@ import { pairTv, tvRequest, tvToast } from './lgtv.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
+const TV_SECURE_KEY = 'tv:secure';
 
-async function requirePaired(): Promise<{ host: string; clientKey: string }> {
+async function requirePaired(): Promise<{
+  host: string;
+  clientKey: string;
+  allowPlaintext: boolean;
+}> {
   const { vaultGet } = await import('../vault.js');
   const host = await vaultGet(TV_HOST_KEY);
   const clientKey = await vaultGet(TV_CLIENT_KEY);
@@ -14,7 +19,9 @@ async function requirePaired(): Promise<{ host: string; clientKey: string }> {
       'Tele no emparejada: ejecuta primero `pa tv setup <ip>` con la tele encendida.',
     );
   }
-  return { host, clientKey };
+  // Si el pairing solo pudo ir por ws (3000), los requests siguen por ws; si
+  // fue por wss, el downgrade a ws queda prohibido (ver lgtv.ts).
+  return { host, clientKey, allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0' };
 }
 
 export async function tvCommand(args: string[]): Promise<number> {
@@ -31,10 +38,18 @@ export async function tvCommand(args: string[]): Promise<number> {
       process.stdout.write(
         `Emparejando con ${host}: ACEPTA el aviso en la tele con el mando (tienes 120s)...\n`,
       );
-      const clientKey = await pairTv(host);
+      const { clientKey, secure } = await pairTv(host);
       const { vaultSetMany } = await import('../vault.js');
-      await vaultSetMany({ [TV_HOST_KEY]: host, [TV_CLIENT_KEY]: clientKey });
-      process.stdout.write('Tele emparejada y guardada. Prueba: pa tv toast "hola"\n');
+      await vaultSetMany({
+        [TV_HOST_KEY]: host,
+        [TV_CLIENT_KEY]: clientKey,
+        [TV_SECURE_KEY]: secure ? '1' : '0',
+      });
+      process.stdout.write(
+        secure
+          ? 'Tele emparejada y guardada (canal cifrado). Prueba: pa tv toast "hola"\n'
+          : 'Tele emparejada y guardada (canal ws sin cifrar: la tele no abrio el 3001).\n',
+      );
       return 0;
     }
     case 'toast': {
@@ -43,18 +58,19 @@ export async function tvCommand(args: string[]): Promise<number> {
         process.stderr.write('uso: pa tv toast <mensaje>\n');
         return 2;
       }
-      const { host, clientKey } = await requirePaired();
-      await tvToast(host, clientKey, message);
+      const { host, clientKey, allowPlaintext } = await requirePaired();
+      await tvToast(host, clientKey, message, { allowPlaintext });
       process.stdout.write('Toast enviado.\n');
       return 0;
     }
     case 'apps': {
-      const { host, clientKey } = await requirePaired();
+      const { host, clientKey, allowPlaintext } = await requirePaired();
       const res = await tvRequest(
         host,
         clientKey,
         'com.webos.applicationManager/listLaunchPoints',
         {},
+        { allowPlaintext },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
       for (const p of points) process.stdout.write(`${p.id}\t${p.title}\n`);
@@ -66,14 +82,14 @@ export async function tvCommand(args: string[]): Promise<number> {
         process.stderr.write('uso: pa tv launch <appId>   (ids: pa tv apps)\n');
         return 2;
       }
-      const { host, clientKey } = await requirePaired();
-      await tvRequest(host, clientKey, 'system.launcher/launch', { id: appId });
+      const { host, clientKey, allowPlaintext } = await requirePaired();
+      await tvRequest(host, clientKey, 'system.launcher/launch', { id: appId }, { allowPlaintext });
       process.stdout.write(`Lanzada ${appId}.\n`);
       return 0;
     }
     case 'off': {
-      const { host, clientKey } = await requirePaired();
-      await tvRequest(host, clientKey, 'system/turnOff', {});
+      const { host, clientKey, allowPlaintext } = await requirePaired();
+      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
       process.stdout.write('Tele apagada.\n');
       return 0;
     }
