@@ -24,6 +24,32 @@ export function extractBotHandles(html: string): string[] {
   return [...seen];
 }
 
+const BODY_CAP = 512 * 1024;
+const FETCH_TIMEOUT_MS = 10_000;
+
+/** Lee el cuerpo con tope duro: una pagina gigante o infinita no infla memoria. */
+async function readCapped(res: Response): Promise<string> {
+  if (!res.body) {
+    const text = await res.text();
+    if (text.length > BODY_CAP) throw new Error('pagina demasiado grande (tope 512KB)');
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > BODY_CAP) {
+      await reader.cancel();
+      throw new Error('pagina demasiado grande (tope 512KB)');
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks.map((c) => Buffer.from(c))));
+}
+
 export async function discoverBotHandle(options?: {
   fetchImpl?: typeof fetch;
   force?: boolean;
@@ -34,13 +60,22 @@ export async function discoverBotHandle(options?: {
     return cache.handle;
   }
   const fetchImpl = options?.fetchImpl ?? fetch;
-  // La home redirige a telegra.ph; fetch sigue redirecciones solo.
-  const res = await fetchImpl(SOURCE_URL, { redirect: 'follow' });
+  // La home redirige a telegra.ph; fetch sigue redirecciones solo. Timeout
+  // duro: una pagina colgada nunca deja el pipeline esperando.
+  const res = await fetchImpl(SOURCE_URL, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`bibliotecasecreta.nl responde ${res.status}`);
-  const html = await res.text();
+  const html = await readCapped(res);
   const handles = extractBotHandles(html);
   if (handles.length === 0) {
     throw new Error('No se encontro ningun handle de bot en bibliotecasecreta.nl');
+  }
+  // Seleccion anclada: varios handles distintos = pagina rara o comprometida;
+  // jamas se elige uno al azar.
+  if (handles.length > 1) {
+    throw new Error(`Descubrimiento ambiguo: varios bots (${handles.join(', ')})`);
   }
   const first = handles[0];
   if (!first) throw new Error('No se encontro ningun handle de bot en bibliotecasecreta.nl');

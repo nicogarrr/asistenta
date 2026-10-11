@@ -72,4 +72,20 @@ describe('discoverBotHandle', () => {
       discoverBotHandle({ fetchImpl: fakeFetch('<p>roto</p>'), force: true }),
     ).rejects.toThrow(/handle/);
   });
+
+  it('varios handles distintos = ambiguo, jamas autopick', async () => {
+    invalidateBotCache();
+    const html = '<a href="https://t.me/BotUnoBot">a</a><a href="https://t.me/OtroBot">b</a>';
+    await expect(discoverBotHandle({ fetchImpl: fakeFetch(html), force: true })).rejects.toThrow(
+      /ambig/i,
+    );
+  });
+
+  it('pagina gigante se rechaza por el tope de body', async () => {
+    invalidateBotCache();
+    const huge = `${'x'.repeat(600 * 1024)} t.me/BibliotecaSecretaBot`;
+    await expect(discoverBotHandle({ fetchImpl: fakeFetch(huge), force: true })).rejects.toThrow(
+      /grande/,
+    );
+  });
 });

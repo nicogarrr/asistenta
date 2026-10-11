@@ -32,13 +32,16 @@ const CODE_RE = /\/(b[A-Za-z0-9]{4,5})(?![A-Za-z0-9])/g;
 export function parseSearchResults(text: string): BookHit[] {
   const normalized = text.replace(/\/\s*\n\s*(b[A-Za-z0-9]{4,5})(?![A-Za-z0-9])/g, '/$1');
   const hits: BookHit[] = [];
+  let prevCodeEnd = 0;
   for (const match of normalized.matchAll(CODE_RE)) {
     const code = match[1];
     if (!code) continue;
-    const before = normalized.slice(0, match.index);
-    // El titulo es lo ultimo no vacio antes del codigo; puede terminar en "/"
-    // suelto si el salto de linea cayo justo ahi.
-    const tail = before.replace(/\/\s*$/, '');
+    // El segmento del titulo empieza tras el codigo anterior: dos codigos en
+    // la misma linea no contaminan el segundo titulo con el primero.
+    const seg = normalized.slice(prevCodeEnd, match.index);
+    prevCodeEnd = match.index + match[0].length;
+    // Puede terminar en "/" suelto si el salto de linea cayo justo ahi.
+    const tail = seg.replace(/\/\s*$/, '');
     const nl = tail.lastIndexOf('\n');
     const title = tail.slice(nl + 1).trim();
     if (title) hits.push({ title, code });
@@ -48,17 +51,20 @@ export function parseSearchResults(text: string): BookHit[] {
 
 const PUBLISHED_RE = /Publicado:\s*(\d{4})\s*\|\s*(\d+)\s*p[áa]ginas/i;
 
-/** Parsea la ficha: primera linea "Titulo - Autor", luego Publicado y genero. */
-export function parseBookCard(text: string): BookCard {
+/** Parsea la ficha: primera linea "Titulo - Autor", luego Publicado y genero.
+ * Sin cabecera usable (texto vacio o primera linea que ya es "Publicado:")
+ * devuelve undefined: una ficha sin titulo no es una ficha, nunca title "". */
+export function parseBookCard(text: string): BookCard | undefined {
   const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
   const first = lines[0] ?? '';
+  if (!first || PUBLISHED_RE.test(first)) return undefined;
   const dash = first.lastIndexOf(' - ');
-  const card: BookCard = {
-    title: (dash > 0 ? first.slice(0, dash) : first).trim(),
-  };
+  const title = (dash > 0 ? first.slice(0, dash) : first).trim();
+  if (!title) return undefined;
+  const card: BookCard = { title };
   if (dash > 0) card.author = first.slice(dash + 3).trim();
   const pub = text.match(PUBLISHED_RE);
   if (pub) {
@@ -75,10 +81,11 @@ export function parseBookCard(text: string): BookCard {
 
 /** El texto de busqueda que pide el usuario, saneado (sin comandos ni exceso). */
 export function sanitizeQuery(input: string): string {
-  const clean = input
-    .replace(/^\/\S+\s*/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  let stripped = input.trim();
+  while (/^\/\S+/.test(stripped)) {
+    stripped = stripped.replace(/^\/\S+\s*/, '').trim();
+  }
+  const clean = stripped.replace(/\s+/g, ' ').trim();
   if (!clean) throw new Error('busqueda vacia');
   return clean.slice(0, 120);
 }

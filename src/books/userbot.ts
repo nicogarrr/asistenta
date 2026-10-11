@@ -1,10 +1,10 @@
-/** Userbot MTProto (gramjs) para hablar con el bot Biblioteca Secreta.
+/** Userbot MTProto (teleproto) para hablar con el bot Biblioteca Secreta.
  *
- * La Bot API no permite bot-a-bot: esto usa la cuenta personal de Nico.
- * Credenciales: NUNCA en codigo, logs ni chat. Se leen de variables de
- * entorno (BOOKS_TG_API_ID / BOOKS_TG_API_HASH) que la pagina de setup de
- * asistenta escribe en el .env local (0600) desde el vault de Nico.
- * La sesion StringSession se persiste en disco con permisos 0600.
+ * La Bot API no permite bot-a-bot: esto usa la cuenta personal de Nico (la
+ * corona: va con token de setup, validacion estricta y loopback).
+ * Credenciales: NUNCA en codigo, logs ni chat. Variables de entorno
+ * (BOOKS_TG_API_ID / BOOKS_TG_API_HASH) escritas por la pagina de setup
+ * local. Sesion StringSession persistida en disco con 0600.
  */
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -15,22 +15,22 @@ import { StringSession } from 'teleproto/sessions/index.js';
 export interface UserbotConfig {
   apiId: number;
   apiHash: string;
-  sessionPath: string; // fichero StringSession, se crea con 0600
+  sessionPath: string;
 }
 
 export function configFromEnv(
   env: NodeJS.ProcessEnv = process.env,
   sessionPath = 'data/books/userbot.session',
 ): UserbotConfig {
-  const apiId = Number(env.BOOKS_TG_API_ID);
+  const apiIdRaw = env.BOOKS_TG_API_ID ?? '';
   const apiHash = env.BOOKS_TG_API_HASH ?? '';
-  if (!Number.isInteger(apiId) || apiId <= 0) {
-    throw new Error('BOOKS_TG_API_ID no configurado (pagina de setup pendiente)');
+  if (!/^\d{1,12}$/.test(apiIdRaw)) {
+    throw new Error('BOOKS_TG_API_ID no configurado o con formato invalido');
   }
-  if (!apiHash.trim()) {
-    throw new Error('BOOKS_TG_API_HASH no configurado (pagina de setup pendiente)');
+  if (!/^[a-f0-9]{32}$/i.test(apiHash)) {
+    throw new Error('BOOKS_TG_API_HASH no configurado o con formato invalido');
   }
-  return { apiId, apiHash, sessionPath };
+  return { apiId: Number(apiIdRaw), apiHash, sessionPath };
 }
 
 function loadSession(path: string): StringSession {
@@ -44,78 +44,99 @@ function saveSession(path: string, session: StringSession): void {
   chmodSync(path, 0o600);
 }
 
-/** Cliente conectado; el caller decide si hace login o usa sesion guardada. */
-export async function createUserbot(config: UserbotConfig): Promise<TelegramClient> {
-  const session = loadSession(config.sessionPath);
-  const client = new TelegramClient(session, config.apiId, config.apiHash, {
-    connectionRetries: 3,
-  });
-  await client.connect();
-  return client;
-}
+const PENDING_TTL_MS = 10 * 60 * 1000;
 
-/** Persiste la sesion tras un login correcto. */
-export function persistSession(config: UserbotConfig, client: TelegramClient): void {
-  saveSession(config.sessionPath, client.session as StringSession);
-}
+/** Flujo de login en 2 pasos sobre UNA MISMA conexion: el phoneCodeHash de
+ * Telegram va ligado a la auth key de la conexion que lo pidio; cambiar de
+ * cliente entre request y complete rompe el login. */
+export class LoginFlow {
+  private client: TelegramClient | undefined;
+  private pending: { phoneNumber: string; phoneCodeHash: string; at: number } | undefined;
 
-/** Estado del login: lo justo para reanudar entre request y complete. */
-export interface PendingLogin {
-  phoneNumber: string;
-  phoneCodeHash: string;
-}
+  private readonly config: UserbotConfig;
 
-export async function requestLoginCode(
-  config: UserbotConfig,
-  phoneNumber: string,
-): Promise<PendingLogin> {
-  const client = await createUserbot(config);
-  try {
+  constructor(config: UserbotConfig) {
+    this.config = config;
+  }
+
+  private async ensureClient(): Promise<TelegramClient> {
+    if (!this.client) {
+      this.client = new TelegramClient(
+        loadSession(this.config.sessionPath),
+        this.config.apiId,
+        this.config.apiHash,
+        { connectionRetries: 3 },
+      );
+      await this.client.connect();
+    }
+    return this.client;
+  }
+
+  async requestCode(phoneNumber: string): Promise<void> {
+    const client = await this.ensureClient();
     const result = await client.invoke(
       new Api.auth.SendCode({
         phoneNumber,
-        apiId: config.apiId,
-        apiHash: config.apiHash,
+        apiId: this.config.apiId,
+        apiHash: this.config.apiHash,
         settings: new Api.CodeSettings({}),
       }),
     );
     if (!(result instanceof Api.auth.SentCode)) {
       throw new Error('Telegram no devolvio un envio de codigo');
     }
-    return { phoneNumber, phoneCodeHash: result.phoneCodeHash };
-  } finally {
-    await client.disconnect();
+    this.pending = { phoneNumber, phoneCodeHash: result.phoneCodeHash, at: Date.now() };
+  }
+
+  async complete(code: string, password?: string): Promise<void> {
+    const pending = this.pending;
+    if (!pending || Date.now() - pending.at > PENDING_TTL_MS) {
+      throw new Error('El login caduco: pide un codigo nuevo');
+    }
+    const client = await this.ensureClient();
+    try {
+      await client.invoke(
+        new Api.auth.SignIn({
+          phoneNumber: pending.phoneNumber,
+          phoneCodeHash: pending.phoneCodeHash,
+          phoneCode: code,
+        }),
+      );
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('SESSION_PASSWORD_NEEDED')) {
+        if (!password) throw new Error('2FA requerido: falta la contraseña (vault)');
+        const { computeCheck } = await import('teleproto/Password.js');
+        const pwd = await client.invoke(new Api.account.GetPassword());
+        await client.invoke(
+          new Api.auth.CheckPassword({ password: await computeCheck(pwd, password) }),
+        );
+      } else {
+        throw err;
+      }
+    }
+    saveSession(this.config.sessionPath, client.session as StringSession);
+    this.pending = undefined;
+    await this.dispose();
+  }
+
+  async dispose(): Promise<void> {
+    this.pending = undefined;
+    if (this.client) {
+      await this.client.disconnect();
+      this.client = undefined;
+    }
   }
 }
 
-export async function completeLogin(
-  config: UserbotConfig,
-  pending: PendingLogin,
-  code: string,
-  password?: string,
-): Promise<void> {
-  const client = await createUserbot(config);
-  try {
-    await client.invoke(
-      new Api.auth.SignIn({
-        phoneNumber: pending.phoneNumber,
-        phoneCodeHash: pending.phoneCodeHash,
-        phoneCode: code,
-      }),
-    );
-  } catch (err) {
-    // 2FA: Telegram pide la contraseña de verificacion en dos pasos.
-    if (err instanceof Error && err.message.includes('SESSION_PASSWORD_NEEDED')) {
-      if (!password) throw new Error('2FA requerido: falta la contraseña (vault)');
-      const { computeCheck } = await import('teleproto/Password.js');
-      const pwd = await client.invoke(new Api.account.GetPassword());
-      await client.invoke(
-        new Api.auth.CheckPassword({ password: await computeCheck(pwd, password) }),
-      );
-    } else {
-      throw err;
-    }
+/** Cliente ya logueado (sesion persistida) para el pipeline de libros. */
+export async function createUserbot(config: UserbotConfig): Promise<TelegramClient> {
+  const client = new TelegramClient(loadSession(config.sessionPath), config.apiId, config.apiHash, {
+    connectionRetries: 3,
+  });
+  await client.connect();
+  if (!(await client.checkAuthorization())) {
+    await client.disconnect();
+    throw new Error('Sin sesion valida: haz el login desde la pagina de setup');
   }
-  persistSession(config, client);
-  await client.disconnect();
+  return client;
 }

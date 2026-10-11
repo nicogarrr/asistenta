@@ -47,6 +47,14 @@ describe('parseSearchResults', () => {
     expect(parseSearchResults('Libro raro /bJ3eE7x')).toEqual([]);
   });
 
+  it('dos codigos en una linea: el segundo titulo no arrastra el primero', () => {
+    const hits = parseSearchResults('Libro Uno /b1111 Libro Dos /b2222');
+    expect(hits).toEqual([
+      { title: 'Libro Uno', code: 'b1111' },
+      { title: 'Libro Dos', code: 'b2222' },
+    ]);
+  });
+
   it('el codigo conserva mayusculas y minusculas (son significativas)', () => {
     const hit = parseSearchResults('Don Quijote en el exilio /bnv7E')[0];
     expect(hit?.code).toBe('bnv7E');
@@ -67,25 +75,37 @@ describe('parseBookCard', () => {
 
   it('sin autor (sin guion) no inventa autor', () => {
     const card = parseBookCard('El Quijote\nPublicado: 1605 | 863 páginas\nNovela');
-    expect(card.title).toBe('El Quijote');
-    expect(card.author).toBeUndefined();
+    expect(card?.title).toBe('El Quijote');
+    expect(card?.author).toBeUndefined();
   });
 
   it('sin linea Publicado no inventa año ni paginas', () => {
     const card = parseBookCard('Ensayo raro - Alguien\nEnsayo');
-    expect(card.year).toBeUndefined();
-    expect(card.pages).toBeUndefined();
+    expect(card?.year).toBeUndefined();
+    expect(card?.pages).toBeUndefined();
+  });
+
+  it('texto vacio devuelve undefined, nunca title ""', () => {
+    expect(parseBookCard('')).toBeUndefined();
+    expect(parseBookCard('   \n  ')).toBeUndefined();
+  });
+
+  it('una card sin cabecera no convierte "Publicado..." en titulo', () => {
+    expect(parseBookCard('Publicado: 1994 | 386 páginas\nEnsayo')).toBeUndefined();
   });
 
   it('la cita inicial («...») nunca se cuela como genero', () => {
     const card = parseBookCard(CARD_REPLY);
-    expect(card.genre).not.toMatch(/^«/);
+    expect(card?.genre).not.toMatch(/^«/);
   });
 });
 
 describe('sanitizeQuery', () => {
   it('quita comandos y espacios', () => {
     expect(sanitizeQuery('/start  El  quijote ')).toBe('El quijote');
+  });
+  it('quita TODOS los comandos encadenados, no solo el primero', () => {
+    expect(sanitizeQuery('/start /otro /b1234 quijote')).toBe('quijote');
   });
   it('rechaza la busqueda vacia', () => {
     expect(() => sanitizeQuery('   ')).toThrow(/vacia/);
