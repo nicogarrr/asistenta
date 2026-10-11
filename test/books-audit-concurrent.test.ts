@@ -12,8 +12,12 @@ it('does not dispose while a setup request is in flight', async () => {
     active = false,
     disposedActive = false;
   let release!: () => void, entered!: () => void;
-  const started = new Promise<void>((r) => (entered = r));
-  const gate = new Promise<void>((r) => (release = r));
+  const started = new Promise<void>((r) => {
+    entered = r;
+  });
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
   vi.spyOn(LoginFlow.prototype, 'requestCode').mockImplementation(async () => {
     calls++;
     if (calls === 1) {
