@@ -111,7 +111,7 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
-import { startVigilanteLoop } from './vigilante.js';
+import { resolveOwnerDmChatId, startVigilanteLoop } from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -1767,7 +1767,7 @@ async function serveCommand(): Promise<number> {
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
-      vigilante.stop();
+      await vigilante.stop();
       store.close();
       memoryDb.close();
       log.info('daemon stopped', { threads: threads.size });
@@ -1845,11 +1845,18 @@ async function serveCommand(): Promise<number> {
           followups: () => followups.list(undefined, 200),
         }),
       send: (text) => {
-        // Avisa en la conversación más reciente del usuario; sin conversación no hay
-        // a quién avisar y el hallazgo queda pendiente para el siguiente barrido.
-        const latest = [...threads.values()].sort((a, b) => b.createdAt - a.createdAt)[0];
-        const chatId = latest?.chatKey.split(':')[2];
-        if (!chatId) return Promise.resolve(false);
+        // Destinatario fijo: el DM del owner (chatId positivo y en la allowlist del
+        // canal). Un grupo con un usuario permitido NO es destino válido — la agenda
+        // es privada. Sin DM único y verificado, fail-closed: no se envía y el
+        // hallazgo se reintenta en el siguiente barrido.
+        const chatId = resolveOwnerDmChatId(
+          [...threads.values()].map((t) => t.chatKey),
+          allowed,
+        );
+        if (!chatId) {
+          log.warn('vigilante: sin DM de owner verificado; el hallazgo queda pendiente', {});
+          return Promise.resolve(false);
+        }
         return telegram
           .send({ channel: 'telegram', account: telegram.account, chatId, text })
           .then(() => true)

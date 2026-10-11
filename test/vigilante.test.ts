@@ -6,25 +6,31 @@ vi.mock('../src/log.js', () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const { runVigilanteOnce, collectFindings, findingKey, formatFindings } = await import(
-  '../src/vigilante.js'
-);
+const {
+  runVigilanteOnce,
+  collectFindings,
+  findingKey,
+  formatFindings,
+  resolveOwnerDmChatId,
+  startVigilanteLoop,
+} = await import('../src/vigilante.js');
 
 const TZ = 'Europe/Madrid';
 const NOW = new Date('2026-10-11T10:00:00+02:00').getTime();
+const DAY = 86_400_000;
 
 function item(partial: Partial<AgendaItem> & { title: string }): AgendaItem {
-  return { at: NOW + 86_400_000, kind: 'deadline', where: 'correo', ...partial };
+  return { at: NOW + DAY, kind: 'deadline', where: 'correo', ...partial };
 }
 
-function agenda(items: AgendaItem[]): UnifiedAgenda {
+function agenda(items: AgendaItem[], pending: AgendaItem[] = []): UnifiedAgenda {
   return {
     today: [],
     upcoming: items,
-    pending: [],
+    pending,
     generatedAt: NOW,
     days: 7,
-    counts: { calendar: 0, mail: items.length, pending: 0 },
+    counts: { calendar: 0, mail: items.length, pending: pending.length },
     notes: [],
   };
 }
@@ -49,30 +55,70 @@ describe('findingKey', () => {
       title: '  factura   del TALLER ',
       at: new Date('2026-10-12T21:30:00+02:00').getTime(),
     });
-    expect(findingKey(a)).toBe(findingKey(b));
+    expect(findingKey(a, TZ)).toBe(findingKey(b, TZ));
     const otroDia = item({
       title: 'Factura del taller',
       at: new Date('2026-10-13T09:00:00+02:00').getTime(),
     });
-    expect(findingKey(otroDia)).not.toBe(findingKey(a));
+    expect(findingKey(otroDia, TZ)).not.toBe(findingKey(a, TZ));
+  });
+
+  it('el día es LOCAL, no UTC: la medianoche de Madrid no parte el hallazgo', () => {
+    const madrugada = item({
+      title: 'Plazo',
+      at: new Date('2026-10-13T00:30:00+02:00').getTime(),
+    });
+    const tarde = item({ title: 'Plazo', at: new Date('2026-10-13T14:00:00+02:00').getTime() });
+    expect(findingKey(madrugada, TZ)).toBe(findingKey(tarde, TZ));
   });
 });
 
 describe('collectFindings', () => {
-  it('filtra por tipo con fecha, ordena por cuándo toca y capa', () => {
-    const tarde = item({ title: 'tarde', at: NOW + 3 * 86_400_000, kind: 'payment' });
-    const pronto = item({ title: 'pronto', at: NOW + 86_400_000, kind: 'travel' });
+  it('filtra por tipo con fecha y ordena por cuándo toca, SIN capar', () => {
+    const tarde = item({ title: 'tarde', at: NOW + 3 * DAY, kind: 'payment' });
+    const pronto = item({ title: 'pronto', at: NOW + DAY, kind: 'travel' });
     const sinFecha = item({ title: 'sin fecha', at: null });
     const recordatorio = item({ title: 'ruido', kind: 'reminder' });
-    const found = collectFindings(agenda([tarde, sinFecha, recordatorio, pronto]), 5);
+    const found = collectFindings(agenda([tarde, sinFecha, recordatorio, pronto]), TZ, NOW);
     expect(found.map((f) => f.title)).toEqual(['pronto', 'tarde']);
   });
 
-  it('capa al máximo pedido', () => {
+  it('no capa: el cap va después de descartar lo ya notificado', () => {
     const many = Array.from({ length: 8 }, (_, i) =>
-      item({ title: `cosa ${i}`, at: NOW + (i + 1) * 86_400_000 }),
+      item({ title: `cosa ${i}`, at: NOW + (i + 1) * DAY }),
     );
-    expect(collectFindings(agenda(many), 5)).toHaveLength(5);
+    expect(collectFindings(agenda(many), TZ, NOW)).toHaveLength(8);
+  });
+
+  it('incluye pendientes vigentes; excluye vencidos, sin fecha y fuera de ventana', () => {
+    const vigente = item({ title: 'vigente', at: NOW + 2 * DAY, where: 'pendiente' });
+    const vencido = item({ title: 'vencido', at: NOW - DAY, where: 'pendiente' });
+    const sinFecha = item({ title: 'sin fecha', at: null, where: 'pendiente' });
+    const lejano = item({ title: 'lejano', at: NOW + 40 * DAY, where: 'pendiente' });
+    const found = collectFindings(agenda([], [vigente, vencido, sinFecha, lejano]), TZ, NOW);
+    expect(found.map((f) => f.title)).toEqual(['vigente']);
+  });
+});
+
+describe('resolveOwnerDmChatId', () => {
+  it('acepta el DM del owner (chatId positivo y en la allowlist)', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:12345'], [12345])).toBe('12345');
+  });
+
+  it('rechaza grupos aunque hable un usuario permitido', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:-100999888'], [12345])).toBeNull();
+  });
+
+  it('rechaza DMs de usuarios fuera de la allowlist', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:999'], [12345])).toBeNull();
+  });
+
+  it('rechaza otros canales y fail-closed con cero o varios candidatos', () => {
+    expect(resolveOwnerDmChatId(['whatsapp:cuenta:12345'], [12345])).toBeNull();
+    expect(resolveOwnerDmChatId([], [12345])).toBeNull();
+    expect(
+      resolveOwnerDmChatId(['telegram:cuenta:12345', 'telegram:cuenta:678'], [12345, 678]),
+    ).toBeNull();
   });
 });
 
@@ -91,6 +137,21 @@ describe('runVigilanteOnce', () => {
     const second = await runVigilanteOnce(d, TZ);
     expect(second).toEqual({ seen: 1, fresh: 0, notified: 0 });
     expect(sent).toHaveLength(1);
+  });
+
+  it('capa tras el dedupe: el sexto hallazgo sale en el siguiente barrido', async () => {
+    const many = Array.from({ length: 6 }, (_, i) =>
+      item({ title: `plazo ${i}`, at: NOW + (i + 1) * DAY }),
+    );
+    const d = deps(many);
+    expect((await runVigilanteOnce(d, TZ)).notified).toBe(5);
+    expect((await runVigilanteOnce(d, TZ)).notified).toBe(1);
+  });
+
+  it('deduplica dentro del mismo barrido', async () => {
+    const dup = item({ title: 'Factura del taller' });
+    const d = deps([dup, { ...dup }]);
+    expect((await runVigilanteOnce(d, TZ)).notified).toBe(1);
   });
 
   it('un envío fallido no marca: el siguiente barrido reintenta', async () => {
@@ -121,6 +182,39 @@ describe('runVigilanteOnce', () => {
     expect(result).toEqual({ seen: 0, fresh: 0, notified: 0 });
   });
 
+  it('shouldAbort antes del envío: no envía y no marca', async () => {
+    let calls = 0;
+    const d = {
+      ...deps([item({ title: 'Factura' })], async () => {
+        calls += 1;
+        return true;
+      }),
+      shouldAbort: () => true,
+    };
+    const result = await runVigilanteOnce(d, TZ);
+    expect(result.notified).toBe(0);
+    expect(calls).toBe(0);
+    const after = await runVigilanteOnce({ ...d, shouldAbort: () => false }, TZ);
+    expect(after.notified).toBe(1);
+  });
+
+  it('shouldAbort tras el envío: no persiste, para no escribir en una db moribunda', async () => {
+    let checks = 0;
+    const items = [item({ title: 'Factura' })];
+    const base = deps(items);
+    const d = {
+      ...base,
+      shouldAbort: () => {
+        checks += 1;
+        return checks > 1;
+      },
+    };
+    const result = await runVigilanteOnce(d, TZ);
+    expect(result.notified).toBe(0);
+    const again = await runVigilanteOnce({ ...base }, TZ);
+    expect(again.notified).toBe(1);
+  });
+
   it('los hallazgos viejos no se renotifican entre procesos (persiste en sqlite)', async () => {
     const db = new DatabaseSync(':memory:');
     const items = [item({ title: 'Tren a Barcelona', kind: 'travel' })];
@@ -143,7 +237,7 @@ describe('runVigilanteOnce', () => {
 });
 
 describe('formatFindings', () => {
-  it('digest en español con tipo y fecha, sin hora inventada para el todo-el-día', () => {
+  it('digest en español con tipo, fecha y fuente', () => {
     const text = formatFindings(
       [
         item({
@@ -157,5 +251,67 @@ describe('formatFindings', () => {
     expect(text).toContain('🦅 Ojo de águila: 1 cosa nueva');
     expect(text).toContain('Plazo: Factura del taller');
     expect(text).toContain('octubre');
+    expect(text).toContain('(correo)');
+  });
+
+  it('todo el día y sin hora se dicen; nunca se inventa una hora', () => {
+    const text = formatFindings(
+      [
+        item({
+          title: 'Día de la madre',
+          allDay: true,
+          timed: false,
+          at: new Date('2026-10-13T00:00:00+02:00').getTime(),
+        }),
+        item({ title: 'Pago sin hora', timed: false }),
+      ],
+      TZ,
+    );
+    expect(text).not.toContain('0:00');
+    expect(text).toContain('todo el día');
+    expect(text).toContain('sin hora');
+  });
+
+  it('la confianza baja se declara; el título se capa a 90', () => {
+    const text = formatFindings(
+      [
+        item({
+          title: `Asunto de correo ${'muy '.repeat(40)}largo`,
+          confidence: 0.45,
+        }),
+      ],
+      TZ,
+    );
+    expect(text).toContain('(45% seguro)');
+    const line = text.split('\n')[1] ?? '';
+    expect(line.length).toBeLessThan(160);
+  });
+});
+
+describe('startVigilanteLoop', () => {
+  it('stop drena el barrido en vuelo y cancela el siguiente tick', async () => {
+    let sends = 0;
+    let sendFinished = false;
+    const loop = startVigilanteLoop(
+      {
+        db: new DatabaseSync(':memory:'),
+        agenda: async () => agenda([item({ title: 'Factura' })]),
+        send: async () => {
+          sends += 1;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          sendFinished = true;
+          return true;
+        },
+        now: () => NOW,
+      },
+      TZ,
+      10_000,
+      0,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await loop.stop();
+    expect(sendFinished).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sends).toBe(1);
   });
 });
