@@ -1,11 +1,15 @@
 ﻿import { describe, expect, it } from 'vitest';
-import { createTvTool } from '../src/tools/tv.js';
 import type { TvMemoryState, TvToolDeps } from '../src/tools/tv.js';
+import { createTvTool } from '../src/tools/tv.js';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200, 7)]);
 const BLANK = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(300)]);
 
-function deps(over: Partial<TvToolDeps> = {}): { deps: TvToolDeps; calls: string[]; state: { v: TvMemoryState | null } } {
+function deps(over: Partial<TvToolDeps> = {}): {
+  deps: TvToolDeps;
+  calls: string[];
+  state: { v: TvMemoryState | null };
+} {
   const calls: string[] = [];
   const state = { v: null as TvMemoryState | null };
   const d: TvToolDeps = {
@@ -93,7 +97,13 @@ describe('createTvTool', () => {
 
   it('state recuerda la ultima mirada sin despertar la tele', async () => {
     const { deps: d, state, calls } = deps();
-    state.v = { appId: 'org.xbmc.kodi', category: [], at: '2026-10-11T10:00:00.000Z', framePath: '/x.jpg', bytes: 10 };
+    state.v = {
+      appId: 'org.xbmc.kodi',
+      category: [],
+      at: '2026-10-11T10:00:00.000Z',
+      framePath: '/x.jpg',
+      bytes: 10,
+    };
     const out = await run(d, { action: 'state' });
     expect(out.details.known).toBe(true);
     expect(textOf(out.content)).toContain('org.xbmc.kodi');
@@ -110,7 +120,7 @@ describe('createTvTool', () => {
 
   it('launch exige appId y key exige un nombre conocido', async () => {
     const { deps: d, calls } = deps();
-await expect(exec(d, { action: 'launch' })).rejects.toThrow(/appId/);
+    await expect(exec(d, { action: 'launch' })).rejects.toThrow(/appId/);
     await expect(exec(d, { action: 'key', name: 'RAKETA' })).rejects.toThrow(/valido/);
     expect(calls).toEqual([]);
   });
@@ -121,4 +131,3 @@ await expect(exec(d, { action: 'launch' })).rejects.toThrow(/appId/);
     expect(calls).toEqual(['key:HOME']);
   });
 });
-
