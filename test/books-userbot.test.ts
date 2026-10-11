@@ -71,7 +71,46 @@ describe('LoginFlow', () => {
     rmSync(SESSION_PATH, { force: true });
   });
 
-  it('2FA sin contraseña es error explicito', async () => {
+  it('requestCode fallido desconecta el client (sin conexion colgada)', async () => {
+    const client = fakeClient();
+    client.invoke = async function (this: FakeClient, req: unknown) {
+      this.invokes.push(req);
+      return { not: 'a SentCode' };
+    };
+    const flow = flowWithClient(client);
+    await expect(flow.requestCode('+341')).rejects.toThrow(/envio de codigo/i);
+    expect(client.disconnected).toBe(true);
+  });
+
+  it('complete con codigo erroneo desconecta y limpia el pending', async () => {
+    const client = fakeClient();
+    client.invoke = async () => {
+      throw new Error('PHONE_CODE_INVALID');
+    };
+    const flow = flowWithClient(client);
+    (flow as unknown as { pending: unknown }).pending = {
+      phoneNumber: '+341',
+      phoneCodeHash: 'h',
+      at: Date.now(),
+    };
+    await expect(flow.complete('99999')).rejects.toThrow(/PHONE_CODE_INVALID/);
+    expect(client.disconnected).toBe(true);
+    expect((flow as unknown as { pending: unknown }).pending).toBeUndefined();
+  });
+
+  it('TTL vencido tambien desconecta el client abierto', async () => {
+    const client = fakeClient();
+    const flow = flowWithClient(client);
+    (flow as unknown as { pending: unknown }).pending = {
+      phoneNumber: '+341',
+      phoneCodeHash: 'h',
+      at: Date.now() - 11 * 60 * 1000,
+    };
+    await expect(flow.complete('12345')).rejects.toThrow(/caduco/i);
+    expect(client.disconnected).toBe(true);
+  });
+
+  it('2FA sin contraseña es error explicito y desconecta', async () => {
     const client = fakeClient();
     client.invoke = async () => {
       throw new Error('SESSION_PASSWORD_NEEDED');

@@ -84,7 +84,10 @@ function saveCredsToEnv(apiId: string, apiHash: string): void {
 }
 
 export interface SetupDeps {
-  flow: Pick<LoginFlow, 'requestCode' | 'complete'>;
+  /** Perezoso: el flujo (y la lectura de credenciales del env) nace con el
+   * primer requestCode, NUNCA al arrancar el server: la pagina existe justo
+   * para introducir credenciales que aun no estan. */
+  getFlow: () => Pick<LoginFlow, 'requestCode' | 'complete'>;
   token: string;
   port: number;
   phone?: string;
@@ -130,10 +133,12 @@ export function makeSetupHandler(deps: SetupDeps) {
             saveCredsToEnv(apiId, apiHash);
             process.env.BOOKS_TG_API_ID = apiId;
             process.env.BOOKS_TG_API_HASH = apiHash;
-            await deps.flow.requestCode(phone);
+            await deps.getFlow().requestCode(phone);
             render(res, 'Codigo pedido: revisa Telegram en tu movil.');
           } else if (path === '/login') {
-            await deps.flow.complete((form.code ?? '').trim(), form.password?.trim() || undefined);
+            await deps
+              .getFlow()
+              .complete((form.code ?? '').trim(), form.password?.trim() || undefined);
             render(res, 'Sesion guardada. Ya puedes cerrar esta pagina.');
           } else {
             render(res, 'Ruta desconocida.', 404);
@@ -148,8 +153,16 @@ export function makeSetupHandler(deps: SetupDeps) {
 
 export function startSetupServer(port = 8377): { server: Server; token: string; url: string } {
   const token = generateSetupToken();
-  const flow = new LoginFlow(configFromEnv(process.env));
-  const server = createServer(makeSetupHandler({ flow, token, port }));
+  // Sin LoginFlow aqui: sin credenciales configuradas todavia, construirlo
+  // lanzaria error y la pagina nunca abriria (huevo-y-gallina).
+  let flow: LoginFlow | undefined;
+  const server = createServer(
+    makeSetupHandler({
+      getFlow: () => (flow ??= new LoginFlow(configFromEnv(process.env))),
+      token,
+      port,
+    }),
+  );
   server.listen(port, '127.0.0.1');
   return { server, token, url: `http://127.0.0.1:${port}/?k=${token}` };
 }

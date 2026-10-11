@@ -73,50 +73,62 @@ export class LoginFlow {
   }
 
   async requestCode(phoneNumber: string): Promise<void> {
-    const client = await this.ensureClient();
-    const result = await client.invoke(
-      new Api.auth.SendCode({
-        phoneNumber,
-        apiId: this.config.apiId,
-        apiHash: this.config.apiHash,
-        settings: new Api.CodeSettings({}),
-      }),
-    );
-    if (!(result instanceof Api.auth.SentCode)) {
-      throw new Error('Telegram no devolvio un envio de codigo');
+    try {
+      const client = await this.ensureClient();
+      const result = await client.invoke(
+        new Api.auth.SendCode({
+          phoneNumber,
+          apiId: this.config.apiId,
+          apiHash: this.config.apiHash,
+          settings: new Api.CodeSettings({}),
+        }),
+      );
+      if (!(result instanceof Api.auth.SentCode)) {
+        throw new Error('Telegram no devolvio un envio de codigo');
+      }
+      this.pending = { phoneNumber, phoneCodeHash: result.phoneCodeHash, at: Date.now() };
+    } catch (err) {
+      // Un requestCode fallido no deja la conexion abierta.
+      await this.dispose();
+      throw err;
     }
-    this.pending = { phoneNumber, phoneCodeHash: result.phoneCodeHash, at: Date.now() };
   }
 
   async complete(code: string, password?: string): Promise<void> {
     const pending = this.pending;
     if (!pending || Date.now() - pending.at > PENDING_TTL_MS) {
+      // El TTL vencido tambien cierra la conexion que pudo quedar abierta.
+      await this.dispose();
       throw new Error('El login caduco: pide un codigo nuevo');
     }
-    const client = await this.ensureClient();
+    // Exito o fallo (codigo erroneo, 2FA pendiente, saveSession roto): la
+    // conexion se cierra siempre. Reintentar = pedir un codigo nuevo.
     try {
-      await client.invoke(
-        new Api.auth.SignIn({
-          phoneNumber: pending.phoneNumber,
-          phoneCodeHash: pending.phoneCodeHash,
-          phoneCode: code,
-        }),
-      );
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('SESSION_PASSWORD_NEEDED')) {
-        if (!password) throw new Error('2FA requerido: falta la contraseña (vault)');
-        const { computeCheck } = await import('teleproto/Password.js');
-        const pwd = await client.invoke(new Api.account.GetPassword());
+      const client = await this.ensureClient();
+      try {
         await client.invoke(
-          new Api.auth.CheckPassword({ password: await computeCheck(pwd, password) }),
+          new Api.auth.SignIn({
+            phoneNumber: pending.phoneNumber,
+            phoneCodeHash: pending.phoneCodeHash,
+            phoneCode: code,
+          }),
         );
-      } else {
-        throw err;
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('SESSION_PASSWORD_NEEDED')) {
+          if (!password) throw new Error('2FA requerido: falta la contraseña (vault)');
+          const { computeCheck } = await import('teleproto/Password.js');
+          const pwd = await client.invoke(new Api.account.GetPassword());
+          await client.invoke(
+            new Api.auth.CheckPassword({ password: await computeCheck(pwd, password) }),
+          );
+        } else {
+          throw err;
+        }
       }
+      saveSession(this.config.sessionPath, client.session as StringSession);
+    } finally {
+      await this.dispose();
     }
-    saveSession(this.config.sessionPath, client.session as StringSession);
-    this.pending = undefined;
-    await this.dispose();
   }
 
   async dispose(): Promise<void> {

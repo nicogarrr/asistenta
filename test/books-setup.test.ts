@@ -52,7 +52,7 @@ function raw(
 
 let server: Server | undefined;
 let port = 0;
-const flowCalls = { requestCode: 0, complete: 0, failWith: '' };
+const flowCalls = { requestCode: 0, complete: 0, getFlow: 0, failWith: '' };
 
 async function boot(): Promise<void> {
   const fakeFlow = {
@@ -64,10 +64,14 @@ async function boot(): Promise<void> {
       if (flowCalls.failWith) throw new Error(flowCalls.failWith);
     },
   };
+  flowCalls.getFlow = 0;
   const s: Server = createServer((req, res) => {
     // El handler necesita el puerto real: se crea tras listen.
     const handler = makeSetupHandler({
-      flow: fakeFlow,
+      getFlow: () => {
+        flowCalls.getFlow += 1;
+        return fakeFlow;
+      },
       token: TOKEN,
       port: (s.address() as AddressInfo).port,
       phone: '+34600000000',
@@ -102,6 +106,13 @@ describe('validCredentialFormats', () => {
 });
 
 describe('setup server (adversarial)', () => {
+  it('GET no construye el LoginFlow: sin credenciales la pagina abre igual', async () => {
+    await boot();
+    const res = await raw(port, { path: `/?k=${TOKEN}` });
+    expect(res.status).toBe(200);
+    expect(flowCalls.getFlow).toBe(0);
+  });
+
   it('GET sin token: 403', async () => {
     await boot();
     expect((await raw(port, {})).status).toBe(403);
