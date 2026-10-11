@@ -1,6 +1,6 @@
 /** Comandos `pa tv ...`: setup (pairing una vez), toast, apps, launch, off. */
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import {
   assertTvHost,
   pairTv,
@@ -134,22 +134,40 @@ export async function tvCommand(args: string[]): Promise<number> {
       return 0;
     }
     case 'shot': {
-      // `pa tv shot [fichero] [--key NOMBRE]`: si se pasa --key se manda esa
-      // tecla antes de capturar (util para salir de una app antes de mirar).
+      // `pa tv shot [fichero] [--key NOMBRE] [--force]`: si se pasa --key se
+      // manda esa tecla antes de capturar (util para salir de una app antes
+      // de mirar). Nunca sobrescribe un fichero existente sin --force.
       const positional: string[] = [];
       let keyName: string | undefined;
+      let force = false;
       for (let i = 0; i < rest.length; i += 1) {
         const arg = rest[i];
         if (arg === undefined) continue;
         if (arg === '--key') {
-          keyName = rest[i + 1];
+          const value = rest[i + 1];
+          if (!value || value.startsWith('--')) {
+            process.stderr.write('pa tv shot: --key necesita un nombre (HOME, BACK...)\n');
+            return 2;
+          }
+          keyName = value;
           i += 1;
           continue;
         }
-        if (arg.startsWith('--')) continue;
+        if (arg === '--force') {
+          force = true;
+          continue;
+        }
+        if (arg.startsWith('--')) {
+          process.stderr.write(`pa tv shot: flag desconocido ${sanitizeTvText(arg)}\n`);
+          return 2;
+        }
         positional.push(arg);
       }
       const out = positional[0] ?? 'tv-shot.jpg';
+      if (existsSync(out) && !force) {
+        process.stderr.write(`pa tv shot: ${out} ya existe; usa --force para sobrescribir.\n`);
+        return 2;
+      }
       const { host, clientKey, allowPlaintext } = await requirePaired();
       const deps = { allowPlaintext };
       if (keyName) {
@@ -165,12 +183,16 @@ export async function tvCommand(args: string[]): Promise<number> {
     case 'key': {
       const name = rest.find((a) => !a.startsWith('--'))?.trim();
       if (!name) {
-        process.stderr.write('uso: pa tv key <NOMBRE>   (HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN)\n');
+        process.stderr.write(
+          'uso: pa tv key <NOMBRE>   (HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN)\n',
+        );
         return 2;
       }
       const { host, clientKey, allowPlaintext } = await requirePaired();
       await tvKey(host, clientKey, name, { allowPlaintext });
-      process.stdout.write(`Tecla ${name} enviada.\n`);
+      // El protocolo del socket de input no confirma la pulsacion: se
+      // reporta el envio, no el efecto en la tele.
+      process.stdout.write(`Tecla ${name} enviada (sin confirmacion de la tele).\n`);
       return 0;
     }
     default:
