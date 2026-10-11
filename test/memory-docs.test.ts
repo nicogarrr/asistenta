@@ -51,8 +51,8 @@ describe('chunkText', () => {
     expect(chunkText('  \n\n ')).toEqual([]);
   });
 
-  it('caps the number of chunks', () => {
-    expect(chunkText('z'.repeat(2_000_000), 1500).length).toBeLessThanOrEqual(400);
+  it("returns every chunk - capping is the store's job, so coverage is measurable", () => {
+    expect(chunkText('z'.repeat(2_000_000), 1500).length).toBeGreaterThan(400);
   });
 });
 
@@ -228,6 +228,64 @@ describe('DocMemory', () => {
     expect(hits[0]!.docId).toBe(doc!.docId);
   });
 
+  it('compound id boundaries: a/docx and adoc/x are different docs', async () => {
+    await mem.index('a', { fileId: 'docx', mimeType: 'text/plain' }, Buffer.from('aguacate'));
+    await mem.index('adoc', { fileId: 'x', mimeType: 'text/plain' }, Buffer.from('tomate'));
+    expect(mem.search('a', 'aguacate')).toHaveLength(1);
+  });
+
+  it('an ordinary multi-paragraph document is NOT truncated', async () => {
+    const doc = await mem.index(
+      'chat-a',
+      { fileId: 'multi', mimeType: 'text/plain' },
+      Buffer.from('primero\n\nsegundo'),
+    );
+    expect(doc!.truncated).toBe(false);
+  });
+
+  it('a paragraph separator at the chunk boundary is not missing coverage', async () => {
+    const doc = await mem.index(
+      'chat-a',
+      { fileId: 'boundary', mimeType: 'text/plain' },
+      Buffer.from('x'.repeat(1490) + '\n\n' + 'segundo parrafo de veinte letras'),
+    );
+    expect(doc!.truncated).toBe(false);
+    expect(mem.search('chat-a', 'segundo parrafo')).toHaveLength(1);
+  });
+
+  it('a hanging pdf loader obeys the total deadline', async () => {
+    const outcome = await Promise.race([
+      extractText(
+        Buffer.from('pdf'),
+        'application/pdf',
+        () => new Promise<never>(() => {}),
+        5,
+      ).then(
+        () => 'ok',
+        () => 'timeout',
+      ),
+      new Promise((r) => setTimeout(() => r('hung'), 2_000)),
+    ]);
+    expect(outcome).toBe('timeout');
+  });
+
+  it('a hanging destroy cannot defeat the deadline', async () => {
+    const loader = async () => ({
+      getDocument: () => ({
+        promise: new Promise<never>(() => {}),
+        destroy: () => new Promise<void>(() => {}),
+      }),
+    });
+    const outcome = await Promise.race([
+      extractText(Buffer.from('pdf'), 'application/pdf', loader, 5).then(
+        () => 'ok',
+        () => 'timeout',
+      ),
+      new Promise((r) => setTimeout(() => r('hung'), 2_000)),
+    ]);
+    expect(outcome).toBe('timeout');
+  });
+
   it('mirrors extracted text to disk', async () => {
     const doc = await mem.index(
       'chat-a',
@@ -236,5 +294,31 @@ describe('DocMemory', () => {
     );
     expect(doc).not.toBeNull();
     expect(readFileSync(join(dir, 'mirror', `${doc!.docId}.txt`), 'utf8')).toBe('contenido espejo');
+  });
+});
+
+describe('DocMemory schema migration', () => {
+  it('opens a pre-truncated-column database and upgrades it', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'docmig-'));
+    const dbPath = join(d, 'old.sqlite');
+    // An R1-shaped database: docs without the truncated column.
+    const { DatabaseSync } = await import('node:sqlite');
+    const oldDb = new DatabaseSync(dbPath);
+    oldDb.exec(`CREATE TABLE docs (
+      doc_id TEXT PRIMARY KEY, chat_key TEXT NOT NULL, title TEXT NOT NULL,
+      mime_type TEXT NOT NULL, chars INTEGER NOT NULL, chunks INTEGER NOT NULL, at INTEGER NOT NULL
+    )`);
+    oldDb.close();
+    const m = new DocMemory({ dbPath, directory: join(d, 'mirror') });
+    const doc = await m.index(
+      'chat-a',
+      { fileId: 'post', name: 'post.txt', mimeType: 'text/plain' },
+      Buffer.from('despues de la migracion'),
+    );
+    expect(doc).not.toBeNull();
+    expect(m.search('chat-a', 'migracion')).toHaveLength(1);
+    expect(m.list('chat-a')[0]!.truncated).toBe(false);
+    m.close();
+    rmSync(d, { recursive: true, force: true });
   });
 });

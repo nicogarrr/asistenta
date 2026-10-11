@@ -78,7 +78,13 @@ const DEFAULT_SEARCH_LIMIT = 8;
  * treatment — unscoped, message 42 of chat B would evict message 42 of chat A.
  */
 function docIdFor(scope: string, kind: string, ref: string): string {
-  return createHash('sha256').update(`${scope}${kind}${ref}`).digest('hex').slice(0, 16);
+  // JSON array as hash input: plain concatenation collides deterministically
+  // ("a"+"doc"+"docx" === "adoc"+"doc"+"x") and a crafted scope could poison
+  // another doc's id.
+  return createHash('sha256')
+    .update(JSON.stringify([scope, kind, ref]))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 /** Split on paragraph boundaries, then hard-wrap whatever still overflows. */
@@ -107,7 +113,7 @@ export function chunkText(text: string, chunkChars = CHUNK_CHARS): string[] {
     }
   }
   if (current.trim()) chunks.push(current.trim());
-  return chunks.slice(0, MAX_CHUNKS_PER_DOC);
+  return chunks;
 }
 
 /** The slice of pdfjs we use, structural so tests can stub the loader. */
@@ -137,9 +143,12 @@ async function extractPdfText(
   loader: () => Promise<PdfjsLike>,
   timeoutMs: number,
 ): Promise<string> {
-  const pdfjs = await loader();
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
+  // One budget over EVERYTHING: loader, getDocument and the per-page loop. A
+  // hang in any of them rejects at timeoutMs; nothing is awaited bare.
+  let loadingTask: ReturnType<PdfjsLike['getDocument']> | undefined;
   const work = (async () => {
+    const pdfjs = await loader();
+    loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
     const doc = await loadingTask.promise;
     const parts: string[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
@@ -153,7 +162,15 @@ async function extractPdfText(
   try {
     return await withTimeout(work, timeoutMs, 'pdf extraction timed out');
   } finally {
-    await loadingTask.destroy().catch(() => {});
+    // The destroy itself can hang on a stuck task, so it gets its own small
+    // bound; its error is swallowed either way - it is cleanup, not result.
+    if (loadingTask) {
+      await withTimeout(
+        loadingTask.destroy().catch(() => {}),
+        Math.min(10_000, timeoutMs),
+        'pdf destroy timed out',
+      ).catch(() => {});
+    }
   }
 }
 
@@ -220,6 +237,12 @@ export class DocMemory {
         at UNINDEXED
       );
     `);
+    // DBs written before the truncated column existed keep their schema:
+    // CREATE IF NOT EXISTS does not add columns, so migrate explicitly.
+    const cols = this.#db.prepare('PRAGMA table_info(docs)').all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'truncated')) {
+      this.#db.exec('ALTER TABLE docs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0');
+    }
     this.#directory = options.directory;
     this.#now = options.now ?? Date.now;
     this.#pdfjsLoader = options.pdfjsLoader;
@@ -242,10 +265,14 @@ export class DocMemory {
       this.#extractTimeoutMs,
     );
     const sliced = extracted.slice(0, MAX_TEXT_CHARS);
-    const chunks = chunkText(sliced);
-    if (!chunks.length) return null;
+    const allChunks = chunkText(sliced);
+    if (!allChunks.length) return null;
+    // Truncation is measured against the caps, never against the original
+    // text: chunking normalizes whitespace, so comparing char counts would
+    // flag perfectly whole documents as truncated.
+    const truncated = extracted.length > sliced.length || allChunks.length > MAX_CHUNKS_PER_DOC;
+    const chunks = allChunks.slice(0, MAX_CHUNKS_PER_DOC);
     const indexedChars = chunks.reduce((n, c) => n + c.length, 0);
-    const truncated = extracted.length > sliced.length || indexedChars < sliced.trim().length;
     const docId = docIdFor(scope, 'doc', doc.fileId);
     const title = doc.name?.trim() || doc.fileId;
     const at = this.#now();
@@ -302,10 +329,11 @@ export class DocMemory {
     transcript: string,
     caption?: string,
   ): IndexedDocument | null {
-    const chunks = chunkText(transcript);
-    if (!chunks.length) return null;
+    const allChunks = chunkText(transcript);
+    if (!allChunks.length) return null;
+    const truncated = allChunks.length > MAX_CHUNKS_PER_DOC;
+    const chunks = allChunks.slice(0, MAX_CHUNKS_PER_DOC);
     const indexedChars = chunks.reduce((n, c) => n + c.length, 0);
-    const truncated = indexedChars < transcript.trim().length;
     const docId = docIdFor(scope, 'audio', messageId);
     const title = caption?.trim() ? `audio: ${caption.trim()}` : `audio ${messageId}`;
     const at = this.#now();
