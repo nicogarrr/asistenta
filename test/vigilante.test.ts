@@ -11,6 +11,7 @@ const {
   collectFindings,
   findingKey,
   formatFindings,
+  resolveOwnerUserId,
   resolveOwnerDmChatId,
   startVigilanteLoop,
 } = await import('../src/vigilante.js');
@@ -100,25 +101,51 @@ describe('collectFindings', () => {
   });
 });
 
+describe('resolveOwnerUserId', () => {
+  it('allowlist unitaria: ese usuario es el owner', () => {
+    expect(resolveOwnerUserId([12345], null)).toBe(12345);
+  });
+
+  it('allowlist múltiple sin config explícita: fail-closed (usar el bot != ser el owner)', () => {
+    expect(resolveOwnerUserId([12345, 678], null)).toBeNull();
+  });
+
+  it('config explícita válida (y allowlisted) gana', () => {
+    expect(resolveOwnerUserId([12345, 678], 678)).toBe(678);
+  });
+
+  it('config fuera de la allowlist: fail-closed', () => {
+    expect(resolveOwnerUserId([12345], 999)).toBeNull();
+  });
+});
+
 describe('resolveOwnerDmChatId', () => {
-  it('acepta el DM del owner (chatId positivo y en la allowlist)', () => {
-    expect(resolveOwnerDmChatId(['telegram:cuenta:12345'], [12345])).toBe('12345');
+  it('encuentra el DM del owner verificado y solo ese', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:12345'], 12345)).toBe('12345');
   });
 
-  it('rechaza grupos aunque hable un usuario permitido', () => {
-    expect(resolveOwnerDmChatId(['telegram:cuenta:-100999888'], [12345])).toBeNull();
+  it('sin owner verificado no hay destino, hable quien hable', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:12345'], null)).toBeNull();
   });
 
-  it('rechaza DMs de usuarios fuera de la allowlist', () => {
-    expect(resolveOwnerDmChatId(['telegram:cuenta:999'], [12345])).toBeNull();
+  it('rechaza el DM de otra persona, grupos y otros canales', () => {
+    expect(resolveOwnerDmChatId(['telegram:cuenta:678'], 12345)).toBeNull();
+    expect(resolveOwnerDmChatId(['telegram:cuenta:-100999888'], 12345)).toBeNull();
+    expect(resolveOwnerDmChatId(['whatsapp:cuenta:12345'], 12345)).toBeNull();
+    expect(resolveOwnerDmChatId([], 12345)).toBeNull();
   });
 
-  it('rechaza otros canales y fail-closed con cero o varios candidatos', () => {
-    expect(resolveOwnerDmChatId(['whatsapp:cuenta:12345'], [12345])).toBeNull();
-    expect(resolveOwnerDmChatId([], [12345])).toBeNull();
-    expect(
-      resolveOwnerDmChatId(['telegram:cuenta:12345', 'telegram:cuenta:678'], [12345, 678]),
-    ).toBeNull();
+  it('ruta adversarial: allowlist [owner, B] y solo B ha hablado -> no se envía', () => {
+    const ownerId = resolveOwnerUserId([111, 222], null);
+    expect(ownerId).toBeNull();
+    expect(resolveOwnerDmChatId(['telegram:cuenta:222'], ownerId)).toBeNull();
+  });
+
+  it('con config explícita, el DM del owner configurado sí resuelve', () => {
+    const ownerId = resolveOwnerUserId([111, 222], 111);
+    expect(resolveOwnerDmChatId(['telegram:cuenta:111', 'telegram:cuenta:222'], ownerId)).toBe(
+      '111',
+    );
   });
 });
 
@@ -198,7 +225,7 @@ describe('runVigilanteOnce', () => {
     expect(after.notified).toBe(1);
   });
 
-  it('shouldAbort tras el envío: no persiste, para no escribir en una db moribunda', async () => {
+  it('entrega confirmada se persiste aunque el cierre empiece después (drain)', async () => {
     let checks = 0;
     const items = [item({ title: 'Factura' })];
     const base = deps(items);
@@ -210,9 +237,11 @@ describe('runVigilanteOnce', () => {
       },
     };
     const result = await runVigilanteOnce(d, TZ);
-    expect(result.notified).toBe(0);
+    // El abort frena el ENVÍO durante el cierre, pero una entrega ya confirmada se
+    // marca: si no, el mismo aviso reaparecería al reiniciar.
+    expect(result.notified).toBe(1);
     const again = await runVigilanteOnce({ ...base }, TZ);
-    expect(again.notified).toBe(1);
+    expect(again.fresh).toBe(0);
   });
 
   it('los hallazgos viejos no se renotifican entre procesos (persiste en sqlite)', async () => {

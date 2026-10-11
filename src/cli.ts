@@ -111,7 +111,7 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
-import { resolveOwnerDmChatId, startVigilanteLoop } from './vigilante.js';
+import { resolveOwnerDmChatId, resolveOwnerUserId, startVigilanteLoop } from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -1821,6 +1821,17 @@ async function serveCommand(): Promise<number> {
   // + pendientes) y avisa por Telegram SOLO de lo nuevo, una vez por hallazgo
   // (el módulo guarda lo ya notificado en sqlite). Primer barrido a los 5 min:
   // al arrancar, las fuentes aún se están calentando.
+  // Owner de los avisos: allowlist unitaria (asistente personal, ese usuario es
+  // el dueño) o config explícita `vigilante:ownerUserId` en vault. La allowlist
+  // autoriza USO del bot, NO propiedad de la agenda; sin owner verificado el
+  // vigilante no envía nada (fail-closed).
+  const vigilanteOwnerConfigured = Number((await vaultGet('vigilante:ownerUserId'))?.trim());
+  const vigilanteOwnerId = resolveOwnerUserId(
+    allowed,
+    Number.isSafeInteger(vigilanteOwnerConfigured) && vigilanteOwnerConfigured > 0
+      ? vigilanteOwnerConfigured
+      : null,
+  );
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
@@ -1845,13 +1856,12 @@ async function serveCommand(): Promise<number> {
           followups: () => followups.list(undefined, 200),
         }),
       send: (text) => {
-        // Destinatario fijo: el DM del owner (chatId positivo y en la allowlist del
-        // canal). Un grupo con un usuario permitido NO es destino válido — la agenda
-        // es privada. Sin DM único y verificado, fail-closed: no se envía y el
-        // hallazgo se reintenta en el siguiente barrido.
+        // Destinatario fijo: el DM del owner verificado arriba. Un grupo — aunque
+        // hable un usuario permitido — NO es destino: la agenda es privada. Sin DM
+        // del owner, fail-closed: no se envía y se reintenta en el próximo barrido.
         const chatId = resolveOwnerDmChatId(
           [...threads.values()].map((t) => t.chatKey),
-          allowed,
+          vigilanteOwnerId,
         );
         if (!chatId) {
           log.warn('vigilante: sin DM de owner verificado; el hallazgo queda pendiente', {});

@@ -22,7 +22,10 @@
  *    confianza baja, lo dice: inferido nunca se presenta como confirmado.
  * 5. **El destinatario es el DM del owner, o nadie.** Un chat de grupo con un
  *    usuario permitido es una audiencia distinta: la agenda privada no va ahí.
- *    Sin un DM único y verificado (allowlist), el hallazgo espera.
+ *    Y el owner no se deduce de los hilos que existen: la allowlist autoriza
+ *    USO del bot, no propiedad de la agenda. Owner = el único usuario de la
+ *    allowlist (asistente personal) o `vigilante:ownerUserId` en vault, fijado
+ *    explícitamente. Sin owner verificado, el hallazgo espera.
  *
  * `runVigilanteOnce` no lanza: todo el cuerpo va dentro de un try, porque el
  * vigilante no puede ser lo que tumbe el daemon. El barrido es barato y sin LLM:
@@ -56,9 +59,9 @@ export interface VigilanteDeps {
   now?: () => number;
   maxItems?: number;
   /**
-   * Cierre ordenado: se consulta antes de enviar y antes de persistir. Si el daemon
-   * se está apagando, el barrido en vuelo termina SIN enviar ni escribir — la base
-   * de datos puede morir justo después.
+   * Cierre ordenado: se consulta antes de ENVIAR (durante el apagado no salen
+   * avisos nuevos). Una entrega ya confirmada se persiste siempre — el drain de
+   * `stop()` la espera antes de que se cierren las bases de datos.
    */
   shouldAbort?: () => boolean;
 }
@@ -120,27 +123,40 @@ export function collectFindings(
 }
 
 /**
- * El DM del owner, o null. Un chatId de Telegram positivo es un DM; los grupos y
- * canales son negativos, y un grupo con un usuario permitido dentro sigue siendo
- * una audiencia que no pidió la agenda privada del owner. La allowlist del canal es
- * la prueba de que el DM es del owner. Cero candidatos o más de uno: null — cerrado.
+ * Quién es el owner, o null si no se puede saber. La allowlist autoriza USO del
+ * bot, no propiedad de la agenda: con varios usuarios permitidos, "el único que
+ * ha hablado" podría ser cualquiera. Solo dos pruebas valen:
+ *
+ * - la allowlist tiene UN usuario (asistente personal: ese es el dueño), o
+ * - `vigilante:ownerUserId` (config explícita) lo fija — y debe estar allowlisted,
+ *   porque un owner que no puede usar el bot es una config rota, no un owner.
+ */
+export function resolveOwnerUserId(
+  allowedUserIds: readonly number[],
+  configuredOwnerId: number | null,
+): number | null {
+  if (configuredOwnerId != null) {
+    return allowedUserIds.includes(configuredOwnerId) ? configuredOwnerId : null;
+  }
+  return allowedUserIds.length === 1 ? (allowedUserIds[0] ?? null) : null;
+}
+
+/**
+ * El DM del owner entre los hilos conocidos, o null. El chatId de un DM de Telegram
+ * es el id del usuario, así que la coincidencia exacta con el owner verificado es la
+ * prueba; grupos y canales (ids negativos) y otros canales ni se miran.
  */
 export function resolveOwnerDmChatId(
   chatKeys: Iterable<string>,
-  allowedUserIds: readonly number[],
+  ownerUserId: number | null,
 ): string | null {
-  const candidates = new Set<string>();
+  if (ownerUserId == null) return null;
+  const wanted = String(ownerUserId);
   for (const key of chatKeys) {
     const [channel, , chatId] = key.split(':');
-    if (channel !== 'telegram' || !chatId) continue;
-    const id = Number(chatId);
-    // DMs de usuario: entero positivo. Grupos, supergrupos y canales: negativos.
-    if (!Number.isSafeInteger(id) || id <= 0) continue;
-    if (!allowedUserIds.includes(id)) continue;
-    candidates.add(chatId);
+    if (channel === 'telegram' && chatId === wanted) return chatId;
   }
-  if (candidates.size !== 1) return null;
-  return [...candidates][0] ?? null;
+  return null;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -253,8 +269,10 @@ export async function runVigilanteOnce(
       });
     }
     if (!sent) return { seen: findings.length, fresh: toSend.length, notified: 0 };
-    if (deps.shouldAbort?.()) return { seen: findings.length, fresh: toSend.length, notified: 0 };
 
+    // Una entrega CONFIRMADA se persiste siempre, también durante el cierre: el
+    // drain de stop() espera a este barrido antes de que cli.ts cierre las bases
+    // de datos. Marcarla evita que el mismo aviso reaparezca al reiniciar.
     const insert = deps.db.prepare(
       'INSERT OR IGNORE INTO vigilante_seen (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
     );
@@ -272,8 +290,9 @@ export async function runVigilanteOnce(
 /**
  * El bucle: cadena de setTimeout, no setInterval — un barrido lento nunca apila el
  * siguiente (misma razón que en `cron/scheduler.ts`). `stop` es async: cancela el
- * siguiente tick y drena el barrido en vuelo, que además consulta `shouldAbort`
- * antes de enviar y de escribir, así nada se envía ni se persiste tras el cierre.
+ * siguiente tick y drena el barrido en vuelo. El barrido consulta `shouldAbort`
+ * antes de enviar (durante el cierre no salen avisos nuevos); una entrega ya
+ * confirmada se completa y se persiste dentro del drain, antes del db close.
  */
 export function startVigilanteLoop(
   deps: VigilanteDeps,
