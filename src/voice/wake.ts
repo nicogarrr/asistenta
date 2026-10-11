@@ -239,8 +239,6 @@ function withinOneEdit(heard: string, target: string): boolean {
   return heard.slice(i) === target.slice(i + 1);
 }
 
-
-
 /**
  * How well one heard token matches one target token, as a tier score.
  *
@@ -455,10 +453,7 @@ function loadWakePipeline(model: string): Promise<WakeAsrPipeline> {
  * with the word dropped entirely ("reproduce Jingle Bells"); with the prompt set
  * to the wake word itself, whisper has a spelling to copy.
  */
-async function defaultTranscriber(
-  samples: Float32Array,
-  initialPrompt?: string,
-): Promise<string> {
+async function defaultTranscriber(samples: Float32Array, initialPrompt?: string): Promise<string> {
   const pipe = await loadWakePipeline(DEFAULT_MODEL);
   const output = await withTimeout(
     pipe(samples, {

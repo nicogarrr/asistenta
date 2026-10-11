@@ -196,12 +196,9 @@ describe('matchesWakeWord phonetic tier', () => {
   // Jingle Bells" on this machine, from the daemon log. Both fold to the same
   // Spanish phonetic shape as "chochi" ("koki"), which is why the one-edit tier
   // never fired but the phonetic tier does.
-  it.each(['Choci', 'Chocchi'])(
-    'matches the custom word "%s" at the phonetic tier',
-    (heard) => {
-      expect(matchesWakeWord(heard, 'chochi', SCORE_PHONETIC)).toBe(true);
-    },
-  );
+  it.each(['Choci', 'Chocchi'])('matches the custom word "%s" at the phonetic tier', (heard) => {
+    expect(matchesWakeWord(heard, 'chochi', SCORE_PHONETIC)).toBe(true);
+  });
 
   it('does not match a transcription two edits away even phonetically', () => {
     // "Chuchis" folds to "kukis", two edits from "koki". The phonetic tier is
