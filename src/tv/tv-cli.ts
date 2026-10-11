@@ -1,6 +1,15 @@
 /** Comandos `pa tv ...`: setup (pairing una vez), toast, apps, launch, off. */
 
-import { assertTvHost, pairTv, sanitizeTvText, tvRequest, tvToast } from './lgtv.js';
+import { writeFileSync } from 'node:fs';
+import {
+  assertTvHost,
+  pairTv,
+  sanitizeTvText,
+  tvKey,
+  tvRequest,
+  tvScreenshot,
+  tvToast,
+} from './lgtv.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
@@ -124,8 +133,48 @@ export async function tvCommand(args: string[]): Promise<number> {
       process.stdout.write('Tele apagada.\n');
       return 0;
     }
+    case 'shot': {
+      // `pa tv shot [fichero] [--key NOMBRE]`: si se pasa --key se manda esa
+      // tecla antes de capturar (util para salir de una app antes de mirar).
+      const positional: string[] = [];
+      let keyName: string | undefined;
+      for (let i = 0; i < rest.length; i += 1) {
+        const arg = rest[i];
+        if (arg === undefined) continue;
+        if (arg === '--key') {
+          keyName = rest[i + 1];
+          i += 1;
+          continue;
+        }
+        if (arg.startsWith('--')) continue;
+        positional.push(arg);
+      }
+      const out = positional[0] ?? 'tv-shot.jpg';
+      const { host, clientKey, allowPlaintext } = await requirePaired();
+      const deps = { allowPlaintext };
+      if (keyName) {
+        await tvKey(host, clientKey, keyName, deps);
+        // La app tarda en redirigir: sin esta espera la captura sale en negro.
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+      const bytes = await tvScreenshot(host, clientKey, deps);
+      writeFileSync(out, bytes);
+      process.stdout.write(`Captura guardada en ${out} (${bytes.length} bytes).\n`);
+      return 0;
+    }
+    case 'key': {
+      const name = rest.find((a) => !a.startsWith('--'))?.trim();
+      if (!name) {
+        process.stderr.write('uso: pa tv key <NOMBRE>   (HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN)\n');
+        return 2;
+      }
+      const { host, clientKey, allowPlaintext } = await requirePaired();
+      await tvKey(host, clientKey, name, { allowPlaintext });
+      process.stdout.write(`Tecla ${name} enviada.\n`);
+      return 0;
+    }
     default:
-      process.stderr.write('uso: pa tv <setup|toast|apps|launch|off>\n');
+      process.stderr.write('uso: pa tv <setup|toast|apps|launch|key|shot|off>\n');
       return 2;
   }
 }

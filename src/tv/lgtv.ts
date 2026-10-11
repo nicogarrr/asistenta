@@ -11,6 +11,7 @@
  * (tv:host, tv:clientKey, tv:secure) desde el CLI.
  */
 
+import https from 'node:https';
 import WebSocket from 'ws';
 import { TV_MANIFEST } from './manifest.js';
 
@@ -410,4 +411,92 @@ export async function tvToast(
   deps: TvClientDeps = {},
 ): Promise<void> {
   await tvRequest(host, clientKey, 'system.notifications/createToast', { message }, deps);
+}
+
+/**
+ * Tecla del mando por el socket de input (netinput.pointer.sock): es la unica
+ * via para HOME/BACK/VOLUMEN, que `system.launcher/*` no cubre. Sin esto la
+ * tele se queda atrapada en la app en primer plano.
+ */
+export async function tvKey(
+  host: string,
+  clientKey: string,
+  name: string,
+  deps: TvClientDeps = {},
+): Promise<void> {
+  const res = await tvRequest(
+    host,
+    clientKey,
+    'com.webos.service.networkinput/getPointerInputSocket',
+    {},
+    deps,
+  );
+  const socketPath = (res as { socketPath?: string }).socketPath;
+  if (!socketPath) throw new Error('La tele no devolvio socket de input.');
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(socketPath, { rejectUnauthorized: false });
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('timeout enviando la tecla'));
+    }, 5000);
+    ws.on('open', () => {
+      ws.send(`type:button\nname:${name}\n\n`);
+      // La tele no responde nada: se da margen al consumo y se cierra.
+      setTimeout(() => {
+        clearTimeout(timer);
+        ws.close();
+        resolve();
+      }, 800);
+    });
+    ws.on('error', () => {
+      clearTimeout(timer);
+      reject(new Error('no se pudo enviar la tecla'));
+    });
+  });
+}
+
+const MAX_SHOT_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Captura de pantalla: `tv/executeOneShot` devuelve un imageUri HTTPS que hay
+ * que descargar con TLS sin verificar (cert autofirmado de la tele).
+ *
+ * Limite de la plataforma: el puente SSAP entrega 960x540 JPG fijo e ignora
+ * width/height/format. El contenido con DRM (Netflix, Prime, Disney+, DAZN...)
+ * sale en NEGRO: es una proteccion de LG en TVs 2020+, no un fallo. Para ver
+ * video protegido hace falta capturadora HDMI.
+ */
+export async function tvScreenshot(
+  host: string,
+  clientKey: string,
+  deps: TvClientDeps = {},
+): Promise<Buffer> {
+  const res = await tvRequest(host, clientKey, 'tv/executeOneShot', {}, deps);
+  const uri = (res as { imageUri?: string }).imageUri;
+  if (!uri) throw new Error('La tele no devolvio imageUri para la captura.');
+  const bytes = await new Promise<Buffer>((resolve, reject) => {
+    https
+      .get(uri, { rejectUnauthorized: false }, (r) => {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        r.on('data', (c: Buffer) => {
+          total += c.length;
+          if (total > MAX_SHOT_BYTES) {
+            r.destroy();
+            reject(new Error('la captura supera el tamano maximo'));
+            return;
+          }
+          chunks.push(c);
+        });
+        r.on('end', () => resolve(Buffer.concat(chunks)));
+        r.on('error', reject);
+      })
+      .on('error', () => reject(new Error('no se pudo descargar la captura')));
+  });
+  // JPG y PNG empiezan por su firma: una respuesta HTML de error no debe
+  // guardarse como si fuera una imagen.
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+  const isPng = bytes.subarray(1, 4).toString('ascii') === 'PNG';
+  if (!isJpeg && !isPng) throw new Error('la tele no devolvio una imagen valida');
+  return bytes;
 }

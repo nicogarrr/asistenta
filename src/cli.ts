@@ -128,6 +128,8 @@ Usage:
   pa tv toast <mensaje>   mostrar un aviso en la tele
   pa tv apps              listar apps instaladas (ids para pa tv launch)
   pa tv launch <appId>    lanzar una app en la tele
+  pa tv key <NOMBRE>      pulsar una tecla del mando (HOME, BACK, ENTER, UP/DOWN/LEFT/RIGHT)
+  pa tv shot [fichero]    capturar la pantalla de la tele (960x540 jpg; DRM sale en negro)
   pa tv off               apagar la tele
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
