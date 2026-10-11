@@ -38,6 +38,7 @@ import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
+import { canExtract, DocMemory } from './memory/docs.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
 import type { SessionHit } from './memory/sessions.js';
@@ -72,6 +73,7 @@ import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
+import { createDocsTool } from './tools/docs.js';
 import { createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
@@ -1069,6 +1071,10 @@ async function serveCommand(): Promise<number> {
   const store = new Store();
   store.sweepExpired();
   const memory = new MemoryStore();
+  const docMemory = new DocMemory({
+    dbPath: join(paths.docs, 'docs.sqlite'),
+    directory: join(paths.docs, 'mirror'),
+  });
   /**
    * The one file the gates of every conversation read their standing approvals from.
    *
@@ -1369,6 +1375,7 @@ async function serveCommand(): Promise<number> {
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
       createMemoryTool(memory, scope, snapshot),
+      createDocsTool(docMemory, scope),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createSkillsTool({ store: skills }),
       // Window and UI Automation inspection. Read-only, so it is not under the
@@ -3074,6 +3081,37 @@ async function serveCommand(): Promise<number> {
         }
       }
 
+      let documentNote = '';
+      if (inbound.documentFileId) {
+        const label = inbound.documentName ?? inbound.documentMimeType ?? 'documento';
+        if (!canExtract(inbound.documentMimeType)) {
+          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora solo se leen PDF y archivos de texto.]`;
+        } else {
+          try {
+            const bytes = await telegram.downloadFile(inbound.documentFileId);
+            if (!bytes) {
+              documentNote = `[Documento reenviado: ${label}. Telegram no devolvió el archivo.]`;
+            } else {
+              const indexed = await docMemory.index(
+                chatKey(inbound),
+                {
+                  fileId: inbound.documentFileId,
+                  name: inbound.documentName,
+                  mimeType: inbound.documentMimeType,
+                },
+                bytes,
+              );
+              documentNote = indexed
+                ? `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
+                : `[Documento reenviado: ${label}. No tenía texto extraíble (los PDF escaneados son imágenes, no texto).]`;
+            }
+          } catch (err) {
+            log.warn('document index failed', { err });
+            documentNote = `[Documento reenviado: ${label}. Falló la indexación: ${err instanceof Error ? err.message : String(err)}]`;
+          }
+        }
+      }
+
       let prompt = text;
       if (inbound.audioFileId) {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
@@ -3095,6 +3133,18 @@ async function serveCommand(): Promise<number> {
           // Remembered with the handle, so "suéltame ese audio" two messages later
           // has something to act on.
           recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
+          try {
+            docMemory.indexTranscript(
+              chatKey(inbound),
+              inbound.messageId,
+              heard.text,
+              inbound.text,
+            );
+          } catch (err) {
+            // The transcript is already in the turn and in the short-term recall;
+            // losing only its long-term index must not kill the turn.
+            log.warn('transcript index failed', { err });
+          }
         } catch (err) {
           await say(
             inbound,
@@ -3104,6 +3154,8 @@ async function serveCommand(): Promise<number> {
           return;
         }
       }
+
+      if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
         await say(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });

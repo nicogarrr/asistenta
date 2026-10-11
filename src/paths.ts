@@ -32,6 +32,8 @@ export const paths = {
   browser: join(STATE_DIR, 'browser'),
   /** Long-term memory markdown, one file per scope. */
   memory: join(STATE_DIR, 'memory'),
+  /** Document memory: the FTS5 index plus the extracted-text mirror. */
+  docs: join(STATE_DIR, 'docs'),
   /** Voice scratch files (decoded pcm, synthesized wav, opus). */
   voice: join(STATE_DIR, 'voice'),
   /**

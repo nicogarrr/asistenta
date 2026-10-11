@@ -246,10 +246,20 @@ export class TelegramChannel implements ChannelAdapter {
       if (best) inbound.photoFileId = best.file_id;
     }
 
+    if (msg.document) {
+      // Kept to ids and metadata: the bytes are fetched inside the turn, which
+      // is also where the document memory learns whether it can read them.
+      inbound.documentFileId = msg.document.file_id;
+      inbound.documentMimeType = msg.document.mime_type ?? undefined;
+      inbound.documentName = msg.document.file_name ?? undefined;
+      if (!inbound.text) inbound.text = '';
+    }
+
     // A command with no text must still reach the handler: `/screen` and `/watch`
     // are handled before the agent exists, and a caption-less photo needs its file
     // id even though there is nothing to say about it.
-    if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId) return;
+    if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId && !inbound.documentFileId)
+      return;
 
     await handlers.onMessage(inbound);
   }
