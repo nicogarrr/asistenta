@@ -124,6 +124,11 @@ Usage:
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
+  pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
+  pa tv toast <mensaje>   mostrar un aviso en la tele
+  pa tv apps              listar apps instaladas (ids para pa tv launch)
+  pa tv launch <appId>    lanzar una app en la tele
+  pa tv off               apagar la tele
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
@@ -145,6 +150,7 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
+import { tvCommand } from './tv/tv-cli.js';
 
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
@@ -166,6 +172,8 @@ export async function main(argv: string[]): Promise<number> {
         return 1;
       }
       return new Promise<number>(() => {});
+    case 'tv':
+      return tvCommand(rest);
     case 'doctor':
       return doctorCommand();
     case 'evolve':
