@@ -18,6 +18,7 @@ import {
   retryDelay,
   sleep,
 } from './retry.js';
+import { classifyRequest, iterationBudgetFor } from './router.js';
 import { ToolLoadout } from './toolset.js';
 
 /**
@@ -385,6 +386,8 @@ export class PersonalAgent {
   readonly #gateBlockedIds = new Set<string>();
   /** One iteration per tool call; shared with subagents via `budget.child()`. */
   readonly #budget: IterationBudget;
+  /** This run's tool-call ceiling, set by the request-level router. */
+  #runToolCallCeiling: number;
   /**
    * False means the budget is refilled at the start of every `run()`, which is the
    * default: a `PersonalAgent` outlives the conversation that created it, so one
@@ -407,6 +410,7 @@ export class PersonalAgent {
     this.#retry = retry;
     this.#sessionId = sessionId;
     this.#budget = budget;
+    this.#runToolCallCeiling = config.maxToolCalls;
     this.#sharedBudget = sharedBudget;
   }
 
@@ -700,6 +704,20 @@ export class PersonalAgent {
     // Per-request ceiling by default: each task gets the full allowance and cannot
     // spend the leftovers of whatever the user asked earlier.
     this.beginRun();
+    // Request-level routing (levels 1-4): local heuristic classification, zero
+    // cost, logged for audit. The level only shrinks THIS run's tool-call
+    // ceiling (never past config.maxToolCalls); it never touches the shared
+    // IterationBudget, so a subagent's parent counter and the pressure
+    // display keep their real max. The same classification is the extension
+    // point for per-level model choice once more free models exist.
+    const routing = classifyRequest(prompt);
+    this.#runToolCallCeiling = iterationBudgetFor(routing.level, this.#config.maxToolCalls);
+    log.info('request classified', {
+      level: routing.level,
+      reasons: routing.reasons,
+      override: routing.override,
+      iterationBudget: this.#runToolCallCeiling,
+    });
     const shared: AttemptState = {
       toolCalls: 0,
       blocked: 0,
@@ -821,9 +839,9 @@ export class PersonalAgent {
               'describe qué ves en pantalla y pide ayuda o prueba otra estrategia.';
             log.warn('stuck loop detected, aborting', { kind: loop, toolCalls: shared.toolCalls });
             this.#agent.abort();
-          } else if (shared.toolCalls >= this.#config.maxToolCalls) {
+          } else if (shared.toolCalls >= this.#runToolCallCeiling) {
             guardReason =
-              `Te detuve porque superaste el presupuesto de ${this.#config.maxToolCalls} acciones ` +
+              `Te detuve porque superaste el presupuesto de ${this.#runToolCallCeiling} acciones ` +
               'sin terminar. Resume lo conseguido hasta ahora y qué falta.';
             log.warn('tool budget exhausted, aborting', { toolCalls: shared.toolCalls });
             this.#agent.abort();
