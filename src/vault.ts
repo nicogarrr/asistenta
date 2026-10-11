@@ -321,11 +321,22 @@ export async function vaultSetMany(entries: Record<string, string>): Promise<voi
 }
 
 export async function vaultGet(key: string): Promise<string | undefined> {
+  // Env gana SIEMPRE y para CUALQUIER clave: se resuelve directamente antes
+  // de cache/fichero, sin lista fija de claves. Asi una variable creada (o
+  // cambiada) despues de cachear sigue ganando, y las claves env-only son
+  // legibles aunque nunca hayan tocado el fichero.
+  const env = process.env[envSecretName(key)];
+  if (env !== undefined && env !== '') return env;
   if (cache.has(key)) return cache.get(key);
   const map = await loadMap();
   return map[key];
 }
 
+/**
+ * Delete one key. NOTE: deleting does NOT revoke a secret that lives in the
+ * environment (PA_SECRET_<KEY> always wins over cache and file); to retire
+ * such a secret the variable itself must be removed.
+ */
 export async function vaultDelete(key: string): Promise<boolean> {
   return runWriteExclusive(async () => {
     const map = await loadMap();
