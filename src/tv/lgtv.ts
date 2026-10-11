@@ -333,7 +333,7 @@ export interface PairResult {
 export async function pairTv(host: string, deps: TvClientDeps = {}): Promise<PairResult> {
   const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
   const opened = await openSocket(safeHost, deps.factory ?? defaultFactory, {
-    allowPlaintext: deps.allowPlaintext ?? true,
+    allowPlaintext: deps.allowPlaintext ?? false,
   });
   try {
     const clientKey = await register(opened.ws, undefined, deps.pairTimeoutMs ?? PAIR_TIMEOUT_MS);

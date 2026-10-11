@@ -37,6 +37,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 it('closes failed first socket before fallback', async () => {
   const sockets: Socket[] = [];
   const p = pairTv('192.168.1.237', {
+    allowPlaintext: true, // el downgrade se pide explicito; este test ejercita el fallback
     factory: () => {
       const s = new Socket(sockets.length === 0);
       sockets.push(s);

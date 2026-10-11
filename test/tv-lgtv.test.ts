@@ -110,7 +110,8 @@ describe('pairTv', () => {
       sockets.push(s);
       return s;
     };
-    const pending = pairTv('192.168.1.237', { factory });
+    // El downgrade a plaintext nunca es por defecto: el caller lo pide explicito.
+    const pending = pairTv('192.168.1.237', { factory, allowPlaintext: true });
     await tick();
     await tick();
     expect(urls).toEqual(['wss://192.168.1.237:3001', 'ws://192.168.1.237:3000']);
