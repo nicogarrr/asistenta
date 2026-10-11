@@ -214,14 +214,27 @@ async function loadMap(): Promise<Record<string, string>> {
   return map;
 }
 
-async function saveMap(map: Record<string, string>): Promise<void> {
+/**
+ * Persist the secret map. `deletions` names keys that must NOT survive the
+ * write: the portable backend merges over the on-disk file (so env-managed
+ * keys keep their file copy), and without an explicit deletion set a removed
+ * key would silently resurrect from that file on the next read.
+ */
+async function saveMap(
+  map: Record<string, string>,
+  deletions?: ReadonlySet<string>,
+): Promise<void> {
   if (vaultBackend() === 'portable') {
     // Only the file is writable; values that come from the environment stay there.
     const fileMap = readPortableFile(portableSecretsFile());
     for (const key of Object.keys(map)) {
       if (process.env[envSecretName(key)]) delete map[key];
     }
-    writePortableFile(portableSecretsFile(), { ...fileMap, ...map });
+    const merged = { ...fileMap, ...map };
+    if (deletions) {
+      for (const key of deletions) delete merged[key];
+    }
+    writePortableFile(portableSecretsFile(), merged);
     return;
   }
   const dek = randomBytes(32);
@@ -255,6 +268,25 @@ function runWriteExclusive<T>(op: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** True when an environment variable overrides this key (env wins). */
+function hasEnvOverride(key: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env[envSecretName(key)];
+  return v !== undefined && v !== '';
+}
+
+/**
+ * Cache must mirror what survives a restart. When an env override owns the
+ * key, saveMap never writes it to the file, so the written value must NOT
+ * stay in cache either: drop it and let the next read re-resolve the env.
+ */
+function syncCacheAfterWrite(key: string, value: string): void {
+  if (hasEnvOverride(key)) {
+    cache.delete(key);
+  } else {
+    cache.set(key, value);
+  }
+}
+
 export async function vaultSet(key: string, value: string): Promise<void> {
   return runWriteExclusive(async () => {
     const map = await loadMap();
@@ -262,7 +294,7 @@ export async function vaultSet(key: string, value: string): Promise<void> {
     await saveMap(map);
     // Cache SOLO tras escritura durable: si saveMap falla, vaultGet no debe
     // devolver un valor que nunca llego al disco.
-    cache.set(key, value);
+    syncCacheAfterWrite(key, value);
   });
 }
 
@@ -283,23 +315,36 @@ export async function vaultSetMany(entries: Record<string, string>): Promise<voi
     await saveMap(map);
     // Cache SOLO tras escritura durable (misma regla que vaultSet).
     for (const [key, value] of Object.entries(entries)) {
-      cache.set(key, value);
+      syncCacheAfterWrite(key, value);
     }
   });
 }
 
 export async function vaultGet(key: string): Promise<string | undefined> {
+  // Env gana SIEMPRE y para CUALQUIER clave: se resuelve directamente antes
+  // de cache/fichero, sin lista fija de claves. Asi una variable creada (o
+  // cambiada) despues de cachear sigue ganando, y las claves env-only son
+  // legibles aunque nunca hayan tocado el fichero.
+  const env = process.env[envSecretName(key)];
+  if (env !== undefined && env !== '') return env;
   if (cache.has(key)) return cache.get(key);
   const map = await loadMap();
   return map[key];
 }
 
+/**
+ * Delete one key. NOTE: deleting does NOT revoke a secret that lives in the
+ * environment (PA_SECRET_<KEY> always wins over cache and file); to retire
+ * such a secret the variable itself must be removed.
+ */
 export async function vaultDelete(key: string): Promise<boolean> {
   return runWriteExclusive(async () => {
     const map = await loadMap();
     if (!(key in map)) return false;
     delete map[key];
-    await saveMap(map);
+    // Explicit deletion set: without it the portable merge would resurrect
+    // the key from the on-disk file (saveMap merges over fileMap).
+    await saveMap(map, new Set([key]));
     cache.delete(key);
     return true;
   });
