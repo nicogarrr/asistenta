@@ -591,14 +591,14 @@ export async function tvScreenshot(
   const bytes = await new Promise<Buffer>((resolve, reject) => {
     let done = false;
     let response: { destroy(): void } | undefined;
-    let req: ReturnType<typeof https.get>;
+    let req: ReturnType<typeof https.get> | undefined;
     const finish = (err?: Error, buf?: Buffer) => {
       if (done) return;
       done = true;
       clearTimeout(totalTimer);
       if (err) {
         response?.destroy();
-        req.destroy();
+        req?.destroy();
         reject(err);
         return;
       }
@@ -609,40 +609,48 @@ export async function tvScreenshot(
     const totalTimer = setTimeout(() => {
       finish(new Error(`timeout de ${timeoutMs / 1000}s descargando la captura`));
     }, timeoutMs);
-    req = https.get(uri, { rejectUnauthorized: false }, (r) => {
-      response = r;
-      const status = r.statusCode ?? 0;
-      const type = String(r.headers['content-type'] ?? '');
-      // Un 3xx cae aqui: los redirects NUNCA se siguen (destino de red).
-      if (status !== 200) {
-        r.resume();
-        finish(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
-        return;
-      }
-      if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
-        r.resume();
-        finish(
-          new Error(`content-type inesperado en la captura: ${sanitizeTvText(type) || 'ausente'}`),
-        );
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let total = 0;
-      r.on('data', (c: Buffer) => {
-        total += c.length;
-        if (total > MAX_SHOT_BYTES) {
-          finish(new Error('la captura supera el tamano maximo'));
+    // https.get puede lanzar SINCRONO (mock o biblioteca): sin try/catch el
+    // fallo escapa del Promise con el timer total vivo.
+    try {
+      req = https.get(uri, { rejectUnauthorized: false }, (r) => {
+        response = r;
+        const status = r.statusCode ?? 0;
+        const type = String(r.headers['content-type'] ?? '');
+        // Un 3xx cae aqui: los redirects NUNCA se siguen (destino de red).
+        if (status !== 200) {
+          r.resume();
+          finish(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
           return;
         }
-        chunks.push(c);
+        if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
+          r.resume();
+          finish(
+            new Error(
+              `content-type inesperado en la captura: ${sanitizeTvText(type) || 'ausente'}`,
+            ),
+          );
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        r.on('data', (c: Buffer) => {
+          total += c.length;
+          if (total > MAX_SHOT_BYTES) {
+            finish(new Error('la captura supera el tamano maximo'));
+            return;
+          }
+          chunks.push(c);
+        });
+        r.on('end', () => finish(undefined, Buffer.concat(chunks)));
+        r.on('aborted', () => finish(new Error('la descarga de la captura fue abortada')));
+        r.on('error', () => finish(new Error('no se pudo descargar la captura')));
       });
-      r.on('end', () => finish(undefined, Buffer.concat(chunks)));
-      r.on('aborted', () => finish(new Error('la descarga de la captura fue abortada')));
-      r.on('error', () => finish(new Error('no se pudo descargar la captura')));
-    });
-    req.on('error', (err: unknown) => {
-      finish(err instanceof Error ? err : new Error('no se pudo descargar la captura'));
-    });
+      req.on('error', (err: unknown) => {
+        finish(err instanceof Error ? err : new Error('no se pudo descargar la captura'));
+      });
+    } catch (err) {
+      finish(err instanceof Error ? err : new Error('no se pudo iniciar la descarga'));
+    }
   });
   // JPG y PNG empiezan por su firma COMPLETA: una respuesta HTML de error o
   // una respuesta de 2 bytes no deben guardarse como si fueran una imagen.
