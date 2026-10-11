@@ -6,10 +6,10 @@
  * the task may spend) and is audit-logged; when more free models exist, the
  * same classification is the extension point for picking the model per level.
  *
- * Design rules (Nico, 11-oct-2026): no LLM for the classification itself
- * (deciding the level must not spend model quota), deterministic, every
- * classification logged, and the user can force a level with a prefix
- * ("n1: ..." .. "n4: ..." or "nivel 1: ...").
+ * Design rules (team, 11-oct-2026, inside the zero-cost rule): no LLM for the
+ * classification itself (deciding the level must not spend model quota),
+ * deterministic, every classification logged, and the user can force a level
+ * with a prefix ("n1: ..." .. "n4: ..." or "nivel 1: ...").
  */
 export type RequestLevel = 1 | 2 | 3 | 4;
 
@@ -23,58 +23,58 @@ export interface RequestClassification {
 
 /** Multi-step build/change verbs and phrases (Spanish + English), level 4. */
 const LEVEL4 = [
-  /\bimplementa\b/,
-  /\bimplementar\b/,
+  /\bimplementa\b/i,
+  /\bimplementar\b/i,
   /\brefactor/i,
-  /\bmigra\b/,
-  /\bmigrar\b/,
-  /\bdespliega\b/,
-  /\bdesplegar\b/,
+  /\bmigra\b/i,
+  /\bmigrar\b/i,
+  /\bdespliega\b/i,
+  /\bdesplegar\b/i,
   /\bdeploy\b/i,
-  /\bcrea(?:r)? una (?:app|web|herramienta|skill)\b/,
-  /\bconstru/,
+  /\bcrea(?:r)? una (?:app|web|herramienta|skill)\b/i,
+  /\bconstru/i,
   /\barquitectura\b/i,
   /\bdise[ñn]a(?:r)? (?:el|la|un|una) (?:sistema|m[oó]dulo)/i,
   /\bbuild\b/i,
   /\bfull[\s-]?stack/i,
-  /\bde punta a punta\b/,
+  /\bde punta a punta\b/i,
   /\bend[\s-]?to[\s-]?end\b/i,
 ];
 /** Research/compare work, level 3-4 depending on breadth. */
 const LEVEL3 = [
-  /\binvestiga\b/,
-  /\banaliza\b/,
-  /\bcompara\b/,
-  /\baudita\b/,
-  /\brevisa\b/,
-  /\bdiagnostica\b/,
-  /\barregla\b/,
+  /\binvestiga\b/i,
+  /\banaliza\b/i,
+  /\bcompara\b/i,
+  /\baudita\b/i,
+  /\brevisa\b/i,
+  /\bdiagnostica\b/i,
+  /\barregla\b/i,
   /\bfix\b/i,
-  /\bcorrige\b/,
-  /\bintegra\b/,
-  /\bactualiza\b/,
-  /\ba[ñn]ade\b/,
-  /\bprograma\b/,
-  /\bconfigura\b/,
+  /\bcorrige\b/i,
+  /\bintegra\b/i,
+  /\bactualiza\b/i,
+  /\ba[ñn]ade\b/i,
+  /\bprograma\b/i,
+  /\bconfigura\b/i,
 ];
 /** Single simple actions, level 2. */
 const LEVEL2 = [
-  /\bbusca\b/,
-  /\benvia\b/,
-  /\bmanda\b/,
-  /\blee\b/,
-  /\bresume\b/,
-  /\btraduce\b/,
-  /\brecordatorio\b/,
-  /\brecuerda\b/,
-  /\babre\b/,
-  /\bdescarga\b/,
-  /\blista\b/,
-  /\bborra\b/,
-  /\belimina\b/,
-  /\bcancela\b/,
-  /\bapaga\b/,
-  /\benciende\b/,
+  /\bbusca\b/i,
+  /\benv[ií]a\b/i,
+  /\bmanda\b/i,
+  /\blee\b/i,
+  /\bresume\b/i,
+  /\btraduce\b/i,
+  /\brecordatorio\b/i,
+  /\brecuerda\b/i,
+  /\babre\b/i,
+  /\bdescarga\b/i,
+  /\blista\b/i,
+  /\bborra\b/i,
+  /\belimina\b/i,
+  /\bcancela\b/i,
+  /\bapaga\b/i,
+  /\benciende\b/i,
 ];
 /** Direct-answer questions and chatter, level 1. */
 const LEVEL1 = [

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { classifyRequest, iterationBudgetFor } from '../src/core/router.js';
 
@@ -75,5 +76,36 @@ describe('iterationBudgetFor', () => {
   it('rejects a bad base', () => {
     expect(() => iterationBudgetFor(1, -1)).toThrow(RangeError);
     expect(() => iterationBudgetFor(1, 1.5)).toThrow(RangeError);
+  });
+});
+
+describe('presupuesto por nivel: contrato con Agent.run', () => {
+  it('respeta un max personalizado (no asume 60)', () => {
+    expect(iterationBudgetFor(1, 200)).toBe(10);
+    expect(iterationBudgetFor(2, 200)).toBe(25);
+    expect(iterationBudgetFor(3, 200)).toBe(60);
+    expect(iterationBudgetFor(4, 200)).toBe(200);
+  });
+
+  it('n4 nunca recorta aunque el max sea pequeno', () => {
+    expect(iterationBudgetFor(4, 10)).toBe(10);
+    expect(iterationBudgetFor(4, 1)).toBe(1);
+  });
+
+  it('override por prefijo solo elige nivel; el tope sigue saliendo del max real', () => {
+    const forced = classifyRequest('n1: implementa una app completa');
+    expect(forced.level).toBe(1);
+    expect(iterationBudgetFor(forced.level, 500)).toBe(10);
+  });
+
+  it('Agent.run nunca consume el presupuesto compartido ni lo reinicia (guardia de regresion)', () => {
+    const src = readFileSync(new URL('../src/core/agent.ts', import.meta.url), 'utf8');
+    // Un hijo/subagente comparte su IterationBudget con el padre: si run()
+    // volviera a consumir para recortar, quemaria el contador del padre,
+    // el hijo heredaria un resto ya gastado y un retry quedaria sin margen.
+    expect(src).not.toMatch(/this\.#budget\.consume\(/);
+    expect(src).not.toMatch(/this\.#budget\.reset\(/);
+    // El tope por nivel se aplica solo al techo de ESTA corrida.
+    expect(src).toMatch(/#runToolCallCeiling = iterationBudgetFor\(/);
   });
 });
