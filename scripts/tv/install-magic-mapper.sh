@@ -1,10 +1,14 @@
 #!/bin/sh
-# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R5:
+# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R6:
+# - rollback generado desde templates/mapper-rollback.sh (test mock local):
+#   stop sin ||true, guard no-vivo antes de tocar ficheros, restore visible;
 # - rollback script verificado ANTES de mutar; stop del servicio viejo confirmado
-#   no-vivo antes del rename; restore falla visiblemente (set -e dentro);
+#   no-vivo antes del rename;
 # - --button validado contra la lista v1.1.0 (fuente: magic_mapper.py BUTTONS)
 #   con magic_mapper_settings rechazado como reservado;
-# - staging en el fs propio de cada destino; rollback automatico en fallo.
+# - staging en el fs propio de cada destino; rollback automatico en fallo
+#   post-backup (lo que el codigo garantiza: nada mas).
+# - pgrep exigido en preflight (sin el, deploy/rollback no pueden verificar).
 # Uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]
 set -eu
 TV="${1:?uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]}"
@@ -46,6 +50,7 @@ set -eu
 BASE="$1"
 mkdir -p /var/lib/webosbrew/init.d
 command -v python3 >/dev/null || { echo "python3 no existe en la TV"; exit 1; }
+command -v pgrep >/dev/null || { echo "pgrep no existe en la TV (lo exigen deploy y rollback)"; exit 1; }
 python3 -c 'import evdev' 2>/dev/null || { echo "python-evdev no importable en la TV"; exit 1; }
 [ -d /dev/input ] || { echo "/dev/input ausente"; exit 1; }
 rm -rf /home/root/.mm-new && mkdir -p /home/root/.mm-new
@@ -66,6 +71,7 @@ ssh "$USER@$TV" "cat > /home/root/.mm-new/magic_mapper_config.json" < "$CFG"
 rm -f "$CFG"
 ssh "$USER@$TV" "python3 -m json.tool /home/root/.mm-new/magic_mapper_config.json >/dev/null"
 
+scp "$SCRIPT_DIR/templates/mapper-rollback.sh" "$USER@$TV:/home/root/.mm-rollback.tmpl"
 ssh "$USER@$TV" sh -s <<'REMOTE_EOF'
 set -eu
 TS=$(date +%Y%m%d-%H%M%S)
@@ -75,21 +81,9 @@ mkdir -p "$BK"
 for f in $FILES; do
   if [ -e "$f" ]; then cp -a "$f" "$BK/"; fi
 done
-# Rollback REAL: set -e (un fallo de copia se ve), stop primero, restore total.
-cat > /home/root/mm-rollback-$TS.sh <<RB
-#!/bin/sh
-set -e
-/var/lib/webosbrew/init.d/start_magic_mapper stop 2>/dev/null || true
-rm -f /home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper
-for b in $BK/*; do
-  [ -e "\$b" ] || continue
-  case "\$b" in
-    */start_magic_mapper) cp -a "\$b" /var/lib/webosbrew/init.d/start_magic_mapper ;;
-    *) cp -a "\$b" "/home/root/\$(basename "\$b")" ;;
-  esac
-done
-if [ -x /var/lib/webosbrew/init.d/start_magic_mapper ]; then /var/lib/webosbrew/init.d/start_magic_mapper start; fi
-RB
+# Rollback REAL generado desde el template testeado (templates/mapper-rollback.sh):
+# stop sin ||true, guard no-vivo antes de rm, restore con fallos visibles.
+sed "s|__BK__|$BK|g" /home/root/.mm-rollback.tmpl > /home/root/mm-rollback-$TS.sh
 chmod +x /home/root/mm-rollback-$TS.sh
 [ -x /home/root/mm-rollback-$TS.sh ] || { echo "rollback script NO creado - aborto ANTES de mutar"; exit 1; }
 rollback() {

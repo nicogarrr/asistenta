@@ -42,19 +42,25 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
 4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop> --button <boton>`
    - El boton EXIGE flag explicito del operador (decision del owner en ejecucion;
      sin --button el script aborta). Candidatos: 0-9 (pierden long-press), guide, info.
-   - Staging en el fs propio de cada destino, backup de los 4. El script de
-     rollback (/home/root/mm-rollback-<ts>.sh) se escribe y se VERIFICA ejecutable
-     ANTES de mutar nada; el servicio viejo se para y se confirma NO-VIVO (pgrep)
-     antes del rename; el restore falla visiblemente (set -e dentro del rollback);
-     rollback automatico ante cualquier fallo post-backup.
+   - Staging en el fs propio de cada destino, backup de los 4. El rollback
+     (/home/root/mm-rollback-<ts>.sh) se genera desde scripts/tv/templates/
+     mapper-rollback.sh (cubierto por scripts/tv/test-tv-rollback-mock.sh) y se
+     VERIFICA ejecutable ANTES de mutar nada; el servicio viejo se para y se
+     confirma NO-VIVO (pgrep, exigido en preflight) antes del rename. El rollback
+     garantiza SOLO lo que el codigo verifica: stop sin ||true, guard no-vivo
+     antes de tocar ficheros (si no puede pararlo, aborta sin tocar nada) y
+     restore con fallos visibles (set -e; nunca declara hecho un restore roto).
+     Rollback automatico ante fallos post-backup.
    - --button se valida contra la lista oficial de botones de v1.1.0
      (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
      (:8765/tv/button-health) no responde - el boton NO se activa sin listener.
-   - Rollback tailscaled: /home/root/tailscaled-autostart-rollback-<ts>.sh con
-     ownership horneado: solo mata el daemon si la instalacion lo lanzo, solo
-     desmonta resolv.conf si el mount lo hizo ella, y restaura+relanza el init
-     previo si existia. Verificado ejecutable ANTES de mutar.
+   - Rollback tailscaled: /home/root/tailscaled-autostart-rollback-<ts>.sh desde
+     templates/tailscaled-rollback.sh (mismo test mock). Lee el pre-state de
+     /home/root/tailscaled-autostart-<ts>.state y deshace SOLO lo propio (mata el
+     daemon solo si la instalacion lo lanzo, desmonta solo si ella monto,
+     restaura+relanza el init previo si existia). set -e: cada undo falla
+     visible, sin "rollback hecho" falso. Verificado ejecutable ANTES de mutar.
    - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
    - Boton: SIN defecto - se decide en ejecucion via --button (owner).
    - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta

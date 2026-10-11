@@ -1,6 +1,7 @@
 #!/bin/sh
 # install-tailscaled-autostart.sh - autostart de tailscaled (webosbrew init.d).
-# R5: rollback con ownership real. Antes de mutar captura el estado previo
+# R6: rollback desde templates/tailscaled-rollback.sh (test mock local) con
+# set -e y fallos visibles (nada de "rollback hecho" falso). Ownership real: Antes de mutar captura el estado previo
 # (init existente, pid de tailscaled, mount de resolv.conf) y el script de
 # rollback generado solo deshace lo que ESTA instalacion hizo:
 # - mata tailscaled SOLO si no habia ninguno corriendo antes;
@@ -12,6 +13,8 @@
 set -eu
 TV="${1:?uso: sh scripts/tv/install-tailscaled-autostart.sh <ip-tv> [usuario]}"
 USER="${2:-root}"
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+scp "$SCRIPT_DIR/templates/tailscaled-rollback.sh" "$USER@$TV:/home/root/.tailscaled-rollback.tmpl"
 ssh "$USER@$TV" sh -s <<'REMOTE_EOF'
 set -eu
 [ "$(id -u)" = "0" ] || { echo "necesito root en la TV"; exit 1; }
@@ -23,33 +26,12 @@ PRE_INIT=0; [ -e /var/lib/webosbrew/init.d/tailscaled ] && PRE_INIT=1
 PRE_PID=$(pidof tailscaled 2>/dev/null || true)
 PRE_DNS=0; grep -q ' /etc/resolv.conf ' /proc/mounts 2>/dev/null && PRE_DNS=1
 echo "pre-state: init=$PRE_INIT pid='${PRE_PID:-ninguno}' dns_montado=$PRE_DNS"
-# Rollback script generado con el ownership horneado. Verificado ANTES de mutar.
+# Pre-state a fichero + rollback generado desde el template testeado.
 RB=/home/root/tailscaled-autostart-rollback-$TS.sh
-{
-  echo '#!/bin/sh'
-  echo "# Rollback del autostart de tailscaled (generado $TS)."
-  echo '# Pre-state: init='"$PRE_INIT"' pid='"${PRE_PID:-ninguno}"' dns='"$PRE_DNS"
-  if [ -n "$PRE_PID" ]; then
-    echo "echo 'habia tailscaled previo (pid $PRE_PID): NO se mata'"
-  else
-    echo 'PID=$(pidof tailscaled 2>/dev/null) && kill "$PID" 2>/dev/null || true'
-    echo 'sleep 1'
-    echo 'pidof tailscaled >/dev/null 2>&1 && echo "AVISO: tailscaled sigue vivo" || true'
-  fi
-  if [ "$PRE_DNS" = "0" ]; then
-    echo 'umount /etc/resolv.conf 2>/dev/null || true'
-  else
-    echo "echo 'resolv.conf ya estaba montado antes: NO se desmonta'"
-  fi
-  if [ "$PRE_INIT" = "1" ]; then
-    echo "mv /var/lib/webosbrew/init.d/tailscaled.bak-$TS /var/lib/webosbrew/init.d/tailscaled"
-    echo '# Relanzar el init previo restaurado (idempotente: no duplica el daemon).'
-    echo '/var/lib/webosbrew/init.d/tailscaled || true'
-  else
-    echo 'rm -f /var/lib/webosbrew/init.d/tailscaled'
-  fi
-  echo 'echo "rollback hecho"'
-} > "$RB"
+STATE=/home/root/tailscaled-autostart-$TS.state
+printf 'PRE_PID=%s\nPRE_DNS=%s\nPRE_INIT=%s\n' "$PRE_PID" "$PRE_DNS" "$PRE_INIT" > "$STATE"
+sed -e "s|__STATE__|$STATE|g" -e "s|__BAK__|/var/lib/webosbrew/init.d/tailscaled.bak-$TS|g" \
+  /home/root/.tailscaled-rollback.tmpl > "$RB"
 chmod +x "$RB"
 [ -x "$RB" ] || { echo "rollback script NO creado - aborto ANTES de mutar"; exit 1; }
 # A partir de aqui, cualquier fallo ejecuta el rollback automaticamente.
