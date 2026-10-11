@@ -52,7 +52,16 @@ function raw(
 
 let server: Server | undefined;
 let port = 0;
-const flowCalls = { requestCode: 0, complete: 0, getFlow: 0, fresh: 0, failWith: '' };
+const flowCalls = {
+  requestCode: 0,
+  complete: 0,
+  getFlow: 0,
+  fresh: 0,
+  verifySmtp: 0,
+  saveMail: 0,
+  smtpFails: false,
+  failWith: '',
+};
 
 async function boot(): Promise<void> {
   // Aislamiento: cada boot empieza con contadores a cero y sin .env previo.
@@ -60,6 +69,9 @@ async function boot(): Promise<void> {
   flowCalls.complete = 0;
   flowCalls.getFlow = 0;
   flowCalls.fresh = 0;
+  flowCalls.verifySmtp = 0;
+  flowCalls.saveMail = 0;
+  flowCalls.smtpFails = false;
   const { rmSync } = await import('node:fs');
   rmSync(process.env.BOOKS_ENV_PATH ?? '', { force: true });
   const fakeFlow = {
@@ -73,6 +85,8 @@ async function boot(): Promise<void> {
   };
   flowCalls.getFlow = 0;
   flowCalls.fresh = 0;
+  flowCalls.verifySmtp = 0;
+  flowCalls.saveMail = 0;
   const s: Server = createServer((req, res) => {
     // El handler necesita el puerto real: se crea tras listen.
     const handler = makeSetupHandler({
@@ -84,6 +98,13 @@ async function boot(): Promise<void> {
       token: TOKEN,
       port: (s.address() as AddressInfo).port,
       phone: '+34600000000',
+      verifySmtp: async () => {
+        flowCalls.verifySmtp += 1;
+        if (flowCalls.smtpFails) throw new Error('535 auth failed');
+      },
+      saveMail: async () => {
+        flowCalls.saveMail += 1;
+      },
     });
     handler(req, res);
   });
@@ -128,6 +149,43 @@ describe('setup server (adversarial)', () => {
     await raw(port, { method: 'POST', path: `/setup?k=${TOKEN}`, body });
     await raw(port, { method: 'POST', path: `/setup?k=${TOKEN}`, body });
     expect(flowCalls.fresh).toBe(2);
+  });
+
+  it('app password con formato invalido: 400, sin verificar ni guardar', async () => {
+    await boot();
+    const res = await raw(port, {
+      method: 'POST',
+      path: `/gmail?k=${TOKEN}`,
+      body: 'gmail_address=nico%40gmail.com&app_password=1234',
+    });
+    expect(res.status).toBe(400);
+    expect(flowCalls.verifySmtp).toBe(0);
+    expect(flowCalls.saveMail).toBe(0);
+  });
+
+  it('Google rechaza el login SMTP: 502 y NO se guarda nada', async () => {
+    await boot();
+    flowCalls.smtpFails = true;
+    const res = await raw(port, {
+      method: 'POST',
+      path: `/gmail?k=${TOKEN}`,
+      body: `gmail_address=nico%40gmail.com&app_password=${'a'.repeat(16)}`,
+    });
+    expect(res.status).toBe(502);
+    expect(flowCalls.saveMail).toBe(0);
+  });
+
+  it('login SMTP valido: guarda la cuenta (16 letras con espacios admitidas)', async () => {
+    await boot();
+    const grouped = 'abcd efgh ijkl mnop';
+    const res = await raw(port, {
+      method: 'POST',
+      path: `/gmail?k=${TOKEN}`,
+      body: `gmail_address=nico%40gmail.com&app_password=${encodeURIComponent(grouped)}`,
+    });
+    expect(res.status).toBe(200);
+    expect(flowCalls.verifySmtp).toBe(1);
+    expect(flowCalls.saveMail).toBe(1);
   });
 
   it('GET sin token: 403', async () => {
