@@ -186,7 +186,10 @@ export function startSetupServer(port = 8377): { server: Server; token: string; 
       swap = step;
       await step;
     }
-    return (flow ??= new LoginFlow(configFromEnv(process.env)));
+    if (!flow) {
+      flow = new LoginFlow(configFromEnv(process.env));
+    }
+    return flow;
   };
   const server = createServer(makeSetupHandler({ getFlow, token, port }));
   server.listen(port, '127.0.0.1');
