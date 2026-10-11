@@ -6,6 +6,8 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { upcomingEvents } from './agenda/ics.js';
+import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
@@ -28,12 +30,12 @@ import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
-import { applyConfiguredTimeZone, buildNowNote } from './datecontext.js';
+import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log, redact } from './log.js';
-import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
+import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -109,6 +111,7 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
+import { resolveOwnerDmChatId, resolveOwnerUserId, startVigilanteLoop } from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -1747,6 +1750,11 @@ async function serveCommand(): Promise<number> {
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
+      // El vigilante se para en el PRIMER statement: desde aquí no salen avisos
+      // nuevos durante todo el cierre. Su drain (acotado por el timeout de la
+      // agenda) corre en paralelo con el resto del apagado y se espera justo
+      // antes de cerrar las bases de datos.
+      const vigilanteDrain = vigilante.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
       telegram.cancelApprovals();
@@ -1764,6 +1772,7 @@ async function serveCommand(): Promise<number> {
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
+      await vigilanteDrain;
       store.close();
       memoryDb.close();
       log.info('daemon stopped', { threads: threads.size });
@@ -1811,6 +1820,77 @@ async function serveCommand(): Promise<number> {
     },
   });
   routineRunner.start();
+
+  // ---- vigilante (ojo de águila) -------------------------------------------
+  // Barrido proactivo: cada 30 min mira la agenda unificada (calendario + correo
+  // + pendientes) y avisa por Telegram SOLO de lo nuevo, una vez por hallazgo
+  // (el módulo guarda lo ya notificado en sqlite). Primer barrido a los 5 min:
+  // al arrancar, las fuentes aún se están calentando.
+  // Owner de los avisos: allowlist unitaria (asistente personal, ese usuario es
+  // el dueño) o config explícita `vigilante:ownerUserId` en vault. La allowlist
+  // autoriza USO del bot, NO propiedad de la agenda; sin owner verificado el
+  // vigilante no envía nada (fail-closed).
+  const vigilanteOwnerConfigured = Number((await vaultGet('vigilante:ownerUserId'))?.trim());
+  const vigilanteOwnerId = resolveOwnerUserId(
+    allowed,
+    Number.isSafeInteger(vigilanteOwnerConfigured) && vigilanteOwnerConfigured > 0
+      ? vigilanteOwnerConfigured
+      : null,
+  );
+  const vigilante = startVigilanteLoop(
+    {
+      db: memoryDb,
+      agenda: () =>
+        buildAgenda({
+          calendar: () =>
+            upcomingEvents({
+              getUrl: () => vaultGet('calendar:icsUrl'),
+              fetchText: async (url) => {
+                // Timeout duro: un servidor de calendario colgado no puede eternizar
+                // el barrido ni el drain del apagado.
+                const res = await fetch(url, {
+                  redirect: 'follow',
+                  signal: AbortSignal.timeout(15_000),
+                });
+                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
+                return res.text();
+              },
+            }),
+          mail: async () => {
+            const account = await loadMailAccount();
+            if (!account) return [];
+            // Tres días hacia atrás: el extractor solo propone fechas futuras, y un
+            // buzón entero por barrido es ruido y tiempo de IMAP.
+            // Deadline duro: un IMAP colgado no se apila entre barridos.
+            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30, 20_000);
+          },
+          followups: () => followups.list(undefined, 200),
+        }),
+      send: (text) => {
+        // Destinatario fijo: el DM del owner verificado arriba. Un grupo — aunque
+        // hable un usuario permitido — NO es destino: la agenda es privada. Sin DM
+        // del owner, fail-closed: no se envía y se reintenta en el próximo barrido.
+        const chatId = resolveOwnerDmChatId(
+          [...threads.values()].map((t) => t.chatKey),
+          vigilanteOwnerId,
+        );
+        if (!chatId) {
+          log.warn('vigilante: sin DM de owner verificado; el hallazgo queda pendiente', {});
+          return Promise.resolve(false);
+        }
+        return telegram
+          .send({ channel: 'telegram', account: telegram.account, chatId, text })
+          .then(() => true)
+          .catch((err: unknown) => {
+            log.warn('vigilante: send failed', { err });
+            return false;
+          });
+      },
+    },
+    localTimeZone(),
+    30 * 60 * 1000,
+    5 * 60 * 1000,
+  );
 
   // ---- commands -----------------------------------------------------------
 
