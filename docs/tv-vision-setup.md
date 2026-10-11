@@ -46,21 +46,27 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      (/home/root/mm-rollback-<ts>.sh) se genera desde scripts/tv/templates/
      mapper-rollback.sh (cubierto por scripts/tv/test-tv-rollback-mock.sh) y se
      VERIFICA ejecutable ANTES de mutar nada; el servicio viejo se para y se
-     confirma NO-VIVO (pgrep, exigido en preflight) antes del rename. El rollback
-     garantiza SOLO lo que el codigo verifica: stop sin ||true, guard no-vivo
-     antes de tocar ficheros (si no puede pararlo, aborta sin tocar nada) y
-     restore con fallos visibles (set -e; nunca declara hecho un restore roto).
-     Rollback automatico ante fallos post-backup.
+     confirma NO-VIVO antes del rename (pgrep TRI-ESTADO: 0=vivo, 1=muerto,
+     cualquier otro exit = aborta visible). El rollback garantiza SOLO lo que
+     el codigo verifica: valida el backup (MANIFEST) ANTES de stop/rm - sin
+     MANIFEST o con ficheros ausentes aborta sin tocar nada; EMPTY = no habia
+     instalacion previa (rm limpio, distinto de backup perdido); stop sin
+     ||true, guard no-vivo antes de tocar ficheros y restore con fallos
+     visibles (set -e; nunca declara hecho un restore roto).
+     Rollback automatico ante fallos post-backup. Tests mock:
+     scripts/tv/test-tv-rollback-mock.sh (8/8, filesystem falso real).
    - --button se valida contra la lista oficial de botones de v1.1.0
      (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
      (:8765/tv/button-health) no responde - el boton NO se activa sin listener.
    - Rollback tailscaled: /home/root/tailscaled-autostart-rollback-<ts>.sh desde
      templates/tailscaled-rollback.sh (mismo test mock). Lee el pre-state de
-     /home/root/tailscaled-autostart-<ts>.state y deshace SOLO lo propio (mata el
-     daemon solo si la instalacion lo lanzo, desmonta solo si ella monto,
-     restaura+relanza el init previo si existia). set -e: cada undo falla
-     visible, sin "rollback hecho" falso. Verificado ejecutable ANTES de mutar.
+     /home/root/tailscaled-autostart-<ts>.state (valores con quoting; multi-PID
+     no rompe el source) y deshace SOLO lo propio: mata el daemon solo si la
+     instalacion lo lanzo, PID a PID (kill "$(pidof)" falla con varios),
+     desmonta solo si ella monto, restaura+relanza el init previo si existia.
+     set -e: cada undo falla visible, sin "rollback hecho" falso.
+     Verificado ejecutable ANTES de mutar.
    - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
    - Boton: SIN defecto - se decide en ejecucion via --button (owner).
    - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta

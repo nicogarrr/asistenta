@@ -1,6 +1,7 @@
 #!/bin/sh
 # install-tailscaled-autostart.sh - autostart de tailscaled (webosbrew init.d).
-# R6: rollback desde templates/tailscaled-rollback.sh (test mock local) con
+# R7: pre-state con quoting seguro (multi-PID no rompe el source) y kill PID a
+# PID. Rollback desde templates/tailscaled-rollback.sh (test mock 8/8) con
 # set -e y fallos visibles (nada de "rollback hecho" falso). Ownership real: Antes de mutar captura el estado previo
 # (init existente, pid de tailscaled, mount de resolv.conf) y el script de
 # rollback generado solo deshace lo que ESTA instalacion hizo:
@@ -29,7 +30,7 @@ echo "pre-state: init=$PRE_INIT pid='${PRE_PID:-ninguno}' dns_montado=$PRE_DNS"
 # Pre-state a fichero + rollback generado desde el template testeado.
 RB=/home/root/tailscaled-autostart-rollback-$TS.sh
 STATE=/home/root/tailscaled-autostart-$TS.state
-printf 'PRE_PID=%s\nPRE_DNS=%s\nPRE_INIT=%s\n' "$PRE_PID" "$PRE_DNS" "$PRE_INIT" > "$STATE"
+printf 'PRE_PID="%s"\nPRE_DNS=%s\nPRE_INIT=%s\n' "$PRE_PID" "$PRE_DNS" "$PRE_INIT" > "$STATE"
 sed -e "s|__STATE__|$STATE|g" -e "s|__BAK__|/var/lib/webosbrew/init.d/tailscaled.bak-$TS|g" \
   /home/root/.tailscaled-rollback.tmpl > "$RB"
 chmod +x "$RB"

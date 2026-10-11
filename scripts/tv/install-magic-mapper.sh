@@ -1,5 +1,5 @@
 #!/bin/sh
-# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R6:
+# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R7:
 # - rollback generado desde templates/mapper-rollback.sh (test mock local):
 #   stop sin ||true, guard no-vivo antes de tocar ficheros, restore visible;
 # - rollback script verificado ANTES de mutar; stop del servicio viejo confirmado
@@ -8,7 +8,9 @@
 #   con magic_mapper_settings rechazado como reservado;
 # - staging en el fs propio de cada destino; rollback automatico en fallo
 #   post-backup (lo que el codigo garantiza: nada mas).
-# - pgrep exigido en preflight (sin el, deploy/rollback no pueden verificar).
+# - pgrep exigido en preflight y usado TRI-ESTADO (0=vivo, 1=muerto, otro=aborta);
+# - backup con MANIFEST: el rollback valida la copia ANTES de mutar y distingue
+#   "sin instalacion previa" (EMPTY) de "backup perdido" (aborta).
 # Uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]
 set -eu
 TV="${1:?uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]}"
@@ -79,8 +81,11 @@ BK=/home/root/mm-backup-$TS
 FILES="/home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper"
 mkdir -p "$BK"
 for f in $FILES; do
-  if [ -e "$f" ]; then cp -a "$f" "$BK/"; fi
+  if [ -e "$f" ]; then cp -a "$f" "$BK/" && basename "$f" >> "$BK/.mlist"; fi
 done
+# MANIFEST: lo respaldado, o EMPTY si no habia instalacion previa (distingue
+# "sin instalacion" de "backup perdido" en el rollback).
+if [ -f "$BK/.mlist" ]; then mv "$BK/.mlist" "$BK/MANIFEST"; else echo EMPTY > "$BK/MANIFEST"; fi
 # Rollback REAL generado desde el template testeado (templates/mapper-rollback.sh):
 # stop sin ||true, guard no-vivo antes de rm, restore con fallos visibles.
 sed "s|__BK__|$BK|g" /home/root/.mm-rollback.tmpl > /home/root/mm-rollback-$TS.sh
@@ -96,7 +101,9 @@ if [ -x /var/lib/webosbrew/init.d/start_magic_mapper ]; then
   /var/lib/webosbrew/init.d/start_magic_mapper stop 2>/dev/null || true
 fi
 sleep 1
-pgrep -f magic_mapper.py >/dev/null 2>&1 && { echo "un magic_mapper viejo sigue VIVO - aborto ANTES de mutar"; exit 1; }
+# pgrep tri-estado: 0=vivo (aborta), 1=muerto (sigue), otro=error (aborta visible)
+rc=0; pgrep -f magic_mapper.py >/dev/null 2>&1 || rc=$?
+[ "$rc" = "1" ] || { [ "$rc" = "0" ] && echo "un magic_mapper viejo sigue VIVO - aborto ANTES de mutar" || echo "pgrep fallo con exit $rc - no puedo confirmar proceso muerto"; exit 1; }
 mv /home/root/.mm-new/magic_mapper.py /home/root/magic_mapper.py || rollback
 mv /home/root/.mm-new/magic_mapper_config.json /home/root/magic_mapper_config.json || rollback
 mv /home/root/.mm-new/magic_mapper_config.json.dist /home/root/magic_mapper_config.json.dist || rollback
