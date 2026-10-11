@@ -83,7 +83,7 @@ describe('presupuesto por nivel: contrato con Agent.run', () => {
   it('respeta un max personalizado (no asume 60)', () => {
     expect(iterationBudgetFor(1, 200)).toBe(10);
     expect(iterationBudgetFor(2, 200)).toBe(25);
-    expect(iterationBudgetFor(3, 200)).toBe(60);
+    expect(iterationBudgetFor(3, 200)).toBe(200); // n3 y n4 no recortan
     expect(iterationBudgetFor(4, 200)).toBe(200);
   });
 
@@ -104,7 +104,10 @@ describe('presupuesto por nivel: contrato con Agent.run', () => {
     // volviera a consumir para recortar, quemaria el contador del padre,
     // el hijo heredaria un resto ya gastado y un retry quedaria sin margen.
     expect(src).not.toMatch(/this\.#budget\.consume\(/);
-    expect(src).not.toMatch(/this\.#budget\.reset\(/);
+    // reset() solo existe para la corrida raiz (cuando no hay presupuesto
+    // compartido); nunca dentro de run(), que es donde vive el router.
+    const runBody = src.slice(src.indexOf('async run('));
+    expect(runBody).not.toMatch(/this\.#budget\.reset\(/);
     // El tope por nivel se aplica solo al techo de ESTA corrida.
     expect(src).toMatch(/#runToolCallCeiling = iterationBudgetFor\(/);
   });
