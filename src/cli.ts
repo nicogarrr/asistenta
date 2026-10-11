@@ -6,6 +6,8 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { upcomingEvents } from './agenda/ics.js';
+import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
@@ -28,12 +30,12 @@ import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
-import { applyConfiguredTimeZone, buildNowNote } from './datecontext.js';
+import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { log, redact } from './log.js';
-import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
+import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -109,6 +111,7 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
+import { startVigilanteLoop } from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -1764,6 +1767,7 @@ async function serveCommand(): Promise<number> {
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
+      vigilante.stop();
       store.close();
       memoryDb.close();
       log.info('daemon stopped', { threads: threads.size });
@@ -1811,6 +1815,54 @@ async function serveCommand(): Promise<number> {
     },
   });
   routineRunner.start();
+
+  // ---- vigilante (ojo de águila) -------------------------------------------
+  // Barrido proactivo: cada 30 min mira la agenda unificada (calendario + correo
+  // + pendientes) y avisa por Telegram SOLO de lo nuevo, una vez por hallazgo
+  // (el módulo guarda lo ya notificado en sqlite). Primer barrido a los 5 min:
+  // al arrancar, las fuentes aún se están calentando.
+  const vigilante = startVigilanteLoop(
+    {
+      db: memoryDb,
+      agenda: () =>
+        buildAgenda({
+          calendar: () =>
+            upcomingEvents({
+              getUrl: () => vaultGet('calendar:icsUrl'),
+              fetchText: async (url) => {
+                const res = await fetch(url, { redirect: 'follow' });
+                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
+                return res.text();
+              },
+            }),
+          mail: async () => {
+            const account = await loadMailAccount();
+            if (!account) return [];
+            // Tres días hacia atrás: el extractor solo propone fechas futuras, y un
+            // buzón entero por barrido es ruido y tiempo de IMAP.
+            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30);
+          },
+          followups: () => followups.list(undefined, 200),
+        }),
+      send: (text) => {
+        // Avisa en la conversación más reciente del usuario; sin conversación no hay
+        // a quién avisar y el hallazgo queda pendiente para el siguiente barrido.
+        const latest = [...threads.values()].sort((a, b) => b.createdAt - a.createdAt)[0];
+        const chatId = latest?.chatKey.split(':')[2];
+        if (!chatId) return Promise.resolve(false);
+        return telegram
+          .send({ channel: 'telegram', account: telegram.account, chatId, text })
+          .then(() => true)
+          .catch((err: unknown) => {
+            log.warn('vigilante: send failed', { err });
+            return false;
+          });
+      },
+    },
+    localTimeZone(),
+    30 * 60 * 1000,
+    5 * 60 * 1000,
+  );
 
   // ---- commands -----------------------------------------------------------
 
