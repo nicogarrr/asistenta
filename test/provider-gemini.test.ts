@@ -103,7 +103,6 @@ describe('endpoints Google (Gemini)', () => {
   });
 });
 
-
 describe('endpoint custom desconocido (fail-closed)', () => {
   it('sin PA_API_KEY nunca usa la clave de OpenCode contra un tercero', async () => {
     // Repro del auditor #103: vault solo con la clave de OpenCode.
