@@ -105,11 +105,11 @@ export function chunkText(text: string, chunkChars = CHUNK_CHARS): string[] {
       for (let i = 0; i < para.length; i += chunkChars) chunks.push(para.slice(i, i + chunkChars));
       continue;
     }
-    if ((current + '\n\n' + para).trim().length > chunkChars && current.trim()) {
+    if (`${current}\n\n${para}`.trim().length > chunkChars && current.trim()) {
       chunks.push(current.trim());
       current = para;
     } else {
-      current = current ? current + '\n\n' + para : para;
+      current = current ? `${current}\n\n${para}` : para;
     }
   }
   if (current.trim()) chunks.push(current.trim());
@@ -145,10 +145,30 @@ async function extractPdfText(
 ): Promise<string> {
   // One budget over EVERYTHING: loader, getDocument and the per-page loop. A
   // hang in any of them rejects at timeoutMs; nothing is awaited bare.
+  let expired = false;
   let loadingTask: ReturnType<PdfjsLike['getDocument']> | undefined;
+  const destroyTask = async (): Promise<void> => {
+    // The destroy itself can hang on a stuck task, so it gets its own small
+    // bound; its error is swallowed either way - it is cleanup, not result.
+    const task = loadingTask;
+    loadingTask = undefined;
+    if (task) {
+      await withTimeout(
+        task.destroy().catch(() => {}),
+        Math.min(10_000, timeoutMs),
+        'pdf destroy timed out',
+      ).catch(() => {});
+    }
+  };
   const work = (async () => {
     const pdfjs = await loader();
     loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
+    if (expired) {
+      // The caller already gave up while the loader was in flight: kill the
+      // task we just created so "no work after the rejection" stays true.
+      await destroyTask();
+      throw new Error('pdf extraction timed out');
+    }
     const doc = await loadingTask.promise;
     const parts: string[] = [];
     for (let p = 1; p <= doc.numPages; p++) {
@@ -162,15 +182,8 @@ async function extractPdfText(
   try {
     return await withTimeout(work, timeoutMs, 'pdf extraction timed out');
   } finally {
-    // The destroy itself can hang on a stuck task, so it gets its own small
-    // bound; its error is swallowed either way - it is cleanup, not result.
-    if (loadingTask) {
-      await withTimeout(
-        loadingTask.destroy().catch(() => {}),
-        Math.min(10_000, timeoutMs),
-        'pdf destroy timed out',
-      ).catch(() => {});
-    }
+    expired = true;
+    await destroyTask();
   }
 }
 
