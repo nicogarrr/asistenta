@@ -86,8 +86,10 @@ function saveCredsToEnv(apiId: string, apiHash: string): void {
 export interface SetupDeps {
   /** Perezoso: el flujo (y la lectura de credenciales del env) nace con el
    * primer requestCode, NUNCA al arrancar el server: la pagina existe justo
-   * para introducir credenciales que aun no estan. */
-  getFlow: () => Pick<LoginFlow, 'requestCode' | 'complete'>;
+   * para introducir credenciales que aun no estan.
+   * fresh: las credenciales acaban de cambiar - descarta el flow anterior
+   * (con su config vieja) y construye uno nuevo; los cambios se serializan. */
+  getFlow: (opts?: { fresh?: boolean }) => Promise<Pick<LoginFlow, 'requestCode' | 'complete'>>;
   token: string;
   port: number;
   phone?: string;
@@ -133,12 +135,13 @@ export function makeSetupHandler(deps: SetupDeps) {
             saveCredsToEnv(apiId, apiHash);
             process.env.BOOKS_TG_API_ID = apiId;
             process.env.BOOKS_TG_API_HASH = apiHash;
-            await deps.getFlow().requestCode(phone);
+            await (await deps.getFlow({ fresh: true })).requestCode(phone);
             render(res, 'Codigo pedido: revisa Telegram en tu movil.');
           } else if (path === '/login') {
-            await deps
-              .getFlow()
-              .complete((form.code ?? '').trim(), form.password?.trim() || undefined);
+            await (await deps.getFlow()).complete(
+              (form.code ?? '').trim(),
+              form.password?.trim() || undefined,
+            );
             render(res, 'Sesion guardada. Ya puedes cerrar esta pagina.');
           } else {
             render(res, 'Ruta desconocida.', 404);
@@ -156,13 +159,23 @@ export function startSetupServer(port = 8377): { server: Server; token: string; 
   // Sin LoginFlow aqui: sin credenciales configuradas todavia, construirlo
   // lanzaria error y la pagina nunca abriria (huevo-y-gallina).
   let flow: LoginFlow | undefined;
-  const server = createServer(
-    makeSetupHandler({
-      getFlow: () => (flow ??= new LoginFlow(configFromEnv(process.env))),
-      token,
-      port,
-    }),
-  );
+  // Reconfiguracion: un /setup con credenciales nuevas desecha el flow viejo
+  // (su config readonly quedaria antigua). Los swaps van en cadena: dos POST
+  // concurrentes no dejan dos clientes vivos ni un flow a medias.
+  let swap: Promise<void> = Promise.resolve();
+  const getFlow = async (opts?: { fresh?: boolean }): Promise<LoginFlow> => {
+    if (opts?.fresh) {
+      const step = swap.then(async () => {
+        const old = flow;
+        flow = undefined;
+        if (old) await old.dispose();
+      });
+      swap = step;
+      await step;
+    }
+    return (flow ??= new LoginFlow(configFromEnv(process.env)));
+  };
+  const server = createServer(makeSetupHandler({ getFlow, token, port }));
   server.listen(port, '127.0.0.1');
   return { server, token, url: `http://127.0.0.1:${port}/?k=${token}` };
 }

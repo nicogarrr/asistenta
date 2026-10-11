@@ -52,9 +52,16 @@ function raw(
 
 let server: Server | undefined;
 let port = 0;
-const flowCalls = { requestCode: 0, complete: 0, getFlow: 0, failWith: '' };
+const flowCalls = { requestCode: 0, complete: 0, getFlow: 0, fresh: 0, failWith: '' };
 
 async function boot(): Promise<void> {
+  // Aislamiento: cada boot empieza con contadores a cero y sin .env previo.
+  flowCalls.requestCode = 0;
+  flowCalls.complete = 0;
+  flowCalls.getFlow = 0;
+  flowCalls.fresh = 0;
+  const { rmSync } = await import('node:fs');
+  rmSync(process.env.BOOKS_ENV_PATH ?? '', { force: true });
   const fakeFlow = {
     requestCode: async () => {
       flowCalls.requestCode += 1;
@@ -65,11 +72,13 @@ async function boot(): Promise<void> {
     },
   };
   flowCalls.getFlow = 0;
+  flowCalls.fresh = 0;
   const s: Server = createServer((req, res) => {
     // El handler necesita el puerto real: se crea tras listen.
     const handler = makeSetupHandler({
-      getFlow: () => {
+      getFlow: async (opts?: { fresh?: boolean }) => {
         flowCalls.getFlow += 1;
+        if (opts?.fresh) flowCalls.fresh += 1;
         return fakeFlow;
       },
       token: TOKEN,
@@ -111,6 +120,14 @@ describe('setup server (adversarial)', () => {
     const res = await raw(port, { path: `/?k=${TOKEN}` });
     expect(res.status).toBe(200);
     expect(flowCalls.getFlow).toBe(0);
+  });
+
+  it('un segundo /setup pide flow FRESCO (reconfiguracion no usa creds viejas)', async () => {
+    await boot();
+    const body = `api_id=12345&api_hash=${'a'.repeat(32)}`;
+    await raw(port, { method: 'POST', path: `/setup?k=${TOKEN}`, body });
+    await raw(port, { method: 'POST', path: `/setup?k=${TOKEN}`, body });
+    expect(flowCalls.fresh).toBe(2);
   });
 
   it('GET sin token: 403', async () => {
