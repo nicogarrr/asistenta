@@ -247,6 +247,22 @@ export async function vaultSet(key: string, value: string): Promise<void> {
   await saveMap(map);
 }
 
+/**
+ * Set several keys in ONE load+save: the batch either lands together or not
+ * at all (single file write). Use it for values that are only meaningful as a
+ * group (e.g. mail:address + mail:password), so a failure mid-write never
+ * leaves half a pair confirmed. Not serialized against writers outside this
+ * process (shared vault).
+ */
+export async function vaultSetMany(entries: Record<string, string>): Promise<void> {
+  const map = await loadMap();
+  for (const [key, value] of Object.entries(entries)) {
+    map[key] = value;
+    cache.set(key, value);
+  }
+  await saveMap(map);
+}
+
 export async function vaultGet(key: string): Promise<string | undefined> {
   if (cache.has(key)) return cache.get(key);
   const map = await loadMap();

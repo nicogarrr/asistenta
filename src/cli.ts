@@ -159,7 +159,12 @@ export async function main(argv: string[]): Promise<number> {
         process.stderr.write('uso: pa books setup' + '\n');
         return 2;
       }
-      booksSetupCommand();
+      try {
+        await booksSetupCommand();
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
       return new Promise<number>(() => {});
     case 'doctor':
       return doctorCommand();

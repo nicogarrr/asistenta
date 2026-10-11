@@ -129,7 +129,13 @@ export function makeSetupHandler(deps: SetupDeps) {
     return run;
   };
   const render = (res: ServerResponse, msg: string, status = 200) => {
-    res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+    res.writeHead(status, {
+      'content-type': 'text/html; charset=utf-8',
+      // La pagina lleva el token en la URL y secretos en formularios: nada
+      // de cache del navegador ni de referrer que los filtre a terceros.
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    });
     res.end(PAGE.replaceAll('TOKEN', deps.token).replace('MSG', escapeHtml(msg)));
   };
   return (req: IncomingMessage, res: ServerResponse): void => {
@@ -185,7 +191,18 @@ export function makeSetupHandler(deps: SetupDeps) {
               );
               return;
             }
-            await deps.saveMail(address, appPassword);
+            try {
+              await deps.saveMail(address, appPassword);
+            } catch {
+              // Error generico: el detalle del vault puede llevar datos
+              // sensibles y NO vuelve al navegador.
+              render(
+                res,
+                'No se pudo guardar el correo en el vault local. Intentalo de nuevo.',
+                500,
+              );
+              return;
+            }
             render(res, 'Correo verificado y guardado.');
           } else if (path === '/login') {
             await (await deps.getFlow()).complete(
@@ -204,7 +221,13 @@ export function makeSetupHandler(deps: SetupDeps) {
   };
 }
 
-export function startSetupServer(port = 8377): { server: Server; token: string; url: string } {
+export function startSetupServer(port = 8377): {
+  server: Server;
+  token: string;
+  url: string;
+  /** Resuelve cuando el puerto escucha DE VERDAD; rechaza (p.ej. EADDRINUSE) si no. */
+  ready: Promise<void>;
+} {
   const token = generateSetupToken();
   // Sin LoginFlow aqui: sin credenciales configuradas todavia, construirlo
   // lanzaria error y la pagina nunca abriria (huevo-y-gallina).
@@ -238,12 +261,23 @@ export function startSetupServer(port = 8377): { server: Server; token: string; 
         await verifyGmailSmtp(address, appPassword);
       },
       saveMail: async (address, appPassword) => {
-        const { vaultSet } = await import('../vault.js');
-        await vaultSet('mail:address', address);
-        await vaultSet('mail:password', appPassword);
+        const { vaultSetMany } = await import('../vault.js');
+        // Una sola escritura para la pareja: nunca queda address nueva con
+        // password vieja. Limite honesto: escritores de OTRO proceso sobre
+        // el vault compartido no se serializan con esta operacion.
+        await vaultSetMany({ 'mail:address': address, 'mail:password': appPassword });
       },
     }),
   );
+  // Anunciar la URL antes del listening prometia un server que podia no
+  // existir: ready separa "creado" de "escuchando".
+  const ready = new Promise<void>((resolve, reject) => {
+    server.once('listening', () => resolve());
+    server.once('error', reject);
+  });
+  // Si el llamador ignora ready, que un fallo de listen no explote como
+  // unhandledRejection: quien lo espera sigue recibiendo el rechazo.
+  void ready.catch(() => undefined);
   server.listen(port, '127.0.0.1');
-  return { server, token, url: `http://127.0.0.1:${port}/?k=${token}` };
+  return { server, token, url: `http://127.0.0.1:${port}/?k=${token}`, ready };
 }
