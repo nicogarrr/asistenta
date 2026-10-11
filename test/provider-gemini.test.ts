@@ -102,3 +102,34 @@ describe('endpoints Google (Gemini)', () => {
     expect(handle.model.compat).toBeUndefined();
   });
 });
+
+
+describe('endpoint custom desconocido (fail-closed)', () => {
+  it('sin PA_API_KEY nunca usa la clave de OpenCode contra un tercero', async () => {
+    // Repro del auditor #103: vault solo con la clave de OpenCode.
+    VAULT_KEYS['provider:apiKey'] = 'opencode-secret';
+    delete process.env.PA_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
+    const { createProviderHandle } = await import('../src/core/provider.js');
+    await expect(
+      createProviderHandle({
+        provider: 'custom',
+        model: 'm',
+        baseUrl: 'https://third-party.example/v1',
+      } as never),
+    ).rejects.toThrow('PA_API_KEY');
+  });
+
+  it('un falso host Google tampoco recibe la clave de OpenCode', async () => {
+    VAULT_KEYS['provider:apiKey'] = 'opencode-secret';
+    delete process.env.PA_API_KEY;
+    const { createProviderHandle } = await import('../src/core/provider.js');
+    await expect(
+      createProviderHandle({
+        provider: 'custom',
+        model: 'm',
+        baseUrl: 'https://generativelanguage.googleapis.com.evil.example/v1',
+      } as never),
+    ).rejects.toThrow('PA_API_KEY');
+  });
+});

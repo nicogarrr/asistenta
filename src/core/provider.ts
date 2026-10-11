@@ -144,9 +144,15 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
       'no Gemini API key: run `pa vault set provider:geminiKey <key>` or set GEMINI_API_KEY',
     );
   }
-  if (!isOpenCodeEndpoint(baseUrl) && process.env.PA_API_KEY) {
-    // Endpoint OpenAI-compatible custom (Cerebras, vLLM, ...): clave generica.
-    return process.env.PA_API_KEY;
+  if (!isOpenCodeEndpoint(baseUrl)) {
+    // Endpoint OpenAI-compatible custom (Cerebras, vLLM, ...): NUNCA la
+    // clave de OpenCode ni vault provider:apiKey - un typo en PA_BASE_URL
+    // enviaria el secreto OpenCode a un tercero (hallazgo auditor #103).
+    // Falla cerrado si no hay PA_API_KEY explicita.
+    if (process.env.PA_API_KEY) return process.env.PA_API_KEY;
+    throw new Error(
+      `no API key for custom endpoint ${baseUrl}: set PA_API_KEY (the OpenCode key is never sent to third-party endpoints)`,
+    );
   }
   const fromVault = await vaultGet('provider:apiKey');
   if (fromVault) return fromVault;
