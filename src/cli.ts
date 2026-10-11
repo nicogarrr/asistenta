@@ -654,8 +654,9 @@ function tvToolDeps(store: Store): TvToolDeps {
       await tvToast(host, clientKey, message, { allowPlaintext });
     },
     power: async (on) => {
-      // Glasshouse powerOn/powerOff exige allowPower en la config de la tele;
-      // si esta deshabilitado (ok:false) o no responde, SSAP.
+      // Glasshouse powerOn/powerOff exige allowPower en la config de la tele.
+      // SSAP solo si Glasshouse no llego a recibir la orden; si responde con
+      // rechazo (allowPower=false) se respeta la config y se propaga el error.
       try {
         await (await ghClient()).control(on ? 'powerOn' : 'powerOff');
         return;
