@@ -42,6 +42,14 @@ export interface Inbound {
   audioFileId?: string;
   audioMimeType?: string;
   audioDurationSeconds?: number;
+  /**
+   * A forwarded document (PDF, text file, ...), also fetched lazily: the bytes
+   * feed the document memory, and downloading on arrival would reorder
+   * messages behind a slow fetch exactly like photos would.
+   */
+  documentFileId?: string;
+  documentMimeType?: string;
+  documentName?: string;
   /** Set by the adapter after its own auth check. */
   authorised: boolean;
   replyToMessageId?: string;

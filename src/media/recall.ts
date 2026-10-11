@@ -221,7 +221,7 @@ export class AudioRecall {
     if (!this.#directory) return null;
     return join(
       this.#directory,
-      createHash('sha256').update(`${chat}\0${message}`).digest('hex') + '.audio',
+      `${createHash('sha256').update(`${chat}\0${message}`).digest('hex')}.audio`,
     );
   }
   #remove(chat: string, message: string): void {
@@ -231,8 +231,8 @@ export class AudioRecall {
   #save(): void {
     if (!this.#directory) return;
     const path = join(this.#directory, 'index.json');
-    writeFileSync(path + '.tmp', JSON.stringify([...this.#byChat]), { mode: 0o600 });
-    renameSync(path + '.tmp', path);
+    writeFileSync(`${path}.tmp`, JSON.stringify([...this.#byChat]), { mode: 0o600 });
+    renameSync(`${path}.tmp`, path);
   }
   retain(chat: string, message: string, bytes: Buffer): void {
     if (!this.byMessage(chat, message) || bytes.length === 0 || bytes.length > 25_000_000) return;
