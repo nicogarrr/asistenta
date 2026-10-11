@@ -11,6 +11,8 @@ TV="${1:?uso: sh install-tailscaled-autostart.sh <ip-tv> [usuario]}"
 USER="${2:-root}"
 ssh "$USER@$TV" sh -s <<'REMOTE'
 set -eu
+[ "$(id -u)" = "0" ] || { echo "necesito root en la TV"; exit 1; }
+[ -x /media/developer/bin/tailscaled ] || { echo "tailscaled no esta en /media/developer/bin - instala tailscale primero"; exit 1; }
 mkdir -p /var/lib/webosbrew/init.d
 cat > /var/lib/webosbrew/init.d/tailscaled <<'INIT'
 #!/bin/sh

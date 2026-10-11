@@ -13,7 +13,7 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
   (wake en cadencia vigilando `tailscale status`).
 
 ## Prerequisitos a verificar EN la tele (ssh root@192.168.1.237)
-1. `cat /var/info/modelname` y version webOS: piccap requiere webOS >= 3.4 (repo oficial).
+1. `cat /var/info/modelname` y version webOS: piccap 0.5.3 requiere webOS >= 4.0 (manifiesto oficial; el script lo comprueba y aborta si no).
 2. Homebrew Channel presente y actualizado (Glasshouse ya funciona = homebrew OK).
 3. `/media/developer/bin/tailscaled` existe (estuvo online antes = instalado).
 
@@ -22,10 +22,10 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
    - Escribe /var/lib/webosbrew/init.d/tailscaled (run-parts; nombre sin puntos).
    - Lo arranca y verifica pidof. Verificar desde la VM: `tailscale status | grep -i lgwebostv`.
 2. **PicCap**: `sh scripts/tv/install-piccap.sh 192.168.1.237`
-   - Instala por ID via hbchannel.service (el servicio resuelve el paquete del
-     repo oficial; no fijamos URL de IPK para no acoplar a un formato cambiante).
-   - Instalacion asincrona: el script sondea listLaunchPoints hasta 90 s; si no
-     aparece, se instala desde la UI de Homebrew (camino manual documentado).
+   - Release observada: 0.5.3 (GitHub releases, URL + version reales); el sha256
+     del IPK se calcula AL EJECUTAR descargandolo (hbchannel EXIGE ipkUrl+ipkHash).
+   - Instalacion asincrona con suscripcion real al progreso y verificacion final
+     en listLaunchPoints; si no aparece, camino manual por la UI de Homebrew.
    - UI: esperar elevate; configurar receptor = IP tailscale de la VM AL EJECUTAR
      (`tailscale ip -4` en la VM; a 12/10 era 100.108.180.24, VERIFICAR), puerto
      flatbuffers 19400 (HyperHDR en la VM).
@@ -54,13 +54,16 @@ mapear "0" elimina su long-press. ir_input_enabled queda en false (no tocamos IR
 ## Que boton usar (decidir con Nico)
 Los botones de color YA tienen funciones utiles en la config de ejemplo (OLED light,
 eye comfort) - NO tocarlos sin permiso. Candidatos de la lista oficial de botones:
-"0"-"9", "guide", "info", "exit"... Proponemos "0" (en el mando de Nico no tiene
-funcion visible; confirmar). Cambiarlo = editar la clave de config/tv/magic_mapper_config.json
+"0"-"9", "guide", "info", "exit"... Proponemos "0" como HIPOTESIS A CONFIRMAR con Nico (N/D si su mando le da uso;
+ademas mapear 0-9 elimina su long-press - verificado upstream). NO ejecutar el
+paso 4 hasta tener: boton decidido + listener :8765/tv/button desplegado. Cambiarlo = editar la clave de config/tv/magic_mapper_config.json
 y volver a desplegar (restart del script).
 
 ## Rollback
-- piccap: luna-send luna://org.webosbrew.hbchannel.service/remove '{"id":"org.webosbrew.piccap"}'
-- magic_mapper: rm /var/lib/webosbrew/init.d/start_magic_mapper + reiniciar.
+- piccap: luna-send luna://org.webosbrew.hbchannel.service/uninstall '{"id":"org.webosbrew.piccap"}'
+- magic_mapper: stop del servicio + restaurar desde /home/root/mm-backup-<ts>/
+  (el instalador guarda TODOS los ficheros vivos previos ahi) + start. Si no
+  habia instalacion previa: stop + rm de los 4 ficheros desplegados.
 - tailscaled init: rm /var/lib/webosbrew/init.d/tailscaled (el daemon corriendo se mata con pidof/kill).
 
 ## Fuentes (verificadas 12/10 01:17)
