@@ -317,7 +317,43 @@ describe('formatFindings', () => {
   });
 });
 
+describe('timeout de agenda', () => {
+  it('una agenda colgada no eterniza el barrido: timeout y a otra cosa', async () => {
+    const db = new DatabaseSync(':memory:');
+    const started = Date.now();
+    const result = await runVigilanteOnce(
+      {
+        db,
+        agenda: () => new Promise<UnifiedAgenda>(() => {}),
+        send: async () => true,
+        agendaTimeoutMs: 30,
+      },
+      TZ,
+    );
+    expect(result).toEqual({ seen: 0, fresh: 0, notified: 0 });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe('startVigilanteLoop', () => {
+  it('stop drena acotado: ni una agenda colgada eterniza el cierre del daemon', async () => {
+    const loop = startVigilanteLoop(
+      {
+        db: new DatabaseSync(':memory:'),
+        agenda: () => new Promise<UnifiedAgenda>(() => {}),
+        send: async () => true,
+        agendaTimeoutMs: 30,
+      },
+      TZ,
+      10_000,
+      0,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const started = Date.now();
+    await loop.stop();
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('stop drena el barrido en vuelo y cancela el siguiente tick', async () => {
     let sends = 0;
     let sendFinished = false;

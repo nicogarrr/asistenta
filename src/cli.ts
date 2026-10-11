@@ -1764,10 +1764,15 @@ async function serveCommand(): Promise<number> {
       // opening it.
       await stopWake().catch(() => {});
       // Every Chromium, or the next start refuses to claim the profile dir.
+      // stopped YA, antes de cerrar nada más: desde aquí no salen avisos nuevos.
+      // El drain corre en paralelo con el apagado del resto y se espera antes de
+      // cerrar las bases de datos — una entrega confirmada queda persistida, y el
+      // timeout de la agenda acota cuánto puede tardar como máximo.
+      const vigilanteDrain = vigilante.stop();
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
-      await vigilante.stop();
+      await vigilanteDrain;
       store.close();
       memoryDb.close();
       log.info('daemon stopped', { threads: threads.size });
@@ -1841,7 +1846,12 @@ async function serveCommand(): Promise<number> {
             upcomingEvents({
               getUrl: () => vaultGet('calendar:icsUrl'),
               fetchText: async (url) => {
-                const res = await fetch(url, { redirect: 'follow' });
+                // Timeout duro: un servidor de calendario colgado no puede eternizar
+                // el barrido ni el drain del apagado.
+                const res = await fetch(url, {
+                  redirect: 'follow',
+                  signal: AbortSignal.timeout(15_000),
+                });
                 if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
                 return res.text();
               },

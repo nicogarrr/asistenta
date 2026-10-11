@@ -48,6 +48,29 @@ export const MAX_HALLAZGOS = 5;
 /** Tope de título, como en la agenda: un asunto de correo no acotado infla el digest. */
 export const MAX_TITULO = 90;
 
+/** Tope por defecto para construir la agenda: una fuente colgada no puede eternizar un barrido. */
+export const AGENDA_TIMEOUT_MS = 60_000;
+
+/** Rechaza `p` si tarda más de `ms`: el temporizador gana aunque la promesa no se rinda nunca. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label}: más de ${ms} ms sin respuesta`));
+    }, ms);
+    timer.unref?.();
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
 const DAY_MS = 86_400_000;
 
 export interface VigilanteDeps {
@@ -64,6 +87,11 @@ export interface VigilanteDeps {
    * `stop()` la espera antes de que se cierren las bases de datos.
    */
   shouldAbort?: () => boolean;
+  /**
+   * Tope para construir la agenda (ICS/IMAP colgados). Sin él, el drain de
+   * `stop()` podría esperar una fuente colgada y el daemon no cerraría nunca.
+   */
+  agendaTimeoutMs?: number;
 }
 
 export interface VigilanteResult {
@@ -232,7 +260,11 @@ export async function runVigilanteOnce(
   try {
     initVigilanteStore(deps.db);
     const now = deps.now ?? Date.now;
-    const agenda = await deps.agenda();
+    const agenda = await withTimeout(
+      deps.agenda(),
+      Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
+      'vigilante: construir la agenda',
+    );
 
     const findings = collectFindings(agenda, timeZone, now());
     if (findings.length === 0) return zero;
