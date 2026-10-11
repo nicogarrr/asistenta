@@ -93,10 +93,10 @@ import {
 import { createShellTool } from './tools/shell.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
-import { createTvTool } from './tools/tv.js';
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
-import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
+import { createTvTool } from './tools/tv.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
+import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
 import {
@@ -563,7 +563,13 @@ function tvToolDeps(store: Store): TvToolDeps {
     shot: async () => {
       const { host, clientKey, allowPlaintext } = await paired();
       const image = await tvScreenshot(host, clientKey, { allowPlaintext });
-      return { image, mimeType: 'image/jpeg' };
+      // El mime/ext salen de la FIRMA real del frame: la tele decide el
+      // formato, no el cliente (tvScreenshot acepta JPEG y PNG).
+      const jpeg = image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
+      const png = image[0] === 0x89 && image[1] === 0x50 && image[2] === 0x4e && image[3] === 0x47;
+      if (png) return { image, mimeType: 'image/png', ext: 'png' };
+      if (jpeg) return { image, mimeType: 'image/jpeg', ext: 'jpg' };
+      return { image, mimeType: 'application/octet-stream', ext: 'bin' };
     },
     foreground: async () => {
       const { host, clientKey, allowPlaintext } = await paired();
@@ -615,16 +621,32 @@ function tvToolDeps(store: Store): TvToolDeps {
       }
       await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
     },
-    saveFrame: (bytes) => {
-      const file = join(frameDir, `tv-${Date.now()}.jpg`);
-      writeFileSync(file, bytes);
+    saveFrame: (bytes, ext) => {
+      // UUID + wx: dos agentes (o dos capturas en el mismo ms) nunca pisan el
+      // frame del otro, y el recuerdo apunta siempre a SUS bytes.
+      const file = join(frameDir, `tv-${randomUUID()}.${ext}`);
+      writeFileSync(file, bytes, { flag: 'wx' });
       return file;
     },
     getState: () => {
       const raw = store.kvGet(STATE_KEY);
       if (!raw) return null;
       try {
-        return JSON.parse(raw) as TvMemoryState;
+        // kv es disco, no memoria: validar la ESTRUCTURA antes de fiarse.
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        const s = parsed as Record<string, unknown>;
+        if (
+          typeof s.appId !== 'string' ||
+          !Array.isArray(s.category) ||
+          !s.category.every((c) => typeof c === 'string') ||
+          typeof s.at !== 'string' ||
+          typeof s.framePath !== 'string' ||
+          typeof s.bytes !== 'number'
+        ) {
+          return null;
+        }
+        return s as unknown as TvMemoryState;
       } catch {
         // kv corrupto: se descarta en silencio y se vuelve a mirar la tele.
         return null;

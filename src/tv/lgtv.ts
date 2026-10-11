@@ -629,11 +629,7 @@ export async function tvScreenshot(
         // la da la firma JPEG/PNG de los bytes, que se comprueba al final.
         if (type && !type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
           r.resume();
-          finish(
-            new Error(
-              `content-type inesperado en la captura: ${sanitizeTvText(type)}`,
-            ),
-          );
+          finish(new Error(`content-type inesperado en la captura: ${sanitizeTvText(type)}`));
           return;
         }
         const chunks: Buffer[] = [];
