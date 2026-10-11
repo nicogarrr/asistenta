@@ -18,6 +18,7 @@ import {
   retryDelay,
   sleep,
 } from './retry.js';
+import { classifyRequest, iterationBudgetFor } from './router.js';
 import { ToolLoadout } from './toolset.js';
 
 /**
@@ -700,6 +701,22 @@ export class PersonalAgent {
     // Per-request ceiling by default: each task gets the full allowance and cannot
     // spend the leftovers of whatever the user asked earlier.
     this.beginRun();
+    // Request-level routing (levels 1-4): local heuristic classification, zero
+    // cost, logged for audit. Today it only shrinks the iteration ceiling for
+    // small asks (never grows past config.maxToolCalls); the same
+    // classification is the extension point for per-level model choice once
+    // more free models exist.
+    const routing = classifyRequest(prompt);
+    const levelBudget = iterationBudgetFor(routing.level, this.#config.maxToolCalls);
+    if (levelBudget < this.#config.maxToolCalls) {
+      this.#budget.consume(this.#config.maxToolCalls - levelBudget);
+    }
+    log.info('request classified', {
+      level: routing.level,
+      reasons: routing.reasons,
+      override: routing.override,
+      iterationBudget: levelBudget,
+    });
     const shared: AttemptState = {
       toolCalls: 0,
       blocked: 0,
