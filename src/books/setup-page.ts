@@ -97,6 +97,19 @@ export interface SetupDeps {
 
 export function makeSetupHandler(deps: SetupDeps) {
   const phone = deps.phone ?? PHONE;
+  // Mutex por OPERACION completa (guardar credenciales + recrear flow +
+  // requestCode, o complete): una segunda peticion espera a que la primera
+  // termine del todo. Sin esto, un segundo /setup podia hacer dispose del
+  // flow mientras el primero estaba a mitad del requestCode.
+  let opChain: Promise<void> = Promise.resolve();
+  const runExclusive = (op: () => Promise<void>): Promise<void> => {
+    const run = opChain.then(op);
+    opChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
   const render = (res: ServerResponse, msg: string, status = 200) => {
     res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
     res.end(PAGE.replaceAll('TOKEN', deps.token).replace('MSG', escapeHtml(msg)));
@@ -117,7 +130,7 @@ export function makeSetupHandler(deps: SetupDeps) {
       if (body.length > 10_000) req.destroy();
     });
     req.on('end', () => {
-      void (async () => {
+      void runExclusive(async () => {
         try {
           const form = Object.fromEntries(new URLSearchParams(body));
           const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
@@ -149,7 +162,7 @@ export function makeSetupHandler(deps: SetupDeps) {
         } catch (err) {
           render(res, `Error: ${err instanceof Error ? err.message : String(err)}`, 500);
         }
-      })();
+      });
     });
   };
 }
