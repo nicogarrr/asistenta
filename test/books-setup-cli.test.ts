@@ -9,8 +9,8 @@ describe('booksSetupCommand', () => {
     });
     try {
       const match = printed.match(/http:\/\/127\.0\.0\.1:18381\/\?k=([a-f0-9]{48})/);
-      expect(match).not.toBeNull();
-      const token = match![1];
+      const token = match?.[1];
+      expect(token).toBeDefined();
       const ok = await fetch(`http://127.0.0.1:18381/?k=${token}`);
       expect(ok.status).toBe(200);
       const forbidden = await fetch('http://127.0.0.1:18381/');
