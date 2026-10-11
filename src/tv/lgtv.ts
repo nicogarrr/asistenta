@@ -82,8 +82,19 @@ export function assertTvHost(host: string, allowNonLan = false): string {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: la clase de control ES lo que sanitiza esta funcion
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
+/** Campo remoto arbitrario a texto seguro: nunca lanza (123, null, arrays...). */
+function safeText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === undefined || value === null) return '';
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /** Texto de error de la TV o la red: sin controles de terminal, sin eco de secretos, acotado. */
-function sanitizeText(text: string, secrets: Array<string | undefined> = []): string {
+export function sanitizeTvText(text: string, secrets: Array<string | undefined> = []): string {
   let out = text.replace(CONTROL_CHARS, '');
   for (const secret of secrets) {
     if (secret) out = out.replaceAll(secret, '***');
@@ -132,6 +143,14 @@ async function openSocket(
           clearTimeout(timer);
           reject(new Error(`no abre`));
         });
+        // Close antes de open: rechaza AL MOMENTO, no al timeout de 5s.
+        const onEarlyClose = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('cerro antes de abrir'));
+        };
+        ws.on('close', onEarlyClose);
       });
       return { ws, secure: candidate.secure };
     } catch (err) {
@@ -152,7 +171,7 @@ async function openSocket(
   }
   throw new Error(
     `No se pudo conectar con la TV en ${host} (wss://3001${opts.allowPlaintext ? ' y ws://3000' : ''}). ` +
-      `¿Encendida y en la misma red? (${sanitizeText(lastError instanceof Error ? lastError.message : String(lastError))})`,
+      `¿Encendida y en la misma red? (${sanitizeTvText(lastError instanceof Error ? lastError.message : String(lastError))})`,
   );
 }
 
@@ -177,6 +196,7 @@ function awaitPhase<T>(
   timeoutError: () => Error,
   handle: (msg: SsapMessage) => PhaseOutcome<T>,
   secrets: Array<string | undefined> = [],
+  kick?: () => void,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -201,14 +221,21 @@ function awaitPhase<T>(
         return;
       }
       if (!raw || typeof raw !== 'object') return;
-      const out = handle(raw as SsapMessage);
+      // El handler valida payload REMOTO: si aun asi lanza (error:123 y
+      // amigos), la fase falla DENTRO del Promise y el proceso no se tumba.
+      let out: PhaseOutcome<T>;
+      try {
+        out = handle(raw as SsapMessage);
+      } catch {
+        out = { ok: false, error: new Error('La TV devolvio una respuesta malformada.') };
+      }
       if (!out) return;
       if (out.ok) succeed(out.value);
       else fail(out.error);
     };
     const onClose = () => fail(new Error('La TV cerro la conexion.'));
     const onError = (err: unknown) =>
-      fail(new Error(sanitizeText(err instanceof Error ? err.message : String(err), secrets)));
+      fail(new Error(sanitizeTvText(err instanceof Error ? err.message : String(err), secrets)));
     const timer = setTimeout(() => fail(timeoutError()), timeoutMs);
     const cleanup = () => {
       clearTimeout(timer);
@@ -219,6 +246,18 @@ function awaitPhase<T>(
     ws.on('message', onMessage);
     ws.on('close', onClose);
     ws.on('error', onError);
+    // Un send() sincrono que lanza no puede dejar timer/listeners vivos.
+    if (kick) {
+      try {
+        kick();
+      } catch (err) {
+        fail(
+          new Error(
+            `No se pudo enviar a la TV: ${sanitizeTvText(err instanceof Error ? err.message : String(err), secrets)}`,
+          ),
+        );
+      }
+    }
   });
 }
 
@@ -248,7 +287,7 @@ async function register(
         return {
           ok: false,
           error: new Error(
-            `La TV rechazo el registro: ${sanitizeText(msg.error ?? 'error desconocido', [clientKey])}`,
+            `La TV rechazo el registro: ${sanitizeTvText(safeText(msg.error) || 'error desconocido', [clientKey])}`,
           ),
         };
       }
@@ -267,18 +306,19 @@ async function register(
       return undefined;
     },
     [clientKey],
-  );
-  ws.send(
-    JSON.stringify({
-      type: 'register',
-      id: 'register_0',
-      payload: {
-        'client-key': clientKey,
-        forcePairing: false,
-        manifest: TV_MANIFEST,
-        pairingType: 'PROMPT',
-      },
-    }),
+    () =>
+      ws.send(
+        JSON.stringify({
+          type: 'register',
+          id: 'register_0',
+          payload: {
+            'client-key': clientKey,
+            forcePairing: false,
+            manifest: TV_MANIFEST,
+            pairingType: 'PROMPT',
+          },
+        }),
+      ),
   );
   return pending;
 }
@@ -326,14 +366,21 @@ export async function tvRequest(
       (msg) => {
         if (msg.id !== id) return undefined;
         if (msg.type === 'response') {
-          const res = msg.payload ?? {};
-          // returnValue:false es un RECHAZO de la TV (not permitted y
-          // amigos): nunca se anuncia exito con el.
-          if (res.returnValue === false) {
+          const res = msg.payload;
+          // Contrato SSAP: exito = returnValue===true EXPLICITO sobre un
+          // payload objeto no-array. Null/missing/malformed NUNCA es exito:
+          // la CLI no puede anunciar "Tele apagada" ante respuesta invalida.
+          if (!res || typeof res !== 'object' || Array.isArray(res)) {
+            return {
+              ok: false,
+              error: new Error(`La TV devolvio una respuesta invalida para ${uri}.`),
+            };
+          }
+          if (res.returnValue !== true) {
             return {
               ok: false,
               error: new Error(
-                `La TV rechazo ${uri}: ${sanitizeText(String(res.errorText ?? 'not permitted'), [clientKey])}`,
+                `La TV rechazo ${uri}: ${sanitizeTvText(safeText(res.errorText) || 'not permitted', [clientKey])}`,
               ),
             };
           }
@@ -342,13 +389,13 @@ export async function tvRequest(
         return {
           ok: false,
           error: new Error(
-            `La TV devolvio error en ${uri}: ${sanitizeText(msg.error ?? msg.type ?? 'desconocido', [clientKey])}`,
+            `La TV devolvio error en ${uri}: ${sanitizeTvText(safeText(msg.error) || safeText(msg.type) || 'desconocido', [clientKey])}`,
           ),
         };
       },
       [clientKey],
+      () => opened.ws.send(JSON.stringify({ type: 'request', id, uri: `ssap://${uri}`, payload })),
     );
-    opened.ws.send(JSON.stringify({ type: 'request', id, uri: `ssap://${uri}`, payload }));
     return await pending;
   } finally {
     opened.ws.close();

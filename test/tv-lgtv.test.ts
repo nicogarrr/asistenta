@@ -199,6 +199,19 @@ describe('tvRequest', () => {
     await expect(pending).resolves.toBeUndefined();
   });
 
+  it('response sin returnValue explicito NUNCA es exito', async () => {
+    const sockets: FakeSocket[] = [];
+    const { factory } = factoryTracking(sockets);
+    const pending = tvRequest('192.168.1.237', 'KEY123', 'system/turnOff', {}, { factory });
+    await tick();
+    const tv = at(sockets, 0);
+    tv.emit({ type: 'registered', id: 'register_0', payload: { 'client-key': 'KEY123' } });
+    await tick();
+    const req = tv.lastSent() as { id: string };
+    tv.emit({ type: 'response', id: req.id, payload: {} });
+    await expect(pending).rejects.toThrow(/rechazo/);
+  });
+
   it('rechaza si la tele devuelve error en el request', async () => {
     const sockets: FakeSocket[] = [];
     const { factory } = factoryTracking(sockets);

@@ -14,4 +14,7 @@ describe('tvCommand (uso)', () => {
   it('subcomando desconocido devuelve 2', async () => {
     expect(await tvCommand(['explode'])).toBe(2);
   });
+  it('setup con host no-LAN devuelve 2 sin tocar la red', async () => {
+    expect(await tvCommand(['setup', 'http://evil.example/x@y'])).toBe(2);
+  });
 });

@@ -1,6 +1,6 @@
 /** Comandos `pa tv ...`: setup (pairing una vez), toast, apps, launch, off. */
 
-import { pairTv, tvRequest, tvToast } from './lgtv.js';
+import { assertTvHost, pairTv, sanitizeTvText, tvRequest, tvToast } from './lgtv.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
@@ -28,17 +28,46 @@ export async function tvCommand(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case 'setup': {
-      const host = rest[0]?.trim();
-      if (!host) {
+      const allowPlaintext = rest.includes('--allow-plaintext');
+      const hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
+      if (!hostArg) {
         process.stderr.write(
-          'uso: pa tv setup <ip>   (tele encendida; acepta el aviso en pantalla)\n',
+          'uso: pa tv setup <ip> [--allow-plaintext]   (tele encendida; acepta el aviso en pantalla)\n',
         );
         return 2;
+      }
+      // Validar ANTES de imprimir: un host crudo podria meter controles de terminal.
+      let host: string;
+      try {
+        host = assertTvHost(hostArg);
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 2;
+      }
+      if (allowPlaintext) {
+        process.stdout.write(
+          'AVISO: se acepta el canal ws://3000 SIN CIFRAR si el 3001 no abre: la client-key de emparejamiento podria viajar en claro por tu red local.\n',
+        );
       }
       process.stdout.write(
         `Emparejando con ${host}: ACEPTA el aviso en la tele con el mando (tienes 120s)...\n`,
       );
-      const { clientKey, secure } = await pairTv(host);
+      let paired: { clientKey: string; secure: boolean };
+      try {
+        paired = await pairTv(host, { allowPlaintext });
+      } catch (err) {
+        if (!allowPlaintext) {
+          process.stderr.write(
+            `${err instanceof Error ? err.message : String(err)}\n\n` +
+              'Si la tele no abre el canal cifrado (3001), reintenta con:\n' +
+              `  pa tv setup ${host} --allow-plaintext\n` +
+              'solo si aceptas que la clave de emparejamiento viaje sin cifrar por tu wifi.\n',
+          );
+          return 1;
+        }
+        throw err;
+      }
+      const { clientKey, secure } = paired;
       const { vaultSetMany } = await import('../vault.js');
       await vaultSetMany({
         [TV_HOST_KEY]: host,
@@ -73,7 +102,9 @@ export async function tvCommand(args: string[]): Promise<number> {
         { allowPlaintext },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
-      for (const p of points) process.stdout.write(`${p.id}\t${p.title}\n`);
+      // Titulos remotos sanitizados: la tele no controla esta terminal.
+      for (const p of points)
+        process.stdout.write(`${sanitizeTvText(p.id)}\t${sanitizeTvText(p.title)}\n`);
       return 0;
     }
     case 'launch': {
