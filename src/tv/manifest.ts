@@ -1,12 +1,22 @@
 /**
- * Manifiesto de emparejamiento LG Connect. Es el blob firmado con el cert de
- * pruebas de LG que usan los clientes open source (verbatim de bscpylgtv
- * manifest.py): la tele lo exige tal cual en el register; deviceName
- * identifica ESTE cliente en el aviso de emparejamiento.
+ * Manifiesto de emparejamiento LG Connect.
+ *
+ * SIN firma: la firma test-signing-cert de LG (appId com.lge.test, serial
+ * 2f930e2d...) que los clientes open source copiaban de bscpylgtv esta en la
+ * blacklist de LG en firmwares recientes (CVE-2023-6317; observado en 43.x,
+ * depende de modelo/firmware): la tele rechaza el pairing con 403
+ * "blacklisted certificate detected". Este es el fix oficial
+ * de aiowebostv >= 0.9.2: manifiesto sin firmar con TODOS los permisos en el
+ * array `permissions` externo. Verificado contra la tele real (pairing, toast
+ * y launch OK, 11 oct 2026).
+ *
+ * Consecuencia documentada: sin firma la tele puede NO conceder WRITE_SETTINGS
+ * ni READ_UPDATE_INFO (depende de modelo/firmware). Para
+ * ajustes de imagen haria falta el truco createAlert onClick/onfail ->
+ * luna://com.webos.settingsservice/setSystemSettings, o el puerto 9761
+ * (IP Control). Decidido por main bajo preferencias de Nico (cero terminal /
+ * secretos fuera de chat).
  */
-const SIGNATURE =
-  'eyJhbGdvcml0aG0iOiJSU0EtU0hBMjU2Iiwia2V5SWQiOiJ0ZXN0LXNpZ25pbmctY2VydCIsInNpZ25hdHVyZVZlcnNpb24iOjF9.hrVRgjCwXVvE2OOSpDZ58hR+59aFNwYDyjQgKk3auukd7pcegmE2CzPCa0bJ0ZsRAcKkCTJrWo5iDzNhMBWRyaMOv5zWSrthlf7G128qvIlpMT0YNY+n/FaOHE73uLrS/g7swl3/qH/BGFG2Hu4RlL48eb3lLKqTt2xKHdCs6Cd4RMfJPYnzgvI4BNrFUKsjkcu+WD4OO2A27Pq1n50cMchmcaXadJhGrOqH5YmHdOCj5NSHzJYrsW0HPlpuAx/ECMeIZYDh6RMqaFM2DXzdKX9NmmyqzJ3o/0lkk/N97gfVRLW5hA29yeAwaCViZNCP8iC9aO0q9fQojoa7NQnAtw==';
-
 export const TV_MANIFEST = {
   appVersion: '1.1',
   manifestVersion: 1,
@@ -18,58 +28,37 @@ export const TV_MANIFEST = {
     'CLOSE',
     'TEST_OPEN',
     'TEST_PROTECTED',
+    'TEST_SECURE',
     'CONTROL_AUDIO',
     'CONTROL_DISPLAY',
     'CONTROL_INPUT_JOYSTICK',
     'CONTROL_INPUT_MEDIA_RECORDING',
     'CONTROL_INPUT_MEDIA_PLAYBACK',
     'CONTROL_INPUT_TV',
+    'CONTROL_INPUT_TEXT',
+    'CONTROL_MOUSE_AND_KEYBOARD',
     'CONTROL_POWER',
     'CONTROL_TV_SCREEN',
     'READ_APP_STATUS',
     'READ_CURRENT_CHANNEL',
-    'READ_INPUT_DEVICE_LIST',
-    'READ_NETWORK_STATE',
-    'READ_RUNNING_APPS',
-    'READ_TV_CHANNEL_LIST',
-    'WRITE_NOTIFICATION_TOAST',
-    'READ_POWER_STATE',
     'READ_COUNTRY_INFO',
-    'CONTROL_INPUT_TEXT',
-    'CONTROL_MOUSE_AND_KEYBOARD',
+    'READ_INPUT_DEVICE_LIST',
     'READ_INSTALLED_APPS',
+    'READ_LGE_SDX',
+    'READ_LGE_TV_INPUT_EVENTS',
+    'READ_NETWORK_STATE',
+    'READ_NOTIFICATIONS',
+    'READ_POWER_STATE',
+    'READ_RUNNING_APPS',
     'READ_SETTINGS',
     'READ_STORAGE_DEVICE_LIST',
+    'READ_TV_CHANNEL_LIST',
+    'READ_TV_CURRENT_TIME',
+    'READ_UPDATE_INFO',
+    'SEARCH',
+    'UPDATE_FROM_REMOTE_APP',
+    'WRITE_NOTIFICATION_ALERT',
+    'WRITE_NOTIFICATION_TOAST',
+    'WRITE_SETTINGS',
   ],
-  signatures: [{ signature: SIGNATURE, signatureVersion: 1 }],
-  signed: {
-    appId: 'com.lge.test',
-    created: '20140509',
-    localizedAppNames: {
-      '': 'LG Remote App',
-      'ko-KR': '리모컨 앱',
-      'zxx-XX': 'ЛГ Rэмotэ AПП',
-    },
-    localizedVendorNames: { '': 'LG Electronics' },
-    permissions: [
-      'TEST_SECURE',
-      'CONTROL_INPUT_TEXT',
-      'CONTROL_MOUSE_AND_KEYBOARD',
-      'READ_INSTALLED_APPS',
-      'READ_LGE_SDX',
-      'READ_NOTIFICATIONS',
-      'SEARCH',
-      'WRITE_SETTINGS',
-      'WRITE_NOTIFICATION_ALERT',
-      'CONTROL_POWER',
-      'READ_CURRENT_CHANNEL',
-      'READ_RUNNING_APPS',
-      'READ_UPDATE_INFO',
-      'UPDATE_FROM_REMOTE_APP',
-      'READ_LGE_TV_INPUT_EVENTS',
-      'READ_TV_CURRENT_TIME',
-    ],
-    serial: '2f930e2d2cfe083771f68e4fe7bb07',
-    vendorId: 'com.lge',
-  },
 } as const;
