@@ -37,6 +37,8 @@ export interface TvClientDeps {
   factory?: TvSocketFactory;
   pairTimeoutMs?: number;
   commandTimeoutMs?: number;
+  /** Timeout total de descarga de capturas (tvScreenshot); por defecto 10s. */
+  shotTimeoutMs?: number;
   /**
    * Permite el fallback ws://3000 (sin cifrar). En pairing hace falta si la
    * tele no abre 3001 (documentado: la client-key viajaria en claro por la
@@ -414,9 +416,78 @@ export async function tvToast(
 }
 
 /**
+ * URL devuelta por la tele por RED (imageUri, socketPath): solo se acepta si
+ * apunta a la PROPIA tele (mismo host validado), con esquema y puerto
+ * conocidos y sin credenciales embebidas. Cualquier otra cosa es un destino
+ * arbitrario decidido por la red y se rechaza (SSRF).
+ */
+function parseTvUrl(value: unknown, safeHost: string, schemes: string[]): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (!schemes.includes(url.protocol)) return null;
+  if (url.username !== '' || url.password !== '') return null;
+  if (url.hostname !== safeHost) return null;
+  const port =
+    url.port === ''
+      ? url.protocol === 'https:' || url.protocol === 'wss:'
+        ? '443'
+        : '80'
+      : url.port;
+  if (!['80', '443', '3000', '3001'].includes(port)) return null;
+  return url.toString();
+}
+
+/** Teclas validas del mando: whitelist cerrada, jamas texto libre al protocolo. */
+const TV_KEY_NAMES = new Set([
+  'HOME',
+  'BACK',
+  'EXIT',
+  'ENTER',
+  'LEFT',
+  'RIGHT',
+  'UP',
+  'DOWN',
+  'OK',
+  'RED',
+  'GREEN',
+  'YELLOW',
+  'BLUE',
+  'INFO',
+  'GUIDE',
+  'MENU',
+  'MUTE',
+  'VOLUMEUP',
+  'VOLUMEDOWN',
+  'CHANNELUP',
+  'CHANNELDOWN',
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+]);
+
+/**
  * Tecla del mando por el socket de input (netinput.pointer.sock): es la unica
  * via para HOME/BACK/VOLUMEN, que `system.launcher/*` no cubre. Sin esto la
  * tele se queda atrapada en la app en primer plano.
+ *
+ * Endurecimiento (auditor, 11 oct): el socketPath viene de RED, asi que se
+ * exige mismo host que la tele pareada, esquema ws/wss y puerto conocido; el
+ * nombre de tecla sale de una whitelist (un nombre con CRLF inyectaria
+ * botones arbitrarios en el protocolo); y NUNCA se resuelve si el socket se
+ * cerro o fallo antes de tiempo. El margen de consumo empieza SOLO tras un
+ * open+send exitoso: si el handshake no abre, no hay exito que reportar.
  */
 export async function tvKey(
   host: string,
@@ -424,79 +495,169 @@ export async function tvKey(
   name: string,
   deps: TvClientDeps = {},
 ): Promise<void> {
+  const keyName = name.trim().toUpperCase();
+  if (!TV_KEY_NAMES.has(keyName)) {
+    throw new Error(`Tecla no valida: ${sanitizeTvText(name, [clientKey])}`);
+  }
+  const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
   const res = await tvRequest(
-    host,
+    safeHost,
     clientKey,
     'com.webos.service.networkinput/getPointerInputSocket',
     {},
     deps,
   );
-  const socketPath = (res as { socketPath?: string }).socketPath;
-  if (!socketPath) throw new Error('La tele no devolvio socket de input.');
+  const socketUrl = parseTvUrl((res as { socketPath?: unknown }).socketPath, safeHost, [
+    'ws:',
+    'wss:',
+  ]);
+  if (!socketUrl) throw new Error('La tele devolvio un socket de input no valido.');
   await new Promise<void>((resolve, reject) => {
-    const ws = new WebSocket(socketPath, { rejectUnauthorized: false });
+    const ws = new WebSocket(socketUrl, { rejectUnauthorized: false });
+    let settled = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
-      ws.close();
-      reject(new Error('timeout enviando la tecla'));
+      fail(new Error('timeout enviando la tecla'));
     }, 5000);
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      ws.close();
+      reject(err);
+    };
     ws.on('open', () => {
-      ws.send(`type:button\nname:${name}\n\n`);
-      // La tele no responde nada: se da margen al consumo y se cierra.
-      setTimeout(() => {
+      try {
+        ws.send(`type:button\nname:${keyName}\n\n`);
+      } catch {
+        fail(new Error('no se pudo enviar la tecla'));
+        return;
+      }
+      // La tele no responde nada: se da margen al consumo SOLO tras el envio
+      // y se cierra. Si el socket se cierra o falla antes, la tecla no se
+      // confirma.
+      grace = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         ws.close();
         resolve();
       }, 800);
     });
-    ws.on('error', () => {
-      clearTimeout(timer);
-      reject(new Error('no se pudo enviar la tecla'));
+    ws.on('error', () => fail(new Error('no se pudo enviar la tecla')));
+    ws.on('close', () => {
+      if (!settled) fail(new Error('la tele cerro el socket de input antes de tiempo'));
     });
   });
 }
 
 const MAX_SHOT_BYTES = 12 * 1024 * 1024;
+/** Un JPG 960x540 real son KBs; menos que esto es basura o un error de la tele. */
+const MIN_SHOT_BYTES = 512;
+const JPEG_MAGIC = [0xff, 0xd8, 0xff];
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /**
  * Captura de pantalla: `tv/executeOneShot` devuelve un imageUri HTTPS que hay
  * que descargar con TLS sin verificar (cert autofirmado de la tele).
  *
- * Limite de la plataforma: el puente SSAP entrega 960x540 JPG fijo e ignora
- * width/height/format. El contenido con DRM (Netflix, Prime, Disney+, DAZN...)
- * sale en NEGRO: es una proteccion de LG en TVs 2020+, no un fallo. Para ver
- * video protegido hace falta capturadora HDMI.
+ * Limites de la plataforma, comprobados contra la tele real (OLED55C4,
+ * webOS 23): el puente SSAP entrega 960x540 JPG fijo e ignora
+ * width/height/format, y el contenido con DRM (Netflix, Prime, Disney+,
+ * DAZN) sale en NEGRO. Eso es proteccion de LG en TVs 2020+, no un fallo:
+ * para ver video protegido hace falta capturadora HDMI.
+ *
+ * Endurecimiento (auditor, 11 oct): el imageUri viene de RED y solo se
+ * descarga si apunta a la propia tele (mismo host, https, puerto conocido,
+ * sin credenciales); los redirects NO se siguen; status 200 y content-type
+ * de imagen son obligatorios; se comprueba la firma JPEG/PNG completa y un
+ * tamano minimo (firma comprobada, contenido NO decodificado: no se afirma
+ * que sea una imagen valida); y hay un timeout TOTAL externo (no el de
+ * inactividad del socket) con cleanup de request y response en todas las
+ * salidas. El TLS sin verificar queda acotado a la IP de la tele pareada,
+ * como el resto del cliente.
  */
 export async function tvScreenshot(
   host: string,
   clientKey: string,
   deps: TvClientDeps = {},
 ): Promise<Buffer> {
-  const res = await tvRequest(host, clientKey, 'tv/executeOneShot', {}, deps);
-  const uri = (res as { imageUri?: string }).imageUri;
-  if (!uri) throw new Error('La tele no devolvio imageUri para la captura.');
+  const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
+  const res = await tvRequest(safeHost, clientKey, 'tv/executeOneShot', {}, deps);
+  const uri = parseTvUrl((res as { imageUri?: unknown }).imageUri, safeHost, ['https:']);
+  if (!uri) throw new Error('La tele devolvio un imageUri no valido para la captura.');
+  const timeoutMs = deps.shotTimeoutMs ?? 10_000;
   const bytes = await new Promise<Buffer>((resolve, reject) => {
-    https
-      .get(uri, { rejectUnauthorized: false }, (r) => {
+    let done = false;
+    let response: { destroy(): void } | undefined;
+    let req: ReturnType<typeof https.get> | undefined;
+    const finish = (err?: Error, buf?: Buffer) => {
+      if (done) return;
+      done = true;
+      clearTimeout(totalTimer);
+      if (err) {
+        response?.destroy();
+        req?.destroy();
+        reject(err);
+        return;
+      }
+      resolve(buf as Buffer);
+    };
+    // Timeout TOTAL desde el inicio: un servidor goteando bytes resetearia
+    // el timeout de inactividad del socket y retendria la descarga a vida.
+    const totalTimer = setTimeout(() => {
+      finish(new Error(`timeout de ${timeoutMs / 1000}s descargando la captura`));
+    }, timeoutMs);
+    // https.get puede lanzar SINCRONO (mock o biblioteca): sin try/catch el
+    // fallo escapa del Promise con el timer total vivo.
+    try {
+      req = https.get(uri, { rejectUnauthorized: false }, (r) => {
+        response = r;
+        const status = r.statusCode ?? 0;
+        const type = String(r.headers['content-type'] ?? '');
+        // Un 3xx cae aqui: los redirects NUNCA se siguen (destino de red).
+        if (status !== 200) {
+          r.resume();
+          finish(new Error(`la tele respondio HTTP ${status} al descargar la captura`));
+          return;
+        }
+        if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) {
+          r.resume();
+          finish(
+            new Error(
+              `content-type inesperado en la captura: ${sanitizeTvText(type) || 'ausente'}`,
+            ),
+          );
+          return;
+        }
         const chunks: Buffer[] = [];
         let total = 0;
         r.on('data', (c: Buffer) => {
           total += c.length;
           if (total > MAX_SHOT_BYTES) {
-            r.destroy();
-            reject(new Error('la captura supera el tamano maximo'));
+            finish(new Error('la captura supera el tamano maximo'));
             return;
           }
           chunks.push(c);
         });
-        r.on('end', () => resolve(Buffer.concat(chunks)));
-        r.on('error', reject);
-      })
-      .on('error', () => reject(new Error('no se pudo descargar la captura')));
+        r.on('end', () => finish(undefined, Buffer.concat(chunks)));
+        r.on('aborted', () => finish(new Error('la descarga de la captura fue abortada')));
+        r.on('error', () => finish(new Error('no se pudo descargar la captura')));
+      });
+      req.on('error', (err: unknown) => {
+        finish(err instanceof Error ? err : new Error('no se pudo descargar la captura'));
+      });
+    } catch (err) {
+      finish(err instanceof Error ? err : new Error('no se pudo iniciar la descarga'));
+    }
   });
-  // JPG y PNG empiezan por su firma: una respuesta HTML de error no debe
-  // guardarse como si fuera una imagen.
-  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-  const isPng = bytes.subarray(1, 4).toString('ascii') === 'PNG';
-  if (!isJpeg && !isPng) throw new Error('la tele no devolvio una imagen valida');
+  // JPG y PNG empiezan por su firma COMPLETA: una respuesta HTML de error o
+  // una respuesta de 2 bytes no deben guardarse como si fueran una imagen.
+  // Se comprueba la firma, no se decodifica el contenido.
+  const hasMagic = (magic: number[]): boolean => magic.every((b, i) => bytes[i] === b);
+  if (bytes.length < MIN_SHOT_BYTES || (!hasMagic(JPEG_MAGIC) && !hasMagic(PNG_MAGIC))) {
+    throw new Error('la captura no tiene firma JPEG/PNG completa');
+  }
   return bytes;
 }
