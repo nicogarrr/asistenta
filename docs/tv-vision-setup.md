@@ -42,14 +42,21 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
 4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop> --button <boton>`
    - El boton EXIGE flag explicito del operador (decision del owner en ejecucion;
      sin --button el script aborta). Candidatos: 0-9 (pierden long-press), guide, info.
-   - Staging en el fs propio de cada destino, backup de los 4, rollback automatico
-     ante cualquier fallo post-backup + script de rollback remoto real
-     (/home/root/mm-rollback-<ts>.sh).
+   - Staging en el fs propio de cada destino, backup de los 4. El script de
+     rollback (/home/root/mm-rollback-<ts>.sh) se escribe y se VERIFICA ejecutable
+     ANTES de mutar nada; el servicio viejo se para y se confirma NO-VIVO (pgrep)
+     antes del rename; el restore falla visiblemente (set -e dentro del rollback);
+     rollback automatico ante cualquier fallo post-backup.
+   - --button se valida contra la lista oficial de botones de v1.1.0
+     (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
      (:8765/tv/button-health) no responde - el boton NO se activa sin listener.
-   - Rollback tailscaled: script remoto real /home/root/tailscaled-autostart-rollback-<ts>.sh.
+   - Rollback tailscaled: /home/root/tailscaled-autostart-rollback-<ts>.sh con
+     ownership horneado: solo mata el daemon si la instalacion lo lanzo, solo
+     desmonta resolv.conf si el mount lo hizo ella, y restaura+relanza el init
+     previo si existia. Verificado ejecutable ANTES de mutar.
    - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
-   - Boton mapeado: "0" por defecto (ver seccion siguiente) -> curl al webhook.
+   - Boton: SIN defecto - se decide en ejecucion via --button (owner).
    - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta
      :8765/tv/button que despierte a la asistenta. Hoy NO existe superficie HTTP
      (telegram es long-polling). Hasta tenerlo, el boton no hace nada - config lista.
@@ -77,8 +84,8 @@ y volver a desplegar (restart del script).
   tras el backup. Manual: stop + restaurar los 4 ficheros desde
   /home/root/mm-backup-<ts>/ a sus rutas + start (comando exacto impreso por el
   script al desplegar). Sin instalacion previa: stop + rm de los 4.
-- tailscaled: umount /etc/resolv.conf + kill + restaurar init .bak-<ts> (o rm).
-- tailscaled init: rm /var/lib/webosbrew/init.d/tailscaled (el daemon corriendo se mata con pidof/kill).
+- tailscaled: sh /home/root/tailscaled-autostart-rollback-<ts>.sh (ownership
+  horneado al generarse: no toca daemon/DNS/init ajenos a la instalacion).
 
 ## Fuentes (verificadas 12/10 01:17)
 - PicCap: https://repo.webosbrew.org/apps/org.webosbrew.piccap/ y https://github.com/TBSniller/piccap

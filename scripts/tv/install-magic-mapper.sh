@@ -1,11 +1,10 @@
 #!/bin/sh
-# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R4:
-# - staging en el fs PROPIO de cada destino (rename atomico real);
-# - backup total + rollback automatico en CUALQUIER fallo post-backup
-#   (restore hace stop primero), y rollback manual como script remoto real;
-# - IP LAN estricta (192.168/10/172.16-31/100.64-127, 4 octetos 0-255);
-# - prereq evdev probado con import real;
-# - el boton solo se activa con --button <nombre> EXPLICITO del operador.
+# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R5:
+# - rollback script verificado ANTES de mutar; stop del servicio viejo confirmado
+#   no-vivo antes del rename; restore falla visiblemente (set -e dentro);
+# - --button validado contra la lista v1.1.0 (fuente: magic_mapper.py BUTTONS)
+#   con magic_mapper_settings rechazado como reservado;
+# - staging en el fs propio de cada destino; rollback automatico en fallo.
 # Uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]
 set -eu
 TV="${1:?uso: sh install-magic-mapper.sh <ip-tv> <ip-laptop> --button <nombre> [usuario]}"
@@ -13,16 +12,14 @@ LAPTOP="${2:?falta la IP LAN del laptop (asistenta)}"
 BTN=""
 [ "${3:-}" = "--button" ] && BTN="${4:-}"
 USER="${5:-root}"
-[ -n "$BTN" ] || { echo "falta --button <nombre> (decision explicita del owner; candidatos: 0-9, guide, info...)"; exit 2; }
-echo "$BTN" | grep -qE '^[a-z0-9_]+$' || { echo "nombre de boton invalido: $BTN"; exit 2; }
+KNOWN=" red green yellow blue ch_up ch_down vol_up vol_down play pause stop record rewind fastforward 1 2 3 4 5 6 7 8 9 0 prime sling netflix disney lg_channels rakuten alexa google guide voice channels channels_alt search search_alt exit sap tv info home "
+case "$KNOWN" in *" $BTN "*) : ;; *) echo "boton invalido o reservado: '$BTN' (lista v1.1.0; magic_mapper_settings esta reservado)"; exit 2;; esac
 VERSION="v1.1.0"
 BASE="https://raw.githubusercontent.com/andrewfraley/magic_mapper/$VERSION"
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 
-# IP: exactamente 4 octetos 0-255 y rango LAN/tailnet.
 O1=$(echo "$LAPTOP" | cut -d. -f1); O2=$(echo "$LAPTOP" | cut -d. -f2)
 O3=$(echo "$LAPTOP" | cut -d. -f3); O4=$(echo "$LAPTOP" | cut -d. -f4)
-case "$O1.$O2.$O3.$O4" in *[!0-9.]*|*..*|.*|*.) echo "IP mal formada: $LAPTOP"; exit 1;; esac
 [ "$(echo "$LAPTOP" | awk -F. '{print NF}')" = "4" ] || { echo "IP debe tener 4 octetos: $LAPTOP"; exit 1; }
 for o in "$O1" "$O2" "$O3" "$O4"; do
   case "$o" in ''|*[!0-9]*) echo "octeto no numerico: $o"; exit 1;; esac
@@ -35,18 +32,15 @@ PRIVATE=0
 [ "$O1" = "100" ] && [ "$O2" -ge 64 ] && [ "$O2" -le 127 ] && PRIVATE=1
 [ "$PRIVATE" = "1" ] || { echo "IP no privada/tailnet: $LAPTOP"; exit 1; }
 
-# PREFLIGHT: listener de la asistenta respondiendo (boton sin listener = boton muerto activado).
 curl -fsS -m 3 "http://$LAPTOP:8765/tv/button-health" >/dev/null 2>&1 \
   || { echo "listener :8765/tv/button-health NO responde en $LAPTOP - despliega primero la PR del listener"; exit 2; }
 
-# Config local renderizada con boton+URL, validada dos veces antes de subir.
 CFG="/tmp/mm-config-$$.json"
 sed -e "s|__ASISTENTA_URL__|http://$LAPTOP:8765/tv/button|" -e "s|\"__BUTTON__\"|\"$BTN\"|" \
   "$SCRIPT_DIR/../../config/tv/magic_mapper_config.json" > "$CFG"
-python3 -m json.tool "$CFG" >/dev/null || { echo "config renderizada no es JSON valido"; rm -f "$CFG"; exit 1; }
-python3 -c "import json;d=json.load(open('$CFG'));assert '$BTN' in d, 'boton no quedo en la config'" || { rm -f "$CFG"; exit 1; }
+python3 -m json.tool "$CFG" >/dev/null || { echo "config no es JSON valido"; rm -f "$CFG"; exit 1; }
+python3 -c "import json;d=json.load(open('$CFG'));assert '$BTN' in d" || { rm -f "$CFG"; exit 1; }
 
-# 1) STAGING: home en /home/root/.mm-new y init.d en su PROPIO directorio (rename atomico real).
 ssh "$USER@$TV" sh -s "$BASE" <<'REMOTE_EOF'
 set -eu
 BASE="$1"
@@ -59,51 +53,56 @@ cd /home/root/.mm-new
 wget -q "$BASE/magic_mapper.py" -O magic_mapper.py
 wget -q "$BASE/magic_mapper_config.json" -O magic_mapper_config.json.dist
 wget -q "$BASE/start_magic_mapper" -O start_magic_mapper
-[ -s magic_mapper.py ] && [ -s magic_mapper_config.json.dist ] && [ -s start_magic_mapper ]
+[ -s magic_mapper.py ] || { echo "magic_mapper.py vacio/ausente"; exit 1; }
+[ -s magic_mapper_config.json.dist ] || { echo "config dist vacio/ausente"; exit 1; }
+[ -s start_magic_mapper ] || { echo "start_magic_mapper vacio/ausente"; exit 1; }
 python3 -c "import ast; ast.parse(open('/home/root/.mm-new/magic_mapper.py').read())"
-# start_magic_mapper es SHELL: validar con el interprete que declara.
 SHBIN=$(head -1 start_magic_mapper | tr -d '\r' | sed 's/^#!//')
 [ -x "$SHBIN" ] || { echo "interprete $SHBIN no existe en la TV"; exit 1; }
 "$SHBIN" -n start_magic_mapper || { echo "start_magic_mapper no parsea con $SHBIN"; exit 1; }
-# Mover el startup al fs de destino ANTES del deploy (rename atomico luego).
 mv /home/root/.mm-new/start_magic_mapper /var/lib/webosbrew/init.d/.start_magic_mapper.staged
 REMOTE_EOF
 ssh "$USER@$TV" "cat > /home/root/.mm-new/magic_mapper_config.json" < "$CFG"
 rm -f "$CFG"
 ssh "$USER@$TV" "python3 -m json.tool /home/root/.mm-new/magic_mapper_config.json >/dev/null"
 
-# 2) BACKUP -> STOP -> REPLACE -> START -> VERIFY, con rollback automatico ante
-#    CUALQUIER fallo posterior al backup (el restore para el servicio primero).
 ssh "$USER@$TV" sh -s <<'REMOTE_EOF'
-set -u
+set -eu
 TS=$(date +%Y%m%d-%H%M%S)
 BK=/home/root/mm-backup-$TS
 FILES="/home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper"
-mkdir -p "$BK" || exit 1
+mkdir -p "$BK"
 for f in $FILES; do
-  if [ -e "$f" ]; then cp -a "$f" "$BK/" || { echo "backup fallo en $f"; exit 1; }; fi
+  if [ -e "$f" ]; then cp -a "$f" "$BK/"; fi
 done
-# Script de rollback REAL (sin interpolacion peligrosa: rutas fijas + $BK propio).
+# Rollback REAL: set -e (un fallo de copia se ve), stop primero, restore total.
 cat > /home/root/mm-rollback-$TS.sh <<RB
 #!/bin/sh
-BK="$BK"
+set -e
 /var/lib/webosbrew/init.d/start_magic_mapper stop 2>/dev/null || true
-for f in /home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper; do
-  rm -f "\$f"
-done
-for b in "\$BK"/*; do
+rm -f /home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /var/lib/webosbrew/init.d/start_magic_mapper
+for b in $BK/*; do
   [ -e "\$b" ] || continue
   case "\$b" in
     */start_magic_mapper) cp -a "\$b" /var/lib/webosbrew/init.d/start_magic_mapper ;;
     *) cp -a "\$b" "/home/root/\$(basename "\$b")" ;;
   esac
 done
-[ -x /var/lib/webosbrew/init.d/start_magic_mapper ] && /var/lib/webosbrew/init.d/start_magic_mapper start || true
+if [ -x /var/lib/webosbrew/init.d/start_magic_mapper ]; then /var/lib/webosbrew/init.d/start_magic_mapper start; fi
 RB
 chmod +x /home/root/mm-rollback-$TS.sh
-rollback() { echo "FALLO - ROLLBACK AUTOMATICO"; sh /home/root/mm-rollback-$TS.sh; exit 1; }
-
-/var/lib/webosbrew/init.d/start_magic_mapper stop 2>/dev/null || true
+[ -x /home/root/mm-rollback-$TS.sh ] || { echo "rollback script NO creado - aborto ANTES de mutar"; exit 1; }
+rollback() {
+  echo "FALLO - ROLLBACK AUTOMATICO"
+  if ! sh /home/root/mm-rollback-$TS.sh; then echo "EL ROLLBACK TAMBIEN FALLO: restaurar a mano desde $BK"; fi
+  exit 1
+}
+# Stop confirmado no-vivo ANTES de mutar (tambien sin init: proceso huerfano).
+if [ -x /var/lib/webosbrew/init.d/start_magic_mapper ]; then
+  /var/lib/webosbrew/init.d/start_magic_mapper stop 2>/dev/null || true
+fi
+sleep 1
+pgrep -f magic_mapper.py >/dev/null 2>&1 && { echo "un magic_mapper viejo sigue VIVO - aborto ANTES de mutar"; exit 1; }
 mv /home/root/.mm-new/magic_mapper.py /home/root/magic_mapper.py || rollback
 mv /home/root/.mm-new/magic_mapper_config.json /home/root/magic_mapper_config.json || rollback
 mv /home/root/.mm-new/magic_mapper_config.json.dist /home/root/magic_mapper_config.json.dist || rollback
