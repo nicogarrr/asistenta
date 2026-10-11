@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApprovalQuestion } from './approval-text.js';
@@ -3699,14 +3699,28 @@ function textOf(content: unknown): string {
  * module (see test/newfeatures.test.ts) and must not boot anything: the old
  * unconditional call ran `main` on import, which walked into `assertNotRunning`
  * and printed "another agent is already running" into every test run.
+ *
+ * Las rutas se comparan RESUELTAS (realpath): con `npm link`, `pnpm link` o
+ * cualquier instalacion por symlink/junction, argv[1] trae la ruta del link
+ * (node_modules\personal-agent\...) mientras que import.meta.url trae la ruta
+ * real del repo. Sin realpath la comparacion falla, isEntrypoint devuelve false
+ * y el CLI sale con codigo 0 sin hacer NADA (silencioso). Ver tests/entrypoint.
  */
 function isEntrypoint(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
-  const entryUrl = pathToFileURL(entry).href;
+  const resolveReal = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const entryUrl = pathToFileURL(resolveReal(entry)).href;
+  const selfUrl = pathToFileURL(resolveReal(fileURLToPath(import.meta.url))).href;
   // Windows paths are case-insensitive and the drive letter's case depends on how
   // the process was launched, so an exact URL match alone would miss its own entry.
-  return import.meta.url === entryUrl || import.meta.url.toLowerCase() === entryUrl.toLowerCase();
+  return selfUrl === entryUrl || selfUrl.toLowerCase() === entryUrl.toLowerCase();
 }
 
 if (isEntrypoint()) {
