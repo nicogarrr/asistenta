@@ -2,12 +2,15 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import {
   type BrowserService,
+  type ExecJsResult,
   looksLikeCssSelector,
   type TargetResult,
   type WaitResult,
 } from '../browser/service.js';
+import { normalizeDomain, parseSiteKey, siteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
+import { vaultGet } from '../vault.js';
 
 /**
  * The browser tool.
@@ -115,6 +118,15 @@ const BrowserParams = Type.Object({
     }),
   ),
   text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
+  secret_key: Type.Optional(
+    Type.String({
+      description:
+        'For fill: a vault key site:<dominio>:<campo> (e.g. site:seg-social.es:password). ' +
+        'The daemon types the secret straight from the vault, masked end to end: the value ' +
+        'never appears to you, in the result or in the transcript. Use it for logins. ' +
+        'Mutually exclusive with text.',
+    }),
+  ),
   option: Type.Optional(
     Type.String({
       description:
@@ -219,6 +231,146 @@ if (norm(got) !== norm(want)) {
   return 'ATENCIÓN: el campo ' + ${named} + ' quedó con "' + got + '" en lugar de "' + want + '". Revisa el autocompletado antes de continuar.';
 }
 return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
+}
+
+/**
+ * The secret fill channel (fill with `secret_key`) as a FIXED protocol, not a
+ * text: the script returns one status TOKEN from a closed set and the tool
+ * maps it to a fixed Spanish message. No page-derived string ever crosses -
+ * there is nothing to censor, so no partial or escaped fragment of the value
+ * can leak through an unknown string.
+ *
+ * Mechanics, hardened:
+ *
+ * - Origin binding on a STABLE element: the locator resolves ONCE to an
+ *   element handle, and the origin check and the typing run on that same
+ *   element in that same frame. A navigation or swap detaches the handle and
+ *   every later operation throws, which aborts - it can never retarget the
+ *   secret into a new frame. The check also runs again AFTER the write,
+ *   before verification.
+ * - NO keyboard retry: typing is focus-based and not atomic, so a page can
+ *   redirect the remaining characters mid-type. A failed exact fill is a
+ *   mismatch for a human, not a retry.
+ * - The origin must be https (localhost excepted) on the key's canonical
+ *   domain or a subdomain. No URL constructor: the vm sandbox this runs in
+ *   has no URL global, so the href is parsed by hand.
+ * - Every page operation sits in its own try/catch: Playwright errors can
+ *   quote the typed value in their call logs, so no error text leaves here.
+ * - Verification is honest: a read-back that cannot run is error_verify,
+ *   never an invented match. The comparison is EXACT (a password's case and
+ *   spaces are the password).
+ */
+export type SecretFillStatus =
+  | 'filled'
+  | 'rejected_origin'
+  | 'aborted_after_write'
+  | 'error_write'
+  | 'error_verify'
+  | 'mismatch';
+
+export const SECRET_FILL_STATUSES: readonly SecretFillStatus[] = [
+  'filled',
+  'rejected_origin',
+  'aborted_after_write',
+  'error_write',
+  'error_verify',
+  'mismatch',
+];
+
+/** The fixed message for a status token. Inputs are the key's domain only. */
+export function secretFillMessage(status: string, domain: string): string {
+  switch (status as SecretFillStatus) {
+    case 'filled':
+      return 'Campo rellenado con el valor del vault (no mostrado).';
+    case 'rejected_origin':
+      return `RECHAZADO: el campo no está en ${domain} (origen distinto, ilegible o no seguro). No se ha escrito nada.`;
+    case 'aborted_after_write':
+      return (
+        'ATENCIÓN: se intentó escribir el valor del vault y la página cambió durante la operación; ' +
+        'se detuvo antes de verificar. Puede haber texto parcial en el campo: revísalo antes de continuar. ' +
+        'El valor no se muestra.'
+      );
+    case 'error_write':
+      return 'ATENCIÓN: no se pudo escribir en el campo (valor del vault, no mostrado).';
+    case 'error_verify':
+      return 'ATENCIÓN: se intentó escribir pero no se pudo verificar el contenido del campo (valor del vault, no mostrado).';
+    case 'mismatch':
+      return (
+        'ATENCIÓN: el campo no quedó con el valor del vault. No se reintenta con el teclado por seguridad ' +
+        '(el foco puede cambiar a mitad de la escritura). Revisa el campo (autocompletado, gestor de ' +
+        'contraseñas) antes de continuar; el valor no se muestra por seguridad.'
+      );
+    default:
+      // An unknown token says the channel was tampered or broke: fail closed.
+      return 'ATENCIÓN: no se pudo verificar el campo (valor del vault, no mostrado).';
+  }
+}
+
+/** Whether the status means the value actually landed in the field. */
+export function secretFillOk(status: string): boolean {
+  return status === 'filled';
+}
+
+export function buildFillScriptMasked(locatorJs: string, value: string, domain: string): string {
+  const val = JSON.stringify(value);
+  const dom = JSON.stringify(domain);
+  return `const loc = ${locatorJs};
+const want = ${val};
+const expected = ${dom};
+const parse = (href) => {
+  const m = /^([a-z][a-z0-9+.-]*):\\/\\/([^/?#]*)/i.exec(String(href ?? ''));
+  if (!m) return null;
+  let h = m[2];
+  const at = h.lastIndexOf('@');
+  if (at !== -1) h = h.slice(at + 1);
+  const colon = h.indexOf(':');
+  if (colon !== -1) h = h.slice(0, colon);
+  return { proto: m[1].toLowerCase(), host: h.toLowerCase() };
+};
+const onExpected = (u) => {
+  if (!u) return false;
+  const hh = u.host.replace(/^www\\./, '');
+  const local = hh === 'localhost' || hh === '127.0.0.1';
+  if (u.proto !== 'https' && !local) return false;
+  return hh === expected || hh.endsWith('.' + expected);
+};
+let el;
+try {
+  el = await loc.elementHandle();
+} catch {
+  return 'error_write';
+}
+if (!el) return 'error_write';
+const frameOk = async () => {
+  try {
+    return onExpected(parse(await el.evaluate(() => String(location.href))));
+  } catch {
+    return false;
+  }
+};
+if (!(await frameOk())) return 'rejected_origin';
+try {
+  await el.fill(want);
+} catch {
+  // fill rejected before applying: no write was confirmed.
+  return 'error_write';
+}
+// A write WAS attempted. From here on no message may claim nothing was written.
+try {
+  await page.waitForTimeout(300);
+} catch {
+  return 'aborted_after_write';
+}
+if (!(await frameOk())) return 'aborted_after_write';
+let got;
+try {
+  got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
+} catch {
+  return 'error_verify';
+}
+if (got === null) return 'error_verify';
+if (got !== want) return 'mismatch';
+return 'filled';`;
 }
 
 /**
@@ -329,6 +481,11 @@ export function createBrowserTool(
       'tu"), and keep it for the rest of the task. Every result repeats whether the window',
       'is visible, so you can check instead of guessing. If it is headless and you want the',
       'user to see something, either reopen with visible: true or send a screenshot.',
+      '',
+      'LOGINS: never ask the user for a password or type one they pasted. Credentials',
+      'live in the vault as site:<dominio>:username and site:<dominio>:password; fill with',
+      'secret_key types them straight from the vault, masked - you never see the value. If',
+      'the key is missing the error names the exact `pa vault set` command for the user.',
       '',
       'CAPTCHAS: after open / click / press / snapshot the result may start with',
       '"captcha_detectado". That means a human check (Cloudflare, reCAPTCHA, hCaptcha...) is',
@@ -453,8 +610,54 @@ export function createBrowserTool(
 
         case 'fill': {
           const target = requireTarget(record);
-          const value = String(record.text ?? '');
-          if (!value) throw new Error('la acción fill necesita text');
+          const secretKey =
+            record.secret_key === undefined ? undefined : String(record.secret_key).trim();
+          let value: string;
+          let canonicalKey: string | undefined;
+          let secretDomain: string | undefined;
+          if (secretKey !== undefined) {
+            if (record.text !== undefined) {
+              throw new Error('la acción fill acepta text o secret_key, no ambos');
+            }
+            const parsed = parseSiteKey(secretKey);
+            if (!parsed) {
+              throw new Error(
+                'secret_key debe tener la forma site:<dominio>:<campo> ' +
+                  '(p. ej. site:seg-social.es:password).',
+              );
+            }
+            // Canonical form: casing in the argument cannot desync from the
+            // vault, where keys live in convention lowercase.
+            canonicalKey = siteKey(parsed.domain, parsed.field);
+            secretDomain = parsed.domain;
+            // The key is bound to its origin BEFORE the vault is touched:
+            // typing a secret into the wrong page is the one failure no retry
+            // undoes. The owning frame is checked again inside the script.
+            const probe = await service
+              .execJs(scope, 'return String(page.url());')
+              .catch(() => null);
+            const pageDomain = probe?.text ? normalizeDomain(probe.text) : null;
+            if (
+              !pageDomain ||
+              (pageDomain !== secretDomain && !pageDomain.endsWith(`.${secretDomain}`))
+            ) {
+              throw new Error(
+                `Rechazado: la página actual no es ${secretDomain}. ` +
+                  'No se ha tocado el vault ni se ha escrito nada.',
+              );
+            }
+            const stored = await vaultGet(canonicalKey);
+            if (stored === undefined) {
+              throw new Error(
+                `El vault no tiene ningún secreto con la clave ${canonicalKey}. ` +
+                  `Nico lo guarda con: pa vault set ${canonicalKey} <valor>`,
+              );
+            }
+            value = stored;
+          } else {
+            value = String(record.text ?? '');
+            if (!value) throw new Error('la acción fill necesita text');
+          }
           // Resolved first, and through the same rescue chain as click: a stale
           // selector used to be the end of the turn. The fill itself still goes through
           // the read-back script, which is what catches an autocomplete that mangles
@@ -462,7 +665,23 @@ export function createBrowserTool(
           const resolved = await service.resolveTarget(scope, target, {
             timeoutMs: readTimeout(record),
           });
+          const secretDetails = canonicalKey ? { secret_key: canonicalKey } : { value };
           if (!resolved.ok) {
+            // Secret path: the closed-channel rule covers every exit, so the
+            // resolution payload (page-derived) does not cross either - fixed
+            // message and allowlist details here as well.
+            if (canonicalKey) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `No se encontró el campo para escribir el secreto (clave ${canonicalKey}, valor no mostrado).`,
+                  },
+                ],
+                details: { secret_key: canonicalKey, visible: Boolean(resolved.visible) },
+                isError: true,
+              };
+            }
             return {
               content: [
                 {
@@ -470,7 +689,49 @@ export function createBrowserTool(
                   text: `${describeTarget(resolved, { done: 'filled', missing: 'encontrar el campo para escribir en' })}${visibleNote(resolved.visible)}`,
                 },
               ],
-              details: { ...resolved, value },
+              details: { ...resolved, ...secretDetails },
+            };
+          }
+          if (canonicalKey && secretDomain) {
+            // Dedicated secret channel, FIXED PROTOCOL: the script returns one
+            // status token from a closed set and the message comes from a
+            // fixed map - no page-derived string crosses, so there is nothing
+            // to censor (a partial or escaped fragment of the value cannot
+            // leak through an unknown string). Errors never propagate verbatim
+            // (Playwright can quote the typed value in its call logs), details
+            // are an allowlist, and nothing on this path logs code, value or
+            // error.
+            let status: string;
+            try {
+              const res: ExecJsResult = await service.execJs(
+                scope,
+                buildFillScriptMasked(resolved.locatorJs, value, secretDomain),
+              );
+              status = res.text.trim();
+            } catch {
+              throw new Error('No se pudo escribir el secreto (valor del vault, no mostrado).');
+            }
+            // An unknown token is never echoed anywhere: it could carry a
+            // fragment of the value, so details record 'unknown' and the
+            // message map fails closed.
+            const known = SECRET_FILL_STATUSES.includes(status as SecretFillStatus)
+              ? status
+              : 'unknown';
+            const ok = secretFillOk(known);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `${secretFillMessage(status, secretDomain)}${resolved.how === 'selector' ? '' : ` (resolved as ${resolved.how})`}${visibleNote(resolved.visible)}`,
+                },
+              ],
+              details: {
+                secret_key: canonicalKey,
+                status: known,
+                visible: Boolean(resolved.visible),
+                resolvedAs: resolved.how,
+              },
+              isError: !ok,
             };
           }
           const text = await service.execJs(
@@ -484,7 +745,7 @@ export function createBrowserTool(
                 text: `${text.text}${resolved.how === 'selector' ? '' : ` (resolved as ${resolved.how})`}${visibleNote(resolved.visible)}`,
               },
             ],
-            details: { ...resolved, value, filled: text.text },
+            details: { ...resolved, ...secretDetails, filled: text.text },
           };
         }
 
