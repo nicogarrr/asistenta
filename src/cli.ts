@@ -55,6 +55,7 @@ import { MemorySnapshot } from './memory/snapshot.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
+import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
@@ -137,6 +138,7 @@ import {
 } from './vault.js';
 import {
   getOjoEnabled,
+  isOwnerDm,
   resolveOwnerDmChatId,
   resolveOwnerUserId,
   setOjoEnabled,
@@ -2135,10 +2137,81 @@ async function serveCommand(): Promise<number> {
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. También te aviso de citas con hora que se pisan.',
-        `Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
+        `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ].join('\n'),
       { quote: true },
     );
+  };
+
+  /** `/ignora <n>`: descarta el aviso [#n]; a los 2 descartes parecidos propone una regla. */
+  const cmdIgnora = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const m = /^#?(\d{1,9})$/.exec(args.trim());
+    if (!m) {
+      await say(
+        inbound,
+        'Uso: /ignora <número del aviso>, el que sale entre corchetes [#n]. /ignorados lista las reglas.',
+        { quote: true },
+      );
+      return;
+    }
+    const res = dismissNotice(memoryDb, Number(m[1]), Date.now());
+    if (!res.ok) {
+      await say(inbound, res.error, { quote: true });
+      return;
+    }
+    if (res.already) {
+      await say(inbound, `El aviso #${m[1]} ya estaba descartado.`, { quote: true });
+      return;
+    }
+    const lines = [
+      `Descartado «${res.title.slice(0, 80)}»: no te lo vuelvo a recordar. Excepción: un pago o plazo con hora a menos de 2 h te lo aviso una vez más.`,
+    ];
+    if (res.noClass) {
+      lines.push('Su título no da un patrón fiable, así que no cuenta para proponer reglas.');
+    }
+    if (res.proposal) {
+      const r = res.proposal;
+      lines.push(
+        '',
+        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
+      );
+    }
+    await say(inbound, lines.join('\n'), { quote: true });
+  };
+
+  /** `/ignorados [activar|borrar <id>]`: ver y gestionar las reglas de ignorar. */
+  const cmdIgnorados = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const m = /^(activar|borrar)\s+R?(\d{1,9})$/i.exec(args.trim());
+    if (args.trim() && !m) {
+      await say(inbound, 'Uso: /ignorados, /ignorados activar <id> o /ignorados borrar <id>.', {
+        quote: true,
+      });
+      return;
+    }
+    if (m) {
+      const id = Number(m[2]);
+      const out =
+        (m[1] ?? '').toLowerCase() === 'activar'
+          ? activateRule(memoryDb, id)
+          : deleteRule(memoryDb, id);
+      if (!out.ok) {
+        await say(inbound, out.error ?? 'No se ha podido.', { quote: true });
+        return;
+      }
+    }
+    await say(inbound, formatRules(listRules(memoryDb)), { quote: true });
   };
 
   // ---- commands -----------------------------------------------------------
@@ -3271,6 +3344,7 @@ async function serveCommand(): Promise<number> {
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
+        '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
         '/memory - lo que recuerdo de ti',
         '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
         '/pendientes - lo que te tengo que recordar',
@@ -3890,6 +3964,10 @@ async function serveCommand(): Promise<number> {
             return cmdAgenda(inbound);
           case 'ojo':
             return cmdOjo(inbound, command.args);
+          case 'ignora':
+            return cmdIgnora(inbound, command.args);
+          case 'ignorados':
+            return cmdIgnorados(inbound, command.args);
           case 'voice':
             return cmdVoice(inbound, command.args);
           case 'wake':

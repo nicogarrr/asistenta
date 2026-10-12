@@ -52,6 +52,15 @@ import {
   stageKey,
   whenRelative,
 } from './ojo.js';
+import {
+  confirmNotices,
+  dropStaleReservations,
+  initIgnoreStore,
+  loadIgnoreState,
+  releaseNotices,
+  reserveNotices,
+  ruleSuppresses,
+} from './ojo-ignore.js';
 
 /** Tipos que merecen aviso proactivo. `reminder`/`other` no: o ya avisa otro, o es ruido. */
 export const VIGILANTE_KINDS: readonly AgendaKind[] = ['deadline', 'payment', 'travel', 'meeting'];
@@ -226,6 +235,16 @@ export function resolveOwnerUserId(
  * es el id del usuario, así que la coincidencia exacta con el owner verificado es la
  * prueba; grupos y canales (ids negativos) y otros canales ni se miran.
  */
+/** Solo el DM del owner verificado puede usar /ignora y /ignorados: la agenda es privada. */
+export function isOwnerDm(
+  m: { channel: string; chatId: string; userId: string },
+  ownerUserId: number | null,
+): boolean {
+  if (ownerUserId == null || m.channel !== 'telegram') return false;
+  const wanted = String(ownerUserId);
+  return m.chatId === wanted && m.userId === wanted;
+}
+
 export function resolveOwnerDmChatId(
   chatKeys: Iterable<string>,
   ownerUserId: number | null,
@@ -276,8 +295,12 @@ function formatWhen(item: AgendaItem, timeZone: string): string {
  * confianza del extractor es baja (<0.8, el mismo umbral que la agenda), lo dice:
  * un plazo leído por heurística en un correo es una sospecha razonable, no un hecho.
  */
-export function formatFindings(items: AgendaItem[], timeZone: string): string {
-  const lines = items.map((item) => {
+export function formatFindings(
+  items: AgendaItem[],
+  timeZone: string,
+  numbers?: readonly number[],
+): string {
+  const lines = items.map((item, i) => {
     const label = KIND_LABEL[item.kind] ?? item.kind;
     const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
     const tag =
@@ -288,7 +311,7 @@ export function formatFindings(items: AgendaItem[], timeZone: string): string {
       item.confidence !== undefined && item.confidence < 0.8
         ? ` (${Math.round(item.confidence * 100)}% seguro)`
         : '';
-    return `• ${label}: ${title} — ${formatWhen(item, timeZone)} (${tag})${doubt}`;
+    return `• ${label}: ${title} — ${formatWhen(item, timeZone)} (${tag})${doubt}${numbers?.[i] ? ` [#${numbers[i]}]` : ''}`;
   });
   const header =
     items.length === 1
@@ -304,8 +327,13 @@ interface Reminder {
   covered: ReminderStage[];
 }
 
-export function formatReminders(reminders: Reminder[], now: number, timeZone: string): string {
-  const lines = reminders.map(({ item }) => {
+export function formatReminders(
+  reminders: Reminder[],
+  now: number,
+  timeZone: string,
+  numbers?: readonly number[],
+): string {
+  const lines = reminders.map(({ item }, i) => {
     const label = KIND_LABEL[item.kind] ?? item.kind;
     const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
     const tag =
@@ -316,7 +344,7 @@ export function formatReminders(reminders: Reminder[], now: number, timeZone: st
       item.confidence !== undefined && item.confidence < 0.8
         ? ` (${Math.round(item.confidence * 100)}% seguro)`
         : '';
-    return `• ${label}: ${title} — ${whenRelative(item, now, timeZone)}; ${formatWhen(item, timeZone)} (${tag})${doubt}`;
+    return `• ${label}: ${title} — ${whenRelative(item, now, timeZone)}; ${formatWhen(item, timeZone)} (${tag})${doubt}${numbers?.[i] ? ` [#${numbers[i]}]` : ''}`;
   });
   return `⏰ Recordatorio: ${reminders.length === 1 ? '1 cosa próxima' : `${reminders.length} cosas próximas`}\n${lines.join('\n')}`;
 }
@@ -328,13 +356,27 @@ export function formatReminders(reminders: Reminder[], now: number, timeZone: st
  * fuente rota, una base de datos cerrada o un envío fallido dejan nota en el log y
  * el siguiente barrido lo intenta de nuevo.
  */
-export async function runVigilanteOnce(
-  deps: VigilanteDeps,
-  timeZone: string,
-): Promise<VigilanteResult> {
+/** Marca de entrega servida dentro de la ventana crítica (<2 h) de una ocurrencia. */
+const critKey = (occ: string): string => `${occ}:crit`;
+
+const sweepChains = new WeakMap<object, Promise<unknown>>();
+
+/** Barridos serializados por base de datos: dos solapados no se pisan números ni etapas. */
+export function runVigilanteOnce(deps: VigilanteDeps, timeZone: string): Promise<VigilanteResult> {
+  const prev = sweepChains.get(deps.db) ?? Promise.resolve();
+  const next = prev.then(
+    () => sweepOnce(deps, timeZone),
+    () => sweepOnce(deps, timeZone),
+  );
+  sweepChains.set(deps.db, next);
+  return next;
+}
+
+async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<VigilanteResult> {
   const zero: VigilanteResult = { seen: 0, fresh: 0, notified: 0 };
   try {
     initVigilanteStore(deps.db);
+    dropStaleReservations(deps.db);
     // Interruptor general (/ojo off): apagado no mira ni avisa de nada.
     if (!getOjoEnabled(deps.db)) return zero;
     const now = deps.now ?? Date.now;
@@ -382,6 +424,14 @@ export async function runVigilanteOnce(
         (r) => r.key,
       ),
     );
+    // Reglas de ignorar y avisos descartados. Salvaguarda fija: un pago o plazo con hora
+    // a menos de 2 h se avisa siempre, esté ignorado o con regla.
+    initIgnoreStore(deps.db);
+    const ignore = loadIgnoreState(deps.db);
+    const ignoredByRule = (item: AgendaItem): boolean =>
+      ruleSuppresses(ignore, item) && !isCritical(item, nowMs);
+    const ignoredOccurrence = (item: AgendaItem): boolean =>
+      ignore.dismissedOccurrences.has(occurrenceKey(item)) && !isCritical(item, nowMs);
     // Horas de silencio: lo no crítico espera SIN marcarse, y sale al terminar.
     const quiet = deps.quiet ? inQuietHours(nowMs, deps.quiet, timeZone) : false;
     const allowed = (item: AgendaItem): boolean => !quiet || isCritical(item, nowMs);
@@ -393,7 +443,9 @@ export async function runVigilanteOnce(
     // de las ocurrencias permitidas, no de las demás homónimas del mismo hallazgo.
     const toSend: Array<[string, AgendaItem[], Array<[string, AgendaItem]>]> = [];
     for (const [key, item] of fresh) {
-      const occs = (occByFinding.get(key) ?? []).filter(([, occ]) => allowed(occ));
+      const occs = (occByFinding.get(key) ?? []).filter(
+        ([, occ]) => allowed(occ) && !ignoredByRule(occ),
+      );
       if (occs.length === 0 && allowed(item) && !occByFinding.has(key)) continue;
       if (occs.length === 0) continue;
       occs.sort((x, y) => (x[1].at ?? 0) - (y[1].at ?? 0));
@@ -411,9 +463,14 @@ export async function runVigilanteOnce(
     }> = [];
     for (const [ok, item] of occurrences) {
       if (!known.has(findingKey(item, timeZone)) || !allowed(item)) continue;
+      if (ignoredByRule(item) || ignoredOccurrence(item)) continue;
       const due = dueStages(item, timeZone, nowMs);
       const pending = due.filter((st) => !marked.has(stageKey(ok, st)));
-      const last = pending[pending.length - 1];
+      // Etapa crítica propia: un pago o plazo con hora que ENTRA en <2h se avisa una vez
+      // dentro de esa ventana aunque T-2h ya se hubiera dado antes, y no se repite.
+      const critPending = isCritical(item, nowMs) && !marked.has(critKey(ok));
+      const last =
+        pending[pending.length - 1] ?? (critPending ? ('t2' as ReminderStage) : undefined);
       if (last) reminders.push({ key: ok, item, stage: last, covered: due });
     }
     reminders.sort((x, y) => (x.item.at ?? 0) - (y.item.at ?? 0));
@@ -437,19 +494,27 @@ export async function runVigilanteOnce(
     // Último punto de no retorno: /ojo off puede haber llegado durante cualquier espera.
     if (!getOjoEnabled(deps.db)) return zero;
 
+    // Números de aviso: reserva durable ANTES de enviar; se confirma o se suelta.
+    const findingItems = toSend.flatMap(([, items]) => items);
+    const reminderItems = remindersToSend.map((r) => r.item);
+    const reserved = reserveNotices(deps.db, [...findingItems, ...reminderItems], now());
+    const findingNumbers = reserved.slice(0, findingItems.length);
+    const reminderNumbers = reserved.slice(findingItems.length);
+
     const parts: string[] = [];
     if (toSend.length > 0) {
       parts.push(
         formatFindings(
           // Solo las ocurrencias permitidas, cada una con su hora: lo que se marca
           // como cubierto es exactamente lo que el aviso dice.
-          toSend.flatMap(([, items]) => items),
+          findingItems,
           timeZone,
+          findingNumbers,
         ),
       );
     }
     if (remindersToSend.length > 0) {
-      parts.push(formatReminders(remindersToSend, nowMs, timeZone));
+      parts.push(formatReminders(remindersToSend, nowMs, timeZone, reminderNumbers));
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
 
@@ -461,7 +526,10 @@ export async function runVigilanteOnce(
         err: String(err),
       });
     }
-    if (!sent) return { seen: findings.length, fresh: toSend.length, notified: 0 };
+    if (!sent) {
+      releaseNotices(deps.db, reserved);
+      return { seen: findings.length, fresh: toSend.length, notified: 0 };
+    }
 
     // Una entrega CONFIRMADA se persiste siempre, también durante el cierre: el
     // drain de stop() espera a este barrido antes de que cli.ts cierre las bases
@@ -480,13 +548,20 @@ export async function runVigilanteOnce(
         for (const st of dueStages(occ, timeZone, nowMs)) {
           mark.run(stageKey(ok, st), `etapa:${st}`, occ.title, occ.at ?? null, now());
         }
+        if (isCritical(occ, nowMs)) {
+          mark.run(critKey(ok), 'etapa:crit', occ.title, occ.at ?? null, now());
+        }
       }
     }
     for (const r of remindersToSend) {
       for (const st of r.covered) {
         mark.run(stageKey(r.key, st), `etapa:${st}`, r.item.title, r.item.at ?? null, now());
       }
+      if (isCritical(r.item, nowMs)) {
+        mark.run(critKey(r.key), 'etapa:crit', r.item.title, r.item.at ?? null, now());
+      }
     }
+    confirmNotices(deps.db, reserved);
     for (const c of conflicts) {
       mark.run(c.key, 'conflicto', `${c.a.title} / ${c.b.title}`, c.a.at ?? null, now());
     }
