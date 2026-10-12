@@ -1,10 +1,17 @@
 /**
  * Factory-built tools: code the agent writes for itself when it does not know
- * how to do something, tests in a subprocess, and only then proposes for
- * installation. Installation always asks the human through the Gate - like a
- * purchase confirm, no scope, memo or window covers it (see permissions.ts).
+ * how to do something, tests in a sandboxed subprocess, and only then proposes
+ * for installation. Installation always asks the human through the Gate - like
+ * a purchase confirm, no scope, memo or window covers it (see permissions.ts).
  */
 export type FactoryToolStatus = 'built' | 'tested' | 'installed' | 'disabled';
+
+/** Contract of an authored module, extracted by the sandbox supervisor from the executed artifact. */
+export interface FactoryToolContract {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
 
 export interface FactoryToolMeta {
   /** Slug id; doubles as the directory name. */
@@ -20,12 +27,19 @@ export interface FactoryToolMeta {
   status: FactoryToolStatus;
   createdAt: string;
   updatedAt: string;
-  /** sha256 of tool.js as last written. */
+  /** sha256 of tool.js as last written by build/improve. */
   codeSha256: string;
-  /** sha256 of the tool.js that last passed the subprocess test. */
+  /**
+   * sha256 of the tool.js that last passed the sandboxed test, computed from
+   * the artifact read from disk AFTER the run. Install and load re-hash the
+   * file and compare against THIS value, so the approval binds to the exact
+   * tested artifact and tampering is refused before any execution.
+   */
   testedSha256: string | null;
   lastTestAt: string | null;
   lastTestOk: boolean;
+  /** Contract of the module that passed the test; lets the loader register the tool without importing guest code in the daemon. */
+  contract: FactoryToolContract | null;
 }
 
 export const FACTORY_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

@@ -17,7 +17,7 @@
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { testFactoryTool } from '../factory/runner.js';
+import { runFactoryToolSandboxed } from '../factory/runner.js';
 import {
   listFactoryTools,
   readFactoryTool,
@@ -163,6 +163,7 @@ export function createFactoryTool(
             testedSha256: null,
             lastTestAt: null,
             lastTestOk: false,
+            contract: existing?.meta.contract ?? null,
           };
           writeFactoryTool(meta, code, existing?.notes ?? '');
           log.info('factory build', { id, version: meta.version });
@@ -175,13 +176,18 @@ export function createFactoryTool(
           requireFields('test', args, ['id']);
           const t = readFactoryTool(args.id as string);
           if (!t) throw new Error(`no existe la herramienta ${args.id}`);
-          const result = await testFactoryTool(args.id as string, args.sampleParams ?? {});
+          const result = await runFactoryToolSandboxed(args.id as string, args.sampleParams ?? {});
           const now = new Date().toISOString();
+          // Bind the test to the artifact actually executed: re-read the file
+          // AFTER the sandbox run and hash that, never a cached field.
+          const after = readFactoryTool(args.id as string);
+          const realHash = after ? sha256(after.code) : t.meta.codeSha256;
           const meta: FactoryToolMeta = {
             ...t.meta,
             status: result.ok ? 'tested' : t.meta.status === 'installed' ? 'installed' : 'built',
             updatedAt: now,
-            testedSha256: result.ok ? t.meta.codeSha256 : t.meta.testedSha256,
+            testedSha256: result.ok ? realHash : t.meta.testedSha256,
+            contract: result.ok ? (result.contract ?? t.meta.contract) : t.meta.contract,
             lastTestAt: now,
             lastTestOk: result.ok,
           };
@@ -211,14 +217,18 @@ export function createFactoryTool(
           if (!t) throw new Error(`no existe la herramienta ${args.id}`);
           if (t.meta.status === 'installed')
             return text(`${args.id} ya estaba instalada (v${t.meta.version}).`);
+          // Bind the approval to the real artifact: hash the code on disk NOW
+          // and compare against the hash that passed the test, never against a
+          // cached metadata field.
+          const realHash = sha256(t.code);
           if (t.meta.status === 'disabled') {
             // Reinstall still requires a fresh passing test of the current code.
-            if (t.meta.testedSha256 !== t.meta.codeSha256 || !t.meta.lastTestOk) {
+            if (t.meta.testedSha256 !== realHash || !t.meta.lastTestOk) {
               throw new Error(
                 `${args.id} esta disabled y su codigo no tiene test vigente: action "test" primero`,
               );
             }
-          } else if (t.meta.status !== 'tested' || t.meta.testedSha256 !== t.meta.codeSha256) {
+          } else if (t.meta.status !== 'tested' || t.meta.testedSha256 !== realHash) {
             throw new Error(
               `${args.id} no tiene un test superado del codigo actual: action "test" primero`,
             );

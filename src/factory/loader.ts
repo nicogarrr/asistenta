@@ -4,85 +4,79 @@
  * during one message is simply there on the next - no restart, no hot-swap
  * machinery.
  *
- * One bad tool must never break the daemon: a directory that fails to read,
- * import or validate is logged and skipped.
+ * Two hard rules, audited:
+ *  - The daemon NEVER imports guest code. The tool wrapper executes the module
+ *    through the same sandboxed runner used for the pre-install test (vm with
+ *    no capabilities + --permission + empty env + timeout + output cap +
+ *    process-group kill). A hung or crashing tool returns isError; the daemon
+ *    keeps running.
+ *  - Load is bound to the approved artifact: the tool.js on disk is re-hashed
+ *    and must equal testedSha256 (the hash the approval covered), with
+ *    lastTestOk. Any drift - tampering, hand edits, a test that rewrote the
+ *    file - and the tool is skipped with an error log.
  */
-import { pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
-import { factoryDir, listFactoryTools, readFactoryTool } from './store.js';
+import { runFactoryToolSandboxed } from './runner.js';
+import { listFactoryTools, readFactoryTool, sha256 } from './store.js';
 
 export const FACTORY_TOOL_PREFIX = 'fab_';
 
-interface FactoryModule {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  run: (params: unknown) => Promise<unknown>;
-}
+/** Wall clock for one post-install call. */
+export const FACTORY_RUNTIME_TIMEOUT_MS = 30_000;
 
-function isFactoryModule(mod: unknown): mod is FactoryModule {
-  const m = mod as Partial<FactoryModule>;
-  return (
-    !!m &&
-    typeof m.name === 'string' &&
-    !!m.name &&
-    typeof m.description === 'string' &&
-    !!m.parameters &&
-    typeof m.parameters === 'object' &&
-    typeof m.run === 'function'
-  );
-}
-
-export async function loadInstalledFactoryTools(): Promise<AgentTool[]> {
+export async function loadInstalledFactoryTools(
+  opts: { timeoutMs?: number } = {},
+): Promise<AgentTool[]> {
+  const timeoutMs = opts.timeoutMs ?? FACTORY_RUNTIME_TIMEOUT_MS;
   const tools: AgentTool[] = [];
   for (const meta of listFactoryTools()) {
     if (meta.status !== 'installed') continue;
     try {
       const current = readFactoryTool(meta.id);
       if (!current) continue;
-      // Cache-bust on the code hash so `improve` + reinstall picks the new
-      // module instead of the cached import of the previous version.
-      const url = `${pathToFileURL(`${factoryDir(meta.id)}/tool.js`).href}?v=${meta.codeSha256.slice(0, 12)}`;
-      const mod: unknown = await import(url);
-      if (!isFactoryModule(mod)) {
-        log.error('factory tool con contrato invalido, omitida', { id: meta.id });
+      const realHash = sha256(current.code);
+      if (!meta.lastTestOk || !meta.testedSha256 || realHash !== meta.testedSha256) {
+        log.error('factory tool con codigo que no es el aprobado (hash mismatch), omitida', {
+          id: meta.id,
+        });
         continue;
       }
-      const run = mod.run;
+      const contract = meta.contract;
+      if (!contract) {
+        log.error('factory tool sin contrato registrado (test anterior al contrato?), omitida', {
+          id: meta.id,
+        });
+        continue;
+      }
       tools.push({
         name: `${FACTORY_TOOL_PREFIX}${meta.id}`,
         label: meta.name,
         description: [
-          mod.description,
-          `Cuando usarla: ${meta.whenToUse || meta.description}`,
+          contract.description,
+          `Cuando usarla: ${meta.whenToUse || contract.description}`,
           '(Construida por la fabrica y aprobada por el usuario.)',
         ].join(' '),
-        parameters: Type.Unsafe<Record<string, unknown>>(mod.parameters),
+        parameters: Type.Unsafe<Record<string, unknown>>(contract.parameters),
         execute: async (_id, args) => {
-          try {
-            const result = await run(args);
-            const text =
-              typeof result === 'string'
-                ? result
-                : result && typeof (result as { text?: unknown }).text === 'string'
-                  ? (result as { text: string }).text
-                  : JSON.stringify(result);
+          const result = await runFactoryToolSandboxed(meta.id, args, { timeoutMs });
+          if (result.ok) {
             return {
-              content: [{ type: 'text' as const, text: String(text).slice(0, 20_000) }],
+              content: [{ type: 'text' as const, text: result.output.slice(0, 20_000) }],
               details: { factory: meta.id, version: meta.version },
-            };
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [
-                { type: 'text' as const, text: `Error en ${meta.id}: ${msg}`.slice(0, 4000) },
-              ],
-              details: { factory: meta.id, version: meta.version },
-              isError: true,
             };
           }
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error en ${meta.id} (${result.stage}): ${result.output}`.slice(0, 4000),
+              },
+            ],
+            details: { factory: meta.id, version: meta.version },
+            isError: true,
+          };
         },
       });
     } catch (err) {

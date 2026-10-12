@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { paths } from '../paths.js';
 import {
   FACTORY_ID,
+  type FactoryToolContract,
   type FactoryToolMeta,
   type FactoryToolStatus,
   MAX_FACTORY_ID_LENGTH,
@@ -66,6 +67,7 @@ function serialize(meta: FactoryToolMeta, notes: string): string {
     `testedSha256: ${meta.testedSha256 ?? 'null'}`,
     `lastTestAt: ${meta.lastTestAt ?? 'null'}`,
     `lastTestOk: ${meta.lastTestOk}`,
+    `contract: ${meta.contract ? JSON.stringify(meta.contract) : 'null'}`,
     '---',
     '',
     '## Notes',
@@ -85,6 +87,29 @@ function unq(v: string): string {
     }
   }
   return t;
+}
+
+function parseContract(raw: string | undefined): FactoryToolContract | null {
+  if (!raw || raw === 'null') return null;
+  try {
+    const c = JSON.parse(raw) as Partial<FactoryToolContract>;
+    if (
+      c &&
+      typeof c.name === 'string' &&
+      typeof c.description === 'string' &&
+      c.parameters &&
+      typeof c.parameters === 'object'
+    ) {
+      return {
+        name: c.name,
+        description: c.description,
+        parameters: c.parameters as Record<string, unknown>,
+      };
+    }
+  } catch {
+    /* corrupt contract entry */
+  }
+  return null;
 }
 
 export function readFactoryTool(
@@ -119,6 +144,7 @@ export function readFactoryTool(
     testedSha256: nullStr(kv.get('testedSha256')),
     lastTestAt: nullStr(kv.get('lastTestAt')),
     lastTestOk: kv.get('lastTestOk') === 'true',
+    contract: parseContract(kv.get('contract')),
   };
   const notesIdx = md.indexOf('## Notes');
   const notes = notesIdx >= 0 ? md.slice(notesIdx + 8).trim() : '';
