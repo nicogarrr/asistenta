@@ -62,6 +62,7 @@ import {
   buildMacroPrompt,
   canonicalMacroName,
   detectMacroParams,
+  isMacroName,
   parseMacroArgs,
   procedurePrompt,
   RoutineRunner,
@@ -1325,7 +1326,7 @@ async function serveCommand(): Promise<number> {
   /** chatKey -> explicitly selected thread name, set by /topic. */
   const activeTopic = new Map<string, string>();
   /** chatId -> thread currently recording steps for /learn. */
-  const learning = new Map<string, string>();
+  const learning = new Map<string, { name: string; threadKey: string; from: number }>();
   /** chatId -> whether to answer with a spoken reply. */
   const voiceOn = new Map<string, boolean>();
   /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
@@ -2316,16 +2317,38 @@ async function serveCommand(): Promise<number> {
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
-      const recorded = learning.get(inbound.chatId);
-      if (!recorded) {
+      const rec = learning.get(inbound.chatId);
+      if (!rec) {
         await say(inbound, 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.', {
           quote: true,
         });
         return;
       }
+      // The recording is anchored to the thread and the message where /learn
+      // started: closing it from another topic, or after the history shrank,
+      // would summarise a conversation that is not the one demonstrated.
+      if (thread.key !== rec.threadKey) {
+        await say(
+          inbound,
+          `Estoy grabando "${rec.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`,
+          { quote: true },
+        );
+        return;
+      }
+      const all = thread.agent.messages;
+      if (all.length < rec.from) {
+        learning.delete(inbound.chatId);
+        await say(
+          inbound,
+          'La conversación se ha recortado desde que empecé a grabar y no puedo aislar lo que demostraste. Empieza de nuevo con /learn <nombre>.',
+          { quote: true },
+        );
+        return;
+      }
       learning.delete(inbound.chatId);
+      const recorded = rec.name;
       await say(inbound, 'Resumiendo los pasos que acabas de hacer⬦', { quote: true });
-      const transcript = summarizeTranscript(thread.agent.messages);
+      const transcript = summarizeTranscript(all.slice(rec.from));
       const result = await thread.agent.run(
         [
           'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
@@ -2333,6 +2356,10 @@ async function serveCommand(): Promise<number> {
           '',
           'Escribe en español los pasos reutilizables, en tercera persona e imperativo breve,',
           'uno por línea, sin numeración ni explicaciones. Empieza por el más general.',
+          'Si un dato cambia de una ejecución a otra (destinatario, fichero, dominio, texto),',
+          'escribe un parámetro {nombre} en vez del valor concreto: nombre con letras, números, _ o -;',
+          '{fichero}, {correo} y {dominio} (o {url}) llevan validación de tipo, cualquier otro nombre es texto.',
+          'No uses llaves para nada más. Tras cada paso que se pueda comprobar, añade " verifica: <qué comprobar>".',
           'Si algún paso requiere una contraseña o un pago, escribe [PIDE CONFIRMACIÓN].',
           'Si no se puede reutilizar, escribe una sola línea: NO REUTILIZABLE.',
           'No escribas nada más: ni título, ni comentarios, ni código fences.',
@@ -2344,10 +2371,19 @@ async function serveCommand(): Promise<number> {
         return;
       }
       // Steps with {placeholders} make it a macro: it is saved under the
-      // macro/ namespace with its typed parameter contract, and Nico sees the
-      // contract before the macro exists.
+      // macro/ namespace with its typed parameter contract, and the contract is
+      // shown in the confirmation. Detection is only as good as what the
+      // summariser emitted, so the user is told to re-record if it is wrong.
       const params = detectMacroParams(steps);
       const macro = params.length > 0;
+      if (!macro && isMacroName(recorded)) {
+        await say(
+          inbound,
+          'El prefijo macro/ es solo para macros con {parámetros}; esta grabación no tiene ninguno. Grábala con otro nombre.',
+          { quote: true },
+        );
+        return;
+      }
       const routine = store.saveRoutine({
         scope: thread.key,
         name: macro ? canonicalMacroName(recorded) : recorded,
@@ -2364,7 +2400,11 @@ async function serveCommand(): Promise<number> {
                 .join(' ')}.`
             : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
           ...(macro
-            ? ['', 'Parámetros detectados:', ...params.map((p) => `- ${p.name} (${p.type})`)]
+            ? [
+                '',
+                'Parámetros detectados (si falta alguno o sobra, vuelve a grabarla):',
+                ...params.map((p) => `- ${p.name} (${p.type})`),
+              ]
             : []),
           '',
           steps,
@@ -2379,7 +2419,11 @@ async function serveCommand(): Promise<number> {
       });
       return;
     }
-    learning.set(inbound.chatId, name);
+    learning.set(inbound.chatId, {
+      name,
+      threadKey: thread.key,
+      from: thread.agent.messages.length,
+    });
     await say(
       inbound,
       `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
@@ -2434,7 +2478,16 @@ async function serveCommand(): Promise<number> {
     // nothing. A plain routine takes no arguments at all.
     const tokens = args.trim().split(/\s+/).slice(1);
     let prompt: string;
-    if (routine.params?.length) {
+    if (isMacroName(routine.name) && !routine.params?.length) {
+      // The macro/ namespace never falls back to a plain replay: without a
+      // valid contract the steps would reach the model with raw {placeholders}.
+      await say(
+        inbound,
+        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+        { quote: true },
+      );
+      return;
+    } else if (routine.params?.length) {
       const parsed = parseMacroArgs(tokens);
       if (!parsed.ok) {
         await say(

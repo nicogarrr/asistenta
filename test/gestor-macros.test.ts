@@ -348,3 +348,120 @@ describe('gestion action=macro', () => {
     expect(text(repeated)).toContain('repetido');
   });
 });
+
+describe('auditor R1 regressions (B1-B4)', () => {
+  const two = (steps: string): Routine =>
+    macroRoutine({
+      steps,
+      params: [
+        { name: 'x', type: 'texto' },
+        { name: 'y', type: 'texto' },
+      ],
+    });
+  const promptOf = (r: ReturnType<typeof buildMacroPrompt>): string => {
+    if (!r.ok) throw new Error(r.error);
+    return r.prompt;
+  };
+  const stepsOf = (p: string): string =>
+    p
+      .split("Steps, with this run's values already substituted:\n")[1]
+      ?.split('\n\nStanding rules:')[0] ?? '';
+
+  it('B1: substitutes once over the template; a value that looks like a placeholder stays literal', () => {
+    const p = promptOf(buildMacroPrompt(two('A {x}; B {y}'), { x: '{y}', y: 'CANARY_B' }));
+    expect(stepsOf(p)).toBe('A {y}; B CANARY_B');
+    const q = promptOf(
+      buildMacroPrompt(two('A {x}; B {y}'), { x: 'literal {untouched}', y: 'ok' }),
+    );
+    expect(stepsOf(q)).toBe('A literal {untouched}; B ok');
+  });
+  it('B1: result is independent of parameter order', () => {
+    const a = promptOf(buildMacroPrompt(two('A {x}; B {y}'), { x: '{y}', y: 'Z' }));
+    const b = promptOf(buildMacroPrompt(two('A {x}; B {y}'), { y: 'Z', x: '{y}' }));
+    expect(stepsOf(a)).toBe(stepsOf(b));
+  });
+  it('B1: $-patterns in values are not replacement syntax', () => {
+    const p = promptOf(buildMacroPrompt(two('A {x}; B {y}'), { x: "$& $1 $'", y: 'ok' }));
+    expect(stepsOf(p)).toBe("A $& $1 $'; B ok");
+  });
+  it('B1: an undeclared placeholder is refused before any value is inserted', () => {
+    const r = buildMacroPrompt(two('A {x}; B {y}; C {z}'), { x: '1', y: '2' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('{z}');
+  });
+  it('B2: prototype keys are never arguments or names', () => {
+    const r = buildMacroPrompt(two('A {x}; B {y}'), { x: '1', y: '2', toString: 'x' });
+    expect(r.ok).toBe(false);
+    const missing = buildMacroPrompt(two('A {x}; B {y}'), {});
+    expect(missing.ok).toBe(false);
+    const names = detectMacroParams('{constructor} {toString} {__proto__}');
+    expect(names.map((n) => n.type)).toEqual(['texto', 'texto', 'texto']);
+    expect(JSON.parse(JSON.stringify(names))).toEqual(names);
+  });
+  it('B2: an unknown type or duplicate name is a corrupt contract and blocks the macro', () => {
+    const bad = [
+      [{ name: 'x', type: 'WRONG' }],
+      [
+        { name: 'x', type: 'texto' },
+        { name: 'x', type: 'texto' },
+      ],
+      [{ name: 'toString' }],
+      [{ name: 'bad name', type: 'texto' }],
+    ];
+    for (const params of bad) {
+      const r = buildMacroPrompt(
+        macroRoutine({ steps: 'A {x}', params: params as unknown as RoutineParam[] }),
+        { x: '1' },
+      );
+      expect(r.ok).toBe(false);
+    }
+    const dir = tmp();
+    const store = new Store(join(dir, 'db.sqlite'));
+    expect(() =>
+      store.saveRoutine({
+        scope: 's',
+        name: 'macro/m',
+        kind: 'procedure',
+        params: [{ name: 'x', type: 'WRONG' as never }],
+        steps: 'A {x}',
+      }),
+    ).toThrow();
+    store.close?.();
+  });
+  it('B4: duplicates are an error in the CLI parser too', () => {
+    const r = parseMacroArgs(['x=first', 'x=second']);
+    expect(r.ok).toBe(false);
+  });
+  it('B4: raw values with surrounding whitespace or controls are rejected, not cleaned', () => {
+    const p: RoutineParam = { name: 'x', type: 'texto' };
+    for (const v of ['\rDATA', 'DATA\n', ' DATA', 'DATA\t', 'DATA ', 'DA\u0085TA']) {
+      expect(validateMacroValue(p, v).ok).toBe(false);
+    }
+    expect(validateMacroValue(p, 'DATA')).toEqual({ ok: true, value: 'DATA' });
+  });
+});
+
+describe('B3: macro/ namespace never replays without a valid contract', () => {
+  it('a row with garbage params loads with no contract and buildMacroPrompt refuses it', () => {
+    const dir = tmp();
+    const dbPath = join(dir, 'db.sqlite');
+    const store = new Store(dbPath);
+    store.saveRoutine({
+      scope: 's',
+      name: 'macro/x',
+      kind: 'procedure',
+      params: [{ name: 'correo', type: 'correo' }],
+      steps: 'Send to {correo}',
+    });
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare('UPDATE routines SET params = ? WHERE name = ?').run('{broken', 'macro/x');
+    raw.close();
+    const r = store.getRoutine('s', 'macro/x');
+    expect(r?.params).toBeNull();
+    expect(isMacroName(r?.name ?? '')).toBe(true);
+    if (r) {
+      const built = buildMacroPrompt(r, {});
+      expect(built.ok).toBe(false);
+    }
+  });
+});

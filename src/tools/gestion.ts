@@ -435,7 +435,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
           );
         }
         const routine = deps.routines.getRoutine(scope, name);
-        if (!routine?.params?.length) {
+        if (!routine) {
           return reply(`No encuentro la macro ${name} en este chat.`, true);
         }
         const argMap: Record<string, string> = {};

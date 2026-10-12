@@ -1,6 +1,12 @@
 import { Cron } from 'croner';
 import { loadConfig } from './config.js';
-import type { Routine, RoutineParam, RoutineParamType, Store } from './db.js';
+import {
+  type Routine,
+  type RoutineParam,
+  type RoutineParamType,
+  type Store,
+  validateRoutineParams,
+} from './db.js';
 import { normalizeDomain } from './gestor/login.js';
 import { log, redact } from './log.js';
 import { withTimeout } from './utils.js';
@@ -29,16 +35,18 @@ export function canonicalMacroName(name: string): string {
 }
 
 /** Explicit name -> type table; anything unlisted is plain text. */
-const PARAM_TYPE_BY_NAME: Record<string, RoutineParamType> = {
-  fichero: 'fichero',
-  correo: 'correo',
-  email: 'correo',
-  dominio: 'dominio',
-  url: 'dominio',
-};
+const PARAM_TYPE_BY_NAME: ReadonlyMap<string, RoutineParamType> = new Map<string, RoutineParamType>(
+  [
+    ['fichero', 'fichero'],
+    ['correo', 'correo'],
+    ['email', 'correo'],
+    ['dominio', 'dominio'],
+    ['url', 'dominio'],
+  ],
+);
 
 export function paramTypeForName(name: string): RoutineParamType {
-  return PARAM_TYPE_BY_NAME[name.toLowerCase()] ?? 'texto';
+  return PARAM_TYPE_BY_NAME.get(name.toLowerCase()) ?? 'texto';
 }
 
 const PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_-]*)\}/g;
@@ -83,11 +91,16 @@ export function validateMacroValue(
   param: RoutineParam,
   raw: string,
 ): { ok: true; value: string } | { ok: false; error: string } {
-  const value = raw.trim();
-  if (!value) return { ok: false, error: `${param.name}: valor vacío` };
-  if (hasForbiddenChar(value)) {
+  // The RAW value is judged: trimming first would let "\rDATA" or "DATA\n"
+  // through and silently change the datum. Rejected, never cleaned.
+  if (!raw.trim()) return { ok: false, error: `${param.name}: valor vacío` };
+  if (hasForbiddenChar(raw)) {
     return { ok: false, error: `${param.name}: una sola línea, sin caracteres de control` };
   }
+  if (raw !== raw.trim()) {
+    return { ok: false, error: `${param.name}: sin espacios al principio ni al final` };
+  }
+  const value = raw;
   switch (param.type) {
     case 'correo':
       if (!EMAIL_RE.test(value)) {
@@ -112,15 +125,17 @@ export function validateMacroValue(
 export function parseMacroArgs(
   tokens: string[],
 ): { ok: true; args: Record<string, string> } | { ok: false; error: string } {
-  const args: Record<string, string> = {};
+  const args = new Map<string, string>();
   for (const token of tokens) {
     const eq = token.indexOf('=');
     if (eq <= 0) {
       return { ok: false, error: `Los parámetros van como clave=valor; "${token}" no lo es.` };
     }
-    args[token.slice(0, eq)] = token.slice(eq + 1);
+    const key = token.slice(0, eq);
+    if (args.has(key)) return { ok: false, error: `Parámetro repetido: ${key}.` };
+    args.set(key, token.slice(eq + 1));
   }
-  return { ok: true, args };
+  return { ok: true, args: Object.fromEntries(args) };
 }
 
 /**
@@ -132,24 +147,45 @@ export function parseMacroArgs(
  */
 export function buildMacroPrompt(
   routine: Routine,
-  args: Record<string, string>,
+  rawArgs: Record<string, string> | ReadonlyMap<string, string>,
 ): { ok: true; prompt: string } | { ok: false; error: string } {
-  const params = routine.params ?? [];
-  if (!params.length) {
-    return { ok: false, error: `"${routine.name}" no es una macro: no declara parámetros.` };
+  // Own entries only: a prototype key ({toString}) is never an argument.
+  const args: ReadonlyMap<string, string> =
+    rawArgs instanceof Map ? rawArgs : new Map(Object.entries(rawArgs));
+  const params = validateRoutineParams(routine.params);
+  if (!params) {
+    return {
+      ok: false,
+      error: `"${routine.name}" no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+    };
   }
+  const template = (routine.steps ?? '').trim();
   const declared = new Map(params.map((p) => [p.name, p]));
+  // Undeclared placeholders are detected on the ORIGINAL template, before any
+  // value exists: a value can neither hide nor create a placeholder.
+  const undeclared = [
+    ...new Set(
+      [...template.matchAll(PLACEHOLDER)].map((m) => m[1] ?? '').filter((n) => !declared.has(n)),
+    ),
+  ];
+  if (undeclared.length) {
+    return {
+      ok: false,
+      error: `La macro ${routine.name} tiene placeholders sin declarar: ${undeclared.map((n) => `{${n}}`).join(', ')}. Regrábala con /learn.`,
+    };
+  }
   const errors: string[] = [];
   for (const p of params) {
-    if (!(p.name in args)) errors.push(`falta ${p.name} (${p.type})`);
+    if (!args.has(p.name)) errors.push(`falta ${p.name} (${p.type})`);
   }
-  for (const key of Object.keys(args)) {
+  for (const key of args.keys()) {
     if (!declared.has(key)) errors.push(`sobra ${key}: no es un parámetro de esta macro`);
   }
   const values = new Map<string, string>();
   for (const p of params) {
-    if (!(p.name in args)) continue;
-    const checked = validateMacroValue(p, args[p.name] ?? '');
+    const given = args.get(p.name);
+    if (given === undefined) continue;
+    const checked = validateMacroValue(p, given);
     if (checked.ok) values.set(p.name, checked.value);
     else errors.push(checked.error);
   }
@@ -164,17 +200,9 @@ export function buildMacroPrompt(
       ].join('\n'),
     };
   }
-  let steps = (routine.steps ?? '').trim();
-  for (const [name, value] of values) {
-    steps = steps.split(`{${name}}`).join(value);
-  }
-  const leftover = steps.match(PLACEHOLDER);
-  if (leftover) {
-    return {
-      ok: false,
-      error: `La macro ${routine.name} tiene placeholders sin declarar: ${[...new Set(leftover)].join(', ')}. Regrábala con /learn.`,
-    };
-  }
+  // ONE pass over the original template: inserted text is never rescanned, so
+  // a value that looks like {otro} or {x} stays literal data.
+  const steps = template.replace(PLACEHOLDER, (_m, name: string) => values.get(name) ?? '');
   return { ok: true, prompt: macroPrompt(routine, values, steps) };
 }
 

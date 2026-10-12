@@ -47,6 +47,32 @@ export interface RoutineParam {
   type: RoutineParamType;
 }
 
+const ROUTINE_PARAM_TYPES: ReadonlySet<string> = new Set(['fichero', 'correo', 'dominio', 'texto']);
+const ROUTINE_PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * The one definition of a valid parameter contract, used when a contract is
+ * built, saved and loaded. Names must be well-formed and unique, types must be
+ * from the closed set; anything else is a corrupt contract (null), never a
+ * silently degraded one. Own properties only: prototype keys are not names.
+ */
+export function validateRoutineParams(raw: unknown): RoutineParam[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const seen = new Set<string>();
+  const out: RoutineParam[] = [];
+  for (const p of raw) {
+    if (!p || typeof p !== 'object') return null;
+    const o = p as Record<string, unknown>;
+    const name = Object.hasOwn(o, 'name') ? o.name : undefined;
+    const type = Object.hasOwn(o, 'type') ? o.type : undefined;
+    if (typeof name !== 'string' || !ROUTINE_PARAM_NAME.test(name) || seen.has(name)) return null;
+    if (typeof type !== 'string' || !ROUTINE_PARAM_TYPES.has(type)) return null;
+    seen.add(name);
+    out.push({ name, type: type as RoutineParamType });
+  }
+  return out;
+}
+
 export interface Routine {
   id: string;
   /** chatKey, so routines are per chat unless deliberately global. */
@@ -392,6 +418,9 @@ export class Store {
     schedule?: string | null;
     enabled?: boolean;
   }): Routine {
+    if (r.params && !validateRoutineParams(r.params)) {
+      throw new Error(`invalid macro parameter contract for "${r.name}"`);
+    }
     const now = new Date().toISOString();
     const existing = this.getRoutine(r.scope, r.name);
     const id = r.id ?? existing?.id ?? crypto.randomUUID();
@@ -505,21 +534,14 @@ export class Store {
 
 /**
  * The params column is JSON this process wrote; a hand-edited or truncated row
- * still has to load, so anything unreadable maps to no contract at all.
+ * still has to load, so anything unreadable or invalid maps to no contract. A
+ * routine in the macro/ namespace with no valid contract is BLOCKED by every
+ * caller (it is never replayed as a plain procedure).
  */
 function parseRoutineParams(raw: string | number | null | undefined): RoutineParam[] | null {
   if (raw === null || raw === undefined) return null;
   try {
-    const parsed: unknown = JSON.parse(String(raw));
-    if (!Array.isArray(parsed)) return null;
-    const params: RoutineParam[] = [];
-    for (const p of parsed) {
-      if (!p || typeof p !== 'object') return null;
-      const { name, type } = p as { name?: unknown; type?: unknown };
-      if (typeof name !== 'string' || typeof type !== 'string') return null;
-      params.push({ name, type: type as RoutineParamType });
-    }
-    return params.length > 0 ? params : null;
+    return validateRoutineParams(JSON.parse(String(raw)));
   } catch {
     return null;
   }
