@@ -57,6 +57,9 @@ export const THREAD_ALLOW_TOOLS = [
   // Long-haul goals: propose/list/pause/resume/cancel/avance are freely
   // callable; `activar` is hardcoded as always-ask in the Gate itself.
   'objetivo',
+  // Universal errands: preparar/paso/completar/cancelar/listar/estado are
+  // freely callable; `ejecutar` is hardcoded as always-ask in the Gate itself.
+  'gestion',
   LOADER_TOOL_NAME,
 ];
 
