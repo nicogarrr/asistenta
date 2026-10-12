@@ -11,11 +11,19 @@
  *
  * Playbooks (PR3 / D4): a gestión that taught something reusable about a site
  * leaves it in a per-domain playbook (login flow, selectors, quirks) via
- * playbook_guardar, and preparar hands the model the existing playbook of
- * every declared login domain - model-facing details, never in the message
- * Nico approves. Credentials never enter a playbook: before any save the
- * content is checked against ALL current vault values (exact, case-sensitive)
- * and one match rejects it; references go by vault key NAME.
+ * playbook_guardar, and reads it back with playbook_leer - BEFORE preparar,
+ * because tool-result `details` never reach the model (only `content` does),
+ * and knowledge that arrives after the plan is written cannot shape it. The
+ * message Nico approves carries no playbook content; an existing playbook for
+ * a declared login domain is announced as one plain line in the Accesos
+ * section, true for Nico and a pointer for the model.
+ *
+ * Credentials never enter AND never leave a playbook: save and serve both
+ * check the rendered content against ALL current vault values (one fresh
+ * snapshot per operation, exact case-sensitive match, env-only secrets
+ * included) and one match rejects the write or blocks the read with a generic
+ * error. The guarantee covers the vault values at that operation; rotation
+ * afterwards is caught by the next operation's revalidation.
  *
  * The scope comes from the caller, never from the model: a gestión belongs to
  * the chat that asked for it and cannot be touched from another.
@@ -33,7 +41,7 @@ import {
   validatePlaybook,
 } from '../gestor/playbooks.js';
 import type { Gestion, GestionStep, GestorStore } from '../gestor/store.js';
-import { vaultGet, vaultList } from '../vault.js';
+import { vaultList, vaultSnapshotValues } from '../vault.js';
 
 /**
  * Telegram's per-message ceiling is 4096 chars and the channel splits anything
@@ -161,11 +169,12 @@ export interface GestionToolDeps {
   /** Vault key NAMES only, for the access section of preparar. Tests inject this. */
   vaultNames?: () => Promise<string[]>;
   /**
-   * Vault values BY NAME, for the credential guard of playbook_guardar only.
-   * Tests inject canaries; production is vaultGet. The value never leaves
-   * the comparison - it is not logged, returned or stored.
+   * One fresh snapshot of ALL current vault values, for the playbook
+   * credential guard (save AND serve). Tests inject canaries; production is
+   * vaultSnapshotValues, which includes env-only secrets vaultList cannot
+   * see. Values are only ever compared - never logged, returned or stored.
    */
-  vaultGetByName?: (name: string) => Promise<string | undefined>;
+  vaultSnapshotValues?: () => Promise<string[]>;
 }
 
 export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Params> {
@@ -202,9 +211,11 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
       'Then work the steps with the normal tools, calling paso as each one completes, and completar at the end.',
       'Never claim an errand is active unless ejecutar said so.',
       'Site knowledge goes to a PLAYBOOK, not a skill: after a gestión taught you how a site works ' +
-        '(login flow, selectors that worked, quirks/waits), save it with playbook_guardar; preparar ' +
-        'gives you the existing playbook of every login domain you declare. Credentials never go in: ' +
-        'reference vault keys by NAME (site:<dominio>:password), a real value rejects the save.',
+        '(login flow, selectors that worked, quirks/waits), save it with playbook_guardar. BEFORE ' +
+        'preparar, call playbook_leer for every domain you plan to declare in logins - its result ' +
+        'content reaches you, preparar details would not, and a plan built on known selectors is a ' +
+        'better plan. Credentials never go in or out: reference vault keys by NAME ' +
+        '(site:<dominio>:password); a real value rejects the save and blocks the read.',
     ].join('\n'),
     parameters: Params,
     executionMode: 'sequential',
@@ -293,6 +304,14 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
                 );
               }
             }
+            // One plain line, true for Nico and a pointer for the model: the
+            // playbook CONTENT never rides here - the model reads it with
+            // playbook_leer, whose result content does reach it.
+            if (deps.playbooks.read(domain)) {
+              access.push(
+                `- ${domain}: hay un playbook guardado de este sitio (lo leo con gestion:playbook_leer).`,
+              );
+            }
           }
         }
         // Budget the exact message Nico would approve. The probe id is the
@@ -319,24 +338,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
           );
         }
         const gestion = deps.gestor.propose({ scope, title, encargo, plan });
-        // Prior site knowledge, model-facing ONLY: it rides in details so the
-        // plan is built on it, and never enters the message Nico approves.
-        const found: Playbook[] = [];
-        for (const domain of domains) {
-          const pb = deps.playbooks.read(domain);
-          if (pb) found.push(pb);
-        }
-        const result = reply(formatProposal(gestion, access));
-        if (found.length > 0) {
-          result.details = {
-            playbooks: found.map((pb) => ({
-              domain: pb.domain,
-              updatedAt: pb.updatedAt,
-              content: renderPlaybook(pb),
-            })),
-          };
-        }
-        return result;
+        return reply(formatProposal(gestion, access));
       }
 
       if (args.action === 'playbook_leer') {
@@ -348,6 +350,17 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         if (!pb) {
           return reply(
             `No hay playbook de ${domain}. Cuando una gestión en ese sitio enseñe algo reusable, guárdalo con playbook_guardar.`,
+          );
+        }
+        // Serve revalidates like save: the file could have been hand-edited,
+        // or a value it quotes could have become a secret after a rotation.
+        // One snapshot per read; a match blocks with a generic error and the
+        // content is never returned.
+        const values = await (deps.vaultSnapshotValues ?? vaultSnapshotValues)();
+        if (containsVaultValue(renderPlaybook(pb), values)) {
+          return reply(
+            `El playbook de ${domain} está bloqueado: su contenido coincide con un valor actual del vault. Revísalo a mano (playbooks/${domain}.md) o bórralo, y vuelve a guardarlo solo con conocimiento, nunca con credenciales.`,
+            true,
           );
         }
         return reply(renderPlaybook(pb));
@@ -377,13 +390,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         // checked against ALL current vault values (exact, case-sensitive)
         // before anything is written. One match rejects the save with a
         // generic message - the matched value is never named or echoed.
-        const names = await (deps.vaultNames ?? vaultList)();
-        const getValue = deps.vaultGetByName ?? vaultGet;
-        const values: string[] = [];
-        for (const name of names) {
-          const value = await getValue(name);
-          if (value !== undefined) values.push(value);
-        }
+        const values = await (deps.vaultSnapshotValues ?? vaultSnapshotValues)();
         if (containsVaultValue(renderPlaybook(pb), values)) {
           return reply(
             'El playbook no se guarda: su contenido coincide con un valor del vault. Las credenciales viven en el vault; aquí solo va el NOMBRE de la clave (site:<dominio>:campo).',

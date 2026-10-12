@@ -355,6 +355,27 @@ export async function vaultList(): Promise<string[]> {
   return Object.keys(await loadMap()).sort();
 }
 
+/**
+ * EVERY value the vault interface would return right now, as ONE snapshot:
+ * the decrypted map (file/DPAPI) plus every PA_SECRET_* environment variable,
+ * because vaultGet resolves env for ANY key - an env-only secret is invisible
+ * to vaultList but readable by vaultGet, so a check that wants "no current
+ * vault value" must see them all. For internal guards only: values in, values
+ * compared, nothing logged, returned to a tool result, or sent to a model.
+ * Two reads a millisecond apart can legitimately differ (rotation); callers
+ * get one consistent snapshot per operation and say so.
+ */
+export async function vaultSnapshotValues(): Promise<string[]> {
+  const values = new Set<string>();
+  for (const v of Object.values(await loadMap())) {
+    if (v.length > 0) values.add(v);
+  }
+  for (const [name, v] of Object.entries(process.env)) {
+    if (name.startsWith('PA_SECRET_') && v !== undefined && v !== '') values.add(v);
+  }
+  return [...values];
+}
+
 export function clearVaultCache(): void {
   cache.clear();
 }

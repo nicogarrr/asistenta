@@ -15,13 +15,21 @@
  * Credentials NEVER live here - only vault key NAMES as references
  * (`site:<dominio>:password` points at the secret without containing it). The
  * guard is positive and provable, and lives in the gestion tool before any
- * save: the whole rendered content is checked against ALL current vault
- * values (exact, case-sensitive substring match); one match rejects the save
- * and nothing is written. Declared limit: a PARTIAL fragment of a secret, or
- * a secret that is not in the vault, cannot be detected that way - that is
- * why the content is structured into sections and references go by key name.
+ * save AND every serve: the rendered content is checked against ALL current
+ * vault values (exact, case-sensitive substring match, one snapshot per
+ * operation); one match rejects the write or blocks the read, and nothing is
+ * written or returned. The guarantee's temporal scope, stated plainly: it
+ * covers the snapshot of vault values at THAT operation - a value rotated in
+ * afterwards is caught by the revalidation of the NEXT operation, which is
+ * why reads revalidate instead of trusting the check made at save time. A
+ * hand-edited file gets the same treatment as a stored one.
+ *
+ * Declared limit: a PARTIAL fragment of a secret, or a secret that is not in
+ * the vault, cannot be detected that way - that is why the content is
+ * structured into sections and references go by key name.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeDomain } from './login.js';
 
@@ -129,11 +137,39 @@ export function validatePlaybook(pb: Playbook): string | null {
     if (tooLong !== -1) {
       return `La nota ${tooLong + 1} de ${name} no puede pasar de ${MAX_PLAYBOOK_LINE_CHARS} caracteres (tiene ${lines[tooLong]?.length ?? 0}): resúmela.`;
     }
-    if (lines.some((l) => l.includes('\n'))) {
-      return `Cada nota de ${name} es una sola línea: divide las que tengan saltos.`;
+    if (lines.some((l) => hasForbiddenChar(l))) {
+      return `Cada nota de ${name} es una sola línea de texto simple: quita saltos y caracteres de control.`;
     }
   }
+  // Structural round-trip: parse(render(pb)) must be exactly pb, or the note
+  // smuggled structure past the format (a forged header, a fake bullet).
+  const back = parsePlaybook(pb.domain, renderPlaybook(pb));
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+  if (
+    !same(back.login, pb.login) ||
+    !same(back.selectores, pb.selectores) ||
+    !same(back.quirks, pb.quirks)
+  ) {
+    return 'El contenido no encaja en el formato de playbook (una nota por línea, sin cabeceras ni viñetas propias): reescríbelo como notas simples.';
+  }
   return null;
+}
+
+/**
+ * Characters that can smuggle structure past the one-line-per-note format:
+ * CR, Unicode line/paragraph separators, NEL and C0/C1 controls (tab stays:
+ * it cannot forge a line). A note carrying one reads differently to every
+ * other parser, so it is rejected, never cleaned. A code-point loop instead
+ * of a regex: the lint rule against control characters in regex literals is
+ * right that they are unreadable there.
+ */
+function hasForbiddenChar(line: string): boolean {
+  for (const ch of line) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c === 0x0d || c === 0x85 || c === 0x2028 || c === 0x2029) return true;
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true;
+  }
+  return false;
 }
 
 /**
@@ -171,10 +207,26 @@ export class PlaybookStore {
     }
   }
 
-  /** Rebuilds the file from the structured fields (see the module doc). */
+  /**
+   * Rebuilds the file from the structured fields (see the module doc). The
+   * store validates on its own - canonical domain and caps - so no caller can
+   * skip the contract. The tmp file is unique per save and created
+   * exclusively ('wx'): a pre-planted symlink cannot redirect the write, and
+   * a failed save cleans up after itself.
+   */
   save(pb: Playbook): void {
-    const tmp = join(this.dir, `.${pb.domain}.md.tmp`);
-    writeFileSync(tmp, renderPlaybook(pb), 'utf8');
-    renameSync(tmp, this.#path(pb.domain));
+    if (canonicalPlaybookDomain(pb.domain) !== pb.domain) {
+      throw new Error(`dominio de playbook no canónico: ${JSON.stringify(pb.domain)}`);
+    }
+    const invalid = validatePlaybook(pb);
+    if (invalid) throw new Error(invalid);
+    const tmp = join(this.dir, `.${randomUUID()}.tmp`);
+    try {
+      writeFileSync(tmp, renderPlaybook(pb), { encoding: 'utf8', flag: 'wx' });
+      renameSync(tmp, this.#path(pb.domain));
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
+    }
   }
 }

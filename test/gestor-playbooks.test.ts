@@ -17,7 +17,7 @@ import {
 import { GestorStore } from '../src/gestor/store.js';
 import { siteKey } from '../src/gestor/login.js';
 import { createGestionTool } from '../src/tools/gestion.js';
-import { clearVaultCache, vaultSet } from '../src/vault.js';
+import { clearVaultCache, envSecretName, vaultSet } from '../src/vault.js';
 
 const CANARY_PASS = 'CAN4RY-playbook-pass-sintetico';
 const CANARY_USER = 'CAN4RY-playbook-user';
@@ -33,6 +33,7 @@ afterEach(() => {
   clearVaultCache();
   delete process.env.PA_VAULT_BACKEND;
   delete process.env.PA_SECRETS_FILE;
+  delete process.env.PA_SECRET_SITE_EXAMPLE_COM_PASSWORD;
 });
 
 async function seedVault(entries: Record<string, string>) {
@@ -204,7 +205,7 @@ describe('gestion playbook_leer / playbook_guardar', () => {
     }
   });
 
-  it('preparar inyecta el playbook en details (modelo) y NO en el mensaje de Nico', async () => {
+  it('B2: el conocimiento llega al modelo por CONTENT (payload real), nunca por details', async () => {
     const { run, text, playbooks } = setup();
     playbooks.save({
       domain: 'seg-social.es',
@@ -213,17 +214,119 @@ describe('gestion playbook_leer / playbook_guardar', () => {
       selectores: ['botón Entrar: #entrar'],
       quirks: [],
     });
+    // Lo que el modelo recibe de verdad, según la conversión de los providers
+    // (openai-completions y Anthropic extraen SOLO toolMsg.content; details
+    // se descarta). El test reproduce esa extracción, sin llamada real.
+    const modelFacing = (r: { content: { type: string; text?: string }[] }) =>
+      r.content.map((c) => (c.type === 'text' ? (c.text ?? '') : '')).join('\n');
+    const read = await run({ action: 'playbook_leer', dominio: 'seg-social.es' });
+    expect(modelFacing(read)).toContain('botón Entrar: #entrar');
+    // preparar NO inyecta nada en details (no llegaría) y su propuesta para
+    // Nico solo anuncia la existencia del playbook, sin su contenido.
     const res = await run({ ...base, logins: ['seg-social.es'] });
+    expect(JSON.stringify(res.details)).not.toContain('playbooks');
     const forNico = text(res);
-    // El mensaje que aprueba Nico no lleva el contenido del playbook.
     expect(forNico).not.toContain('botón Entrar: #entrar');
-    // El modelo sí lo recibe, en details, con su dominio.
-    const details = JSON.stringify(res.details);
-    expect(details).toContain('botón Entrar: #entrar');
-    expect(details).toContain('seg-social.es');
-    // Sin playbook no hay inyección.
+    expect(forNico).toContain('hay un playbook guardado de este sitio');
+    // Sin playbook, ninguna línea de playbook.
     const res2 = await run({ ...base, logins: ['booking.com'] });
-    expect(JSON.stringify(res2.details)).not.toContain('playbooks');
+    expect(text(res2)).not.toContain('playbook');
+  });
+
+  it('B1: un secreto SOLO en entorno (env-only) también bloquea el guardado', async () => {
+    // vaultGet resuelve PA_SECRET_<KEY> para cualquier clave aunque vaultList
+    // no la enumere: el snapshot del guarda debe incluirla.
+    process.env.PA_VAULT_BACKEND = 'portable';
+    process.env.PA_SECRETS_FILE = join(tmp(), 'secrets.json');
+    const envKey = envSecretName('site:example.com:password');
+    expect(envKey).toBe('PA_SECRET_SITE_EXAMPLE_COM_PASSWORD');
+    process.env[envKey] = 'CAN4RY-env-only';
+    const { run, text, dir } = setup();
+    const rejected = text(
+      await run({
+        action: 'playbook_guardar',
+        dominio: 'example.com',
+        login: ['la pass es CAN4RY-env-only'],
+      }),
+    );
+    expect(rejected).toContain('no se guarda');
+    expect(rejected).not.toContain('CAN4RY-env-only');
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('B3: un fichero contaminado a mano NO se sirve: lectura bloqueada y genérica', async () => {
+    await seedVault({ [siteKey('seg-social.es', 'password')]: CANARY_PASS });
+    const { run, text, dir } = setup();
+    // Mano ajena escribe el canario directamente en el fichero.
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(
+      join(dir, 'seg-social.es.md'),
+      `---\ndomain: seg-social.es\nupdated: x\n---\n\n# Playbook\n\n## Login\n\n- la pass es ${CANARY_PASS}\n`,
+      'utf8',
+    );
+    const res = await run({ action: 'playbook_leer', dominio: 'seg-social.es' });
+    expect(res.isError).toBe(true);
+    const out = text(res);
+    expect(out).toContain('bloqueado');
+    expect(out).not.toContain(CANARY_PASS);
+  });
+
+  it('B3: una rotación posterior al guardado bloquea la lectura siguiente', async () => {
+    await seedVault({ [siteKey('seg-social.es', 'password')]: CANARY_PASS });
+    const { run, text } = setup();
+    // Guardado limpio: el token viejo aún no es secreto del vault.
+    const saved = text(
+      await run({
+        action: 'playbook_guardar',
+        dominio: 'seg-social.es',
+        quirks: ['el token viejo era TOK3N-viejo, ya no vale'],
+      }),
+    );
+    expect(saved).toContain('guardado');
+    expect(text(await run({ action: 'playbook_leer', dominio: 'seg-social.es' }))).toContain(
+      'TOK3N-viejo',
+    );
+    // Rotación: ese literal pasa a ser un valor actual del vault -> bloqueo.
+    await vaultSet('otra:clave', 'TOK3N-viejo');
+    const blocked = await run({ action: 'playbook_leer', dominio: 'seg-social.es' });
+    expect(blocked.isError).toBe(true);
+    expect(text(blocked)).toContain('bloqueado');
+    expect(text(blocked)).not.toContain('TOK3N-viejo');
+  });
+
+  it('CR y separadores Unicode se rechazan (no pueden fraguar estructura)', async () => {
+    const { run, text, dir } = setup();
+    for (const evil of ['safe\r## Quirks\r- altered', 'uno\u2028dos', 'x\x0by']) {
+      const rejected = text(
+        await run({ action: 'playbook_guardar', dominio: 'seg-social.es', login: [evil] }),
+      );
+      expect(rejected).toContain('una sola línea');
+      expect(readdirSync(dir)).toEqual([]);
+    }
+  });
+
+  it('el store valida por sí mismo: dominio no canónico y caps se rechazan dentro', () => {
+    const { playbooks, dir } = setup();
+    expect(() =>
+      playbooks.save({
+        domain: 'WWW.seg-social.es',
+        updatedAt: 'x',
+        login: ['ok'],
+        selectores: [],
+        quirks: [],
+      }),
+    ).toThrow(/no canónico/);
+    expect(() =>
+      playbooks.save({
+        domain: 'seg-social.es',
+        updatedAt: 'x',
+        login: Array.from({ length: 21 }, (_, i) => `nota ${i}`),
+        selectores: [],
+        quirks: [],
+      }),
+    ).toThrow(/no puede tener más de 20/);
+    // Sin tmp residuales tras los fallos.
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('completar recuerda guardar el playbook', async () => {
