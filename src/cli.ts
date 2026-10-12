@@ -166,7 +166,8 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
-import { ConversationSession } from './voice/conversation.js';
+import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
+import { speakPhrases, splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
@@ -3513,7 +3514,7 @@ async function serveCommand(): Promise<number> {
         '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
-        '/conversacion on|off|estado - tras mi nombre, hablar sin repetirlo',
+        '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (cortarme: apagado por defecto)',
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
         '/play [volumen] - suena en el PC el último audio que me mandaste',
         '/mic [segundos] - escuchar lo que oye el microfono',
@@ -4014,28 +4015,60 @@ async function serveCommand(): Promise<number> {
   let conversationOn = false;
   let session: ConversationSession | null = null;
   let sessionPlayback: Playback | null = null;
+  let activeSpeech: { abort(): void } | null = null;
+  /** How easily talking over the agent cuts it off. Not persisted. */
+  let bargeLevel: BargeInLevel = 'off';
   let conversationCount = 0;
   let lastConversationEnd = '';
   const speaker = createMciSpeaker();
 
-  /** Read an answer out loud on this machine's speakers. Never touches the system volume. */
+  /**
+   * Read an answer out loud on this machine's speakers, phrase by phrase, interruptible.
+   * Never touches the system volume. Runs inside the session's `speak`, so the agent's
+   * own voice is not taken for a request and the user talking over it stops the sound.
+   */
   const speakAloud = async (text: string, owner: ConversationSession): Promise<void> => {
-    const clean = trimForSpeech(text);
-    if (!clean) return;
-    const spoken = await tts.speak(clean);
-    // Closed (or switched off) while synthesising: say nothing.
-    if (session !== owner) return;
+    const phrases = splitPhrases(trimForSpeech(text));
+    if (phrases.length === 0 || session !== owner) return;
     mkdirSync(paths.voice, { recursive: true });
-    const file = join(paths.voice, `say-${Date.now()}.mp3`);
-    writeFileSync(file, spoken.data);
-    try {
-      const playback = speaker.play(file);
-      sessionPlayback = playback;
-      await playback.done;
-    } finally {
-      sessionPlayback = null;
-      rmSync(file, { force: true });
-    }
+    let handle: ReturnType<typeof speakPhrases> | null = null;
+    let n = 0;
+    await owner.speak(
+      async (ctl) => {
+        if (session !== owner) return;
+        handle = speakPhrases(phrases, {
+          synth: async (phrase) => {
+            const spoken = await tts.speak(phrase);
+            // Closed, switched off or replaced while synthesising: nothing more is said.
+            if (session !== owner) throw new Error('sesión cerrada');
+            const file = join(paths.voice, `say-${Date.now()}-${n++}.mp3`);
+            writeFileSync(file, spoken.data);
+            return file;
+          },
+          play: (file) => {
+            const playback = speaker.play(file);
+            sessionPlayback = playback;
+            return playback;
+          },
+          remove: (file) => rmSync(file, { force: true }),
+          onPhraseStart: () => ctl.phraseStart(),
+        });
+        activeSpeech = handle;
+        try {
+          const result = await handle.done;
+          if (!result.aborted && result.spoken < phrases.length) {
+            throw new Error('no he podido leer toda la respuesta en voz alta');
+          }
+        } catch (err) {
+          // Aborted on purpose (barge-in / close): not a failure worth reporting.
+          if (!ctl.interrupted() && session === owner) throw err;
+        } finally {
+          sessionPlayback = null;
+          activeSpeech = null;
+        }
+      },
+      { stop: () => handle?.abort(), text: phrases.join(' ') },
+    );
   };
 
   const closeSessionText = (reason: string, detail?: string): string =>
@@ -4065,6 +4098,7 @@ async function serveCommand(): Promise<number> {
     const listener = currentWake();
     if (!conversationOn || !listener || session) return session;
     const created = new ConversationSession({
+      bargeIn: bargeLevel,
       transcriber: (samples) => defaultTranscriber(samples),
       onUtterance: async (heard) => {
         const inbound: Inbound = {
@@ -4094,6 +4128,7 @@ async function serveCommand(): Promise<number> {
           session = null;
         }
         sessionPlayback?.stop();
+        activeSpeech?.abort();
         currentWake()?.hold(false);
         lastConversationEnd = `${reason}${detail ? `: ${detail}` : ''}`;
         log.info('voice session closed', { reason, detail });
@@ -4158,7 +4193,7 @@ async function serveCommand(): Promise<number> {
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
+            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones, lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
             : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
           (currentWake()?.isRunning()
             ? ''
@@ -4167,8 +4202,28 @@ async function serveCommand(): Promise<number> {
       );
       return;
     }
+    if (want === 'corte') {
+      const level = args.trim().split(/\s+/)[1]?.toLowerCase() ?? '';
+      if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
+        await say(
+          inbound,
+          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|altavoces|auriculares (vale desde la próxima sesión).`,
+          { quote: true },
+        );
+        return;
+      }
+      bargeLevel = level;
+      await say(
+        inbound,
+        level === 'off'
+          ? 'No me cortaré si hablas encima: te escucho cuando termine. Vale desde la próxima sesión.'
+          : `Si hablas encima me callo (${level}). Con altavoces es aproximado y puede cortar de más o de menos; con auriculares es fiable. Vale desde la próxima sesión.`,
+        { quote: true },
+      );
+      return;
+    }
     if (want !== 'on' && want !== 'off') {
-      await say(inbound, 'Uso: /conversacion on|off|estado', { quote: true });
+      await say(inbound, 'Uso: /conversacion on|off|estado|corte', { quote: true });
       return;
     }
     if (want === 'off') {

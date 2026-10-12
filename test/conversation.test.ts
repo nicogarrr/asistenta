@@ -302,7 +302,7 @@ describe('ConversationSession: saludo, ruido continuo y solapes', () => {
           release = r;
         }),
     );
-    expect(session.state()).toBe('respondiendo');
+    expect(session.state()).toBe('hablando');
     feedN(session, voice, 10); // el "Dime." saliendo por el altavoz
     feedN(session, quiet, 10);
     release();
