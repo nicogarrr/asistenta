@@ -46,6 +46,7 @@ import {
   inQuietHours,
   isCritical,
   MAX_CONFLICTS,
+  occurrenceKey,
   type QuietHours,
   type ReminderStage,
   stageKey,
@@ -304,7 +305,7 @@ interface Reminder {
 }
 
 export function formatReminders(reminders: Reminder[], now: number, timeZone: string): string {
-  const lines = reminders.map(({ item, stage }) => {
+  const lines = reminders.map(({ item }) => {
     const label = KIND_LABEL[item.kind] ?? item.kind;
     const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
     const tag =
@@ -315,7 +316,7 @@ export function formatReminders(reminders: Reminder[], now: number, timeZone: st
       item.confidence !== undefined && item.confidence < 0.8
         ? ` (${Math.round(item.confidence * 100)}% seguro)`
         : '';
-    return `• ${label}: ${title} — ${whenRelative(item, stage, now)}; ${formatWhen(item, timeZone)} (${tag})${doubt}`;
+    return `• ${label}: ${title} — ${whenRelative(item, now, timeZone)}; ${formatWhen(item, timeZone)} (${tag})${doubt}`;
   });
   return `⏰ Recordatorio: ${reminders.length === 1 ? '1 cosa próxima' : `${reminders.length} cosas próximas`}\n${lines.join('\n')}`;
 }
@@ -342,6 +343,8 @@ export async function runVigilanteOnce(
       Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
       'vigilante: construir la agenda',
     );
+    // /ojo off durante la espera de la agenda: este barrido ya no avisa ni marca.
+    if (!getOjoEnabled(deps.db)) return zero;
 
     const nowMs = now();
     const findings = collectFindings(agenda, timeZone, nowMs);
@@ -353,6 +356,20 @@ export async function runVigilanteOnce(
     for (const item of findings) {
       const key = findingKey(item, timeZone);
       if (!unique.has(key)) unique.set(key, item);
+    }
+
+    // Ocurrencias exactas (para etapas y solapes), agrupadas por su clave de descubrimiento.
+    const occurrences = new Map<string, AgendaItem>();
+    for (const item of findings) {
+      const ok = occurrenceKey(item);
+      if (!occurrences.has(ok)) occurrences.set(ok, item);
+    }
+    const occByFinding = new Map<string, Array<[string, AgendaItem]>>();
+    for (const [ok, item] of occurrences) {
+      const fk = findingKey(item, timeZone);
+      const list = occByFinding.get(fk) ?? [];
+      list.push([ok, item]);
+      occByFinding.set(fk, list);
     }
 
     const known = new Set(
@@ -382,12 +399,12 @@ export async function runVigilanteOnce(
       stage: ReminderStage;
       covered: ReminderStage[];
     }> = [];
-    for (const [key, item] of unique) {
-      if (!known.has(key) || !allowed(item)) continue;
+    for (const [ok, item] of occurrences) {
+      if (!known.has(findingKey(item, timeZone)) || !allowed(item)) continue;
       const due = dueStages(item, timeZone, nowMs);
-      const pending = due.filter((st) => !marked.has(stageKey(key, st)));
+      const pending = due.filter((st) => !marked.has(stageKey(ok, st)));
       const last = pending[pending.length - 1];
-      if (last) reminders.push({ key, item, stage: last, covered: due });
+      if (last) reminders.push({ key: ok, item, stage: last, covered: due });
     }
     reminders.sort((x, y) => (x.item.at ?? 0) - (y.item.at ?? 0));
     const remindersToSend = reminders.slice(0, maxItems);
@@ -396,7 +413,7 @@ export async function runVigilanteOnce(
     // Nunca críticos: durante el silencio esperan.
     const conflicts: Conflict[] = quiet
       ? []
-      : findConflicts([...unique.values()], (i) => findingKey(i, timeZone), nowMs)
+      : findConflicts([...occurrences.values()], occurrenceKey, nowMs)
           .filter((c) => !marked.has(c.key))
           .slice(0, MAX_CONFLICTS);
 
@@ -406,6 +423,9 @@ export async function runVigilanteOnce(
 
     // Cierre ordenado: si el daemon se apaga, este barrido no envía ni escribe.
     if (deps.shouldAbort?.()) return { seen: findings.length, fresh: toSend.length, notified: 0 };
+
+    // Último punto de no retorno: /ojo off puede haber llegado durante cualquier espera.
+    if (!getOjoEnabled(deps.db)) return zero;
 
     const parts: string[] = [];
     if (toSend.length > 0) {
@@ -443,8 +463,11 @@ export async function runVigilanteOnce(
     for (const [key, item] of toSend) {
       insert.run(key, item.kind, item.title, item.at ?? null, now());
       // El aviso de descubrimiento ya cubre las etapas que tocan ahora.
-      for (const st of dueStages(item, timeZone, nowMs)) {
-        mark.run(stageKey(key, st), `etapa:${st}`, item.title, item.at ?? null, now());
+      // y a todas las ocurrencias de ese hallazgo (homónimos del mismo día).
+      for (const [ok, occ] of occByFinding.get(key) ?? []) {
+        for (const st of dueStages(occ, timeZone, nowMs)) {
+          mark.run(stageKey(ok, st), `etapa:${st}`, occ.title, occ.at ?? null, now());
+        }
       }
     }
     for (const r of remindersToSend) {

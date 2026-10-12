@@ -24,7 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { zonedDayStart, zonedParts } from './agenda/ics.js';
+import { zonedDayKey, zonedDayStart, zonedParts } from './agenda/ics.js';
 import type { AgendaItem } from './agenda/unified.js';
 
 const HOUR_MS = 3_600_000;
@@ -91,6 +91,20 @@ export function dueStages(item: AgendaItem, timeZone: string, now: number): Remi
     .map((s) => s.stage);
 }
 
+/**
+ * Identidad de una OCURRENCIA exacta (tipo + título + instante), distinta de la
+ * clave de descubrimiento del vigilante (tipo + título + día): dos citas con el
+ * mismo título el mismo día a distinta hora son dos ocurrencias, con sus propias
+ * etapas y sus propios solapes. La misma ocurrencia vista en dos fuentes es una.
+ */
+export function occurrenceKey(item: AgendaItem): string {
+  const title = item.title.trim().toLowerCase().replace(/\s+/g, ' ');
+  return createHash('sha256')
+    .update(`${item.kind}|${item.at ?? 'sin-fecha'}|${title}`)
+    .digest('hex')
+    .slice(0, 24);
+}
+
 export function stageKey(findingKey: string, stage: ReminderStage): string {
   return `${findingKey}:${stage}`;
 }
@@ -108,7 +122,7 @@ export function inQuietHours(now: number, quiet: QuietHours, timeZone: string): 
 export function isCritical(item: AgendaItem, now: number): boolean {
   if (!CRITICAL_KINDS.includes(item.kind) || !isTimed(item) || item.at == null) return false;
   const left = item.at - now;
-  return left > 0 && left <= CRITICAL_WINDOW_MS;
+  return left > 0 && left < CRITICAL_WINDOW_MS;
 }
 
 export interface Conflict {
@@ -160,6 +174,25 @@ export function findConflicts(
   return out;
 }
 
+const WHERE_LABEL: Record<string, string> = {
+  calendario: 'calendario',
+  correo: 'correo',
+  pendiente: 'pendiente',
+};
+
+/** Procedencia y duda de un lado del conflicto: lo inferido nunca sale como confirmado. */
+function provenance(item: AgendaItem): string {
+  const tag =
+    item.sources && item.sources.length > 1
+      ? item.sources.map((w) => WHERE_LABEL[w] ?? w).join('+')
+      : (WHERE_LABEL[item.where] ?? item.where);
+  const doubt =
+    item.confidence !== undefined && item.confidence < 0.8
+      ? `, ${Math.round(item.confidence * 100)}% seguro`
+      : '';
+  return `${tag}${doubt}`;
+}
+
 function clock(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat('es-ES', {
     hour: 'numeric',
@@ -193,14 +226,19 @@ export function formatConflicts(
     }).format(new Date(at));
   const lines = conflicts.map(
     (c) =>
-      `• ${day(c.a.at as number)}: «${clean(c.a.title, max)}» (${range(c.a, timeZone)}) se pisa con «${clean(c.b.title, max)}» (${range(c.b, timeZone)})`,
+      `• ${day(c.a.at as number)}: «${clean(c.a.title, max)}» (${range(c.a, timeZone)}, ${provenance(c.a)}) se pisa con «${clean(c.b.title, max)}» (${range(c.b, timeZone)}, ${provenance(c.b)})`,
   );
   return `⚠️ Conflicto de agenda${conflicts.length > 1 ? ` (${conflicts.length})` : ''}\n${lines.join('\n')}`;
 }
 
 /** "en 2 h", "en 35 min", "mañana": relativo y honesto, nunca una hora inventada. */
-export function whenRelative(item: AgendaItem, stage: ReminderStage, now: number): string {
-  if (stage === 't24' && !isTimed(item)) return 'mañana (sin hora)';
+export function whenRelative(item: AgendaItem, now: number, timeZone: string): string {
+  if (!isTimed(item)) {
+    // La etapa dura hasta el final del día objetivo: tras un apagón puede salir el propio día.
+    const sameDay =
+      item.at != null && zonedDayKey(item.at, timeZone) === zonedDayKey(now, timeZone);
+    return sameDay ? 'hoy (sin hora)' : 'mañana (sin hora)';
+  }
   const left = (item.at as number) - now;
   if (left >= 3 * HOUR_MS) return `en ${Math.round(left / HOUR_MS)} h`;
   if (left >= HOUR_MS) {

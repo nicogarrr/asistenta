@@ -246,3 +246,131 @@ describe('interruptor /ojo', () => {
     expect(r.sent).toHaveLength(1);
   });
 });
+
+describe('auditor R1 (B1-B4)', () => {
+  it('B1: sin hora, el propio día dice "hoy" y el día antes "mañana"', async () => {
+    const dl: AgendaItem = {
+      title: 'Plazo IRPF',
+      at: at('2026-10-15T00:00:00+02:00'),
+      kind: 'deadline',
+      where: 'correo',
+      timed: false,
+    };
+    const r = rig([dl]);
+    r.at(at('2026-10-13T10:00:00+02:00'));
+    await r.run(); // descubrimiento
+    r.at(at('2026-10-14T09:30:00+02:00'));
+    await r.run();
+    expect(r.sent[1]).toContain('mañana (sin hora)');
+    const r2 = rig([dl]);
+    r2.at(at('2026-10-13T10:00:00+02:00'));
+    await r2.run();
+    r2.at(at('2026-10-15T10:00:00+02:00')); // reanudación el propio día tras un apagón
+    await r2.run();
+    expect(r2.sent[1]).toContain('hoy (sin hora)');
+    expect(r2.sent[1]).not.toContain('mañana');
+  });
+
+  it('B2: /ojo off durante un barrido en vuelo no envía ni marca', async () => {
+    const db = new DatabaseSync(':memory:');
+    let release!: () => void;
+    const gate = new Promise<void>((res) => {
+      release = res;
+    });
+    const sent: string[] = [];
+    const items = [meeting('CANARY', BASE + 30 * H)];
+    const p = runVigilanteOnce(
+      {
+        db,
+        agenda: async () => {
+          await gate;
+          return agenda(items);
+        },
+        send: async (t) => {
+          sent.push(t);
+          return true;
+        },
+        now: () => BASE,
+      },
+      TZ,
+    );
+    setOjoEnabled(db, false);
+    release();
+    await p;
+    expect(sent).toHaveLength(0);
+    expect((db.prepare('SELECT count(*) n FROM vigilante_seen').get() as { n: number }).n).toBe(0);
+    expect((db.prepare('SELECT count(*) n FROM vigilante_stages').get() as { n: number }).n).toBe(
+      0,
+    );
+  });
+
+  it('B3: homónimos del mismo día a distinta hora son ocurrencias distintas y chocan', async () => {
+    const a = meeting('Reunión', at('2026-10-13T11:00:00+02:00'), {
+      end: at('2026-10-13T13:00:00+02:00'),
+    });
+    const b = meeting('Reunión', at('2026-10-13T12:00:00+02:00'), {
+      end: at('2026-10-13T14:00:00+02:00'),
+    });
+    const r = rig([a, b]);
+    await r.run();
+    expect(r.sent[0]).toContain('Conflicto de agenda');
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+  });
+
+  it('B3: el redescubrimiento duplicado de la misma ocurrencia no es conflicto ni duplica etapas', async () => {
+    const a = meeting('Reunión', at('2026-10-13T11:00:00+02:00'), {
+      end: at('2026-10-13T13:00:00+02:00'),
+    });
+    const r = rig([a, { ...a, where: 'correo', sources: ['correo'] }]);
+    await r.run();
+    expect(r.sent[0]).not.toContain('Conflicto');
+  });
+
+  it('B3: homónimos: el descubrimiento cubre las etapas de TODAS las ocurrencias del hallazgo', async () => {
+    const t1 = BASE + 30 * H;
+    const a = meeting('Revisión', t1);
+    const b = meeting('Revisión', t1 + 3 * H);
+    const r = rig([a, b]);
+    r.at(t1 - 1 * H); // ambas dentro de T-24h al descubrir
+    await r.run();
+    const n = r.sent.length;
+    await r.run();
+    expect(r.sent).toHaveLength(n);
+  });
+
+  it('B3: homónimos reciben cada uno su recordatorio T-2h', async () => {
+    const t1 = BASE + 30 * H;
+    const a = meeting('Revisión', t1);
+    const b = meeting('Revisión', t1 + 5 * H);
+    const r = rig([a, b]);
+    await r.run();
+    r.at(t1 - 2 * H + 60_000);
+    await r.run();
+    r.at(t1 + 5 * H - 2 * H + 60_000);
+    await r.run();
+    const rec = r.sent.filter((t) => t.includes('Recordatorio'));
+    expect(rec.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('B4: el conflicto lleva procedencia y duda de ambos lados', async () => {
+    const a = meeting('Dentista', at('2026-10-13T10:00:00+02:00'), {
+      end: at('2026-10-13T11:00:00+02:00'),
+    });
+    const b = meeting('Comida', at('2026-10-13T10:30:00+02:00'), {
+      where: 'correo',
+      confidence: 0.4,
+    });
+    const r = rig([a, b]);
+    await r.run();
+    const msg = r.sent.find((t) => t.includes('Conflicto')) ?? '';
+    expect(msg).toContain('calendario');
+    expect(msg).toContain('correo, 40% seguro');
+  });
+
+  it('menor: crítico es estrictamente menos de 2 h', () => {
+    const pay: AgendaItem = { title: 'P', at: BASE + 2 * H, kind: 'payment', where: 'correo' };
+    expect(isCritical(pay, BASE)).toBe(false);
+    expect(isCritical({ ...pay, at: BASE + 2 * H - 1 }, BASE)).toBe(true);
+  });
+});

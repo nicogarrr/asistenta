@@ -2134,8 +2134,8 @@ async function serveCommand(): Promise<number> {
       inbound,
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
-        'Cada 30 min miro calendario, correo y pendientes, y te aviso de plazos, pagos, viajes y citas nuevos, con un recordatorio a 24 h y otro a 2 h, y de citas que se pisan.',
-        `Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h.`,
+        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. También te aviso de citas con hora que se pisan.',
+        `Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ].join('\n'),
       { quote: true },
     );
