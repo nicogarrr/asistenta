@@ -106,9 +106,14 @@ export function fileKind(ext: string): string {
 
 /** Nombre apto para un mensaje: sin saltos de línea ni caracteres de control, acotado. */
 export function safeName(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: se eliminan a propósito
-  const clean = name
-    .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e]+/g, ' ')
+  const clean = [...name]
+    .map((ch) => {
+      const c = ch.codePointAt(0) ?? 0;
+      const control =
+        c <= 0x1f || c === 0x7f || c === 0x200e || c === 0x200f || (c >= 0x202a && c <= 0x202e);
+      return control ? ' ' : ch;
+    })
+    .join('')
     .replace(/\s+/g, ' ')
     .trim();
   return clean.length > NAME_MAX ? `${clean.slice(0, NAME_MAX - 1)}…` : clean || '(sin nombre)';
