@@ -34,7 +34,8 @@ export function initIgnoreStore(db: DatabaseSync): void {
       src TEXT NOT NULL,
       title TEXT NOT NULL,
       at INTEGER,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'enviado'
     )
   `);
   db.exec(`
@@ -81,7 +82,7 @@ export function classKey(item: AgendaItem): string | null {
     .slice(0, 24);
 }
 
-/** Último número asignado (0 si no hay): los siguientes avisos usan base+1... */
+/** Último número asignado (0 si no hay). */
 export function lastNoticeNumber(db: DatabaseSync): number {
   initIgnoreStore(db);
   const row = db
@@ -90,31 +91,67 @@ export function lastNoticeNumber(db: DatabaseSync): number {
   return row?.seq ?? 0;
 }
 
-/** Guarda los avisos YA entregados con su número. */
-export function recordNotices(
+/**
+ * Reserva DURABLE de números: cada aviso se inserta como 'reservado' ANTES de enviar y
+ * el número lo da la base (AUTOINCREMENT), nunca un cálculo previo. Devuelve los números
+ * en el orden de las entradas. El barrido está serializado por base de datos; aun así,
+ * una colisión de números fallaría en voz alta (sin INSERT OR IGNORE).
+ */
+export function reserveNotices(
   db: DatabaseSync,
-  entries: ReadonlyArray<{ n: number; item: AgendaItem }>,
+  items: readonly AgendaItem[],
   now: number,
-): void {
+): number[] {
   initIgnoreStore(db);
   const ins = db.prepare(
-    'INSERT OR IGNORE INTO vigilante_notices (n, occ_key, class_key, kind, src, title, at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    "INSERT INTO vigilante_notices (occ_key, class_key, kind, src, title, at, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'reservado')",
   );
-  let max = 0;
-  for (const { n, item } of entries) {
-    ins.run(
-      n,
-      occurrenceKey(item),
-      classKey(item),
-      item.kind,
-      item.where,
-      item.title,
-      item.at ?? null,
-      now,
-    );
-    max = Math.max(max, n);
-  }
-  if (max > 0) db.prepare('DELETE FROM vigilante_notices WHERE n <= ?').run(max - MAX_NOTICES);
+  return items.map((item) =>
+    Number(
+      ins.run(
+        occurrenceKey(item),
+        classKey(item),
+        item.kind,
+        item.where,
+        item.title,
+        item.at ?? null,
+        now,
+      ).lastInsertRowid,
+    ),
+  );
+}
+
+/** Envío confirmado: los números reservados pasan a ser avisos descartables. */
+export function confirmNotices(db: DatabaseSync, ns: readonly number[]): void {
+  if (ns.length === 0) return;
+  const upd = db.prepare("UPDATE vigilante_notices SET status = 'enviado' WHERE n = ?");
+  for (const n of ns) upd.run(n);
+  const max = Math.max(...ns);
+  db.prepare("DELETE FROM vigilante_notices WHERE n <= ? AND status = 'enviado'").run(
+    max - MAX_NOTICES,
+  );
+}
+
+/**
+ * Envío fallido: se sueltan las reservas y los números no se gastan (el siguiente intento
+ * reutiliza los mismos). Solo es seguro porque el barrido está serializado.
+ */
+export function releaseNotices(db: DatabaseSync, ns: readonly number[]): void {
+  if (ns.length === 0) return;
+  const del = db.prepare("DELETE FROM vigilante_notices WHERE n = ? AND status = 'reservado'");
+  for (const n of ns) del.run(n);
+  db.prepare(
+    "UPDATE sqlite_sequence SET seq = max((SELECT COALESCE(MAX(n), 0) FROM vigilante_notices), (SELECT COALESCE(MAX(n), 0) FROM vigilante_dismissals)) WHERE name = 'vigilante_notices'",
+  ).run();
+}
+
+/**
+ * Reservas huérfanas (el proceso murió con el envío en vuelo): se sueltan sin tocar la
+ * secuencia, porque no se sabe si el mensaje llegó a salir y su número no debe reutilizarse.
+ */
+export function dropStaleReservations(db: DatabaseSync): void {
+  initIgnoreStore(db);
+  db.prepare("DELETE FROM vigilante_notices WHERE status = 'reservado'").run();
 }
 
 export interface Rule {
@@ -130,7 +167,7 @@ export function listRules(db: DatabaseSync): Array<Rule & { dismissed: number; c
   const rows = db
     .prepare(
       `SELECT r.id, r.kind, r.src, r.pattern, r.status, r.class_key AS classKey,
-        (SELECT count(*) FROM vigilante_dismissals d WHERE d.class_key = r.class_key AND d.counted = 1) AS dismissed
+        (SELECT count(DISTINCT d.occ_key) FROM vigilante_dismissals d WHERE d.class_key = r.class_key AND d.counted = 1) AS dismissed
        FROM vigilante_rules r ORDER BY r.id`,
     )
     .all() as unknown as Array<Rule & { dismissed: number; classKey: string }>;
@@ -144,7 +181,15 @@ export type DismissResult =
 /** `/ignora n`: descarta ese aviso y cuenta contra su clase; propone regla a los 2 descartes. */
 export function dismissNotice(db: DatabaseSync, n: number, now: number): DismissResult {
   initIgnoreStore(db);
-  const notice = db.prepare('SELECT * FROM vigilante_notices WHERE n = ?').get(n) as
+  const pend = db
+    .prepare("SELECT 1 AS x FROM vigilante_notices WHERE n = ? AND status = 'reservado'")
+    .get(n);
+  if (pend) {
+    return { ok: false, error: `El aviso #${n} se está enviando; repite /ignora en un momento.` };
+  }
+  const notice = db
+    .prepare("SELECT * FROM vigilante_notices WHERE n = ? AND status = 'enviado'")
+    .get(n) as
     | { occ_key: string; class_key: string | null; kind: string; src: string; title: string }
     | undefined;
   if (!notice) {
@@ -209,6 +254,7 @@ export function activateRule(db: DatabaseSync, id: number): { ok: boolean; error
     | undefined;
   if (!row) return { ok: false, error: `No existe la regla ${id}.` };
   if (row.status === 'activa') return { ok: false, error: `La regla ${id} ya está activa.` };
+  if (row.status !== 'propuesta') return { ok: false, error: `La regla ${id} no está propuesta.` };
   db.prepare("UPDATE vigilante_rules SET status = 'activa' WHERE id = ?").run(id);
   return { ok: true };
 }
@@ -257,7 +303,7 @@ export function formatRules(rules: ReturnType<typeof listRules>): string {
   }
   const lines = rules.map(
     (r) =>
-      `• R${r.id} [${r.status}] ${r.kind} · ${r.src} · «${r.pattern}» (descartados: ${r.dismissed})`,
+      `• R${r.id} [${r.status}] ${r.kind} · ${r.src} · «${r.pattern}» (avisos distintos descartados: ${r.dismissed})`,
   );
   return `Reglas de ignorar:\n${lines.join('\n')}\nActivar una propuesta: /ignorados activar <id>. Borrar: /ignorados borrar <id>.`;
 }

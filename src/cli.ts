@@ -138,6 +138,7 @@ import {
 } from './vault.js';
 import {
   getOjoEnabled,
+  isOwnerDm,
   resolveOwnerDmChatId,
   resolveOwnerUserId,
   setOjoEnabled,
@@ -2144,6 +2145,12 @@ async function serveCommand(): Promise<number> {
 
   /** `/ignora <n>`: descarta el aviso [#n]; a los 2 descartes parecidos propone una regla. */
   const cmdIgnora = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
     const m = /^#?(\d{1,9})$/.exec(args.trim());
     if (!m) {
       await say(
@@ -2162,7 +2169,9 @@ async function serveCommand(): Promise<number> {
       await say(inbound, `El aviso #${m[1]} ya estaba descartado.`, { quote: true });
       return;
     }
-    const lines = [`Descartado «${res.title.slice(0, 80)}»: no te lo vuelvo a recordar.`];
+    const lines = [
+      `Descartado «${res.title.slice(0, 80)}»: no te lo vuelvo a recordar. Excepción: un pago o plazo con hora a menos de 2 h te lo aviso una vez más.`,
+    ];
     if (res.noClass) {
       lines.push('Su título no da un patrón fiable, así que no cuenta para proponer reglas.');
     }
@@ -2171,7 +2180,6 @@ async function serveCommand(): Promise<number> {
       lines.push(
         '',
         `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
-        'Un pago o plazo con hora a menos de 2 h te lo aviso siempre.',
       );
     }
     await say(inbound, lines.join('\n'), { quote: true });
@@ -2179,6 +2187,12 @@ async function serveCommand(): Promise<number> {
 
   /** `/ignorados [activar|borrar <id>]`: ver y gestionar las reglas de ignorar. */
   const cmdIgnorados = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
     const m = /^(activar|borrar)\s+R?(\d{1,9})$/i.exec(args.trim());
     if (args.trim() && !m) {
       await say(inbound, 'Uso: /ignorados, /ignorados activar <id> o /ignorados borrar <id>.', {
