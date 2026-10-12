@@ -47,9 +47,36 @@ export interface ConversationOptions {
   /** Runs the agent turn for what was said and speaks the answer. Resolves when done. */
   onUtterance: (text: string) => Promise<void>;
   onClose: (reason: CloseReason, detail?: string) => void;
+  /** Interrupt the agent while it talks. Default 'normal'. */
+  bargeIn?: BargeInLevel;
 }
 
-export type ConversationState = 'escuchando' | 'transcribiendo' | 'respondiendo' | 'cerrada';
+export type ConversationState =
+  | 'escuchando'
+  | 'transcribiendo'
+  | 'respondiendo'
+  | 'hablando'
+  | 'cerrada';
+
+/** Barge-in tuning. `off` keeps V1 behaviour: nothing is heard while the agent talks. */
+export type BargeInLevel = 'off' | 'normal' | 'sensible';
+
+const BARGE_IN: Record<Exclude<BargeInLevel, 'off'>, { factor: number; sustainMs: number }> = {
+  normal: { factor: 2, sustainMs: 400 },
+  sensible: { factor: 1.5, sustainMs: 250 },
+};
+
+/** Echo is measured over this much audio at the start of each phrase. */
+const CALIBRATE_MS = 500;
+
+export interface SpeakControl {
+  /** Call when each phrase starts playing: the echo level is measured again. */
+  phraseStart(): void;
+  /** True once the user interrupted; the runner must stop producing sound. */
+  interrupted(): boolean;
+}
+
+export type SpeakOutcome = 'fin' | 'interrumpido';
 
 const FILLERS = new Set([
   'eh',
@@ -123,7 +150,7 @@ function rms(samples: Float32Array): number {
 const msToSamples = (ms: number): number => Math.round((ms * SAMPLE_RATE) / 1000);
 
 export class ConversationSession {
-  #o: Required<Omit<ConversationOptions, 'transcriber' | 'onUtterance' | 'onClose'>>;
+  #o: Required<Omit<ConversationOptions, 'transcriber' | 'onUtterance' | 'onClose' | 'bargeIn'>>;
   #transcriber: ConversationOptions['transcriber'];
   #onUtterance: ConversationOptions['onUtterance'];
   #onClose: ConversationOptions['onClose'];
@@ -145,6 +172,17 @@ export class ConversationSession {
   #lastHeard = '';
   #lastError = '';
   #generation = 0;
+  #bargeIn: BargeInLevel;
+  #bargeIns = 0;
+  /** Which turn is allowed to resume listening when it ends (an interrupted one is not). */
+  #turnSeq = 0;
+  #speakStop: (() => void) | null = null;
+  #speakInterrupted = false;
+  #echoSum = 0;
+  #echoSamples = 0;
+  #loudSamples = 0;
+  #speakBuf: Float32Array[] = [];
+  #speakBufSamples = 0;
   /** True until the transcriber's own promise settles, even after our timeout gave up on it. */
   #transcribing = false;
 
@@ -161,6 +199,7 @@ export class ConversationSession {
       transcribeTimeoutMs: opts.transcribeTimeoutMs ?? 30_000,
       maxFailures: opts.maxFailures ?? 3,
     };
+    this.#bargeIn = opts.bargeIn ?? 'normal';
     this.#transcriber = opts.transcriber;
     this.#onUtterance = opts.onUtterance;
     this.#onClose = opts.onClose;
@@ -170,8 +209,15 @@ export class ConversationSession {
     return this.#state;
   }
 
-  stats(): { state: ConversationState; utterances: number; lastHeard: string; lastError: string } {
+  stats(): {
+    state: ConversationState;
+    utterances: number;
+    lastHeard: string;
+    lastError: string;
+    bargeIns: number;
+  } {
     return {
+      bargeIns: this.#bargeIns,
       state: this.#state,
       utterances: this.#utterances,
       lastHeard: this.#lastHeard,
@@ -195,6 +241,10 @@ export class ConversationSession {
 
   /** Feed microphone audio (16 kHz mono float). Audio outside 'escuchando' is dropped on purpose. */
   feed(pcm: Float32Array): void {
+    if (this.#state === 'hablando') {
+      this.#feedWhileSpeaking(pcm);
+      return;
+    }
     if (this.#state !== 'escuchando' || pcm.length === 0) return;
     if (this.#skipSamples > 0) {
       this.#skipSamples = Math.max(0, this.#skipSamples - pcm.length);
@@ -348,32 +398,119 @@ export class ConversationSession {
 
     this.#utterances++;
     this.#state = 'respondiendo';
+    const mine = ++this.#turnSeq;
     try {
       await this.#onUtterance(text);
     } catch (err) {
       this.#lastError = err instanceof Error ? err.message : String(err);
     }
     if (generation !== this.#generation) return;
+    // Interrupted (barge-in) or superseded by a newer turn: that one owns the state now.
+    if (mine !== this.#turnSeq || this.#state !== 'respondiendo') return;
     this.#resumeListening(true);
   }
 
   /**
-   * Speak something that is not a turn (the greeting). The session is NOT listening
-   * while it plays, and the echo tail is dropped after, so the agent cannot hear itself
-   * and answer itself.
+   * Speak out loud (the greeting or a turn's answer). While it plays the session is
+   * 'hablando': the agent's own voice is never taken for a request, and, with barge-in
+   * on, the user talking over it stops the sound (`stop`) and what they say becomes the
+   * next utterance. Called while listening (greeting) it resumes listening with the echo
+   * tail dropped; called from inside a turn the turn itself resumes afterwards.
+   * Resolves once `run` has settled.
    */
-  async speak(say: () => Promise<void>): Promise<void> {
-    if (this.#state !== 'escuchando') return;
+  async speak(
+    run: (ctl: SpeakControl) => Promise<void>,
+    opts: { stop?: () => void } = {},
+  ): Promise<SpeakOutcome> {
+    const fromListening = this.#state === 'escuchando';
+    if (!fromListening && this.#state !== 'respondiendo') return 'fin';
     const generation = this.#generation;
-    this.#resetUtterance();
-    this.#state = 'respondiendo';
+    if (fromListening) this.#resetUtterance();
+    const returnTo: ConversationState = fromListening ? 'escuchando' : 'respondiendo';
+    const turn = this.#turnSeq;
+    this.#state = 'hablando';
+    this.#speakStop = opts.stop ?? null;
+    this.#speakInterrupted = false;
+    this.#restartCalibration();
+    this.#speakBuf = [];
+    this.#speakBufSamples = 0;
+    const ctl: SpeakControl = {
+      phraseStart: () => this.#restartCalibration(),
+      interrupted: () => this.#speakInterrupted,
+    };
     try {
-      await say();
+      await run(ctl);
     } catch (err) {
       this.#lastError = err instanceof Error ? err.message : String(err);
     }
-    if (generation !== this.#generation) return;
-    this.#resumeListening();
+    const interrupted = this.#speakInterrupted;
+    this.#speakStop = null;
+    this.#speakInterrupted = false;
+    if (generation !== this.#generation) return interrupted ? 'interrumpido' : 'fin';
+    if (interrupted) return 'interrumpido'; // the session already went back to listening
+    if (this.#state === 'hablando' && turn === this.#turnSeq) {
+      this.#state = returnTo;
+      if (fromListening) this.#resumeListening();
+    }
+    return 'fin';
+  }
+
+  #restartCalibration(): void {
+    this.#echoSum = 0;
+    this.#echoSamples = 0;
+    this.#loudSamples = 0;
+  }
+
+  #feedWhileSpeaking(pcm: Float32Array): void {
+    if (this.#bargeIn === 'off' || !this.#speakStop || pcm.length === 0) return;
+    const level = BARGE_IN[this.#bargeIn];
+    const level_rms = rms(pcm);
+    // Keep a short tail of what was heard: it seeds the interrupting utterance.
+    this.#speakBuf.push(pcm);
+    this.#speakBufSamples += pcm.length;
+    const keep = msToSamples(this.#o.preRollMs + level.sustainMs) + pcm.length;
+    while (
+      this.#speakBuf.length > 1 &&
+      this.#speakBufSamples - (this.#speakBuf[0]?.length ?? 0) >= keep
+    ) {
+      this.#speakBufSamples -= this.#speakBuf.shift()?.length ?? 0;
+    }
+    // The first CALIBRATE_MS of each phrase are the room's echo of our own voice, not
+    // the user. (Declared: someone already talking over the phrase start is measured as
+    // echo and raises the bar for that phrase.)
+    if (this.#echoSamples < msToSamples(CALIBRATE_MS)) {
+      this.#echoSum += level_rms * pcm.length;
+      this.#echoSamples += pcm.length;
+      return;
+    }
+    const echo = this.#echoSum / Math.max(1, this.#echoSamples);
+    const threshold = Math.max(this.#o.gateRms, level.factor * echo);
+    if (level_rms >= threshold) this.#loudSamples += pcm.length;
+    else this.#loudSamples = 0;
+    if (this.#loudSamples < msToSamples(level.sustainMs)) return;
+
+    // Interruption: stop the sound NOW and make what was heard the start of an utterance.
+    this.#speakInterrupted = true;
+    this.#bargeIns++;
+    this.#turnSeq++;
+    const stop = this.#speakStop;
+    this.#speakStop = null;
+    this.#resetUtterance();
+    this.#speech = [...this.#speakBuf];
+    this.#speechSamples = this.#speakBufSamples;
+    this.#voicedSamples = this.#loudSamples;
+    this.#silentSamples = 0;
+    this.#inSpeech = true;
+    this.#speakBuf = [];
+    this.#speakBufSamples = 0;
+    this.#idleSamples = 0;
+    this.#skipSamples = 0;
+    this.#state = 'escuchando';
+    try {
+      stop?.();
+    } catch {
+      // The sound is already being cut by the caller's own abort; never throw into the audio path.
+    }
   }
 
   #withTimeout<T>(p: Promise<T>): Promise<T> {
