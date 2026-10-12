@@ -112,6 +112,11 @@ describe('PlaybookStore', () => {
 
 describe('gestion playbook_leer / playbook_guardar', () => {
   it('guardar + leer por la tool; leer sin playbook no inventa', async () => {
+    // La tool lee el vault al guardar (para no filtrar secretos) y al leer.
+    // Sin vault inicializado esa lectura falla cerrada con "run: pa vault
+    // init", que aqui no es lo que se quiere probar: se quiere probar que no
+    // hay playbook. Un vault portable vacio dice exactamente eso.
+    await seedVault({});
     const { run, text } = setup();
     const none = text(await run({ action: 'playbook_leer', dominio: 'seg-social.es' }));
     expect(none).toContain('No hay playbook de seg-social.es');
@@ -211,6 +216,9 @@ describe('gestion playbook_leer / playbook_guardar', () => {
   });
 
   it('B2: el conocimiento llega al modelo por CONTENT (payload real), nunca por details', async () => {
+    // Mismo motivo que el test de arriba: la lectura de playbook consulta el
+    // vault, y sin uno la tool falla cerrada antes de llegar a la asercion.
+    await seedVault({});
     const { run, text, playbooks } = setup();
     playbooks.save({
       domain: 'seg-social.es',

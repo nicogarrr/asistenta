@@ -21,6 +21,19 @@ import {
 import { createGestionTool } from '../src/tools/gestion.js';
 
 const dirs: string[] = [];
+/**
+ * Stores abiertos por un test, para cerrarlos antes de borrar.
+ *
+ * En Windows un handle de SQLite abierto bloquea el fichero y `rmSync` falla
+ * con EBUSY. Los tests que destructuran `{ run, text }` sin coger `store` no
+ * tienen forma de cerrarlo, asi que se registra al crearlo y se cierra aqui:
+ * la limpieza la lleva el arnes, no cada test.
+ */
+const opened: Array<{ close: () => void }> = [];
+function track<T extends { close: () => void }>(store: T): T {
+  opened.push(store);
+  return store;
+}
 function tmp(): string {
   const dir = mkdtempSync(join(FACTORY_TEST_STATE_DIR, 'pa-macros-'));
   dirs.push(dir);
@@ -28,6 +41,13 @@ function tmp(): string {
 }
 
 afterEach(() => {
+  while (opened.length) {
+    try {
+      opened.pop()?.close();
+    } catch {
+      // Un store ya cerrado no debe impedir borrar el temporal.
+    }
+  }
   while (dirs.length) {
     const dir = dirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -270,7 +290,7 @@ describe('routines store with params', () => {
 describe('gestion action=macro', () => {
   function setup() {
     const dir = tmp();
-    const store = new Store(join(dir, 'test.db'));
+    const store = track(new Store(join(dir, 'test.db')));
     store.saveRoutine({
       scope: 'scope',
       name: 'macro/enviar',
@@ -452,7 +472,7 @@ describe('auditor R1 regressions (B1-B4)', () => {
       expect(r.ok).toBe(false);
     }
     const dir = tmp();
-    const store = new Store(join(dir, 'db.sqlite'));
+    const store = track(new Store(join(dir, 'db.sqlite')));
     expect(() =>
       store.saveRoutine({
         scope: 's',
@@ -481,7 +501,7 @@ describe('B3: macro/ namespace never replays without a valid contract', () => {
   it('a row with garbage params loads with no contract and buildMacroPrompt refuses it', () => {
     const dir = tmp();
     const dbPath = join(dir, 'db.sqlite');
-    const store = new Store(dbPath);
+    const store = track(new Store(dbPath));
     store.saveRoutine({
       scope: 's',
       name: 'macro/x',

@@ -75,12 +75,24 @@ const tmp = (): string => {
   dirs.push(d);
   return d;
 };
+const opened: Array<{ close: () => void }> = [];
 afterEach(() => {
+  // En Windows un DocMemory abierto mantiene el .sqlite bloqueado y el rmSync
+  // falla con EBUSY; el arnes los cierra antes de borrar el temporal.
+  while (opened.length) {
+    try {
+      opened.pop()?.close();
+    } catch {
+      // Una memoria ya cerrada no debe impedir borrar el temporal.
+    }
+  }
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 const mem = (): { m: DocMemory; dir: string } => {
   const dir = tmp();
-  return { m: new DocMemory({ dbPath: join(dir, 'd.sqlite'), directory: join(dir, 'txt') }), dir };
+  const m = new DocMemory({ dbPath: join(dir, 'd.sqlite'), directory: join(dir, 'txt') });
+  opened.push(m);
+  return { m, dir };
 };
 const textOf = (r: unknown): string =>
   (r as { content: Array<{ text?: string }> }).content.map((c) => c.text ?? '').join('\n');

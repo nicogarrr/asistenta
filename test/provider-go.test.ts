@@ -14,6 +14,10 @@ describe('OpenCode Go client rules', () => {
     process.env.OPENCODE_GO_API_KEY = 'test-key-no-network';
     delete process.env.PA_MODEL;
     delete process.env.PA_BASE_URL;
+    // Un endpoint de terceros exige PA_API_KEY explicita (la clave de OpenCode
+    // nunca se manda fuera), asi que se borra para que cada test declare la
+    // suya en vez de heredarla.
+    delete process.env.PA_API_KEY;
     resetConfigForTests();
   });
   afterEach(() => {
@@ -53,6 +57,9 @@ describe('OpenCode Go client rules', () => {
     const go = await createProviderHandle(loadConfig());
     expect(go.modelFor('pa-2').headers?.['x-opencode-session']).toBe('pa-2');
     process.env.PA_BASE_URL = 'https://example.test/v1';
+    // Endpoint de terceros: la clave de OpenCode no se envia ahi, asi que hace
+    // falta una propia o la construccion falla cerrada antes de llegar a esto.
+    process.env.PA_API_KEY = 'test-third-party-no-network';
     resetConfigForTests();
     const other = await createProviderHandle(loadConfig());
     expect(other.modelFor('pa-3').headers?.['x-opencode-session']).toBeUndefined();

@@ -26,6 +26,11 @@ const stateDir = mkdtempSync(join(tmpdir(), 'pa-budget-'));
 process.env.PA_STATE_DIR = stateDir;
 process.env.PA_VAULT_BACKEND = 'portable';
 process.env.PA_SECRET_PROVIDER_APIKEY = 'test-key-never-used';
+// La config de este test apunta a un endpoint propio (127.0.0.1:1), y para un
+// endpoint que no es de OpenCode la clave tiene que venir de PA_API_KEY con ese
+// nombre exacto: la clave del vault no se reutiliza ahi para no mandar el
+// secreto de OpenCode a un tercero por accidente.
+process.env.PA_API_KEY = 'test-key-never-used';
 
 const { PersonalAgent: AgentClass, resolveIterationBudget } = await import('../src/core/agent.js');
 

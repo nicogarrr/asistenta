@@ -67,7 +67,15 @@ describe('LoginFlow', () => {
     expect(client.disconnected).toBe(true);
     const { readFileSync, statSync } = await import('node:fs');
     expect(readFileSync(SESSION_PATH, 'utf8')).toBe('SESSION-DATA');
-    expect(statSync(SESSION_PATH).mode & 0o777).toBe(0o600);
+    // El source escribe con mode 0600 y hace chmod explicito. En Windows no
+    // hay bits POSIX: chmodSync solo alterna el atributo read-only y stat.mode
+    // devuelve 0666 para cualquier fichero regular, asi que ahi se comprueba
+    // lo que el chmod significa de verdad en esa plataforma.
+    if (process.platform === 'win32') {
+      expect(statSync(SESSION_PATH).mode & 0o200).toBe(0o200);
+    } else {
+      expect(statSync(SESSION_PATH).mode & 0o777).toBe(0o600);
+    }
     rmSync(SESSION_PATH, { force: true });
   });
 

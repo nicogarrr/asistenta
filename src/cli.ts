@@ -145,6 +145,7 @@ import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/sy
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
 import { createTvTool } from './tools/tv.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
+import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
@@ -1906,6 +1907,10 @@ async function serveCommand(): Promise<number> {
       conversationOn = false;
       endSession('apagado');
       await stopWake().catch(() => {});
+      // El listener del boton se para antes que los navegadores: sigue siendo
+      // una superficie de red abierta, y el corte no deberia dejarla escuchando
+      // mientras el resto de la maquinaria se desmonta.
+      await stopTvButton().catch(() => {});
       // Every Chromium, or the next start refuses to claim the profile dir.
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
@@ -4185,6 +4190,55 @@ async function serveCommand(): Promise<number> {
     log.info('wake word stopped', listener.stats());
   };
 
+  /**
+   * Listener HTTP del boton del mando (:8765).
+   *
+   * Vive fuera de `wake` a proposito: el boton es una via de activacion mas,
+   * no una variante del microfono. Con la palabra de activacion apagada el
+   * boton sigue teniendo que funcionar, asi que arrancarlo y apagarlo aqui
+   * (y no dentro de startWake/stopWake) lo mantiene independiente del micro.
+   *
+   * Null hasta que arranca, otra vez tras un fallo de listen: un daemon al que
+   * le ocupa el puerto 8765 no es un daemon roto, y las tres referencias lo
+   * tratan como opcional.
+   */
+  let tvButton: TvButtonListener | null = null;
+
+  /**
+   * El listener vivo, o null.
+   *
+   * Mismo motivo que `currentWake`: solo se asigna desde dentro de closures y
+   * el analisis de flujo lo reduce a `null` en todos los puntos de
+   * `serveCommand` que se ejecutan antes de que existan.
+   */
+  const currentTvButton = (): TvButtonListener | null => tvButton;
+
+  const startTvButton = async (): Promise<void> => {
+    if (tvButton) return;
+    const listener = startTvButtonListener({
+      token: await vaultGet('tv:buttonToken'),
+      onButton: (source) => handleWake('').then(() => log.info('tv button wake', { source })),
+    });
+    tvButton = listener;
+    try {
+      await listener.ready;
+      log.info('tv button listener ready', { port: listener.port });
+    } catch (err) {
+      // Puerto ocupado o bind imposible: el boton no funcionara, pero el resto
+      // del daemon sigue. Se dice claro en el log en vez de caer en silencio.
+      tvButton = null;
+      log.warn('tv button listener no arranco; el boton del mando no funcionara', { err });
+    }
+  };
+
+  const stopTvButton = async (): Promise<void> => {
+    const listener = tvButton;
+    if (!listener) return;
+    tvButton = null;
+    await listener.close().catch(() => {});
+    log.info('tv button listener stopped');
+  };
+
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
@@ -4483,9 +4537,15 @@ async function serveCommand(): Promise<number> {
     });
   }
 
+  // El boton del mando tampoco es el camino critico: mismo trato que el
+  // microfono. Si el 8765 esta ocupado, el daemon sigue sirviendo Telegram y
+  // el boton simplemente no despertara a nadie hasta que se libere el puerto.
+  await startTvButton();
+
   log.info('daemon running', {
     wake: currentWake()?.isRunning() ?? false,
     wakeWord,
+    tvButton: currentTvButton()?.port ?? null,
     rememberedAudio: recall.size,
   });
   await lifecycle.done;

@@ -18,7 +18,18 @@ const tmp = (): string => {
   dirs.push(d);
   return d;
 };
+const opened: Array<{ close: () => void }> = [];
 afterEach(() => {
+  // En Windows un DocMemory abierto mantiene el .sqlite bloqueado y el rmSync
+  // falla con EBUSY. Los tests que crean la memoria y no la cierran dependen de
+  // este arnes para liberarla antes de borrar el temporal.
+  while (opened.length) {
+    try {
+      opened.pop()?.close();
+    } catch {
+      // Una memoria ya cerrada no debe impedir borrar el temporal.
+    }
+  }
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 const ocrOf = (...texts: string[]): OcrResult => ({
@@ -30,7 +41,9 @@ const ocrOf = (...texts: string[]): OcrResult => ({
 });
 const mem = (): DocMemory => {
   const d = tmp();
-  return new DocMemory({ dbPath: join(d, 'd.sqlite'), directory: join(d, 'txt') });
+  const memory = new DocMemory({ dbPath: join(d, 'd.sqlite'), directory: join(d, 'txt') });
+  opened.push(memory);
+  return memory;
 };
 
 describe('OCR de imágenes', () => {

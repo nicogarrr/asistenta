@@ -234,7 +234,13 @@ describe('setup server (adversarial)', () => {
     const envPath = process.env.BOOKS_ENV_PATH ?? '';
     expect(envPath).not.toBe('');
     expect(readFileSync(envPath, 'utf8')).toContain('BOOKS_TG_API_ID=12345');
-    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+    // Ver test/books-userbot.test.ts: en Windows no hay bits POSIX, chmodSync
+    // solo alterna read-only y stat.mode devuelve 0666 siempre.
+    if (process.platform === 'win32') {
+      expect(statSync(envPath).mode & 0o200).toBe(0o200);
+    } else {
+      expect(statSync(envPath).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('error de Telegram se escapa en el HTML (sin XSS)', async () => {
