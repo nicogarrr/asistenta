@@ -389,7 +389,17 @@ export async function runVigilanteOnce(
 
     const fresh = [...unique.entries()].filter(([key]) => !known.has(key));
     // Cap aquí, no en collectFindings: después del dedupe y del filtro de conocidos.
-    const toSend = fresh.filter(([, item]) => allowed(item)).slice(0, maxItems);
+    // El filtro de silencio se aplica POR OCURRENCIA: se avisa (y se marca) exactamente
+    // de las ocurrencias permitidas, no de las demás homónimas del mismo hallazgo.
+    const toSend: Array<[string, AgendaItem[], Array<[string, AgendaItem]>]> = [];
+    for (const [key, item] of fresh) {
+      const occs = (occByFinding.get(key) ?? []).filter(([, occ]) => allowed(occ));
+      if (occs.length === 0 && allowed(item) && !occByFinding.has(key)) continue;
+      if (occs.length === 0) continue;
+      occs.sort((x, y) => (x[1].at ?? 0) - (y[1].at ?? 0));
+      toSend.push([key, occs.map(([, o]) => o), occs]);
+    }
+    toSend.splice(maxItems);
 
     // Recordatorios: hallazgos ya avisados cuya etapa (T-24h / T-2h) ya toca y aún
     // no salió. Solo la etapa más cercana se dice; las anteriores se marcan.
@@ -431,13 +441,9 @@ export async function runVigilanteOnce(
     if (toSend.length > 0) {
       parts.push(
         formatFindings(
-          // Todas las ocurrencias del hallazgo, cada una con su hora: lo que se marca
+          // Solo las ocurrencias permitidas, cada una con su hora: lo que se marca
           // como cubierto es exactamente lo que el aviso dice.
-          toSend.flatMap(([key, item]) =>
-            (occByFinding.get(key) ?? [['', item] as [string, AgendaItem]])
-              .map(([, occ]) => occ)
-              .sort((x, y) => (x.at ?? 0) - (y.at ?? 0)),
-          ),
+          toSend.flatMap(([, items]) => items),
           timeZone,
         ),
       );
@@ -466,11 +472,11 @@ export async function runVigilanteOnce(
     const mark = deps.db.prepare(
       'INSERT OR IGNORE INTO vigilante_stages (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
     );
-    for (const [key, item] of toSend) {
-      insert.run(key, item.kind, item.title, item.at ?? null, now());
-      // El aviso de descubrimiento ya cubre las etapas que tocan ahora.
-      // y a todas las ocurrencias de ese hallazgo (homónimos del mismo día).
-      for (const [ok, occ] of occByFinding.get(key) ?? []) {
+    for (const [key, items, occs] of toSend) {
+      const first = items[0] as AgendaItem;
+      insert.run(key, first.kind, first.title, first.at ?? null, now());
+      // El aviso de descubrimiento cubre las etapas vigentes de las ocurrencias que dice.
+      for (const [ok, occ] of occs) {
         for (const st of dueStages(occ, timeZone, nowMs)) {
           mark.run(stageKey(ok, st), `etapa:${st}`, occ.title, occ.at ?? null, now());
         }

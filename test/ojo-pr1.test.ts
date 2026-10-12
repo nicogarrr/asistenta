@@ -414,3 +414,52 @@ describe('auditor R2: cobertura = contenido', () => {
     expect(text).toContain('en 1 h 59 min');
   });
 });
+
+describe('auditor R3: silencio por ocurrencia', () => {
+  const pay = (when: number): AgendaItem => ({
+    title: 'Pago',
+    at: when,
+    kind: 'payment',
+    where: 'correo',
+    timed: true,
+  });
+
+  it('quiet 21-08, ahora 21:00: solo se dice y se marca el pago crítico, no el de 23:30', async () => {
+    const now = at('2026-10-12T21:00:00+02:00');
+    const r = rig([pay(at('2026-10-12T21:30:00+02:00')), pay(at('2026-10-12T23:30:00+02:00'))], {
+      startHour: 21,
+      endHour: 8,
+    });
+    r.at(now);
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]).toContain('21:30');
+    expect(r.sent[0]).not.toContain('23:30');
+    // el de 23:30 sigue pendiente de decir: sale al terminar el silencio (si sigue vigente) o por su recordatorio
+    const keys = (
+      r.db.prepare('SELECT key FROM vigilante_stages').all() as Array<{ key: string }>
+    ).map((x) => x.key);
+    const late = occurrenceKey(pay(at('2026-10-12T23:30:00+02:00')));
+    const early = occurrenceKey(pay(at('2026-10-12T21:30:00+02:00')));
+    expect(keys.some((k) => k.startsWith(late))).toBe(false);
+    expect(keys.some((k) => k.startsWith(early))).toBe(true);
+  });
+
+  it('homónimos mixtos con hora / todo el día: el crítico no arrastra al que no lo es', async () => {
+    const now = at('2026-10-12T21:00:00+02:00');
+    const timed = pay(at('2026-10-12T21:30:00+02:00'));
+    const allDay: AgendaItem = {
+      title: 'Pago',
+      at: at('2026-10-12T00:00:00+02:00'),
+      kind: 'payment',
+      where: 'correo',
+      allDay: true,
+    };
+    const r = rig([timed, allDay], { startHour: 21, endHour: 8 });
+    r.at(now);
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]).toContain('21:30');
+    expect(r.sent[0]).not.toContain('todo el día');
+  });
+});
