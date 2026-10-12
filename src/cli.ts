@@ -2072,10 +2072,23 @@ async function serveCommand(): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
+  const downloadsCtl = createDownloadsController({
+    db: memoryDb,
+    getOverride: async () => (await vaultGet('ojo:downloadsDir'))?.trim() || undefined,
+  });
+
+  if (getDownloadsEnabled(memoryDb)) {
+    const st = await downloadsCtl.apply().catch(() => null);
+    if (!st?.running)
+      log.warn('descargas: encendido pero sin vigilar', { reason: st?.reason ?? 'error' });
+  }
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
       quiet: DEFAULT_QUIET_HOURS,
+      downloadsHealth: () => downloadsCtl.apply(),
+      downloadsSuppressed: () => downloadsCtl.suppressed(),
       agenda: () =>
         buildAgenda({
           calendar: () =>
@@ -2138,13 +2151,6 @@ async function serveCommand(): Promise<number> {
     5 * 60 * 1000,
   );
 
-  // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
-  const downloadsCtl = createDownloadsController({
-    db: memoryDb,
-    getOverride: async () => (await vaultGet('ojo:downloadsDir'))?.trim() || undefined,
-  });
-  await downloadsCtl.apply().catch(() => {});
-
   /** `/ojo [on|off]`: interruptor general del ojo de águila y su estado. */
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
@@ -2180,10 +2186,17 @@ async function serveCommand(): Promise<number> {
       return;
     }
     const quiet = DEFAULT_QUIET_HOURS;
+    const dst = getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    const downloadsLine = !dst
+      ? 'Descargas: apagado (/ojo descargas on lo enciende).'
+      : dst.running
+        ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
+        : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
     await say(
       inbound,
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
+        downloadsLine,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas solo si lo pides: /ojo descargas on.',
         `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ].join('\n'),

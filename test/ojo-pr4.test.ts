@@ -154,6 +154,15 @@ describe('texto del aviso', () => {
     expect(fileKind('.exe')).toBe('instalador o programa');
     expect(fileKind('.zzz')).toBe('archivo');
     expect(safeName('a\nb\u202etxt.exe')).toBe('a b txt.exe');
+    // por codepoint: C0, DEL, C1, bidi, aislantes, ALM, ancho cero, BOM
+    const bad: number[] = [];
+    for (let c = 0; c <= 0x1f; c++) bad.push(c);
+    for (let c = 0x7f; c <= 0x9f; c++) bad.push(c);
+    for (const c of [0x61c, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2028, 0x2029, 0xfeff])
+      bad.push(c);
+    for (let c = 0x202a; c <= 0x202e; c++) bad.push(c);
+    for (let c = 0x2060; c <= 0x206f; c++) bad.push(c);
+    for (const c of bad) expect(safeName(`a${String.fromCodePoint(c)}b.pdf`)).toBe('a b.pdf');
     expect(safeName('x'.repeat(100)).length).toBe(60);
     const items = Array.from({ length: 7 }, (_, i) => ({
       key: `k${i}`,
@@ -229,4 +238,97 @@ describe('vigilante real de carpeta', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 20_000);
+});
+
+describe('R1: ciclo de vida del vigilante de carpeta', () => {
+  const gated = () => {
+    let release: (v: string) => void = () => {};
+    const p = new Promise<string>((res) => {
+      release = res;
+    });
+    return { p, release };
+  };
+  it('stop durante el arranque: el arranque viejo no crea nada después', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ojo-dl-'));
+    try {
+      const db = new DatabaseSync(':memory:');
+      setDownloadsEnabled(db, true);
+      const g = gated();
+      const ctl = createDownloadsController({ db, getOverride: () => g.p });
+      const pending = ctl.apply();
+      ctl.stop();
+      g.release(dir);
+      expect(await pending).toMatchObject({ running: false });
+      expect(await ctl.apply()).toMatchObject({ running: false }); // definitivo
+      writeFileSync(join(dir, 'tarde.pdf'), 'x'.repeat(50));
+      await new Promise((res) => setTimeout(res, 1500));
+      expect(pendingDownloads(db, Date.now())).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+  it('off durante el arranque: no arranca', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ojo-dl-'));
+    try {
+      const db = new DatabaseSync(':memory:');
+      setDownloadsEnabled(db, true);
+      const g = gated();
+      const ctl = createDownloadsController({ db, getOverride: () => g.p });
+      const pending = ctl.apply();
+      setDownloadsEnabled(db, false);
+      g.release(dir);
+      expect(await pending).toMatchObject({ running: false });
+      ctl.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('estado real: carpeta inexistente o que muere se dice, y se reintenta', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ojo-dl-'));
+    try {
+      const db = new DatabaseSync(':memory:');
+      setDownloadsEnabled(db, true);
+      let target = join(dir, 'no-existe');
+      const ctl = createDownloadsController({ db, getOverride: async () => target });
+      expect(await ctl.apply()).toMatchObject({ running: false });
+      target = dir;
+      expect(await ctl.apply()).toMatchObject({ running: true });
+      ctl.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('R1: pérdidas por saturación se dicen', () => {
+  it('el tope de pendientes y el ritmo del vigilante aparecen en el digest, una vez', async () => {
+    const r = rig();
+    setDownloadsEnabled(r.db, true);
+    for (let i = 0; i < 53; i++) recordDownload(r.db, DIR, created(`f${i}.pdf`, 100 + i), BASE + i);
+    let suppressed = 4;
+    const sent: string[] = [];
+    const run = () =>
+      runVigilanteOnce(
+        {
+          db: r.db,
+          agenda: async () => emptyAgenda(),
+          send: async (t) => {
+            sent.push(t);
+            return true;
+          },
+          now: () => BASE + 100,
+          downloadsSuppressed: () => suppressed,
+        },
+        TZ,
+      );
+    await run();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('7 más que no pude seguir'); // 3 por tope + 4 por ritmo
+    await run();
+    expect(sent).toHaveLength(1);
+    suppressed = 6;
+    await run();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain('2 no las pude seguir');
+  });
 });

@@ -57,6 +57,10 @@ export function setDownloadsEnabled(db: DatabaseSync, enabled: boolean): void {
   db.prepare(
     'INSERT INTO vigilante_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(SETTING_KEY, enabled ? 'on' : 'off');
+  if (enabled) {
+    putNum(db, CAP_DROPPED_KEY, 0);
+    putNum(db, LOST_REPORTED_KEY, 0);
+  }
   // Al apagar, lo pendiente se descarta: no debe aparecer después, fuera de contexto.
   if (!enabled)
     db.prepare(
@@ -106,14 +110,9 @@ export function fileKind(ext: string): string {
 
 /** Nombre apto para un mensaje: sin saltos de línea ni caracteres de control, acotado. */
 export function safeName(name: string): string {
-  const clean = [...name]
-    .map((ch) => {
-      const c = ch.codePointAt(0) ?? 0;
-      const control =
-        c <= 0x1f || c === 0x7f || c === 0x200e || c === 0x200f || (c >= 0x202a && c <= 0x202e);
-      return control ? ' ' : ch;
-    })
-    .join('')
+  // Fuera TODA la categoría Unicode "Other": control (C0, DEL, C1), formato (bidi, aislantes, ALM, ZW*, BOM), sin asignar y de uso privado.
+  const clean = name
+    .replace(/[\p{C}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return clean.length > NAME_MAX ? `${clean.slice(0, NAME_MAX - 1)}…` : clean || '(sin nombre)';
@@ -139,11 +138,53 @@ export function recordDownload(db: DatabaseSync, dir: string, ev: FileEvent, now
     )
     .run(key, name, extname(name).toLowerCase(), ev.bytes, now);
   if (Number(res.changes) === 0) return false;
-  // Tope: lo más antiguo pendiente se descarta si se acumula demasiado.
-  db.prepare(
-    "UPDATE vigilante_downloads SET status = 'descartada' WHERE status = 'pendiente' AND key NOT IN (SELECT key FROM vigilante_downloads WHERE status = 'pendiente' ORDER BY at DESC, rowid DESC LIMIT ?)",
-  ).run(MAX_PENDING);
+  // Tope: lo más antiguo pendiente se descarta si se acumula demasiado (y se cuenta).
+  const dropped = db
+    .prepare(
+      "UPDATE vigilante_downloads SET status = 'descartada' WHERE status = 'pendiente' AND key NOT IN (SELECT key FROM vigilante_downloads WHERE status = 'pendiente' ORDER BY at DESC, rowid DESC LIMIT ?)",
+    )
+    .run(MAX_PENDING);
+  if (Number(dropped.changes) > 0) addSetting(db, CAP_DROPPED_KEY, Number(dropped.changes));
   return true;
+}
+
+const CAP_DROPPED_KEY = 'downloads_cap_dropped';
+const LOST_REPORTED_KEY = 'downloads_lost_reported';
+
+function getNum(db: DatabaseSync, key: string): number {
+  const row = db.prepare('SELECT value FROM vigilante_settings WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  const n = Number(row?.value);
+  return Number.isFinite(n) ? n : 0;
+}
+function putNum(db: DatabaseSync, key: string, n: number): void {
+  db.prepare(
+    'INSERT INTO vigilante_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(key, String(n));
+}
+function addSetting(db: DatabaseSync, key: string, n: number): void {
+  putNum(db, key, getNum(db, key) + n);
+}
+
+/**
+ * Descargas que NO se pudieron avisar por saturación: las que el vigilante de carpeta
+ * suprimió por ritmo (`suppressed`, pasado por quien lo tiene) y las que el tope de 50
+ * pendientes descartó. Devuelve cuántas son nuevas desde el último aviso.
+ */
+export function lostSinceReport(
+  db: DatabaseSync,
+  suppressed: number,
+): { lost: number; total: number } {
+  initDownloadsStore(db);
+  const total = getNum(db, CAP_DROPPED_KEY) + Math.max(0, suppressed);
+  const reported = getNum(db, LOST_REPORTED_KEY);
+  if (total < reported) putNum(db, LOST_REPORTED_KEY, total); // el vigilante se reinició
+  return { lost: Math.max(0, total - reported), total };
+}
+
+export function markLostReported(db: DatabaseSync, total: number): void {
+  putNum(db, LOST_REPORTED_KEY, total);
 }
 
 export interface PendingDownload {
@@ -181,54 +222,65 @@ const size = (b: number): string =>
     ? `${(b / 1_048_576).toFixed(1).replace('.', ',')} MB`
     : `${Math.max(1, Math.round(b / 1024))} KB`;
 
-export function formatDownloads(items: readonly PendingDownload[]): string {
+export function formatDownloads(items: readonly PendingDownload[], lost = 0): string {
   const shown = items.slice(0, MAX_LISTED);
   const lines = shown.map((d) => `• ${safeName(d.name)} (${fileKind(d.ext)}, ${size(d.bytes)})`);
   const more = items.length - shown.length;
   if (more > 0) lines.push(`• y ${more} más`);
-  return `📥 Descargas nuevas: ${items.length === 1 ? '1 archivo' : `${items.length} archivos`} (solo el nombre, no he abierto nada)\n${lines.join('\n')}`;
+  if (lost > 0) lines.push(`• y ${lost} más que no pude seguir (llegaron demasiado rápido)`);
+  const head =
+    items.length === 0
+      ? `📥 Descargas: llegaron demasiadas a la vez y ${lost} no las pude seguir`
+      : `📥 Descargas nuevas: ${items.length === 1 ? '1 archivo' : `${items.length} archivos`} (solo el nombre, no he abierto nada)`;
+  return items.length === 0 ? head : `${head}\n${lines.join('\n')}`;
 }
 
-/** Ciclo de vida del vigilante de carpeta: un FileWatcher por encendido (empieza y para una vez). */
+export interface DownloadsState {
+  running: boolean;
+  dir: string | null;
+  reason?: string;
+}
+
+/**
+ * Ciclo de vida del vigilante de carpeta: un FileWatcher por encendido (empieza y para una
+ * vez). `running` es el estado REAL (hay un handle vivo), no el deseo: cada `apply` hace
+ * health check y reintenta una vez si el vigilante murió. `stop()` es definitivo (apagado del
+ * daemon): invalida cualquier arranque en vuelo y nada vuelve a empezar después.
+ */
 export function createDownloadsController(opts: {
   db: DatabaseSync;
   getOverride: () => Promise<string | undefined>;
   now?: () => number;
 }): {
-  apply: () => Promise<{ running: boolean; dir: string | null; reason?: string }>;
+  apply: () => Promise<DownloadsState>;
   stop: () => void;
+  suppressed: () => number;
 } {
   let watcher: FileWatcher | null = null;
   let watchedDir: string | null = null;
-  const stop = (): void => {
+  let closed = false;
+  let gen = 0;
+  let suppressedBase = 0;
+
+  const dropWatcher = (): void => {
+    if (watcher) suppressedBase += watcher.suppressed();
     watcher?.stop();
     watcher = null;
     watchedDir = null;
   };
-  let chain: Promise<unknown> = Promise.resolve();
-  const apply = (): ReturnType<typeof applyOnce> => {
-    // Serializado: dos "on" seguidos no crean dos vigilantes.
-    const next = chain.then(applyOnce, applyOnce);
-    chain = next;
-    return next;
+  const stop = (): void => {
+    closed = true;
+    gen++;
+    dropWatcher();
   };
-  const applyOnce = async (): Promise<{
-    running: boolean;
-    dir: string | null;
-    reason?: string;
-  }> => {
-    if (!getDownloadsEnabled(opts.db)) {
-      stop();
-      return { running: false, dir: null };
-    }
-    if (watcher) return { running: true, dir: watchedDir };
-    const dir = resolveDownloadsDir({ override: await opts.getOverride() });
-    if (!dir) return { running: false, dir: null, reason: 'no encuentro la carpeta de Descargas' };
+
+  const startWatcher = (dir: string): DownloadsState => {
     try {
       const w = new FileWatcher({
         dirs: [dir],
         ignore: (p) => !wantedPath(dir, p),
         onEvent: (ev) => {
+          if (closed) return;
           try {
             recordDownload(opts.db, dir, ev, (opts.now ?? Date.now)());
           } catch (err) {
@@ -237,6 +289,10 @@ export function createDownloadsController(opts: {
         },
       });
       w.start();
+      if (w.active() === 0) {
+        w.stop();
+        return { running: false, dir, reason: 'no he podido vigilar la carpeta' };
+      }
       watcher = w;
       watchedDir = dir;
       return { running: true, dir };
@@ -245,5 +301,45 @@ export function createDownloadsController(opts: {
       return { running: false, dir, reason: 'no he podido vigilar la carpeta' };
     }
   };
-  return { apply, stop };
+
+  const applyOnce = async (): Promise<DownloadsState> => {
+    if (closed) return { running: false, dir: null, reason: 'apagado' };
+    if (!getDownloadsEnabled(opts.db)) {
+      dropWatcher();
+      return { running: false, dir: null };
+    }
+    // Health check: un vigilante sin handles vivos está muerto; se retira y se reintenta.
+    if (watcher && watcher.active() === 0) {
+      log.warn('descargas: el vigilante de carpeta murió; reintentando', {});
+      dropWatcher();
+    }
+    if (watcher) return { running: true, dir: watchedDir };
+    const myGen = gen;
+    const override = await opts.getOverride();
+    // Tras la espera: ni apagado del daemon, ni /ojo descargas off, ni otra generación.
+    if (closed || myGen !== gen || !getDownloadsEnabled(opts.db)) {
+      return {
+        running: false,
+        dir: null,
+        reason: closed ? 'apagado' : undefined,
+      } as DownloadsState;
+    }
+    const dir = resolveDownloadsDir({ override });
+    if (!dir) return { running: false, dir: null, reason: 'no encuentro la carpeta de Descargas' };
+    return startWatcher(dir);
+  };
+
+  let chain: Promise<unknown> = Promise.resolve();
+  const apply = (): Promise<DownloadsState> => {
+    // Serializado: dos "on" seguidos no crean dos vigilantes.
+    const next = chain.then(applyOnce, applyOnce);
+    chain = next;
+    return next;
+  };
+
+  return {
+    apply,
+    stop,
+    suppressed: () => suppressedBase + (watcher?.suppressed() ?? 0),
+  };
 }

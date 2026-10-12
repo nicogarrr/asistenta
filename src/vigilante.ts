@@ -60,7 +60,14 @@ import {
   markChargesNotified,
   pendingChargeAlerts,
 } from './ojo-charges.js';
-import { formatDownloads, markDownloadsNotified, pendingDownloads } from './ojo-downloads.js';
+import {
+  formatDownloads,
+  getDownloadsEnabled,
+  lostSinceReport,
+  markDownloadsNotified,
+  markLostReported,
+  pendingDownloads,
+} from './ojo-downloads.js';
 import {
   confirmNotices,
   dropStaleReservations,
@@ -136,6 +143,12 @@ export interface VigilanteDeps {
    * sembrar el historial sin avisar de nada; las siguientes, solo los últimos días.
    */
   charges?: (sinceMs: number) => Promise<MailMessage[]>;
+  /**
+   * Descargas: comprueba/reintenta el vigilante de carpeta (si está encendido) al empezar
+   * cada barrido, y devuelve cuántos eventos suprimió por ritmo desde que arrancó.
+   */
+  downloadsHealth?: () => Promise<unknown>;
+  downloadsSuppressed?: () => number;
 }
 
 export const CHARGE_SEED_DAYS = 120;
@@ -410,6 +423,11 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
       'vigilante: construir la agenda',
     );
+    if (deps.downloadsHealth && getDownloadsEnabled(deps.db)) {
+      await deps.downloadsHealth().catch((err: unknown) => {
+        log.warn('vigilante: descargas no disponibles en este barrido', { err: String(err) });
+      });
+    }
     // Cargos raros: se incorporan al historial (la primera vez solo se siembra).
     if (deps.charges) {
       try {
@@ -537,13 +555,18 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     const chargeAlerts = quiet ? [] : pendingChargeAlerts(deps.db, nowMs);
     // Descargas nuevas (solo si /ojo descargas on): tampoco críticas, esperan al silencio.
     const downloads = quiet ? [] : pendingDownloads(deps.db, nowMs);
+    const lostInfo =
+      quiet || !getDownloadsEnabled(deps.db)
+        ? { lost: 0, total: 0 }
+        : lostSinceReport(deps.db, deps.downloadsSuppressed?.() ?? 0);
 
     if (
       toSend.length === 0 &&
       remindersToSend.length === 0 &&
       conflicts.length === 0 &&
       chargeAlerts.length === 0 &&
-      downloads.length === 0
+      downloads.length === 0 &&
+      lostInfo.lost === 0
     ) {
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
     }
@@ -578,7 +601,9 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
     if (chargeAlerts.length > 0) parts.push(formatChargeAlerts(chargeAlerts, timeZone));
-    if (downloads.length > 0) parts.push(formatDownloads(downloads));
+    if (downloads.length > 0 || lostInfo.lost > 0) {
+      parts.push(formatDownloads(downloads, lostInfo.lost));
+    }
 
     let sent = false;
     try {
@@ -632,6 +657,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       deps.db,
       downloads.map((d) => d.key),
     );
+    if (lostInfo.lost > 0) markLostReported(deps.db, lostInfo.total);
     trackItems(
       deps.db,
       toSend.flatMap(([, , occs]) => occs.map(([, o]) => o)),
