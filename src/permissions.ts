@@ -218,6 +218,17 @@ function argString(args: Record<string, unknown>, key: string): string {
 }
 
 /** Every argument value flattened into one string, for pattern matching. */
+/**
+ * A browser fill that types straight from the vault: the key NAME is all the
+ * Gate ever sees, and any vault key is credential material by definition -
+ * whatever field it names (a `username` key included). This arms
+ * ask-credential-field and every credential carve-out (memo, scopes,
+ * fullControl, preflight) on the call.
+ */
+function isSecretFill(c: ToolCall): boolean {
+  return c.tool === 'browser' && typeof c.args?.secret_key === 'string';
+}
+
 function blobOf(c: ToolCall): string {
   return Object.values(c.args)
     .map((v) => (typeof v === 'string' ? v : (JSON.stringify(v) ?? '')))
@@ -344,7 +355,8 @@ export class Gate {
         id: 'ask-credential-field',
         verdict: 'ask',
         reason: 'touches a password, code or card field',
-        match: (c) => c.tool === 'browser' && BROWSER_CREDENTIAL.test(fold(blobOf(c))),
+        match: (c) =>
+          isSecretFill(c) || (c.tool === 'browser' && BROWSER_CREDENTIAL.test(fold(blobOf(c)))),
       },
       {
         id: 'ask-browser-effect',
@@ -425,6 +437,7 @@ export class Gate {
   }
 
   #isCredentialish(c: ToolCall): boolean {
+    if (isSecretFill(c)) return true;
     // checkout's `selectors` are CSS ids of the buyer's own form (#dni, #email): the
     // field names are not a credential, and filling them is free by the owner's decision.
     const blob = blobOf(

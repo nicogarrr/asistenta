@@ -208,11 +208,15 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         // plan needs and the exact `pa vault set` command for each missing
         // one. Key NAMES only - a value never passes through this tool.
         const domains: string[] = [];
+        let loginIndex = 0;
         for (const raw of args.logins ?? []) {
+          loginIndex++;
           const domain = normalizeDomain(raw);
           if (!domain) {
+            // NEVER echo the raw input: a malformed URL can carry userinfo
+            // (user:secret@host) and this error goes straight to the chat.
             return reply(
-              `"${raw}" no parece un dominio válido para un login: usa algo como seg-social.es.`,
+              `El login número ${loginIndex} no parece un dominio válido: usa algo como seg-social.es.`,
               true,
             );
           }

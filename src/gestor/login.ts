@@ -55,8 +55,13 @@ export function parseSiteKey(key: string): { domain: string; field: LoginKeyFiel
   return { domain, field };
 }
 
-/** The fields of the convention missing from the vault, in canonical order. */
+/**
+ * The fields of the convention missing from the vault, in canonical order.
+ * The comparison is EXACT: the convention's keys are canonical lowercase and
+ * `vaultGet` is case-sensitive, so a variant stored with different casing must
+ * report as missing here instead of promising a fill that will fail.
+ */
 export function missingLoginFields(domain: string, vaultNames: readonly string[]): LoginKeyField[] {
-  const names = new Set(vaultNames.map((n) => n.trim().toLowerCase()));
+  const names = new Set(vaultNames);
   return LOGIN_KEY_FIELDS.filter((f) => !names.has(siteKey(domain, f)));
 }
