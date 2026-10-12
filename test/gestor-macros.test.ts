@@ -347,6 +347,42 @@ describe('gestion action=macro', () => {
     expect(repeated.isError).toBe(true);
     expect(text(repeated)).toContain('repetido');
   });
+
+  it('prototype-named parameters work through the tool and a repeat is still caught', async () => {
+    const { run, text, store } = setup();
+    store.saveRoutine({
+      scope: 'scope',
+      name: 'macro/proto',
+      kind: 'procedure',
+      params: [
+        { name: 'constructor', type: 'texto' },
+        { name: 'toString', type: 'texto' },
+        { name: '__proto__', type: 'texto' },
+      ],
+      steps: 'a {constructor} b {toString} c {__proto__}',
+    });
+    const ok = await run({
+      action: 'macro',
+      macro: 'macro/proto',
+      parametros: [
+        { nombre: 'constructor', valor: 'CANARY_C' },
+        { nombre: 'toString', valor: 'CANARY_T' },
+        { nombre: '__proto__', valor: 'CANARY_P' },
+      ],
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(text(ok)).toContain('a CANARY_C b CANARY_T c CANARY_P');
+    const dup = await run({
+      action: 'macro',
+      macro: 'macro/proto',
+      parametros: [
+        { nombre: '__proto__', valor: 'x' },
+        { nombre: '__proto__', valor: 'y' },
+      ],
+    });
+    expect(dup.isError).toBe(true);
+    expect(text(dup)).toContain('repetido');
+  });
 });
 
 describe('auditor R1 regressions (B1-B4)', () => {

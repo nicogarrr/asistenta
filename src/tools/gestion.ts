@@ -438,11 +438,11 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         if (!routine) {
           return reply(`No encuentro la macro ${name} en este chat.`, true);
         }
-        const argMap: Record<string, string> = {};
+        const argMap = new Map<string, string>();
         for (const entry of args.parametros ?? []) {
           const key = entry.nombre.trim();
-          if (key in argMap) return reply(`Parámetro repetido: ${key}.`, true);
-          argMap[key] = entry.valor;
+          if (argMap.has(key)) return reply(`Parámetro repetido: ${key}.`, true);
+          argMap.set(key, entry.valor);
         }
         const built = buildMacroPrompt(routine, argMap);
         if (!built.ok) return reply(built.error, true);

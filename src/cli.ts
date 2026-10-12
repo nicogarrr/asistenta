@@ -39,6 +39,7 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
+import { LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -1326,7 +1327,7 @@ async function serveCommand(): Promise<number> {
   /** chatKey -> explicitly selected thread name, set by /topic. */
   const activeTopic = new Map<string, string>();
   /** chatId -> thread currently recording steps for /learn. */
-  const learning = new Map<string, { name: string; threadKey: string; from: number }>();
+  const learning = new LearnRecorder();
   /** chatId -> whether to answer with a spoken reply. */
   const voiceOn = new Map<string, boolean>();
   /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
@@ -2317,38 +2318,20 @@ async function serveCommand(): Promise<number> {
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
-      const rec = learning.get(inbound.chatId);
-      if (!rec) {
-        await say(inbound, 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.', {
-          quote: true,
-        });
+      const ended = learning.end(inbound.chatId, thread.key, thread.agent);
+      if (!ended.ok) {
+        const text =
+          ended.reason === 'none'
+            ? 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.'
+            : ended.reason === 'other-thread'
+              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo con /learn <nombre>.';
+        await say(inbound, text, { quote: true });
         return;
       }
-      // The recording is anchored to the thread and the message where /learn
-      // started: closing it from another topic, or after the history shrank,
-      // would summarise a conversation that is not the one demonstrated.
-      if (thread.key !== rec.threadKey) {
-        await say(
-          inbound,
-          `Estoy grabando "${rec.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`,
-          { quote: true },
-        );
-        return;
-      }
-      const all = thread.agent.messages;
-      if (all.length < rec.from) {
-        learning.delete(inbound.chatId);
-        await say(
-          inbound,
-          'La conversación se ha recortado desde que empecé a grabar y no puedo aislar lo que demostraste. Empieza de nuevo con /learn <nombre>.',
-          { quote: true },
-        );
-        return;
-      }
-      learning.delete(inbound.chatId);
-      const recorded = rec.name;
+      const recorded = ended.name;
       await say(inbound, 'Resumiendo los pasos que acabas de hacer⬦', { quote: true });
-      const transcript = summarizeTranscript(all.slice(rec.from));
+      const transcript = summarizeTranscript(ended.segment);
       const result = await thread.agent.run(
         [
           'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
@@ -2419,11 +2402,7 @@ async function serveCommand(): Promise<number> {
       });
       return;
     }
-    learning.set(inbound.chatId, {
-      name,
-      threadKey: thread.key,
-      from: thread.agent.messages.length,
-    });
+    learning.start(inbound.chatId, name, thread.key, thread.agent);
     await say(
       inbound,
       `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
