@@ -61,6 +61,11 @@ export interface ExtractedCommitment {
    * 09:00 is worse than one that admits it has no hour.
    */
   timed?: boolean;
+  /**
+   * True when the mail says the thing expires or renews ("caduca", "expires", "renueva"),
+   * so the date is an expiry and gets 30/7/1-day notices. Only a positive match sets it.
+   */
+  expiry?: boolean;
   /** Which rules fired. For the report, and for working out why one went wrong. */
   because?: string;
 }
@@ -535,6 +540,21 @@ function timeNear(date: DateHit, folded: string): TimeHit | undefined {
   return best;
 }
 
+const EXPIRY_STRONG_RE =
+  /\b(caduca|caducara|caducan|caducidad|expira|expirara|expiran|expires|expiring|expiration|renueva|renovara|renovacion|renews|renewal)\b/;
+const EXPIRY_VENCE_RE = /\b(vence|vencen|vencimiento)\b/;
+const MONEY_DUE_RE =
+  /(factura|invoice|recibo|pago|pagar|cuota|importe|cobro|payment|abono|\u20ac|\beur\b)/;
+
+/**
+ * Expiry = positive proof only. "caduca/expira/renueva" always count. "vence" counts only
+ * when the mail carries no money word: "vence la factura" is a payment due, not an expiry.
+ */
+export function isExpiry(folded: string): boolean {
+  if (EXPIRY_STRONG_RE.test(folded)) return true;
+  return EXPIRY_VENCE_RE.test(folded) && !MONEY_DUE_RE.test(folded);
+}
+
 function kindIn(folded: string): KindSignal | undefined {
   for (const rule of KIND_RULES)
     if (rule.re.test(folded)) return { kind: rule.kind, marker: rule.marker };
@@ -687,6 +707,7 @@ export function extractCommitments(
     if (!date) continue;
 
     const signal = kindIn(folded);
+    const expiry = isExpiry(folded);
     const time = timeNear(date, folded);
     const timed = time !== undefined;
     const at = timed
@@ -707,7 +728,7 @@ export function extractCommitments(
     const confidence = score({
       specificity: date.specificity,
       timed,
-      kindFound: signal !== undefined,
+      kindFound: signal !== undefined || expiry,
       detail: DETAIL_RE.test(raw),
       automated: AUTOMATED_SENDER_RE.test(message.from ?? ''),
       newsletter: NEWSLETTER_RE.test(folded),
@@ -717,13 +738,20 @@ export function extractCommitments(
     if (confidence < minConfidence) continue;
 
     found.push({
-      subject: summarize(message, signal?.kind ?? 'other'),
+      subject: summarize(message, signal?.kind ?? (expiry ? 'deadline' : 'other')),
       at,
-      kind: signal?.kind ?? 'other',
+      kind: signal?.kind ?? (expiry ? 'deadline' : 'other'),
       confidence,
       source: { messageId: message.id, from: message.from ?? '' },
       timed,
-      because: [date.rule, signal?.marker, timed ? 'hora' : 'sin hora', isRange ? 'rango' : null]
+      ...(expiry ? { expiry: true } : {}),
+      because: [
+        date.rule,
+        signal?.marker,
+        expiry ? 'caducidad' : null,
+        timed ? 'hora' : 'sin hora',
+        isRange ? 'rango' : null,
+      ]
         .filter((part): part is string => typeof part === 'string')
         .join(' + '),
     });

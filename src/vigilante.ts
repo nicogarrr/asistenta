@@ -38,6 +38,7 @@ import { zonedDayKey, zonedDayStart } from './agenda/ics.js';
 import type { AgendaItem, AgendaKind, UnifiedAgenda } from './agenda/unified.js';
 import { localTimeZone } from './datecontext.js';
 import { log } from './log.js';
+import type { MailMessage } from './mail/types.js';
 import {
   type Conflict,
   dueStages,
@@ -53,6 +54,13 @@ import {
   whenRelative,
 } from './ojo.js';
 import {
+  chargeBaseline,
+  formatChargeAlerts,
+  ingestCharges,
+  markChargesNotified,
+  pendingChargeAlerts,
+} from './ojo-charges.js';
+import {
   confirmNotices,
   dropStaleReservations,
   initIgnoreStore,
@@ -61,6 +69,7 @@ import {
   reserveNotices,
   ruleSuppresses,
 } from './ojo-ignore.js';
+import { loadTracked, trackItems } from './ojo-track.js';
 
 /** Tipos que merecen aviso proactivo. `reminder`/`other` no: o ya avisa otro, o es ruido. */
 export const VIGILANTE_KINDS: readonly AgendaKind[] = ['deadline', 'payment', 'travel', 'meeting'];
@@ -120,7 +129,16 @@ export interface VigilanteDeps {
    * cableado del daemon, así los tests y otros usos son deterministas.
    */
   quiet?: QuietHours;
+  /**
+   * Correos para vigilar cargos raros desde ese instante (epoch ms). Opcional: sin él no
+   * hay detección de cargos. La primera ejecución pide `CHARGE_SEED_DAYS` días para
+   * sembrar el historial sin avisar de nada; las siguientes, solo los últimos días.
+   */
+  charges?: (sinceMs: number) => Promise<MailMessage[]>;
 }
+
+export const CHARGE_SEED_DAYS = 120;
+const CHARGE_RECENT_DAYS = 3;
 
 export interface VigilanteResult {
   /** Hallazgos candidatos vistos en este barrido. */
@@ -194,6 +212,9 @@ export function findingKey(item: AgendaItem, timeZone: string = localTimeZone())
  * hallazgo como uno leído en el correo. SIN cap aquí: capar antes de descartar lo ya
  * notificado dejaría los hallazgos 6+ esperando a que venzan los primeros.
  */
+/** Ventana de aviso de lo que no es una caducidad (días después de hoy). */
+const BASE_DAYS = 7;
+
 export function collectFindings(
   agenda: UnifiedAgenda,
   timeZone: string,
@@ -206,8 +227,11 @@ export function collectFindings(
   const pendingVigente = agenda.pending.filter(
     (item) => item.at != null && item.at >= dayStart && item.at < horizon,
   );
+  // Lo normal avisa a 7 días vista; solo las caducidades miran más lejos (30 días).
+  const baseHorizon = zonedDayStart(tomorrow + BASE_DAYS * DAY_MS, timeZone);
   return [...agenda.today, ...agenda.upcoming, ...pendingVigente]
     .filter((item) => item.at != null && VIGILANTE_KINDS.includes(item.kind))
+    .filter((item) => agenda.days <= BASE_DAYS || item.expiry || (item.at as number) < baseHorizon)
     .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
 }
 
@@ -301,7 +325,7 @@ export function formatFindings(
   numbers?: readonly number[],
 ): string {
   const lines = items.map((item, i) => {
-    const label = KIND_LABEL[item.kind] ?? item.kind;
+    const label = item.expiry ? 'Caducidad' : (KIND_LABEL[item.kind] ?? item.kind);
     const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
     const tag =
       item.sources && item.sources.length > 1
@@ -334,7 +358,7 @@ export function formatReminders(
   numbers?: readonly number[],
 ): string {
   const lines = reminders.map(({ item }, i) => {
-    const label = KIND_LABEL[item.kind] ?? item.kind;
+    const label = item.expiry ? 'Caducidad' : (KIND_LABEL[item.kind] ?? item.kind);
     const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
     const tag =
       item.sources && item.sources.length > 1
@@ -385,12 +409,28 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
       'vigilante: construir la agenda',
     );
+    // Cargos raros: se incorporan al historial (la primera vez solo se siembra).
+    if (deps.charges) {
+      try {
+        const since =
+          chargeBaseline(deps.db) === null
+            ? now() - CHARGE_SEED_DAYS * DAY_MS
+            : now() - CHARGE_RECENT_DAYS * DAY_MS;
+        const msgs = await withTimeout(
+          deps.charges(since),
+          Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
+          'vigilante: correos de cargos',
+        );
+        ingestCharges(deps.db, msgs, now());
+      } catch (err) {
+        log.warn('vigilante: cargos no disponibles en este barrido', { err: String(err) });
+      }
+    }
     // /ojo off durante la espera de la agenda: este barrido ya no avisa ni marca.
     if (!getOjoEnabled(deps.db)) return zero;
 
     const nowMs = now();
     const findings = collectFindings(agenda, timeZone, nowMs);
-    if (findings.length === 0) return zero;
 
     // Dedupe intra-barrido: dos fuentes pueden traer el mismo hallazgo dos veces y
     // el digest diría la misma cosa en dos bullets.
@@ -403,6 +443,12 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     // Ocurrencias exactas (para etapas y solapes), agrupadas por su clave de descubrimiento.
     const occurrences = new Map<string, AgendaItem>();
     for (const item of findings) {
+      const ok = occurrenceKey(item);
+      if (!occurrences.has(ok)) occurrences.set(ok, item);
+    }
+    // Lo ya avisado por correo y seguido en la base: sus recordatorios no dependen de que
+    // el correo siga dentro de la ventana de lectura.
+    for (const item of loadTracked(deps.db, nowMs)) {
       const ok = occurrenceKey(item);
       if (!occurrences.has(ok)) occurrences.set(ok, item);
     }
@@ -484,7 +530,15 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
           .filter((c) => !marked.has(c.key))
           .slice(0, MAX_CONFLICTS);
 
-    if (toSend.length === 0 && remindersToSend.length === 0 && conflicts.length === 0) {
+    // Cargos raros pendientes: no críticos, esperan al fin del silencio sin marcarse.
+    const chargeAlerts = quiet ? [] : pendingChargeAlerts(deps.db, nowMs);
+
+    if (
+      toSend.length === 0 &&
+      remindersToSend.length === 0 &&
+      conflicts.length === 0 &&
+      chargeAlerts.length === 0
+    ) {
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
     }
 
@@ -517,6 +571,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       parts.push(formatReminders(remindersToSend, nowMs, timeZone, reminderNumbers));
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
+    if (chargeAlerts.length > 0) parts.push(formatChargeAlerts(chargeAlerts, timeZone));
 
     let sent = false;
     try {
@@ -562,6 +617,15 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       }
     }
     confirmNotices(deps.db, reserved);
+    markChargesNotified(
+      deps.db,
+      chargeAlerts.map((a) => a.msgId),
+    );
+    trackItems(
+      deps.db,
+      toSend.flatMap(([, , occs]) => occs.map(([, o]) => o)),
+      now(),
+    );
     for (const c of conflicts) {
       mark.run(c.key, 'conflicto', `${c.a.title} / ${c.b.title}`, c.a.at ?? null, now());
     }

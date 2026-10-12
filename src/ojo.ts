@@ -42,7 +42,14 @@ export const CRITICAL_KINDS: readonly string[] = ['payment', 'deadline'];
 export const CRITICAL_WINDOW_MS = 2 * HOUR_MS;
 export const MAX_CONFLICTS = 3;
 
-export type ReminderStage = 't24' | 't2';
+export type ReminderStage = 't24' | 't2' | 'd30' | 'd7' | 'd1';
+
+/** Días de antelación de las etapas de una caducidad, de la más lejana a la más cercana. */
+export const EXPIRY_STAGE_DAYS: ReadonlyArray<{ stage: ReminderStage; days: number }> = [
+  { stage: 'd30', days: 30 },
+  { stage: 'd7', days: 7 },
+  { stage: 'd1', days: 1 },
+];
 
 export interface QuietHours {
   /** Hora local de inicio (0-23). */
@@ -70,7 +77,17 @@ export function stageInstants(
   item: AgendaItem,
   timeZone: string,
 ): Array<{ stage: ReminderStage; at: number }> {
-  if (item.at == null || !REMINDER_KINDS.includes(item.kind)) return [];
+  if (item.at == null) return [];
+  if (item.expiry) {
+    // Caducidad: avisos a 30, 7 y 1 día, siempre a las 9:00 locales de ese día (nunca
+    // una hora inventada). Se apunta al mediodía del día objetivo para no tropezar con el DST.
+    const dayStart = zonedDayStart(item.at, timeZone);
+    return EXPIRY_STAGE_DAYS.map(({ stage, days }) => ({
+      stage,
+      at: zonedDayStart(dayStart - days * DAY_MS + 12 * HOUR_MS, timeZone) + 9 * HOUR_MS,
+    }));
+  }
+  if (!REMINDER_KINDS.includes(item.kind)) return [];
   if (isTimed(item)) {
     return [
       { stage: 't24', at: item.at - DAY_MS },
