@@ -105,7 +105,7 @@ export function stageInstants(
   if (item.at == null) return [];
   if (item.expiry) {
     // Caducidad: avisos a 30, 7 y 1 día, siempre a las 9:00 locales de ese día (nunca
-    // una hora inventada). Se apunta al mediodía del día objetivo para no tropezar con el DST.
+    // una hora inventada). La fecha objetivo se resuelve en días de calendario y las 09:00 en hora de pared de la zona (correcto con el cambio de hora).
     return EXPIRY_STAGE_DAYS.map(({ stage, days }) => ({
       stage,
       at: nineAmDaysBefore(item.at as number, days, timeZone),

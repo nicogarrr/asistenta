@@ -37,19 +37,24 @@ function fold(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-const NUM = String.raw`(?:\d{1,3}(?:[.\s]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)`;
+// Token numérico COMPLETO: toda la racha de dígitos, puntos y comas, sin frontera partida
+// (lookbehind: nada numérico delante, ni "1 " + espacio, que sería un separador de miles
+// no soportado). Si el token entero no es legible, se niega; nunca se busca un subimporte.
+const RUN = String.raw`(?<![\d.,])(?<!\d\s)(\d[\d.,]*)`;
 const SIGN = String.raw`([-\u2212(]\s?)?`;
-const TOKEN_AFTER = new RegExp(`${SIGN}(${NUM})\\s?(?:\u20ac|eur\\b|euros?\\b)`, 'gi');
-const TOKEN_BEFORE = new RegExp(`${SIGN}(?:\u20ac|eur\\b)\\s?(${NUM})`, 'gi');
+const TRAIL = String.raw`([-\u2212])?`;
+const TOKEN_AFTER = new RegExp(`${SIGN}${RUN}${TRAIL}\\s?(?:\u20ac|eur\\b|euros?\\b)`, 'gi');
+const TOKEN_BEFORE = new RegExp(`${SIGN}(?:\u20ac|eur\\b)\\s?${RUN}${TRAIL}`, 'gi');
 const FOREIGN_RE = /[$\u00a3]|\b(usd|gbp|dolares?|libras?)\b/i;
-const STRICT_THOUSANDS = /^(\d{1,3}(?:[.\s]\d{3})+)(?:[,.](\d{2}))?$/;
+const STRICT_THOUSANDS = /^(\d{1,3}(?:\.\d{3})+)(?:,(\d{2}))?$/;
 const STRICT_PLAIN = /^(\d+)(?:[,.](\d{2}))?$/;
 
-/** Estricto: miles opcionales y 0 o 2 decimales; cualquier otra forma es "no soportado". */
-function strictCents(token: string): number | null {
+/** Estricto: miles con punto y 0 o 2 decimales; cualquier otra forma es "no soportado". */
+function strictCents(raw: string): number | null {
+  const token = raw.replace(/[.,]+$/, ''); // un punto de fin de frase no es parte del importe
   const m = STRICT_THOUSANDS.exec(token) ?? STRICT_PLAIN.exec(token);
   if (!m) return null;
-  const whole = (m[1] ?? '').replace(/[.\s]/g, '');
+  const whole = (m[1] ?? '').replace(/\./g, '');
   if (!/^\d{1,7}$/.test(whole)) return null;
   return Number(whole) * 100 + Number(m[2] ?? '0');
 }
@@ -64,7 +69,8 @@ export function scanMoney(text: string): { cents: number[]; bad: boolean } {
   let bad = FOREIGN_RE.test(text);
   for (const re of [TOKEN_AFTER, TOKEN_BEFORE]) {
     for (const m of text.matchAll(re)) {
-      if (m[1]) bad = true; // signo menos o paréntesis: abono, reembolso o ambiguo
+      // signo menos o paréntesis delante, o menos detrás: abono, reembolso o ambiguo
+      if (m[1] || m[3]) bad = true;
       const c = strictCents(m[2] ?? '');
       if (c === null || c <= 0) bad = true;
       else out.add(c);
@@ -168,8 +174,9 @@ export function ingestCharges(
   const ordered = [...messages].sort((a, b) => a.at - b.at);
   for (const m of ordered) {
     if (!m.id || !Number.isFinite(m.at) || exists.get(m.id)) continue;
-    // Fecha futura: no es un cargo ya hecho. No se guarda; se reevalúa cuando llegue su hora.
-    if (m.at > now && !seedOnly) continue;
+    // Fecha futura (también en la siembra): no es un cargo ya hecho. No se guarda ni cuenta
+    // como historial; se evalúa cuando llegue su hora.
+    if (m.at > now) continue;
     const parsed = parseCharge(m);
     if (!parsed) continue;
     const priors = (priorsOf.all(parsed.sender, m.at, m.id) as Array<{ cents: number }>).map(

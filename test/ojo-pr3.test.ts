@@ -416,3 +416,47 @@ describe('R1: ruta nocturna sin detector de cargos', () => {
     expect(r.db.prepare('SELECT count(*) AS c FROM vigilante_tracked').get()).toEqual({ c: 1 });
   });
 });
+
+describe('R2: el token monetario se niega entero, sin subimportes', () => {
+  const F = 'Tienda <info@tienda.es>';
+  const p = (t: string) => parseCharge(mail('z', F, 'Cargo', t, BASE));
+  it('formatos mixtos, miles no soportados y signos pegados a ambos lados', () => {
+    expect(p('Cargo 1,234.56 €')).toBeNull();
+    expect(p('Cargo 12.34.56€')).toBeNull();
+    expect(p('Cargo 1 234,56 €')).toBeNull();
+    expect(p('Cargo €12.34.56')).toBeNull();
+    expect(p('Cargo -12,50€')).toBeNull();
+    expect(p('Cargo \u221212,50 €')).toBeNull();
+    expect(p('Cargo 12,50-€')).toBeNull();
+    expect(p('Cargo EUR -12,50')).toBeNull();
+    expect(p('Cargo EUR 12,50-')).toBeNull();
+    expect(p('Cargo 1.234 €')).toEqual({ sender: 'tienda.es', cents: 123400 });
+    expect(p('Cargo 1.234,56 €')).toEqual({ sender: 'tienda.es', cents: 123456 });
+    expect(p('Cargo EUR 12,50.')).toEqual({ sender: 'tienda.es', cents: 1250 });
+    expect(p('Cargo 12,50€.')).toEqual({ sender: 'tienda.es', cents: 1250 });
+    expect(p('Cargo 12.50 EUR')).toEqual({ sender: 'tienda.es', cents: 1250 });
+    expect(p('Cargo 12,50 €/mes')).toEqual({ sender: 'tienda.es', cents: 1250 });
+  });
+});
+
+describe('R2: correos futuros nunca se guardan, tampoco en la siembra', () => {
+  it('seed con un correo a +30 d: 0 filas; al llegar su fecha se evalúa', () => {
+    const db = new DatabaseSync(':memory:');
+    const f = mail('fut', 'Raro <c@raro.io>', 'Cargo', 'Se ha cobrado 9,99 €', BASE + 30 * D);
+    ingestCharges(db, [f], BASE);
+    expect(db.prepare('SELECT count(*) AS c FROM vigilante_charges').get()).toEqual({ c: 0 });
+    ingestCharges(db, [f], BASE + 31 * D);
+    expect(db.prepare("SELECT status FROM vigilante_charges WHERE msg_id = 'fut'").get()).toEqual({
+      status: 'aviso',
+    });
+  });
+  it('barrido: primera llamada con un futuro no avisa y, al llegar su hora, sí', async () => {
+    const msgs = [mail('f1', 'Raro <c@raro.io>', 'Cargo', 'Se ha cobrado 9,99 €', BASE + 5 * H)];
+    const r = rig(() => [], { msgs: () => msgs });
+    await r.run();
+    expect(r.sent).toHaveLength(0);
+    r.at(BASE + 6 * H);
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+  });
+});
