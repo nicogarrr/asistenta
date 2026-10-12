@@ -387,6 +387,48 @@ export class DocMemory {
     };
   }
 
+  /** Index the text an OCR pass read off a photo, under the same scope rules as
+   * everything else. The title is the caption or a bare marker, never an invented
+   * description: OCR only knows the text that was visible, and the shelf says so by
+   * its mime type (`image/ocr`). Returns null when nothing legible came out. */
+  indexOcr(scope: string, ref: string, text: string, caption?: string): IndexedDocument | null {
+    const sliced = text.slice(0, MAX_TEXT_CHARS);
+    const allChunks = chunkText(sliced);
+    if (!allChunks.length) return null;
+    const truncated = text.length > sliced.length || allChunks.length > MAX_CHUNKS_PER_DOC;
+    const chunks = allChunks.slice(0, MAX_CHUNKS_PER_DOC);
+    const indexedChars = chunks.reduce((n, c) => n + c.length, 0);
+    const docId = docIdFor(scope, 'image', ref);
+    const title = caption?.trim() ? `foto: ${caption.trim()}` : `foto ${ref.slice(-8)}`;
+    const at = this.#now();
+    this.#db.exec('BEGIN');
+    try {
+      this.#db.prepare('DELETE FROM docs WHERE doc_id = ?').run(docId);
+      this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?').run(docId);
+      this.#db
+        .prepare(
+          'INSERT INTO docs (doc_id, chat_key, title, mime_type, chars, chunks, truncated, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(docId, scope, title, 'image/ocr', indexedChars, chunks.length, truncated ? 1 : 0, at);
+      const insertChunk = this.#db.prepare(
+        'INSERT INTO doc_chunks (text, doc_id, chat_key, title, at) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const chunk of chunks) insertChunk.run(chunk, docId, scope, title, at);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    return {
+      docId,
+      title,
+      mimeType: 'image/ocr',
+      chunks: chunks.length,
+      chars: indexedChars,
+      truncated,
+    };
+  }
+
   /** FTS5 search, always scoped. An empty or over-broad query returns nothing
    * rather than the whole shelf. */
   search(scope: string, query: string, limit = DEFAULT_SEARCH_LIMIT): DocSearchHit[] {

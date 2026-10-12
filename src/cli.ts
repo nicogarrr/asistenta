@@ -56,6 +56,7 @@ import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/cli
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { canExtract, DocMemory } from './memory/docs.js';
+import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
 import type { SessionHit } from './memory/sessions.js';
@@ -3620,10 +3621,72 @@ async function serveCommand(): Promise<number> {
         }
       }
 
+      // Fotos e imágenes: se lee el texto visible con el OCR local de Windows y se indexa
+      // bajo el mismo hilo (la memoria documental nunca cruza chats). La imagen no se guarda.
+      const indexImage = async (
+        bytes: Buffer,
+        mime: string,
+        ref: string,
+        caption: string | undefined,
+        label: string,
+      ): Promise<string> => {
+        try {
+          const out = await ocrImageBytes(bytes, mime, { ocrAvailable, ocrImage });
+          const indexed =
+            out.status === 'ok' ? docMemory.indexOcr(thread.key, ref, out.text, caption) : null;
+          return imageNote(label, out, indexed);
+        } catch (err) {
+          log.warn('image index failed', { err: String(err) });
+          return `[${label}: no se indexó: falló la lectura de la imagen.]`;
+        }
+      };
+
       let documentNote = '';
+      if (inbound.photoFileId && images?.[0]?.data) {
+        documentNote = await indexImage(
+          Buffer.from(images[0].data, 'base64'),
+          'image/jpeg',
+          inbound.photoFileId,
+          inbound.text,
+          'Foto',
+        );
+      }
       if (inbound.documentFileId) {
         const label = inbound.documentName ?? inbound.documentMimeType ?? 'documento';
-        if (!canExtract(inbound.documentMimeType)) {
+        const docMime = inbound.documentMimeType?.toLowerCase() ?? '';
+        if (imageExtension(docMime)) {
+          const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
+          documentNote = bytes
+            ? await indexImage(
+                bytes,
+                docMime,
+                inbound.documentFileId,
+                inbound.documentName ?? inbound.text,
+                `Imagen reenviada "${label}"`,
+              )
+            : `[Imagen reenviada: ${label}. Telegram no devolvió el archivo.]`;
+        } else if (docMime.startsWith('audio/')) {
+          const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
+          if (!bytes) {
+            documentNote = `[Audio reenviado: ${label}. Telegram no devolvió el archivo.]`;
+          } else {
+            try {
+              const heard = await transcribeVoiceNote(bytes, { mimeType: docMime });
+              const indexed = docMemory.indexTranscript(
+                thread.key,
+                inbound.messageId,
+                heard.text,
+                inbound.documentName ?? inbound.text,
+              );
+              documentNote = indexed
+                ? `[Audio reenviado: "${label}", transcrito e indexado${indexed.truncated ? ' PARCIALMENTE (la transcripción era demasiado larga)' : ''} en la memoria documental (${indexed.chars} caracteres). La transcripción puede tener errores. Úsalo con la herramienta documents cuando pregunte por él.]`
+                : `[Audio reenviado: ${label}. No se entendió ninguna palabra; no se indexó nada.]`;
+            } catch (err) {
+              log.warn('audio document index failed', { err: String(err) });
+              documentNote = `[Audio reenviado: ${label}. No se pudo transcribir: ${err instanceof Error ? err.message : String(err)}]`;
+            }
+          }
+        } else if (!canExtract(inbound.documentMimeType)) {
           documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora solo se leen PDF y archivos de texto.]`;
         } else {
           try {
@@ -3647,7 +3710,7 @@ async function serveCommand(): Promise<number> {
                 ? indexed.truncated
                   ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
                   : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
-                : `[Documento reenviado: ${label}. No tenía texto extraíble (los PDF escaneados son imágenes, no texto).]`;
+                : `[Documento reenviado: ${label}. No tenía texto extraíble (un PDF escaneado son imágenes, no texto: por ahora no leo imágenes dentro de un PDF; si quieres, mándame las páginas como fotos).]`;
             }
           } catch (err) {
             log.warn('document index failed', { err });
