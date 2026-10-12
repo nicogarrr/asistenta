@@ -246,7 +246,11 @@ return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' 
  *   element handle, and the origin check and the typing run on that same
  *   element in that same frame. A navigation or swap detaches the handle and
  *   every later operation throws, which aborts - it can never retarget the
- *   secret into a new frame. The check also runs again before the retry.
+ *   secret into a new frame. The check also runs again AFTER the write,
+ *   before verification.
+ * - NO keyboard retry: typing is focus-based and not atomic, so a page can
+ *   redirect the remaining characters mid-type. A failed exact fill is a
+ *   mismatch for a human, not a retry.
  * - The origin must be https (localhost excepted) on the key's canonical
  *   domain or a subdomain. No URL constructor: the vm sandbox this runs in
  *   has no URL global, so the href is parsed by hand.
@@ -258,20 +262,18 @@ return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' 
  */
 export type SecretFillStatus =
   | 'filled'
-  | 'filled_retried'
   | 'rejected_origin'
+  | 'aborted_after_write'
   | 'error_write'
   | 'error_verify'
-  | 'error_retry'
   | 'mismatch';
 
 export const SECRET_FILL_STATUSES: readonly SecretFillStatus[] = [
   'filled',
-  'filled_retried',
   'rejected_origin',
+  'aborted_after_write',
   'error_write',
   'error_verify',
-  'error_retry',
   'mismatch',
 ];
 
@@ -280,18 +282,24 @@ export function secretFillMessage(status: string, domain: string): string {
   switch (status as SecretFillStatus) {
     case 'filled':
       return 'Campo rellenado con el valor del vault (no mostrado).';
-    case 'filled_retried':
-      return 'Campo rellenado con el valor del vault (no mostrado), reintentado tras limpiar el campo.';
     case 'rejected_origin':
       return `RECHAZADO: el campo no está en ${domain} (origen distinto, ilegible o no seguro). No se ha escrito nada.`;
+    case 'aborted_after_write':
+      return (
+        'ATENCIÓN: se intentó escribir el valor del vault y la página cambió durante la operación; ' +
+        'se detuvo antes de verificar. Puede haber texto parcial en el campo: revísalo antes de continuar. ' +
+        'El valor no se muestra.'
+      );
     case 'error_write':
       return 'ATENCIÓN: no se pudo escribir en el campo (valor del vault, no mostrado).';
     case 'error_verify':
-      return 'ATENCIÓN: no se pudo verificar el contenido del campo (valor del vault, no mostrado).';
-    case 'error_retry':
-      return 'ATENCIÓN: no se pudo reintentar la escritura (valor del vault, no mostrado).';
+      return 'ATENCIÓN: se intentó escribir pero no se pudo verificar el contenido del campo (valor del vault, no mostrado).';
     case 'mismatch':
-      return 'ATENCIÓN: el campo no quedó con el valor del vault tras dos intentos. Revisa el campo (autocompletado, gestor de contraseñas) antes de continuar; el valor no se muestra por seguridad.';
+      return (
+        'ATENCIÓN: el campo no quedó con el valor del vault. No se reintenta con el teclado por seguridad ' +
+        '(el foco puede cambiar a mitad de la escritura). Revisa el campo (autocompletado, gestor de ' +
+        'contraseñas) antes de continuar; el valor no se muestra por seguridad.'
+      );
     default:
       // An unknown token says the channel was tampered or broke: fail closed.
       return 'ATENCIÓN: no se pudo verificar el campo (valor del vault, no mostrado).';
@@ -300,7 +308,7 @@ export function secretFillMessage(status: string, domain: string): string {
 
 /** Whether the status means the value actually landed in the field. */
 export function secretFillOk(status: string): boolean {
-  return status === 'filled' || status === 'filled_retried';
+  return status === 'filled';
 }
 
 export function buildFillScriptMasked(locatorJs: string, value: string, domain: string): string {
@@ -341,34 +349,28 @@ const frameOk = async () => {
   }
 };
 if (!(await frameOk())) return 'rejected_origin';
-let got;
-let retried = false;
 try {
   await el.fill(want);
-  await page.waitForTimeout(300);
-  got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
 } catch {
+  // fill rejected before applying: no write was confirmed.
   return 'error_write';
 }
-if (got === null) return 'error_verify';
-if (got !== want) {
-  retried = true;
-  if (!(await frameOk())) return 'rejected_origin';
-  try {
-    await el.fill('');
-    await el.click();
-    await el.press('Control+A');
-    await el.press('Delete');
-    await el.type(want, { delay: 60 });
-    await page.waitForTimeout(500);
-    got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
-  } catch {
-    return 'error_retry';
-  }
-  if (got === null) return 'error_verify';
+// A write WAS attempted. From here on no message may claim nothing was written.
+try {
+  await page.waitForTimeout(300);
+} catch {
+  return 'aborted_after_write';
 }
+if (!(await frameOk())) return 'aborted_after_write';
+let got;
+try {
+  got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
+} catch {
+  return 'error_verify';
+}
+if (got === null) return 'error_verify';
 if (got !== want) return 'mismatch';
-return retried ? 'filled_retried' : 'filled';`;
+return 'filled';`;
 }
 
 /**
@@ -665,6 +667,21 @@ export function createBrowserTool(
           });
           const secretDetails = canonicalKey ? { secret_key: canonicalKey } : { value };
           if (!resolved.ok) {
+            // Secret path: the closed-channel rule covers every exit, so the
+            // resolution payload (page-derived) does not cross either - fixed
+            // message and allowlist details here as well.
+            if (canonicalKey) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `No se encontró el campo para escribir el secreto (clave ${canonicalKey}, valor no mostrado).`,
+                  },
+                ],
+                details: { secret_key: canonicalKey, visible: Boolean(resolved.visible) },
+                isError: true,
+              };
+            }
             return {
               content: [
                 {
