@@ -397,6 +397,12 @@ export interface WakeWordOptions {
    * Ignored by injected transcribers, which is what the tests use.
    */
   initialPrompt?: string;
+  /**
+   * Raw audio tap (capability 6). Called with every captured chunk while the listener
+   * runs, before the suppression and hold checks, so a conversation session can own the
+   * stream without opening a second capture on a device that only allows one.
+   */
+  onAudio?: (pcm: Float32Array) => void;
 }
 
 /** The pipeline type, kept structural so the heavy import stays inside a function. */
@@ -452,7 +458,10 @@ function loadWakePipeline(model: string): Promise<WakeAsrPipeline> {
  * with the word dropped entirely ("reproduce Jingle Bells"); with the prompt set
  * to the wake word itself, whisper has a spelling to copy.
  */
-async function defaultTranscriber(samples: Float32Array, initialPrompt?: string): Promise<string> {
+export async function defaultTranscriber(
+  samples: Float32Array,
+  initialPrompt?: string,
+): Promise<string> {
   const pipe = await loadWakePipeline(DEFAULT_MODEL);
   const output = await withTimeout(
     pipe(samples, {
@@ -682,6 +691,8 @@ export class WakeWordListener {
   #capture: WakeCapture;
   #transcriber: (samples: Float32Array, initialPrompt?: string) => Promise<string>;
   #initialPrompt: string | undefined;
+  #onAudio: ((pcm: Float32Array) => void) | undefined;
+  #held = false;
 
   #lock = new Mutex();
   #ring = new SampleRing(WHISPER_SAMPLE_RATE * WINDOW_SECONDS);
@@ -718,6 +729,7 @@ export class WakeWordListener {
     this.#capture = opts.capture ?? new FfmpegMicCapture();
     this.#transcriber = opts.transcriber ?? defaultTranscriber;
     this.#initialPrompt = opts.initialPrompt;
+    this.#onAudio = opts.onAudio;
   }
 
   isRunning(): boolean {
@@ -757,6 +769,16 @@ export class WakeWordListener {
   suppress(ms: number): void {
     const until = Date.now() + Math.max(0, ms);
     if (until > this.#suppressedUntil) this.#suppressedUntil = until;
+    this.#ring.clear();
+  }
+
+  /**
+   * Hold wake detection while a conversation session owns the microphone: no window is
+   * collected or transcribed, so the session's speech cannot fire the wake word again.
+   * The capture itself keeps running and the tap keeps receiving audio.
+   */
+  hold(on: boolean): void {
+    this.#held = on;
     this.#ring.clear();
   }
 
@@ -810,6 +832,14 @@ export class WakeWordListener {
     // Chunks that arrive after stop() (a dying ffmpeg, an injected capture with a
     // sloppy shutdown) must not resurrect the window.
     if (!this.#running) return;
+    if (this.#onAudio) {
+      try {
+        this.#onAudio(pcm);
+      } catch (err) {
+        this.#reportError(err);
+      }
+    }
+    if (this.#held) return;
     if (Date.now() < this.#suppressedUntil) return;
     this.#ring.push(pcm);
   }
@@ -838,6 +868,7 @@ export class WakeWordListener {
   async #tick(): Promise<void> {
     try {
       if (!this.#running) return;
+      if (this.#held) return;
       if (Date.now() < this.#suppressedUntil) {
         this.#suppressed++;
         return;
