@@ -177,8 +177,13 @@ export class GestorStore {
         `Solo se avanza una gestión activa; "${gestion.title}" está ${gestion.status}.`,
       );
     }
-    if (stepIdx < 0 || stepIdx >= gestion.plan.length) {
-      throw new Error(`paso debe ser un número entre 1 y ${gestion.plan.length}.`);
+    if (!Number.isInteger(stepIdx) || stepIdx < 0 || stepIdx >= gestion.plan.length) {
+      throw new Error(`paso debe ser un número entero entre 1 y ${gestion.plan.length}.`);
+    }
+    if (gestion.plan[stepIdx]?.done) {
+      throw new Error(
+        `El paso ${stepIdx + 1} ya estaba marcado como hecho; no lo registro dos veces.`,
+      );
     }
     const plan = gestion.plan.map((s, i) =>
       i === stepIdx ? { ...s, done: true, note: note || s.note } : s,
@@ -253,16 +258,26 @@ export class GestorStore {
 
 /**
  * The Gate predicate's question, in one function so the wording is tested
- * once: null when nothing forces an ask (no active gestión, or the call fits
- * the approved class of the current step); otherwise the reason Nico reads.
+ * once. null when nothing forces an ask; otherwise the reason Nico reads.
+ * Fail-closed by construction: an unprovable call class (null) asks whatever
+ * the step declares, and an active gestión with no valid current step - plan
+ * finished but not closed, or a corrupt row - asks for anything with a world
+ * effect. Reading and the gestion tool itself stay free in that state so the
+ * model can still close the gestión.
  */
 export function effectOverrideReason(
   gestion: Gestion | null,
-  callClass: EffectClass,
+  callClass: EffectClass | null,
 ): string | null {
   if (!gestion || gestion.status !== 'active') return null;
   const step = gestion.plan[gestion.currentStep];
-  if (!step) return null;
+  if (!step) {
+    if (callClass === 'lee') return null;
+    return `gestión "${gestion.title}": plan completado sin cerrar (o estado corrupto); las acciones con efecto preguntan hasta gestion:completar`;
+  }
+  if (callClass === null) {
+    return `gestión "${gestion.title}": no puedo probar la clase de efecto de esta acción (el paso ${gestion.currentStep + 1} se aprobó como [${EFFECT_LABEL[step.effect]}])`;
+  }
   if (effectCovered(callClass, step.effect)) return null;
   return `gestión "${gestion.title}": el paso ${gestion.currentStep + 1} se aprobó como [${EFFECT_LABEL[step.effect]}] y esta acción es [${EFFECT_LABEL[callClass]}]`;
 }

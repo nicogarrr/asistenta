@@ -112,12 +112,25 @@ describe('GestorStore', () => {
     expect(done?.ledger).toHaveLength(2);
   });
 
-  it('recordStep rejects out-of-range steps and non-active gestiones', () => {
+  it('recordStep rejects fractions, NaN, out-of-range and repeats', () => {
+    const gestor = new GestorStore({ db: newDb() });
+    const g = proposeIn(gestor);
+    gestor.start(g.id);
+    expect(() => gestor.recordStep(g.id, 0.5, 'x')).toThrow(/número entero/);
+    expect(() => gestor.recordStep(g.id, Number.NaN, 'x')).toThrow(/número entero/);
+    expect(() => gestor.recordStep(g.id, -1, 'x')).toThrow(/número entero/);
+    expect(() => gestor.recordStep(g.id, 5, 'x')).toThrow(/número entero/);
+    // Nothing was recorded by the rejected calls.
+    expect(gestor.read(g.id)?.ledger).toEqual([]);
+    gestor.recordStep(g.id, 0, 'ok');
+    expect(() => gestor.recordStep(g.id, 0, 'otra vez')).toThrow(/ya estaba marcado/);
+    expect(gestor.read(g.id)?.ledger).toHaveLength(1);
+  });
+
+  it('recordStep rejects a non-active gestion', () => {
     const gestor = new GestorStore({ db: newDb() });
     const g = proposeIn(gestor);
     expect(() => gestor.recordStep(g.id, 0, 'x')).toThrow(/Solo se avanza una gestión activa/);
-    gestor.start(g.id);
-    expect(() => gestor.recordStep(g.id, 5, 'x')).toThrow(/paso debe ser/);
   });
 
   it('complete requires active; cancel rejects done', () => {
@@ -143,41 +156,85 @@ describe('GestorStore', () => {
 });
 
 describe('effect classes', () => {
-  it('covers exactly the declared lattice', () => {
+  it('covers exactly the declared lattice: lee always, paga covers envia, nothing else crosses', () => {
     for (const step of EFFECT_CLASSES) {
       expect(effectCovered('lee', step)).toBe(true);
     }
+    expect(effectCovered('escribe-local', 'escribe-local')).toBe(true);
     expect(effectCovered('escribe-local', 'lee')).toBe(false);
-    expect(effectCovered('escribe-local', 'envia-terceros')).toBe(true);
-    expect(effectCovered('escribe-local', 'destructivo')).toBe(true);
+    expect(effectCovered('escribe-local', 'envia-terceros')).toBe(false);
+    expect(effectCovered('escribe-local', 'paga')).toBe(false);
+    expect(effectCovered('escribe-local', 'destructivo')).toBe(false);
+    expect(effectCovered('envia-terceros', 'envia-terceros')).toBe(true);
+    expect(effectCovered('envia-terceros', 'paga')).toBe(true);
     expect(effectCovered('envia-terceros', 'escribe-local')).toBe(false);
     expect(effectCovered('envia-terceros', 'destructivo')).toBe(false);
-    expect(effectCovered('envia-terceros', 'paga')).toBe(true);
+    expect(effectCovered('paga', 'paga')).toBe(true);
     expect(effectCovered('paga', 'envia-terceros')).toBe(false);
     expect(effectCovered('paga', 'destructivo')).toBe(false);
-    expect(effectCovered('destructivo', 'paga')).toBe(false);
     expect(effectCovered('destructivo', 'destructivo')).toBe(true);
+    expect(effectCovered('destructivo', 'paga')).toBe(false);
     expect(EFFECT_LABEL['envia-terceros']).toBe('envía a terceros');
   });
 
-  it('effectOverrideReason: null without gestion or when covered, reason when exceeded', () => {
+  it('effectOverrideReason: null without gestion, when covered, or for reads without valid step', () => {
     expect(effectOverrideReason(null, 'paga')).toBeNull();
+    expect(effectOverrideReason(null, null)).toBeNull();
     const gestor = new GestorStore({ db: newDb() });
     const g = proposeIn(gestor);
     expect(effectOverrideReason(g, 'envia-terceros')).toBeNull(); // proposed, not active
     gestor.start(g.id);
     expect(effectOverrideReason(gestor.read(g.id) ?? null, 'lee')).toBeNull();
+  });
+
+  it('effectOverrideReason: exceeding, unprovable and finished-not-closed all ask', () => {
+    const gestor = new GestorStore({ db: newDb() });
+    const g = proposeIn(gestor);
+    gestor.start(g.id);
+    // Exceeds the approved class of step 1 (lee).
     const reason = effectOverrideReason(gestor.read(g.id) ?? null, 'envia-terceros');
     expect(reason).toContain('paso 1');
     expect(reason).toContain('[solo lectura]');
     expect(reason).toContain('[envía a terceros]');
+    // Unprovable class: asks whatever the step declares.
+    const opaque = effectOverrideReason(gestor.read(g.id) ?? null, null);
+    expect(opaque).toContain('no puedo probar la clase de efecto');
+    expect(opaque).toContain('paso 1');
     gestor.recordStep(g.id, 0, 'ok');
-    // Step 2 is envia-terceros: a send is covered now, a payment is not.
+    // Step 2 is envia-terceros: a send is covered now; writes and payments are not.
     expect(effectOverrideReason(gestor.read(g.id) ?? null, 'envia-terceros')).toBeNull();
+    expect(effectOverrideReason(gestor.read(g.id) ?? null, 'escribe-local')).toContain(
+      '[escribe en tu PC]',
+    );
     expect(effectOverrideReason(gestor.read(g.id) ?? null, 'paga')).toContain('[paga]');
     gestor.recordStep(g.id, 1, 'ok');
-    // All steps done: no current step, nothing to exceed.
+    // All steps marked but the gestion is still ACTIVE: fail closed for effects.
+    expect(effectOverrideReason(gestor.read(g.id) ?? null, 'lee')).toBeNull();
+    const tail = effectOverrideReason(gestor.read(g.id) ?? null, 'envia-terceros');
+    expect(tail).toContain('plan completado sin cerrar');
+    expect(effectOverrideReason(gestor.read(g.id) ?? null, null)).toContain(
+      'plan completado sin cerrar',
+    );
+    gestor.complete(g.id);
     expect(effectOverrideReason(gestor.read(g.id) ?? null, 'paga')).toBeNull();
+  });
+
+  it('effectOverrideReason: a corrupt plan fails closed for effects', () => {
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'corrupta',
+      encargo: 'x',
+      plan: plan('lee'),
+    });
+    gestor.start(g.id);
+    const raw = gestor.read(g.id);
+    expect(raw).not.toBeNull();
+    // Simulate a row whose currentStep points past the plan (corrupt).
+    const corrupt = { ...raw!, currentStep: 99 };
+    expect(effectOverrideReason(corrupt, 'lee')).toBeNull();
+    expect(effectOverrideReason(corrupt, 'envia-terceros')).toContain('sin cerrar');
+    expect(effectOverrideReason(corrupt, null)).toContain('sin cerrar');
   });
 });
 
@@ -259,12 +316,7 @@ describe('gestion tool', () => {
     const { run, text } = setup();
     expect(
       text(
-        await run({
-          action: 'preparar',
-          titulo: 't'.repeat(121),
-          encargo: 'e',
-          pasos: goodPlan,
-        }),
+        await run({ action: 'preparar', titulo: 't'.repeat(121), encargo: 'e', pasos: goodPlan }),
       ),
     ).toContain('título no puede pasar de 120');
     expect(
@@ -340,14 +392,17 @@ describe('gestion tool', () => {
     expect(gestor.read(id)?.ledger).toHaveLength(2);
   });
 
-  it('paso without an active gestion or with a bad number errors', async () => {
-    const { run, text } = setup();
+  it('paso without an active gestion, with a bad number or repeated errors cleanly', async () => {
+    const { gestor, run, text } = setup();
     expect(text(await run({ action: 'paso', paso: 1 }))).toContain('ninguna gestión activa');
     await run({ action: 'preparar', titulo: 'a', encargo: 'e', pasos: goodPlan });
-    const gestor2 = new GestorStore({ db: newDb() });
-    void gestor2;
-    const { gestor } = setup();
-    void gestor;
+    const id = gestor.list(SCOPE)[0]?.id ?? '';
+    await run({ action: 'ejecutar', id });
+    expect(text(await run({ action: 'paso', paso: 1.5 }))).toContain('número entero');
+    expect(text(await run({ action: 'paso', paso: 99 }))).toContain('número entero');
+    await run({ action: 'paso', paso: 1 });
+    expect(text(await run({ action: 'paso', paso: 1 }))).toContain('ya estaba marcado');
+    expect(gestor.read(id)?.ledger).toHaveLength(1);
   });
 
   it('listar hides finished gestiones and estado renders plan and ledger', async () => {
@@ -465,14 +520,80 @@ describe('Gate: gestion ejecutar always asks', () => {
   });
 });
 
+describe('Gate: classifyEffect provability table', () => {
+  const gate = new Gate({ allowUntilPayment: true, approver: () => true });
+  const at = (tool: string, args: Record<string, unknown>, stage?: 'browse' | 'fill' | 'confirm') =>
+    gate.classifyEffect({ tool, args, actor: 'test', ...(stage ? { stage } : {}) });
+
+  it('money evidence is paga', () => {
+    expect(at('browser', { action: 'click', _target: 'button | Pay now @@ Shop' })).toBe('paga');
+    expect(at('shell', { command: 'echo 4111111111111111' })).toBe('paga');
+    expect(at('checkout', { action: 'fill' }, 'confirm')).toBe('paga');
+  });
+
+  it('reads and internal bookkeeping are lee', () => {
+    expect(at('read', { path: 'C:\\tmp\\x.txt' })).toBe('lee');
+    expect(at('list', { path: 'C:\\tmp' })).toBe('lee');
+    expect(at('memory', { action: 'save' })).toBe('lee');
+    expect(at('objetivo', { action: 'listar' })).toBe('lee');
+    expect(at('gestion', { action: 'ejecutar', id: 'x' })).toBe('lee');
+    expect(at('windows', {})).toBe('lee');
+    expect(at('computer', { action: 'screenshot' })).toBe('lee');
+    expect(at('computer', { action: 'move', x: 1, y: 2 })).toBe('lee');
+    expect(at('browser', { action: 'open', url: 'https://example.com' })).toBe('lee');
+    expect(at('browser', { action: 'snapshot' })).toBe('lee');
+    expect(at('tv', { action: 'state' })).toBe('lee');
+    expect(at('tv', { action: 'screenshot' })).toBe('lee');
+    expect(at('fetch', { url: 'https://example.com' })).toBe('lee');
+    expect(at('fetch', { url: 'https://example.com', method: 'GET' })).toBe('lee');
+  });
+
+  it('provable writes and sends get their class', () => {
+    expect(at('write', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
+    expect(at('edit', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
+    expect(at('media', { action: 'tts' })).toBe('escribe-local');
+    expect(at('reminder', { action: 'crear' })).toBe('escribe-local');
+    expect(at('browser', { action: 'fill', selector: '#email', text: 'a@b.c' })).toBe(
+      'escribe-local',
+    );
+    expect(
+      at('browser', { action: 'click', _target: 'link | Leer mas @@ Blog personal' }),
+    ).toBe('escribe-local');
+    expect(
+      at('browser', { action: 'click', _target: 'button | Seguir [destino ilegible]' }),
+    ).toBe('envia-terceros');
+    expect(at('fetch', { url: 'https://example.com', method: 'POST' })).toBe('envia-terceros');
+    expect(at('shell', { command: 'Remove-Item -Recurse C:\\x' })).toBe('destructivo');
+    expect(at('checkout', { action: 'fill' }, 'browse')).toBe('escribe-local');
+  });
+
+  it('opaque calls are null (unprovable), never a default', () => {
+    expect(at('browser', { action: 'exec_js', code: 'document.forms[0].submit()' })).toBeNull();
+    expect(at('shell', { command: 'curl -X POST https://api.example.com -d x=1' })).toBeNull();
+    expect(at('shell', { command: 'dir' })).toBeNull();
+    expect(at('computer', { action: 'click', x: 1, y: 2 })).toBeNull();
+    expect(at('computer', { action: 'type', text: 'hola' })).toBeNull();
+    expect(at('tv', { action: 'power', value: false })).toBeNull();
+    expect(at('book', { action: 'reservar' })).toBeNull();
+    expect(at('opengym', { action: 'reservar' })).toBeNull();
+    expect(at('herramienta_de_fabrica', { anything: true })).toBeNull();
+  });
+});
+
 describe('Gate: gestor effect guard (forced ask)', () => {
   const shellCall = { tool: 'shell', args: { command: 'dir' }, actor: 'test' };
 
-  function wiredGate(dir: string, gestor: GestorStore, approver: (reason: string) => boolean) {
+  function wiredGate(
+    dir: string,
+    gestor: GestorStore,
+    approver: (reason: string) => boolean,
+    extra: Record<string, unknown> = {},
+  ) {
     const gate = new Gate({
       dbPath: join(dir, 'g.db'),
       grantWindowMs: 0,
-      approver: (_call, reason) => approver(reason),
+      ...extra,
+      approver: (_call: unknown, reason: string) => approver(reason),
     });
     gate.setForcedAsk(SCOPE, (call) =>
       effectOverrideReason(gestor.activeForScope(SCOPE), gate.classifyEffect(call)),
@@ -480,7 +601,7 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     return gate;
   }
 
-  it('a call exceeding the approved step class asks every time, memo or no memo', async () => {
+  it('an opaque call in a lee step asks every time, memo or no memo', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
     const gestor = new GestorStore({ db: newDb() });
     const g = proposeIn(gestor);
@@ -493,9 +614,76 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     await gate.check(SCOPE, shellCall);
     await gate.check(SCOPE, shellCall);
     expect(reasons).toHaveLength(2);
+    expect(reasons[0]).toContain('no puedo probar la clase de efecto');
     expect(reasons[0]).toContain('paso 1');
     expect(reasons[0]).toContain('[solo lectura]');
-    expect(reasons[0]).toContain('[escribe en tu PC]');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('auditor repro: exec_js, fill, curl POST, computer click and tv power all ask', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'x',
+      encargo: 'x',
+      plan: plan('lee', 'escribe-local'),
+    });
+    gestor.start(g.id); // step 1: lee
+    const reasons: string[] = [];
+    const gate = wiredGate(dir, gestor, (reason) => {
+      reasons.push(reason);
+      return true;
+    });
+    const execJs = {
+      tool: 'browser',
+      args: { action: 'exec_js', code: 'document.querySelector("button").click()' },
+      actor: 'test',
+    };
+    const fill = {
+      tool: 'browser',
+      args: { action: 'fill', selector: '#email', text: 'a@b.c' },
+      actor: 'test',
+    };
+    const tv = { tool: 'tv', args: { action: 'power', value: false }, actor: 'test' };
+    await gate.check(SCOPE, execJs);
+    await gate.check(SCOPE, execJs); // no memo for opaque calls
+    await gate.check(SCOPE, fill);
+    await gate.check(SCOPE, tv);
+    expect(reasons).toHaveLength(4);
+    gestor.recordStep(g.id, 0, 'ok'); // step 2: escribe-local
+    const curl = {
+      tool: 'shell',
+      args: { command: 'curl -X POST https://api.example.com -d x=1' },
+      actor: 'test',
+    };
+    const click = { tool: 'computer', args: { action: 'click', x: 10, y: 20 }, actor: 'test' };
+    await gate.check(SCOPE, curl);
+    await gate.check(SCOPE, click);
+    expect(reasons).toHaveLength(6);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('opaque calls still ask under fullControl, always-scope and a live grant window', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = proposeIn(gestor);
+    gestor.start(g.id);
+    let asked = 0;
+    const gate = wiredGate(
+      dir,
+      gestor,
+      () => {
+        asked++;
+        return true;
+      },
+      { fullControl: true, grantWindowMs: 60_000 },
+    );
+    gate.setScope(SCOPE, 'computer', 'always');
+    const click = { tool: 'computer', args: { action: 'click', x: 10, y: 20 }, actor: 'test' };
+    await gate.check(SCOPE, click); // forced ask (approval opens the computer window)
+    await gate.check(SCOPE, click); // window + scope + fullControl: still asks
+    expect(asked).toBe(2);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -509,13 +697,18 @@ describe('Gate: gestor effect guard (forced ask)', () => {
       asked++;
       return true;
     });
-    await gate.check(SCOPE, shellCall); // forced: escribe-local over lee
+    const effectClick = {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | Seguir [destino ilegible]' },
+      actor: 'test',
+    };
+    await gate.check(SCOPE, effectClick); // forced: envia over lee
     expect(asked).toBe(1);
     gestor.recordStep(g.id, 0, 'ok'); // now step 2: envia-terceros
-    // Covered now, and the exact call was explicitly approved a moment ago:
-    // the fingerprint memo applies (Nico already said yes to THIS command).
-    await gate.check(SCOPE, shellCall);
-    await gate.check(SCOPE, shellCall);
+    // Covered now, and this exact call was explicitly approved a moment ago
+    // (the forced ask recorded its fingerprint), so the memo applies.
+    await gate.check(SCOPE, effectClick);
+    await gate.check(SCOPE, effectClick);
     expect(asked).toBe(1);
     // ...but a payment call in a sending step still forces the ask.
     const payCall = {
@@ -525,6 +718,49 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     };
     await gate.check(SCOPE, payCall);
     expect(asked).toBe(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('last step marked but not closed: effects keep asking until completar', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'x',
+      encargo: 'x',
+      plan: plan('lee'),
+    });
+    gestor.start(g.id);
+    gestor.recordStep(g.id, 0, 'ok'); // plan marked done, gestion STILL active
+    const reasons: string[] = [];
+    const gate = wiredGate(dir, gestor, (reason) => {
+      reasons.push(reason);
+      return true;
+    });
+    const payCall = {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | Pay now @@ Shop' },
+      actor: 'test',
+    };
+    await gate.check(SCOPE, payCall);
+    expect(reasons[0]).toContain('plan completado sin cerrar');
+    // Reads stay free of the FORCED ask so the model can close the gestion
+    // (a gate that allow-lists reads never hears about them).
+    let readAsked = 0;
+    const gate2 = wiredGate(
+      dir,
+      gestor,
+      () => {
+        readAsked++;
+        return true;
+      },
+      { allow: ['read'] },
+    );
+    await gate2.check(SCOPE, { tool: 'read', args: { path: 'x' }, actor: 'test' });
+    expect(readAsked).toBe(0);
+    gestor.complete(g.id);
+    await gate.check(SCOPE, payCall); // closed: normal path (payment rule asks)
+    expect(reasons[1] ?? '').not.toContain('plan completado sin cerrar');
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -623,29 +859,5 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     await gate.check(SCOPE, shellCall); // memo
     expect(asked).toBe(1);
     rmSync(dir, { recursive: true, force: true });
-  });
-});
-
-describe('Gate: classifyEffect', () => {
-  const gate = new Gate({ allowUntilPayment: true, approver: () => true });
-  const at = (tool: string, args: Record<string, unknown>, stage?: 'browse' | 'fill' | 'confirm') =>
-    gate.classifyEffect({ tool, args, actor: 'test', ...(stage ? { stage } : {}) });
-
-  it('maps calls onto classes from the same evidence as the rules', () => {
-    expect(at('browser', { action: 'click', _target: 'button | Pay now @@ Shop' })).toBe('paga');
-    expect(at('shell', { command: 'echo 4111111111111111' })).toBe('paga');
-    expect(at('shell', { command: 'Remove-Item -Recurse C:\\x' })).toBe('destructivo');
-    expect(at('shell', { command: 'dir' })).toBe('escribe-local');
-    expect(at('browser', { action: 'click', _target: 'button | Seguir [destino ilegible]' })).toBe(
-      'envia-terceros',
-    );
-    expect(at('browser', { action: 'click', _target: 'link | Leer mas @@ Blog' })).toBe('lee');
-    expect(at('write', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
-    expect(at('computer', { action: 'click', x: 1, y: 2 })).toBe('escribe-local');
-    expect(at('read', { path: 'C:\\tmp\\x.txt' })).toBe('lee');
-    expect(at('fetch', { url: 'https://example.com' })).toBe('lee');
-    expect(at('checkout', { action: 'fill' }, 'confirm')).toBe('paga');
-    expect(at('checkout', { action: 'fill' }, 'browse')).toBe('escribe-local');
-    expect(at('gestion', { action: 'ejecutar', id: 'x' })).toBe('lee');
   });
 });

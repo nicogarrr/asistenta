@@ -544,28 +544,88 @@ export class Gate {
   }
 
   /**
-   * The effect class of a call in the world, from the same evidence the rules
-   * already use - the gestor compares this against the class Nico approved for
-   * the current step. Conservative on purpose: a shell command that is not
-   * visibly destructive still lands in `escribe-local`, and a checkout between
-   * browse and confirm is form-filling, not reading.
+   * The effect class of a call in the world - or null when the class cannot be
+   * PROVEN. The gestor compares this against the class Nico approved for the
+   * current step, and null forces an ask: opaque actions (arbitrary code in a
+   * page, an arbitrary shell command, a desktop click whose target is unknown,
+   * booking tools, factory-built tools) get evidence or a question, never a
+   * default. The evidence is the same the rules already fire on; the
+   * conservative choices are deliberate: a shell command that is not visibly
+   * destructive is unprovable rather than "local", and a non-GET fetch sends.
    */
-  classifyEffect(c: ToolCall): EffectClass {
+  classifyEffect(c: ToolCall): EffectClass | null {
     if (this.#isPaymentConfirmation(c) || this.#isPaymentish(c)) return 'paga';
-    if (c.tool === 'shell' && DESTRUCTIVE.test(argString(c.args, 'command'))) {
-      return 'destructivo';
+    switch (c.tool) {
+      // Provably without world effect: reads and the daemon's own bookkeeping
+      // (the gestion/objetivo flows, memory, skills, documents, inspection).
+      case 'read':
+      case 'list':
+      case 'done':
+      case 'memory':
+      case 'skills':
+      case 'documents':
+      case 'objetivo':
+      case 'gestion':
+      case 'windows':
+      case 'ocr':
+      case 'cargar_herramienta':
+        return 'lee';
+      case 'fetch': {
+        const method = argString(c.args, 'method').toUpperCase();
+        return method === '' || method === 'GET' || method === 'HEAD' ? 'lee' : 'envia-terceros';
+      }
+      case 'browser': {
+        const action = argString(c.args, 'action');
+        // Arbitrary code in the page can send, delete or pay: unprovable.
+        if (action === 'exec_js') return null;
+        if (
+          [
+            'open',
+            'snapshot',
+            'screenshot',
+            'back',
+            'close',
+            'wait',
+            'wait_for',
+            'media',
+            'pick',
+          ].includes(action)
+        ) {
+          return 'lee';
+        }
+        if (action === 'fill' || action === 'choose') return 'escribe-local';
+        if (action === 'click' || action === 'press') {
+          // The snapshot evidence (legible non-effect text, page not about money)
+          // downgrades a click to a page-state change; without it, the click sends.
+          return this.#isBrowserEffect(c) ? 'envia-terceros' : 'escribe-local';
+        }
+        return null;
+      }
+      case 'write':
+      case 'edit':
+      case 'media':
+      case 'fabrica':
+      case 'reminder':
+        return 'escribe-local';
+      // The confirm stage was caught above as paga; browse/fill is form work.
+      case 'checkout':
+        return 'escribe-local';
+      case 'shell':
+        // The destructive regex is the best available evidence; everything else
+        // a shell can do (a curl POST included) cannot be proven local.
+        return DESTRUCTIVE.test(argString(c.args, 'command')) ? 'destructivo' : null;
+      case 'computer': {
+        const action = argString(c.args, 'action');
+        return action === 'screenshot' || action === 'move' ? 'lee' : null;
+      }
+      case 'tv': {
+        const action = argString(c.args, 'action');
+        return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
+      }
+      // book, opengym, factory-built and anything new: unprovable.
+      default:
+        return null;
     }
-    if (this.#isBrowserEffect(c)) return 'envia-terceros';
-    if (
-      c.tool === 'write' ||
-      c.tool === 'edit' ||
-      c.tool === 'shell' ||
-      c.tool === 'computer' ||
-      c.tool === 'checkout'
-    ) {
-      return 'escribe-local';
-    }
-    return 'lee';
   }
 
   #fingerprint(c: ToolCall): string {
