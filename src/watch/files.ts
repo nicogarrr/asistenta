@@ -234,6 +234,11 @@ export class FileWatcher {
     return [...this.#events];
   }
 
+  /** Directory watchers that are actually alive now (a failed one removes itself). */
+  active(): number {
+    return this.#watchers.size;
+  }
+
   /** Events dropped by `maxEventsPerMinute` since `start()`, so the caller can mention the gap. */
   suppressed(): number {
     return this.#suppressed;
