@@ -166,9 +166,11 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { ConversationSession } from './voice/conversation.js';
+import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
-import { stripWakeWord, WakeWordListener } from './voice/wake.js';
+import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
@@ -1267,6 +1269,8 @@ async function serveCommand(): Promise<number> {
   const withMicrophone = async <T>(fn: () => Promise<T>): Promise<T> => {
     const listener = wake;
     const wasRunning = listener?.isRunning() ?? false;
+    // A spoken session cannot survive its microphone being taken away.
+    if (wasRunning) endSession('apagado');
     if (wasRunning) await listener?.stop().catch(() => {});
     try {
       return await fn();
@@ -1898,6 +1902,8 @@ async function serveCommand(): Promise<number> {
       // Release the microphone before anything else slow: an ffmpeg that is still
       // holding the capture device would keep the next app (or the next start) from
       // opening it.
+      conversationOn = false;
+      endSession('apagado');
       await stopWake().catch(() => {});
       // Every Chromium, or the next start refuses to claim the profile dir.
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
@@ -3507,6 +3513,7 @@ async function serveCommand(): Promise<number> {
         '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
+        '/conversacion on|off|estado - tras mi nombre, hablar sin repetirlo',
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
         '/play [volumen] - suena en el PC el último audio que me mandaste',
         '/mic [segundos] - escuchar lo que oye el microfono',
@@ -3529,7 +3536,7 @@ async function serveCommand(): Promise<number> {
     thread: Thread,
     inbound: Inbound,
     text: string,
-    opts: { images?: Inbound['images'] },
+    opts: { images?: Inbound['images']; spoken?: (text: string) => Promise<void> },
   ): Promise<void> => {
     const generation = thread.generation;
     thread.active = true;
@@ -3808,6 +3815,11 @@ async function serveCommand(): Promise<number> {
       const text2 =
         result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
       await answer(thread, inbound, text2);
+      // Spoken sessions (capability 6) read the answer out loud on this machine. After
+      // the chat copy, so a TTS failure never costs the text.
+      if (opts.spoken && text2.trim()) {
+        await opts.spoken(text2).catch((err: unknown) => log.warn('spoken answer failed', { err }));
+      }
       // The answer itself joins the session record: it is what /buscar reads back
       // when the user asks "what did you tell me about that?".
       const finalText = result.text;
@@ -3926,6 +3938,16 @@ async function serveCommand(): Promise<number> {
       return;
     }
     const request = stripWakeWord(heard, wakeWord);
+    if (conversationOn && !session) {
+      // Capability 6: the wake word opens a spoken session; the request that came with
+      // it is its first turn. The chat is fixed for the whole session.
+      const opened = openSession(chat);
+      if (opened) {
+        if (request) await opened.submit(request);
+        else await opened.speak(() => speakAloud('Dime.', opened));
+        return;
+      }
+    }
     if (!request) {
       // "Asistenta" on its own is a check that it is listening, not a task. Saying so
       // would answer every cough that sounded like the word.
@@ -3986,6 +4008,105 @@ async function serveCommand(): Promise<number> {
     );
   };
 
+  // ---- spoken conversation (capability 6, V1) --------------------------------
+
+  /** Opt-in and off at every boot: it is the switch that lets the wake word open a session. */
+  let conversationOn = false;
+  let session: ConversationSession | null = null;
+  let sessionPlayback: Playback | null = null;
+  let conversationCount = 0;
+  let lastConversationEnd = '';
+  const speaker = createMciSpeaker();
+
+  /** Read an answer out loud on this machine's speakers. Never touches the system volume. */
+  const speakAloud = async (text: string, owner: ConversationSession): Promise<void> => {
+    const clean = trimForSpeech(text);
+    if (!clean) return;
+    const spoken = await tts.speak(clean);
+    // Closed (or switched off) while synthesising: say nothing.
+    if (session !== owner) return;
+    mkdirSync(paths.voice, { recursive: true });
+    const file = join(paths.voice, `say-${Date.now()}.mp3`);
+    writeFileSync(file, spoken.data);
+    try {
+      const playback = speaker.play(file);
+      sessionPlayback = playback;
+      await playback.done;
+    } finally {
+      sessionPlayback = null;
+      rmSync(file, { force: true });
+    }
+  };
+
+  const closeSessionText = (reason: string, detail?: string): string =>
+    reason === 'inactividad'
+      ? 'Conversación por voz cerrada por inactividad. Di "asistenta" para abrir otra.'
+      : reason === 'cierre'
+        ? 'Conversación por voz cerrada. Di "asistenta" para abrir otra.'
+        : reason === 'apagado'
+          ? 'Conversación por voz cerrada.'
+          : `Conversación por voz cerrada por un fallo${detail ? `: ${detail}` : ''}.`;
+
+  const endSession = (
+    reason: 'apagado' | 'fallo' | 'cierre' | 'inactividad',
+    detail?: string,
+  ): void => {
+    const current = session;
+    if (!current) return;
+    current.close(reason, detail);
+    // The close hook (below) does the rest; this keeps /off and shutdown synchronous.
+  };
+
+  const openSession = (chat: {
+    key: string;
+    chatId: string;
+    threadId?: string;
+  }): ConversationSession | null => {
+    const listener = currentWake();
+    if (!conversationOn || !listener || session) return session;
+    const created = new ConversationSession({
+      transcriber: (samples) => defaultTranscriber(samples),
+      onUtterance: async (heard) => {
+        const inbound: Inbound = {
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: chat.chatId,
+          threadId: chat.threadId,
+          userId: String(chat.chatId),
+          displayName: 'conversación por voz',
+          text: `[dicho en voz alta ante el microfono] ${heard}`,
+          authorised: true,
+          messageId: `voz-${++wakeCount}`,
+          receivedAt: new Date().toISOString(),
+        };
+        const thread = await getOrCreateThread(chat.key, 'main', 'principal');
+        messageThread.set(`${chat.key}:${inbound.messageId}`, thread.key);
+        log.info('voice session utterance', { chars: heard.length, chatId: chat.chatId });
+        // The turn goes through runTurn like any message: same gate, same mutex. An
+        // approval it needs is still asked with Telegram buttons; nothing spoken is read
+        // as a yes.
+        await runTurn(thread, inbound, inbound.text, {
+          spoken: (answer) => speakAloud(answer, created),
+        });
+      },
+      onClose: (reason, detail) => {
+        if (session === created) {
+          session = null;
+        }
+        sessionPlayback?.stop();
+        currentWake()?.hold(false);
+        lastConversationEnd = `${reason}${detail ? `: ${detail}` : ''}`;
+        log.info('voice session closed', { reason, detail });
+        void notifyLastChat(closeSessionText(reason, detail)).catch(() => {});
+      },
+    });
+    session = created;
+    conversationCount++;
+    listener.hold(true);
+    log.info('voice session opened', { chatId: chat.chatId, n: conversationCount });
+    return created;
+  };
+
   const startWake = async (): Promise<void> => {
     if (!desktop) throw new Error('sin micrófono en modo servidor');
     let told = false;
@@ -3995,6 +4116,7 @@ async function serveCommand(): Promise<number> {
       // "Choci", "Chuchis", "Chocchi" or dropped entirely. The initial prompt
       // gives it a spelling to copy instead of one to invent.
       initialPrompt: wakeWord,
+      onAudio: (pcm) => session?.feed(pcm),
       onWake: (heard) => {
         // Deliberately not awaited: a wake starts a whole turn, and the listener's
         // job is done the moment it has handed the text over.
@@ -4002,6 +4124,8 @@ async function serveCommand(): Promise<number> {
       },
       onError: (err) => {
         log.warn('wake listener error', { err });
+        // Capture failure ends any spoken session too: its audio is gone.
+        endSession('fallo', err.message);
         // The listener stops itself when capture or transcription fails, and from the
         // user's side a listener that stopped listening is indistinguishable from one
         // that never started. Said once: the failure repeats until it is fixed.
@@ -4021,8 +4145,62 @@ async function serveCommand(): Promise<number> {
     const listener = wake;
     if (!listener) return;
     wake = null;
+    endSession('apagado');
     await listener.stop();
     log.info('wake word stopped', listener.stats());
+  };
+
+  const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
+    const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+    if (want === 'estado' || want === '') {
+      const st = session?.stats();
+      await say(
+        inbound,
+        `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
+          (st
+            ? `Sesión abierta (${st.state}, ${st.utterances} frases, lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
+            : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
+          (currentWake()?.isRunning()
+            ? ''
+            : ' El micrófono está cerrado: /conversacion on lo abre.'),
+        { quote: true },
+      );
+      return;
+    }
+    if (want !== 'on' && want !== 'off') {
+      await say(inbound, 'Uso: /conversacion on|off|estado', { quote: true });
+      return;
+    }
+    if (want === 'off') {
+      conversationOn = false;
+      endSession('apagado');
+      await say(
+        inbound,
+        'Conversación por voz apagada. La palabra de activación sigue como estaba.',
+        { quote: true },
+      );
+      return;
+    }
+    if (!desktop) {
+      await say(inbound, 'Sin micrófono en modo servidor.', { quote: true });
+      return;
+    }
+    try {
+      if (!currentWake()?.isRunning()) await startWake();
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido abrir el micrófono: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+      return;
+    }
+    conversationOn = true;
+    await say(
+      inbound,
+      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio, con "adiós"/"nada más" o con /conversacion off. Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
+      { quote: true },
+    );
   };
 
   const cmdWake = async (inbound: Inbound, args: string): Promise<void> => {
@@ -4187,6 +4365,8 @@ async function serveCommand(): Promise<number> {
             return cmdIgnorados(inbound, command.args);
           case 'voice':
             return cmdVoice(inbound, command.args);
+          case 'conversacion':
+            return cmdConversacion(inbound, command.args);
           case 'wake':
           case 'asistenta':
             return cmdWake(inbound, command.args);
