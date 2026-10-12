@@ -292,6 +292,110 @@ describe('ConversationSession: ciclo y cierre', () => {
   });
 });
 
+describe('ConversationSession: saludo, ruido continuo y solapes', () => {
+  it('el saludo no se oye a sí mismo: el eco durante speak() y su cola no llegan al turno', async () => {
+    const { session, heard, lengths } = build({ tailMs: 800 });
+    let release: () => void = () => {};
+    const playing = session.speak(
+      () =>
+        new Promise<void>((r) => {
+          release = r;
+        }),
+    );
+    expect(session.state()).toBe('respondiendo');
+    feedN(session, voice, 10); // el "Dime." saliendo por el altavoz
+    feedN(session, quiet, 10);
+    release();
+    await playing;
+    expect(session.state()).toBe('escuchando');
+    feedN(session, voice, 8); // cola de eco tras terminar
+    feedN(session, quiet, 10);
+    await settle();
+    expect(lengths).toHaveLength(0);
+    expect(heard).toEqual([]);
+    // y después escucha de verdad
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10);
+    await settle();
+    expect(heard).toEqual(['qué hora es']);
+  });
+
+  it('speak() que falla no cierra la sesión y deja el fallo visible', async () => {
+    const { session } = build();
+    await session.speak(async () => {
+      throw new Error('sin altavoz');
+    });
+    expect(session.state()).toBe('escuchando');
+    expect(session.stats().lastError).toBe('sin altavoz');
+  });
+
+  it('ruido continuo transcrito como alucinación NO mantiene la sesión abierta', async () => {
+    let calls = 0;
+    const { session, closed, heard } = build({
+      transcribe: async () => {
+        calls++;
+        return 'Gracias por ver el video';
+      },
+    });
+    // 180 s de ruido continuo: tramos de 30 s.
+    for (let i = 0; i < 6 && session.state() !== 'cerrada'; i++) {
+      feedN(session, voice, 301);
+      await settle();
+    }
+    expect(closed.map((c) => c.reason)).toEqual(['inactividad']);
+    expect(calls).toBeLessThan(6);
+    expect(heard).toEqual([]);
+  });
+
+  it('un turno real sí reinicia el reloj de inactividad tras ruido descartado', async () => {
+    let n = 0;
+    const { session, closed } = build({
+      transcribe: async () => (++n === 1 ? 'eh' : 'qué hora es'),
+    });
+    feedN(session, quiet, 300);
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10); // ruido descartado: no reinicia
+    await settle();
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10); // turno real: reinicia
+    await settle();
+    feedN(session, quiet, 440);
+    expect(closed).toEqual([]);
+  });
+
+  it('una transcripción que sobrevive a su timeout no se solapa con otra', async () => {
+    let calls = 0;
+    let finish: (t: string) => void = () => {};
+    const { session, heard } = build({
+      transcribeTimeoutMs: 20,
+      transcribe: () => {
+        calls++;
+        if (calls === 1) {
+          return new Promise<string>((r) => {
+            finish = r;
+          });
+        }
+        return Promise.resolve('qué hora es');
+      },
+    });
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(session.state()).toBe('escuchando');
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10); // la primera sigue viva: esta se descarta
+    await settle();
+    expect(calls).toBe(1);
+    finish('tarde');
+    await settle();
+    feedN(session, voice, 5);
+    feedN(session, quiet, 10);
+    await settle();
+    expect(calls).toBe(2);
+    expect(heard).toEqual(['qué hora es']);
+  });
+});
+
 describe('WakeWordListener: tap de audio y hold', () => {
   function fakeCapture() {
     let push: (p: Float32Array) => void = () => {};

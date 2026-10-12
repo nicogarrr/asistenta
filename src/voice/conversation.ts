@@ -145,6 +145,8 @@ export class ConversationSession {
   #lastHeard = '';
   #lastError = '';
   #generation = 0;
+  /** True until the transcriber's own promise settles, even after our timeout gave up on it. */
+  #transcribing = false;
 
   constructor(opts: ConversationOptions) {
     this.#o = {
@@ -198,6 +200,14 @@ export class ConversationSession {
       this.#skipSamples = Math.max(0, this.#skipSamples - pcm.length);
       return;
     }
+    // Every listened sample counts, voiced or not: only a REAL turn resets the clock
+    // (see #resumeListening), so a room that keeps making noise cannot hold the
+    // microphone open by feeding whisper discarded transcripts.
+    this.#idleSamples += pcm.length;
+    if (this.#idleSamples >= msToSamples(this.#o.idleMs)) {
+      this.close('inactividad');
+      return;
+    }
     const voiced = rms(pcm) >= this.#o.gateRms;
 
     if (!this.#inSpeech) {
@@ -210,13 +220,10 @@ export class ConversationSession {
           this.#speechSamples = this.#preRollSamples;
           this.#voicedSamples = this.#pendingStart;
           this.#silentSamples = 0;
-          this.#idleSamples = 0;
         }
       } else {
         this.#pendingStart = 0;
         this.#pushPreRoll(pcm);
-        this.#idleSamples += pcm.length;
-        if (this.#idleSamples >= msToSamples(this.#o.idleMs)) this.close('inactividad');
       }
       return;
     }
@@ -258,10 +265,11 @@ export class ConversationSession {
     this.#preRollSamples = 0;
   }
 
-  #resumeListening(): void {
+  /** `realTurn`: only an answered request resets the inactivity clock. */
+  #resumeListening(realTurn = false): void {
     if (this.#state === 'cerrada') return;
     this.#resetUtterance();
-    this.#idleSamples = 0;
+    if (realTurn) this.#idleSamples = 0;
     this.#skipSamples = msToSamples(this.#o.tailMs);
     this.#state = 'escuchando';
   }
@@ -279,10 +287,26 @@ export class ConversationSession {
     this.#resetUtterance();
     if (voiced < msToSamples(this.#o.minVoicedMs)) return;
 
+    // A previous transcription that outlived its timeout is still running: never two
+    // whisper passes at once. This utterance is dropped.
+    if (this.#transcribing) {
+      this.#lastError = 'la transcripción anterior sigue en curso; descarto esta frase';
+      return;
+    }
     this.#state = 'transcribiendo';
     let text: string;
     try {
-      text = await this.#withTimeout(this.#transcriber(joined));
+      this.#transcribing = true;
+      const pending = this.#transcriber(joined);
+      void pending.then(
+        () => {
+          this.#transcribing = false;
+        },
+        () => {
+          this.#transcribing = false;
+        },
+      );
+      text = await this.#withTimeout(pending);
       this.#failures = 0;
     } catch (err) {
       if (generation !== this.#generation) return;
@@ -326,6 +350,25 @@ export class ConversationSession {
     this.#state = 'respondiendo';
     try {
       await this.#onUtterance(text);
+    } catch (err) {
+      this.#lastError = err instanceof Error ? err.message : String(err);
+    }
+    if (generation !== this.#generation) return;
+    this.#resumeListening(true);
+  }
+
+  /**
+   * Speak something that is not a turn (the greeting). The session is NOT listening
+   * while it plays, and the echo tail is dropped after, so the agent cannot hear itself
+   * and answer itself.
+   */
+  async speak(say: () => Promise<void>): Promise<void> {
+    if (this.#state !== 'escuchando') return;
+    const generation = this.#generation;
+    this.#resetUtterance();
+    this.#state = 'respondiendo';
+    try {
+      await say();
     } catch (err) {
       this.#lastError = err instanceof Error ? err.message : String(err);
     }

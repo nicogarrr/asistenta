@@ -3944,10 +3944,7 @@ async function serveCommand(): Promise<number> {
       const opened = openSession(chat);
       if (opened) {
         if (request) await opened.submit(request);
-        else
-          await speakAloud('Dime.').catch((err: unknown) =>
-            log.warn('spoken greeting failed', { err }),
-          );
+        else await opened.speak(() => speakAloud('Dime.', opened));
         return;
       }
     }
@@ -4022,12 +4019,12 @@ async function serveCommand(): Promise<number> {
   const speaker = createMciSpeaker();
 
   /** Read an answer out loud on this machine's speakers. Never touches the system volume. */
-  const speakAloud = async (text: string): Promise<void> => {
+  const speakAloud = async (text: string, owner: ConversationSession): Promise<void> => {
     const clean = trimForSpeech(text);
     if (!clean) return;
     const spoken = await tts.speak(clean);
     // Closed (or switched off) while synthesising: say nothing.
-    if (!session) return;
+    if (session !== owner) return;
     mkdirSync(paths.voice, { recursive: true });
     const file = join(paths.voice, `say-${Date.now()}.mp3`);
     writeFileSync(file, spoken.data);
@@ -4088,7 +4085,9 @@ async function serveCommand(): Promise<number> {
         // The turn goes through runTurn like any message: same gate, same mutex. An
         // approval it needs is still asked with Telegram buttons; nothing spoken is read
         // as a yes.
-        await runTurn(thread, inbound, inbound.text, { spoken: speakAloud });
+        await runTurn(thread, inbound, inbound.text, {
+          spoken: (answer) => speakAloud(answer, created),
+        });
       },
       onClose: (reason, detail) => {
         if (session === created) {
