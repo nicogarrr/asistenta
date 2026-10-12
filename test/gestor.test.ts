@@ -525,11 +525,23 @@ describe('Gate: classifyEffect provability table', () => {
   const at = (tool: string, args: Record<string, unknown>, stage?: 'browse' | 'fill' | 'confirm') =>
     gate.classifyEffect({ tool, args, actor: 'test', ...(stage ? { stage } : {}) });
 
-  it('money evidence is paga on bounded tools only', () => {
-    expect(at('browser', { action: 'click', _target: 'button | Pay now @@ Shop' })).toBe('paga');
+  it('paga comes from tool design only; money words never classify', () => {
+    // checkout's confirm IS the charge by the tool's own bounded vocabulary:
+    // positive proof from the design, not a money signal, so no stage label
+    // is needed for the class.
+    expect(at('checkout', { action: 'confirm' })).toBe('paga');
     expect(at('checkout', { action: 'confirm' }, 'confirm')).toBe('paga');
-    // Opacity first: money-shaped arguments on an opaque call prove presence,
-    // never completeness.
+    // Money evidence on an opaque call proves presence, never completeness.
+    // A 'Pay now' click can also submit a form full of data, and a click on a
+    // billing page can delete the account instead of paying.
+    expect(at('browser', { action: 'click', _target: 'button | Pay now @@ Shop' })).toBeNull();
+    expect(
+      at('browser', {
+        action: 'click',
+        _target: 'button | submit | Delete account',
+        _page: 'https://example.invalid/billing',
+      }),
+    ).toBeNull();
     expect(at('shell', { command: 'echo 4111111111111111' })).toBeNull();
     expect(at('shell', { command: 'echo payment' }, undefined)).toBeNull();
   });
@@ -567,6 +579,30 @@ describe('Gate: classifyEffect provability table', () => {
     // Typing into a third-party page can transmit on every keystroke.
     expect(at('browser', { action: 'fill', selector: '#email', text: 'a@b.c' })).toBeNull();
     expect(at('browser', { action: 'choose', selector: '#pais', text: 'ES' })).toBeNull();
+    // ...also under money cover: a billing URL or a confirm stage cannot turn
+    // typing or key presses on a third-party page into a provable payment.
+    expect(
+      at('browser', {
+        action: 'fill',
+        selector: '#card',
+        text: '4111 1111 1111 1111',
+        _page: 'https://example.invalid/billing',
+      }),
+    ).toBeNull();
+    expect(
+      at('browser', {
+        action: 'choose',
+        selector: '#plan',
+        text: 'anual',
+        _page: 'https://example.invalid/billing',
+      }),
+    ).toBeNull();
+    expect(
+      at('browser', { action: 'press', key: 'Enter', _page: 'https://example.invalid/billing' }),
+    ).toBeNull();
+    expect(
+      at('browser', { action: 'click', _target: 'button | submit | Continuar' }, 'confirm'),
+    ).toBeNull();
     // Acting on a page element is unprovable as a WHOLE effect: the Gate's
     // effect-text predicate is an ask heuristic, not a classifier. A legible
     // "Continuar" can submit the form, "Delete account" also destroys, and
@@ -596,7 +632,6 @@ describe('Gate: classifyEffect provability table', () => {
     expect(at('fetch', { url: 'https://example.com', method: 'POST' })).toBeNull();
     // fill_passenger types into a third-party page: same as browser fill.
     expect(at('checkout', { action: 'fill_passenger', nombre: 'N' })).toBeNull();
-    expect(at('checkout', { action: 'confirm' })).toBeNull(); // no stage: fail closed
     expect(at('computer', { action: 'click', x: 1, y: 2 })).toBeNull();
     expect(at('computer', { action: 'type', text: 'hola' })).toBeNull();
     expect(at('tv', { action: 'power', value: false })).toBeNull();
@@ -819,6 +854,67 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     });
     await gate.check(SCOPE, { tool: 'checkout', args: { action: 'search' }, actor: 'test' });
     expect(reasons).toHaveLength(5);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('auditor R4 probes: money never disarms the forced ask on opaque browser actions', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({ scope: SCOPE, title: 'x', encargo: 'x', plan: plan('paga') });
+    gestor.start(g.id); // approved step: paga
+    const reasons: string[] = [];
+    const gate = wiredGate(
+      dir,
+      gestor,
+      (reason) => {
+        reasons.push(reason);
+        return true;
+      },
+      { fullControl: true, allowPayments: true, allowUntilPayment: true },
+    );
+    const billing = 'https://example.invalid/billing';
+    // 1. The auditor's exact repro: 'Delete account' click on a billing page
+    // in an approved PAYING step, fullControl + allowPayments on. Money on
+    // the page proves nothing about the click's whole effect: it asks.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | submit | Delete account', _page: billing },
+      actor: 'test',
+    });
+    // 2. fill/choose on the same money page: same opacity, same forced ask.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'fill', selector: '#card', text: '4111 1111 1111 1111', _page: billing },
+      actor: 'test',
+    });
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'choose', selector: '#plan', text: 'anual', _page: billing },
+      actor: 'test',
+    });
+    // 3. stage: 'confirm' on click/press: a label cannot classify opacity.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | submit | Continuar', _page: billing },
+      actor: 'test',
+      stage: 'confirm',
+    });
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'press', key: 'Enter', _page: billing },
+      actor: 'test',
+      stage: 'confirm',
+    });
+    expect(reasons).toHaveLength(5);
+    expect(reasons[0]).toContain('no puedo probar la clase de efecto');
+    // 4. The designed charge IS provable: checkout confirm in a paga step is
+    // covered, so the gestor guard stays silent - any ask here comes from the
+    // Gate's own payment rules, never from the forced predicate.
+    const before = reasons.length;
+    await gate.check(SCOPE, { tool: 'checkout', args: { action: 'confirm' }, actor: 'test' });
+    expect(
+      reasons.slice(before).some((r) => r.includes('no puedo probar la clase de efecto')),
+    ).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -553,9 +553,12 @@ export class Gate {
    * Only PROOF of the complete effect assigns a class: the absence of effect
    * words in a target proves nothing about what a click sends, one matched
    * regex proves nothing about the rest of a compound command, and a money
-   * signal on an opaque call proves presence, never completeness. Note
-   * `destructivo` and `envia-terceros` never come out of this function: both
-   * are provable as present, never as the WHOLE effect of a call.
+   * signal - a card-shaped number, a billing URL, payment words, a `confirm`
+   * stage - on an opaque call proves presence, never completeness. The `paga`
+   * class has exactly one source: `checkout`'s `confirm` action, the charge by
+   * the tool's own bounded design. Note `destructivo` and `envia-terceros`
+   * never come out of this function: both are provable as present, never as
+   * the WHOLE effect of a call.
    */
   classifyEffect(c: ToolCall): EffectClass | null {
     // OPACITY FIRST, before any money or stage signal: payment-shaped arguments
@@ -575,18 +578,47 @@ export class Gate {
         const action = argString(c.args, 'action');
         return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
       }
-      case 'browser':
-        // Arbitrary code in the page can send, delete or pay: unprovable.
-        if (argString(c.args, 'action') === 'exec_js') return null;
-        break;
+      case 'browser': {
+        const action = argString(c.args, 'action');
+        if (
+          [
+            'open',
+            'snapshot',
+            'screenshot',
+            'back',
+            'close',
+            'wait',
+            'wait_for',
+            'media',
+            'pick',
+          ].includes(action)
+        ) {
+          return 'lee';
+        }
+        // click/press/fill/choose/exec_js or anything unlisted: the COMPLETE
+        // effect of acting on a third-party page is unprovable, and money
+        // words in the page, the target or the stage never change that - a
+        // 'button | submit | Delete account' on a billing URL can destroy
+        // under money cover, and typing into a money page can transmit on
+        // every keystroke. The Gate's effect-text predicate is an ask
+        // heuristic, not a classifier. No money signal classifies opacity.
+        return null;
+      }
+      case 'checkout': {
+        // The designed purchase flow: search/select/status read and choose,
+        // with select refusing charge-shaped buttons by tool design, and
+        // confirm IS the charge by the tool's own bounded vocabulary -
+        // positive proof from the design, not a money signal. fill_passenger
+        // types into a third-party page: same unprovability as browser fill.
+        const action = argString(c.args, 'action');
+        if (['search', 'select', 'status'].includes(action)) return 'lee';
+        return action === 'confirm' ? 'paga' : null;
+      }
       default:
         break;
     }
     // Factory-built and otherwise unknown tools are opaque too.
     if (!BOUNDED_EFFECT_TOOLS.has(c.tool)) return null;
-    // Money evidence on a BOUNDED tool: the worst case of its known vocabulary
-    // (and the Gate's own money rules ask for these regardless).
-    if (this.#isPaymentConfirmation(c) || this.#isPaymentish(c)) return 'paga';
     switch (c.tool) {
       // Provably without world effect: reads and the daemon's own bookkeeping
       // (the gestion/objetivo flows, memory, skills, documents, inspection).
@@ -608,44 +640,12 @@ export class Gate {
         // server-side effect cannot be proven from the client side.
         return method === '' || method === 'GET' || method === 'HEAD' ? 'lee' : null;
       }
-      case 'browser': {
-        const action = argString(c.args, 'action');
-        if (
-          [
-            'open',
-            'snapshot',
-            'screenshot',
-            'back',
-            'close',
-            'wait',
-            'wait_for',
-            'media',
-            'pick',
-          ].includes(action)
-        ) {
-          return 'lee';
-        }
-        // click/press/fill/choose: the COMPLETE effect of acting on a
-        // third-party page is unprovable. The Gate's effect-text predicate is
-        // an ask heuristic, not a classifier: its delete/destroy words and its
-        // illegible-destination fallback say "this needs a human", never "this
-        // only sends" - and matching nothing proves nothing either.
-        return null;
-      }
       case 'write':
       case 'edit':
       case 'media':
       case 'fabrica':
       case 'reminder':
         return 'escribe-local';
-      case 'checkout': {
-        // The designed purchase flow: the confirm stage is the charge (caught
-        // above as paga), and search/select/status read and choose, with
-        // select refusing charge-shaped buttons by tool design. fill_passenger
-        // types into a third-party page: same unprovability as browser fill.
-        const action = argString(c.args, 'action');
-        return ['search', 'select', 'status'].includes(action) ? 'lee' : null;
-      }
       default:
         return null;
     }
@@ -1019,6 +1019,8 @@ const WEB_TOOLS = new Set(['browser', 'computer', 'shell', 'checkout']);
  * Tools whose action vocabulary is bounded and known to `classifyEffect`.
  * Anything else - a factory-built tool, a future addition - is opaque until
  * its actions are mapped here and gets the forced ask, never a default class.
+ * `browser`, `checkout`, `computer`, `tv`, `shell` and the booking tools are
+ * decided in `classifyEffect`'s first switch, BEFORE any money signal.
  */
 const BOUNDED_EFFECT_TOOLS = new Set([
   'read',
@@ -1033,13 +1035,11 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'ocr',
   'cargar_herramienta',
   'fetch',
-  'browser',
   'write',
   'edit',
   'media',
   'fabrica',
   'reminder',
-  'checkout',
 ]);
 
 /**
