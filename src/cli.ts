@@ -32,6 +32,7 @@ import { applyConfiguredTimeZone, buildNowNote } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
+import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
@@ -138,6 +139,7 @@ Usage:
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
   pa doctor               check the environment
+  pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
 `;
 
 /**
@@ -181,6 +183,8 @@ export async function main(argv: string[]): Promise<number> {
       return tvCommand(rest);
     case 'doctor':
       return doctorCommand();
+    case 'llm-health':
+      return llmHealthCommand();
     case 'evolve':
       return evolveCommand(rest);
     case 'chat':
