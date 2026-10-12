@@ -3611,13 +3611,18 @@ async function serveCommand(): Promise<number> {
 
     try {
       let images = opts.images;
+      let photoDownloadNote = '';
       if (!images?.length && inbound.photoFileId) {
         try {
           const data = await telegram.downloadPhoto(inbound.photoFileId);
-          if (data)
+          if (data) {
             images = [{ type: 'image', mimeType: 'image/jpeg', data: data.toString('base64') }];
+          } else {
+            photoDownloadNote = '[Foto: Telegram no devolvió la imagen; no se vio ni se indexó.]';
+          }
         } catch (err) {
           log.warn('photo download failed', { err });
+          photoDownloadNote = '[Foto: no pude descargarla; no se vio ni se indexó.]';
         }
       }
 
@@ -3641,7 +3646,7 @@ async function serveCommand(): Promise<number> {
         }
       };
 
-      let documentNote = '';
+      let documentNote = photoDownloadNote;
       if (inbound.photoFileId && images?.[0]?.data) {
         documentNote = await indexImage(
           Buffer.from(images[0].data, 'base64'),
@@ -3665,6 +3670,8 @@ async function serveCommand(): Promise<number> {
                 `Imagen reenviada "${label}"`,
               )
             : `[Imagen reenviada: ${label}. Telegram no devolvió el archivo.]`;
+        } else if (docMime.startsWith('audio/') && !/ogg|opus/.test(docMime)) {
+          documentNote = `[Audio reenviado: ${label}. No lo transcribo: solo entiendo notas de voz en formato ogg/opus (no mp3, m4a ni wav).]`;
         } else if (docMime.startsWith('audio/')) {
           const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
           if (!bytes) {
@@ -3686,8 +3693,8 @@ async function serveCommand(): Promise<number> {
               documentNote = `[Audio reenviado: ${label}. No se pudo transcribir: ${err instanceof Error ? err.message : String(err)}]`;
             }
           }
-        } else if (!canExtract(inbound.documentMimeType)) {
-          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora solo se leen PDF y archivos de texto.]`;
+        } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
+          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), imágenes con texto y notas de voz ogg/opus. Los formatos antiguos (doc, xls, ppt) no.]`;
         } else {
           try {
             const bytes = await telegram.downloadFile(inbound.documentFileId);
