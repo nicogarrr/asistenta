@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
 import { withTimeout } from '../utils.js';
+import { extractOfficeText, officeKind } from './office.js';
 
 /** Total document memory: every document the user forwards is text-extracted,
  * chunked, and indexed into a per-install sqlite FTS5 table so it can be
@@ -48,6 +49,10 @@ export interface DocSearchHit {
   /** FTS5 snippet with the match wrapped in «» markers. */
   snippet: string;
   rank: number;
+  /** Type of the source (`application/pdf`, `image/ocr`, `audio/transcript`...). */
+  mimeType: string;
+  /** True when only part of the source fit in the index. */
+  truncated: boolean;
 }
 
 export interface DocMemoryOptions {
@@ -190,7 +195,8 @@ async function extractPdfText(
 /** What we know how to read today. Anything else is refused loudly at the
  * caller, because silently indexing zero bytes teaches the user to trust an
  * empty memory. */
-export function canExtract(mimeType?: string): boolean {
+export function canExtract(mimeType?: string, name?: string): boolean {
+  if (officeKind(mimeType, name)) return true;
   if (!mimeType) return false;
   const mime = mimeType.toLowerCase();
   return (
@@ -208,7 +214,10 @@ export async function extractText(
   mimeType?: string,
   pdfjsLoader?: () => Promise<PdfjsLike>,
   timeoutMs = EXTRACT_TIMEOUT_MS,
+  name?: string,
 ): Promise<string> {
+  const office = officeKind(mimeType, name);
+  if (office) return extractOfficeText(bytes, office);
   if (!mimeType) return '';
   const mime = mimeType.toLowerCase();
   if (mime === 'application/pdf')
@@ -276,6 +285,7 @@ export class DocMemory {
       doc.mimeType,
       this.#pdfjsLoader,
       this.#extractTimeoutMs,
+      doc.name,
     );
     const sliced = extracted.slice(0, MAX_TEXT_CHARS);
     const allChunks = chunkText(sliced);
@@ -455,13 +465,58 @@ export class DocMemory {
       snip: string;
       score: number;
     }>;
-    return rows.map((r) => ({
-      docId: r.doc_id,
-      title: r.title,
-      at: new Date(r.at).toISOString(),
-      snippet: r.snip,
-      rank: r.score,
-    }));
+    const meta = this.#db.prepare('SELECT mime_type, truncated FROM docs WHERE doc_id = ?');
+    return rows.map((r) => {
+      const m = meta.get(r.doc_id) as { mime_type: string; truncated: number } | undefined;
+      return {
+        docId: r.doc_id,
+        title: r.title,
+        at: new Date(r.at).toISOString(),
+        snippet: r.snip,
+        rank: r.score,
+        mimeType: m?.mime_type ?? 'unknown',
+        truncated: m?.truncated === 1,
+      };
+    });
+  }
+
+  /** What the shelf holds for a scope: how many sources and how many are only partly indexed. */
+  stats(scope: string): { docs: number; partial: number } {
+    const r = this.#db
+      .prepare(
+        'SELECT count(*) AS n, coalesce(sum(truncated), 0) AS p FROM docs WHERE chat_key = ?',
+      )
+      .get(scope) as { n: number; p: number };
+    return { docs: Number(r.n), partial: Number(r.p) };
+  }
+
+  /** Forget one source of this scope: rows, indexed text and the mirrored copy. A docId that
+   * belongs to another scope is simply not found: a chat can only delete its own shelf. */
+  remove(scope: string, docId: string): boolean {
+    this.#db.exec('BEGIN');
+    let removed = false;
+    try {
+      const del = this.#db
+        .prepare('DELETE FROM docs WHERE doc_id = ? AND chat_key = ?')
+        .run(docId, scope);
+      removed = Number(del.changes) > 0;
+      if (removed)
+        this.#db
+          .prepare('DELETE FROM doc_chunks WHERE doc_id = ? AND chat_key = ?')
+          .run(docId, scope);
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    if (removed && /^[0-9a-f]{16}$/.test(docId)) {
+      try {
+        rmSync(join(this.#directory, `${docId}.txt`), { force: true });
+      } catch (err) {
+        log.warn('doc memory mirror delete failed', { error: String(err) });
+      }
+    }
+    return removed;
   }
 
   /** What this scope has on the shelf, newest first. */
