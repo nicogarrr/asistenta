@@ -38,6 +38,12 @@ export function initIgnoreStore(db: DatabaseSync): void {
       status TEXT NOT NULL DEFAULT 'enviado'
     )
   `);
+  // Migración idempotente: tablas creadas por la versión previa no tienen `status`; los
+  // avisos que ya existen eran entregas confirmadas, así que entran como 'enviado'.
+  const cols = db.prepare('PRAGMA table_info(vigilante_notices)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'status')) {
+    db.exec("ALTER TABLE vigilante_notices ADD COLUMN status TEXT NOT NULL DEFAULT 'enviado'");
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS vigilante_dismissals (
       n INTEGER PRIMARY KEY,

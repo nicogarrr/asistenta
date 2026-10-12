@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { AgendaItem, UnifiedAgenda } from '../src/agenda/unified.js';
+import { occurrenceKey as occKeyOf } from '../src/ojo.js';
 import {
   activateRule,
   classKey,
@@ -8,6 +9,7 @@ import {
   deleteRule,
   dismissNotice,
   formatRules,
+  initIgnoreStore,
   lastNoticeNumber,
   listRules,
   reserveNotices,
@@ -362,5 +364,38 @@ describe('R1: conteo visible y estado exacto', () => {
     expect(formatRules(rules)).toContain('avisos distintos descartados: 2');
     db.prepare("UPDATE vigilante_rules SET status = 'rara'").run();
     expect(activateRule(db, rules[0]?.id as number)).toMatchObject({ ok: false });
+  });
+});
+
+describe('R2: migración de la tabla de avisos de la versión previa', () => {
+  it('conserva avisos, números, descartes y reglas; barre y descarta un aviso antiguo', async () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(`CREATE TABLE vigilante_notices (
+      n INTEGER PRIMARY KEY AUTOINCREMENT, occ_key TEXT NOT NULL, class_key TEXT,
+      kind TEXT NOT NULL, src TEXT NOT NULL, title TEXT NOT NULL, at INTEGER, created_at INTEGER NOT NULL)`);
+    const old = dl('Factura taller 111', BASE + 30 * H);
+    db.prepare(
+      'INSERT INTO vigilante_notices (occ_key, class_key, kind, src, title, at, created_at) VALUES (?, ?, ?, ?, ?, ?, 1)',
+    ).run(occKeyOf(old), classKey(old), old.kind, old.where, old.title, old.at ?? null);
+    for (let i = 0; i < 2; i++) initIgnoreStore(db); // abrir dos veces
+    expect(db.prepare('SELECT n, status FROM vigilante_notices').all()).toEqual([
+      { n: 1, status: 'enviado' },
+    ]);
+    const sent: string[] = [];
+    const out = await runVigilanteOnce(
+      {
+        db,
+        agenda: async () => agenda([dl('Plazo nuevo', BASE + 60 * H)]),
+        send: async (t) => {
+          sent.push(t);
+          return true;
+        },
+        now: () => BASE,
+      },
+      TZ,
+    );
+    expect(out.notified).toBe(1);
+    expect(sent[0]).toContain('[#2]');
+    expect(dismissNotice(db, 1, 5)).toMatchObject({ ok: true, already: false });
   });
 });
