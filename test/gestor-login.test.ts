@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import vm from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { missingLoginFields, normalizeDomain, parseSiteKey, siteKey } from '../src/gestor/login.js';
+import { PlaybookStore } from '../src/gestor/playbooks.js';
 import { GestorStore } from '../src/gestor/store.js';
 import { Gate } from '../src/permissions.js';
 import {
@@ -644,6 +645,7 @@ describe('gestion preparar con logins', () => {
       gestor,
       scopeOf: () => 'scope',
       vaultNames: async () => vaultNames,
+      playbooks: new PlaybookStore({ dir: tmp() }),
     });
   }
   const base = {
