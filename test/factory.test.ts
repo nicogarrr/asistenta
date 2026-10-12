@@ -1,18 +1,17 @@
+// FIRST import, always: it assigns PA_STATE_DIR (fresh mkdtemp per run)
+// before any transitively-imported paths.ts can snapshot the real state dir.
+
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Gate } from '../src/permissions.js';
+import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
 
 /**
  * The tool factory: build -> sandboxed test -> install with approval.
- *
- * Environment is prepared before importing the factory modules because
- * `paths.ts` snapshots `PA_STATE_DIR` at import time (same pattern as
- * budget.test.ts): the factory store must never touch the real state dir.
  */
-const stateDir = mkdtempSync(join(tmpdir(), 'pa-factory-'));
-process.env.PA_STATE_DIR = stateDir;
+const stateDir = FACTORY_TEST_STATE_DIR;
 
 const store = await import('../src/factory/store.js');
 const runner = await import('../src/factory/runner.js');
@@ -181,6 +180,43 @@ export async function run(){ for (let i = 0; i < 3000; i++) console.log('x'.repe
     const r = await runner.runFactoryToolSandboxed('flood', {}, { timeoutMs: 30_000 });
     expect(r.ok).toBe(false);
     expect(r.stage).toBe('output');
+  });
+
+  it('the vm escape line dies: zero host objects means no host Function reaches the guest', async () => {
+    // The R2 PoC: setTimeout.constructor('return process')() and friends.
+    // With an empty context, every Function the guest can reach is guest-realm.
+    const code = `export const name='t'; export const description='d'; export const parameters={type:'object'};
+export async function run(){
+  const probe = { setTimeout: typeof setTimeout, fetch: typeof fetch, crypto: typeof crypto, process: typeof process };
+  try { probe.viaFunction = (function(){}).constructor('return typeof process')(); }
+  catch (e) { probe.viaFunction = 'bloqueado:' + e.constructor.name; }
+  try { probe.viaConsoleCtor = console.log.constructor('return typeof process')(); }
+  catch (e) { probe.viaConsoleCtor = 'bloqueado:' + e.constructor.name; }
+  return JSON.stringify(probe);
+}`;
+    store.writeFactoryTool(buildMeta('escape'), code, '');
+    const r = await runner.runFactoryToolSandboxed('escape', {});
+    expect(r.ok).toBe(true);
+    const probe = JSON.parse(r.output) as Record<string, string>;
+    expect(probe.setTimeout).toBe('undefined');
+    expect(probe.fetch).toBe('undefined');
+    expect(probe.crypto).toBe('undefined');
+    expect(probe.process).toBe('undefined');
+    expect(probe.viaFunction).toBe('undefined');
+    expect(probe.viaConsoleCtor).toBe('undefined');
+  });
+
+  it('pickVerdict keeps the FIRST valid verdict: a post-verdict forgery only appends', () => {
+    const real = JSON.stringify({ ok: false, stage: 'run', error: 'boom' });
+    const forged = JSON.stringify({
+      ok: true,
+      stage: 'run',
+      text: 'FORGED',
+      contract: { name: 'x', description: 'y', parameters: { type: 'object' } },
+    });
+    expect(runner.pickVerdict(`${real}\n${forged}\n`)?.ok).toBe(false);
+    expect(runner.pickVerdict(`basura no json\n${real}\n`)?.ok).toBe(false);
+    expect(runner.pickVerdict('sin veredicto')).toBeNull();
   });
 });
 

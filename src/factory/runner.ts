@@ -2,16 +2,23 @@
  * Sandboxed execution of factory-built tools, used BOTH for the mandatory
  * pre-install test and for every post-install call. The authored module never
  * runs in the daemon process, and inside the child it runs as a guest with no
- * capabilities: a node:vm SourceTextModule whose context has no process, no
- * require, no fetch, no imports of any kind - the linker denies everything.
- * On top of the vm boundary the child runs under --permission (fs limited to
- * the tool dir, no child_process, no workers) and with an empty environment
- * (no HOME, no PATH, nothing from the daemon).
+ * capabilities at all: a node:vm SourceTextModule whose context receives ZERO
+ * host objects. Any host function injected into a vm context leaks the host
+ * Function via .constructor (setTimeout.constructor('return process')()) and
+ * with it the whole child process - fd 3, fs despite --permission, real
+ * network. So the context is created empty and every helper the guest gets
+ * (console capture, params) is code evaluated INSIDE the context, creating
+ * guest-realm objects only. The guest is pure ECMAScript: no process, no
+ * require, no fetch, no timers, no crypto, and no imports of any kind (the
+ * linker denies them). Network note: Node 24 has no --allow-net (lands in
+ * 25+), so the network boundary is this capability discipline plus the import
+ * denial - a pure-JS guest has no socket API to call.
  *
  * The verdict protocol is outside the module's control: only the supervisor
- * (our trusted code in the child) writes it, on fd 3. Guest console output is
- * captured and prefixed as '[tool]', so a module cannot forge a passing test:
- * it never touches the verdict channel.
+ * (our trusted code in the child) writes it, on fd 3, and the parent accepts
+ * the FIRST valid verdict line (a guest that somehow reached fd 3 later could
+ * only append, never overwrite). Guest console output is captured in-context
+ * and drained by the supervisor as '[tool]' log lines.
  *
  * Resource bounds: a wall-clock timeout kills the whole process group (not
  * just the direct child), and captured output is capped - a flood kills the
@@ -32,7 +39,7 @@ export interface FactoryTestResult {
   stage: FactoryRunStage;
   output: string;
   durationMs: number;
-  /** Contract read from the executed module (only on ok). Persisted in TOOL.md; the loader uses it so it never imports the module in the daemon. */
+  /** Contract read from the executed module (only on ok). Persisted in TOOL.md; the loader uses it so it never imports guest code in the daemon. */
   contract?: FactoryToolContract;
 }
 
@@ -41,11 +48,9 @@ export const MAX_FACTORY_OUTPUT_BYTES = 1024 * 1024;
 const LOG_TAIL_BYTES = 4000;
 
 /**
- * Trusted supervisor: the only code that writes the verdict (fd 3). The guest
- * module is evaluated inside a vm context that grants only pure-compute
- * globals (encoding, URL, structuredClone, timers, webcrypto). Any import -
- * static or dynamic - is rejected by the linker, so node:fs/net/child_process
- * are unreachable from guest code even before --permission applies.
+ * Trusted supervisor: the only code that writes the verdict (fd 3). Runs
+ * under --permission with fs limited to the tool dir as a second layer behind
+ * the capability-less vm context.
  */
 const SUPERVISOR_SOURCE = `
 import fs from 'node:fs';
@@ -53,7 +58,6 @@ import vm from 'node:vm';
 
 const [toolPath, paramsJson] = process.argv.slice(2);
 const say = (v) => { try { fs.writeSync(3, JSON.stringify(v) + '\\n'); } catch {} };
-const captured = (...a) => { try { console.log('[tool]', ...a); } catch {} };
 
 let code;
 try { code = fs.readFileSync(toolPath, 'utf8'); } catch (e) {
@@ -61,13 +65,26 @@ try { code = fs.readFileSync(toolPath, 'utf8'); } catch (e) {
   process.exit(0);
 }
 
-const guestConsole = { log: captured, info: captured, warn: captured, error: captured, debug: captured };
-const ctx = vm.createContext({
-  console: guestConsole,
-  TextEncoder, TextDecoder, atob, btoa, URL, URLSearchParams, structuredClone,
-  queueMicrotask, crypto,
-  setTimeout, clearTimeout, setInterval, clearInterval,
-});
+// Empty context: no host object crosses the boundary.
+const ctx = vm.createContext({});
+// In-context helpers (guest-realm objects only): console capture into an
+// in-context buffer the supervisor drains, and params arriving as a JSON
+// string parsed INSIDE the guest (a host object would leak constructors).
+vm.runInContext(
+  'globalThis.__guestLogs = [];' +
+  'globalThis.console = (() => {' +
+  '  const push = (a) => { try { __guestLogs.push(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ")); } catch {} };' +
+  '  return { log: (...a) => push(a), info: (...a) => push(a), warn: (...a) => push(a), error: (...a) => push(a), debug: (...a) => push(a) };' +
+  '})();',
+  ctx,
+);
+const drainLogs = () => {
+  try {
+    const out = vm.runInContext('__guestLogs.splice(0).join("\\\\n")', ctx);
+    if (out) console.log('[tool]', String(out).split('\\n').join('\\n[tool] '));
+  } catch {}
+};
+vm.runInContext('globalThis.__paramsJson = ' + JSON.stringify(String(paramsJson ?? '')), ctx);
 
 let mod;
 try {
@@ -75,19 +92,21 @@ try {
   await mod.link((specifier) => { throw new Error('imports denegados en herramientas de fabrica (v1 solo computo): ' + specifier); });
   await mod.evaluate();
 } catch (e) {
+  drainLogs();
   say({ ok: false, stage: 'import', error: String(e && e.stack ? e.stack : e) });
   process.exit(0);
 }
 
 const ns = mod.namespace;
-const bad = (msg) => { say({ ok: false, stage: 'shape', error: msg }); process.exit(0); };
+const bad = (msg) => { drainLogs(); say({ ok: false, stage: 'shape', error: msg }); process.exit(0); };
 if (typeof ns.name !== 'string' || !ns.name) bad('export name debe ser string no vacio');
 if (typeof ns.description !== 'string' || !ns.description) bad('export description debe ser string no vacio');
 if (!ns.parameters || typeof ns.parameters !== 'object' || ns.parameters.type !== 'object') bad('export parameters debe ser un JSON schema de objeto ({ type: "object", ... })');
 if (typeof ns.run !== 'function') bad('falta export async function run(params)');
 
-let params = {};
-try { params = paramsJson ? JSON.parse(paramsJson) : {}; } catch (e) {
+let params;
+try { params = vm.runInContext('JSON.parse(globalThis.__paramsJson || "{}")', ctx); } catch (e) {
+  drainLogs();
   say({ ok: false, stage: 'run', error: 'sampleParams no es JSON valido: ' + String(e) });
   process.exit(0);
 }
@@ -99,13 +118,17 @@ const keepAlive = setInterval(() => {}, 60000);
 try {
   const result = await ns.run(params);
   clearInterval(keepAlive);
+  drainLogs();
+  // Only primitives cross back: strings and JSON. Guest objects are
+  // stringified, never handed to host callers as live objects.
   const text = typeof result === 'string' ? result : (result && typeof result.text === 'string' ? result.text : JSON.stringify(result));
   say({
     ok: true, stage: 'run', text: String(text).slice(0, 4000),
-    contract: { name: ns.name, description: ns.description, parameters: ns.parameters },
+    contract: { name: String(ns.name), description: String(ns.description), parameters: JSON.parse(JSON.stringify(ns.parameters)) },
   });
 } catch (e) {
   clearInterval(keepAlive);
+  drainLogs();
   say({ ok: false, stage: 'run', error: String(e && e.stack ? e.stack : e) });
 }
 `;
@@ -114,6 +137,42 @@ function tail(s: string): string {
   return s.length <= LOG_TAIL_BYTES
     ? s
     : `...[${s.length - LOG_TAIL_BYTES} chars cortados]\n${s.slice(-LOG_TAIL_BYTES)}`;
+}
+
+interface SupervisorVerdict {
+  ok?: boolean;
+  stage?: string;
+  text?: string;
+  error?: string;
+  contract?: FactoryToolContract;
+}
+
+const VERDICT_STAGES = new Set(['import', 'shape', 'run']);
+
+/**
+ * Picks the verdict the supervisor wrote: the FIRST line that parses as a
+ * valid verdict. A guest with hypothetical post-verdict access to fd 3 could
+ * only append lines; the first valid one is the supervisor's.
+ */
+export function pickVerdict(verdictRaw: string): SupervisorVerdict | null {
+  for (const line of verdictRaw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const parsed = JSON.parse(t) as SupervisorVerdict;
+      if (
+        parsed &&
+        typeof parsed.ok === 'boolean' &&
+        typeof parsed.stage === 'string' &&
+        VERDICT_STAGES.has(parsed.stage)
+      ) {
+        return parsed;
+      }
+    } catch {
+      /* not a verdict line */
+    }
+  }
+  return null;
 }
 
 export async function runFactoryToolSandboxed(
@@ -200,34 +259,14 @@ export async function runFactoryToolSandboxed(
     );
     child.on('close', (exitCode) => {
       if (settled) return;
-      const line = verdictRaw.trim().split('\n').pop() ?? '';
-      interface SupervisorVerdict {
-        ok?: boolean;
-        stage?: string;
-        text?: string;
-        error?: string;
-        contract?: FactoryToolContract;
-      }
-      let parsed: SupervisorVerdict | null = null;
-      try {
-        parsed = JSON.parse(line) as SupervisorVerdict | null;
-      } catch {
-        /* not our verdict */
-      }
-      const validStages = new Set(['import', 'shape', 'run']);
-      if (
-        exitCode === 0 &&
-        parsed &&
-        typeof parsed.ok === 'boolean' &&
-        typeof parsed.stage === 'string' &&
-        validStages.has(parsed.stage)
-      ) {
+      const verdict = pickVerdict(verdictRaw);
+      if (exitCode === 0 && verdict) {
         finish({
-          ok: parsed.ok,
-          stage: parsed.stage as FactoryRunStage,
-          output: String((parsed.ok ? parsed.text : parsed.error) ?? tail(logs)),
+          ok: verdict.ok as boolean,
+          stage: verdict.stage as FactoryRunStage,
+          output: String((verdict.ok ? verdict.text : verdict.error) ?? tail(logs)),
           durationMs: Date.now() - started,
-          ...(parsed.contract ? { contract: parsed.contract } : {}),
+          ...(verdict.contract ? { contract: verdict.contract } : {}),
         });
       } else {
         finish({
