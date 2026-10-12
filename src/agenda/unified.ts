@@ -55,6 +55,8 @@ export interface AgendaItem {
   timed?: boolean;
   /** True for a `VALUE=DATE` calendar event. Rendered as "todo el día". */
   allDay?: boolean;
+  /** True when the date is an expiry or renewal ("caduca", "renueva"): 30/7/1-day notices. */
+  expiry?: boolean;
   /** Epoch ms, for a calendar event that lasts. */
   end?: number;
   location?: string;
@@ -250,6 +252,7 @@ function mergeItems(primary: AgendaItem, other: AgendaItem): AgendaItem {
       titleKey(primary.title).length >= titleKey(other.title).length ? primary.title : other.title,
     kind: KIND_PRIORITY[other.kind] < KIND_PRIORITY[primary.kind] ? other.kind : primary.kind,
     confidence: bestConfidence(primary.confidence, other.confidence),
+    ...(primary.expiry || other.expiry ? { expiry: true } : {}),
     sources: [...new Set([...(primary.sources ?? [primary.where]), other.where])].sort(),
     ...(other.location && !primary.location ? { location: other.location } : {}),
   };
@@ -314,6 +317,7 @@ export async function buildAgenda(deps: BuildAgendaDeps): Promise<UnifiedAgenda>
         where: 'correo',
         confidence: commitment.confidence,
         ...(commitment.timed === undefined ? {} : { timed: commitment.timed }),
+        ...(commitment.expiry ? { expiry: true } : {}),
       }),
     ),
   ];

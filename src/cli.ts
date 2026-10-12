@@ -2095,7 +2095,17 @@ async function serveCommand(): Promise<number> {
             return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30, 20_000);
           },
           followups: () => followups.list(undefined, 200),
+          // 35 días: las caducidades avisan a 30 días; lo demás sigue en 7 (collectFindings).
+          days: 35,
         }),
+      // Cargos raros: la primera vez siembra el historial (hasta 200 correos de 120 días);
+      // después solo los últimos días. Mismo tope duro que el correo de la agenda.
+      charges: async (sinceMs) => {
+        const account = await loadMailAccount();
+        if (!account) return [];
+        const seeding = Date.now() - sinceMs > 10 * 86_400_000;
+        return searchMail(account, { since: sinceMs }, seeding ? 200 : 30, 30_000);
+      },
       send: (text) => {
         // Destinatario fijo: el DM del owner verificado arriba. Un grupo — aunque
         // hable un usuario permitido — NO es destino: la agenda es privada. Sin DM
@@ -2136,7 +2146,7 @@ async function serveCommand(): Promise<number> {
       inbound,
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
-        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. También te aviso de citas con hora que se pisan.',
+        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar).',
         `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ].join('\n'),
       { quote: true },

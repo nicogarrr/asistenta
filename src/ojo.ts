@@ -24,7 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { zonedDayKey, zonedDayStart, zonedParts } from './agenda/ics.js';
+import { zonedDayStart, zonedParts, zonedTime } from './agenda/ics.js';
 import type { AgendaItem } from './agenda/unified.js';
 
 const HOUR_MS = 3_600_000;
@@ -42,7 +42,14 @@ export const CRITICAL_KINDS: readonly string[] = ['payment', 'deadline'];
 export const CRITICAL_WINDOW_MS = 2 * HOUR_MS;
 export const MAX_CONFLICTS = 3;
 
-export type ReminderStage = 't24' | 't2';
+export type ReminderStage = 't24' | 't2' | 'd30' | 'd7' | 'd1';
+
+/** Días de antelación de las etapas de una caducidad, de la más lejana a la más cercana. */
+export const EXPIRY_STAGE_DAYS: ReadonlyArray<{ stage: ReminderStage; days: number }> = [
+  { stage: 'd30', days: 30 },
+  { stage: 'd7', days: 7 },
+  { stage: 'd1', days: 1 },
+];
 
 export interface QuietHours {
   /** Hora local de inicio (0-23). */
@@ -65,21 +72,53 @@ export function dueInstant(item: AgendaItem, timeZone: string): number | null {
   return zonedDayStart(dayStart + DAY_MS + 6 * HOUR_MS, timeZone);
 }
 
+/** Las 09:00 en hora de pared de la zona, `days` días de calendario antes del día de `at` (correcto con el cambio de hora). */
+function nineAmDaysBefore(at: number, days: number, timeZone: string): number {
+  const p = zonedParts(at, timeZone);
+  const d = new Date(Date.UTC(p.year, p.month - 1, p.day - days));
+  return zonedTime(
+    {
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+      hour: 9,
+      minute: 0,
+    },
+    timeZone,
+  );
+}
+
+/** Días de calendario locales entre hoy y el día de `at` (0 = hoy). */
+function calendarDaysUntil(at: number, now: number, timeZone: string): number {
+  const a = zonedParts(at, timeZone);
+  const n = zonedParts(now, timeZone);
+  return Math.round(
+    (Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(n.year, n.month - 1, n.day)) / DAY_MS,
+  );
+}
+
 /** Instante en que toca cada etapa; solo las que el hallazgo admite. */
 export function stageInstants(
   item: AgendaItem,
   timeZone: string,
 ): Array<{ stage: ReminderStage; at: number }> {
-  if (item.at == null || !REMINDER_KINDS.includes(item.kind)) return [];
+  if (item.at == null) return [];
+  if (item.expiry) {
+    // Caducidad: avisos a 30, 7 y 1 día, siempre a las 9:00 locales de ese día (nunca
+    // una hora inventada). La fecha objetivo se resuelve en días de calendario y las 09:00 en hora de pared de la zona (correcto con el cambio de hora).
+    return EXPIRY_STAGE_DAYS.map(({ stage, days }) => ({
+      stage,
+      at: nineAmDaysBefore(item.at as number, days, timeZone),
+    }));
+  }
+  if (!REMINDER_KINDS.includes(item.kind)) return [];
   if (isTimed(item)) {
     return [
       { stage: 't24', at: item.at - DAY_MS },
       { stage: 't2', at: item.at - 2 * HOUR_MS },
     ];
   }
-  const dayStart = zonedDayStart(item.at, timeZone);
-  const prevStart = zonedDayStart(dayStart - 1, timeZone);
-  return [{ stage: 't24', at: prevStart + 9 * HOUR_MS }];
+  return [{ stage: 't24', at: nineAmDaysBefore(item.at, 1, timeZone) }];
 }
 
 /** Etapas ya alcanzadas y todavía vigentes (instante <= ahora < vencimiento), de la más lejana a la más cercana. */
@@ -235,11 +274,14 @@ export function formatConflicts(
 export function whenRelative(item: AgendaItem, now: number, timeZone: string): string {
   if (!isTimed(item)) {
     // La etapa dura hasta el final del día objetivo: tras un apagón puede salir el propio día.
-    const sameDay =
-      item.at != null && zonedDayKey(item.at, timeZone) === zonedDayKey(now, timeZone);
-    return sameDay ? 'hoy (sin hora)' : 'mañana (sin hora)';
+    if (item.at == null) return 'sin fecha';
+    const days = calendarDaysUntil(item.at, now, timeZone);
+    if (days <= 0) return 'hoy (sin hora)';
+    if (days === 1) return 'mañana (sin hora)';
+    return `en ${days} días (sin hora)`;
   }
   const left = (item.at as number) - now;
+  if (left >= 2 * DAY_MS) return `en ${calendarDaysUntil(item.at as number, now, timeZone)} días`;
   if (left >= 3 * HOUR_MS) return `en ${Math.round(left / HOUR_MS)} h`;
   if (left >= HOUR_MS) {
     const h = Math.floor(left / HOUR_MS);
