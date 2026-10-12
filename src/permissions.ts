@@ -304,6 +304,12 @@ export class Gate {
         match: (c) => c.tool === 'fabrica' && argString(c.args, 'action') === 'install',
       },
       {
+        id: 'ask-goal-activate',
+        verdict: 'ask',
+        reason: 'activates days of autonomous work on a goal',
+        match: (c) => c.tool === 'objetivo' && argString(c.args, 'action') === 'activar',
+      },
+      {
         // Documented here so the effective policy reads top to bottom, but decided in
         // `check()`: the list is ordered deny-ask-allow, and an allow entry in it can
         // never outrank an ask. A purchase flow is nothing but clicks and typing, so
@@ -434,6 +440,10 @@ export class Gate {
    */
   #isPreflight(c: ToolCall): boolean {
     if (!this.#allowUntilPayment) return false;
+    // A goal activation is NEVER preflight: the hard ask on `objetivo:activar`
+    // collects a fresh human yes for days of autonomous work, and a `browse` or
+    // `fill` stage - resolved or labelled by the caller - must not wave it through.
+    if (this.#isGoalActivate(c)) return false;
     const stage = this.#stageOf(c);
     if (stage !== 'browse' && stage !== 'fill') return false;
     if (this.#isPaymentish(c) || this.#isCredentialish(c)) return false;
@@ -473,6 +483,19 @@ export class Gate {
    */
   #isFactoryInstall(c: ToolCall): boolean {
     return c.tool === 'fabrica' && argString(c.args, 'action') === 'install';
+  }
+
+  /**
+   * Activating a long-haul goal: tool `objetivo`, action `activar`. Same
+   * treatment as a factory install, and for the same shape of reason: one
+   * click here starts DAYS of autonomous ticks that spend model quota and act
+   * on Nico's behalf, so the human yes is collected fresh every time - never
+   * from a memo, a scope grant, the grant window or fullControl. Nico's rule:
+   * the plan gets an explicit "sí" in the thread, and this ask is what keeps
+   * the model from upgrading a conversation about a goal into an active one.
+   */
+  #isGoalActivate(c: ToolCall): boolean {
+    return c.tool === 'objetivo' && argString(c.args, 'action') === 'activar';
   }
 
   #fingerprint(c: ToolCall): string {
@@ -621,9 +644,10 @@ export class Gate {
     // purchase of the same thing.
     const confirmation = this.#isPaymentConfirmation(call);
     const factoryInstall = this.#isFactoryInstall(call);
+    const goalActivate = this.#isGoalActivate(call);
 
     const fp = this.#fingerprint(call);
-    if (approved.has(fp) && !confirmation && !factoryInstall) {
+    if (approved.has(fp) && !confirmation && !factoryInstall && !goalActivate) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -665,7 +689,8 @@ export class Gate {
       !this.#isPaymentish(call) &&
       !this.#isCredentialish(call) &&
       !confirmation &&
-      !factoryInstall
+      !factoryInstall &&
+      !goalActivate
     ) {
       if (this.#alwaysAllow.has(call.tool)) {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
@@ -692,14 +717,15 @@ export class Gate {
         (!paymentish || this.#allowPayments) &&
         !this.#isCredentialish(call) &&
         !confirmation &&
-        !factoryInstall
+        !factoryInstall &&
+        !goalActivate
       ) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
       }
     }
 
     // A fresh grant from an earlier approval covers the rest of this task.
-    if (!factoryInstall && this.#withinGrantWindow(sessionId, call)) {
+    if (!factoryInstall && !goalActivate && this.#withinGrantWindow(sessionId, call)) {
       return this.#record(call, { verdict: 'allow', reason: 'within the approval window' });
     }
 

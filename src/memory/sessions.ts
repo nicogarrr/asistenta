@@ -256,15 +256,23 @@ export class SessionStore {
         // A build without the 'rebuild' command keeps the trigger-maintained index.
       }
     }
+    try {
+      // Provenance column: who opened the session, recorded at write time.
+      // Databases written before it existed get it here; their rows predate
+      // goal ticks entirely (capability shipped together), so 'human' is true.
+      this.#db.exec("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'human'");
+    } catch {
+      /* already there */
+    }
   }
 
-  begin(scope: string, title: string): string {
+  begin(scope: string, title: string, origin: 'human' | 'goal-tick' = 'human'): string {
     const id = randomUUID();
     this.#db
       .prepare(
-        'INSERT INTO sessions (id, scope, title, started_at, ended_at, summary) VALUES (?, ?, ?, ?, NULL, NULL)',
+        `INSERT INTO sessions (id, scope, title, started_at, ended_at, summary, origin) VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
       )
-      .run(id, scope, title, Date.now());
+      .run(id, scope, title, Date.now(), origin);
     return id;
   }
 
@@ -272,6 +280,20 @@ export class SessionStore {
     this.#db
       .prepare('INSERT INTO session_turns (session_id, role, text, at) VALUES (?, ?, ?, ?)')
       .run(sessionId, role, text, Date.now());
+  }
+
+  /**
+   * Whether a HUMAN turn opened on this scope after `sinceMs`. Provenance is
+   * explicit (the origin column recorded at write time), never inferred from
+   * a free-form title: a person may well start a message with "[objetivo]".
+   */
+  hasHumanTurnSince(scope: string, sinceMs: number): boolean {
+    const row = this.#db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM sessions WHERE scope = ? AND started_at > ? AND origin = 'human'`,
+      )
+      .get(scope, sinceMs) as { n: number } | undefined;
+    return Number(row?.n ?? 0) > 0;
   }
 
   /** Closing writes the summary, which is what later searches and prompts use. */
