@@ -159,6 +159,42 @@ describe('runLlmHealth', () => {
     });
   });
 
+  it('ADVERSARIO R3-1: Error.name mutable con secreto NO sale (diagnostico constante)', async () => {
+    await withEnv(baseEnv, async () => {
+      const NAME_KEY = 'sk-UNKNOWN-NAME-CANARY-123';
+      const err = new Error('lookup failed');
+      err.name = NAME_KEY;
+      const statuses = await runLlmHealth({
+        fetchImpl: async () => jsonResponse(200, { choices: [{ message: { content: 'ok' } }] }),
+        getKey: (k) =>
+          k === 'provider:openrouterKey'
+            ? Promise.reject(err)
+            : Promise.resolve(k === 'provider:apiKey' ? CANARY : undefined),
+        now: () => 0,
+      });
+      expect(statuses.find((s) => s.provider === 'openrouter')?.status).toBe('error');
+      const out = formatLlmHealth(statuses);
+      expect(out).not.toContain(NAME_KEY);
+      expect(statuses.find((s) => s.provider === 'zen')?.status).toBe('ok');
+    });
+  });
+
+  it('ADVERSARIO R3-2: PA_CRON con canaria y CERO keys cargadas no sale en el informe', async () => {
+    // La canaria va en el SCHEDULE: el mensaje de validacion cita ese trozo.
+    await withEnv({ ...baseEnv, PA_CRON: `${CANARY}\tprompt` }, async () => {
+      const statuses = await runLlmHealth({
+        fetchImpl: async () => jsonResponse(200, { choices: [{ message: { content: 'ok' } }] }),
+        getKey: () => Promise.resolve(undefined), // secrets vacio: la canaria es irredactable
+        now: () => 0,
+      });
+      expect(statuses.find((s) => s.provider === 'configured')?.status).toBe('error');
+      const out = formatLlmHealth(statuses);
+      expect(out).not.toContain(CANARY);
+      // El resto del informe sigue vivo con cero keys.
+      expect(statuses.find((s) => s.provider === 'openrouter')?.status).toBe('sin-key');
+    });
+  });
+
   it('ADVERSARIO R2-2: error largo no deja PREFIJO de key (redactar antes de truncar)', async () => {
     await withEnv(baseEnv, async () => {
       // 150 chars de relleno + key: slice(0,160) pre-redaccion dejaria 10 chars de key.

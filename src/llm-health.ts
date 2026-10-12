@@ -280,14 +280,17 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
       kind: endpointKind(config.baseUrl),
       extraHeaders: isOpenCodeEndpoint(config.baseUrl) ? goHeaders('llm-health') : undefined,
     });
-  } catch (err) {
+  } catch {
     early.push({
       provider: 'configured',
       model: '?',
       status: 'error',
       latencyMs: 0,
-      // Crudo aqui: se redacta y trunca al materializar (secrets aun no cargados).
-      detail: `loadConfig: ${err instanceof Error ? err.message : String(err)}`,
+      // Sin mensaje crudo: la validacion cita el VALOR ofensivo de env
+      // (PA_CRON, PA_PROVIDER_PRESET, ...) y ese valor puede ser un secreto
+      // que ningun provider llego a cargar -> irredactable. Diagnostico
+      // generico; el detalle real esta en stderr al arrancar el daemon.
+      detail: 'loadConfig fallo (sin detalle: puede citar valores de env)',
     });
   }
 
@@ -312,17 +315,17 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
   // Resolve all keys up front: the redactor must know every consulted secret
   // before any probe output exists.
   const secrets: string[] = [];
-  const keyed: { plan: Planned; key?: string; keyError?: string }[] = [];
+  const keyed: { plan: Planned; key?: string; keyError?: boolean }[] = [];
   for (const plan of planned) {
     try {
       const key = await resolveKeyFor(plan.kind, filled);
       if (key) secrets.push(key);
       keyed.push({ plan, key });
-    } catch (err) {
-      // El mensaje crudo puede citar un secreto que NUNCA llego a secrets
-      // (el lookup fallo): no se puede redactar lo desconocido -> solo el
-      // tipo de error, nunca el mensaje.
-      keyed.push({ plan, keyError: err instanceof Error ? err.name : 'Error' });
+    } catch {
+      // Ni mensaje ni name: un mensaje puede citar un secreto que NUNCA
+      // llego a secrets (irredactable) y Error.name es MUTABLE (el error
+      // puede llevar el secreto como nombre). Solo una constante generica.
+      keyed.push({ plan, keyError: true });
     }
   }
   const redact = makeRedactor(secrets);
@@ -341,7 +344,7 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
         model: plan.model,
         status: 'error',
         latencyMs: 0,
-        detail: `key lookup fallo: ${keyError}`, // nombre de error, sin mensaje crudo
+        detail: 'key lookup fallo (sin detalle: puede citar secretos)',
       });
     } else if (!key) {
       statuses.push({
