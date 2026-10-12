@@ -49,9 +49,12 @@ const FOREIGN_RE = /[$\u00a3]|\b(usd|gbp|dolares?|libras?)\b/i;
 const STRICT_THOUSANDS = /^(\d{1,3}(?:\.\d{3})+)(?:,(\d{2}))?$/;
 const STRICT_PLAIN = /^(\d+)(?:[,.](\d{2}))?$/;
 
-/** Estricto: miles con punto y 0 o 2 decimales; cualquier otra forma es "no soportado". */
-function strictCents(raw: string): number | null {
-  const token = raw.replace(/[.,]+$/, ''); // un punto de fin de frase no es parte del importe
+/**
+ * Estricto: miles con punto y 0 o 2 decimales; cualquier otra forma es "no soportado".
+ * Sin limpieza: un token raro se niega, no se recorta hasta un número plausible. La única
+ * excepción es UN punto o coma final de frase tras el importe (forma "EUR 12,50.").
+ */
+function strictCents(token: string): number | null {
   const m = STRICT_THOUSANDS.exec(token) ?? STRICT_PLAIN.exec(token);
   if (!m) return null;
   const whole = (m[1] ?? '').replace(/\./g, '');
@@ -59,19 +62,33 @@ function strictCents(raw: string): number | null {
   return Number(whole) * 100 + Number(m[2] ?? '0');
 }
 
+/** Lo que sigue INMEDIATAMENTE al importe+divisa: cierre, signo o puntuación repetida lo niegan. */
+const BAD_FOLLOW = /^(?:[-\u2212\u2013)\]]|[.,]{2,})/;
+
 /**
  * Todos los importes monetarios del texto. `bad` = hay algo monetario que no se sabe leer
- * (negativo o entre paréntesis, otra divisa, formato raro): entonces NO se infiere nada.
- * Los enteros ("100 €") son importes: no se pueden ignorar por no tener decimales.
+ * (negativo o entre paréntesis, otra divisa, formato raro, signo o cierre pegados): entonces
+ * NO se infiere nada. Los enteros ("100 €") son importes: no se pueden ignorar.
  */
 export function scanMoney(text: string): { cents: number[]; bad: boolean } {
   const out = new Set<number>();
   let bad = FOREIGN_RE.test(text);
-  for (const re of [TOKEN_AFTER, TOKEN_BEFORE]) {
+  for (const [re, form] of [
+    [TOKEN_AFTER, 'after'],
+    [TOKEN_BEFORE, 'before'],
+  ] as const) {
     for (const m of text.matchAll(re)) {
       // signo menos o paréntesis delante, o menos detrás: abono, reembolso o ambiguo
       if (m[1] || m[3]) bad = true;
-      const c = strictCents(m[2] ?? '');
+      const end = (m.index ?? 0) + m[0].length;
+      const follow = text.slice(end);
+      if (BAD_FOLLOW.test(follow)) bad = true;
+      let token = m[2] ?? '';
+      // "EUR 12,50." : un único punto/coma de fin de frase, solo con la divisa delante
+      if (form === 'before' && /^\d[\d.,]*\d[.,]$/.test(token) && /^(?:\s|$)/.test(follow)) {
+        token = token.slice(0, -1);
+      }
+      const c = strictCents(token);
       if (c === null || c <= 0) bad = true;
       else out.add(c);
     }

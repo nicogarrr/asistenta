@@ -430,6 +430,17 @@ describe('R2: el token monetario se niega entero, sin subimportes', () => {
     expect(p('Cargo 12,50-€')).toBeNull();
     expect(p('Cargo EUR -12,50')).toBeNull();
     expect(p('Cargo EUR 12,50-')).toBeNull();
+    expect(p('Cargo 12,50 €-')).toBeNull();
+    expect(p('Cargo 12,50 €)')).toBeNull();
+    expect(p('Cargo 12,50€]')).toBeNull();
+    expect(p('Cargo 12,50 €,,')).toBeNull();
+    expect(p('Cargo 12,50 €..')).toBeNull();
+    expect(p('Cargo EUR 12,50,,')).toBeNull();
+    expect(p('Cargo EUR 12,50..')).toBeNull();
+    expect(p('Cargo EUR 12,50)')).toBeNull();
+    expect(p('Cargo 12,50.€')).toBeNull();
+    expect(p('Cargo 12,50 € - IVA incluido')).toEqual({ sender: 'tienda.es', cents: 1250 });
+    expect(p('Cargo 12,50 €, gracias')).toEqual({ sender: 'tienda.es', cents: 1250 });
     expect(p('Cargo 1.234 €')).toEqual({ sender: 'tienda.es', cents: 123400 });
     expect(p('Cargo 1.234,56 €')).toEqual({ sender: 'tienda.es', cents: 123456 });
     expect(p('Cargo EUR 12,50.')).toEqual({ sender: 'tienda.es', cents: 1250 });
