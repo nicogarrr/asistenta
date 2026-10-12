@@ -547,11 +547,13 @@ export class Gate {
    * The effect class of a call in the world - or null when the class cannot be
    * PROVEN. The gestor compares this against the class Nico approved for the
    * current step, and null forces an ask: opaque actions (arbitrary code in a
-   * page, an arbitrary shell command, a desktop click whose target is unknown,
-   * booking tools, factory-built tools) get evidence or a question, never a
-   * default. The evidence is the same the rules already fire on; the
-   * conservative choices are deliberate: a shell command that is not visibly
-   * destructive is unprovable rather than "local", and a non-GET fetch sends.
+   * page, any shell command, a desktop click whose target is unknown, typing
+   * into a third-party form, booking tools, factory-built tools) get evidence
+   * or a question, never a default. Only POSITIVE evidence assigns a class:
+   * the absence of effect words in a target proves nothing about what a click
+   * sends, and one matched regex proves nothing about the rest of a compound
+   * command. Note `destructivo` never comes out of this function: destruction
+   * is provable as present, but never as the WHOLE effect of a call.
    */
   classifyEffect(c: ToolCall): EffectClass | null {
     if (this.#isPaymentConfirmation(c) || this.#isPaymentish(c)) return 'paga';
@@ -593,12 +595,16 @@ export class Gate {
         ) {
           return 'lee';
         }
-        if (action === 'fill' || action === 'choose') return 'escribe-local';
         if (action === 'click' || action === 'press') {
-          // The snapshot evidence (legible non-effect text, page not about money)
-          // downgrades a click to a page-state change; without it, the click sends.
-          return this.#isBrowserEffect(c) ? 'envia-terceros' : 'escribe-local';
+          // POSITIVE evidence of sending (legible effect text, money page or an
+          // illegible destination) proves envia-terceros. Its ABSENCE proves
+          // nothing: a legible "Continuar" button can submit the form, so a
+          // click without that evidence is unprovable, not "local".
+          return this.#isBrowserEffect(c) ? 'envia-terceros' : null;
         }
+        // fill/choose type into a third-party page, where an autosave or an
+        // event listener can transmit on every keystroke: sending is possible
+        // and its absence cannot be proven, so they are unprovable too.
         return null;
       }
       case 'write':
@@ -610,10 +616,13 @@ export class Gate {
       // The confirm stage was caught above as paga; browse/fill is form work.
       case 'checkout':
         return 'escribe-local';
+      // A shell command is arbitrary code: matching the destructive regex
+      // proves destruction but says nothing about what ELSE the command does
+      // ('Remove-Item X; curl -X POST ...' also sends). Classifying by the
+      // first effect found would silently license the rest, so shell is
+      // unprovable as a whole.
       case 'shell':
-        // The destructive regex is the best available evidence; everything else
-        // a shell can do (a curl POST included) cannot be proven local.
-        return DESTRUCTIVE.test(argString(c.args, 'command')) ? 'destructivo' : null;
+        return null;
       case 'computer': {
         const action = argString(c.args, 'action');
         return action === 'screenshot' || action === 'move' ? 'lee' : null;

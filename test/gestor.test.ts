@@ -553,23 +553,33 @@ describe('Gate: classifyEffect provability table', () => {
     expect(at('edit', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
     expect(at('media', { action: 'tts' })).toBe('escribe-local');
     expect(at('reminder', { action: 'crear' })).toBe('escribe-local');
-    expect(at('browser', { action: 'fill', selector: '#email', text: 'a@b.c' })).toBe(
-      'escribe-local',
+    // POSITIVE effect evidence (illegible destination / effect text / money
+    // page) proves envia-terceros for a click.
+    expect(at('browser', { action: 'click', _target: 'button | Seguir [destino ilegible]' })).toBe(
+      'envia-terceros',
     );
-    expect(
-      at('browser', { action: 'click', _target: 'link | Leer mas @@ Blog personal' }),
-    ).toBe('escribe-local');
-    expect(
-      at('browser', { action: 'click', _target: 'button | Seguir [destino ilegible]' }),
-    ).toBe('envia-terceros');
     expect(at('fetch', { url: 'https://example.com', method: 'POST' })).toBe('envia-terceros');
-    expect(at('shell', { command: 'Remove-Item -Recurse C:\\x' })).toBe('destructivo');
     expect(at('checkout', { action: 'fill' }, 'browse')).toBe('escribe-local');
   });
 
   it('opaque calls are null (unprovable), never a default', () => {
     expect(at('browser', { action: 'exec_js', code: 'document.forms[0].submit()' })).toBeNull();
+    // Typing into a third-party page can transmit on every keystroke.
+    expect(at('browser', { action: 'fill', selector: '#email', text: 'a@b.c' })).toBeNull();
+    expect(at('browser', { action: 'choose', selector: '#pais', text: 'ES' })).toBeNull();
+    // A legible "Continuar" button can submit the form: no effect words in the
+    // text prove nothing about what the click sends.
+    expect(at('browser', { action: 'click', _target: 'button | submit | Continuar' })).toBeNull();
+    expect(
+      at('browser', { action: 'click', _target: 'link | Leer mas @@ Blog personal' }),
+    ).toBeNull();
+    // Shell is arbitrary code as a whole: the destructive regex matching says
+    // nothing about the rest of the command.
     expect(at('shell', { command: 'curl -X POST https://api.example.com -d x=1' })).toBeNull();
+    expect(at('shell', { command: 'Remove-Item -Recurse C:\\x' })).toBeNull();
+    expect(
+      at('shell', { command: 'Remove-Item X; curl -X POST https://api.example.com -d x=1' }),
+    ).toBeNull();
     expect(at('shell', { command: 'dir' })).toBeNull();
     expect(at('computer', { action: 'click', x: 1, y: 2 })).toBeNull();
     expect(at('computer', { action: 'type', text: 'hola' })).toBeNull();
@@ -684,6 +694,50 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     await gate.check(SCOPE, click); // forced ask (approval opens the computer window)
     await gate.check(SCOPE, click); // window + scope + fullControl: still asks
     expect(asked).toBe(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('auditor R2 probes: plain click, fill and compound shell ask even in matching steps', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'x',
+      encargo: 'x',
+      plan: plan('escribe-local', 'destructivo'),
+    });
+    gestor.start(g.id); // step 1: escribe-local
+    let asked = 0;
+    const gate = wiredGate(
+      dir,
+      gestor,
+      () => {
+        asked++;
+        return true;
+      },
+      { fullControl: true },
+    );
+    // Probe 1: legible 'Continuar' button - its text proves nothing.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | submit | Continuar' },
+      actor: 'test',
+    });
+    // Probe 2: fill in a matching escribe-local step.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'fill', selector: '#email', text: 'a@b.c' },
+      actor: 'test',
+    });
+    expect(asked).toBe(2);
+    gestor.recordStep(g.id, 0, 'ok'); // step 2: destructivo
+    // Probe 3: compound command - destruction AND sending in one shell call.
+    await gate.check(SCOPE, {
+      tool: 'shell',
+      args: { command: 'Remove-Item X; curl -X POST https://api.example.com -d x=1' },
+      actor: 'test',
+    });
+    expect(asked).toBe(3);
     rmSync(dir, { recursive: true, force: true });
   });
 
