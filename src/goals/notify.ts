@@ -158,7 +158,17 @@ export class GoalNotifier {
         )
         .run(goal.id, key, text, new Date(this.#now()).toISOString());
     }
-    return (await this.#attempt(goal, key, text)) ? 'sent' : 'pending';
+    const r = await this.#attempt(goal, key, text);
+    if (r === 'sent') return 'sent';
+    if (r === 'skipped') {
+      // Another path was delivering this exact row: it either landed
+      // (duplicate) or stays for the next retry (pending).
+      const now = this.#db
+        .prepare('SELECT delivered FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
+        .get(goal.id, key) as { delivered: number } | undefined;
+      return now?.delivered === 1 ? 'duplicate' : 'pending';
+    }
+    return 'pending';
   }
 
   /** Whether the goal still has undelivered notifications (a done goal's routine lives on this). */
@@ -219,7 +229,9 @@ export class GoalNotifier {
   /** Retry everything still undelivered. Called on every goal tick. */
   async flush(goal: Goal): Promise<void> {
     const rows = this.#db
-      .prepare('SELECT * FROM goal_notifications WHERE goal_id = ? AND delivered = 0')
+      .prepare(
+        'SELECT * FROM goal_notifications WHERE goal_id = ? AND delivered = 0 ORDER BY created_at, nkey',
+      )
       .all(goal.id) as Row[];
     for (const row of rows) {
       const age = this.#now() - Date.parse(row.created_at);
@@ -233,36 +245,60 @@ export class GoalNotifier {
     }
   }
 
-  async #attempt(goal: Goal, key: string, text: string): Promise<boolean> {
+  /**
+   * One send attempt. Returns 'sent' when THIS path delivered, 'pending' when
+   * the transport said no, and 'skipped' when the row no longer needs sending
+   * (claimed elsewhere, already delivered, expired or deleted).
+   */
+  async #attempt(goal: Goal, key: string, text: string): Promise<'sent' | 'pending' | 'skipped'> {
     // In-flight exclusion per (goal, key) for EVERY path: report, tick flush,
     // boot flush and the engine can race each other; only one send per row
     // may be on the wire at a time. The claim releases on failure so the
     // retry is never lost.
     const claim = `${goal.id}:${key}`;
-    if (this.#inflight.has(claim)) return false;
+    if (this.#inflight.has(claim)) return 'skipped';
     this.#inflight.add(claim);
-    let sentId: string | null = null;
     try {
-      sentId = await this.#send(goal, text);
-    } catch {
-      sentId = null;
-    } finally {
-      this.#inflight.delete(claim);
-    }
-    if (sentId) {
-      // The sent id is stored: reply routing survives a daemon restart.
-      this.#db
+      // Re-read AFTER claiming, BEFORE sending: the caller's snapshot (a flush
+      // batch, a pre-check in report) may be stale - another path may have
+      // delivered, expired or deleted this exact row while an earlier send of
+      // the same batch was on the wire. Never send from a stale snapshot.
+      const row = this.#db
         .prepare(
-          'UPDATE goal_notifications SET delivered = 1, delivered_at = ?, sent_id = ?, attempts = attempts + 1 WHERE goal_id = ? AND nkey = ?',
+          'SELECT delivered, created_at FROM goal_notifications WHERE goal_id = ? AND nkey = ?',
         )
-        .run(new Date(this.#now()).toISOString(), sentId, goal.id, key);
-    } else {
+        .get(goal.id, key) as { delivered: number; created_at: string } | undefined;
+      if (!row || row.delivered === 1) return 'skipped';
+      if (this.#now() - Date.parse(row.created_at) > NOTIFY_RETRY_MAX_AGE_MS) {
+        this.#db
+          .prepare('DELETE FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
+          .run(goal.id, key);
+        return 'skipped';
+      }
+      let sentId: string | null = null;
+      try {
+        sentId = await this.#send(goal, text);
+      } catch {
+        sentId = null;
+      }
+      if (sentId) {
+        // The sent id is stored: reply routing survives a daemon restart.
+        this.#db
+          .prepare(
+            'UPDATE goal_notifications SET delivered = 1, delivered_at = ?, sent_id = ?, attempts = attempts + 1 WHERE goal_id = ? AND nkey = ?',
+          )
+          .run(new Date(this.#now()).toISOString(), sentId, goal.id, key);
+        return 'sent';
+      }
       this.#db
         .prepare(
           'UPDATE goal_notifications SET attempts = attempts + 1 WHERE goal_id = ? AND nkey = ?',
         )
         .run(goal.id, key);
+      return 'pending';
+    } finally {
+      // The claim is held until the state update above is fully written.
+      this.#inflight.delete(claim);
     }
-    return sentId !== null;
   }
 }

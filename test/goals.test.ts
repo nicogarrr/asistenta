@@ -410,6 +410,125 @@ describe('goal notifier', () => {
     expect(delivered).toHaveLength(2);
   });
 
+  it('never re-sends from a stale snapshot: the row is re-read after claiming', async () => {
+    // The auditor's interleaving: flush reads [A,B], send(A) suspends; a
+    // concurrent report(B) delivers B; when A lands, the batch must NOT send
+    // B again from its old snapshot.
+    const goals = new GoalStore({ db: newDb() });
+    const g = proposeIn(goals, 'instantanea');
+    let transportUp = false;
+    const sends: string[] = [];
+    let releaseA!: (id: string) => void;
+    const gateA = new Promise<string>((res) => {
+      releaseA = res;
+    });
+    const notifier = new GoalNotifier({
+      db: newDb(),
+      send: (_goal, text) => {
+        if (!transportUp) return Promise.resolve(null);
+        sends.push(text);
+        if (text.includes('pregunta A')) return gateA;
+        return Promise.resolve(`m-${sends.length}`);
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    // 1. Transport down: both reports stay pending.
+    expect(await notifier.report(g, 'decision', 'pregunta A')).toBe('pending');
+    expect(await notifier.report(g, 'decision', 'pregunta B')).toBe('pending');
+    // 2. Transport back: flush starts, send(A) goes on the wire and suspends.
+    transportUp = true;
+    const flushP = notifier.flush(g);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sends).toHaveLength(1);
+    // 3. Concurrent report(B) delivers B and marks it.
+    expect(await notifier.report(g, 'decision', 'pregunta B')).toBe('sent');
+    expect(sends).toHaveLength(2);
+    // 4. A lands; the batch's next row is B from the STALE snapshot.
+    releaseA('m-a');
+    await flushP;
+    // No second send of B: delivered was re-read after claiming.
+    expect(sends.filter((t) => t.includes('pregunta A'))).toHaveLength(1);
+    expect(sends.filter((t) => t.includes('pregunta B'))).toHaveLength(1);
+    expect(notifier.hasPending(g.id)).toBe(false);
+  });
+
+  it('drops rows that expired while another send of the batch was on the wire', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g = proposeIn(goals, 'caduca');
+    let now = 1_000_000_000_000;
+    let transportUp = false;
+    const sends: string[] = [];
+    let releaseA!: (id: string) => void;
+    const gateA = new Promise<string>((res) => {
+      releaseA = res;
+    });
+    const notifier = new GoalNotifier({
+      db: newDb(),
+      now: () => now,
+      send: (_goal, text) => {
+        if (!transportUp) return Promise.resolve(null);
+        sends.push(text);
+        if (text.includes('vieja A')) return gateA;
+        return Promise.resolve('m-b');
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    expect(await notifier.report(g, 'hito', 'vieja A')).toBe('pending');
+    now += 1000; // distinct created_at: delivery order is oldest-first
+    expect(await notifier.report(g, 'hito', 'vieja B')).toBe('pending');
+    transportUp = true;
+    const flushP = notifier.flush(g);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sends).toEqual(['🎯 caduca: vieja A']);
+    // 25h pass while A is on the wire.
+    now += 25 * 60 * 60_000;
+    releaseA('m-a');
+    await flushP;
+    // B expired mid-batch: deleted WITHOUT being sent.
+    expect(sends).toHaveLength(1);
+    expect(notifier.hasPending(g.id)).toBe(false);
+  });
+
+  it('skips rows deleted while another send of the batch was on the wire', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g = proposeIn(goals, 'borrada');
+    const sharedDb = newDb();
+    let transportUp = false;
+    const sends: string[] = [];
+    let releaseA!: (id: string) => void;
+    const gateA = new Promise<string>((res) => {
+      releaseA = res;
+    });
+    const notifier = new GoalNotifier({
+      db: sharedDb,
+      send: (_goal, text) => {
+        if (!transportUp) return Promise.resolve(null);
+        sends.push(text);
+        if (text.includes('nota A')) return gateA;
+        return Promise.resolve('m-b');
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    expect(await notifier.report(g, 'hito', 'nota A')).toBe('pending');
+    expect(await notifier.report(g, 'hito', 'nota B')).toBe('pending');
+    transportUp = true;
+    const flushP = notifier.flush(g);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sends).toHaveLength(1);
+    // The goal disappears mid-batch: its rows are cleaned by another path.
+    const orphanCleaner = new GoalNotifier({
+      db: sharedDb,
+      send: () => Promise.resolve(null),
+      resolveGoal: () => null,
+    });
+    await orphanCleaner.flushAll();
+    releaseA('m-a');
+    await flushP;
+    // B was deleted mid-batch: skipped, never sent.
+    expect(sends).toHaveLength(1);
+    expect(notifier.hasPending(g.id)).toBe(false);
+  });
+
   it('formats one Spanish piece per kind', () => {
     expect(formatGoalMessage('hito', { title: 'T' }, 'paso listo')).toContain('🎯 T: paso listo');
     expect(formatGoalMessage('bloqueo', { title: 'T' }, 'falta X')).toContain('bloqueado');
