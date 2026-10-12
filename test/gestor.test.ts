@@ -17,6 +17,7 @@ import {
   effectOverrideReason,
 } from '../src/gestor/store.js';
 import { Gate } from '../src/permissions.js';
+import { PlaybookStore } from '../src/gestor/playbooks.js';
 import { MAX_GESTION_CHARS, createGestionTool, formatProposal } from '../src/tools/gestion.js';
 
 const stateDir = FACTORY_TEST_STATE_DIR;
@@ -241,7 +242,8 @@ describe('effect classes', () => {
 describe('gestion tool', () => {
   function setup(scope = SCOPE) {
     const gestor = new GestorStore({ db: newDb() });
-    const tool = createGestionTool({ gestor, scopeOf: () => scope });
+    const playbooks = new PlaybookStore({ dir: mkdtempSync(join(FACTORY_TEST_STATE_DIR, 'pb-')) });
+    const tool = createGestionTool({ gestor, scopeOf: () => scope, playbooks });
     const run = (args: Record<string, unknown>) => tool.execute('c', args as never);
     const text = (r: { content: { type: string; text?: string }[] }) =>
       r.content.map((c) => c.text ?? '').join('\n');
@@ -368,7 +370,11 @@ describe('gestion tool', () => {
     await run({ action: 'preparar', titulo: 'a', encargo: 'e', pasos: goodPlan });
     const id = gestor.list(SCOPE)[0]?.id ?? '';
     // Same store, another chat's scope: the row exists but is not yours.
-    const other = createGestionTool({ gestor, scopeOf: () => OTHER });
+    const other = createGestionTool({
+      gestor,
+      scopeOf: () => OTHER,
+      playbooks: new PlaybookStore({ dir: mkdtempSync(join(FACTORY_TEST_STATE_DIR, 'pb-')) }),
+    });
     const r = await other.execute('c', { action: 'ejecutar', id } as never);
     expect(text(r)).toContain('pertenece a otro chat');
     expect(gestor.read(id)?.status).toBe('proposed');

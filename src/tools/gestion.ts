@@ -9,6 +9,22 @@
  * Gate re-asks about any call whose effect exceeds the class approved for the
  * current step (see effectOverrideReason in gestor/store.ts).
  *
+ * Playbooks (PR3 / D4): a gestión that taught something reusable about a site
+ * leaves it in a per-domain playbook (login flow, selectors, quirks) via
+ * playbook_guardar, and reads it back with playbook_leer - BEFORE preparar,
+ * because tool-result `details` never reach the model (only `content` does),
+ * and knowledge that arrives after the plan is written cannot shape it. The
+ * message Nico approves carries no playbook content; an existing playbook for
+ * a declared login domain is announced as one plain line in the Accesos
+ * section, true for Nico and a pointer for the model.
+ *
+ * Credentials never enter AND never leave a playbook: save and serve both
+ * check the rendered content against ALL current vault values (one fresh
+ * snapshot per operation, exact case-sensitive match, env-only secrets
+ * included) and one match rejects the write or blocks the read with a generic
+ * error. The guarantee covers the vault values at that operation; rotation
+ * afterwards is caught by the next operation's revalidation.
+ *
  * The scope comes from the caller, never from the model: a gestión belongs to
  * the chat that asked for it and cannot be touched from another.
  */
@@ -16,8 +32,16 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { EFFECT_CLASSES, EFFECT_LABEL, type EffectClass } from '../gestor/effects.js';
 import { missingLoginFields, normalizeDomain, siteKey } from '../gestor/login.js';
+import {
+  canonicalPlaybookDomain,
+  containsVaultValue,
+  type Playbook,
+  type PlaybookStore,
+  renderPlaybook,
+  validatePlaybook,
+} from '../gestor/playbooks.js';
 import type { Gestion, GestionStep, GestorStore } from '../gestor/store.js';
-import { vaultList } from '../vault.js';
+import { vaultList, vaultSnapshotValues } from '../vault.js';
 
 /**
  * Telegram's per-message ceiling is 4096 chars and the channel splits anything
@@ -39,6 +63,8 @@ const Params = Type.Object({
     Type.Literal('cancelar'),
     Type.Literal('listar'),
     Type.Literal('estado'),
+    Type.Literal('playbook_leer'),
+    Type.Literal('playbook_guardar'),
   ]),
   id: Type.Optional(
     Type.String({
@@ -72,6 +98,32 @@ const Params = Type.Object({
   paso: Type.Optional(Type.Number({ description: 'paso: 1-based step number completed.' })),
   nota: Type.Optional(
     Type.String({ description: 'paso: one line on what happened in that step.' }),
+  ),
+  dominio: Type.Optional(
+    Type.String({
+      description:
+        'playbook_leer/playbook_guardar: the site domain (e.g. seg-social.es). Canonicalized ' +
+        'with the vault login convention, so www./URL/port forms land on the same playbook.',
+    }),
+  ),
+  login: Type.Optional(
+    Type.Array(Type.String({ description: 'One line of the login flow that worked.' }), {
+      description:
+        'playbook_guardar: login flow notes. Vault key NAMES only as references ' +
+        '(site:<dominio>:username|password); a real value here rejects the whole save.',
+    }),
+  ),
+  selectores: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        'playbook_guardar: selectors that worked, one line each: what it is + the selector.',
+    }),
+  ),
+  quirks: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        'playbook_guardar: quirks and waits (iframes, captcha, multi-step flows, timeouts).',
+    }),
   ),
 });
 
@@ -112,8 +164,17 @@ function oneLine(g: Gestion): string {
 export interface GestionToolDeps {
   gestor: GestorStore;
   scopeOf: () => string;
+  /** Per-domain playbooks: preparar reads them, playbook_guardar writes them. */
+  playbooks: PlaybookStore;
   /** Vault key NAMES only, for the access section of preparar. Tests inject this. */
   vaultNames?: () => Promise<string[]>;
+  /**
+   * One fresh snapshot of ALL current vault values, for the playbook
+   * credential guard (save AND serve). Tests inject canaries; production is
+   * vaultSnapshotValues, which includes env-only secrets vaultList cannot
+   * see. Values are only ever compared - never logged, returned or stored.
+   */
+  vaultSnapshotValues?: () => Promise<string[]>;
 }
 
 export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Params> {
@@ -149,6 +210,12 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
       'ejecutar: start the approved errand - ONLY after the user said an explicit yes to the plan just shown; the gate still asks them.',
       'Then work the steps with the normal tools, calling paso as each one completes, and completar at the end.',
       'Never claim an errand is active unless ejecutar said so.',
+      'Site knowledge goes to a PLAYBOOK, not a skill: after a gestión taught you how a site works ' +
+        '(login flow, selectors that worked, quirks/waits), save it with playbook_guardar. BEFORE ' +
+        'preparar, call playbook_leer for every domain you plan to declare in logins - its result ' +
+        'content reaches you, preparar details would not, and a plan built on known selectors is a ' +
+        'better plan. Credentials never go in or out: reference vault keys by NAME ' +
+        '(site:<dominio>:password); a real value rejects the save and blocks the read.',
     ].join('\n'),
     parameters: Params,
     executionMode: 'sequential',
@@ -237,6 +304,14 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
                 );
               }
             }
+            // One plain line, true for Nico and a pointer for the model: the
+            // playbook CONTENT never rides here - the model reads it with
+            // playbook_leer, whose result content does reach it.
+            if (deps.playbooks.read(domain)) {
+              access.push(
+                `- ${domain}: hay un playbook guardado de este sitio (lo leo con gestion:playbook_leer).`,
+              );
+            }
           }
         }
         // Budget the exact message Nico would approve. The probe id is the
@@ -264,6 +339,69 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         }
         const gestion = deps.gestor.propose({ scope, title, encargo, plan });
         return reply(formatProposal(gestion, access));
+      }
+
+      if (args.action === 'playbook_leer') {
+        const domain = canonicalPlaybookDomain(args.dominio ?? '');
+        if (!domain) {
+          return reply('playbook_leer necesita un dominio válido (p. ej. seg-social.es).', true);
+        }
+        const pb = deps.playbooks.read(domain);
+        if (!pb) {
+          return reply(
+            `No hay playbook de ${domain}. Cuando una gestión en ese sitio enseñe algo reusable, guárdalo con playbook_guardar.`,
+          );
+        }
+        // Serve revalidates like save: the file could have been hand-edited,
+        // or a value it quotes could have become a secret after a rotation.
+        // One snapshot per read; a match blocks with a generic error and the
+        // content is never returned.
+        const values = await (deps.vaultSnapshotValues ?? vaultSnapshotValues)();
+        if (containsVaultValue(renderPlaybook(pb), values)) {
+          return reply(
+            `El playbook de ${domain} está bloqueado: su contenido coincide con un valor actual del vault. Revísalo a mano (playbooks/${domain}.md) o bórralo, y vuelve a guardarlo solo con conocimiento, nunca con credenciales.`,
+            true,
+          );
+        }
+        return reply(renderPlaybook(pb));
+      }
+
+      if (args.action === 'playbook_guardar') {
+        const domain = canonicalPlaybookDomain(args.dominio ?? '');
+        if (!domain) {
+          return reply('playbook_guardar necesita un dominio válido (p. ej. seg-social.es).', true);
+        }
+        const pb: Playbook = {
+          domain,
+          updatedAt: new Date().toISOString(),
+          login: (args.login ?? []).map((l) => l.trim()).filter(Boolean),
+          selectores: (args.selectores ?? []).map((l) => l.trim()).filter(Boolean),
+          quirks: (args.quirks ?? []).map((l) => l.trim()).filter(Boolean),
+        };
+        if (pb.login.length + pb.selectores.length + pb.quirks.length === 0) {
+          return reply(
+            'playbook_guardar necesita contenido en alguna sección (login, selectores o quirks).',
+            true,
+          );
+        }
+        const invalid = validatePlaybook(pb);
+        if (invalid) return reply(invalid, true);
+        // Credential guard, positive and provable: the rendered content is
+        // checked against ALL current vault values (exact, case-sensitive)
+        // before anything is written. One match rejects the save with a
+        // generic message - the matched value is never named or echoed.
+        const values = await (deps.vaultSnapshotValues ?? vaultSnapshotValues)();
+        if (containsVaultValue(renderPlaybook(pb), values)) {
+          return reply(
+            'El playbook no se guarda: su contenido coincide con un valor del vault. Las credenciales viven en el vault; aquí solo va el NOMBRE de la clave (site:<dominio>:campo).',
+            true,
+          );
+        }
+        deps.playbooks.save(pb);
+        const notes = pb.login.length + pb.selectores.length + pb.quirks.length;
+        return reply(
+          `Playbook de ${domain} guardado (${notes} notas). La próxima gestión en ${domain} lo leerá al preparar el plan.`,
+        );
       }
 
       if (args.action === 'listar') {
@@ -349,7 +487,9 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
             return reply(err instanceof Error ? err.message : String(err), true);
           }
           return reply(
-            `Gestión "${gestion.title}" terminada. ${gestion.ledger.length} pasos registrados.`,
+            `Gestión "${gestion.title}" terminada. ${gestion.ledger.length} pasos registrados. ` +
+              'Si el sitio enseñó algo reusable (flujo de login, selectores que funcionaron, esperas), ' +
+              'guárdalo con gestion:playbook_guardar - la próxima gestión en ese dominio lo leerá al preparar el plan.',
           );
         }
         case 'cancelar': {

@@ -34,6 +34,7 @@ import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecont
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
+import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
@@ -1145,6 +1146,7 @@ async function serveCommand(): Promise<number> {
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
   // Canal de QA solo en la sandbox (PA_QA_CHANNEL=1): mismo pipeline, entrada y salida por ficheros.
@@ -1416,7 +1418,7 @@ async function serveCommand(): Promise<number> {
         humanRepliedAfter: (scopeKey, sinceIso) =>
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
-      createGestionTool({ gestor: gestorStore, scopeOf: scope }),
+      createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
