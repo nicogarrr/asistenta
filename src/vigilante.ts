@@ -60,6 +60,7 @@ import {
   markChargesNotified,
   pendingChargeAlerts,
 } from './ojo-charges.js';
+import { formatDownloads, markDownloadsNotified, pendingDownloads } from './ojo-downloads.js';
 import {
   confirmNotices,
   dropStaleReservations,
@@ -534,12 +535,15 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
 
     // Cargos raros pendientes: no críticos, esperan al fin del silencio sin marcarse.
     const chargeAlerts = quiet ? [] : pendingChargeAlerts(deps.db, nowMs);
+    // Descargas nuevas (solo si /ojo descargas on): tampoco críticas, esperan al silencio.
+    const downloads = quiet ? [] : pendingDownloads(deps.db, nowMs);
 
     if (
       toSend.length === 0 &&
       remindersToSend.length === 0 &&
       conflicts.length === 0 &&
-      chargeAlerts.length === 0
+      chargeAlerts.length === 0 &&
+      downloads.length === 0
     ) {
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
     }
@@ -574,6 +578,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
     if (chargeAlerts.length > 0) parts.push(formatChargeAlerts(chargeAlerts, timeZone));
+    if (downloads.length > 0) parts.push(formatDownloads(downloads));
 
     let sent = false;
     try {
@@ -622,6 +627,10 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     markChargesNotified(
       deps.db,
       chargeAlerts.map((a) => a.msgId),
+    );
+    markDownloadsNotified(
+      deps.db,
+      downloads.map((d) => d.key),
     );
     trackItems(
       deps.db,
