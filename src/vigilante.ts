@@ -431,7 +431,13 @@ export async function runVigilanteOnce(
     if (toSend.length > 0) {
       parts.push(
         formatFindings(
-          toSend.map(([, item]) => item),
+          // Todas las ocurrencias del hallazgo, cada una con su hora: lo que se marca
+          // como cubierto es exactamente lo que el aviso dice.
+          toSend.flatMap(([key, item]) =>
+            (occByFinding.get(key) ?? [['', item] as [string, AgendaItem]])
+              .map(([, occ]) => occ)
+              .sort((x, y) => (x.at ?? 0) - (y.at ?? 0)),
+          ),
           timeZone,
         ),
       );

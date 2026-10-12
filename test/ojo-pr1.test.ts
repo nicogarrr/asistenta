@@ -374,3 +374,43 @@ describe('auditor R1 (B1-B4)', () => {
     expect(isCritical({ ...pay, at: BASE + 2 * H - 1 }, BASE)).toBe(true);
   });
 });
+
+describe('auditor R2: cobertura = contenido', () => {
+  it('homónimos sin duración: el descubrimiento dice AMBAS horas y luego no hay silencio indebido', async () => {
+    const a = meeting('Reunión', at('2026-10-12T11:00:00+02:00'));
+    const b = meeting('Reunión', at('2026-10-12T11:30:00+02:00'));
+    const r = rig([a, b]);
+    await r.run();
+    expect(r.sent[0]).toContain('11:00');
+    expect(r.sent[0]).toContain('11:30');
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+  });
+
+  it('una ocurrencia homónima que no estaba en el descubrimiento sigue recibiendo su recordatorio', async () => {
+    const a = meeting('Reunión', BASE + 30 * H);
+    const r = rig([a]);
+    await r.run();
+    // aparece después otra con el mismo título y día, a otra hora
+    const b = meeting('Reunión', BASE + 33 * H);
+    const items = [a, b];
+    const sent: string[] = [];
+    const db = r.db;
+    const now = BASE + 33 * H - 2 * H + 60_000;
+    await runVigilanteOnce(
+      {
+        db,
+        agenda: async () => agenda(items),
+        send: async (t) => {
+          sent.push(t);
+          return true;
+        },
+        now: () => now,
+      },
+      TZ,
+    );
+    const text = sent.join('\n');
+    expect(text).toContain('Recordatorio');
+    expect(text).toContain('en 1 h 59 min');
+  });
+});
