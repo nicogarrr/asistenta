@@ -424,7 +424,11 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       'vigilante: construir la agenda',
     );
     if (deps.downloadsHealth && getDownloadsEnabled(deps.db)) {
-      await deps.downloadsHealth().catch((err: unknown) => {
+      await withTimeout(
+        deps.downloadsHealth(),
+        Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
+        'vigilante: salud de descargas',
+      ).catch((err: unknown) => {
         log.warn('vigilante: descargas no disponibles en este barrido', { err: String(err) });
       });
     }

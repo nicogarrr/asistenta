@@ -332,3 +332,56 @@ describe('R1: pérdidas por saturación se dicen', () => {
     expect(sent[1]).toContain('2 no las pude seguir');
   });
 });
+describe('R2: salud acotada y contadores idempotentes', () => {
+  it('una salud que no resuelve no bloquea el barrido ni los avisos', async () => {
+    const r = rig();
+    setDownloadsEnabled(r.db, true);
+    recordDownload(r.db, DIR, created('a.pdf'), BASE);
+    const t0 = Date.now();
+    await runVigilanteOnce(
+      {
+        db: r.db,
+        agenda: async () => emptyAgenda(),
+        send: async (t) => {
+          r.sent.push(t);
+          return true;
+        },
+        now: () => BASE + 100,
+        agendaTimeoutMs: 50,
+        downloadsHealth: () => new Promise(() => {}),
+      },
+      TZ,
+    );
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]).toContain('a.pdf');
+  });
+  it('un getOverride colgado no atasca el controller y stop no espera', async () => {
+    const db = new DatabaseSync(':memory:');
+    setDownloadsEnabled(db, true);
+    const ctl = createDownloadsController({
+      db,
+      getOverride: () => new Promise(() => {}),
+      overrideTimeoutMs: 50,
+    });
+    const st = await ctl.apply();
+    expect(st.running).toBe(false);
+    expect(st.reason).toContain('bóveda');
+    const t0 = Date.now();
+    ctl.stop();
+    expect(Date.now() - t0).toBeLessThan(100);
+  });
+  it('repetir "on" no borra pérdidas pendientes; off -> on sí empieza sesión nueva', async () => {
+    const r = rig();
+    setDownloadsEnabled(r.db, true);
+    for (let i = 0; i < 60; i++) recordDownload(r.db, DIR, created(`f${i}.pdf`, 100 + i), BASE + i);
+    setDownloadsEnabled(r.db, true); // repetido
+    await r.run();
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]).toContain('10 más que no pude seguir');
+    setDownloadsEnabled(r.db, false);
+    setDownloadsEnabled(r.db, true);
+    await r.run();
+    expect(r.sent).toHaveLength(1); // nada viejo resucita
+  });
+});

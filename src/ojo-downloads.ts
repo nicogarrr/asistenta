@@ -54,10 +54,13 @@ export function getDownloadsEnabled(db: DatabaseSync): boolean {
 
 export function setDownloadsEnabled(db: DatabaseSync, enabled: boolean): void {
   initDownloadsStore(db);
+  const wasOn = getDownloadsEnabled(db);
   db.prepare(
     'INSERT INTO vigilante_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(SETTING_KEY, enabled ? 'on' : 'off');
-  if (enabled) {
+  // Los contadores de pérdidas solo se reinician en la transición real apagado -> encendido;
+  // repetir "on" no borra avisos de saturación pendientes.
+  if (enabled && !wasOn) {
     putNum(db, CAP_DROPPED_KEY, 0);
     putNum(db, LOST_REPORTED_KEY, 0);
   }
@@ -247,9 +250,18 @@ export interface DownloadsState {
  * health check y reintenta una vez si el vigilante murió. `stop()` es definitivo (apagado del
  * daemon): invalida cualquier arranque en vuelo y nada vuelve a empezar después.
  */
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, rej) => {
+    t = setTimeout(() => rej(new Error('timeout')), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
+}
+
 export function createDownloadsController(opts: {
   db: DatabaseSync;
   getOverride: () => Promise<string | undefined>;
+  overrideTimeoutMs?: number;
   now?: () => number;
 }): {
   apply: () => Promise<DownloadsState>;
@@ -306,6 +318,7 @@ export function createDownloadsController(opts: {
     if (closed) return { running: false, dir: null, reason: 'apagado' };
     if (!getDownloadsEnabled(opts.db)) {
       dropWatcher();
+      suppressedBase = 0; // sesión nueva en el próximo encendido, igual que los contadores SQLite
       return { running: false, dir: null };
     }
     // Health check: un vigilante sin handles vivos está muerto; se retira y se reintenta.
@@ -315,7 +328,12 @@ export function createDownloadsController(opts: {
     }
     if (watcher) return { running: true, dir: watchedDir };
     const myGen = gen;
-    const override = await opts.getOverride();
+    let override: Awaited<ReturnType<typeof opts.getOverride>>;
+    try {
+      override = await withDeadline(opts.getOverride(), opts.overrideTimeoutMs ?? 10_000);
+    } catch {
+      return { running: false, dir: null, reason: 'la bóveda no respondió a tiempo' };
+    }
     // Tras la espera: ni apagado del daemon, ni /ojo descargas off, ni otra generación.
     if (closed || myGen !== gen || !getDownloadsEnabled(opts.db)) {
       return {

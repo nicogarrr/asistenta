@@ -2186,12 +2186,15 @@ async function serveCommand(): Promise<number> {
       return;
     }
     const quiet = DEFAULT_QUIET_HOURS;
-    const dst = getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
-    const downloadsLine = !dst
-      ? 'Descargas: apagado (/ojo descargas on lo enciende).'
-      : dst.running
-        ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
-        : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
+    const ownerView = isOwnerDm(inbound, vigilanteOwnerId);
+    const dst = ownerView && getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    const downloadsLine = !ownerView
+      ? null
+      : !dst
+        ? 'Descargas: apagado (/ojo descargas on lo enciende).'
+        : dst.running
+          ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
+          : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
     await say(
       inbound,
       [
@@ -2199,7 +2202,9 @@ async function serveCommand(): Promise<number> {
         downloadsLine,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas solo si lo pides: /ojo descargas on.',
         `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
-      ].join('\n'),
+      ]
+        .filter((l): l is string => l !== null)
+        .join('\n'),
       { quote: true },
     );
   };
