@@ -18,6 +18,8 @@ const SETTING_KEY = 'screen_enabled';
 export const SCREEN_STALE_MS = 12 * 60 * 60 * 1000;
 /** Mismo hallazgo (misma huella) no se repite en este plazo. */
 export const SCREEN_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Las filas (ya sin texto) se borran pasado este plazo. */
+export const SCREEN_PURGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_PENDING = 20;
 const MAX_LISTED = 5;
 const SNIPPET_MAX = 110;
@@ -53,7 +55,7 @@ export function setScreenEnabled(db: DatabaseSync, enabled: boolean): void {
   // Al apagar, lo pendiente se descarta: no debe aparecer después, fuera de contexto.
   if (!enabled)
     db.prepare(
-      "UPDATE vigilante_screen SET status = 'descartada' WHERE status = 'pendiente'",
+      "UPDATE vigilante_screen SET status = 'descartada', snippet = '' WHERE status = 'pendiente'",
     ).run();
 }
 
@@ -111,7 +113,8 @@ export function redact(input: string): string {
     (_m, k: string) => `${k} ${HIDDEN}`,
   );
   // Emails.
-  s = s.replace(/[\w.+-]+\s*@\s*[\w-]+(\.[\w-]+)+/g, HIDDEN);
+  // Cualquier token con @ en medio (incluye letras no ASCII, ñ, acentos, dominios IDN).
+  s = s.replace(/[^\s@]*\s?@\s?[^\s@]*/g, HIDDEN);
   // IBAN (con o sin espacios).
   s = s.replace(
     /\b[A-Za-z]{2}\d{2}(?:[ -]?[A-Za-z0-9]{4}){2,7}(?:[ -]?[A-Za-z0-9]{1,4})?\b/g,
@@ -120,7 +123,9 @@ export function redact(input: string): string {
   // URLs completas: pueden llevar tokens.
   s = s.replace(/\bhttps?:\/\/\S+/gi, HIDDEN);
   // Secuencias largas de dígitos (tarjetas, DNI/NIE, teléfonos, cuentas), con separadores.
-  s = s.replace(/(?:\+?\d[\d .-]{7,}\d)/g, (m) => (isDateLike(m) ? m : HIDDEN));
+  s = s.replace(/(?:\+?\d[\d .-]{7,}\d)/g, (m, off: number, all: string) =>
+    isDateLike(m) || isAmountLike(m, all.slice(off + m.length)) ? m : HIDDEN,
+  );
   s = s.replace(/\b\d{9,}\b/g, HIDDEN);
   // DNI / NIE.
   s = s.replace(/\b[XYZxyz]?\d{7,8}[ -]?[A-Za-z]\b/g, HIDDEN);
@@ -131,7 +136,12 @@ export function redact(input: string): string {
 }
 
 function isDateLike(m: string): boolean {
-  return /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(m.trim());
+  return /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}(\s+\d{1,2}[.:]\d{2})?$/.test(m.trim());
+}
+
+/** Importe con miles ("1.234.567" seguido de ",89"): no es un identificador. */
+function isAmountLike(m: string, after: string): boolean {
+  return /^\d{1,3}(\.\d{3})+$/.test(m) && /^,\d{2}(?!\d)/.test(after);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -221,8 +231,10 @@ export function pendingScreen(db: DatabaseSync, now: number): PendingScreen[] {
   initScreenStore(db);
   if (!getScreenEnabled(db)) return [];
   db.prepare(
-    "UPDATE vigilante_screen SET status = 'descartada' WHERE status = 'pendiente' AND at < ?",
+    "UPDATE vigilante_screen SET status = 'descartada', snippet = '' WHERE status = 'pendiente' AND at < ?",
   ).run(now - SCREEN_STALE_MS);
+  // Solo hace falta la huella para el dedupe de 7 días: nada más allá de 30 días.
+  db.prepare('DELETE FROM vigilante_screen WHERE at < ?').run(now - SCREEN_PURGE_MS);
   return db
     .prepare(
       "SELECT key, snippet, at FROM vigilante_screen WHERE status = 'pendiente' ORDER BY at, rowid",
@@ -233,7 +245,7 @@ export function pendingScreen(db: DatabaseSync, now: number): PendingScreen[] {
 export function markScreenNotified(db: DatabaseSync, keys: readonly string[]): void {
   if (keys.length === 0) return;
   const upd = db.prepare(
-    "UPDATE vigilante_screen SET status = 'avisada' WHERE key = ? AND status = 'pendiente'",
+    "UPDATE vigilante_screen SET status = 'avisada', snippet = '' WHERE key = ? AND status = 'pendiente'",
   );
   for (const k of keys) upd.run(k);
 }
@@ -263,16 +275,24 @@ export interface ScreenScanDeps {
   capture: () => Promise<{ path: string; cleanup: () => void }>;
   ocr: (path: string) => Promise<string[]>;
   now?: () => number;
+  /** Tope por paso (por defecto 30 s). */
   ocrTimeoutMs?: number;
+  /** Presupuesto total del escaneo (por defecto 45 s). */
+  budgetMs?: number;
 }
 
 function deadline<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let t: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, rej) => {
-    t = setTimeout(() => rej(new Error(`${label}: más de ${ms} ms`)), ms);
+    t = setTimeout(() => rej(new Error(`${label}: más de ${ms} ms`)), Math.max(1, ms));
   });
   return Promise.race([p, timeout]).finally(() => clearTimeout(t));
 }
+
+/** Presupuesto total de un escaneo: por debajo del tope del barrido (60 s). */
+export const SCAN_BUDGET_MS = 45_000;
+
+type Shot = { path: string; cleanup: () => void };
 
 /** Comprueba ventanas: fail-closed (no se pudo listar, o lista vacía, o alguna excluida). */
 async function windowsSafe(deps: ScreenScanDeps, ms: number): Promise<string | null> {
@@ -288,21 +308,43 @@ async function windowsSafe(deps: ScreenScanDeps, ms: number): Promise<string | n
 }
 
 export async function scanScreenOnce(deps: ScreenScanDeps): Promise<ScanOutcome> {
-  const ms = deps.ocrTimeoutMs ?? 30_000;
+  const started = Date.now();
+  const budget = deps.budgetMs ?? SCAN_BUDGET_MS;
+  const step = deps.ocrTimeoutMs ?? 30_000;
+  // Cada paso espera como mucho `step` y nunca más de lo que queda del presupuesto total.
+  const left = (): number => Math.min(step, budget - (Date.now() - started));
   if (!getScreenEnabled(deps.db)) return { ok: false, reason: 'apagado' };
-  if (!(await deadline(deps.interactive(), ms, 'escritorio').catch(() => false)))
+  if (!(await deadline(deps.interactive(), left(), 'escritorio').catch(() => false)))
     return { ok: false, reason: 'no hay escritorio interactivo' };
   if (!getScreenEnabled(deps.db)) return { ok: false, reason: 'apagado' };
-  const before = await windowsSafe(deps, ms);
+  const before = await windowsSafe(deps, left());
   if (before) return { ok: false, reason: before };
-  let shot: { path: string; cleanup: () => void } | null = null;
+
+  // La captura puede terminar DESPUÉS de que nos rindamos: si llega tarde, se borra igual.
+  let abandoned = false;
+  let landed: Shot | null = null;
+  const safeCleanup = (s: Shot): void => {
+    try {
+      s.cleanup();
+    } catch (err) {
+      log.warn('pantalla: no se pudo borrar la captura', { err: String(err) });
+    }
+  };
+  const capP = deps.capture();
+  capP.then(
+    (s) => {
+      landed = s;
+      if (abandoned) safeCleanup(s);
+    },
+    () => {},
+  );
   try {
-    shot = await deadline(deps.capture(), ms, 'captura');
+    const shot = await deadline(capP, left(), 'captura');
     // Otra comprobación DESPUÉS de capturar: si apareció algo excluido entre medias, se tira.
-    const after = await windowsSafe(deps, ms);
+    const after = await windowsSafe(deps, left());
     if (after) return { ok: false, reason: after };
     if (!getScreenEnabled(deps.db)) return { ok: false, reason: 'apagado' };
-    const lines = await deadline(deps.ocr(shot.path), ms, 'OCR');
+    const lines = await deadline(deps.ocr(shot.path), left(), 'OCR');
     // Off durante el OCR: no se guarda nada.
     if (!getScreenEnabled(deps.db)) return { ok: false, reason: 'apagado' };
     const found = recordScreenFindings(
@@ -315,11 +357,8 @@ export async function scanScreenOnce(deps: ScreenScanDeps): Promise<ScanOutcome>
     log.warn('pantalla: no se pudo leer', { err: String(err) });
     return { ok: false, reason: 'no pude leer la pantalla' };
   } finally {
-    try {
-      shot?.cleanup();
-    } catch (err) {
-      log.warn('pantalla: no se pudo borrar la captura', { err: String(err) });
-    }
+    abandoned = true;
+    if (landed) safeCleanup(landed);
   }
 }
 

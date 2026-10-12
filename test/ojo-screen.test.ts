@@ -6,10 +6,12 @@ import {
   formatScreen,
   getScreenEnabled,
   isExcludedWindow,
+  markScreenNotified,
   pendingScreen,
   recordScreenFindings,
   redact,
   SCREEN_DEDUPE_MS,
+  SCREEN_PURGE_MS,
   SCREEN_STALE_MS,
   scanScreenOnce,
   setScreenEnabled,
@@ -344,5 +346,81 @@ describe('en el barrido del vigilante', () => {
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0]).toContain('Factura vence 15/11/2026');
+  });
+});
+
+describe('R1: borrado tardío, emails no ASCII, importes, retención, presupuesto', () => {
+  it('captura que llega tarde (tras el timeout): se borra igual', async () => {
+    const cleaned: string[] = [];
+    const r = scanRig({
+      capture: () =>
+        new Promise((res) =>
+          setTimeout(
+            () => res({ path: '/tmp/late.jpg', cleanup: () => void cleaned.push('late') }),
+            200,
+          ),
+        ),
+    });
+    expect(await r.run()).toMatchObject({ ok: false });
+    expect(cleaned).toEqual([]);
+    await new Promise((res) => setTimeout(res, 400));
+    expect(cleaned).toEqual(['late']);
+  });
+  it('captura que falla tarde no deja nada ni lanza', async () => {
+    const r = scanRig({
+      capture: () => new Promise((_, rej) => setTimeout(() => rej(new Error('x')), 200)),
+    });
+    expect(await r.run()).toMatchObject({ ok: false });
+    await new Promise((res) => setTimeout(res, 300));
+  });
+  it('presupuesto total: pasos colgados no suman más que el presupuesto', async () => {
+    const db = new DatabaseSync(':memory:');
+    setScreenEnabled(db, true);
+    const t0 = Date.now();
+    const out = await scanScreenOnce({
+      db,
+      interactive: () => new Promise(() => {}),
+      windows: async () => okWin,
+      capture: () => new Promise(() => {}),
+      ocr: () => new Promise(() => {}),
+      ocrTimeoutMs: 1000,
+      budgetMs: 150,
+    });
+    expect(out.ok).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(600);
+  });
+  it.each([
+    'josé@gmail.com',
+    'muñoz@x.es',
+    'ana.lópez@universidad.es',
+    'correo@dominio-ñ.com',
+    'user@exämple.de',
+    'a.b+c@x.org',
+  ])('email %s se oculta', (mail) => {
+    const r = redact(`Factura 45,00 € enviada a ${mail} vence 15/11/2026`);
+    expect(r).not.toContain('@');
+    expect(r).not.toContain(mail.split('@')[0] as string);
+    expect(r).toContain('15/11/2026');
+  });
+  it('importes grandes y fecha con hora no se mutilan', () => {
+    expect(redact('Total a pagar 1.234.567,89 €')).toBe('Total a pagar 1.234.567,89 €');
+    expect(redact('vence 12.05.2026 15.30')).toBe('vence 12.05.2026 15.30');
+    expect(redact('tel 612 345 678 total 1.234,50 €')).toBe('tel [oculto] total 1.234,50 €');
+  });
+  it('tras avisar o descartar no queda el texto; a los 30 días ni la fila', () => {
+    const db = new DatabaseSync(':memory:');
+    setScreenEnabled(db, true);
+    recordScreenFindings(db, findScreenFindings(['Factura vence 15/11/2026']), BASE);
+    const [p] = pendingScreen(db, BASE);
+    markScreenNotified(db, [(p as { key: string }).key]);
+    expect(dump(db)).not.toContain('Factura');
+    expect(dump(db)).toContain('avisada');
+    recordScreenFindings(db, findScreenFindings(['Recibo vence 20/11/2026']), BASE + 10);
+    expect(dump(db)).toContain('Recibo');
+    setScreenEnabled(db, false);
+    expect(dump(db)).not.toContain('Recibo');
+    setScreenEnabled(db, true);
+    pendingScreen(db, BASE + SCREEN_PURGE_MS + 11);
+    expect(JSON.parse(dump(db))).toEqual([]);
   });
 });
