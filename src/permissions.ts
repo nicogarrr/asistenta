@@ -298,6 +298,12 @@ export class Gate {
         match: (c) => this.#isPaymentish(c),
       },
       {
+        id: 'ask-factory-install',
+        verdict: 'ask',
+        reason: 'installs a tool the agent built itself',
+        match: (c) => c.tool === 'fabrica' && argString(c.args, 'action') === 'install',
+      },
+      {
         // Documented here so the effective policy reads top to bottom, but decided in
         // `check()`: the list is ordered deny-ask-allow, and an allow entry in it can
         // never outrank an ask. A purchase flow is nothing but clicks and typing, so
@@ -456,6 +462,19 @@ export class Gate {
     return this.#stageOf(c) === 'confirm';
   }
 
+  /**
+   * Installing a factory-built tool: tool `fabrica`, action `install`. Same
+   * treatment as the charge in a purchase - every automatic allowance in
+   * `check()` refuses it: not the fingerprint memo (a second install of the
+   * same code asks again), not `always`/`session` scopes, not `fullControl`,
+   * not the grant window. Installing code the agent wrote itself is the one
+   * action where a reusable grant would be a standing grant on every tool
+   * the agent might invent later. Nico's rule: installs need approval.
+   */
+  #isFactoryInstall(c: ToolCall): boolean {
+    return c.tool === 'fabrica' && argString(c.args, 'action') === 'install';
+  }
+
   #fingerprint(c: ToolCall): string {
     // Stable per (tool, args) so "approve once" means once for this exact action.
     return `${c.tool}:${stableStringify(c.args)}`;
@@ -601,9 +620,10 @@ export class Gate {
     // it. Read it early so the memo cannot resurrect an approval given for an earlier
     // purchase of the same thing.
     const confirmation = this.#isPaymentConfirmation(call);
+    const factoryInstall = this.#isFactoryInstall(call);
 
     const fp = this.#fingerprint(call);
-    if (approved.has(fp) && !confirmation) {
+    if (approved.has(fp) && !confirmation && !factoryInstall) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -641,7 +661,12 @@ export class Gate {
     // window: an `always` grant the model could spend on `id_rsa` or a card
     // number is a standing grant on everything those unlock. The charge itself sits
     // outside them too, so "Siempre" on `checkout` never becomes "always pays".
-    if (!this.#isPaymentish(call) && !this.#isCredentialish(call) && !confirmation) {
+    if (
+      !this.#isPaymentish(call) &&
+      !this.#isCredentialish(call) &&
+      !confirmation &&
+      !factoryInstall
+    ) {
       if (this.#alwaysAllow.has(call.tool)) {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
       }
@@ -663,13 +688,18 @@ export class Gate {
     // and it must not become the way to make `confirm` unattended.
     if (this.#fullControl) {
       const paymentish = call.tool === 'purchase' || this.#isPaymentish(call);
-      if ((!paymentish || this.#allowPayments) && !this.#isCredentialish(call) && !confirmation) {
+      if (
+        (!paymentish || this.#allowPayments) &&
+        !this.#isCredentialish(call) &&
+        !confirmation &&
+        !factoryInstall
+      ) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
       }
     }
 
     // A fresh grant from an earlier approval covers the rest of this task.
-    if (this.#withinGrantWindow(sessionId, call)) {
+    if (!factoryInstall && this.#withinGrantWindow(sessionId, call)) {
       return this.#record(call, { verdict: 'allow', reason: 'within the approval window' });
     }
 

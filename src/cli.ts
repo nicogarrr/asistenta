@@ -33,6 +33,7 @@ import { parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
+import { createFactorySync } from './factory/loader.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -77,6 +78,7 @@ import { createComputerTool } from './tools/computer.js';
 import { createDocsTool } from './tools/docs.js';
 import { createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
+import { createFactoryTool } from './tools/factory.js';
 import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createMediaTool } from './tools/media.js';
@@ -775,10 +777,12 @@ async function chatCommand(): Promise<number> {
   // no gate at all the batch fails closed and runs nothing, which is exactly the
   // bug this wiring prevents.
   const sessionId = 'local';
+  let factorySyncLocal: () => Promise<void> = async () => {};
   const tools: AgentTool[] = [
     ...fsTools,
     createFetchTool(),
     createDoneTool(),
+    createFactoryTool({ onChange: () => void factorySyncLocal() }),
     createShellTool(config),
     createComputerTool(config, screen, (call) =>
       gate.check(sessionId, { ...call, actor: 'asistenta' }),
@@ -786,6 +790,11 @@ async function chatCommand(): Promise<number> {
   ] as AgentTool[];
 
   const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
+  factorySyncLocal = createFactorySync(
+    (t) => agent.registerFactoryTool(t),
+    (n) => agent.unregisterFactoryTool(n),
+  );
+  await factorySyncLocal();
 
   const lifecycle = installLifecycle({
     name: 'agent',
@@ -875,10 +884,12 @@ async function runCommand(prompt: string): Promise<number> {
   // Same wiring as chatCommand: the batch gate has to share the agent's session so
   // sub-actions see the same decisions, and an unwired gate blocks every batch.
   const sessionId = 'run';
+  let factorySyncRun: () => Promise<void> = async () => {};
   const tools = [
     ...fsTools,
     createFetchTool(),
     createDoneTool(),
+    createFactoryTool({ onChange: () => void factorySyncRun() }),
     createShellTool(config),
     createComputerTool(config, screen, (call) =>
       gate.check(sessionId, { ...call, actor: 'asistenta' }),
@@ -886,6 +897,11 @@ async function runCommand(prompt: string): Promise<number> {
   ] as AgentTool[];
 
   const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
+  factorySyncRun = createFactorySync(
+    (t) => agent.registerFactoryTool(t),
+    (n) => agent.unregisterFactoryTool(n),
+  );
+  await factorySyncRun();
   const result = await agent.run(prompt);
 
   // The final answer goes to stdout as plain text so `pa run` is usable in a
@@ -1329,6 +1345,9 @@ async function serveCommand(): Promise<number> {
     };
   };
 
+  /** thread.key -> live sync of installed factory tools (see factory/loader.ts). */
+  const factorySyncs = new Map<string, () => Promise<void>>();
+
   const threadTools = (thread: Thread): AgentTool[] => {
     const scope = () => thread.key;
     const all: AgentTool[] = [
@@ -1382,6 +1401,15 @@ async function serveCommand(): Promise<number> {
       createDocsTool(docMemory, scope),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createSkillsTool({ store: skills }),
+      // The tool factory: build -> subprocess test -> install with approval.
+      // Installed tools are loaded right after agent creation (below), and an
+      // install mid-chat lands on the next message via this onChange.
+      createFactoryTool({
+        onChange: () => {
+          const sync = factorySyncs.get(thread.key);
+          if (sync) void sync();
+        },
+      }),
       // Window and UI Automation inspection. Read-only, so it is not under the
       // machine mutex: two conversations may both look at the window list at once.
       createWindowsTool(),
@@ -1649,6 +1677,12 @@ async function serveCommand(): Promise<number> {
       sessionId: key,
       deferTools: true,
     });
+    const syncFactory = createFactorySync(
+      (t) => thread.agent.registerFactoryTool(t),
+      (n) => thread.agent.unregisterFactoryTool(n),
+    );
+    factorySyncs.set(key, syncFactory);
+    await syncFactory();
     threads.set(key, thread);
     log.info('thread created', { thread: key });
     evictIdleThreads();
