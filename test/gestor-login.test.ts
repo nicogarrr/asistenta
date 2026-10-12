@@ -6,11 +6,12 @@ import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import vm from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { missingLoginFields, normalizeDomain, parseSiteKey, siteKey } from '../src/gestor/login.js';
 import { GestorStore } from '../src/gestor/store.js';
 import { Gate } from '../src/permissions.js';
-import { buildFillScriptMasked, createBrowserTool } from '../src/tools/browser.js';
+import { buildFillScriptMasked, createBrowserTool, secretFillOk } from '../src/tools/browser.js';
 import { createGestionTool } from '../src/tools/gestion.js';
 import { clearVaultCache, vaultSet } from '../src/vault.js';
 
@@ -88,29 +89,57 @@ describe('convención de claves site:<dominio>:<campo>', () => {
   });
 });
 
-describe('buildFillScriptMasked', () => {
+describe('buildFillScriptMasked (protocolo de tokens)', () => {
+  /**
+   * El script corre en el vm REAL del BrowserService: contexto vacío con
+   * codeGeneration deshabilitado y solo page/state/console inyectados - NO
+   * hay URL, ni Function, ni globals del host. Un AsyncFunction heredaría
+   * los globals del host y ocultaría su ausencia (eso enmascaró el bug de
+   * `new URL` en R1).
+   */
+  async function runInVm(script: string, page: unknown): Promise<string> {
+    const context = vm.createContext(
+      {},
+      { codeGeneration: { strings: false, wasm: false } },
+    ) as Record<string, unknown>;
+    context.page = page;
+    context.state = {};
+    context.console = { log: () => {} };
+    const compiled = new vm.Script(`(async () => {\n${script}\n})()`);
+    return (await compiled.runInContext(context)) as string;
+  }
+
   type Fake = { value: string; calls: string[] };
-  function fakePage(opts: {
+  function fakeSecretPage(opts: {
     href?: string | (() => string);
     onType?: (f: Fake, t: string) => void;
     onFill?: (f: Fake, t: string) => void;
     throwOn?: Record<string, string>;
+    detachBeforeFill?: boolean;
   }) {
     const f: Fake = { value: '', calls: [] };
+    const hrefOf = () =>
+      typeof opts.href === 'function' ? opts.href() : (opts.href ?? 'https://seg-social.es/');
     const maybeThrow = (op: string) => {
       const msg = opts.throwOn?.[op];
       if (msg) throw new Error(msg);
     };
-    const loc = {
-      first: () => loc,
-      evaluate: async (fn: () => string) => {
+    const el = {
+      evaluate: async (fn: unknown) => {
         maybeThrow('evaluate');
-        const href = typeof opts.href === 'function' ? opts.href() : (opts.href ?? '');
-        void fn;
-        return href;
+        // El script usa evaluate para el origen (location.href) y para leer el
+        // valor; el doble distingue por el source de la función.
+        if (String(fn).includes('location.href')) return hrefOf();
+        maybeThrow('readvalue');
+        return f.value;
       },
       fill: async (t: string) => {
         maybeThrow('fill');
+        if (opts.detachBeforeFill) {
+          // Navegación justo tras el chequeo: el handle queda detached y
+          // Playwright arroja - el secreto NO se escribe en el nuevo frame.
+          throw new Error('Target closed (frame navigated)');
+        }
         f.calls.push(`fill:${t}`);
         opts.onFill?.(f, t);
       },
@@ -123,24 +152,23 @@ describe('buildFillScriptMasked', () => {
         f.calls.push(`press:${k}`);
         if (k === 'Delete') f.value = '';
       },
-      pressSequentially: async (t: string) => {
-        maybeThrow('pressSequentially');
+      type: async (t: string) => {
+        maybeThrow('type');
         f.calls.push(`type:${t}`);
         opts.onType?.(f, t);
       },
-      inputValue: async () => {
-        maybeThrow('inputValue');
-        return f.value;
+    };
+    const loc = {
+      first: () => loc,
+      elementHandle: async () => {
+        maybeThrow('elementHandle');
+        return el;
       },
     };
     return { f, page: { locator: () => loc, waitForTimeout: async () => {} } };
   }
-  async function run(script: string, page: unknown): Promise<string> {
-    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-    return new AsyncFunction('page', script)(page);
-  }
   const masked = (value = CANARY_PASS, domain = 'seg-social.es') =>
-    buildFillScriptMasked('page.locator("#pw").first()', '#pw', value, domain);
+    buildFillScriptMasked('page.locator("#pw").first()', value, domain);
   const good = {
     onType: (x: Fake, t: string) => {
       x.value = t;
@@ -150,53 +178,66 @@ describe('buildFillScriptMasked', () => {
     },
   };
 
-  it('rellena bien en el dominio canónico (www y subdominio valen), sin exponer el secreto', async () => {
-    for (const href of ['https://www.seg-social.es/login', 'https://login.seg-social.es/x?y=1']) {
-      const { page, f } = fakePage({ href, ...good });
-      const out = await run(masked(), page);
-      expect(out).toBe('filled #pw (valor del vault, no mostrado)');
+  it('corre en un vm SIN URL ni globals del host y rellena en el dominio canónico', async () => {
+    for (const href of [
+      'https://seg-social.es/login',
+      'https://www.seg-social.es/login',
+      'https://login.seg-social.es/x?y=1',
+    ]) {
+      const { page, f } = fakeSecretPage({ href, ...good });
+      const out = await runInVm(masked(), page);
+      expect(out).toBe('filled');
       expect(f.calls).toContain(`fill:${CANARY_PASS}`); // el campo SÍ lo recibe
       expect(out).not.toContain(CANARY_PASS);
     }
   });
 
-  it('origen distinto, ilegible o http: RECHAZADO sin una sola pulsación', async () => {
+  it('www con punto escapado: wwwxexample.com y www-example.com NO son example.com', async () => {
+    for (const href of ['https://wwwxexample.com/', 'https://www-example.com/']) {
+      const { page, f } = fakeSecretPage({ href, ...good });
+      const out = await runInVm(masked(CANARY_PASS, 'example.com'), page);
+      expect(out).toBe('rejected_origin');
+      expect(f.calls.some((x) => x.includes(CANARY_PASS))).toBe(false);
+    }
+    const { page } = fakeSecretPage({ href: 'https://www.example.com/', ...good });
+    expect(await runInVm(masked(CANARY_PASS, 'example.com'), page)).toBe('filled');
+  });
+
+  it('origen distinto, ilegible o http: rejected_origin sin una sola pulsación', async () => {
     const cases = [
       { href: 'https://other.invalid/login' },
       { href: 'https://seg-social.es.evil.invalid/' },
       { href: 'http://seg-social.es/login' },
-      { throwOn: { evaluate: ' SecurityError: cross-origin frame' } },
+      { throwOn: { evaluate: 'SecurityError: cross-origin frame' } },
     ];
     for (const c of cases) {
-      const { page, f } = fakePage({ href: 'https://seg-social.es/', ...good, ...c });
-      const out = await run(masked(), page);
-      expect(out).toContain('RECHAZADO');
-      expect(out).not.toContain(CANARY_PASS);
+      const { page, f } = fakeSecretPage({ href: 'https://seg-social.es/', ...good, ...c });
+      const out = await runInVm(masked(), page);
+      expect(out).toBe('rejected_origin');
       expect(f.calls.some((x) => x.includes(CANARY_PASS))).toBe(false);
     }
   });
 
-  it('localhost puede ser http (desarrollo), un dominio real no', async () => {
-    const { page } = fakePage({ href: 'http://localhost:8080/login', ...good });
-    const out = await run(masked(CANARY_PASS, 'localhost'), page);
-    expect(out).toContain('filled');
+  it('localhost puede ser http (desarrollo)', async () => {
+    const { page } = fakeSecretPage({ href: 'http://localhost:8080/login', ...good });
+    expect(await runInVm(masked(CANARY_PASS, 'localhost'), page)).toBe('filled');
   });
 
-  it('B1: un error de fill que cita el valor sale genérico, sin canario', async () => {
-    const { page } = fakePage({
+  it('un error de fill que cita el valor devuelve token genérico', async () => {
+    const { page } = fakeSecretPage({
       href: 'https://seg-social.es/',
       ...good,
       throwOn: { fill: `locator.fill: Timeout 3000ms exceeded, value=${CANARY_PASS}` },
     });
-    const out = await run(masked(), page);
-    expect(out).toContain('no se pudo escribir o verificar');
+    const out = await runInVm(masked(), page);
+    expect(out).toBe('error_write');
     expect(out).not.toContain(CANARY_PASS);
     expect(out).not.toContain('Timeout');
   });
 
-  it('B1: errores de click/press/pressSequentially en el reintento salen genéricos', async () => {
-    for (const op of ['click', 'press', 'pressSequentially'] as const) {
-      const { page } = fakePage({
+  it('errores de click/press/type en el reintento devuelven error_retry', async () => {
+    for (const op of ['click', 'press', 'type'] as const) {
+      const { page } = fakeSecretPage({
         href: 'https://seg-social.es/',
         onFill: (x) => {
           x.value = 'wrong';
@@ -206,72 +247,73 @@ describe('buildFillScriptMasked', () => {
         },
         throwOn: { [op]: `${op} failed on value=${CANARY_PASS}` },
       });
-      const out = await run(masked(), page);
-      expect(out).toContain('no se pudo reintentar o verificar');
+      const out = await runInVm(masked(), page);
+      expect(out).toBe('error_retry');
       expect(out).not.toContain(CANARY_PASS);
-      expect(out).not.toContain('failed');
     }
   });
 
-  it('B3: una lectura imposible es "no verificado", NUNCA un filled inventado', async () => {
-    const { page } = fakePage({
+  it('lectura imposible es error_verify/error_write, NUNCA un filled inventado', async () => {
+    // Campo no-input: el read-back devuelve null.
+    const { page } = fakeSecretPage({
+      href: 'https://seg-social.es/',
+      onFill: () => {},
+      onType: () => {},
+    });
+    (page as never as { locator: () => unknown }).locator = () => {
+      const el = {
+        evaluate: async (fn: unknown) => {
+          if (String(fn).includes('location.href')) return 'https://seg-social.es/';
+          return null; // no es un input
+        },
+        fill: async () => {},
+        click: async () => {},
+        press: async () => {},
+        type: async () => {},
+      };
+      const locObj = { first: (): unknown => locObj, elementHandle: async () => el };
+      return locObj;
+    };
+    expect(await runInVm(masked(), page)).toBe('error_verify');
+    // Read-back que arroja junto al fill.
+    const { page: page2 } = fakeSecretPage({
       href: 'https://seg-social.es/',
       ...good,
-      throwOn: { inputValue: 'element is not visible' },
+      throwOn: { readvalue: 'detached frame' },
     });
-    const out = await run(masked(), page);
-    expect(out).toContain('no se pudo escribir o verificar');
-    expect(out).not.toContain('filled');
-    expect(out).not.toContain(CANARY_PASS);
+    expect(await runInVm(masked(), page2)).toBe('error_write');
   });
 
-  it('B3/B1: la lectura del reintento también es honesta y genérica', async () => {
-    // Primera lectura ok (wrong), la del reintento arroja.
-    let reads2 = 0;
-    const f3: { value: string; calls: string[] } = { value: '', calls: [] };
-    const loc3 = {
-      first: () => loc3,
-      evaluate: async () => 'https://seg-social.es/',
-      fill: async (t: string) => {
-        f3.value = t === '' ? '' : 'wrong';
-      },
-      click: async () => {},
-      press: async () => {},
-      pressSequentially: async (t: string) => {
-        f3.value = t;
-      },
-      inputValue: async () => {
-        reads2++;
-        if (reads2 === 2) throw new Error('detached frame');
-        return f3.value;
-      },
-    };
-    const page3 = { locator: () => loc3, waitForTimeout: async () => {} };
-    const out = await run(masked(), page3);
-    expect(out).toContain('no se pudo reintentar o verificar');
-    expect(out).not.toContain('filled');
-    expect(out).not.toContain(CANARY_PASS);
+  it('TOCTOU: swap de frame JUSTO entre evaluate y fill aborta sin escribir', async () => {
+    const { page, f } = fakeSecretPage({
+      href: 'https://seg-social.es/',
+      ...good,
+      detachBeforeFill: true,
+    });
+    const out = await runInVm(masked(), page);
+    expect(out).toBe('error_write');
+    expect(f.calls.some((x) => x.includes(CANARY_PASS))).toBe(false);
   });
 
-  it('navegación a mitad de fill: el segundo chequeo de origen frena el reintento', async () => {
-    let navigated = false;
-    const { page, f } = fakePage({
-      href: () => (navigated ? 'https://evil.invalid/' : 'https://seg-social.es/'),
+  it('swap durante el reintento: el segundo chequeo frena antes de teclear', async () => {
+    let swapped = false;
+    const { page, f } = fakeSecretPage({
+      href: () => (swapped ? 'https://evil.invalid/' : 'https://seg-social.es/'),
       onFill: (x) => {
         x.value = 'wrong';
-        navigated = true; // la página cambia tras el primer fill
+        swapped = true;
       },
       onType: (x, t) => {
         x.value = t;
       },
     });
-    const out = await run(masked(), page);
-    expect(out).toContain('RECHAZADO');
+    const out = await runInVm(masked(), page);
+    expect(out).toBe('rejected_origin');
     expect(f.calls.some((x) => x.startsWith('type:'))).toBe(false);
   });
 
-  it('doble mismatch: ATENCIÓN final sin valor ni lo leído', async () => {
-    const { page } = fakePage({
+  it('doble mismatch: token mismatch, sin valor ni lo leído', async () => {
+    const { page } = fakeSecretPage({
       href: 'https://seg-social.es/',
       onFill: (x, t) => {
         x.value = `${t}-mangled`;
@@ -280,10 +322,18 @@ describe('buildFillScriptMasked', () => {
         x.value = `${t}-mangled`;
       },
     });
-    const out = await run(masked(), page);
-    expect(out).toContain('ATENCIÓN');
+    const out = await runInVm(masked(), page);
+    expect(out).toBe('mismatch');
     expect(out).not.toContain(CANARY_PASS);
     expect(out).not.toContain('mangled');
+  });
+
+  it('secretFillOk solo acepta los dos tokens de éxito', () => {
+    expect(secretFillOk('filled')).toBe(true);
+    expect(secretFillOk('filled_retried')).toBe(true);
+    for (const bad of ['mismatch', 'rejected_origin', 'error_write', 'filled CAN4RY', '']) {
+      expect(secretFillOk(bad)).toBe(false);
+    }
   });
 });
 
@@ -308,16 +358,13 @@ describe('browser fill con secret_key', () => {
         }
         if (opts.captured) opts.captured.script = script;
         if (opts.fillThrows) throw new Error(opts.fillThrows);
-        return {
-          text: opts.fillText ?? 'filled #pw (valor del vault, no mostrado)',
-          console: [],
-        };
+        return { text: opts.fillText ?? 'filled', console: [] };
       },
     };
     return createBrowserTool(service as never, () => 'chat#1');
   }
 
-  it('resuelve el secreto del vault y no lo expone en texto ni details', async () => {
+  it('resuelve el secreto del vault y devuelve SOLO mensaje fijo + details allowlist', async () => {
     await seedVault('seg-social.es', { password: CANARY_PASS });
     const captured: { script?: string } = {};
     const tool = toolWithFakeService({ captured });
@@ -326,11 +373,52 @@ describe('browser fill con secret_key', () => {
       selector: '#pw',
       secret_key: 'site:seg-social.es:password',
     });
+    expect(JSON.stringify(res.content)).toContain('Campo rellenado con el valor del vault');
     expect(JSON.stringify(res.content)).not.toContain(CANARY_PASS);
     expect(JSON.stringify(res.details)).not.toContain(CANARY_PASS);
-    expect(JSON.stringify(res.details)).toContain('site:seg-social.es:password');
+    expect(res.details).toMatchObject({
+      secret_key: 'site:seg-social.es:password',
+      status: 'filled',
+      visible: true,
+      resolvedAs: 'selector',
+    });
+    // Allowlist: nada de locatorJs/selector/internals en details.
+    expect(JSON.stringify(res.details)).not.toContain('locatorJs');
     // La frontera interna: el script que va al navegador SÍ lleva el valor.
     expect(captured.script).toContain(CANARY_PASS);
+  });
+
+  it('B1: fragmento parcial o JSON-escaped del valor en la salida no atraviesa', async () => {
+    await seedVault('seg-social.es', { password: CANARY_PASS });
+    for (const dirty of [
+      `filled ${CANARY_PASS.slice(0, 9)}`, // fragmento parcial
+      `filled ${JSON.stringify(CANARY_PASS).slice(1, 14)}`, // JSON-escaped
+      `filled\u0041${CANARY_PASS.slice(0, 6)}`, // mezcla con escape
+    ]) {
+      const tool = toolWithFakeService({ fillText: dirty });
+      const res = await tool.execute('c1x', {
+        action: 'fill',
+        selector: '#pw',
+        secret_key: 'site:seg-social.es:password',
+      });
+      // Token desconocido -> mensaje genérico fijo, isError, cero canario.
+      expect(JSON.stringify(res.content)).not.toContain('CAN4RY');
+      expect(JSON.stringify(res.details)).not.toContain('CAN4RY');
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('no se pudo verificar');
+    }
+  });
+
+  it('B1: un selector contaminado no puede arrastrar el secreto al mensaje', async () => {
+    await seedVault('seg-social.es', { password: CANARY_PASS });
+    const tool = toolWithFakeService({});
+    const res = await tool.execute('c1y', {
+      action: 'fill',
+      selector: `#pw-${CANARY_PASS}`,
+      secret_key: 'site:seg-social.es:password',
+    });
+    expect(JSON.stringify(res.content)).not.toContain(CANARY_PASS);
+    expect(JSON.stringify(res.details)).not.toContain(CANARY_PASS);
   });
 
   it('B2: página en otro origen -> rechazo ANTES de tocar el vault o teclear', async () => {
@@ -382,39 +470,33 @@ describe('browser fill con secret_key', () => {
     expect(captured.script).toContain(CANARY_PASS);
   });
 
-  it('B1: un execJs que arroja citando el valor sale como error genérico', async () => {
+  it('un execJs que arroja citando el valor sale como error genérico', async () => {
     await seedVault('seg-social.es', { password: CANARY_PASS });
     const tool = toolWithFakeService({ fillThrows: `locator.fill: value=${CANARY_PASS}` });
-    await expect(
-      tool.execute('c6', {
-        action: 'fill',
-        selector: '#pw',
-        secret_key: 'site:seg-social.es:password',
-      }),
-    ).rejects.toThrow(/No se pudo escribir el secreto/);
     try {
-      await tool.execute('c6b', {
+      await tool.execute('c6', {
         action: 'fill',
         selector: '#pw',
         secret_key: 'site:seg-social.es:password',
       });
       expect.unreachable();
     } catch (err) {
+      expect(String(err)).toContain('No se pudo escribir el secreto');
       expect(String(err)).not.toContain(CANARY_PASS);
     }
   });
 
-  it('B1: un texto devuelto que contuviera el valor se sustituye entero', async () => {
+  it('status de error del protocolo -> isError con mensaje fijo', async () => {
     await seedVault('seg-social.es', { password: CANARY_PASS });
-    const tool = toolWithFakeService({ fillText: `oops ${CANARY_PASS}` });
-    const res = await tool.execute('c7', {
+    const tool = toolWithFakeService({ fillText: 'rejected_origin' });
+    const res = await tool.execute('c6z', {
       action: 'fill',
       selector: '#pw',
       secret_key: 'site:seg-social.es:password',
     });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain('RECHAZADO');
     expect(JSON.stringify(res.content)).not.toContain(CANARY_PASS);
-    expect(JSON.stringify(res.details)).not.toContain(CANARY_PASS);
-    expect(JSON.stringify(res.content)).toContain('no se pudo verificar');
   });
 
   it('clave ausente: error que nombra la clave y el comando exacto, sin valor', async () => {
@@ -449,7 +531,7 @@ describe('browser fill con secret_key', () => {
     ).rejects.toThrow(/site:<dominio>:<campo>/);
   });
 
-  it('el Gate pregunta por CUALQUIER secret_key, username incluido, bajo fullControl y sin memo', async () => {
+  it('el Gate pregunta por CUALQUIER secret_key, username incluido, bajo fullControl', async () => {
     let asked = 0;
     const gate = new Gate({
       dbPath: join(tmp(), 'g.db'),

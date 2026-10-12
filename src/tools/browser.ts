@@ -234,77 +234,141 @@ return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' 
 }
 
 /**
- * The read-back fill for a secret typed straight from the vault (fill with
- * `secret_key`). This is a DEDICATED, FAIL-CLOSED channel:
+ * The secret fill channel (fill with `secret_key`) as a FIXED protocol, not a
+ * text: the script returns one status TOKEN from a closed set and the tool
+ * maps it to a fixed Spanish message. No page-derived string ever crosses -
+ * there is nothing to censor, so no partial or escaped fragment of the value
+ * can leak through an unknown string.
  *
- * - Origin binding: before ANY typing, the frame that owns the field must be
- *   https (or localhost) on the key's canonical domain or a subdomain; the
- *   check runs again before the retry. A mismatch, an illegible origin or an
- *   insecure scheme returns RECHAZADO without a single keystroke.
- * - Every page operation sits in its own try/catch with a generic message:
- *   Playwright errors can quote the typed value in their call logs, so no
- *   error text ever leaves this script.
- * - Verification is honest: a read-back that cannot run is "no se pudo
- *   verificar", never an invented match.
- * - The comparison is EXACT (a password's case and spaces are the password),
- *   and no returned string contains the wanted or the actual field value.
+ * Mechanics, hardened:
+ *
+ * - Origin binding on a STABLE element: the locator resolves ONCE to an
+ *   element handle, and the origin check and the typing run on that same
+ *   element in that same frame. A navigation or swap detaches the handle and
+ *   every later operation throws, which aborts - it can never retarget the
+ *   secret into a new frame. The check also runs again before the retry.
+ * - The origin must be https (localhost excepted) on the key's canonical
+ *   domain or a subdomain. No URL constructor: the vm sandbox this runs in
+ *   has no URL global, so the href is parsed by hand.
+ * - Every page operation sits in its own try/catch: Playwright errors can
+ *   quote the typed value in their call logs, so no error text leaves here.
+ * - Verification is honest: a read-back that cannot run is error_verify,
+ *   never an invented match. The comparison is EXACT (a password's case and
+ *   spaces are the password).
  */
-export function buildFillScriptMasked(
-  locatorJs: string,
-  label: string,
-  value: string,
-  domain: string,
-): string {
+export type SecretFillStatus =
+  | 'filled'
+  | 'filled_retried'
+  | 'rejected_origin'
+  | 'error_write'
+  | 'error_verify'
+  | 'error_retry'
+  | 'mismatch';
+
+export const SECRET_FILL_STATUSES: readonly SecretFillStatus[] = [
+  'filled',
+  'filled_retried',
+  'rejected_origin',
+  'error_write',
+  'error_verify',
+  'error_retry',
+  'mismatch',
+];
+
+/** The fixed message for a status token. Inputs are the key's domain only. */
+export function secretFillMessage(status: string, domain: string): string {
+  switch (status as SecretFillStatus) {
+    case 'filled':
+      return 'Campo rellenado con el valor del vault (no mostrado).';
+    case 'filled_retried':
+      return 'Campo rellenado con el valor del vault (no mostrado), reintentado tras limpiar el campo.';
+    case 'rejected_origin':
+      return `RECHAZADO: el campo no está en ${domain} (origen distinto, ilegible o no seguro). No se ha escrito nada.`;
+    case 'error_write':
+      return 'ATENCIÓN: no se pudo escribir en el campo (valor del vault, no mostrado).';
+    case 'error_verify':
+      return 'ATENCIÓN: no se pudo verificar el contenido del campo (valor del vault, no mostrado).';
+    case 'error_retry':
+      return 'ATENCIÓN: no se pudo reintentar la escritura (valor del vault, no mostrado).';
+    case 'mismatch':
+      return 'ATENCIÓN: el campo no quedó con el valor del vault tras dos intentos. Revisa el campo (autocompletado, gestor de contraseñas) antes de continuar; el valor no se muestra por seguridad.';
+    default:
+      // An unknown token says the channel was tampered or broke: fail closed.
+      return 'ATENCIÓN: no se pudo verificar el campo (valor del vault, no mostrado).';
+  }
+}
+
+/** Whether the status means the value actually landed in the field. */
+export function secretFillOk(status: string): boolean {
+  return status === 'filled' || status === 'filled_retried';
+}
+
+export function buildFillScriptMasked(locatorJs: string, value: string, domain: string): string {
   const val = JSON.stringify(value);
-  const named = JSON.stringify(label);
   const dom = JSON.stringify(domain);
   return `const loc = ${locatorJs};
 const want = ${val};
 const expected = ${dom};
-const frameUrl = async () => {
-  try {
-    return new URL(await loc.evaluate(() => String(location.href)));
-  } catch {
-    return null;
-  }
+const parse = (href) => {
+  const m = /^([a-z][a-z0-9+.-]*):\\/\\/([^/?#]*)/i.exec(String(href ?? ''));
+  if (!m) return null;
+  let h = m[2];
+  const at = h.lastIndexOf('@');
+  if (at !== -1) h = h.slice(at + 1);
+  const colon = h.indexOf(':');
+  if (colon !== -1) h = h.slice(0, colon);
+  return { proto: m[1].toLowerCase(), host: h.toLowerCase() };
 };
 const onExpected = (u) => {
   if (!u) return false;
-  const h = u.hostname.toLowerCase().replace(/^www./, '');
-  const local = h === 'localhost' || h === '127.0.0.1';
-  if (u.protocol !== 'https:' && !local) return false;
-  return h === expected || h.endsWith('.' + expected);
+  const hh = u.host.replace(/^www\\./, '');
+  const local = hh === 'localhost' || hh === '127.0.0.1';
+  if (u.proto !== 'https' && !local) return false;
+  return hh === expected || hh.endsWith('.' + expected);
 };
-const rejected = 'RECHAZADO: el campo no esta en ' + expected + ' (origen distinto, ilegible o no seguro). No se ha escrito nada.';
-if (!onExpected(await frameUrl())) return rejected;
-let retried = false;
-let got;
+let el;
 try {
-  await loc.fill(want);
-  await page.waitForTimeout(300);
-  got = await loc.inputValue();
+  el = await loc.elementHandle();
 } catch {
-  return 'ATENCIÓN: no se pudo escribir o verificar el campo ' + ${named} + ' (valor del vault, no mostrado).';
+  return 'error_write';
 }
+if (!el) return 'error_write';
+const frameOk = async () => {
+  try {
+    return onExpected(parse(await el.evaluate(() => String(location.href))));
+  } catch {
+    return false;
+  }
+};
+if (!(await frameOk())) return 'rejected_origin';
+let got;
+let retried = false;
+try {
+  await el.fill(want);
+  await page.waitForTimeout(300);
+  got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
+} catch {
+  return 'error_write';
+}
+if (got === null) return 'error_verify';
 if (got !== want) {
   retried = true;
-  if (!onExpected(await frameUrl())) return rejected;
+  if (!(await frameOk())) return 'rejected_origin';
   try {
-    await loc.fill('');
-    await loc.click();
-    await loc.press('Control+A');
-    await loc.press('Delete');
-    await loc.pressSequentially(want, { delay: 60 });
+    await el.fill('');
+    await el.click();
+    await el.press('Control+A');
+    await el.press('Delete');
+    await el.type(want, { delay: 60 });
     await page.waitForTimeout(500);
-    got = await loc.inputValue();
+    got = await el.evaluate((e) => (e && typeof e.value === 'string' ? e.value : null));
   } catch {
-    return 'ATENCIÓN: no se pudo reintentar o verificar el campo ' + ${named} + ' (valor del vault, no mostrado).';
+    return 'error_retry';
   }
+  if (got === null) return 'error_verify';
 }
-if (got !== want) {
-  return 'ATENCIÓN: el campo ' + ${named} + ' no quedo con el valor del vault tras dos intentos. Revisa el campo (autocompletado, gestor de contraseñas) antes de continuar; el valor no se muestra por seguridad.';
-}
-return 'filled ' + ${named} + ' (valor del vault, no mostrado)' + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
+if (got !== want) return 'mismatch';
+return retried ? 'filled_retried' : 'filled';`;
 }
 
 /**
@@ -612,37 +676,45 @@ export function createBrowserTool(
             };
           }
           if (canonicalKey && secretDomain) {
-            // Dedicated secret channel: errors never propagate verbatim
-            // (Playwright can quote the typed value in its call logs), and a
-            // returned text that somehow contains the value is replaced
-            // wholesale. Nothing on this path logs code, value or error.
-            let text: ExecJsResult;
+            // Dedicated secret channel, FIXED PROTOCOL: the script returns one
+            // status token from a closed set and the message comes from a
+            // fixed map - no page-derived string crosses, so there is nothing
+            // to censor (a partial or escaped fragment of the value cannot
+            // leak through an unknown string). Errors never propagate verbatim
+            // (Playwright can quote the typed value in its call logs), details
+            // are an allowlist, and nothing on this path logs code, value or
+            // error.
+            let status: string;
             try {
-              text = await service.execJs(
+              const res: ExecJsResult = await service.execJs(
                 scope,
-                buildFillScriptMasked(
-                  resolved.locatorJs,
-                  resolved.selector ?? target,
-                  value,
-                  secretDomain,
-                ),
+                buildFillScriptMasked(resolved.locatorJs, value, secretDomain),
               );
+              status = res.text.trim();
             } catch {
-              throw new Error(
-                `No se pudo escribir el secreto en ${target} (valor del vault, no mostrado).`,
-              );
+              throw new Error('No se pudo escribir el secreto (valor del vault, no mostrado).');
             }
-            const safeText = text.text.includes(value)
-              ? `ATENCIÓN: no se pudo verificar el campo ${target} (valor del vault, no mostrado).`
-              : text.text;
+            // An unknown token is never echoed anywhere: it could carry a
+            // fragment of the value, so details record 'unknown' and the
+            // message map fails closed.
+            const known = SECRET_FILL_STATUSES.includes(status as SecretFillStatus)
+              ? status
+              : 'unknown';
+            const ok = secretFillOk(known);
             return {
               content: [
                 {
                   type: 'text',
-                  text: `${safeText}${resolved.how === 'selector' ? '' : ` (resolved as ${resolved.how})`}${visibleNote(resolved.visible)}`,
+                  text: `${secretFillMessage(status, secretDomain)}${resolved.how === 'selector' ? '' : ` (resolved as ${resolved.how})`}${visibleNote(resolved.visible)}`,
                 },
               ],
-              details: { ...resolved, ...secretDetails, filled: safeText },
+              details: {
+                secret_key: canonicalKey,
+                status: known,
+                visible: Boolean(resolved.visible),
+                resolvedAs: resolved.how,
+              },
+              isError: !ok,
             };
           }
           const text = await service.execJs(
