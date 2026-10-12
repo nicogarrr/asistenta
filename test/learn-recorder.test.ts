@@ -1,5 +1,3 @@
-// biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que db.js/vault.js carguen paths.ts
-import './factory-test-env.js';
 import { describe, expect, it } from 'vitest';
 import { LearnRecorder } from '../src/learn.js';
 
