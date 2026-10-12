@@ -1734,7 +1734,7 @@ async function serveCommand(): Promise<number> {
       // Durable fallback: a goal notification's sent id lives in SQLite, so a
       // reply to a pending decision finds its owning thread even after a
       // daemon restart emptied messageThread.
-      const goalScope = goalNotifier.scopeBySentId(inbound.replyToMessageId);
+      const goalScope = goalNotifier.scopeBySentId(chatKey_, inbound.replyToMessageId);
       if (goalScope) {
         const { chatKey: goalChatKey_, thread: goalThread_ } = splitGoalScope(goalScope);
         if (goalChatKey_ === chatKey_) {

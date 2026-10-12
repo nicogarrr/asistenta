@@ -4,7 +4,12 @@
  *
  * 1. Each finding is notified ONCE. The key is stable (kind + normalised
  *    reason), so a milestone re-detected on the next tick is a duplicate, not
- *    a second message.
+ *    a second message - and an in-flight claim per (goal, key) keeps a tick,
+ *    the boot flush and the delivery engine from sending the same row twice
+ *    while one send is still on the wire. Exactly-once is NOT promised when
+ *    the network answer is uncertain (delivered-but-threw): the claim releases
+ *    on failure and the retry decides, so at worst a message repeats - the
+ *    failure mode that loses nothing.
  * 2. A failed send is retried, not forgotten: only a confirmed delivery marks
  *    the row. Pending rows are re-attempted on every tick AND by an independent
  *    delivery engine on its own clock (flushAll), and dropped after a day, so
@@ -110,6 +115,10 @@ export class GoalNotifier {
   readonly #send: (goal: Goal, text: string) => Promise<string | null>;
   readonly #resolveGoal: (id: string) => Goal | null;
   readonly #now: () => number;
+  /** (goal_id:nkey) with a send on the wire right now: one delivery path at a time per row. */
+  readonly #inflight = new Set<string>();
+  /** Reentrancy guard: delivery loops never overlap each other. */
+  #flushingAll = false;
 
   constructor(deps: {
     db: DatabaseSync;
@@ -160,14 +169,21 @@ export class GoalNotifier {
     return Number(row?.n ?? 0) > 0;
   }
 
-  /** The owning goal's scope for a delivered message: durable reply routing. */
-  scopeBySentId(sentId: string): string | null {
-    const row = this.#db
-      .prepare(
-        'SELECT goal_id FROM goal_notifications WHERE sent_id = ? ORDER BY created_at DESC LIMIT 1',
-      )
-      .get(sentId) as { goal_id: string } | undefined;
-    return row ? (this.#resolveGoal(row.goal_id)?.scope ?? null) : null;
+  /**
+   * The owning goal's scope for a delivered message: durable reply routing.
+   * Telegram message ids are PER CHAT, never global, so the lookup is by full
+   * destination identity (chatKey, which includes the account) + sent_id -
+   * two chats holding the same sent_id resolve to their own goal each.
+   */
+  scopeBySentId(chatKey: string, sentId: string): string | null {
+    const rows = this.#db
+      .prepare('SELECT goal_id FROM goal_notifications WHERE sent_id = ? ORDER BY created_at DESC')
+      .all(sentId) as { goal_id: string }[];
+    for (const row of rows) {
+      const goal = this.#resolveGoal(row.goal_id);
+      if (goal && splitGoalScope(goal.scope).chatKey === chatKey) return goal.scope;
+    }
+    return null;
   }
 
   /**
@@ -176,6 +192,16 @@ export class GoalNotifier {
    * never runs work - it only delivers.
    */
   async flushAll(): Promise<void> {
+    if (this.#flushingAll) return; // delivery loops never overlap
+    this.#flushingAll = true;
+    try {
+      await this.#flushAllInner();
+    } finally {
+      this.#flushingAll = false;
+    }
+  }
+
+  async #flushAllInner(): Promise<void> {
     const ids = this.#db
       .prepare('SELECT DISTINCT goal_id FROM goal_notifications WHERE delivered = 0')
       .all() as { goal_id: string }[];
@@ -208,11 +234,20 @@ export class GoalNotifier {
   }
 
   async #attempt(goal: Goal, key: string, text: string): Promise<boolean> {
+    // In-flight exclusion per (goal, key) for EVERY path: report, tick flush,
+    // boot flush and the engine can race each other; only one send per row
+    // may be on the wire at a time. The claim releases on failure so the
+    // retry is never lost.
+    const claim = `${goal.id}:${key}`;
+    if (this.#inflight.has(claim)) return false;
+    this.#inflight.add(claim);
     let sentId: string | null = null;
     try {
       sentId = await this.#send(goal, text);
     } catch {
       sentId = null;
+    } finally {
+      this.#inflight.delete(claim);
     }
     if (sentId) {
       // The sent id is stored: reply routing survives a daemon restart.

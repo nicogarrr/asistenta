@@ -264,8 +264,116 @@ describe('goal notifier', () => {
       resolveGoal: (id) => goals.read(id),
     });
     expect(await notifier.report(g, 'decision', '¿20 o 2000?')).toBe('sent');
-    expect(notifier.scopeBySentId('777')).toBe(g.scope);
-    expect(notifier.scopeBySentId('desconocido')).toBeNull();
+    expect(notifier.scopeBySentId('telegram:test:123', '777')).toBe(g.scope);
+    expect(notifier.scopeBySentId('telegram:test:123', 'desconocido')).toBeNull();
+    expect(notifier.scopeBySentId('telegram:test:otro', '777')).toBeNull();
+  });
+
+  it('resolves the same sent_id in two chats to each chat\u2019s own goal (restart-safe)', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const a = goals.propose({
+      scope: 'telegram:acc:123#main',
+      title: 'A',
+      verbatim: 'v',
+      plan: [{ text: 'p', done: false }],
+      cadence: '20 * * * *',
+    });
+    const b = goals.propose({
+      scope: 'telegram:acc:999#m55',
+      title: 'B',
+      verbatim: 'v',
+      plan: [{ text: 'p', done: false }],
+      cadence: '20 * * * *',
+    });
+    const sharedDb = newDb();
+    // Telegram message ids are per chat: BOTH deliveries get id 42.
+    const mkNotifier = () =>
+      new GoalNotifier({
+        db: sharedDb,
+        send: () => Promise.resolve('42'),
+        resolveGoal: (id) => goals.read(id),
+      });
+    const n1 = mkNotifier();
+    expect(await n1.report(a, 'decision', '¿A?')).toBe('sent');
+    expect(await n1.report(b, 'decision', '¿B?')).toBe('sent');
+    // A fresh notifier over the same db (a daemon restart) resolves both.
+    const n2 = mkNotifier();
+    expect(n2.scopeBySentId('telegram:acc:123', '42')).toBe(a.scope);
+    expect(n2.scopeBySentId('telegram:acc:999', '42')).toBe(b.scope);
+    expect(n2.scopeBySentId('telegram:acc:777', '42')).toBeNull();
+  });
+
+  it('never sends the same row twice while a send is on the wire', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g = proposeIn(goals, 'carrera');
+    let sends = 0;
+    let release!: (id: string) => void;
+    const gate = new Promise<string>((res) => {
+      release = res;
+    });
+    const notifier = new GoalNotifier({
+      db: newDb(),
+      send: () => {
+        sends++;
+        return gate; // suspended until the test lets it land
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    const reportP = notifier.report(g, 'decision', '¿20 o 2000?');
+    await new Promise((r) => setTimeout(r, 10)); // send 1 is on the wire now
+    await notifier.flushAll(); // must NOT start send 2 on the same row
+    await notifier.flush(g); // nor the tick flush
+    expect(sends).toBe(1);
+    release('m-1');
+    expect(await reportP).toBe('sent');
+    expect(sends).toBe(1);
+    // Failure releases the claim: the retry still happens.
+    let failOnce = true;
+    const notifier2 = new GoalNotifier({
+      db: newDb(),
+      send: () => {
+        if (failOnce) {
+          failOnce = false;
+          return Promise.resolve(null);
+        }
+        return Promise.resolve('m-2');
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    expect(await notifier2.report(g, 'hito', 'salió')).toBe('pending');
+    expect(await notifier2.flushAll().then(() => notifier2.hasPending(g.id))).toBe(false);
+  });
+
+  it('two concurrent flushAll loops do not overlap', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g1 = proposeIn(goals, 'uno');
+    const g2 = proposeIn(goals, 'dos');
+    const sharedDb = newDb();
+    let sends = 0;
+    const notifier = new GoalNotifier({
+      db: sharedDb,
+      send: async () => {
+        sends++;
+        await new Promise((r) => setTimeout(r, 20));
+        return 'm-z';
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    await notifier.report(g1, 'hito', 'uno listo');
+    await notifier.report(g2, 'hito', 'dos listo');
+    expect(sends).toBe(2); // the two reports delivered
+    // Force a pending row again by hand, then race the loops.
+    // (report would dedupe on delivered=1, so craft pending via failed send
+    // over the SAME db, which is what both loops will read.)
+    const failing = new GoalNotifier({
+      db: sharedDb,
+      send: () => Promise.resolve(null),
+      resolveGoal: (id) => goals.read(id),
+    });
+    await failing.report(g1, 'decision', '¿seguimos?');
+    sends = 0;
+    await Promise.all([notifier.flushAll(), notifier.flushAll(), notifier.flushAll()]);
+    expect(sends).toBe(1); // exactly one loop ran; the row was sent once
   });
 
   it('flushAll retries every goal\u2019s pending notes and cleans up after deleted goals', async () => {
