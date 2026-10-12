@@ -138,7 +138,7 @@ describe('pairTv', () => {
     const pending = pairTv('192.168.1.237', { factory });
     await tick();
     const tv = at(sockets, 0);
-    for (const cb of (tv as unknown as { listeners: Map<string, Handler[]> })['listeners'].get(
+    for (const cb of (tv as unknown as { listeners: Map<string, Handler[]> }).listeners.get(
       'message',
     ) ?? []) {
       cb('esto no es json{');

@@ -37,6 +37,13 @@ export interface TvToolDeps {
   key: (name: string) => Promise<void>;
   toast: (message: string) => Promise<void>;
   power: (on: boolean) => Promise<void>;
+  /**
+   * Control via Glasshouse (API HTTP :8080 de la tele rooteada): volumen
+   * absoluto, inputs, url, picture, adblock y privacidad - lo que SSAP no
+   * alcanza. Ausente = Glasshouse no configurado: esas acciones fallan con
+   * mensaje claro, el resto sigue por SSAP.
+   */
+  ghControl?: (action: string, value?: string | number | boolean) => Promise<void>;
   /** Guarda el frame en disco y devuelve la ruta (queda como ultimo estado). */
   saveFrame: (bytes: Buffer, ext?: string) => string;
   getState: () => TvMemoryState | null;
@@ -52,6 +59,15 @@ const Params = Type.Object({
     Type.Literal('key'),
     Type.Literal('toast'),
     Type.Literal('power'),
+    Type.Literal('volume'),
+    Type.Literal('mute'),
+    Type.Literal('input'),
+    Type.Literal('url'),
+    Type.Literal('closeApp'),
+    Type.Literal('screen'),
+    Type.Literal('media'),
+    Type.Literal('adblock'),
+    Type.Literal('adTracking'),
   ]),
   appId: Type.Optional(
     Type.String({ description: 'Para launch: el id de la app (sacalo de action=apps).' }),
@@ -62,7 +78,28 @@ const Params = Type.Object({
     }),
   ),
   message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
-  on: Type.Optional(Type.Boolean({ description: 'Para power: true enciende, false apaga.' })),
+  on: Type.Optional(
+    Type.Boolean({
+      description:
+        'Para power/screen/mute/adTracking: true enciende/activa, false apaga/desactiva.',
+    }),
+  ),
+  level: Type.Optional(Type.Number({ description: 'Para volume: nivel absoluto, entero 0-100.' })),
+  input: Type.Optional(
+    Type.String({ description: 'Para input: hdmi1, hdmi2, hdmi3, hdmi4 o tv.' }),
+  ),
+  url: Type.Optional(
+    Type.String({ description: 'Para url: pagina http(s) a abrir en el navegador de la tele.' }),
+  ),
+  command: Type.Optional(
+    Type.String({ description: 'Para media: play, pause, playPause, stop, rewind o fastForward.' }),
+  ),
+  mode: Type.Optional(
+    Type.String({
+      description:
+        'Para adblock: off (nada), ads (publi y telemetria) o full (tambien tienda/updates LG).',
+    }),
+  ),
 });
 
 const KEYS = [
@@ -105,6 +142,23 @@ function enqueueTvMutation<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+const TV_INPUTS = ['hdmi1', 'hdmi2', 'hdmi3', 'hdmi4', 'tv'] as const;
+const MEDIA_COMMANDS = ['play', 'pause', 'playPause', 'stop', 'rewind', 'fastForward'] as const;
+const ADBLOCK_MODES = ['off', 'ads', 'full'] as const;
+
+/** Acciones que SOLO existen via Glasshouse: sin cliente configurado, error claro. */
+function needGh(
+  deps: TvToolDeps,
+): (action: string, value?: string | number | boolean) => Promise<void> {
+  if (!deps.ghControl) {
+    throw new Error(
+      'Esta accion va por Glasshouse (la app de la tele rooteada, :8080) y no esta configurado. ' +
+        'Las acciones SSAP (screenshot, apps, launch, key, toast, power) siguen disponibles.',
+    );
+  }
+  return deps.ghControl;
+}
+
 export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
   return {
     name: 'tv',
@@ -122,6 +176,10 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
       'action=power apaga o enciende.',
+      'Via Glasshouse (si esta configurado): action=volume con level (0-100, nivel absoluto - "sube el',
+      'volumen a 13" es volume level=13), action=mute, action=input (hdmi1-4/tv), action=url (abrir web),',
+      'action=closeApp, action=screen (panel negro con audio), action=media (play/pause/stop...),',
+      'action=adblock (off/ads/full) y action=adTracking (limitar seguimiento).',
       '',
       'LIMITE IMPORTANTE: el contenido con DRM (Netflix, Prime, Disney+, DAZN, Max) puede salir en',
       'NEGRO (LG bloquea la captura de video protegido en TVs de 2020 en adelante), pero un frame',
@@ -265,6 +323,145 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
                 text: on
                   ? 'Orden de encender la pantalla enviada. No confirma el estado fisico: si la tele estaba apagada del todo (sin SSAP), la orden no llega.'
                   : 'Orden de apagar la tele enviada. No confirma el estado fisico.',
+              },
+            ],
+            details: { on, verified: false },
+          };
+        }
+        case 'volume': {
+          const level = args.level;
+          if (typeof level !== 'number' || !Number.isInteger(level) || level < 0 || level > 100) {
+            throw new Error('action=volume necesita level: entero 0-100 (nivel absoluto).');
+          }
+          await enqueueTvMutation(() => needGh(deps)('volume', level));
+          return {
+            content: [
+              { type: 'text' as const, text: `Volumen puesto a ${level} (orden enviada).` },
+            ],
+            details: { level, verified: false },
+          };
+        }
+        case 'mute': {
+          if (typeof args.on !== 'boolean') {
+            throw new Error('action=mute necesita on: true (silencia) o false (vuelve el sonido).');
+          }
+          const on = args.on;
+          await enqueueTvMutation(() => needGh(deps)('mute', on));
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: on ? 'Tele silenciada (orden enviada).' : 'Sonido de vuelta (orden enviada).',
+              },
+            ],
+            details: { on, verified: false },
+          };
+        }
+        case 'input': {
+          const input = (args.input ?? '').trim().toLowerCase();
+          if (!TV_INPUTS.includes(input as (typeof TV_INPUTS)[number])) {
+            throw new Error(`action=input necesita un valor valido: ${TV_INPUTS.join(', ')}.`);
+          }
+          await enqueueTvMutation(() => needGh(deps)('input', input));
+          return {
+            content: [
+              { type: 'text' as const, text: `Entrada cambiada a ${input} (orden enviada).` },
+            ],
+            details: { input, verified: false },
+          };
+        }
+        case 'url': {
+          const url = (args.url ?? '').trim();
+          // Misma regla que Glasshouse: solo http(s); un file: o javascript:
+          // iria tal cual al navegador de la tele.
+          if (!/^https?:\/\/[^\s]+$/i.test(url)) {
+            throw new Error('action=url necesita una URL http:// o https:// .');
+          }
+          await enqueueTvMutation(() => needGh(deps)('launchUrl', url));
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `He abierto ${url} en el navegador de la tele (orden enviada).`,
+              },
+            ],
+            details: { url, verified: false },
+          };
+        }
+        case 'closeApp': {
+          const appId = (args.appId ?? '').trim();
+          if (!appId) throw new Error('action=closeApp necesita appId (miralos con action=apps).');
+          await enqueueTvMutation(() => needGh(deps)('closeApp', appId));
+          return {
+            content: [
+              { type: 'text' as const, text: `He cerrado ${appId} en la tele (orden enviada).` },
+            ],
+            details: { appId, verified: false },
+          };
+        }
+        case 'screen': {
+          // screenOff deja el panel negro con el audio sonando (no es apagar).
+          if (typeof args.on !== 'boolean') {
+            throw new Error(
+              'action=screen necesita on: true (enciende el panel) o false (panel negro, el audio sigue).',
+            );
+          }
+          const on = args.on;
+          await enqueueTvMutation(() => needGh(deps)(on ? 'screenOn' : 'screenOff'));
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: on
+                  ? 'Panel encendido (orden enviada).'
+                  : 'Panel en negro, el audio sigue (orden enviada).',
+              },
+            ],
+            details: { on, verified: false },
+          };
+        }
+        case 'media': {
+          const command = (args.command ?? '').trim();
+          if (!MEDIA_COMMANDS.includes(command as (typeof MEDIA_COMMANDS)[number])) {
+            throw new Error(`action=media necesita command: ${MEDIA_COMMANDS.join(', ')}.`);
+          }
+          await enqueueTvMutation(() => needGh(deps)('media', command));
+          return {
+            content: [{ type: 'text' as const, text: `Orden de reproduccion ${command} enviada.` }],
+            details: { command, verified: false },
+          };
+        }
+        case 'adblock': {
+          const mode = (args.mode ?? '').trim().toLowerCase();
+          if (!ADBLOCK_MODES.includes(mode as (typeof ADBLOCK_MODES)[number])) {
+            throw new Error(`action=adblock necesita mode: ${ADBLOCK_MODES.join(', ')}.`);
+          }
+          await enqueueTvMutation(() => needGh(deps)('setAdBlock', mode));
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Bloqueo de anuncios de la tele en modo ${mode} (orden enviada).`,
+              },
+            ],
+            details: { mode, verified: false },
+          };
+        }
+        case 'adTracking': {
+          if (typeof args.on !== 'boolean') {
+            throw new Error(
+              'action=adTracking necesita on: true (limita el seguimiento publicitario) o false.',
+            );
+          }
+          const on = args.on;
+          await enqueueTvMutation(() => needGh(deps)('limitAdTracking', on));
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: on
+                  ? 'Seguimiento publicitario limitado (orden enviada).'
+                  : 'Limite de seguimiento publicitario quitado (orden enviada).',
               },
             ],
             details: { on, verified: false },

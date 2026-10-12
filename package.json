@@ -33,6 +33,7 @@
     "node-ical": "0.27.2",
     "nodemailer": "10.0.13",
     "ogg-opus-decoder": "1.7.5",
+    "pdfjs-dist": "6.4.299",
     "playwright": "1.63.0",
     "teleproto": "1.230.0",
     "typebox": "1.3.27",

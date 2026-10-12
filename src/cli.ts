@@ -6,6 +6,8 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { upcomingEvents } from './agenda/ics.js';
+import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApprovalQuestion } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
@@ -28,15 +30,16 @@ import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseNatural } from './cron/scheduler.js';
-import { applyConfiguredTimeZone, buildNowNote } from './datecontext.js';
+import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
-import { loadAccount as loadMailAccount, sendMail } from './mail/client.js';
+import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
+import { canExtract, DocMemory } from './memory/docs.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
 import type { SessionHit } from './memory/sessions.js';
@@ -71,6 +74,7 @@ import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
+import { createDocsTool } from './tools/docs.js';
 import { createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
@@ -97,6 +101,7 @@ import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/sy
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
 import { createTvTool } from './tools/tv.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
+import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex } from './utils.js';
@@ -109,6 +114,7 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
+import { resolveOwnerDmChatId, resolveOwnerUserId, startVigilanteLoop } from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -563,6 +569,27 @@ function tvToolDeps(store: Store): TvToolDeps {
     return { host, clientKey, allowPlaintext: (await vaultGet('tv:secure')) === '0' };
   };
 
+  /**
+   * Glasshouse (API :8080 de la tele rooteada): via primaria para volumen
+   * absoluto, inputs, url, closeApp, picture y privacidad, y transporte
+   * preferente de launch/toast/power. Default: LAN primero, tailnet de
+   * fallback (el nodo tailscale de la tele tarda en volver tras un reinicio).
+   * Override con vault tv:glasshouseUrl (lista separada por comas) y token
+   * con tv:glasshouseToken. Los endpoints invalidos fallan al CONSTRUIR el
+   * cliente, en la llamada - nunca en el arranque del agente.
+   */
+  const GH_DEFAULT_ENDPOINTS = ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'];
+  const ghClient = async (): Promise<GlasshouseClient> => {
+    const override = await vaultGet('tv:glasshouseUrl');
+    const endpoints = override?.trim()
+      ? override
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : GH_DEFAULT_ENDPOINTS;
+    return new GlasshouseClient({ endpoints, token: await vaultGet('tv:glasshouseToken') });
+  };
+
   return {
     shot: async () => {
       const { host, clientKey, allowPlaintext } = await paired();
@@ -600,6 +627,19 @@ function tvToolDeps(store: Store): TvToolDeps {
       return points.map((p) => ({ id: p.id, title: p.title }));
     },
     launch: async (id) => {
+      // Glasshouse primero (sin pairing); si la tele no lo tiene o no
+      // responde, SSAP con la client-key guardada.
+      try {
+        await (await ghClient()).control('launchApp', id);
+        return;
+      } catch (err) {
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv launch: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
+      }
       const { host, clientKey, allowPlaintext } = await paired();
       await tvRequest(host, clientKey, 'system.launcher/launch', { id }, { allowPlaintext });
     },
@@ -608,10 +648,35 @@ function tvToolDeps(store: Store): TvToolDeps {
       await tvKey(host, clientKey, name, { allowPlaintext });
     },
     toast: async (message) => {
+      try {
+        await (await ghClient()).control('toast', message);
+        return;
+      } catch (err) {
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv toast: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
+      }
       const { host, clientKey, allowPlaintext } = await paired();
       await tvToast(host, clientKey, message, { allowPlaintext });
     },
     power: async (on) => {
+      // Glasshouse powerOn/powerOff exige allowPower en la config de la tele.
+      // SSAP solo si Glasshouse no llego a recibir la orden; si responde con
+      // rechazo (allowPower=false) se respeta la config y se propaga el error.
+      try {
+        await (await ghClient()).control(on ? 'powerOn' : 'powerOff');
+        return;
+      } catch (err) {
+        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
+        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
+        // allowPower=false) o una escritura ambigua JAMAS se repiten por
+        // otro transporte: respetan la config de la tele (auditor #104 r1).
+        if (!(err instanceof GlasshouseUnavailableError)) throw err;
+        log.info('tv power: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
+      }
       const { host, clientKey, allowPlaintext } = await paired();
       if (on) {
         await tvRequest(
@@ -624,6 +689,9 @@ function tvToolDeps(store: Store): TvToolDeps {
         return;
       }
       await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
+    },
+    ghControl: async (action, value) => {
+      await (await ghClient()).control(action, value);
     },
     saveFrame: (bytes, ext) => {
       // UUID + wx: dos agentes (o dos capturas en el mismo ms) nunca pisan el
@@ -1007,6 +1075,10 @@ async function serveCommand(): Promise<number> {
   const store = new Store();
   store.sweepExpired();
   const memory = new MemoryStore();
+  const docMemory = new DocMemory({
+    dbPath: join(paths.docs, 'docs.sqlite'),
+    directory: join(paths.docs, 'mirror'),
+  });
   /**
    * The one file the gates of every conversation read their standing approvals from.
    *
@@ -1307,6 +1379,7 @@ async function serveCommand(): Promise<number> {
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
       createMemoryTool(memory, scope, snapshot),
+      createDocsTool(docMemory, scope),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createSkillsTool({ store: skills }),
       // Window and UI Automation inspection. Read-only, so it is not under the
@@ -1688,6 +1761,11 @@ async function serveCommand(): Promise<number> {
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
+      // El vigilante se para en el PRIMER statement: desde aquí no salen avisos
+      // nuevos durante todo el cierre. Su drain (acotado por el timeout de la
+      // agenda) corre en paralelo con el resto del apagado y se espera justo
+      // antes de cerrar las bases de datos.
+      const vigilanteDrain = vigilante.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
       telegram.cancelApprovals();
@@ -1705,8 +1783,10 @@ async function serveCommand(): Promise<number> {
       await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
       await registry.stopAll();
       await screen.dispose();
+      await vigilanteDrain;
       store.close();
       memoryDb.close();
+      docMemory.close();
       log.info('daemon stopped', { threads: threads.size });
     },
   });
@@ -1752,6 +1832,77 @@ async function serveCommand(): Promise<number> {
     },
   });
   routineRunner.start();
+
+  // ---- vigilante (ojo de águila) -------------------------------------------
+  // Barrido proactivo: cada 30 min mira la agenda unificada (calendario + correo
+  // + pendientes) y avisa por Telegram SOLO de lo nuevo, una vez por hallazgo
+  // (el módulo guarda lo ya notificado en sqlite). Primer barrido a los 5 min:
+  // al arrancar, las fuentes aún se están calentando.
+  // Owner de los avisos: allowlist unitaria (asistente personal, ese usuario es
+  // el dueño) o config explícita `vigilante:ownerUserId` en vault. La allowlist
+  // autoriza USO del bot, NO propiedad de la agenda; sin owner verificado el
+  // vigilante no envía nada (fail-closed).
+  const vigilanteOwnerConfigured = Number((await vaultGet('vigilante:ownerUserId'))?.trim());
+  const vigilanteOwnerId = resolveOwnerUserId(
+    allowed,
+    Number.isSafeInteger(vigilanteOwnerConfigured) && vigilanteOwnerConfigured > 0
+      ? vigilanteOwnerConfigured
+      : null,
+  );
+  const vigilante = startVigilanteLoop(
+    {
+      db: memoryDb,
+      agenda: () =>
+        buildAgenda({
+          calendar: () =>
+            upcomingEvents({
+              getUrl: () => vaultGet('calendar:icsUrl'),
+              fetchText: async (url) => {
+                // Timeout duro: un servidor de calendario colgado no puede eternizar
+                // el barrido ni el drain del apagado.
+                const res = await fetch(url, {
+                  redirect: 'follow',
+                  signal: AbortSignal.timeout(15_000),
+                });
+                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
+                return res.text();
+              },
+            }),
+          mail: async () => {
+            const account = await loadMailAccount();
+            if (!account) return [];
+            // Tres días hacia atrás: el extractor solo propone fechas futuras, y un
+            // buzón entero por barrido es ruido y tiempo de IMAP.
+            // Deadline duro: un IMAP colgado no se apila entre barridos.
+            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30, 20_000);
+          },
+          followups: () => followups.list(undefined, 200),
+        }),
+      send: (text) => {
+        // Destinatario fijo: el DM del owner verificado arriba. Un grupo — aunque
+        // hable un usuario permitido — NO es destino: la agenda es privada. Sin DM
+        // del owner, fail-closed: no se envía y se reintenta en el próximo barrido.
+        const chatId = resolveOwnerDmChatId(
+          [...threads.values()].map((t) => t.chatKey),
+          vigilanteOwnerId,
+        );
+        if (!chatId) {
+          log.warn('vigilante: sin DM de owner verificado; el hallazgo queda pendiente', {});
+          return Promise.resolve(false);
+        }
+        return telegram
+          .send({ channel: 'telegram', account: telegram.account, chatId, text })
+          .then(() => true)
+          .catch((err: unknown) => {
+            log.warn('vigilante: send failed', { err });
+            return false;
+          });
+      },
+    },
+    localTimeZone(),
+    30 * 60 * 1000,
+    5 * 60 * 1000,
+  );
 
   // ---- commands -----------------------------------------------------------
 
@@ -2935,6 +3086,42 @@ async function serveCommand(): Promise<number> {
         }
       }
 
+      let documentNote = '';
+      if (inbound.documentFileId) {
+        const label = inbound.documentName ?? inbound.documentMimeType ?? 'documento';
+        if (!canExtract(inbound.documentMimeType)) {
+          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora solo se leen PDF y archivos de texto.]`;
+        } else {
+          try {
+            const bytes = await telegram.downloadFile(inbound.documentFileId);
+            if (!bytes) {
+              documentNote = `[Documento reenviado: ${label}. Telegram no devolvió el archivo.]`;
+            } else {
+              // The thread key is the memory scope everywhere: the documents
+              // tool reads with () => thread.key, so indexing MUST use the
+              // same string or nothing is findable even in the same chat.
+              const indexed = await docMemory.index(
+                thread.key,
+                {
+                  fileId: inbound.documentFileId,
+                  name: inbound.documentName,
+                  mimeType: inbound.documentMimeType,
+                },
+                bytes,
+              );
+              documentNote = indexed
+                ? indexed.truncated
+                  ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
+                  : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
+                : `[Documento reenviado: ${label}. No tenía texto extraíble (los PDF escaneados son imágenes, no texto).]`;
+            }
+          } catch (err) {
+            log.warn('document index failed', { err });
+            documentNote = `[Documento reenviado: ${label}. Falló la indexación: ${err instanceof Error ? err.message : String(err)}]`;
+          }
+        }
+      }
+
       let prompt = text;
       if (inbound.audioFileId) {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
@@ -2956,6 +3143,13 @@ async function serveCommand(): Promise<number> {
           // Remembered with the handle, so "suéltame ese audio" two messages later
           // has something to act on.
           recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
+          try {
+            docMemory.indexTranscript(thread.key, inbound.messageId, heard.text, inbound.text);
+          } catch (err) {
+            // The transcript is already in the turn and in the short-term recall;
+            // losing only its long-term index must not kill the turn.
+            log.warn('transcript index failed', { err });
+          }
         } catch (err) {
           await say(
             inbound,
@@ -2965,6 +3159,8 @@ async function serveCommand(): Promise<number> {
           return;
         }
       }
+
+      if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
         await say(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });

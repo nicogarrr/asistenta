@@ -40,6 +40,16 @@ export function isOpenCodeEndpoint(baseUrl: string): boolean {
   return /^https:\/\/opencode\.ai\/zen(\/|$)/.test(baseUrl);
 }
 
+/** True for the OpenRouter endpoint. */
+export function isOpenRouterEndpoint(baseUrl: string): boolean {
+  return /^https:\/\/openrouter\.ai(\/|$)/.test(baseUrl);
+}
+
+/** True for Google's Gemini endpoints (OpenAI-compatible layer or native). */
+export function isGoogleEndpoint(baseUrl: string): boolean {
+  return /^https:\/\/generativelanguage\.googleapis\.com(\/|$)/.test(baseUrl);
+}
+
 /**
  * OpenCode Go asks API clients to send their own user agent and a stable session id
  * in `x-opencode-session` for each conversation (https://opencode.ai/docs/go/).
@@ -52,7 +62,7 @@ export function goHeaders(sessionId: string | undefined): Record<string, string>
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
-  const key = await resolveApiKey();
+  const key = await resolveApiKey(config.baseUrl);
 
   const models = createModels({
     authContext: {
@@ -73,6 +83,11 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
         api: 'openai-completions',
         provider: config.provider,
         baseUrl: config.baseUrl,
+        // Google rechaza el campo `store` con 400 ("Unknown name store") y la
+        // autodeteccion de pi-ai no conoce ese endpoint: sin override manda
+        // store:false y toda llamada falla. Verificado con llamada real
+        // (400 con store, 200 sin el).
+        ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
         // Image input is not optional here: computer use is the whole point.
         input: ['text', 'image'],
         reasoning: false,
@@ -105,7 +120,40 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   return { models, model, streamFn, modelFor };
 }
 
-async function resolveApiKey(): Promise<string> {
+async function resolveApiKey(baseUrl: string): Promise<string> {
+  if (isOpenRouterEndpoint(baseUrl)) {
+    // Nunca la clave de OpenCode contra OpenRouter: seria un 401 y una fuga
+    // del secreto a un tercero. Solo vault provider:openrouterKey o
+    // OPENROUTER_API_KEY, con error claro si falta.
+    const fromVault = await vaultGet('provider:openrouterKey');
+    if (fromVault) return fromVault;
+    const fromEnv = process.env.OPENROUTER_API_KEY;
+    if (fromEnv) return fromEnv;
+    throw new Error(
+      'no OpenRouter API key: run `pa vault set provider:openrouterKey <key>` or set OPENROUTER_API_KEY',
+    );
+  }
+  if (isGoogleEndpoint(baseUrl)) {
+    // Gemini: nunca la clave de OpenCode. Vault provider:geminiKey o
+    // GEMINI_API_KEY/GOOGLE_API_KEY, con error claro si falta.
+    const fromVault = await vaultGet('provider:geminiKey');
+    if (fromVault) return fromVault;
+    const fromEnv = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+    if (fromEnv) return fromEnv;
+    throw new Error(
+      'no Gemini API key: run `pa vault set provider:geminiKey <key>` or set GEMINI_API_KEY',
+    );
+  }
+  if (!isOpenCodeEndpoint(baseUrl)) {
+    // Endpoint OpenAI-compatible custom (Cerebras, vLLM, ...): NUNCA la
+    // clave de OpenCode ni vault provider:apiKey - un typo en PA_BASE_URL
+    // enviaria el secreto OpenCode a un tercero (hallazgo auditor #103).
+    // Falla cerrado si no hay PA_API_KEY explicita.
+    if (process.env.PA_API_KEY) return process.env.PA_API_KEY;
+    throw new Error(
+      `no API key for custom endpoint ${baseUrl}: set PA_API_KEY (the OpenCode key is never sent to third-party endpoints)`,
+    );
+  }
   const fromVault = await vaultGet('provider:apiKey');
   if (fromVault) return fromVault;
   const fromEnv = process.env.OPENCODE_GO_API_KEY;
