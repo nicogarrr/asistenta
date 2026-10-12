@@ -6,8 +6,10 @@
  *    reason), so a milestone re-detected on the next tick is a duplicate, not
  *    a second message.
  * 2. A failed send is retried, not forgotten: only a confirmed delivery marks
- *    the row. Pending rows are re-attempted on every tick and dropped after a
- *    day, so a blocked chat cannot be spammed forever.
+ *    the row. Pending rows are re-attempted on every tick AND by an independent
+ *    delivery engine on its own clock (flushAll), and dropped after a day, so
+ *    a blocked chat cannot be spammed forever and a paused or daily goal cannot
+ *    strand a question.
  * 3. The message never promises more than the source: the reason is what the
  *    tick reported, verbatim.
  *
@@ -20,6 +22,13 @@ import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
 export const NOTIFY_RETRY_MAX_AGE_MS = 24 * 60 * 60_000;
+
+/**
+ * The delivery engine's own clock (wired as an interval in cli.ts): retries
+ * must not depend on the goal's cron - a daily goal with a failed send right
+ * after its tick would otherwise get the next attempt AFTER the 24h drop.
+ */
+export const NOTIFY_FLUSH_INTERVAL_MS = 5 * 60_000;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS goal_notifications (
@@ -97,18 +106,28 @@ type Row = {
 
 export class GoalNotifier {
   readonly #db: DatabaseSync;
-  readonly #send: (goal: Goal, text: string) => Promise<boolean>;
+  /** Returns the sent message id, or null when the transport said no. */
+  readonly #send: (goal: Goal, text: string) => Promise<string | null>;
+  readonly #resolveGoal: (id: string) => Goal | null;
   readonly #now: () => number;
 
   constructor(deps: {
     db: DatabaseSync;
-    send: (goal: Goal, text: string) => Promise<boolean>;
+    send: (goal: Goal, text: string) => Promise<string | null>;
+    resolveGoal: (id: string) => Goal | null;
     now?: () => number;
   }) {
     this.#db = deps.db;
     this.#send = deps.send;
+    this.#resolveGoal = deps.resolveGoal;
     this.#now = deps.now ?? (() => Date.now());
     this.#db.exec(SCHEMA);
+    try {
+      // Databases written before sent_id existed get the column here.
+      this.#db.exec('ALTER TABLE goal_notifications ADD COLUMN sent_id TEXT');
+    } catch {
+      /* already there */
+    }
   }
 
   /**
@@ -141,6 +160,36 @@ export class GoalNotifier {
     return Number(row?.n ?? 0) > 0;
   }
 
+  /** The owning goal's scope for a delivered message: durable reply routing. */
+  scopeBySentId(sentId: string): string | null {
+    const row = this.#db
+      .prepare(
+        'SELECT goal_id FROM goal_notifications WHERE sent_id = ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(sentId) as { goal_id: string } | undefined;
+    return row ? (this.#resolveGoal(row.goal_id)?.scope ?? null) : null;
+  }
+
+  /**
+   * Retry every pending notification of EVERY goal, whatever its status. This
+   * is the delivery engine's loop: independent of any goal's cron, and it
+   * never runs work - it only delivers.
+   */
+  async flushAll(): Promise<void> {
+    const ids = this.#db
+      .prepare('SELECT DISTINCT goal_id FROM goal_notifications WHERE delivered = 0')
+      .all() as { goal_id: string }[];
+    for (const { goal_id } of ids) {
+      const goal = this.#resolveGoal(goal_id);
+      if (!goal) {
+        // The goal is gone: its pending notes die with it.
+        this.#db.prepare('DELETE FROM goal_notifications WHERE goal_id = ?').run(goal_id);
+        continue;
+      }
+      await this.flush(goal);
+    }
+  }
+
   /** Retry everything still undelivered. Called on every goal tick. */
   async flush(goal: Goal): Promise<void> {
     const rows = this.#db
@@ -159,18 +208,19 @@ export class GoalNotifier {
   }
 
   async #attempt(goal: Goal, key: string, text: string): Promise<boolean> {
-    let ok = false;
+    let sentId: string | null = null;
     try {
-      ok = await this.#send(goal, text);
+      sentId = await this.#send(goal, text);
     } catch {
-      ok = false;
+      sentId = null;
     }
-    if (ok) {
+    if (sentId) {
+      // The sent id is stored: reply routing survives a daemon restart.
       this.#db
         .prepare(
-          'UPDATE goal_notifications SET delivered = 1, delivered_at = ?, attempts = attempts + 1 WHERE goal_id = ? AND nkey = ?',
+          'UPDATE goal_notifications SET delivered = 1, delivered_at = ?, sent_id = ?, attempts = attempts + 1 WHERE goal_id = ? AND nkey = ?',
         )
-        .run(new Date(this.#now()).toISOString(), goal.id, key);
+        .run(new Date(this.#now()).toISOString(), sentId, goal.id, key);
     } else {
       this.#db
         .prepare(
@@ -178,6 +228,6 @@ export class GoalNotifier {
         )
         .run(goal.id, key);
     }
-    return ok;
+    return sentId !== null;
   }
 }

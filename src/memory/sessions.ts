@@ -256,15 +256,23 @@ export class SessionStore {
         // A build without the 'rebuild' command keeps the trigger-maintained index.
       }
     }
+    try {
+      // Provenance column: who opened the session, recorded at write time.
+      // Databases written before it existed get it here; their rows predate
+      // goal ticks entirely (capability shipped together), so 'human' is true.
+      this.#db.exec("ALTER TABLE sessions ADD COLUMN origin TEXT NOT NULL DEFAULT 'human'");
+    } catch {
+      /* already there */
+    }
   }
 
-  begin(scope: string, title: string): string {
+  begin(scope: string, title: string, origin: 'human' | 'goal-tick' = 'human'): string {
     const id = randomUUID();
     this.#db
       .prepare(
-        'INSERT INTO sessions (id, scope, title, started_at, ended_at, summary) VALUES (?, ?, ?, ?, NULL, NULL)',
+        `INSERT INTO sessions (id, scope, title, started_at, ended_at, summary, origin) VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
       )
-      .run(id, scope, title, Date.now());
+      .run(id, scope, title, Date.now(), origin);
     return id;
   }
 
@@ -275,14 +283,14 @@ export class SessionStore {
   }
 
   /**
-   * Whether a HUMAN turn opened on this scope after `sinceMs`. Goal ticks open
-   * sessions too (titled `[objetivo] ...`); those are the machine talking to
-   * itself and must never count as a person's answer.
+   * Whether a HUMAN turn opened on this scope after `sinceMs`. Provenance is
+   * explicit (the origin column recorded at write time), never inferred from
+   * a free-form title: a person may well start a message with "[objetivo]".
    */
   hasHumanTurnSince(scope: string, sinceMs: number): boolean {
     const row = this.#db
       .prepare(
-        `SELECT COUNT(*) AS n FROM sessions WHERE scope = ? AND started_at > ? AND title NOT LIKE '[objetivo] %'`,
+        `SELECT COUNT(*) AS n FROM sessions WHERE scope = ? AND started_at > ? AND origin = 'human'`,
       )
       .get(scope, sinceMs) as { n: number } | undefined;
     return Number(row?.n ?? 0) > 0;

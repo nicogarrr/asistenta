@@ -40,6 +40,11 @@ export interface Goal {
   cadence: string | null;
   /** Why it is blocked / which decision is pending. Cleared on resume. */
   blockedReason: string | null;
+  /**
+   * When the block began. Kept apart from updatedAt: an avance also bumps
+   * updatedAt, and the human-answer evidence window must start at the BLOCK.
+   */
+  blockedAt: string | null;
   lastOutcome: string | null;
   lastTickAt: string | null;
   /** Local day the tick counter belongs to (YYYY-MM-DD); a new day resets it. */
@@ -71,6 +76,7 @@ CREATE TABLE IF NOT EXISTS goals (
   status        TEXT NOT NULL CHECK (status IN ('proposed','active','paused','blocked','done','cancelled')),
   cadence       TEXT,
   blocked_reason TEXT,
+  blocked_at    TEXT,
   last_outcome  TEXT,
   last_tick_at  TEXT,
   ticks_day     TEXT NOT NULL DEFAULT '',
@@ -91,6 +97,7 @@ type GoalRow = {
   status: string;
   cadence: string | null;
   blocked_reason: string | null;
+  blocked_at: string | null;
   last_outcome: string | null;
   last_tick_at: string | null;
   ticks_day: string;
@@ -114,7 +121,7 @@ export function splitGoalScope(scope: string): { chatKey: string; thread: string
 }
 
 const COLUMNS =
-  'id, scope, title, verbatim, plan, status, cadence, blocked_reason, last_outcome, last_tick_at, ticks_day, ticks_today, workstream_id, created_at, updated_at';
+  'id, scope, title, verbatim, plan, status, cadence, blocked_reason, blocked_at, last_outcome, last_tick_at, ticks_day, ticks_today, workstream_id, created_at, updated_at';
 
 function mapGoal(r: GoalRow): Goal {
   let plan: GoalStep[] = [];
@@ -133,6 +140,7 @@ function mapGoal(r: GoalRow): Goal {
     status: r.status as GoalStatus,
     cadence: r.cadence,
     blockedReason: r.blocked_reason,
+    blockedAt: r.blocked_at,
     lastOutcome: r.last_outcome,
     lastTickAt: r.last_tick_at,
     ticksDay: r.ticks_day,
@@ -149,6 +157,12 @@ export class GoalStore {
   constructor(opts: { db: DatabaseSync }) {
     this.#db = opts.db;
     this.#db.exec(SCHEMA);
+    try {
+      // Databases written before blocked_at existed get the column here.
+      this.#db.exec('ALTER TABLE goals ADD COLUMN blocked_at TEXT');
+    } catch {
+      /* already there */
+    }
   }
 
   #count(scope: string, status: GoalStatus): number {
@@ -182,7 +196,7 @@ export class GoalStore {
     const now = new Date().toISOString();
     this.#db
       .prepare(
-        `INSERT INTO goals (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', ?, NULL, NULL, NULL, '', 0, NULL, ?, ?)`,
+        `INSERT INTO goals (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', ?, NULL, NULL, NULL, NULL, '', 0, NULL, ?, ?)`,
       )
       .run(
         id,
@@ -243,25 +257,29 @@ export class GoalStore {
         `Ya hay ${MAX_ACTIVE_GOALS} objetivos activos. Pausa o cancela uno antes de reanudar este.`,
       );
     }
-    this.#set(id, { status: 'active', blocked_reason: null });
+    this.#set(id, { status: 'active', blocked_reason: null, blocked_at: null });
   }
 
   block(id: string, reason: string): void {
     const goal = this.#mustRead(id);
     if (goal.status !== 'active') return; // a paused goal cannot regress to blocked
-    this.#set(id, { status: 'blocked', blocked_reason: reason });
+    this.#set(id, {
+      status: 'blocked',
+      blocked_reason: reason,
+      blocked_at: new Date().toISOString(),
+    });
   }
 
   complete(id: string): void {
     this.#mustRead(id);
-    this.#set(id, { status: 'done', blocked_reason: null });
+    this.#set(id, { status: 'done', blocked_reason: null, blocked_at: null });
   }
 
   cancel(id: string): void {
     const goal = this.#mustRead(id);
     if (goal.status === 'done')
       throw new Error('Un objetivo cumplido no se cancela; ya está hecho.');
-    this.#set(id, { status: 'cancelled', blocked_reason: null });
+    this.#set(id, { status: 'cancelled', blocked_reason: null, blocked_at: null });
   }
 
   updatePlan(id: string, plan: GoalStep[]): void {

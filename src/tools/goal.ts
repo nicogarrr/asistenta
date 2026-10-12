@@ -196,9 +196,34 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
         if (!args.cadencia) return reply('proponer necesita la cadencia (cron de 5 campos).', true);
         const bad = checkCadence(args.cadencia);
         if (bad) return reply(bad, true);
-        const title = args.titulo.trim().slice(0, 120);
-        const verbatim = args.objetivo.trim().slice(0, 1000);
-        const plan = pasos.slice(0, 20).map((text) => ({ text: text.slice(0, 200), done: false }));
+        // NEVER truncate: slicing the objective would silently drop Nico's own
+        // conditions ("...NO COMPRAR NI ENVIAR" at char 1001). Over a limit the
+        // answer is an honest rejection and nothing is stored.
+        const title = args.titulo.trim();
+        if (title.length > 120) {
+          return reply(`El título no puede pasar de 120 caracteres (tiene ${title.length}).`, true);
+        }
+        const verbatim = args.objetivo.trim();
+        if (verbatim.length > 1000) {
+          return reply(
+            `El objetivo no puede pasar de 1000 caracteres (tiene ${verbatim.length}): resúmelo tú - no lo recorto yo, no voy a quitarte condiciones.`,
+            true,
+          );
+        }
+        if (pasos.length > 20) {
+          return reply(
+            `El plan no puede tener más de 20 pasos (tiene ${pasos.length}): agrúpalos y proponlo de nuevo.`,
+            true,
+          );
+        }
+        const tooLong = pasos.findIndex((p) => p.length > 200);
+        if (tooLong !== -1) {
+          return reply(
+            `El paso ${tooLong + 1} no puede pasar de 200 caracteres (tiene ${pasos[tooLong]?.length ?? 0}): resúmelo y proponlo de nuevo.`,
+            true,
+          );
+        }
+        const plan = pasos.map((text) => ({ text, done: false }));
         const cadence = args.cadencia.trim();
         // Budget the exact message Nico would approve. The probe id is the
         // same length as a real one (36), so the check sees the true size.
@@ -211,6 +236,7 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           status: 'proposed',
           cadence,
           blockedReason: null,
+          blockedAt: null,
           lastOutcome: null,
           lastTickAt: null,
           ticksDay: '',
@@ -286,11 +312,13 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           return reply(`Objetivo "${goal.title}" pausado. No habrá ticks hasta que lo reanudes.`);
         }
         case 'reanudar': {
-          if (goal.status === 'blocked' && !deps.humanRepliedAfter(goal.scope, goal.updatedAt)) {
+          const blockedAt = goal.blockedAt ?? goal.updatedAt;
+          if (goal.status === 'blocked' && !deps.humanRepliedAfter(goal.scope, blockedAt)) {
             // Blocked means waiting on NICO. Resuming needs evidence he
-            // actually answered in this chat after the block (updatedAt is the
-            // block time); otherwise the tick itself could resume and decide
-            // on his behalf. A pause needs no such proof: pausing was his act.
+            // actually answered in this chat after the block (blockedAt, kept
+            // apart from updatedAt so an avance cannot move the window);
+            // otherwise the tick itself could resume and decide on his behalf.
+            // A pause needs no such proof: pausing was his act.
             return reply(
               `"${goal.title}" está bloqueado esperando tu respuesta y no veo ningún mensaje tuyo en este chat desde entonces. Respóndeme aquí con tu decisión y después lo reanudo.`,
               true,

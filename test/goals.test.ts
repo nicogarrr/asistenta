@@ -206,10 +206,11 @@ describe('goal notifier', () => {
     const notifier = new GoalNotifier({
       db: newDb(),
       send: () => {
-        if (fail) return Promise.resolve(false);
+        if (fail) return Promise.resolve(null);
         sent.push('x');
-        return Promise.resolve(true);
+        return Promise.resolve('msg-1');
       },
+      resolveGoal: (id) => goals.read(id),
     });
     expect(await notifier.report(g, 'hito', 'salen a la venta')).toBe('pending');
     fail = false;
@@ -254,6 +255,53 @@ describe('goal notifier', () => {
     });
   });
 
+  it('stores the sent id and resolves the owning scope back from it', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g = proposeIn(goals, 'enrutado');
+    const notifier = new GoalNotifier({
+      db: newDb(),
+      send: () => Promise.resolve('777'),
+      resolveGoal: (id) => goals.read(id),
+    });
+    expect(await notifier.report(g, 'decision', '¿20 o 2000?')).toBe('sent');
+    expect(notifier.scopeBySentId('777')).toBe(g.scope);
+    expect(notifier.scopeBySentId('desconocido')).toBeNull();
+  });
+
+  it('flushAll retries every goal\u2019s pending notes and cleans up after deleted goals', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const g1 = proposeIn(goals, 'uno');
+    const g2 = proposeIn(goals, 'dos');
+    let up = false;
+    const delivered: string[] = [];
+    const notifier = new GoalNotifier({
+      db: newDb(),
+      send: (goal, text) => {
+        if (!up) return Promise.resolve(null);
+        delivered.push(`${goal.title}:${text.slice(0, 12)}`);
+        return Promise.resolve('m-x');
+      },
+      resolveGoal: (id) => goals.read(id),
+    });
+    await notifier.report(g1, 'decision', '¿A o B?');
+    await notifier.report(g2, 'hecho', 'terminado');
+    // A pending note for a goal that no longer exists.
+    await notifier.report({ ...g1, id: 'gone', title: 'fantasma' }, 'hito', 'nada');
+    expect(notifier.hasPending(g1.id)).toBe(true);
+    expect(notifier.hasPending(g2.id)).toBe(true);
+    await notifier.flushAll(); // transport down: nothing moves, nothing is lost
+    expect(delivered).toHaveLength(0);
+    expect(notifier.hasPending(g1.id)).toBe(true);
+    up = true;
+    await notifier.flushAll();
+    expect(delivered).toHaveLength(2);
+    expect(notifier.hasPending(g1.id)).toBe(false);
+    expect(notifier.hasPending(g2.id)).toBe(false);
+    // The deleted goal's rows were dropped, and flushAll stays idempotent.
+    await notifier.flushAll();
+    expect(delivered).toHaveLength(2);
+  });
+
   it('formats one Spanish piece per kind', () => {
     expect(formatGoalMessage('hito', { title: 'T' }, 'paso listo')).toContain('🎯 T: paso listo');
     expect(formatGoalMessage('bloqueo', { title: 'T' }, 'falta X')).toContain('bloqueado');
@@ -282,8 +330,9 @@ describe('goal runner ticks', () => {
       db: newDb(),
       send: (_g, text) => {
         sent.push(text);
-        return Promise.resolve(true);
+        return Promise.resolve('m-1');
       },
+      resolveGoal: (id) => goals.read(id),
     });
     let syncs = 0;
     const done: string[] = [];
@@ -453,10 +502,11 @@ describe('goal runner delivery vs eligibility', () => {
     const notifier = new GoalNotifier({
       db: newDb(),
       send: (_g, text) => {
-        if (!transportUp) return Promise.resolve(false);
+        if (!transportUp) return Promise.resolve(null);
         sent.push(text);
-        return Promise.resolve(true);
+        return Promise.resolve('m-fail-1');
       },
+      resolveGoal: (id) => goals.read(id),
     });
     let execCalls = 0;
     let syncs = 0;
@@ -567,8 +617,9 @@ describe('goal runner delivery vs eligibility', () => {
         expect(t?.chatId).toBe('123');
         expect(t?.replyToMessageId).toBe('456');
         notifiedScopes.push(goal.scope);
-        return Promise.resolve(true);
+        return Promise.resolve('mm-1');
       },
+      resolveGoal: (id) => goals.read(id),
     });
     const executedScopes: string[] = [];
     const runner = new GoalRunner({
@@ -710,6 +761,85 @@ describe('objetivo tool', () => {
     expect(r).toContain('no cabe en un solo mensaje');
     expect(r).toContain('Nada quedó guardado');
     expect(goals.list(SCOPE)).toHaveLength(0); // nothing stored on rejection
+  });
+
+  it('proponer rejects over-limit input honestly and stores nothing', async () => {
+    const { goals, run, text } = setupTool();
+    const r1 = text(
+      await run({
+        action: 'proponer',
+        titulo: 't',
+        objetivo: `${'x'.repeat(1000)} NO COMPRAR NI ENVIAR`,
+        pasos: ['a'],
+        cadencia: '20 * * * *',
+      }),
+    );
+    expect(r1).toContain('no puede pasar de 1000 caracteres');
+    const r2 = text(
+      await run({
+        action: 'proponer',
+        titulo: 't',
+        objetivo: 'o',
+        pasos: ['a', `${'p'.repeat(200)} preguntar antes`],
+        cadencia: '20 * * * *',
+      }),
+    );
+    expect(r2).toContain('El paso 2 no puede pasar de 200 caracteres');
+    const r3 = text(
+      await run({
+        action: 'proponer',
+        titulo: 't',
+        objetivo: 'o',
+        pasos: Array.from({ length: 21 }, (_, i) => `paso ${i}`),
+        cadencia: '20 * * * *',
+      }),
+    );
+    expect(r3).toContain('más de 20 pasos');
+    const r4 = text(
+      await run({
+        action: 'proponer',
+        titulo: 'x'.repeat(121),
+        objetivo: 'o',
+        pasos: ['a'],
+        cadencia: '20 * * * *',
+      }),
+    );
+    expect(r4).toContain('no puede pasar de 120 caracteres');
+    expect(goals.list(SCOPE)).toHaveLength(0); // nothing stored, ever
+  });
+
+  it('reanudar evidence window starts at blockedAt, not at a later avance', async () => {
+    const goals = new GoalStore({ db: newDb() });
+    const routines = fakeRoutineStore();
+    let capturedSince = '';
+    const tool = createGoalTool({
+      goals,
+      scopeOf: () => SCOPE,
+      store: routines,
+      sync: () => {},
+      workstreams: { create: () => 'w', update: () => {}, forget: () => {} },
+      humanRepliedAfter: (_scope, sinceIso) => {
+        capturedSince = sinceIso;
+        return true;
+      },
+    });
+    const g = goals.propose({
+      scope: SCOPE,
+      title: 'ventana',
+      verbatim: 'v',
+      plan: [{ text: 'p', done: false }],
+      cadence: '20 * * * *',
+    });
+    goals.activate(g.id, null);
+    goals.block(g.id, 'Decisión pendiente: ¿A o B?');
+    const blockedAt = goals.read(g.id)?.blockedAt ?? '';
+    expect(blockedAt).not.toBe('');
+    await new Promise((r) => setTimeout(r, 5));
+    await tool.execute('c', { action: 'avance', id: g.id, paso: 1 } as never); // bumps updatedAt
+    expect(goals.read(g.id)?.updatedAt).not.toBe(blockedAt);
+    await tool.execute('c', { action: 'reanudar', id: g.id } as never);
+    expect(capturedSince).toBe(blockedAt); // the window starts at the BLOCK
+    expect(goals.read(g.id)?.blockedAt).toBeNull();
   });
 
   it('activar rejected by the cap leaves no orphaned workstream', async () => {
@@ -875,16 +1005,23 @@ describe('objetivo tool', () => {
 });
 
 describe('sessions: human-turn evidence', () => {
-  it('hasHumanTurnSince ignores the goal tick sessions', () => {
+  it('hasHumanTurnSince goes by provenance, never by title', () => {
     const sessions = new SessionStore({ db: newDb() });
     const t0 = Date.now() - 1000;
     expect(sessions.hasHumanTurnSince(SCOPE, t0)).toBe(false);
-    sessions.begin(SCOPE, '[objetivo] presupuesto'); // the machine's own tick
+    sessions.begin(SCOPE, '[objetivo] presupuesto', 'goal-tick'); // the machine's own tick
     expect(sessions.hasHumanTurnSince(SCOPE, t0)).toBe(false);
     sessions.begin(SCOPE, 'sí, adelante con las de 2000'); // Nico's answer
     expect(sessions.hasHumanTurnSince(SCOPE, t0)).toBe(true);
     expect(sessions.hasHumanTurnSince(SCOPE, Date.now() + 60_000)).toBe(false);
     expect(sessions.hasHumanTurnSince('telegram:test:otro#main', t0)).toBe(false);
+  });
+
+  it('a human message titled "[objetivo] ..." still counts as human', () => {
+    const sessions = new SessionStore({ db: newDb() });
+    const t0 = Date.now() - 1000;
+    sessions.begin(SCOPE, '[objetivo] elige la opción barata'); // a person, free title
+    expect(sessions.hasHumanTurnSince(SCOPE, t0)).toBe(true);
   });
 });
 

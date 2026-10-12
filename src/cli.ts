@@ -34,7 +34,7 @@ import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecont
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
-import { GoalNotifier, goalNotifyTarget } from './goals/notify.js';
+import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
@@ -1731,6 +1731,21 @@ async function serveCommand(): Promise<number> {
       const mapped = messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`);
       const found = mapped ? threads.get(mapped) : undefined;
       if (found) return found;
+      // Durable fallback: a goal notification's sent id lives in SQLite, so a
+      // reply to a pending decision finds its owning thread even after a
+      // daemon restart emptied messageThread.
+      const goalScope = goalNotifier.scopeBySentId(inbound.replyToMessageId);
+      if (goalScope) {
+        const { chatKey: goalChatKey_, thread: goalThread_ } = splitGoalScope(goalScope);
+        if (goalChatKey_ === chatKey_) {
+          messageThread.set(`${chatKey_}:${inbound.replyToMessageId}`, goalScope);
+          return getOrCreateThread(
+            goalChatKey_,
+            goalThread_,
+            goalThread_ === 'main' ? 'principal' : goalThread_,
+          );
+        }
+      }
     }
 
     if (inbound.threadId) {
@@ -1822,6 +1837,7 @@ async function serveCommand(): Promise<number> {
         Promise.allSettled(pending),
         new Promise((resolve) => setTimeout(resolve, 10_000)),
       ]);
+      clearInterval(goalDeliveryTimer);
       routineRunner.stop();
       // Release the microphone before anything else slow: an ffmpeg that is still
       // holding the capture device would keep the next app (or the next start) from
@@ -1843,6 +1859,7 @@ async function serveCommand(): Promise<number> {
   const goalStore = new GoalStore({ db: goalsDb });
   const goalNotifier = new GoalNotifier({
     db: goalsDb,
+    resolveGoal: (id) => goalStore.read(id),
     // A goal's messages go to the chat that owns the goal, and nowhere else.
     send: async (goal, text) => {
       // To the chat AND thread that own the goal: a forum topic gets threadId,
@@ -1850,7 +1867,7 @@ async function serveCommand(): Promise<number> {
       // message, and the sent id is mapped so Nico's reply lands back in that
       // same thread instead of floating into #main.
       const target = goalNotifyTarget(goal.scope);
-      if (!target) return false;
+      if (!target) return null;
       try {
         const sentId = await telegram.send({
           channel: 'telegram',
@@ -1860,15 +1877,28 @@ async function serveCommand(): Promise<number> {
           threadId: target.threadId,
           replyToMessageId: target.replyToMessageId,
         });
-        if (!sentId) return false;
+        if (!sentId) return null;
+        // The sent id also lands in goal_notifications (sent_id): reply
+        // routing survives a daemon restart emptying messageThread.
         messageThread.set(`${target.chatKey}:${sentId}`, goal.scope);
-        return true;
+        return sentId;
       } catch (err) {
         log.warn('goal notify failed', { goal: goal.id, err });
-        return false;
+        return null;
       }
     },
   });
+  // The goal delivery engine: pending notifications (a decision Nico never
+  // saw, a closing note) retry on their own clock, independent of any goal's
+  // cron, of pause/resume and of the daily budget. It only delivers; it never
+  // runs work. Rows live in SQLite, so retries survive restarts up to 24h.
+  const goalDeliveryTimer = setInterval(() => {
+    void goalNotifier.flushAll().catch((err: unknown) => {
+      log.warn('goal delivery flush failed', { err });
+    });
+  }, NOTIFY_FLUSH_INTERVAL_MS);
+  goalDeliveryTimer.unref();
+  void goalNotifier.flushAll().catch(() => {}); // a reboot delivers at once
   const goalRunner = new GoalRunner({
     goals: goalStore,
     notifier: goalNotifier,
@@ -1900,7 +1930,13 @@ async function serveCommand(): Promise<number> {
         thread.active = true;
         let sessionId = '';
         safeRemember(() => {
-          sessionId = sessions.begin(thread.key, `[objetivo] ${goal.title}`.slice(0, 80));
+          // origin 'goal-tick': the machine's own session must never count as
+          // Nico's answer to a pending decision (provenance, not titles).
+          sessionId = sessions.begin(
+            thread.key,
+            `[objetivo] ${goal.title}`.slice(0, 80),
+            'goal-tick',
+          );
         });
         let result: AgentRunResult | null = null;
         try {
