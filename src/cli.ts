@@ -3514,7 +3514,7 @@ async function serveCommand(): Promise<number> {
         '/buscar <texto> - busca en conversaciones pasadas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
-        '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (y cortarme)',
+        '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (cortarme: apagado por defecto)',
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
         '/play [volumen] - suena en el PC el último audio que me mandaste',
         '/mic [segundos] - escuchar lo que oye el microfono',
@@ -4017,7 +4017,7 @@ async function serveCommand(): Promise<number> {
   let sessionPlayback: Playback | null = null;
   let activeSpeech: { abort(): void } | null = null;
   /** How easily talking over the agent cuts it off. Not persisted. */
-  let bargeLevel: BargeInLevel = 'normal';
+  let bargeLevel: BargeInLevel = 'off';
   let conversationCount = 0;
   let lastConversationEnd = '';
   const speaker = createMciSpeaker();
@@ -4067,7 +4067,7 @@ async function serveCommand(): Promise<number> {
           activeSpeech = null;
         }
       },
-      { stop: () => handle?.abort() },
+      { stop: () => handle?.abort(), text: phrases.join(' ') },
     );
   };
 
@@ -4204,10 +4204,10 @@ async function serveCommand(): Promise<number> {
     }
     if (want === 'corte') {
       const level = args.trim().split(/\s+/)[1]?.toLowerCase() ?? '';
-      if (level !== 'off' && level !== 'normal' && level !== 'sensible') {
+      if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
         await say(
           inbound,
-          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|normal|sensible (vale desde la próxima sesión).`,
+          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|altavoces|auriculares (vale desde la próxima sesión).`,
           { quote: true },
         );
         return;
@@ -4217,7 +4217,7 @@ async function serveCommand(): Promise<number> {
         inbound,
         level === 'off'
           ? 'No me cortaré si hablas encima: te escucho cuando termine. Vale desde la próxima sesión.'
-          : `Si hablas encima me callo (${level}). Con altavoces puede cortar de más o de menos; con auriculares es fiable. Vale desde la próxima sesión.`,
+          : `Si hablas encima me callo (${level}). Con altavoces es aproximado y puede cortar de más o de menos; con auriculares es fiable. Vale desde la próxima sesión.`,
         { quote: true },
       );
       return;

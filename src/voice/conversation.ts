@@ -47,7 +47,7 @@ export interface ConversationOptions {
   /** Runs the agent turn for what was said and speaks the answer. Resolves when done. */
   onUtterance: (text: string) => Promise<void>;
   onClose: (reason: CloseReason, detail?: string) => void;
-  /** Interrupt the agent while it talks. Default 'normal'. */
+  /** Interrupt the agent while it talks. Default 'off': enabling it is explicit. */
   bargeIn?: BargeInLevel;
 }
 
@@ -58,12 +58,21 @@ export type ConversationState =
   | 'hablando'
   | 'cerrada';
 
-/** Barge-in tuning. `off` keeps V1 behaviour: nothing is heard while the agent talks. */
-export type BargeInLevel = 'off' | 'normal' | 'sensible';
+/**
+ * Barge-in mode. `off` keeps V1 behaviour: nothing is heard while the agent talks.
+ * `altavoces` assumes the microphone hears the agent's own voice: the echo level is
+ * measured from the first sound of each phrase (never from the silence before it) and
+ * kept for the whole session. `auriculares` assumes no echo: any sustained speech over
+ * the gate interrupts.
+ */
+export type BargeInLevel = 'off' | 'altavoces' | 'auriculares';
 
-const BARGE_IN: Record<Exclude<BargeInLevel, 'off'>, { factor: number; sustainMs: number }> = {
-  normal: { factor: 2, sustainMs: 400 },
-  sensible: { factor: 1.5, sustainMs: 250 },
+const BARGE_IN: Record<
+  Exclude<BargeInLevel, 'off'>,
+  { factor: number; sustainMs: number; calibrate: boolean }
+> = {
+  altavoces: { factor: 2, sustainMs: 400, calibrate: true },
+  auriculares: { factor: 1, sustainMs: 300, calibrate: false },
 };
 
 /** Echo is measured over this much audio at the start of each phrase. */
@@ -179,6 +188,14 @@ export class ConversationSession {
   #speakStop: (() => void) | null = null;
   #speakInterrupted = false;
   #echoSum = 0;
+  /** True once the first sound of this phrase was heard; silence never calibrates. */
+  #echoStarted = false;
+  /** Highest echo level measured in this session: a quieter phrase never lowers the bar. */
+  #echoMax = 0;
+  /** What was being read, to recognise the agent's own voice in an interrupting utterance. */
+  #spokenWords = new Set<string>();
+  #bargeSeeded = false;
+  #echoLoops = 0;
   #echoSamples = 0;
   #loudSamples = 0;
   #speakBuf: Float32Array[] = [];
@@ -199,7 +216,7 @@ export class ConversationSession {
       transcribeTimeoutMs: opts.transcribeTimeoutMs ?? 30_000,
       maxFailures: opts.maxFailures ?? 3,
     };
-    this.#bargeIn = opts.bargeIn ?? 'normal';
+    this.#bargeIn = opts.bargeIn ?? 'off';
     this.#transcriber = opts.transcriber;
     this.#onUtterance = opts.onUtterance;
     this.#onClose = opts.onClose;
@@ -388,9 +405,27 @@ export class ConversationSession {
     const text = raw.trim();
     this.#lastHeard = text;
     if (isNoise(text)) {
+      this.#bargeSeeded = false;
       this.#resumeListening();
       return;
     }
+    // The utterance that interrupted the agent may be the agent itself, heard through
+    // the speakers. Mostly the same words as what it was reading: not a request.
+    const seeded = this.#bargeSeeded;
+    this.#bargeSeeded = false;
+    if (seeded && this.#isSelfEcho(text)) {
+      this.#echoLoops++;
+      this.#lastError = 'me he oído a mí mismo; descarto esa frase';
+      // Twice in a row: the speakers feed the microphone. Stop interrupting.
+      if (this.#echoLoops >= 2) {
+        this.#bargeIn = 'off';
+        this.#lastError =
+          'me oigo a mí mismo por los altavoces; dejo de dejarme interrumpir en esta sesión';
+      }
+      this.#resumeListening();
+      return;
+    }
+    if (seeded) this.#echoLoops = 0;
     if (isClosingPhrase(text)) {
       this.close('cierre');
       return;
@@ -420,7 +455,7 @@ export class ConversationSession {
    */
   async speak(
     run: (ctl: SpeakControl) => Promise<void>,
-    opts: { stop?: () => void } = {},
+    opts: { stop?: () => void; text?: string } = {},
   ): Promise<SpeakOutcome> {
     const fromListening = this.#state === 'escuchando';
     if (!fromListening && this.#state !== 'respondiendo') return 'fin';
@@ -430,6 +465,11 @@ export class ConversationSession {
     const turn = this.#turnSeq;
     this.#state = 'hablando';
     this.#speakStop = opts.stop ?? null;
+    this.#spokenWords = new Set(
+      normaliseSpeech(opts.text ?? '')
+        .split(' ')
+        .filter(Boolean),
+    );
     this.#speakInterrupted = false;
     this.#restartCalibration();
     this.#speakBuf = [];
@@ -455,10 +495,19 @@ export class ConversationSession {
     return 'fin';
   }
 
+  #isSelfEcho(text: string): boolean {
+    if (this.#spokenWords.size === 0) return false;
+    const words = normaliseSpeech(text).split(' ').filter(Boolean);
+    if (words.length < 3) return false;
+    const inside = words.filter((w) => this.#spokenWords.has(w)).length;
+    return inside / words.length >= 0.8;
+  }
+
   #restartCalibration(): void {
     this.#echoSum = 0;
     this.#echoSamples = 0;
     this.#loudSamples = 0;
+    this.#echoStarted = false;
   }
 
   #feedWhileSpeaking(pcm: Float32Array): void {
@@ -475,15 +524,25 @@ export class ConversationSession {
     ) {
       this.#speakBufSamples -= this.#speakBuf.shift()?.length ?? 0;
     }
-    // The first CALIBRATE_MS of each phrase are the room's echo of our own voice, not
-    // the user. (Declared: someone already talking over the phrase start is measured as
-    // echo and raises the bar for that phrase.)
-    if (this.#echoSamples < msToSamples(CALIBRATE_MS)) {
-      this.#echoSum += level_rms * pcm.length;
-      this.#echoSamples += pcm.length;
-      return;
+    // altavoces: the room's echo of our own voice is measured over CALIBRATE_MS from the
+    // first SOUND of the phrase. Never from the moment playback was requested: the player
+    // takes hundreds of ms to start, and that window is silence (measuring it made the
+    // agent cut itself off and answer itself). Declared: a user already talking when the
+    // phrase starts is measured as echo for that phrase.
+    let echo = 0;
+    if (level.calibrate) {
+      if (!this.#echoStarted) {
+        if (level_rms < this.#o.gateRms) return;
+        this.#echoStarted = true;
+      }
+      if (this.#echoSamples < msToSamples(CALIBRATE_MS)) {
+        this.#echoSum += level_rms * pcm.length;
+        this.#echoSamples += pcm.length;
+        this.#echoMax = Math.max(this.#echoMax, this.#echoSum / this.#echoSamples);
+        return;
+      }
+      echo = Math.max(this.#echoMax, this.#echoSum / Math.max(1, this.#echoSamples));
     }
-    const echo = this.#echoSum / Math.max(1, this.#echoSamples);
     const threshold = Math.max(this.#o.gateRms, level.factor * echo);
     if (level_rms >= threshold) this.#loudSamples += pcm.length;
     else this.#loudSamples = 0;
@@ -501,6 +560,7 @@ export class ConversationSession {
     this.#voicedSamples = this.#loudSamples;
     this.#silentSamples = 0;
     this.#inSpeech = true;
+    this.#bargeSeeded = true;
     this.#speakBuf = [];
     this.#speakBufSamples = 0;
     this.#idleSamples = 0;

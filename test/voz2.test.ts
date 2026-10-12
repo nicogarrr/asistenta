@@ -20,14 +20,14 @@ const settle = async (): Promise<void> => {
 };
 
 function build(
-  over: { bargeIn?: 'off' | 'normal' | 'sensible'; transcribe?: () => Promise<string> } = {},
+  over: { bargeIn?: 'off' | 'altavoces' | 'auriculares'; transcribe?: () => Promise<string> } = {},
 ) {
   const heard: string[] = [];
   const lengths: number[] = [];
   const closed: string[] = [];
   const session = new ConversationSession({
     tailMs: 0,
-    bargeIn: over.bargeIn,
+    bargeIn: over.bargeIn ?? 'altavoces',
     transcriber: async (samples) => {
       lengths.push(samples.length);
       return over.transcribe ? over.transcribe() : 'para el timer';
@@ -105,12 +105,11 @@ describe('barge-in', () => {
     expect(speech.stoppedCount()).toBe(0);
   });
 
-  it('sensible corta con menos voz que normal', () => {
-    const a = build({ bargeIn: 'sensible' });
+  it('auriculares corta con voz sostenida sin calibrar eco', () => {
+    const a = build({ bargeIn: 'auriculares' });
     const speech = fakeSpeech();
     void a.session.speak(speech.run, { stop: speech.stop });
-    feedN(a.session, echo, 6);
-    feedN(a.session, user, 3); // 300 ms >= 250
+    feedN(a.session, user, 3); // 300 ms: sin eco que medir
     expect(speech.stoppedCount()).toBe(1);
   });
 
@@ -150,6 +149,7 @@ describe('barge-in', () => {
     const speech = fakeSpeech();
     session = new ConversationSession({
       tailMs: 0,
+      bargeIn: 'altavoces',
       transcriber: async () => `frase ${++n}`,
       onUtterance: async (t) => {
         turns.push(t);
@@ -180,6 +180,112 @@ describe('barge-in', () => {
     await outcome;
     expect(session.state()).toBe('cerrada');
     expect(closed).toEqual(['apagado']);
+  });
+});
+
+describe('barge-in: autoeco', () => {
+  const faint = (): Float32Array => tone(0.004); // silencio de arranque del reproductor
+  it('600 ms de silencio antes de que suene el eco NO calibran: no se corta a sí mismo', () => {
+    const { session } = build();
+    const speech = fakeSpeech();
+    void session.speak(speech.run, { stop: speech.stop });
+    feedN(session, faint, 6);
+    feedN(session, echo, 30); // por fin suena, por encima de la puerta
+    expect(speech.stoppedCount()).toBe(0);
+    expect(session.stats().bargeIns).toBe(0);
+  });
+
+  it('el eco medido en una frase protege a la siguiente aunque arranque en silencio', () => {
+    const { session } = build();
+    const speech = fakeSpeech();
+    const box: { ctl?: { phraseStart(): void } } = {};
+    void session.speak(
+      async (c) => {
+        box.ctl = c;
+        await speech.run();
+      },
+      { stop: speech.stop },
+    );
+    feedN(session, echo, 10);
+    box.ctl?.phraseStart();
+    feedN(session, faint, 8);
+    feedN(session, echo, 30);
+    expect(speech.stoppedCount()).toBe(0);
+  });
+
+  it('si lo interrumpido era él mismo (mismas palabras) no es un turno', async () => {
+    const { session, heard } = build({
+      transcribe: async () => 'son las tres y media de la tarde',
+    });
+    const speech = fakeSpeech();
+    const outcome = session.speak(speech.run, {
+      stop: speech.stop,
+      text: 'Son las tres y media de la tarde.',
+    });
+    feedN(session, echo, 8);
+    feedN(session, user, 5);
+    expect(await outcome).toBe('interrumpido');
+    feedN(session, user, 3);
+    feedN(session, quiet, 10);
+    await settle();
+    expect(heard).toEqual([]);
+    expect(session.state()).toBe('escuchando');
+    expect(session.stats().lastError).toContain('mí mismo');
+  });
+
+  it('dos autoecos seguidos apagan el corte en la sesión', async () => {
+    const { session } = build({ transcribe: async () => 'son las tres y media de la tarde' });
+    for (let i = 0; i < 2; i++) {
+      const speech = fakeSpeech();
+      void session.speak(speech.run, {
+        stop: speech.stop,
+        text: 'Son las tres y media de la tarde.',
+      });
+      feedN(session, echo, 8);
+      feedN(session, user, 5);
+      feedN(session, user, 3);
+      feedN(session, quiet, 10);
+      await settle();
+    }
+    expect(session.stats().lastError).toContain('dejo de dejarme interrumpir');
+    const speech = fakeSpeech();
+    void session.speak(speech.run, { stop: speech.stop });
+    feedN(session, echo, 8);
+    feedN(session, user, 20);
+    expect(speech.stoppedCount()).toBe(0);
+  });
+
+  it('una frase distinta del usuario sí es turno', async () => {
+    const { session, heard } = build({
+      transcribe: async () => 'para el temporizador de la cocina',
+    });
+    const speech = fakeSpeech();
+    void session.speak(speech.run, {
+      stop: speech.stop,
+      text: 'Son las tres y media de la tarde.',
+    });
+    feedN(session, echo, 8);
+    feedN(session, user, 5);
+    feedN(session, user, 3);
+    feedN(session, quiet, 10);
+    await settle();
+    expect(heard).toEqual(['para el temporizador de la cocina']);
+  });
+
+  it('por defecto el corte está apagado', async () => {
+    const heard: string[] = [];
+    const session = new ConversationSession({
+      tailMs: 0,
+      transcriber: async () => 'hola',
+      onUtterance: async (t) => {
+        heard.push(t);
+      },
+      onClose: () => {},
+    });
+    const speech = fakeSpeech();
+    void session.speak(speech.run, { stop: speech.stop });
+    feedN(session, user, 30);
+    expect(speech.stoppedCount()).toBe(0);
   });
 });
 
