@@ -54,6 +54,7 @@ import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { MemoryStore } from './memory.js';
+import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
@@ -134,7 +135,13 @@ import {
   vaultList,
   vaultSet,
 } from './vault.js';
-import { resolveOwnerDmChatId, resolveOwnerUserId, startVigilanteLoop } from './vigilante.js';
+import {
+  getOjoEnabled,
+  resolveOwnerDmChatId,
+  resolveOwnerUserId,
+  setOjoEnabled,
+  startVigilanteLoop,
+} from './vigilante.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -2060,6 +2067,7 @@ async function serveCommand(): Promise<number> {
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
+      quiet: DEFAULT_QUIET_HOURS,
       agenda: () =>
         buildAgenda({
           calendar: () =>
@@ -2111,6 +2119,27 @@ async function serveCommand(): Promise<number> {
     30 * 60 * 1000,
     5 * 60 * 1000,
   );
+
+  /** `/ojo [on|off]`: interruptor general del ojo de águila y su estado. */
+  const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
+    const arg = args.trim().toLowerCase();
+    if (arg === 'on' || arg === 'off') {
+      setOjoEnabled(memoryDb, arg === 'on');
+    } else if (arg && arg !== 'estado') {
+      await say(inbound, 'Uso: /ojo on, /ojo off o /ojo (estado).', { quote: true });
+      return;
+    }
+    const quiet = DEFAULT_QUIET_HOURS;
+    await say(
+      inbound,
+      [
+        `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
+        'Cada 30 min miro calendario, correo y pendientes, y te aviso de plazos, pagos, viajes y citas nuevos, con un recordatorio a 24 h y otro a 2 h, y de citas que se pisan.',
+        `Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h.`,
+      ].join('\n'),
+      { quote: true },
+    );
+  };
 
   // ---- commands -----------------------------------------------------------
 
@@ -3241,6 +3270,7 @@ async function serveCommand(): Promise<number> {
         '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
+        '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
         '/memory - lo que recuerdo de ti',
         '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
         '/pendientes - lo que te tengo que recordar',
@@ -3858,6 +3888,8 @@ async function serveCommand(): Promise<number> {
           }
           case 'agenda':
             return cmdAgenda(inbound);
+          case 'ojo':
+            return cmdOjo(inbound, command.args);
           case 'voice':
             return cmdVoice(inbound, command.args);
           case 'wake':

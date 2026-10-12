@@ -38,6 +38,19 @@ import { zonedDayKey, zonedDayStart } from './agenda/ics.js';
 import type { AgendaItem, AgendaKind, UnifiedAgenda } from './agenda/unified.js';
 import { localTimeZone } from './datecontext.js';
 import { log } from './log.js';
+import {
+  type Conflict,
+  dueStages,
+  findConflicts,
+  formatConflicts,
+  inQuietHours,
+  isCritical,
+  MAX_CONFLICTS,
+  type QuietHours,
+  type ReminderStage,
+  stageKey,
+  whenRelative,
+} from './ojo.js';
 
 /** Tipos que merecen aviso proactivo. `reminder`/`other` no: o ya avisa otro, o es ruido. */
 export const VIGILANTE_KINDS: readonly AgendaKind[] = ['deadline', 'payment', 'travel', 'meeting'];
@@ -92,6 +105,11 @@ export interface VigilanteDeps {
    * `stop()` podría esperar una fuente colgada y el daemon no cerraría nunca.
    */
   agendaTimeoutMs?: number;
+  /**
+   * Horas de silencio (hora local). Sin esto no hay silencio: lo activa el
+   * cableado del daemon, así los tests y otros usos son deterministas.
+   */
+  quiet?: QuietHours;
 }
 
 export interface VigilanteResult {
@@ -105,6 +123,23 @@ export interface VigilanteResult {
 
 export function initVigilanteStore(db: DatabaseSync): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS vigilante_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+  // Etapas de recordatorio y conflictos: tabla aparte, para que vigilante_seen siga
+  // siendo exactamente "lo descubierto y avisado".
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vigilante_stages (
+      key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      at INTEGER,
+      notified_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`
     CREATE TABLE IF NOT EXISTS vigilante_seen (
       key TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -113,6 +148,22 @@ export function initVigilanteStore(db: DatabaseSync): void {
       notified_at INTEGER NOT NULL
     )
   `);
+}
+
+/** Interruptor general del ojo: encendido por defecto, `/ojo off` lo apaga. */
+export function getOjoEnabled(db: DatabaseSync): boolean {
+  initVigilanteStore(db);
+  const row = db.prepare("SELECT value FROM vigilante_settings WHERE key = 'enabled'").get() as
+    | { value: string }
+    | undefined;
+  return row?.value !== 'off';
+}
+
+export function setOjoEnabled(db: DatabaseSync, enabled: boolean): void {
+  initVigilanteStore(db);
+  db.prepare(
+    "INSERT INTO vigilante_settings (key, value) VALUES ('enabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(enabled ? 'on' : 'off');
 }
 
 /**
@@ -245,6 +296,30 @@ export function formatFindings(items: AgendaItem[], timeZone: string): string {
   return `${header}\n${lines.join('\n')}`;
 }
 
+interface Reminder {
+  item: AgendaItem;
+  stage: ReminderStage;
+  /** Etapas ya alcanzadas de este hallazgo: salen todas marcadas, solo la última se dice. */
+  covered: ReminderStage[];
+}
+
+export function formatReminders(reminders: Reminder[], now: number, timeZone: string): string {
+  const lines = reminders.map(({ item, stage }) => {
+    const label = KIND_LABEL[item.kind] ?? item.kind;
+    const title = item.title.replace(/\s+/g, ' ').trim().slice(0, MAX_TITULO) || '(sin título)';
+    const tag =
+      item.sources && item.sources.length > 1
+        ? item.sources.map((where) => WHERE_TAG[where] ?? where).join('+')
+        : (WHERE_TAG[item.where] ?? item.where);
+    const doubt =
+      item.confidence !== undefined && item.confidence < 0.8
+        ? ` (${Math.round(item.confidence * 100)}% seguro)`
+        : '';
+    return `• ${label}: ${title} — ${whenRelative(item, stage, now)}; ${formatWhen(item, timeZone)} (${tag})${doubt}`;
+  });
+  return `⏰ Recordatorio: ${reminders.length === 1 ? '1 cosa próxima' : `${reminders.length} cosas próximas`}\n${lines.join('\n')}`;
+}
+
 /**
  * Un barrido: construye la agenda, difiere contra lo ya notificado y avisa solo de
  * lo nuevo. El cap se aplica DESPUÉS de descartar lo ya visto: capar antes dejaría
@@ -259,6 +334,8 @@ export async function runVigilanteOnce(
   const zero: VigilanteResult = { seen: 0, fresh: 0, notified: 0 };
   try {
     initVigilanteStore(deps.db);
+    // Interruptor general (/ojo off): apagado no mira ni avisa de nada.
+    if (!getOjoEnabled(deps.db)) return zero;
     const now = deps.now ?? Date.now;
     const agenda = await withTimeout(
       deps.agenda(),
@@ -266,7 +343,8 @@ export async function runVigilanteOnce(
       'vigilante: construir la agenda',
     );
 
-    const findings = collectFindings(agenda, timeZone, now());
+    const nowMs = now();
+    const findings = collectFindings(agenda, timeZone, nowMs);
     if (findings.length === 0) return zero;
 
     // Dedupe intra-barrido: dos fuentes pueden traer el mismo hallazgo dos veces y
@@ -282,19 +360,70 @@ export async function runVigilanteOnce(
         (r) => r.key,
       ),
     );
-    const fresh = [...unique.values()].filter((item) => !known.has(findingKey(item, timeZone)));
-    if (fresh.length === 0) return { seen: findings.length, fresh: 0, notified: 0 };
-
-    // Cap aquí, no en collectFindings: después del dedupe y del filtro de conocidos.
+    const marked = new Set(
+      (deps.db.prepare('SELECT key FROM vigilante_stages').all() as Array<{ key: string }>).map(
+        (r) => r.key,
+      ),
+    );
+    // Horas de silencio: lo no crítico espera SIN marcarse, y sale al terminar.
+    const quiet = deps.quiet ? inQuietHours(nowMs, deps.quiet, timeZone) : false;
+    const allowed = (item: AgendaItem): boolean => !quiet || isCritical(item, nowMs);
     const maxItems = Math.max(1, deps.maxItems ?? MAX_HALLAZGOS);
-    const toSend = fresh.slice(0, maxItems);
+
+    const fresh = [...unique.entries()].filter(([key]) => !known.has(key));
+    // Cap aquí, no en collectFindings: después del dedupe y del filtro de conocidos.
+    const toSend = fresh.filter(([, item]) => allowed(item)).slice(0, maxItems);
+
+    // Recordatorios: hallazgos ya avisados cuya etapa (T-24h / T-2h) ya toca y aún
+    // no salió. Solo la etapa más cercana se dice; las anteriores se marcan.
+    const reminders: Array<{
+      key: string;
+      item: AgendaItem;
+      stage: ReminderStage;
+      covered: ReminderStage[];
+    }> = [];
+    for (const [key, item] of unique) {
+      if (!known.has(key) || !allowed(item)) continue;
+      const due = dueStages(item, timeZone, nowMs);
+      const pending = due.filter((st) => !marked.has(stageKey(key, st)));
+      const last = pending[pending.length - 1];
+      if (last) reminders.push({ key, item, stage: last, covered: due });
+    }
+    reminders.sort((x, y) => (x.item.at ?? 0) - (y.item.at ?? 0));
+    const remindersToSend = reminders.slice(0, maxItems);
+
+    // Conflictos: solape real entre dos cosas con hora, una sola vez por par.
+    // Nunca críticos: durante el silencio esperan.
+    const conflicts: Conflict[] = quiet
+      ? []
+      : findConflicts([...unique.values()], (i) => findingKey(i, timeZone), nowMs)
+          .filter((c) => !marked.has(c.key))
+          .slice(0, MAX_CONFLICTS);
+
+    if (toSend.length === 0 && remindersToSend.length === 0 && conflicts.length === 0) {
+      return { seen: findings.length, fresh: toSend.length, notified: 0 };
+    }
 
     // Cierre ordenado: si el daemon se apaga, este barrido no envía ni escribe.
     if (deps.shouldAbort?.()) return { seen: findings.length, fresh: toSend.length, notified: 0 };
 
+    const parts: string[] = [];
+    if (toSend.length > 0) {
+      parts.push(
+        formatFindings(
+          toSend.map(([, item]) => item),
+          timeZone,
+        ),
+      );
+    }
+    if (remindersToSend.length > 0) {
+      parts.push(formatReminders(remindersToSend, nowMs, timeZone));
+    }
+    if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
+
     let sent = false;
     try {
-      sent = await deps.send(formatFindings(toSend, timeZone));
+      sent = await deps.send(parts.join('\n\n'));
     } catch (err) {
       log.warn('vigilante: envío fallido, se reintenta en el próximo barrido', {
         err: String(err),
@@ -308,10 +437,29 @@ export async function runVigilanteOnce(
     const insert = deps.db.prepare(
       'INSERT OR IGNORE INTO vigilante_seen (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
     );
-    for (const item of toSend) {
-      insert.run(findingKey(item, timeZone), item.kind, item.title, item.at ?? null, now());
+    const mark = deps.db.prepare(
+      'INSERT OR IGNORE INTO vigilante_stages (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const [key, item] of toSend) {
+      insert.run(key, item.kind, item.title, item.at ?? null, now());
+      // El aviso de descubrimiento ya cubre las etapas que tocan ahora.
+      for (const st of dueStages(item, timeZone, nowMs)) {
+        mark.run(stageKey(key, st), `etapa:${st}`, item.title, item.at ?? null, now());
+      }
     }
-    log.info('vigilante: hallazgos nuevos notificados', { count: toSend.length });
+    for (const r of remindersToSend) {
+      for (const st of r.covered) {
+        mark.run(stageKey(r.key, st), `etapa:${st}`, r.item.title, r.item.at ?? null, now());
+      }
+    }
+    for (const c of conflicts) {
+      mark.run(c.key, 'conflicto', `${c.a.title} / ${c.b.title}`, c.a.at ?? null, now());
+    }
+    log.info('vigilante: avisos notificados', {
+      nuevos: toSend.length,
+      recordatorios: remindersToSend.length,
+      conflictos: conflicts.length,
+    });
     return { seen: findings.length, fresh: toSend.length, notified: toSend.length };
   } catch (err) {
     log.warn('vigilante: barrido fallido, se reintenta en el próximo ciclo', { err: String(err) });
