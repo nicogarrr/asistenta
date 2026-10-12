@@ -525,10 +525,13 @@ describe('Gate: classifyEffect provability table', () => {
   const at = (tool: string, args: Record<string, unknown>, stage?: 'browse' | 'fill' | 'confirm') =>
     gate.classifyEffect({ tool, args, actor: 'test', ...(stage ? { stage } : {}) });
 
-  it('money evidence is paga', () => {
+  it('money evidence is paga on bounded tools only', () => {
     expect(at('browser', { action: 'click', _target: 'button | Pay now @@ Shop' })).toBe('paga');
-    expect(at('shell', { command: 'echo 4111111111111111' })).toBe('paga');
-    expect(at('checkout', { action: 'fill' }, 'confirm')).toBe('paga');
+    expect(at('checkout', { action: 'confirm' }, 'confirm')).toBe('paga');
+    // Opacity first: money-shaped arguments on an opaque call prove presence,
+    // never completeness.
+    expect(at('shell', { command: 'echo 4111111111111111' })).toBeNull();
+    expect(at('shell', { command: 'echo payment' }, undefined)).toBeNull();
   });
 
   it('reads and internal bookkeeping are lee', () => {
@@ -546,20 +549,17 @@ describe('Gate: classifyEffect provability table', () => {
     expect(at('tv', { action: 'screenshot' })).toBe('lee');
     expect(at('fetch', { url: 'https://example.com' })).toBe('lee');
     expect(at('fetch', { url: 'https://example.com', method: 'GET' })).toBe('lee');
+    expect(at('checkout', { action: 'search' })).toBe('lee');
+    expect(at('checkout', { action: 'select' })).toBe('lee');
+    expect(at('checkout', { action: 'status' })).toBe('lee');
   });
 
-  it('provable writes and sends get their class', () => {
+  it('provable local writes get escribe-local', () => {
     expect(at('write', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
     expect(at('edit', { path: 'C:\\tmp\\x.txt' })).toBe('escribe-local');
     expect(at('media', { action: 'tts' })).toBe('escribe-local');
     expect(at('reminder', { action: 'crear' })).toBe('escribe-local');
-    // POSITIVE effect evidence (illegible destination / effect text / money
-    // page) proves envia-terceros for a click.
-    expect(at('browser', { action: 'click', _target: 'button | Seguir [destino ilegible]' })).toBe(
-      'envia-terceros',
-    );
-    expect(at('fetch', { url: 'https://example.com', method: 'POST' })).toBe('envia-terceros');
-    expect(at('checkout', { action: 'fill' }, 'browse')).toBe('escribe-local');
+    expect(at('fabrica', { action: 'build', name: 'x' })).toBe('escribe-local');
   });
 
   it('opaque calls are null (unprovable), never a default', () => {
@@ -567,20 +567,36 @@ describe('Gate: classifyEffect provability table', () => {
     // Typing into a third-party page can transmit on every keystroke.
     expect(at('browser', { action: 'fill', selector: '#email', text: 'a@b.c' })).toBeNull();
     expect(at('browser', { action: 'choose', selector: '#pais', text: 'ES' })).toBeNull();
-    // A legible "Continuar" button can submit the form: no effect words in the
-    // text prove nothing about what the click sends.
+    // Acting on a page element is unprovable as a WHOLE effect: the Gate's
+    // effect-text predicate is an ask heuristic, not a classifier. A legible
+    // "Continuar" can submit the form, "Delete account" also destroys, and
+    // "[destino ilegible]" can pay or destroy.
     expect(at('browser', { action: 'click', _target: 'button | submit | Continuar' })).toBeNull();
     expect(
       at('browser', { action: 'click', _target: 'link | Leer mas @@ Blog personal' }),
     ).toBeNull();
+    expect(
+      at('browser', { action: 'click', _target: 'button | submit | Delete account' }),
+    ).toBeNull();
+    expect(at('browser', { action: 'click', _target: '[destino ilegible]' })).toBeNull();
     // Shell is arbitrary code as a whole: the destructive regex matching says
-    // nothing about the rest of the command.
+    // nothing about the rest of the command, and a stage label cannot talk an
+    // opaque call into a class.
     expect(at('shell', { command: 'curl -X POST https://api.example.com -d x=1' })).toBeNull();
     expect(at('shell', { command: 'Remove-Item -Recurse C:\\x' })).toBeNull();
     expect(
       at('shell', { command: 'Remove-Item X; curl -X POST https://api.example.com -d x=1' }),
     ).toBeNull();
+    expect(
+      at('shell', { command: 'echo payment; Remove-Item x; curl -X POST https://a.b' }, 'confirm'),
+    ).toBeNull();
     expect(at('shell', { command: 'dir' })).toBeNull();
+    // A non-GET fetch transmits to a third party whose server-side effect is
+    // unprovable from the client side.
+    expect(at('fetch', { url: 'https://example.com', method: 'POST' })).toBeNull();
+    // fill_passenger types into a third-party page: same as browser fill.
+    expect(at('checkout', { action: 'fill_passenger', nombre: 'N' })).toBeNull();
+    expect(at('checkout', { action: 'confirm' })).toBeNull(); // no stage: fail closed
     expect(at('computer', { action: 'click', x: 1, y: 2 })).toBeNull();
     expect(at('computer', { action: 'type', text: 'hola' })).toBeNull();
     expect(at('tv', { action: 'power', value: false })).toBeNull();
@@ -741,30 +757,100 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('auditor R3 probes: complete-effect proof or ask', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
+    const gestor = new GestorStore({ db: newDb() });
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'x',
+      encargo: 'x',
+      plan: plan('envia-terceros', 'paga', 'destructivo'),
+    });
+    gestor.start(g.id); // step 1: envia-terceros
+    const reasons: string[] = [];
+    const gate = wiredGate(
+      dir,
+      gestor,
+      (reason) => {
+        reasons.push(reason);
+        return true;
+      },
+      { fullControl: true, allowPayments: true, allow: ['checkout'] },
+    );
+    // 1a. 'Delete account' in an approved SENDING step: deleting is not
+    // covered by envia-terceros, and the complete effect is unprovable.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'click', _target: 'button | submit | Delete account' },
+      actor: 'test',
+    });
+    // 1b. '[destino ilegible]' proves nothing complete either.
+    await gate.check(SCOPE, {
+      tool: 'browser',
+      args: { action: 'click', _target: '[destino ilegible]' },
+      actor: 'test',
+    });
+    expect(reasons).toHaveLength(2);
+    expect(reasons[0]).toContain('no puedo probar la clase de efecto');
+    gestor.recordStep(g.id, 0, 'ok'); // step 2: paga
+    // 2a. Payment-shaped compound shell in a PAYING step, allowPayments on:
+    // destruction and sending ride along unprovably, so it asks.
+    await gate.check(SCOPE, {
+      tool: 'shell',
+      args: { command: 'echo payment; Remove-Item x; curl -X POST https://a.b' },
+      actor: 'test',
+    });
+    // 2b. A stage label cannot talk an opaque call into the paga class.
+    await gate.check(SCOPE, {
+      tool: 'shell',
+      args: { command: 'dir' },
+      actor: 'test',
+      stage: 'confirm',
+    });
+    expect(reasons).toHaveLength(4);
+    gestor.recordStep(g.id, 1, 'ok'); // step 3: destructivo
+    // 3. fill_passenger types into a third-party page: asks even here; the
+    // bounded reads of checkout stay free (allow-listed gate: only the forced
+    // path can make them ask).
+    await gate.check(SCOPE, {
+      tool: 'checkout',
+      args: { action: 'fill_passenger', nombre: 'N' },
+      actor: 'test',
+    });
+    await gate.check(SCOPE, { tool: 'checkout', args: { action: 'search' }, actor: 'test' });
+    expect(reasons).toHaveLength(5);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('advancing the step relaxes the guard to the new class', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-gestor-gate-'));
     const gestor = new GestorStore({ db: newDb() });
-    const g = proposeIn(gestor); // lee, envia-terceros
+    const g = gestor.propose({
+      scope: SCOPE,
+      title: 'x',
+      encargo: 'x',
+      plan: plan('lee', 'escribe-local'),
+    });
     gestor.start(g.id);
     let asked = 0;
     const gate = wiredGate(dir, gestor, () => {
       asked++;
       return true;
     });
-    const effectClick = {
-      tool: 'browser',
-      args: { action: 'click', _target: 'button | Seguir [destino ilegible]' },
+    const writeCall = {
+      tool: 'write',
+      args: { path: 'C:\\tmp\\borrador.txt', content: 'x' },
       actor: 'test',
     };
-    await gate.check(SCOPE, effectClick); // forced: envia over lee
+    await gate.check(SCOPE, writeCall); // forced: escribe-local over lee
     expect(asked).toBe(1);
-    gestor.recordStep(g.id, 0, 'ok'); // now step 2: envia-terceros
+    gestor.recordStep(g.id, 0, 'ok'); // now step 2: escribe-local
     // Covered now, and this exact call was explicitly approved a moment ago
     // (the forced ask recorded its fingerprint), so the memo applies.
-    await gate.check(SCOPE, effectClick);
-    await gate.check(SCOPE, effectClick);
+    await gate.check(SCOPE, writeCall);
+    await gate.check(SCOPE, writeCall);
     expect(asked).toBe(1);
-    // ...but a payment call in a sending step still forces the ask.
+    // ...but a payment call in a writing step still forces the ask.
     const payCall = {
       tool: 'browser',
       args: { action: 'click', _target: 'button | Pay now @@ Shop' },

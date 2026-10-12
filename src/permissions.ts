@@ -548,14 +548,44 @@ export class Gate {
    * PROVEN. The gestor compares this against the class Nico approved for the
    * current step, and null forces an ask: opaque actions (arbitrary code in a
    * page, any shell command, a desktop click whose target is unknown, typing
-   * into a third-party form, booking tools, factory-built tools) get evidence
-   * or a question, never a default. Only POSITIVE evidence assigns a class:
-   * the absence of effect words in a target proves nothing about what a click
-   * sends, and one matched regex proves nothing about the rest of a compound
-   * command. Note `destructivo` never comes out of this function: destruction
-   * is provable as present, but never as the WHOLE effect of a call.
+   * into a third-party form, acting on a page element, booking tools,
+   * factory-built tools) get positive proof or a question, never a default.
+   * Only PROOF of the complete effect assigns a class: the absence of effect
+   * words in a target proves nothing about what a click sends, one matched
+   * regex proves nothing about the rest of a compound command, and a money
+   * signal on an opaque call proves presence, never completeness. Note
+   * `destructivo` and `envia-terceros` never come out of this function: both
+   * are provable as present, never as the WHOLE effect of a call.
    */
   classifyEffect(c: ToolCall): EffectClass | null {
+    // OPACITY FIRST, before any money or stage signal: payment-shaped arguments
+    // or a stage label on an opaque call prove the shape is present, never
+    // that the call's whole effect is paying - 'echo payment; Remove-Item x;
+    // curl -X POST ...' also destroys and sends.
+    switch (c.tool) {
+      case 'shell':
+      case 'book':
+      case 'opengym':
+        return null;
+      case 'computer': {
+        const action = argString(c.args, 'action');
+        return action === 'screenshot' || action === 'move' ? 'lee' : null;
+      }
+      case 'tv': {
+        const action = argString(c.args, 'action');
+        return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
+      }
+      case 'browser':
+        // Arbitrary code in the page can send, delete or pay: unprovable.
+        if (argString(c.args, 'action') === 'exec_js') return null;
+        break;
+      default:
+        break;
+    }
+    // Factory-built and otherwise unknown tools are opaque too.
+    if (!BOUNDED_EFFECT_TOOLS.has(c.tool)) return null;
+    // Money evidence on a BOUNDED tool: the worst case of its known vocabulary
+    // (and the Gate's own money rules ask for these regardless).
     if (this.#isPaymentConfirmation(c) || this.#isPaymentish(c)) return 'paga';
     switch (c.tool) {
       // Provably without world effect: reads and the daemon's own bookkeeping
@@ -574,12 +604,12 @@ export class Gate {
         return 'lee';
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
-        return method === '' || method === 'GET' || method === 'HEAD' ? 'lee' : 'envia-terceros';
+        // GET/HEAD are reads. Anything else transmits to a third party whose
+        // server-side effect cannot be proven from the client side.
+        return method === '' || method === 'GET' || method === 'HEAD' ? 'lee' : null;
       }
       case 'browser': {
         const action = argString(c.args, 'action');
-        // Arbitrary code in the page can send, delete or pay: unprovable.
-        if (action === 'exec_js') return null;
         if (
           [
             'open',
@@ -595,16 +625,11 @@ export class Gate {
         ) {
           return 'lee';
         }
-        if (action === 'click' || action === 'press') {
-          // POSITIVE evidence of sending (legible effect text, money page or an
-          // illegible destination) proves envia-terceros. Its ABSENCE proves
-          // nothing: a legible "Continuar" button can submit the form, so a
-          // click without that evidence is unprovable, not "local".
-          return this.#isBrowserEffect(c) ? 'envia-terceros' : null;
-        }
-        // fill/choose type into a third-party page, where an autosave or an
-        // event listener can transmit on every keystroke: sending is possible
-        // and its absence cannot be proven, so they are unprovable too.
+        // click/press/fill/choose: the COMPLETE effect of acting on a
+        // third-party page is unprovable. The Gate's effect-text predicate is
+        // an ask heuristic, not a classifier: its delete/destroy words and its
+        // illegible-destination fallback say "this needs a human", never "this
+        // only sends" - and matching nothing proves nothing either.
         return null;
       }
       case 'write':
@@ -613,25 +638,14 @@ export class Gate {
       case 'fabrica':
       case 'reminder':
         return 'escribe-local';
-      // The confirm stage was caught above as paga; browse/fill is form work.
-      case 'checkout':
-        return 'escribe-local';
-      // A shell command is arbitrary code: matching the destructive regex
-      // proves destruction but says nothing about what ELSE the command does
-      // ('Remove-Item X; curl -X POST ...' also sends). Classifying by the
-      // first effect found would silently license the rest, so shell is
-      // unprovable as a whole.
-      case 'shell':
-        return null;
-      case 'computer': {
+      case 'checkout': {
+        // The designed purchase flow: the confirm stage is the charge (caught
+        // above as paga), and search/select/status read and choose, with
+        // select refusing charge-shaped buttons by tool design. fill_passenger
+        // types into a third-party page: same unprovability as browser fill.
         const action = argString(c.args, 'action');
-        return action === 'screenshot' || action === 'move' ? 'lee' : null;
+        return ['search', 'select', 'status'].includes(action) ? 'lee' : null;
       }
-      case 'tv': {
-        const action = argString(c.args, 'action');
-        return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
-      }
-      // book, opengym, factory-built and anything new: unprovable.
       default:
         return null;
     }
@@ -1000,6 +1014,33 @@ export function splitTarget(target: string): { element: string; places: string }
 
 /** Tools where the Spanish money and credential vocabulary applies (checkout drives a shop). */
 const WEB_TOOLS = new Set(['browser', 'computer', 'shell', 'checkout']);
+
+/**
+ * Tools whose action vocabulary is bounded and known to `classifyEffect`.
+ * Anything else - a factory-built tool, a future addition - is opaque until
+ * its actions are mapped here and gets the forced ask, never a default class.
+ */
+const BOUNDED_EFFECT_TOOLS = new Set([
+  'read',
+  'list',
+  'done',
+  'memory',
+  'skills',
+  'documents',
+  'objetivo',
+  'gestion',
+  'windows',
+  'ocr',
+  'cargar_herramienta',
+  'fetch',
+  'browser',
+  'write',
+  'edit',
+  'media',
+  'fabrica',
+  'reminder',
+  'checkout',
+]);
 
 /**
  * Page-level money signal: checkout/payment words in the URL or title. Prices alone do
