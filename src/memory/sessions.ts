@@ -274,6 +274,20 @@ export class SessionStore {
       .run(sessionId, role, text, Date.now());
   }
 
+  /**
+   * Whether a HUMAN turn opened on this scope after `sinceMs`. Goal ticks open
+   * sessions too (titled `[objetivo] ...`); those are the machine talking to
+   * itself and must never count as a person's answer.
+   */
+  hasHumanTurnSince(scope: string, sinceMs: number): boolean {
+    const row = this.#db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM sessions WHERE scope = ? AND started_at > ? AND title NOT LIKE '[objetivo] %'`,
+      )
+      .get(scope, sinceMs) as { n: number } | undefined;
+    return Number(row?.n ?? 0) > 0;
+  }
+
   /** Closing writes the summary, which is what later searches and prompts use. */
   end(sessionId: string, summary: string): void {
     this.#db

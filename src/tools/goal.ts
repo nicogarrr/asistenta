@@ -22,6 +22,14 @@ import { type Goal, type GoalStore, MAX_ACTIVE_GOALS, MAX_PROPOSED_GOALS } from 
 /** Two ticks of one goal never land closer than this: autonomy, not a spin loop. */
 export const MIN_GOAL_TICK_MS = 60 * 60_000;
 
+/**
+ * Telegram's per-message ceiling is 4096 chars and the channel splits anything
+ * longer into 4000-char chunks. The proposal Nico approves must stay ONE piece
+ * (his rule), so the whole message is budgeted before anything is stored:
+ * over budget is an honest error, never a silently truncated plan.
+ */
+export const MAX_PROPOSAL_CHARS = 3900;
+
 const Params = Type.Object({
   action: Type.Union([
     Type.Literal('proponer'),
@@ -72,6 +80,11 @@ export function checkCadence(expr: string): string | null {
     runs = new Cron(fields.join(' '), { paused: true }).nextRuns(8);
   } catch {
     return `La cadencia "${expr}" no es un cron válido.`;
+  }
+  if (runs.length === 0) {
+    // e.g. "0 0 30 2 *" (30 de febrero): valid syntax, never fires - an
+    // activated goal on it would promise work and stay dead forever.
+    return 'Esa cadencia no tiene ninguna ejecución futura (revisa día y mes).';
   }
   for (let i = 1; i < runs.length; i++) {
     const gap = (runs[i]?.getTime() ?? 0) - (runs[i - 1]?.getTime() ?? 0);
@@ -126,6 +139,12 @@ export interface GoalToolDeps {
     update(id: string, fields: { status?: 'done'; nextSteps?: string | null }): void;
     forget(id: string): void;
   };
+  /**
+   * Evidence that Nico wrote in the owning chat after `sinceIso`. Resuming a
+   * BLOCKED goal requires it: the block means the goal waits on his answer,
+   * and without this proof a tick could resume itself and decide for him.
+   */
+  humanRepliedAfter: (scope: string, sinceIso: string) => boolean;
 }
 
 export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
@@ -177,13 +196,36 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
         if (!args.cadencia) return reply('proponer necesita la cadencia (cron de 5 campos).', true);
         const bad = checkCadence(args.cadencia);
         if (bad) return reply(bad, true);
-        const goal = deps.goals.propose({
-          scope,
-          title: args.titulo.trim().slice(0, 120),
-          verbatim: args.objetivo.trim().slice(0, 1000),
-          plan: pasos.slice(0, 20).map((text) => ({ text: text.slice(0, 200), done: false })),
-          cadence: args.cadencia.trim(),
+        const title = args.titulo.trim().slice(0, 120);
+        const verbatim = args.objetivo.trim().slice(0, 1000);
+        const plan = pasos.slice(0, 20).map((text) => ({ text: text.slice(0, 200), done: false }));
+        const cadence = args.cadencia.trim();
+        // Budget the exact message Nico would approve. The probe id is the
+        // same length as a real one (36), so the check sees the true size.
+        const probe = formatProposal({
+          id: '0'.repeat(36),
+          scope: '',
+          title,
+          verbatim,
+          plan,
+          status: 'proposed',
+          cadence,
+          blockedReason: null,
+          lastOutcome: null,
+          lastTickAt: null,
+          ticksDay: '',
+          ticksToday: 0,
+          workstreamId: null,
+          createdAt: '',
+          updatedAt: '',
         });
+        if (probe.length > MAX_PROPOSAL_CHARS) {
+          return reply(
+            `El plan no cabe en un solo mensaje (${probe.length} caracteres, máximo ${MAX_PROPOSAL_CHARS}): resume los pasos o acorta el objetivo y proponlo de nuevo. Nada quedó guardado.`,
+            true,
+          );
+        }
+        const goal = deps.goals.propose({ scope, title, verbatim, plan, cadence });
         return reply(formatProposal(goal));
       }
 
@@ -221,8 +263,18 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           );
         }
         case 'activar': {
-          const wsId = deps.workstreams.create(scope, goal.title, goal.verbatim);
-          deps.goals.activate(goal.id, wsId);
+          // Activate FIRST: when the cap or the status rejects, nothing else
+          // may have happened - a workstream created before this line would be
+          // orphaned by the rejection.
+          deps.goals.activate(goal.id, null);
+          try {
+            deps.goals.attachWorkstream(
+              goal.id,
+              deps.workstreams.create(scope, goal.title, goal.verbatim),
+            );
+          } catch {
+            // The projection can be rebuilt later; the goal is already active.
+          }
           setRoutineEnabled(goal, true);
           return reply(
             `Objetivo "${goal.title}" activado. Trabajaré en ticks (${goal.cadence}, hora local) y te aviso solo con novedades o decisiones.`,
@@ -234,10 +286,20 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           return reply(`Objetivo "${goal.title}" pausado. No habrá ticks hasta que lo reanudes.`);
         }
         case 'reanudar': {
+          if (goal.status === 'blocked' && !deps.humanRepliedAfter(goal.scope, goal.updatedAt)) {
+            // Blocked means waiting on NICO. Resuming needs evidence he
+            // actually answered in this chat after the block (updatedAt is the
+            // block time); otherwise the tick itself could resume and decide
+            // on his behalf. A pause needs no such proof: pausing was his act.
+            return reply(
+              `"${goal.title}" está bloqueado esperando tu respuesta y no veo ningún mensaje tuyo en este chat desde entonces. Respóndeme aquí con tu decisión y después lo reanudo.`,
+              true,
+            );
+          }
           deps.goals.resume(goal.id);
           setRoutineEnabled(goal, true);
           return reply(
-            `Objetivo "${goal.title}" reanudado.${goal.blockedReason ? '' : ''} En el próximo tick sigo con el contexto de este chat.`,
+            `Objetivo "${goal.title}" reanudado. En el próximo tick sigo con el contexto de este chat.`,
           );
         }
         case 'cancelar': {

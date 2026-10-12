@@ -34,9 +34,9 @@ import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecont
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
-import { GoalNotifier } from './goals/notify.js';
+import { GoalNotifier, goalNotifyTarget } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
-import { GoalStore } from './goals/store.js';
+import { GoalStore, splitGoalScope } from './goals/store.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -1411,6 +1411,8 @@ async function serveCommand(): Promise<number> {
         store,
         sync: () => routineRunner.sync(),
         workstreams,
+        humanRepliedAfter: (scopeKey, sinceIso) =>
+          sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
@@ -1842,16 +1844,29 @@ async function serveCommand(): Promise<number> {
   const goalNotifier = new GoalNotifier({
     db: goalsDb,
     // A goal's messages go to the chat that owns the goal, and nowhere else.
-    send: (goal, text) => {
-      const chatId = goal.scope.split('#')[0]?.split(':')[2] ?? '';
-      if (!chatId) return Promise.resolve(false);
-      return telegram
-        .send({ channel: 'telegram', account: telegram.account, chatId, text })
-        .then(() => true)
-        .catch((err: unknown) => {
-          log.warn('goal notify failed', { goal: goal.id, err });
-          return false;
+    send: async (goal, text) => {
+      // To the chat AND thread that own the goal: a forum topic gets threadId,
+      // a message-grown conversation gets the note as a reply to its first
+      // message, and the sent id is mapped so Nico's reply lands back in that
+      // same thread instead of floating into #main.
+      const target = goalNotifyTarget(goal.scope);
+      if (!target) return false;
+      try {
+        const sentId = await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: target.chatId,
+          text,
+          threadId: target.threadId,
+          replyToMessageId: target.replyToMessageId,
         });
+        if (!sentId) return false;
+        messageThread.set(`${target.chatKey}:${sentId}`, goal.scope);
+        return true;
+      } catch (err) {
+        log.warn('goal notify failed', { goal: goal.id, err });
+        return false;
+      }
     },
   });
   const goalRunner = new GoalRunner({
@@ -1869,8 +1884,16 @@ async function serveCommand(): Promise<number> {
       // is exactly the one a chat message would face. What it does NOT do is
       // talk: no typing indicator, no progress notes, no auto-reply - a goal
       // speaks through the notifier alone (novedad o decisión).
-      const chatKey_ = goal.scope.split('#')[0] ?? goal.scope;
-      const thread = await getOrCreateThread(chatKey_, 'main', 'principal');
+      // The OWNING thread, not #main: the scope is a full thread key and the
+      // tick must run where the goal was proposed, with that thread's agent,
+      // context and gate - or objetivo:avance/reanudar would reject the tick's
+      // own goal as belonging to another chat.
+      const { chatKey: goalChatKey, thread: goalThreadName } = splitGoalScope(goal.scope);
+      const thread = await getOrCreateThread(
+        goalChatKey,
+        goalThreadName,
+        goalThreadName === 'main' ? 'principal' : goalThreadName,
+      );
       const gen = thread.generation;
       const tick = async (): Promise<GoalTickResult> => {
         if (thread.generation !== gen) return { text: '', error: 'turno cancelado (/stop)' };

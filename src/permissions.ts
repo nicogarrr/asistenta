@@ -440,6 +440,10 @@ export class Gate {
    */
   #isPreflight(c: ToolCall): boolean {
     if (!this.#allowUntilPayment) return false;
+    // A goal activation is NEVER preflight: the hard ask on `objetivo:activar`
+    // collects a fresh human yes for days of autonomous work, and a `browse` or
+    // `fill` stage - resolved or labelled by the caller - must not wave it through.
+    if (this.#isGoalActivate(c)) return false;
     const stage = this.#stageOf(c);
     if (stage !== 'browse' && stage !== 'fill') return false;
     if (this.#isPaymentish(c) || this.#isCredentialish(c)) return false;

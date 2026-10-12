@@ -50,7 +50,11 @@ export interface Goal {
   updatedAt: string;
 }
 
-/** A person tracks few long goals at once; past 3 the autonomy is noise and spend. */
+/**
+ * A person tracks few long goals at once; past 3 the autonomy is noise and
+ * spend. The cap is GLOBAL - three active goals in total across every chat,
+ * not three per chat (the approved rule was "máx 3 goals activos", sin más).
+ */
 export const MAX_ACTIVE_GOALS = 3;
 /** Proposed goals wait for a human yes; cap the waiting room so it cannot pile up. */
 export const MAX_PROPOSED_GOALS = 5;
@@ -95,6 +99,19 @@ type GoalRow = {
   created_at: string;
   updated_at: string;
 };
+
+/**
+ * Splits a goal scope back into its chat key and thread name. A scope IS a
+ * thread key (`<chatKey>#<threadName>`) and the chat key itself never contains
+ * '#', so the first '#' is the boundary. Execution and notification routing
+ * both need the full pair: resolving only the chat key would silently move
+ * the goal's work, and the questions it asks, into #main.
+ */
+export function splitGoalScope(scope: string): { chatKey: string; thread: string } {
+  const hash = scope.indexOf('#');
+  if (hash === -1) return { chatKey: scope, thread: 'main' };
+  return { chatKey: scope.slice(0, hash), thread: scope.slice(hash + 1) || 'main' };
+}
 
 const COLUMNS =
   'id, scope, title, verbatim, plan, status, cadence, blocked_reason, last_outcome, last_tick_at, ticks_day, ticks_today, workstream_id, created_at, updated_at';
@@ -141,6 +158,14 @@ export class GoalStore {
     return Number(row?.n ?? 0);
   }
 
+  /** The active cap is global: every chat's actives count against it. */
+  #countActive(): number {
+    const row = this.#db.prepare("SELECT COUNT(*) AS n FROM goals WHERE status = 'active'").get() as
+      | { n: number }
+      | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   propose(input: {
     scope: string;
     title: string;
@@ -180,12 +205,22 @@ export class GoalStore {
     if (goal.status !== 'proposed') {
       throw new Error(`Solo se activa un objetivo propuesto; "${goal.title}" está ${goal.status}.`);
     }
-    if (this.#count(goal.scope, 'active') >= MAX_ACTIVE_GOALS) {
+    if (this.#countActive() >= MAX_ACTIVE_GOALS) {
       throw new Error(
-        `Ya hay ${MAX_ACTIVE_GOALS} objetivos activos en este chat. Pausa o cancela uno antes de activar otro.`,
+        `Ya hay ${MAX_ACTIVE_GOALS} objetivos activos. Pausa o cancela uno antes de activar otro.`,
       );
     }
     this.#set(id, { status: 'active', workstream_id: workstreamId });
+  }
+
+  /**
+   * Links the workstream projection AFTER activation succeeded. The tool
+   * activates first and attaches second, so a cap/status rejection can never
+   * leave an orphaned workstream behind.
+   */
+  attachWorkstream(id: string, workstreamId: string): void {
+    this.#mustRead(id);
+    this.#set(id, { workstream_id: workstreamId });
   }
 
   pause(id: string): void {
@@ -200,6 +235,13 @@ export class GoalStore {
     const goal = this.#mustRead(id);
     if (goal.status !== 'paused' && goal.status !== 'blocked') {
       throw new Error(`Solo se reanuda un objetivo pausado o bloqueado; está ${goal.status}.`);
+    }
+    // The cap applies to EVERY transition into active, not just to activate:
+    // a paused/blocked goal sits outside the count, so resume re-checks it.
+    if (this.#countActive() >= MAX_ACTIVE_GOALS) {
+      throw new Error(
+        `Ya hay ${MAX_ACTIVE_GOALS} objetivos activos. Pausa o cancela uno antes de reanudar este.`,
+      );
     }
     this.#set(id, { status: 'active', blocked_reason: null });
   }

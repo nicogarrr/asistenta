@@ -16,7 +16,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Goal } from './store.js';
+import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
 export const NOTIFY_RETRY_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -38,8 +38,32 @@ export type NotifyOutcome = 'sent' | 'pending' | 'duplicate';
 
 /** Stable per (kind, reason): the same milestone found twice has the same key. */
 export function notifyKey(kind: string, reason: string): string {
-  const norm = reason.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120);
+  // The WHOLE normalised reason goes into the hash. Truncating before hashing
+  // collapses two decisions that share a long common prefix (the amount at the
+  // end, 20 vs 2000) into one key - and the second question never reaches Nico.
+  const norm = reason.toLowerCase().replace(/\s+/g, ' ').trim();
   return createHash('sha1').update(`${kind}:${norm}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * Where a goal notification goes: the chat AND the thread that own the goal.
+ * `t<num>` thread names are Telegram forum topics (threadId); `m<num>` are
+ * conversations that grew from one message (replyToMessageId binds the note
+ * to it); `main` needs neither. Without this routing a reply to a decision
+ * floats in #main and never reaches the goal's owning thread.
+ */
+export function goalNotifyTarget(scope: string): {
+  chatKey: string;
+  chatId: string;
+  threadId?: string;
+  replyToMessageId?: string;
+} | null {
+  const { chatKey, thread } = splitGoalScope(scope);
+  const chatId = chatKey.split(':')[2] ?? '';
+  if (!chatId) return null;
+  if (/^t\d+$/.test(thread)) return { chatKey, chatId, threadId: thread.slice(1) };
+  if (/^m\d+$/.test(thread)) return { chatKey, chatId, replyToMessageId: thread.slice(1) };
+  return { chatKey, chatId };
 }
 
 /** One Telegram-legible piece, in Spanish, no JSON dumps. */
@@ -107,6 +131,14 @@ export class GoalNotifier {
         .run(goal.id, key, text, new Date(this.#now()).toISOString());
     }
     return (await this.#attempt(goal, key, text)) ? 'sent' : 'pending';
+  }
+
+  /** Whether the goal still has undelivered notifications (a done goal's routine lives on this). */
+  hasPending(goalId: string): boolean {
+    const row = this.#db
+      .prepare('SELECT COUNT(*) AS n FROM goal_notifications WHERE goal_id = ? AND delivered = 0')
+      .get(goalId) as { n: number } | undefined;
+    return Number(row?.n ?? 0) > 0;
   }
 
   /** Retry everything still undelivered. Called on every goal tick. */

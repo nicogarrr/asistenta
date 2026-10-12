@@ -140,19 +140,46 @@ export class GoalRunner {
     }
   }
 
+  #deleteRoutine(scope: string, name: string): void {
+    if (this.#deps.store.getRoutine(scope, name)) {
+      this.#deps.store.deleteRoutine(scope, name);
+      this.#deps.sync();
+    }
+  }
+
   async #tick(name: string): Promise<void> {
     const id = goalIdOf(name);
     if (!id) return;
     const goal = this.#deps.goals.read(id);
-    if (!goal || goal.status === 'cancelled' || goal.status === 'done') {
+    if (!goal) {
       // Self-cleaning: a routine that outlived its goal goes away instead of
-      // firing forever (the goal was cancelled/done while the runner was down).
-      const routine = goal
-        ? this.#deps.store.getRoutine(goal.scope, name)
-        : this.#deps.store.listRoutines().find((r) => r.name === name);
+      // firing forever (the goal was deleted while the runner was down).
+      const routine = this.#deps.store.listRoutines().find((r) => r.name === name);
       if (routine) {
         this.#deps.store.deleteRoutine(routine.scope, name);
         this.#deps.sync();
+      }
+      return;
+    }
+
+    // Delivery is independent of execution eligibility. A pending question or
+    // closing note is retried on EVERY firing - while the goal is paused,
+    // blocked on a decision, already done or out of daily budget - because
+    // those are exactly the messages Nico cannot afford to lose. Rows live in
+    // SQLite, so retries survive restarts; the notifier drops them after 24h;
+    // and flushing never runs work, so a finished goal stays finished.
+    await this.#deps.notifier.flush(goal).catch(() => {});
+
+    if (goal.status === 'cancelled') {
+      this.#deleteRoutine(goal.scope, name);
+      return;
+    }
+    if (goal.status === 'done') {
+      // A finished goal keeps its routine only while its closing note is still
+      // undelivered; once delivered - or dropped by the 24h rule - the routine
+      // cleans itself up.
+      if (!this.#deps.notifier.hasPending(goal.id)) {
+        this.#deleteRoutine(goal.scope, name);
       }
       return;
     }
@@ -163,8 +190,6 @@ export class GoalRunner {
       log.warn('goal tick budget exhausted for today', { goal: goal.id });
       return;
     }
-
-    await this.#deps.notifier.flush(goal).catch(() => {});
 
     let result: GoalTickResult;
     try {
@@ -200,9 +225,10 @@ export class GoalRunner {
       case 'hecho': {
         this.#deps.goals.complete(goal.id);
         await this.#deps.notifier.report(goal, 'hecho', outcome.reason);
-        if (this.#deps.store.getRoutine(goal.scope, name)) {
-          this.#deps.store.deleteRoutine(goal.scope, name);
-          this.#deps.sync();
+        // The routine survives an undelivered closing note: the next firing
+        // lands on the done branch above, flushes, and only then self-cleans.
+        if (!this.#deps.notifier.hasPending(goal.id)) {
+          this.#deleteRoutine(goal.scope, name);
         }
         this.#deps.onDone?.(goal);
         return;
