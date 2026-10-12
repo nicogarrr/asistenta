@@ -13,10 +13,13 @@
  *
  * Secrecy rules (the auditor tests these):
  * - Keys are collected BEFORE any probe runs, and every diagnostic string
- *   (error body, exception message, config/key-lookup failure) passes through
- *   a redactor that replaces each exact secret — plus its URL-encoded and
- *   base64 forms — with [***]. Exact match also catches short keys with
- *   symbols ("a+b=="), which a length/charset regex cannot.
+ *   (error body, fetch exception, config failure) passes through a redactor
+ *   that replaces each exact secret — plus its URL-encoded and base64 forms —
+ *   with [***] BEFORE any truncation (a truncated key prefix dodges
+ *   exact-match). Exact match also catches short keys with symbols ("a+b=="),
+ *   which a length/charset regex cannot. A key lookup that throws is the one
+ *   place whose message can name a secret we never loaded, so it reports only
+ *   the error class name, never the raw message.
  * - No key ever goes into a URL: Gemini is probed through Google's
  *   OpenAI-compatible layer with an Authorization header, matching how
  *   core/provider.ts talks to it.
@@ -67,7 +70,9 @@ export function classifyHttp(http: number): LlmStatus {
 export function makeRedactor(secrets: string[]): (text: string) => string {
   const variants = new Set<string>();
   for (const secret of secrets) {
-    if (!secret || secret.length < 4) continue;
+    // Sin suelo de longitud: exact-match cubre cualquier secreto consultado;
+    // solo el vacio se salta (split('') meteria [***] entre cada letra).
+    if (!secret) continue;
     variants.add(secret);
     variants.add(encodeURIComponent(secret));
     variants.add(Buffer.from(secret, 'utf8').toString('base64'));
@@ -281,7 +286,8 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
       model: '?',
       status: 'error',
       latencyMs: 0,
-      detail: `loadConfig: ${err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160)}`,
+      // Crudo aqui: se redacta y trunca al materializar (secrets aun no cargados).
+      detail: `loadConfig: ${err instanceof Error ? err.message : String(err)}`,
     });
   }
 
@@ -313,10 +319,10 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
       if (key) secrets.push(key);
       keyed.push({ plan, key });
     } catch (err) {
-      keyed.push({
-        plan,
-        keyError: err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160),
-      });
+      // El mensaje crudo puede citar un secreto que NUNCA llego a secrets
+      // (el lookup fallo): no se puede redactar lo desconocido -> solo el
+      // tipo de error, nunca el mensaje.
+      keyed.push({ plan, keyError: err instanceof Error ? err.name : 'Error' });
     }
   }
   const redact = makeRedactor(secrets);
@@ -324,7 +330,9 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
   const targets: ProbeTarget[] = [];
   const statuses: LlmProviderStatus[] = early.map((s) => ({
     ...s,
-    detail: s.detail === undefined ? undefined : redact(s.detail),
+    // Redactar ANTES de truncar: un prefix parcial de secreto no lo caza el
+    // exact-match; y un body que cita la key tras 160 chars la perderia entera.
+    detail: s.detail === undefined ? undefined : redact(s.detail).slice(0, 160),
   }));
   for (const { plan, key, keyError } of keyed) {
     if (keyError) {
@@ -333,7 +341,7 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
         model: plan.model,
         status: 'error',
         latencyMs: 0,
-        detail: redact(`key lookup: ${keyError}`),
+        detail: `key lookup fallo: ${keyError}`, // nombre de error, sin mensaje crudo
       });
     } else if (!key) {
       statuses.push({

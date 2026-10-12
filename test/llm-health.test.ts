@@ -139,6 +139,58 @@ describe('runLlmHealth', () => {
     });
   });
 
+  it('ADVERSARIO R2-1: getKey que lanza citando una key UNICA no la imprime (no estaba en secrets)', async () => {
+    await withEnv(baseEnv, async () => {
+      const UNIQUE = 'sk-unique-never-loaded-xyz';
+      const statuses = await runLlmHealth({
+        fetchImpl: async () => jsonResponse(200, { choices: [{ message: { content: 'ok' } }] }),
+        getKey: (k) =>
+          k === 'provider:openrouterKey'
+            ? Promise.reject(new Error(`vault refused key ${UNIQUE}`))
+            : Promise.resolve(k === 'provider:apiKey' ? CANARY : undefined),
+        now: () => 0,
+      });
+      const or = statuses.find((s) => s.provider === 'openrouter');
+      expect(or?.status).toBe('error');
+      expect(statuses.find((s) => s.provider === 'zen')?.status).toBe('ok');
+      const out = formatLlmHealth(statuses);
+      expect(out).not.toContain(UNIQUE);
+      expect(out).not.toContain(CANARY);
+    });
+  });
+
+  it('ADVERSARIO R2-2: error largo no deja PREFIJO de key (redactar antes de truncar)', async () => {
+    await withEnv(baseEnv, async () => {
+      // 150 chars de relleno + key: slice(0,160) pre-redaccion dejaria 10 chars de key.
+      const padded = `${'x'.repeat(150)}${CANARY}`;
+      const statuses = await runLlmHealth({
+        fetchImpl: async () => jsonResponse(401, { error: { message: padded } }),
+        getKey: () => Promise.resolve(CANARY),
+        now: () => 0,
+      });
+      const out = formatLlmHealth(statuses);
+      expect(out).not.toContain(CANARY);
+      expect(out).not.toContain(CANARY.slice(0, 10)); // ni el prefijo
+      // Y en loadConfig: mensaje largo con key conocida al final.
+      process.env.PA_CRON = `${'y'.repeat(150)}${CANARY}`;
+      resetConfigForTests();
+      const statuses2 = await runLlmHealth({
+        fetchImpl: async () => jsonResponse(200, { choices: [{ message: { content: 'ok' } }] }),
+        getKey: () => Promise.resolve(CANARY),
+        now: () => 0,
+      });
+      const out2 = formatLlmHealth(statuses2);
+      expect(out2).not.toContain(CANARY);
+      expect(out2).not.toContain(CANARY.slice(0, 10));
+    });
+  });
+
+  it('ADVERSARIO R2-3: secreto de 3 chars tambien se redacta (exact-match sin suelo)', async () => {
+    const redact = makeRedactor(['abc']);
+    expect(redact('la key abc salio')).toBe('la key [***] salio');
+    expect(makeRedactor([''])('texto')).toBe('texto');
+  });
+
   it('loadConfig roto clasifica configured como error y sigue con el resto', async () => {
     await withEnv({ ...baseEnv, PA_CRON: 'linea-sin-tabulador' }, async () => {
       const statuses = await runLlmHealth({
