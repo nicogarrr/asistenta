@@ -58,7 +58,16 @@ import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.
 import { ensureDirs, paths } from './paths.js';
 import { BROWSER_FREE_ACTIONS, Gate } from './permissions.js';
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
-import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
+import {
+  buildMacroPrompt,
+  canonicalMacroName,
+  detectMacroParams,
+  parseMacroArgs,
+  procedurePrompt,
+  RoutineRunner,
+  summarizeRoutine,
+  validateSchedule,
+} from './routines.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -1418,7 +1427,7 @@ async function serveCommand(): Promise<number> {
         humanRepliedAfter: (scopeKey, sinceIso) =>
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
-      createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks }),
+      createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks, routines: store }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
@@ -2334,16 +2343,29 @@ async function serveCommand(): Promise<number> {
         await say(inbound, 'No he podido resumir los pasos.', { quote: true });
         return;
       }
+      // Steps with {placeholders} make it a macro: it is saved under the
+      // macro/ namespace with its typed parameter contract, and Nico sees the
+      // contract before the macro exists.
+      const params = detectMacroParams(steps);
+      const macro = params.length > 0;
       const routine = store.saveRoutine({
         scope: thread.key,
-        name: recorded,
+        name: macro ? canonicalMacroName(recorded) : recorded,
         kind: 'procedure',
+        params: macro ? params : null,
         steps,
       });
       await say(
         inbound,
         [
-          `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+          macro
+            ? `Macro "${routine.name}" guardada. La ejecutas con /routine ${routine.name} ${params
+                .map((p) => `${p.name}=...`)
+                .join(' ')}.`
+            : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+          ...(macro
+            ? ['', 'Parámetros detectados:', ...params.map((p) => `- ${p.name} (${p.type})`)]
+            : []),
           '',
           steps,
         ].join('\n'),
@@ -2407,8 +2429,40 @@ async function serveCommand(): Promise<number> {
       await say(inbound, `No tengo ninguna rutina llamada "${name}".`, { quote: true });
       return;
     }
-    const prompt =
-      routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
+    // A macro takes clave=valor arguments and validates ALL of them before
+    // substituting anything: a bad call gets the full error list and runs
+    // nothing. A plain routine takes no arguments at all.
+    const tokens = args.trim().split(/\s+/).slice(1);
+    let prompt: string;
+    if (routine.params?.length) {
+      const parsed = parseMacroArgs(tokens);
+      if (!parsed.ok) {
+        await say(
+          inbound,
+          `${parsed.error} Uso: /routine ${routine.name} ${routine.params
+            .map((p) => `${p.name}=...`)
+            .join(' ')}.`,
+          { quote: true },
+        );
+        return;
+      }
+      const built = buildMacroPrompt(routine, parsed.args);
+      if (!built.ok) {
+        await say(inbound, built.error, { quote: true });
+        return;
+      }
+      prompt = built.prompt;
+    } else if (tokens.length) {
+      await say(
+        inbound,
+        `"${routine.name}" no tiene parámetros: se repite tal cual con /routine ${routine.name}.`,
+        { quote: true },
+      );
+      return;
+    } else {
+      prompt =
+        routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
+    }
     store.markRoutineRun(routine.scope, routine.name);
     messageThread.set(`${chatKey(inbound)}:${inbound.messageId}`, thread.key);
     await runTurn(thread, inbound, prompt, {});
@@ -3151,8 +3205,8 @@ async function serveCommand(): Promise<number> {
         '/screen - captura ahora',
         '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
         '/topic <nombre> - abre una conversación; /topics para verlas',
-        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos',
-        '/routine <nombre> - repite una rutina; con horario en palabras crea una programada',
+        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos (con {parametros} es una macro)',
+        '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/memory - lo que recuerdo de ti',

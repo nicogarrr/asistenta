@@ -243,7 +243,12 @@ describe('gestion tool', () => {
   function setup(scope = SCOPE) {
     const gestor = new GestorStore({ db: newDb() });
     const playbooks = new PlaybookStore({ dir: mkdtempSync(join(FACTORY_TEST_STATE_DIR, 'pb-')) });
-    const tool = createGestionTool({ gestor, scopeOf: () => scope, playbooks });
+    const tool = createGestionTool({
+      gestor,
+      scopeOf: () => scope,
+      playbooks,
+      routines: { getRoutine: () => null },
+    });
     const run = (args: Record<string, unknown>) => tool.execute('c', args as never);
     const text = (r: { content: { type: string; text?: string }[] }) =>
       r.content.map((c) => c.text ?? '').join('\n');
@@ -374,6 +379,7 @@ describe('gestion tool', () => {
       gestor,
       scopeOf: () => OTHER,
       playbooks: new PlaybookStore({ dir: mkdtempSync(join(FACTORY_TEST_STATE_DIR, 'pb-')) }),
+      routines: { getRoutine: () => null },
     });
     const r = await other.execute('c', { action: 'ejecutar', id } as never);
     expect(text(r)).toContain('pertenece a otro chat');

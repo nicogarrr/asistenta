@@ -646,6 +646,7 @@ describe('gestion preparar con logins', () => {
       scopeOf: () => 'scope',
       vaultNames: async () => vaultNames,
       playbooks: new PlaybookStore({ dir: tmp() }),
+      routines: { getRoutine: () => null },
     });
   }
   const base = {

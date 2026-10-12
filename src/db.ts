@@ -33,12 +33,28 @@ export interface Entry {
  * writes it, and prose is what the model reads best. JSON would only add a parse
  * step between the model and its own memory.
  */
+
+/**
+ * A typed macro parameter (capability 3, PR4): `{nombre}` placeholders in a
+ * procedure's steps make it a macro. The declared type is the whole contract -
+ * every value is validated against it before any substitution, so a value is
+ * always data and can never become prompt structure.
+ */
+export type RoutineParamType = 'fichero' | 'correo' | 'dominio' | 'texto';
+
+export interface RoutineParam {
+  name: string;
+  type: RoutineParamType;
+}
+
 export interface Routine {
   id: string;
   /** chatKey, so routines are per chat unless deliberately global. */
   scope: string;
   name: string;
   kind: 'procedure' | 'schedule';
+  /** Typed `{nombre}` placeholders declared in `steps`; null for plain routines. */
+  params: RoutineParam[] | null;
   steps: string | null;
   prompt: string | null;
   /** 5- or 6-field cron, null for procedures. */
@@ -105,6 +121,7 @@ CREATE TABLE IF NOT EXISTS routines (
   scope       TEXT NOT NULL,
   name        TEXT NOT NULL,
   kind        TEXT NOT NULL,
+  params      TEXT,
   steps       TEXT,
   prompt      TEXT,
   schedule    TEXT,
@@ -151,6 +168,17 @@ export class Store {
     this.#db.exec('PRAGMA foreign_keys = ON');
     this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#db.exec(SCHEMA);
+    // Column migrations for databases written before a column existed. There is
+    // no version ladder on purpose: each migration is a presence check plus an
+    // ALTER, so running it twice is a no-op and the order never matters.
+    const routineCols = (
+      this.#db.prepare('SELECT name FROM pragma_table_info(?)').all('routines') as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
+    if (!routineCols.includes('params')) {
+      this.#db.exec('ALTER TABLE routines ADD COLUMN params TEXT');
+    }
     const row = this.#db.prepare('SELECT version FROM schema_version LIMIT 1').get() as
       | { version: number }
       | undefined;
@@ -358,6 +386,7 @@ export class Store {
     scope: string;
     name: string;
     kind: Routine['kind'];
+    params?: RoutineParam[] | null;
     steps?: string | null;
     prompt?: string | null;
     schedule?: string | null;
@@ -369,11 +398,12 @@ export class Store {
     if (existing) {
       this.#db
         .prepare(
-          `UPDATE routines SET kind = ?, steps = ?, prompt = ?, schedule = ?, enabled = ?, updated_at = ?
+          `UPDATE routines SET kind = ?, params = ?, steps = ?, prompt = ?, schedule = ?, enabled = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
           r.kind,
+          r.params ? JSON.stringify(r.params) : null,
           r.steps ?? null,
           r.prompt ?? null,
           r.schedule ?? null,
@@ -384,6 +414,7 @@ export class Store {
       return {
         ...(existing as Routine),
         kind: r.kind,
+        params: r.params ?? null,
         steps: r.steps ?? null,
         prompt: r.prompt ?? null,
         schedule: r.schedule ?? null,
@@ -393,14 +424,15 @@ export class Store {
     }
     this.#db
       .prepare(
-        `INSERT INTO routines (id, scope, name, kind, steps, prompt, schedule, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO routines (id, scope, name, kind, params, steps, prompt, schedule, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         r.scope,
         r.name,
         r.kind,
+        r.params ? JSON.stringify(r.params) : null,
         r.steps ?? null,
         r.prompt ?? null,
         r.schedule ?? null,
@@ -413,6 +445,7 @@ export class Store {
       scope: r.scope,
       name: r.name,
       kind: r.kind,
+      params: r.params ?? null,
       steps: r.steps ?? null,
       prompt: r.prompt ?? null,
       schedule: r.schedule ?? null,
@@ -470,12 +503,35 @@ export class Store {
   }
 }
 
+/**
+ * The params column is JSON this process wrote; a hand-edited or truncated row
+ * still has to load, so anything unreadable maps to no contract at all.
+ */
+function parseRoutineParams(raw: string | number | null | undefined): RoutineParam[] | null {
+  if (raw === null || raw === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) return null;
+    const params: RoutineParam[] = [];
+    for (const p of parsed) {
+      if (!p || typeof p !== 'object') return null;
+      const { name, type } = p as { name?: unknown; type?: unknown };
+      if (typeof name !== 'string' || typeof type !== 'string') return null;
+      params.push({ name, type: type as RoutineParamType });
+    }
+    return params.length > 0 ? params : null;
+  } catch {
+    return null;
+  }
+}
+
 function mapRoutine(r: Record<string, string | number>): Routine {
   return {
     id: String(r.id),
     scope: String(r.scope),
     name: String(r.name),
     kind: String(r.kind) as Routine['kind'],
+    params: parseRoutineParams(r.params),
     steps: r.steps === null ? null : String(r.steps),
     prompt: r.prompt === null ? null : String(r.prompt),
     schedule: r.schedule === null ? null : String(r.schedule),

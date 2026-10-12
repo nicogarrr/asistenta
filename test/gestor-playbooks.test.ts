@@ -46,7 +46,12 @@ function setup() {
   const dir = tmp();
   const playbooks = new PlaybookStore({ dir });
   const gestor = new GestorStore({ db: new DatabaseSync(':memory:') });
-  const tool = createGestionTool({ gestor, scopeOf: () => 'scope', playbooks });
+  const tool = createGestionTool({
+    gestor,
+    scopeOf: () => 'scope',
+    playbooks,
+    routines: { getRoutine: () => null },
+  });
   const run = (args: Record<string, unknown>) => tool.execute('c', args as never);
   const text = (r: { content: { type: string; text?: string }[] }) =>
     r.content.map((c) => c.text ?? '').join('\n');
