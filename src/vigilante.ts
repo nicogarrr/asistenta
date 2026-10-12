@@ -446,11 +446,13 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       const ok = occurrenceKey(item);
       if (!occurrences.has(ok)) occurrences.set(ok, item);
     }
-    // Lo ya avisado por correo y seguido en la base: sus recordatorios no dependen de que
-    // el correo siga dentro de la ventana de lectura.
+    // Lo ya avisado por correo y seguido en la base: SOLO para sus recordatorios (no
+    // dependen de que el correo siga en la ventana de lectura). Nunca entra en
+    // descubrimiento ni en conflictos: una cosa que ya no está en la agenda no choca con nada.
+    const reminderSources = new Map(occurrences);
     for (const item of loadTracked(deps.db, nowMs)) {
       const ok = occurrenceKey(item);
-      if (!occurrences.has(ok)) occurrences.set(ok, item);
+      if (!reminderSources.has(ok)) reminderSources.set(ok, item);
     }
     const occByFinding = new Map<string, Array<[string, AgendaItem]>>();
     for (const [ok, item] of occurrences) {
@@ -507,7 +509,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       stage: ReminderStage;
       covered: ReminderStage[];
     }> = [];
-    for (const [ok, item] of occurrences) {
+    for (const [ok, item] of reminderSources) {
       if (!known.has(findingKey(item, timeZone)) || !allowed(item)) continue;
       if (ignoredByRule(item) || ignoredOccurrence(item)) continue;
       const due = dueStages(item, timeZone, nowMs);

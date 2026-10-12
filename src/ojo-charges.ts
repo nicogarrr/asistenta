@@ -37,25 +37,44 @@ function fold(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-/** "1.234,56" / "12,50" / "12.50" -> céntimos, o null si no es un importe con 2 decimales. */
-function toCents(whole: string, dec: string): number | null {
-  const digits = whole.replace(/[.\s]/g, '');
-  if (!/^\d{1,7}$/.test(digits) || !/^\d{2}$/.test(dec)) return null;
-  return Number(digits) * 100 + Number(dec);
+const NUM = String.raw`(?:\d{1,3}(?:[.\s]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)`;
+const SIGN = String.raw`([-\u2212(]\s?)?`;
+const TOKEN_AFTER = new RegExp(`${SIGN}(${NUM})\\s?(?:\u20ac|eur\\b|euros?\\b)`, 'gi');
+const TOKEN_BEFORE = new RegExp(`${SIGN}(?:\u20ac|eur\\b)\\s?(${NUM})`, 'gi');
+const FOREIGN_RE = /[$\u00a3]|\b(usd|gbp|dolares?|libras?)\b/i;
+const STRICT_THOUSANDS = /^(\d{1,3}(?:[.\s]\d{3})+)(?:[,.](\d{2}))?$/;
+const STRICT_PLAIN = /^(\d+)(?:[,.](\d{2}))?$/;
+
+/** Estricto: miles opcionales y 0 o 2 decimales; cualquier otra forma es "no soportado". */
+function strictCents(token: string): number | null {
+  const m = STRICT_THOUSANDS.exec(token) ?? STRICT_PLAIN.exec(token);
+  if (!m) return null;
+  const whole = (m[1] ?? '').replace(/[.\s]/g, '');
+  if (!/^\d{1,7}$/.test(whole)) return null;
+  return Number(whole) * 100 + Number(m[2] ?? '0');
 }
 
-const AMOUNT_AFTER = /(\d{1,3}(?:[.\s]\d{3})+|\d+)[,.](\d{2})\s?(?:€|eur\b|euros?\b)/gi;
-const AMOUNT_BEFORE = /(?:€|eur\b)\s?(\d{1,3}(?:[.\s]\d{3})+|\d+)[,.](\d{2})(?!\d)/gi;
-
-export function amountsIn(text: string): number[] {
+/**
+ * Todos los importes monetarios del texto. `bad` = hay algo monetario que no se sabe leer
+ * (negativo o entre paréntesis, otra divisa, formato raro): entonces NO se infiere nada.
+ * Los enteros ("100 €") son importes: no se pueden ignorar por no tener decimales.
+ */
+export function scanMoney(text: string): { cents: number[]; bad: boolean } {
   const out = new Set<number>();
-  for (const re of [AMOUNT_AFTER, AMOUNT_BEFORE]) {
+  let bad = FOREIGN_RE.test(text);
+  for (const re of [TOKEN_AFTER, TOKEN_BEFORE]) {
     for (const m of text.matchAll(re)) {
-      const c = toCents(m[1] ?? '', m[2] ?? '');
-      if (c !== null && c > 0) out.add(c);
+      if (m[1]) bad = true; // signo menos o paréntesis: abono, reembolso o ambiguo
+      const c = strictCents(m[2] ?? '');
+      if (c === null || c <= 0) bad = true;
+      else out.add(c);
     }
   }
-  return [...out];
+  return { cents: [...out], bad };
+}
+
+export function amountsIn(text: string): number[] {
+  return scanMoney(text).cents;
 }
 
 /** Remitente estable: dominio, o la dirección completa si es un correo gratuito. */
@@ -78,9 +97,9 @@ export function parseCharge(message: MailMessage): ParsedCharge | null {
   const raw = `${message.subject ?? ''} ${message.text ?? ''}`;
   const folded = fold(raw);
   if (!CHARGE_RE.test(folded) || PROMO_RE.test(folded)) return null;
-  const amounts = amountsIn(raw);
-  if (amounts.length !== 1) return null; // ninguno o varios: ambiguo, no se infiere nada
-  return { sender, cents: amounts[0] as number };
+  const { cents, bad } = scanMoney(raw);
+  if (bad || cents.length !== 1) return null; // ninguno, varios o ilegible: no se infiere nada
+  return { sender, cents: cents[0] as number };
 }
 
 export function initChargeStore(db: DatabaseSync): void {
@@ -130,6 +149,8 @@ export function ingestCharges(
 ): void {
   initChargeStore(db);
   let baseline = chargeBaseline(db);
+  // La primera llamada SOLO siembra, sea cual sea la fecha de cada correo.
+  const seedOnly = baseline === null;
   if (baseline === null) {
     baseline = now;
     db.prepare('INSERT INTO vigilante_settings (key, value) VALUES (?, ?)').run(
@@ -147,12 +168,14 @@ export function ingestCharges(
   const ordered = [...messages].sort((a, b) => a.at - b.at);
   for (const m of ordered) {
     if (!m.id || !Number.isFinite(m.at) || exists.get(m.id)) continue;
+    // Fecha futura: no es un cargo ya hecho. No se guarda; se reevalúa cuando llegue su hora.
+    if (m.at > now && !seedOnly) continue;
     const parsed = parseCharge(m);
     if (!parsed) continue;
     const priors = (priorsOf.all(parsed.sender, m.at, m.id) as Array<{ cents: number }>).map(
       (r) => r.cents,
     );
-    if (m.at < baseline) {
+    if (seedOnly || m.at < baseline) {
       ins.run(m.id, parsed.sender, parsed.cents, m.at, 'base', null, null, priors.length, now);
       continue;
     }
@@ -193,6 +216,8 @@ export function pendingChargeAlerts(db: DatabaseSync, now: number): ChargeAlert[
 }
 
 export function markChargesNotified(db: DatabaseSync, ids: readonly string[]): void {
+  if (ids.length === 0) return;
+  initChargeStore(db);
   const upd = db.prepare(
     "UPDATE vigilante_charges SET status = 'avisado' WHERE msg_id = ? AND status = 'aviso'",
   );

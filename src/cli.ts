@@ -2146,7 +2146,7 @@ async function serveCommand(): Promise<number> {
       inbound,
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
-        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (el doble de lo habitual o un remitente nuevo; es una lectura del correo, puede fallar).',
+        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar).',
         `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ].join('\n'),
       { quote: true },
