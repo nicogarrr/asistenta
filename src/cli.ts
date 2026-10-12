@@ -34,6 +34,9 @@ import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecont
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
+import { GoalNotifier } from './goals/notify.js';
+import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
+import { GoalStore } from './goals/store.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -81,6 +84,7 @@ import { createDownloadTool } from './tools/download.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
+import { createGoalTool } from './tools/goal.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
@@ -1117,6 +1121,7 @@ async function serveCommand(): Promise<number> {
    */
   setUndoDir(join(paths.state, 'undo'));
   const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
+  const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
   memoryDb.exec('PRAGMA journal_mode = WAL');
   memoryDb.exec('PRAGMA busy_timeout = 5000');
   const sessions = new SessionStore({ db: memoryDb });
@@ -1400,6 +1405,13 @@ async function serveCommand(): Promise<number> {
       createMemoryTool(memory, scope, snapshot),
       createDocsTool(docMemory, scope),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      createGoalTool({
+        goals: goalStore,
+        scopeOf: scope,
+        store,
+        sync: () => routineRunner.sync(),
+        workstreams,
+      }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
@@ -1820,14 +1832,92 @@ async function serveCommand(): Promise<number> {
       await vigilanteDrain;
       store.close();
       memoryDb.close();
+      goalsDb.close();
       docMemory.close();
       log.info('daemon stopped', { threads: threads.size });
+    },
+  });
+
+  const goalStore = new GoalStore({ db: goalsDb });
+  const goalNotifier = new GoalNotifier({
+    db: goalsDb,
+    // A goal's messages go to the chat that owns the goal, and nowhere else.
+    send: (goal, text) => {
+      const chatId = goal.scope.split('#')[0]?.split(':')[2] ?? '';
+      if (!chatId) return Promise.resolve(false);
+      return telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId, text })
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('goal notify failed', { goal: goal.id, err });
+          return false;
+        });
+    },
+  });
+  const goalRunner = new GoalRunner({
+    goals: goalStore,
+    notifier: goalNotifier,
+    store,
+    sync: () => routineRunner.sync(),
+    onDone: (goal) => {
+      if (!goal.workstreamId) return;
+      safeRemember(() => workstreams.update(goal.workstreamId as string, { status: 'done' }));
+    },
+    execute: async (goal, prompt): Promise<GoalTickResult> => {
+      // The tick rides the owning thread's tail, so it never collides with a
+      // live conversation, and it runs through the thread's agent, so the gate
+      // is exactly the one a chat message would face. What it does NOT do is
+      // talk: no typing indicator, no progress notes, no auto-reply - a goal
+      // speaks through the notifier alone (novedad o decisión).
+      const chatKey_ = goal.scope.split('#')[0] ?? goal.scope;
+      const thread = await getOrCreateThread(chatKey_, 'main', 'principal');
+      const gen = thread.generation;
+      const tick = async (): Promise<GoalTickResult> => {
+        if (thread.generation !== gen) return { text: '', error: 'turno cancelado (/stop)' };
+        thread.active = true;
+        let sessionId = '';
+        safeRemember(() => {
+          sessionId = sessions.begin(thread.key, `[objetivo] ${goal.title}`.slice(0, 80));
+        });
+        let result: AgentRunResult | null = null;
+        try {
+          thread.agent.attachContext(
+            buildContextNote(thread, store, memory, snapshot, workstreams, skills),
+          );
+          result = await thread.agent.run(prompt);
+          safeRemember(() =>
+            sessions.addTurn(sessionId, 'assistant', (result?.text ?? '').slice(0, 500)),
+          );
+          actions.record({
+            actor: 'asistenta',
+            action: 'objetivo-tick',
+            target: thread.name,
+            result: result?.error ? 'error' : 'ok',
+            detail: `${result?.toolCalls ?? 0} tools`,
+          });
+          return { text: result?.text ?? '', error: result?.error ?? null };
+        } catch (err) {
+          return { text: '', error: err instanceof Error ? err.message : String(err) };
+        } finally {
+          thread.active = false;
+          thread.gate.clearSession(thread.key);
+          safeRemember(() => sessions.end(sessionId, (result?.text ?? '').slice(0, 200)));
+        }
+      };
+      const next = thread.tail.then(tick);
+      thread.tail = next.catch(() => {});
+      return next;
     },
   });
 
   const routineRunner = new RoutineRunner({
     store,
     run: async (prompt, ctx) => {
+      // A goal tick EXECUTES; it never delivers its prompt as a message.
+      if (isGoalRoutine(ctx.routine)) {
+        await goalRunner.tickByRoutineName(ctx.routine.name);
+        return;
+      }
       // A scheduled routine answers into the chat it was learned in. It reuses the
       // thread of that scope when one exists, so the conversation that created the
       // routine also receives its output.

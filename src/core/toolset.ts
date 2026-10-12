@@ -54,6 +54,9 @@ export const THREAD_ALLOW_TOOLS = [
   'reminder',
   'opengym',
   'book',
+  // Long-haul goals: propose/list/pause/resume/cancel/avance are freely
+  // callable; `activar` is hardcoded as always-ask in the Gate itself.
+  'objetivo',
   LOADER_TOOL_NAME,
 ];
 
