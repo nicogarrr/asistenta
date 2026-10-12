@@ -151,7 +151,7 @@ const ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apo
 
 /** Only the five predefined entities and numeric references: nothing is ever expanded or fetched. */
 export function decodeEntities(s: string): string {
-  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_m, e: string) => {
+  return s.replace(/&(#x[0-9a-fA-F]{1,6}|#\d{1,7}|amp|lt|gt|quot|apos);/g, (_m, e: string) => {
     if (e[0] !== '#') return ENT[e] ?? '';
     const code = e[1] === 'x' ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
     return Number.isInteger(code) &&
@@ -163,107 +163,227 @@ export function decodeEntities(s: string): string {
   });
 }
 
+/**
+ * Everything below scans the XML in ONE linear pass with indexOf and never uses a regex that
+ * can rescan to the end of the input per failed match: the parts are attacker-controlled and
+ * a quadratic pattern on 20 MB freezes the whole daemon (this runs synchronously). On top of
+ * the linear scan, every loop checks a hard time budget and gives up with an honest error.
+ */
+export const OFFICE_TIME_BUDGET_MS = 5_000;
+const MAX_CELLS = 200_000;
+const MAX_SHARED = 200_000;
+
+class Budget {
+  private n = 0;
+  readonly until: number;
+  constructor(ms: number) {
+    this.until = Date.now() + ms;
+  }
+  tick(): void {
+    if ((++this.n & 1023) === 0 && Date.now() > this.until)
+      throw new OfficeError('el documento tardó demasiado en leerse');
+  }
+}
+
+const NAME_END = new Set([' ', '\t', '\n', '\r', '/', '>']);
+
+/** Name of the tag whose `<` is at `i` (without the slash of a closing tag). */
+function tagName(xml: string, i: number): { name: string; closing: boolean; end: number } | null {
+  const end = xml.indexOf('>', i + 1);
+  if (end < 0) return null;
+  let j = i + 1;
+  const closing = xml[j] === '/';
+  if (closing) j++;
+  let k = j;
+  while (k < end && !NAME_END.has(xml[k] as string)) k++;
+  return { name: xml.slice(j, k), closing, end };
+}
+
+const PARA_END = new Set(['w:p', 'a:p', 'text:p', 'text:h', 'table:table-row']);
+const TAB = new Set(['w:tab', 'a:tab', 'text:tab']);
+const BREAK = new Set(['w:br', 'a:br', 'text:line-break']);
+
 /** Text of a WordprocessingML / DrawingML / ODF fragment: paragraph ends become newlines. */
-function xmlText(xml: string): string {
-  return decodeEntities(
-    xml
-      .replace(/<(?:w|a|text):(?:tab)\b[^>]*\/>/g, '\t')
-      .replace(/<(?:w:br|a:br|text:line-break)\b[^>]*\/>/g, '\n')
-      .replace(/<\/(?:w:p|a:p|text:p|text:h|table:table-row)>/g, '\n')
-      .replace(/<[^>]*>/g, ''),
-  )
+function xmlText(xml: string, b: Budget): string {
+  const out: string[] = [];
+  let pos = 0;
+  let size = 0;
+  while (pos < xml.length) {
+    b.tick();
+    const lt = xml.indexOf('<', pos);
+    const chunk = xml.slice(pos, lt < 0 ? xml.length : lt);
+    out.push(chunk);
+    size += chunk.length;
+    if (size > MAX_OFFICE_CHARS * 2 || lt < 0) break;
+    const tag = tagName(xml, lt);
+    if (!tag) break; // '<' without '>': the rest is not markup we can trust, drop it
+    if (tag.closing) {
+      if (PARA_END.has(tag.name)) out.push('\n');
+    } else if (TAB.has(tag.name)) out.push('\t');
+    else if (BREAK.has(tag.name)) out.push('\n');
+    pos = tag.end + 1;
+  }
+  return decodeEntities(out.join(''))
     .replace(/[^\S\n\t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
+/** Inner XML of every `<name ...>...</name>` in `xml`, scanning forward only. An element without a
+ * closing tag ends the scan (the rest is hostile or cut). Self-closing elements yield ''. */
+function elements(xml: string, name: string, b: Budget, max = Number.POSITIVE_INFINITY): string[] {
+  const out: string[] = [];
+  const open = `<${name}`;
+  const close = `</${name}>`;
+  let pos = 0;
+  while (out.length < max) {
+    b.tick();
+    const i = xml.indexOf(open, pos);
+    if (i < 0) break;
+    const next = xml[i + open.length];
+    if (next === undefined || !NAME_END.has(next)) {
+      pos = i + open.length;
+      continue;
+    }
+    const gt = xml.indexOf('>', i + open.length);
+    if (gt < 0) break;
+    if (xml[gt - 1] === '/') {
+      out.push('');
+      pos = gt + 1;
+      continue;
+    }
+    const c = xml.indexOf(close, gt + 1);
+    if (c < 0) break;
+    out.push(xml.slice(gt + 1, c));
+    pos = c + close.length;
+  }
+  return out;
+}
+
+/** Opening tag (`<c r="A1" t="s">`) of an element's source, for reading attributes safely. */
+function attr(tagSource: string, name: string): string | undefined {
+  const key = ` ${name}="`;
+  const i = tagSource.indexOf(key);
+  if (i < 0) return undefined;
+  const j = tagSource.indexOf('"', i + key.length);
+  return j < 0 ? undefined : tagSource.slice(i + key.length, j);
+}
+
+/** Elements with their opening tag, for cells (`<c t="s">`). Same forward-only scan. */
+function cellsOf(xml: string, b: Budget, max: number): Array<{ open: string; inner: string }> {
+  const out: Array<{ open: string; inner: string }> = [];
+  let pos = 0;
+  while (out.length < max) {
+    b.tick();
+    const i = xml.indexOf('<c', pos);
+    if (i < 0) break;
+    const next = xml[i + 2];
+    if (next === undefined || !NAME_END.has(next)) {
+      pos = i + 2;
+      continue;
+    }
+    const gt = xml.indexOf('>', i + 2);
+    if (gt < 0) break;
+    const open = xml.slice(i, gt + 1);
+    if (xml[gt - 1] === '/') {
+      out.push({ open, inner: '' });
+      pos = gt + 1;
+      continue;
+    }
+    const c = xml.indexOf('</c>', gt + 1);
+    if (c < 0) break;
+    out.push({ open, inner: xml.slice(gt + 1, c) });
+    pos = c + 4;
+  }
+  return out;
+}
+
 const num = (name: string, re: RegExp): number => Number(re.exec(name)?.[1] ?? 0);
 
-function docxText(z: Reader): string {
+function docxText(z: Reader, b: Budget): string {
   const parts = ['word/document.xml', 'word/footnotes.xml', 'word/endnotes.xml'];
   const headers = [...z.entries.keys()].filter((n) => /^word\/(header|footer)\d*\.xml$/.test(n));
   return [...parts, ...headers.sort()]
     .filter((n) => z.has(n))
-    .map((n) => xmlText(z.read(n)))
+    .map((n) => xmlText(z.read(n), b))
     .filter(Boolean)
     .join('\n\n');
 }
 
-function pptxText(z: Reader): string {
+function pptxText(z: Reader, b: Budget): string {
   const slides = [...z.entries.keys()]
     .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
-    .sort((a, b) => num(a, /slide(\d+)/) - num(b, /slide(\d+)/));
+    .sort((a, c) => num(a, /slide(\d+)/) - num(c, /slide(\d+)/));
   return slides
     .map((n, i) => {
-      const t = xmlText(z.read(n));
+      const t = xmlText(z.read(n), b);
       const notesName = `ppt/notesSlides/notesSlide${num(n, /slide(\d+)/)}.xml`;
-      const notes = z.has(notesName) ? xmlText(z.read(notesName)) : '';
+      const notes = z.has(notesName) ? xmlText(z.read(notesName), b) : '';
       return t || notes ? `Diapositiva ${i + 1}\n${t}${notes ? `\nNotas: ${notes}` : ''}` : '';
     })
     .filter(Boolean)
     .join('\n\n');
 }
 
-function xlsxText(z: Reader): string {
+const textRuns = (xml: string, b: Budget): string => decodeEntities(elements(xml, 't', b).join(''));
+
+function xlsxText(z: Reader, b: Budget): string {
   const shared: string[] = [];
   if (z.has('xl/sharedStrings.xml')) {
-    for (const si of z.read('xl/sharedStrings.xml').match(/<si\b[\s\S]*?<\/si>/g) ?? [])
-      shared.push(
-        decodeEntities(
-          (si.match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) ?? [])
-            .map((t) => t.replace(/<[^>]*>/g, ''))
-            .join(''),
-        ),
-      );
+    for (const si of elements(z.read('xl/sharedStrings.xml'), 'si', b, MAX_SHARED))
+      shared.push(textRuns(si, b));
   }
   const sheets = [...z.entries.keys()]
     .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
-    .sort((a, b) => num(a, /sheet(\d+)/) - num(b, /sheet(\d+)/));
+    .sort((a, c) => num(a, /sheet(\d+)/) - num(c, /sheet(\d+)/));
   let rows = 0;
+  let cellsSeen = 0;
+  let chars = 0;
   const out: string[] = [];
   for (const [i, n] of sheets.entries()) {
     const lines: string[] = [];
-    for (const row of z.read(n).match(/<row\b[\s\S]*?<\/row>/g) ?? []) {
-      if (++rows > MAX_SHEET_ROWS) break;
+    for (const row of elements(z.read(n), 'row', b, MAX_SHEET_ROWS)) {
+      if (++rows > MAX_SHEET_ROWS || cellsSeen > MAX_CELLS || chars > MAX_OFFICE_CHARS) break;
       const cells: string[] = [];
-      for (const c of row.match(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) ?? []) {
-        const t = /\bt="(\w+)"/.exec(c)?.[1];
-        const v = /<v>([\s\S]*?)<\/v>/.exec(c)?.[1];
+      for (const c of cellsOf(row, b, MAX_CELLS - cellsSeen + 1)) {
+        cellsSeen++;
+        const t = attr(c.open, 't');
+        const v = elements(c.inner, 'v', b, 1)[0];
         let cell = '';
         if (t === 's' && v !== undefined) cell = shared[Number(v)] ?? '';
-        else if (t === 'inlineStr')
-          cell = decodeEntities(
-            (c.match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) ?? [])
-              .map((x) => x.replace(/<[^>]*>/g, ''))
-              .join(''),
-          );
+        else if (t === 'inlineStr') cell = textRuns(c.inner, b);
         else if (v !== undefined) cell = decodeEntities(v);
         if (cell.trim()) cells.push(cell.trim());
       }
-      if (cells.length) lines.push(cells.join('\t'));
+      if (cells.length) {
+        const line = cells.join('\t');
+        chars += line.length;
+        lines.push(line);
+      }
     }
     if (lines.length) out.push(`Hoja ${i + 1}\n${lines.join('\n')}`);
-    if (rows > MAX_SHEET_ROWS) break;
+    if (rows > MAX_SHEET_ROWS || cellsSeen > MAX_CELLS || chars > MAX_OFFICE_CHARS) break;
   }
   return out.join('\n\n');
 }
 
 /** Extract the text of an office document. Throws OfficeError (Spanish) when it cannot. */
 export function extractOfficeText(bytes: Buffer, kind: OfficeKind): string {
+  const b = new Budget(OFFICE_TIME_BUDGET_MS);
   const z = new Reader(bytes, listEntries(bytes));
   let text: string;
   switch (kind) {
     case 'docx':
-      text = docxText(z);
+      text = docxText(z, b);
       break;
     case 'pptx':
-      text = pptxText(z);
+      text = pptxText(z, b);
       break;
     case 'xlsx':
-      text = xlsxText(z);
+      text = xlsxText(z, b);
       break;
     default:
-      text = z.has('content.xml') ? xmlText(z.read('content.xml')) : '';
+      text = z.has('content.xml') ? xmlText(z.read('content.xml'), b) : '';
   }
   return text.slice(0, MAX_OFFICE_CHARS);
 }

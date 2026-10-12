@@ -11,7 +11,7 @@ import {
   OFFICE_MIME,
   officeKind,
 } from '../src/memory/office.js';
-import { createDocsTool } from '../src/tools/docs.js';
+import { createDocsTool, DELETE_CONFIRM_MS } from '../src/tools/docs.js';
 
 interface ZipOpts {
   /** Lie about the uncompressed size in the central directory. */
@@ -277,37 +277,62 @@ describe('integración con la memoria documental', () => {
 describe('herramienta documents', () => {
   const A = 'telegram:main:111#main';
   const B = 'telegram:main:222#main';
-  it('list muestra [id] y tipo; delete borra solo lo del propio hilo y lo dice', async () => {
+  it('list muestra [id] y tipo', async () => {
     const { m } = mem();
     const foto = m.indexOcr(A, 'foto1', 'fianza canariotool', 'el piso') as { docId: string };
-    let scope = A;
-    const tool = createDocsTool(m, () => scope);
+    const tool = createDocsTool(m, () => A);
     const list = textOf(
       await tool.execute('1', { action: 'list' }, undefined as never, undefined as never),
     );
     expect(list).toContain(`[${foto.docId}] foto: el piso (foto, texto leído con OCR`);
-    scope = B;
-    const no = textOf(
-      await tool.execute(
-        '2',
-        { action: 'delete', docId: foto.docId },
-        undefined as never,
-        undefined as never,
-      ),
+  });
+  it('delete en dos pasos: sin confirm no borra; confirm sin petición previa no borra; solo del propio hilo', async () => {
+    const { m } = mem();
+    const foto = m.indexOcr(A, 'foto1', 'fianza canariotool', 'el piso') as { docId: string };
+    let scope = A;
+    let t = 1_000_000;
+    const tool = createDocsTool(m, () => scope, { now: () => t });
+    const run = async (args: object) =>
+      textOf(await tool.execute('x', args as never, undefined as never, undefined as never));
+    // confirm:true directo (sin petición previa): no borra
+    expect(await run({ action: 'delete', docId: foto.docId, confirm: true })).toContain(
+      'Aún no he borrado nada',
     );
-    expect(no).toContain('No he encontrado ese elemento');
     expect(m.search(A, 'canariotool')).toHaveLength(1);
-    scope = A;
-    const yes = textOf(
-      await tool.execute(
-        '3',
-        { action: 'delete', docId: foto.docId },
-        undefined as never,
-        undefined as never,
-      ),
+    // primer paso: nombra el elemento
+    const first = await run({ action: 'delete', docId: foto.docId });
+    expect(first).toContain('Aún no he borrado nada');
+    expect(first).toContain('"foto: el piso"');
+    expect(m.search(A, 'canariotool')).toHaveLength(1);
+    // otro hilo no puede confirmar ni ver el elemento
+    scope = B;
+    expect(await run({ action: 'delete', docId: foto.docId, confirm: true })).toContain(
+      'No he encontrado ese elemento',
     );
-    expect(yes).toContain('lo he olvidado');
+    scope = A;
+    expect(m.search(A, 'canariotool')).toHaveLength(1);
+    // confirmación caducada
+    t += DELETE_CONFIRM_MS + 1;
+    expect(await run({ action: 'delete', docId: foto.docId, confirm: true })).toContain(
+      'Aún no he borrado nada',
+    );
+    expect(m.search(A, 'canariotool')).toHaveLength(1);
+    // petición para otro elemento no sirve de confirmación
+    const otra = m.indexOcr(A, 'foto2', 'otra canariotool2', 'otra') as { docId: string };
+    await run({ action: 'delete', docId: otra.docId });
+    expect(await run({ action: 'delete', docId: foto.docId, confirm: true })).toContain(
+      'Aún no he borrado nada',
+    );
+    expect(m.search(A, 'canariotool')).toHaveLength(1);
+    // flujo correcto: pedir, y confirmar
+    await run({ action: 'delete', docId: foto.docId });
+    const done = await run({ action: 'delete', docId: foto.docId, confirm: true });
+    expect(done).toContain('he olvidado "foto: el piso"');
     expect(m.search(A, 'canariotool')).toEqual([]);
+    // una confirmación se gasta: no vale dos veces
+    expect(await run({ action: 'delete', docId: foto.docId, confirm: true })).toContain(
+      'No he encontrado',
+    );
     await expect(
       tool.execute('4', { action: 'delete' }, undefined as never, undefined as never),
     ).rejects.toThrow(/docId/);
@@ -354,5 +379,97 @@ describe('herramienta documents', () => {
     expect(d).toContain('photos');
     expect(d).toContain('Word/Excel/PowerPoint');
     expect(d).toContain('action=delete');
+  });
+});
+
+describe('entrada hostil: tiempo lineal, sin colgar el daemon', () => {
+  const N = 2_000_000;
+  const timed = (fn: () => unknown): { ms: number; err: unknown } => {
+    const t0 = Date.now();
+    let err: unknown;
+    try {
+      fn();
+    } catch (e) {
+      err = e;
+    }
+    return { ms: Date.now() - t0, err };
+  };
+  const cases: Array<[string, () => Buffer, 'docx' | 'xlsx']> = [
+    [
+      'docx: "<" repetido sin cierre',
+      () => makeZip({ 'word/document.xml': '<'.repeat(N) }),
+      'docx',
+    ],
+    [
+      'docx: "<w:t" repetido sin cierre',
+      () => makeZip({ 'word/document.xml': '<w:t'.repeat(N / 4) }),
+      'docx',
+    ],
+    [
+      'docx: "&" y "&#" repetidos',
+      () => makeZip({ 'word/document.xml': '&#9999999'.repeat(N / 9) + '&'.repeat(N) }),
+      'docx',
+    ],
+    [
+      'xlsx: "<row>" repetido sin cierre',
+      () => makeZip({ 'xl/worksheets/sheet1.xml': '<row>'.repeat(N / 5) }),
+      'xlsx',
+    ],
+    [
+      'xlsx: "<c " repetido dentro de una fila',
+      () => makeZip({ 'xl/worksheets/sheet1.xml': `<row>${'<c '.repeat(N / 3)}</row>` }),
+      'xlsx',
+    ],
+    [
+      'xlsx: "<c>" sin cierre',
+      () => makeZip({ 'xl/worksheets/sheet1.xml': `<row>${'<c>'.repeat(N / 3)}</row>` }),
+      'xlsx',
+    ],
+    [
+      'xlsx: "<si>" repetido sin cierre',
+      () =>
+        makeZip({
+          'xl/sharedStrings.xml': '<si>'.repeat(N / 4),
+          'xl/worksheets/sheet1.xml': '<row/>',
+        }),
+      'xlsx',
+    ],
+    [
+      'xlsx: millones de celdas vacías cerradas',
+      () => makeZip({ 'xl/worksheets/sheet1.xml': `<row>${'<c/>'.repeat(N / 4)}</row>` }),
+      'xlsx',
+    ],
+    [
+      'xlsx: "<si><t>" sin cierre de t',
+      () =>
+        makeZip({
+          'xl/sharedStrings.xml': `<si>${'<t>'.repeat(N / 3)}</si>`,
+          'xl/worksheets/sheet1.xml': '<row/>',
+        }),
+      'xlsx',
+    ],
+  ];
+  it.each(cases)('%s termina en <1 s', (_n, build, kind) => {
+    const buf = build();
+    const { ms } = timed(() => extractOfficeText(buf, kind));
+    expect(ms).toBeLessThan(1000);
+  });
+  it('un "<" sin ">" descarta el resto en vez de volcarlo como texto', () => {
+    const t = extractOfficeText(
+      docx('<w:p><w:r><w:t>antes</w:t></w:r></w:p><w:p><w:t>despues sin cierre'),
+      'docx',
+    );
+    expect(t).toContain('antes');
+    const cut = extractOfficeText(
+      makeZip({
+        'word/document.xml': `<w:document ${W}><w:p><w:r><w:t>visible</w:t></w:r></w:p><w:p x="`,
+      }),
+      'docx',
+    );
+    expect(cut).toBe('visible');
+  });
+  it('un xlsx con una fila gigante sin cierre devuelve vacío, no cuelga', () => {
+    const buf = makeZip({ 'xl/worksheets/sheet1.xml': `<row>${'x'.repeat(5_000_000)}` });
+    expect(extractOfficeText(buf, 'xlsx')).toBe('');
   });
 });
