@@ -82,6 +82,8 @@ function fakeRoutineStore() {
         name: r.name,
         kind: 'schedule',
         steps: null,
+        params: null,
+
         prompt: r.prompt,
         schedule: r.schedule,
         enabled: r.enabled ?? true,

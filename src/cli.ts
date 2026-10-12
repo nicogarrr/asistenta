@@ -39,6 +39,7 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
+import { LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -58,7 +59,17 @@ import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.
 import { ensureDirs, paths } from './paths.js';
 import { BROWSER_FREE_ACTIONS, Gate } from './permissions.js';
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
-import { procedurePrompt, RoutineRunner, summarizeRoutine, validateSchedule } from './routines.js';
+import {
+  buildMacroPrompt,
+  canonicalMacroName,
+  detectMacroParams,
+  isMacroName,
+  parseMacroArgs,
+  procedurePrompt,
+  RoutineRunner,
+  summarizeRoutine,
+  validateSchedule,
+} from './routines.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -1316,7 +1327,7 @@ async function serveCommand(): Promise<number> {
   /** chatKey -> explicitly selected thread name, set by /topic. */
   const activeTopic = new Map<string, string>();
   /** chatId -> thread currently recording steps for /learn. */
-  const learning = new Map<string, string>();
+  const learning = new LearnRecorder();
   /** chatId -> whether to answer with a spoken reply. */
   const voiceOn = new Map<string, boolean>();
   /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
@@ -1418,7 +1429,7 @@ async function serveCommand(): Promise<number> {
         humanRepliedAfter: (scopeKey, sinceIso) =>
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
-      createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks }),
+      createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks, routines: store }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
@@ -2307,16 +2318,20 @@ async function serveCommand(): Promise<number> {
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
-      const recorded = learning.get(inbound.chatId);
-      if (!recorded) {
-        await say(inbound, 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.', {
-          quote: true,
-        });
+      const ended = learning.end(inbound.chatId, thread.key, thread.agent);
+      if (!ended.ok) {
+        const text =
+          ended.reason === 'none'
+            ? 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.'
+            : ended.reason === 'other-thread'
+              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo con /learn <nombre>.';
+        await say(inbound, text, { quote: true });
         return;
       }
-      learning.delete(inbound.chatId);
+      const recorded = ended.name;
       await say(inbound, 'Resumiendo los pasos que acabas de hacer⬦', { quote: true });
-      const transcript = summarizeTranscript(thread.agent.messages);
+      const transcript = summarizeTranscript(ended.segment);
       const result = await thread.agent.run(
         [
           'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
@@ -2324,6 +2339,10 @@ async function serveCommand(): Promise<number> {
           '',
           'Escribe en español los pasos reutilizables, en tercera persona e imperativo breve,',
           'uno por línea, sin numeración ni explicaciones. Empieza por el más general.',
+          'Si un dato cambia de una ejecución a otra (destinatario, fichero, dominio, texto),',
+          'escribe un parámetro {nombre} en vez del valor concreto: nombre con letras, números, _ o -;',
+          '{fichero}, {correo} y {dominio} (o {url}) llevan validación de tipo, cualquier otro nombre es texto.',
+          'No uses llaves para nada más. Tras cada paso que se pueda comprobar, añade " verifica: <qué comprobar>".',
           'Si algún paso requiere una contraseña o un pago, escribe [PIDE CONFIRMACIÓN].',
           'Si no se puede reutilizar, escribe una sola línea: NO REUTILIZABLE.',
           'No escribas nada más: ni título, ni comentarios, ni código fences.',
@@ -2334,16 +2353,42 @@ async function serveCommand(): Promise<number> {
         await say(inbound, 'No he podido resumir los pasos.', { quote: true });
         return;
       }
+      // Steps with {placeholders} make it a macro: it is saved under the
+      // macro/ namespace with its typed parameter contract, and the contract is
+      // shown in the confirmation. Detection is only as good as what the
+      // summariser emitted, so the user is told to re-record if it is wrong.
+      const params = detectMacroParams(steps);
+      const macro = params.length > 0;
+      if (!macro && isMacroName(recorded)) {
+        await say(
+          inbound,
+          'El prefijo macro/ es solo para macros con {parámetros}; esta grabación no tiene ninguno. Grábala con otro nombre.',
+          { quote: true },
+        );
+        return;
+      }
       const routine = store.saveRoutine({
         scope: thread.key,
-        name: recorded,
+        name: macro ? canonicalMacroName(recorded) : recorded,
         kind: 'procedure',
+        params: macro ? params : null,
         steps,
       });
       await say(
         inbound,
         [
-          `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+          macro
+            ? `Macro "${routine.name}" guardada. La ejecutas con /routine ${routine.name} ${params
+                .map((p) => `${p.name}=...`)
+                .join(' ')}.`
+            : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+          ...(macro
+            ? [
+                '',
+                'Parámetros detectados (si falta alguno o sobra, vuelve a grabarla):',
+                ...params.map((p) => `- ${p.name} (${p.type})`),
+              ]
+            : []),
           '',
           steps,
         ].join('\n'),
@@ -2357,7 +2402,7 @@ async function serveCommand(): Promise<number> {
       });
       return;
     }
-    learning.set(inbound.chatId, name);
+    learning.start(inbound.chatId, name, thread.key, thread.agent);
     await say(
       inbound,
       `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
@@ -2407,8 +2452,49 @@ async function serveCommand(): Promise<number> {
       await say(inbound, `No tengo ninguna rutina llamada "${name}".`, { quote: true });
       return;
     }
-    const prompt =
-      routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
+    // A macro takes clave=valor arguments and validates ALL of them before
+    // substituting anything: a bad call gets the full error list and runs
+    // nothing. A plain routine takes no arguments at all.
+    const tokens = args.trim().split(/\s+/).slice(1);
+    let prompt: string;
+    if (isMacroName(routine.name) && !routine.params?.length) {
+      // The macro/ namespace never falls back to a plain replay: without a
+      // valid contract the steps would reach the model with raw {placeholders}.
+      await say(
+        inbound,
+        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+        { quote: true },
+      );
+      return;
+    } else if (routine.params?.length) {
+      const parsed = parseMacroArgs(tokens);
+      if (!parsed.ok) {
+        await say(
+          inbound,
+          `${parsed.error} Uso: /routine ${routine.name} ${routine.params
+            .map((p) => `${p.name}=...`)
+            .join(' ')}.`,
+          { quote: true },
+        );
+        return;
+      }
+      const built = buildMacroPrompt(routine, parsed.args);
+      if (!built.ok) {
+        await say(inbound, built.error, { quote: true });
+        return;
+      }
+      prompt = built.prompt;
+    } else if (tokens.length) {
+      await say(
+        inbound,
+        `"${routine.name}" no tiene parámetros: se repite tal cual con /routine ${routine.name}.`,
+        { quote: true },
+      );
+      return;
+    } else {
+      prompt =
+        routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
+    }
     store.markRoutineRun(routine.scope, routine.name);
     messageThread.set(`${chatKey(inbound)}:${inbound.messageId}`, thread.key);
     await runTurn(thread, inbound, prompt, {});
@@ -3151,8 +3237,8 @@ async function serveCommand(): Promise<number> {
         '/screen - captura ahora',
         '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
         '/topic <nombre> - abre una conversación; /topics para verlas',
-        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos',
-        '/routine <nombre> - repite una rutina; con horario en palabras crea una programada',
+        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos (con {parametros} es una macro)',
+        '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/memory - lo que recuerdo de ti',

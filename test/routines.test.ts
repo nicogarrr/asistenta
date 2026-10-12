@@ -374,6 +374,7 @@ describe('routine text', () => {
     scope: SCOPE,
     name: 'renfe',
     kind: 'schedule',
+    params: null,
     steps: null,
     prompt: 'check the trains from Atocha',
     schedule: '*/10 * * * *',

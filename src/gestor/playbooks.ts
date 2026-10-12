@@ -157,9 +157,9 @@ export function validatePlaybook(pb: Playbook): string | null {
 
 /**
  * Characters that can smuggle structure past the one-line-per-note format:
- * CR, Unicode line/paragraph separators, NEL and C0/C1 controls (tab stays:
- * it cannot forge a line). A note carrying one reads differently to every
- * other parser, so it is rejected, never cleaned. A code-point loop instead
+ * CR, Unicode line/paragraph separators, NEL and every C0/C1 control, tab
+ * included. A note carrying one reads differently to every other parser, so
+ * it is rejected, never cleaned. A code-point loop instead
  * of a regex: the lint rule against control characters in regex literals is
  * right that they are unreadable there.
  */

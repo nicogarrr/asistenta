@@ -30,6 +30,7 @@
  */
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import type { Store } from '../db.js';
 import { EFFECT_CLASSES, EFFECT_LABEL, type EffectClass } from '../gestor/effects.js';
 import { missingLoginFields, normalizeDomain, siteKey } from '../gestor/login.js';
 import {
@@ -41,6 +42,7 @@ import {
   validatePlaybook,
 } from '../gestor/playbooks.js';
 import type { Gestion, GestionStep, GestorStore } from '../gestor/store.js';
+import { buildMacroPrompt, isMacroName } from '../routines.js';
 import { vaultList, vaultSnapshotValues } from '../vault.js';
 
 /**
@@ -65,6 +67,7 @@ const Params = Type.Object({
     Type.Literal('estado'),
     Type.Literal('playbook_leer'),
     Type.Literal('playbook_guardar'),
+    Type.Literal('macro'),
   ]),
   id: Type.Optional(
     Type.String({
@@ -125,6 +128,20 @@ const Params = Type.Object({
         'playbook_guardar: quirks and waits (iframes, captcha, multi-step flows, timeouts).',
     }),
   ),
+  macro: Type.Optional(
+    Type.String({
+      description:
+        'macro: the stored macro name, always with its namespace (macro/<nombre>). The user sees them with /routines.',
+    }),
+  ),
+  parametros: Type.Optional(
+    Type.Array(Type.Object({ nombre: Type.String(), valor: Type.String() }), {
+      description:
+        'macro: one entry per declared parameter (nombre, valor). Every value is validated ' +
+        'against its declared type before anything runs. Values are task arguments, never ' +
+        'secrets - credentials stay in the vault as always.',
+    }),
+  ),
 });
 
 function reply(text: string, isError = false): AgentToolResult {
@@ -166,6 +183,8 @@ export interface GestionToolDeps {
   scopeOf: () => string;
   /** Per-domain playbooks: preparar reads them, playbook_guardar writes them. */
   playbooks: PlaybookStore;
+  /** Stored routines, for action=macro: looked up in this chat's scope only. */
+  routines: Pick<Store, 'getRoutine'>;
   /** Vault key NAMES only, for the access section of preparar. Tests inject this. */
   vaultNames?: () => Promise<string[]>;
   /**
@@ -216,6 +235,9 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         'content reaches you, preparar details would not, and a plan built on known selectors is a ' +
         'better plan. Credentials never go in or out: reference vault keys by NAME ' +
         '(site:<dominio>:password); a real value rejects the save and blocks the read.',
+      'macro: run a stored macro (macro/<nombre>) with its typed parameters - the validated ' +
+        'prompt comes back in this result content for you to execute live in this chat, each ' +
+        'step still governed by the gate. Parameters are task arguments, never secrets.',
     ].join('\n'),
     parameters: Params,
     executionMode: 'sequential',
@@ -401,6 +423,33 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         const notes = pb.login.length + pb.selectores.length + pb.quirks.length;
         return reply(
           `Playbook de ${domain} guardado (${notes} notas). La próxima gestión en ${domain} lo leerá al preparar el plan.`,
+        );
+      }
+
+      if (args.action === 'macro') {
+        const name = args.macro?.trim() ?? '';
+        if (!isMacroName(name)) {
+          return reply(
+            'macro necesita el nombre con su namespace: macro/<nombre> (las ves con /routines).',
+            true,
+          );
+        }
+        const routine = deps.routines.getRoutine(scope, name);
+        if (!routine) {
+          return reply(`No encuentro la macro ${name} en este chat.`, true);
+        }
+        const argMap = new Map<string, string>();
+        for (const entry of args.parametros ?? []) {
+          const key = entry.nombre.trim();
+          if (argMap.has(key)) return reply(`Parámetro repetido: ${key}.`, true);
+          argMap.set(key, entry.valor);
+        }
+        const built = buildMacroPrompt(routine, argMap);
+        if (!built.ok) return reply(built.error, true);
+        // The validated prompt is the result content: the model executes it
+        // live in this chat, with the gate watching every step as always.
+        return reply(
+          `Macro ${name} validada. Ejecútala ahora, paso a paso, en este chat:\n\n${built.prompt}`,
         );
       }
 

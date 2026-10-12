@@ -689,6 +689,7 @@ export class PersonalAgent {
       if (!r.compacted && r.before > trigger) this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;
       if (r.compacted) {
         this.#agent.state.messages = r.messages;
+        this.#compactions++;
         log.info('history summarised', { before: r.before, after: r.after });
       }
     } catch (err) {
@@ -703,6 +704,12 @@ export class PersonalAgent {
 
   /** Identity of the context-note message currently in the transcript. */
   #contextNotes = new WeakSet<object>();
+
+  #compactions = 0;
+  /** Successful history compactions so far: /learn aborts if it changed mid-recording. */
+  get compactions(): number {
+    return this.#compactions;
+  }
 
   get messages(): AgentMessage[] {
     return this.#agent.state.messages;
