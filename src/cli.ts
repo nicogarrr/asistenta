@@ -1,6 +1,15 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -61,6 +70,13 @@ import {
   setDownloadsEnabled,
 } from './ojo-downloads.js';
 import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
+import {
+  getScreenEnabled,
+  type ScanOutcome,
+  scanScreenOnce,
+  screenStatusText,
+  setScreenEnabled,
+} from './ojo-screen.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
@@ -86,9 +102,9 @@ import {
   recordMicrophone,
   toPlayableAudio,
 } from './screen/media.js';
-import { ocrAvailable } from './screen/ocr.js';
+import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
-import { WindowsScreen } from './screen/windows.js';
+import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
@@ -2083,10 +2099,46 @@ async function serveCommand(): Promise<number> {
     if (!st?.running)
       log.warn('descargas: encendido pero sin vigilar', { reason: st?.reason ?? 'error' });
   }
+  // Pantalla: nace apagada (/ojo pantalla on). Solo Windows con escritorio interactivo. La
+  // captura va a un temporal propio que se borra siempre; no se guarda ni imagen ni texto bruto.
+  let lastScreenScan: ScanOutcome | null = null;
+  const screenScan = async (): Promise<ScanOutcome> => {
+    if (process.platform !== 'win32') {
+      lastScreenScan = { ok: false, reason: 'solo funciona en Windows' };
+      return lastScreenScan;
+    }
+    lastScreenScan = await scanScreenOnce({
+      db: memoryDb,
+      interactive: hasInteractiveDesktop,
+      windows: async () =>
+        (await listWindows()).map((w) => ({ title: w.title, process: w.process })),
+      capture: async () => {
+        if (!(await ocrAvailable())) throw new Error('sin OCR de Windows');
+        const shooter = new WindowsScreen();
+        const dir = mkdtempSync(join(tmpdir(), 'ojo-pantalla-'));
+        const cleanup = (): void => {
+          rmSync(dir, { recursive: true, force: true });
+          void shooter.dispose();
+        };
+        try {
+          const shot = await shooter.screenshot();
+          const file = join(dir, 'p.jpg');
+          writeFileSync(file, shot.image);
+          return { path: file, cleanup };
+        } catch (err) {
+          cleanup();
+          throw err;
+        }
+      },
+      ocr: async (path) => (await ocrImage(path)).lines.map((l) => l.text),
+    });
+    return lastScreenScan;
+  };
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
       quiet: DEFAULT_QUIET_HOURS,
+      screenScan,
       downloadsHealth: () => downloadsCtl.apply(),
       downloadsSuppressed: () => downloadsCtl.suppressed(),
       agenda: () =>
@@ -2177,17 +2229,45 @@ async function serveCommand(): Promise<number> {
       );
       return;
     }
+    const pm = /^pantalla(?:\s+(on|off|estado))?$/.exec(arg);
+    if (pm) {
+      if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+        await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+          quote: true,
+        });
+        return;
+      }
+      const want = pm[1];
+      if (want === 'on' || want === 'off') setScreenEnabled(memoryDb, want === 'on');
+      await say(
+        inbound,
+        getScreenEnabled(memoryDb)
+          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} /ojo pantalla off lo apaga.`
+          : 'Pantalla: apagado (es lo normal; /ojo pantalla on lo enciende).',
+        { quote: true },
+      );
+      return;
+    }
     if (arg === 'on' || arg === 'off') {
       setOjoEnabled(memoryDb, arg === 'on');
     } else if (arg && arg !== 'estado') {
-      await say(inbound, 'Uso: /ojo on, /ojo off, /ojo (estado) o /ojo descargas on|off.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'Uso: /ojo on, /ojo off, /ojo (estado), /ojo descargas on|off o /ojo pantalla on|off.',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     const quiet = DEFAULT_QUIET_HOURS;
     const ownerView = isOwnerDm(inbound, vigilanteOwnerId);
     const dst = ownerView && getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    const screenLine = !ownerView
+      ? null
+      : getScreenEnabled(memoryDb)
+        ? `Pantalla: encendido. ${screenStatusText(lastScreenScan)}`
+        : 'Pantalla: apagado (/ojo pantalla on lo enciende).';
     const downloadsLine = !ownerView
       ? null
       : !dst
@@ -2200,7 +2280,8 @@ async function serveCommand(): Promise<number> {
       [
         `Ojo de águila: ${getOjoEnabled(memoryDb) ? 'encendido' : 'apagado'}.`,
         downloadsLine,
-        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas solo si lo pides: /ojo descargas on.',
+        screenLine,
+        'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas y la lectura de pantalla solo si lo pides: /ojo descargas on, /ojo pantalla on.',
         `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ]
         .filter((l): l is string => l !== null)

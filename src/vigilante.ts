@@ -77,6 +77,7 @@ import {
   reserveNotices,
   ruleSuppresses,
 } from './ojo-ignore.js';
+import { formatScreen, getScreenEnabled, markScreenNotified, pendingScreen } from './ojo-screen.js';
 import { loadTracked, trackItems } from './ojo-track.js';
 
 /** Tipos que merecen aviso proactivo. `reminder`/`other` no: o ya avisa otro, o es ruido. */
@@ -149,6 +150,11 @@ export interface VigilanteDeps {
    */
   downloadsHealth?: () => Promise<unknown>;
   downloadsSuppressed?: () => number;
+  /**
+   * Pantalla (solo si /ojo pantalla on): una lectura de la pantalla por barrido, fuera de las
+   * horas de silencio. Con tope de tiempo: una captura u OCR colgados no bloquean el barrido.
+   */
+  screenScan?: () => Promise<unknown>;
 }
 
 export const CHARGE_SEED_DAYS = 120;
@@ -558,6 +564,16 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     // Cargos raros pendientes: no críticos, esperan al fin del silencio sin marcarse.
     const chargeAlerts = quiet ? [] : pendingChargeAlerts(deps.db, nowMs);
     // Descargas nuevas (solo si /ojo descargas on): tampoco críticas, esperan al silencio.
+    if (deps.screenScan && !quiet && !deps.shouldAbort?.() && getScreenEnabled(deps.db)) {
+      await withTimeout(
+        deps.screenScan(),
+        Math.max(1, deps.agendaTimeoutMs ?? AGENDA_TIMEOUT_MS),
+        'vigilante: lectura de pantalla',
+      ).catch((err: unknown) => {
+        log.warn('vigilante: pantalla no disponible en este barrido', { err: String(err) });
+      });
+    }
+    const screenItems = quiet ? [] : pendingScreen(deps.db, nowMs);
     const downloads = quiet ? [] : pendingDownloads(deps.db, nowMs);
     const lostInfo =
       quiet || !getDownloadsEnabled(deps.db)
@@ -570,6 +586,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       conflicts.length === 0 &&
       chargeAlerts.length === 0 &&
       downloads.length === 0 &&
+      screenItems.length === 0 &&
       lostInfo.lost === 0
     ) {
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
@@ -608,6 +625,8 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     if (downloads.length > 0 || lostInfo.lost > 0) {
       parts.push(formatDownloads(downloads, lostInfo.lost));
     }
+
+    if (screenItems.length > 0) parts.push(formatScreen(screenItems));
 
     let sent = false;
     try {
@@ -660,6 +679,10 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     markDownloadsNotified(
       deps.db,
       downloads.map((d) => d.key),
+    );
+    markScreenNotified(
+      deps.db,
+      screenItems.map((i) => i.key),
     );
     if (lostInfo.lost > 0) markLostReported(deps.db, lostInfo.total);
     trackItems(
