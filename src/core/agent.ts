@@ -584,6 +584,7 @@ export class PersonalAgent {
         .trim();
     };
     personal.#loadout = loadout;
+    personal.#baseTools = tools as AgentTool[];
     return personal;
   }
 
@@ -632,6 +633,24 @@ export class PersonalAgent {
    * (b) quote it back to the user when the model echoes the prompt. It also means a
    * memory update takes effect on the next turn without rewriting history.
    */
+  /**
+   * Factory-built tools installed (or retired) after this agent was created:
+   * registered into the live loadout (deferred mode) or appended to the base
+   * array, so the next message sees them without a restart.
+   */
+  registerFactoryTool(tool: AgentTool): void {
+    if (this.#loadout) this.#loadout.registerExtra(tool);
+    else if (!this.#baseTools.some((t) => t.name === tool.name)) this.#baseTools.push(tool);
+  }
+
+  unregisterFactoryTool(name: string): void {
+    if (this.#loadout) this.#loadout.unregisterExtra(name);
+    else {
+      const i = this.#baseTools.findIndex((t) => t.name === name);
+      if (i >= 0) this.#baseTools.splice(i, 1);
+    }
+  }
+
   attachContext(note: string): void {
     if (!note.trim()) return;
     // Replace, don't stack: each note is a full snapshot (memory, routines, date), so
@@ -679,6 +698,8 @@ export class PersonalAgent {
     }
   }
   #loadout?: ToolLoadout;
+  /** Base array captured at create(); the non-deferred path mutates it in place. */
+  #baseTools: AgentTool[] = [];
 
   /** Identity of the context-note message currently in the transcript. */
   #contextNotes = new WeakSet<object>();

@@ -61,6 +61,7 @@ export class ToolLoadout {
   readonly #base: AgentTool[];
   readonly #deferred = new Map<string, { tool: AgentTool; spec: DeferredSpec }>();
   readonly #loaded = new Set<string>();
+  readonly #extras = new Map<string, AgentTool>();
   #version = 0;
 
   constructor(
@@ -82,6 +83,26 @@ export class ToolLoadout {
 
   get loaded(): string[] {
     return [...this.#loaded];
+  }
+
+  /**
+   * Late registration for factory-built tools: appended to the active set and
+   * bumps the version, so the next turn's context carries them without
+   * rebuilding the agent. Removal is by name and also bumps.
+   */
+  registerExtra(tool: AgentTool): void {
+    if (
+      this.#extras.has(tool.name) ||
+      this.#base.some((t) => t.name === tool.name) ||
+      this.#deferred.has(tool.name)
+    )
+      return;
+    this.#extras.set(tool.name, tool);
+    this.#version++;
+  }
+
+  unregisterExtra(name: string): void {
+    if (this.#extras.delete(name)) this.#version++;
   }
 
   load(name: string): boolean {
@@ -130,6 +151,11 @@ export class ToolLoadout {
   active(): AgentTool[] {
     const loaded = [...this.#deferred].filter(([n]) => this.#loaded.has(n)).map(([, d]) => d.tool);
     const stillPending = this.#deferred.size > this.#loaded.size;
-    return [...this.#base, ...loaded, ...(stillPending ? [this.#loader() as AgentTool] : [])];
+    return [
+      ...this.#base,
+      ...loaded,
+      ...this.#extras.values(),
+      ...(stillPending ? [this.#loader() as AgentTool] : []),
+    ];
   }
 }
