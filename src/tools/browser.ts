@@ -6,8 +6,10 @@ import {
   type TargetResult,
   type WaitResult,
 } from '../browser/service.js';
+import { parseSiteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
+import { vaultGet } from '../vault.js';
 
 /**
  * The browser tool.
@@ -115,6 +117,15 @@ const BrowserParams = Type.Object({
     }),
   ),
   text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
+  secret_key: Type.Optional(
+    Type.String({
+      description:
+        'For fill: a vault key site:<dominio>:<campo> (e.g. site:seg-social.es:password). ' +
+        'The daemon types the secret straight from the vault, masked end to end: the value ' +
+        'never appears to you, in the result or in the transcript. Use it for logins. ' +
+        'Mutually exclusive with text.',
+    }),
+  ),
   option: Type.Optional(
     Type.String({
       description:
@@ -219,6 +230,39 @@ if (norm(got) !== norm(want)) {
   return 'ATENCIÓN: el campo ' + ${named} + ' quedó con "' + got + '" en lugar de "' + want + '". Revisa el autocompletado antes de continuar.';
 }
 return 'filled ' + ${named} + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
+}
+
+/**
+ * The read-back fill for a secret typed straight from the vault (fill with
+ * `secret_key`). Same mechanics as fillScriptFor with two hard differences:
+ * the comparison is EXACT (a password's case and spaces are the password),
+ * and no string this script can return ever contains the wanted or the actual
+ * field value - the masked variant exists so a mismatch cannot leak the
+ * secret into the transcript.
+ */
+export function buildFillScriptMasked(locatorJs: string, label: string, value: string): string {
+  const val = JSON.stringify(value);
+  const named = JSON.stringify(label);
+  return `const loc = ${locatorJs};
+const want = ${val};
+await loc.fill(want);
+await page.waitForTimeout(300);
+let got = await loc.inputValue().catch(() => want);
+let retried = false;
+if (got !== want) {
+  retried = true;
+  await loc.fill('');
+  await loc.click();
+  await loc.press('Control+A');
+  await loc.press('Delete');
+  await loc.pressSequentially(want, { delay: 60 });
+  await page.waitForTimeout(500);
+  got = await loc.inputValue().catch(() => want);
+}
+if (got !== want) {
+  return 'ATENCIÓN: el campo ' + ${named} + ' no quedó con el valor del vault tras dos intentos. Revisa el campo (autocompletado, gestor de contraseñas) antes de continuar; el valor no se muestra por seguridad.';
+}
+return 'filled ' + ${named} + ' (valor del vault, no mostrado)' + (retried ? ' (reintentado tras limpiar el campo)' : '');`;
 }
 
 /**
@@ -329,6 +373,11 @@ export function createBrowserTool(
       'tu"), and keep it for the rest of the task. Every result repeats whether the window',
       'is visible, so you can check instead of guessing. If it is headless and you want the',
       'user to see something, either reopen with visible: true or send a screenshot.',
+      '',
+      'LOGINS: never ask the user for a password or type one they pasted. Credentials',
+      'live in the vault as site:<dominio>:username and site:<dominio>:password; fill with',
+      'secret_key types them straight from the vault, masked - you never see the value. If',
+      'the key is missing the error names the exact `pa vault set` command for the user.',
       '',
       'CAPTCHAS: after open / click / press / snapshot the result may start with',
       '"captcha_detectado". That means a human check (Cloudflare, reCAPTCHA, hCaptcha...) is',
@@ -453,8 +502,36 @@ export function createBrowserTool(
 
         case 'fill': {
           const target = requireTarget(record);
-          const value = String(record.text ?? '');
-          if (!value) throw new Error('la acción fill necesita text');
+          const secretKey =
+            record.secret_key === undefined ? undefined : String(record.secret_key).trim();
+          let value: string;
+          if (secretKey !== undefined) {
+            // The value travels from the vault to the field, period: it is
+            // resolved at the last moment, typed by the masked script, and
+            // never lands in arguments, result text or details - only the key
+            // NAME does, which is also what keeps ask-credential-field armed
+            // (the name still says "password").
+            if (record.text !== undefined) {
+              throw new Error('la acción fill acepta text o secret_key, no ambos');
+            }
+            if (!parseSiteKey(secretKey)) {
+              throw new Error(
+                'secret_key debe tener la forma site:<dominio>:<campo> ' +
+                  '(p. ej. site:seg-social.es:password).',
+              );
+            }
+            const stored = await vaultGet(secretKey);
+            if (stored === undefined) {
+              throw new Error(
+                `El vault no tiene ningún secreto con la clave ${secretKey}. ` +
+                  `Nico lo guarda con: pa vault set ${secretKey} <valor>`,
+              );
+            }
+            value = stored;
+          } else {
+            value = String(record.text ?? '');
+            if (!value) throw new Error('la acción fill necesita text');
+          }
           // Resolved first, and through the same rescue chain as click: a stale
           // selector used to be the end of the turn. The fill itself still goes through
           // the read-back script, which is what catches an autocomplete that mangles
@@ -462,6 +539,7 @@ export function createBrowserTool(
           const resolved = await service.resolveTarget(scope, target, {
             timeoutMs: readTimeout(record),
           });
+          const secretDetails = secretKey ? { secret_key: secretKey } : { value };
           if (!resolved.ok) {
             return {
               content: [
@@ -470,12 +548,14 @@ export function createBrowserTool(
                   text: `${describeTarget(resolved, { done: 'filled', missing: 'encontrar el campo para escribir en' })}${visibleNote(resolved.visible)}`,
                 },
               ],
-              details: { ...resolved, value },
+              details: { ...resolved, ...secretDetails },
             };
           }
           const text = await service.execJs(
             scope,
-            buildFillScriptFor(resolved.locatorJs, resolved.selector ?? target, value),
+            secretKey
+              ? buildFillScriptMasked(resolved.locatorJs, resolved.selector ?? target, value)
+              : buildFillScriptFor(resolved.locatorJs, resolved.selector ?? target, value),
           );
           return {
             content: [
@@ -484,7 +564,7 @@ export function createBrowserTool(
                 text: `${text.text}${resolved.how === 'selector' ? '' : ` (resolved as ${resolved.how})`}${visibleNote(resolved.visible)}`,
               },
             ],
-            details: { ...resolved, value, filled: text.text },
+            details: { ...resolved, ...secretDetails, filled: text.text },
           };
         }
 

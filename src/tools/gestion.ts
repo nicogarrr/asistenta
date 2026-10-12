@@ -15,7 +15,9 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { EFFECT_CLASSES, EFFECT_LABEL, type EffectClass } from '../gestor/effects.js';
+import { missingLoginFields, normalizeDomain, siteKey } from '../gestor/login.js';
 import type { Gestion, GestionStep, GestorStore } from '../gestor/store.js';
+import { vaultList } from '../vault.js';
 
 /**
  * Telegram's per-message ceiling is 4096 chars and the channel splits anything
@@ -55,6 +57,18 @@ const Params = Type.Object({
       { description: 'preparar: the plan, one step per entry, in order.' },
     ),
   ),
+  logins: Type.Optional(
+    Type.Array(
+      Type.String({ description: 'A domain the plan must log into, e.g. seg-social.es.' }),
+      {
+        description:
+          'preparar: sites the plan must log into. Credentials live in the vault as ' +
+          'site:<dominio>:username and site:<dominio>:password; the proposal lists every ' +
+          'missing key with the exact `pa vault set` command so Nico can store it. Values ' +
+          'never pass through here.',
+      },
+    ),
+  ),
   paso: Type.Optional(Type.Number({ description: 'paso: 1-based step number completed.' })),
   nota: Type.Optional(
     Type.String({ description: 'paso: one line on what happened in that step.' }),
@@ -66,7 +80,7 @@ function reply(text: string, isError = false): AgentToolResult {
 }
 
 /** The plan Nico approves: Spanish, one piece, every step with its effect class. */
-export function formatProposal(g: Gestion): string {
+export function formatProposal(g: Gestion, access: string[] = []): string {
   const steps = g.plan.map((s, i) => `${i + 1}. [${EFFECT_LABEL[s.effect]}] ${s.text}`).join('\n');
   return [
     `📋 Gestión propuesta: "${g.title}"`,
@@ -75,6 +89,7 @@ export function formatProposal(g: Gestion): string {
     '',
     'Plan (cada paso con su clase de efecto):',
     steps,
+    ...(access.length > 0 ? ['', ...access] : []),
     '',
     'Mientras la ejecute, si algo supera la clase aprobada de su paso - enviar a terceros, pagar o destruir - te pregunto sí o sí. Credenciales siempre por el vault, nunca por aquí.',
     '',
@@ -97,6 +112,8 @@ function oneLine(g: Gestion): string {
 export interface GestionToolDeps {
   gestor: GestorStore;
   scopeOf: () => string;
+  /** Vault key NAMES only, for the access section of preparar. Tests inject this. */
+  vaultNames?: () => Promise<string[]>;
 }
 
 export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Params> {
@@ -187,20 +204,54 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
           effect: p.efecto as EffectClass,
           done: false,
         }));
+        // The vault login convention (PR2): the proposal names every key the
+        // plan needs and the exact `pa vault set` command for each missing
+        // one. Key NAMES only - a value never passes through this tool.
+        const domains: string[] = [];
+        for (const raw of args.logins ?? []) {
+          const domain = normalizeDomain(raw);
+          if (!domain) {
+            return reply(
+              `"${raw}" no parece un dominio válido para un login: usa algo como seg-social.es.`,
+              true,
+            );
+          }
+          if (!domains.includes(domain)) domains.push(domain);
+        }
+        let access: string[] = [];
+        if (domains.length > 0) {
+          const names = await (deps.vaultNames ?? vaultList)();
+          access = ['Accesos (credenciales solo por el vault, nunca por aquí):'];
+          for (const domain of domains) {
+            const missing = missingLoginFields(domain, names);
+            if (missing.length === 0) {
+              access.push(`- ${domain}: ✔ usuario y contraseña ya están en el vault.`);
+            } else {
+              for (const field of missing) {
+                access.push(
+                  `- ${domain}: falta ${siteKey(domain, field)} - guárdala con: pa vault set ${siteKey(domain, field)} <valor>`,
+                );
+              }
+            }
+          }
+        }
         // Budget the exact message Nico would approve. The probe id is the
         // same length as a real one (36), so the check sees the true size.
-        const probe = formatProposal({
-          id: '0'.repeat(36),
-          scope: '',
-          title,
-          encargo,
-          plan,
-          status: 'proposed',
-          currentStep: 0,
-          ledger: [],
-          createdAt: '',
-          updatedAt: '',
-        });
+        const probe = formatProposal(
+          {
+            id: '0'.repeat(36),
+            scope: '',
+            title,
+            encargo,
+            plan,
+            status: 'proposed',
+            currentStep: 0,
+            ledger: [],
+            createdAt: '',
+            updatedAt: '',
+          },
+          access,
+        );
         if (probe.length > MAX_GESTION_CHARS) {
           return reply(
             `El plan no cabe en un solo mensaje (${probe.length} caracteres, máximo ${MAX_GESTION_CHARS}): resume los pasos o acorta el encargo y proponlo de nuevo. Nada quedó guardado.`,
@@ -208,7 +259,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
           );
         }
         const gestion = deps.gestor.propose({ scope, title, encargo, plan });
-        return reply(formatProposal(gestion));
+        return reply(formatProposal(gestion, access));
       }
 
       if (args.action === 'listar') {
