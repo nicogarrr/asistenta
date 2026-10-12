@@ -34,6 +34,7 @@ import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecont
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
+import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
@@ -84,6 +85,7 @@ import { createDownloadTool } from './tools/download.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
+import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
@@ -1414,6 +1416,7 @@ async function serveCommand(): Promise<number> {
         humanRepliedAfter: (scopeKey, sinceIso) =>
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
+      createGestionTool({ gestor: gestorStore, scopeOf: scope }),
       createSkillsTool({ store: skills }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
@@ -1687,6 +1690,14 @@ async function serveCommand(): Promise<number> {
       label,
       createdAt: Date.now(),
     };
+    // The gestor's effect guard rides this gate: while a gestion is active in
+    // the thread, a call whose effect exceeds the class Nico approved for the
+    // current step asks him again, past every memo, scope and window. It reads
+    // the store live, so `paso` advances apply at once, and a thread rebuilt
+    // after a restart re-installs the guard right here.
+    gate.setForcedAsk(key, (call) =>
+      effectOverrideReason(gestorStore.activeForScope(key), gate.classifyEffect(call)),
+    );
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
       deferTools: true,
@@ -1857,6 +1868,7 @@ async function serveCommand(): Promise<number> {
   });
 
   const goalStore = new GoalStore({ db: goalsDb });
+  const gestorStore = new GestorStore({ db: goalsDb });
   const goalNotifier = new GoalNotifier({
     db: goalsDb,
     resolveGoal: (id) => goalStore.read(id),

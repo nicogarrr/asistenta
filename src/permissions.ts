@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
 
@@ -241,6 +242,13 @@ export class Gate {
   readonly #scopes = new Map<string, Map<string, ScopeEntry>>();
   /** sessionId -> (tool+args) approved. Cleared per session. */
   readonly #approved = new Map<string, Set<string>>();
+  /**
+   * sessionId -> forced-ask predicate (today: the gestor's effect-class
+   * guard). Deliberately NOT cleared by clearSession: the gestion it guards
+   * lives across turns and the predicate reads the store live, so a finished
+   * gestion stops forcing on its own.
+   */
+  readonly #forcedAsk = new Map<string, (call: ToolCall) => string | null>();
   readonly #audit: Array<{
     ts: string;
     actor: string;
@@ -310,6 +318,12 @@ export class Gate {
         match: (c) => c.tool === 'objetivo' && argString(c.args, 'action') === 'activar',
       },
       {
+        id: 'ask-gestion-ejecutar',
+        verdict: 'ask',
+        reason: 'starts an approved errand with real-world effects',
+        match: (c) => c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar',
+      },
+      {
         // Documented here so the effective policy reads top to bottom, but decided in
         // `check()`: the list is ordered deny-ask-allow, and an allow entry in it can
         // never outrank an ask. A purchase flow is nothing but clicks and typing, so
@@ -336,21 +350,7 @@ export class Gate {
         id: 'ask-browser-effect',
         verdict: 'ask',
         reason: 'the page element sends, publishes, deletes or books something',
-        match: (c) => {
-          if (c.tool !== 'browser') return false;
-          const action = argString(c.args, 'action');
-          if (!['click', 'press'].includes(action)) return false;
-          const target = argString(c.args, '_target');
-          const { element, places } = splitTarget(target);
-          // On a page that talks about money, any button or Enter asks.
-          const type = element.split(' | ')[1] ?? '';
-          const isButton =
-            action === 'press' ||
-            element.startsWith('button |') ||
-            (element.startsWith('input |') && ['submit', 'button', 'image'].includes(type));
-          if (isButton && pageSaysMoney(places)) return true;
-          return target.includes('[destino ilegible]') || isEffectText(element);
-        },
+        match: (c) => this.#isBrowserEffect(c),
       },
       {
         id: 'ask-computer',
@@ -372,6 +372,27 @@ export class Gate {
         match: (c) => c.tool === 'shell',
       },
     ];
+  }
+
+  /**
+   * The ask-browser-effect rule's match, as a method so the gestor's
+   * classifyEffect reuses exactly the same evidence the rule fires on: a
+   * click or Enter on an element that sends, publishes, deletes or books.
+   */
+  #isBrowserEffect(c: ToolCall): boolean {
+    if (c.tool !== 'browser') return false;
+    const action = argString(c.args, 'action');
+    if (!['click', 'press'].includes(action)) return false;
+    const target = argString(c.args, '_target');
+    const { element, places } = splitTarget(target);
+    // On a page that talks about money, any button or Enter asks.
+    const type = element.split(' | ')[1] ?? '';
+    const isButton =
+      action === 'press' ||
+      element.startsWith('button |') ||
+      (element.startsWith('input |') && ['submit', 'button', 'image'].includes(type));
+    if (isButton && pageSaysMoney(places)) return true;
+    return target.includes('[destino ilegible]') || isEffectText(element);
   }
 
   #isProtected(path: string): boolean {
@@ -442,8 +463,10 @@ export class Gate {
     if (!this.#allowUntilPayment) return false;
     // A goal activation is NEVER preflight: the hard ask on `objetivo:activar`
     // collects a fresh human yes for days of autonomous work, and a `browse` or
-    // `fill` stage - resolved or labelled by the caller - must not wave it through.
-    if (this.#isGoalActivate(c)) return false;
+    // `fill` stage - resolved or labelled by the caller - must not wave it
+    // through. `gestion:ejecutar` gets the same treatment for the same reason:
+    // starting an approved errand starts real-world effects in Nico's name.
+    if (this.#isGoalActivate(c) || this.#isGestionEjecutar(c)) return false;
     const stage = this.#stageOf(c);
     if (stage !== 'browse' && stage !== 'fill') return false;
     if (this.#isPaymentish(c) || this.#isCredentialish(c)) return false;
@@ -496,6 +519,136 @@ export class Gate {
    */
   #isGoalActivate(c: ToolCall): boolean {
     return c.tool === 'objetivo' && argString(c.args, 'action') === 'activar';
+  }
+
+  /**
+   * Starting an approved universal errand: tool `gestion`, action `ejecutar`.
+   * Same treatment as a goal activation, and for the same shape of reason: one
+   * click here starts work that acts on third-party sites in Nico's name under
+   * the plan he just approved, so the human yes is collected fresh every time -
+   * never from a memo, a scope grant, the grant window or fullControl.
+   */
+  #isGestionEjecutar(c: ToolCall): boolean {
+    return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
+  }
+
+  /**
+   * The per-session forced-ask predicate (today: the gestor's effect guard).
+   * While set, every check consults it, and a non-null answer forces the ask
+   * path with that reason, past the memo, scopes, fullControl and the grant
+   * window. The deny list still wins: a forced ask cannot talk past a deny.
+   */
+  setForcedAsk(sessionId: string, predicate: ((call: ToolCall) => string | null) | null): void {
+    if (predicate) this.#forcedAsk.set(sessionId, predicate);
+    else this.#forcedAsk.delete(sessionId);
+  }
+
+  /**
+   * The effect class of a call in the world - or null when the class cannot be
+   * PROVEN. The gestor compares this against the class Nico approved for the
+   * current step, and null forces an ask: opaque actions (arbitrary code in a
+   * page, any shell command, a desktop click whose target is unknown, typing
+   * into a third-party form, acting on a page element, booking tools,
+   * factory-built tools) get positive proof or a question, never a default.
+   * Only PROOF of the complete effect assigns a class: the absence of effect
+   * words in a target proves nothing about what a click sends, one matched
+   * regex proves nothing about the rest of a compound command, and a money
+   * signal - a card-shaped number, a billing URL, payment words, a `confirm`
+   * stage - on an opaque call proves presence, never completeness. The `paga`
+   * class has exactly one source: `checkout`'s `confirm` action, the charge by
+   * the tool's own bounded design. Note `destructivo` and `envia-terceros`
+   * never come out of this function: both are provable as present, never as
+   * the WHOLE effect of a call.
+   */
+  classifyEffect(c: ToolCall): EffectClass | null {
+    // OPACITY FIRST, before any money or stage signal: payment-shaped arguments
+    // or a stage label on an opaque call prove the shape is present, never
+    // that the call's whole effect is paying - 'echo payment; Remove-Item x;
+    // curl -X POST ...' also destroys and sends.
+    switch (c.tool) {
+      case 'shell':
+      case 'book':
+      case 'opengym':
+        return null;
+      case 'computer': {
+        const action = argString(c.args, 'action');
+        return action === 'screenshot' || action === 'move' ? 'lee' : null;
+      }
+      case 'tv': {
+        const action = argString(c.args, 'action');
+        return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
+      }
+      case 'browser': {
+        const action = argString(c.args, 'action');
+        if (
+          [
+            'open',
+            'snapshot',
+            'screenshot',
+            'back',
+            'close',
+            'wait',
+            'wait_for',
+            'media',
+            'pick',
+          ].includes(action)
+        ) {
+          return 'lee';
+        }
+        // click/press/fill/choose/exec_js or anything unlisted: the COMPLETE
+        // effect of acting on a third-party page is unprovable, and money
+        // words in the page, the target or the stage never change that - a
+        // 'button | submit | Delete account' on a billing URL can destroy
+        // under money cover, and typing into a money page can transmit on
+        // every keystroke. The Gate's effect-text predicate is an ask
+        // heuristic, not a classifier. No money signal classifies opacity.
+        return null;
+      }
+      case 'checkout': {
+        // The designed purchase flow: search/select/status read and choose,
+        // with select refusing charge-shaped buttons by tool design, and
+        // confirm IS the charge by the tool's own bounded vocabulary -
+        // positive proof from the design, not a money signal. fill_passenger
+        // types into a third-party page: same unprovability as browser fill.
+        const action = argString(c.args, 'action');
+        if (['search', 'select', 'status'].includes(action)) return 'lee';
+        return action === 'confirm' ? 'paga' : null;
+      }
+      default:
+        break;
+    }
+    // Factory-built and otherwise unknown tools are opaque too.
+    if (!BOUNDED_EFFECT_TOOLS.has(c.tool)) return null;
+    switch (c.tool) {
+      // Provably without world effect: reads and the daemon's own bookkeeping
+      // (the gestion/objetivo flows, memory, skills, documents, inspection).
+      case 'read':
+      case 'list':
+      case 'done':
+      case 'memory':
+      case 'skills':
+      case 'documents':
+      case 'objetivo':
+      case 'gestion':
+      case 'windows':
+      case 'ocr':
+      case 'cargar_herramienta':
+        return 'lee';
+      case 'fetch': {
+        const method = argString(c.args, 'method').toUpperCase();
+        // GET/HEAD are reads. Anything else transmits to a third party whose
+        // server-side effect cannot be proven from the client side.
+        return method === '' || method === 'GET' || method === 'HEAD' ? 'lee' : null;
+      }
+      case 'write':
+      case 'edit':
+      case 'media':
+      case 'fabrica':
+      case 'reminder':
+        return 'escribe-local';
+      default:
+        return null;
+    }
   }
 
   #fingerprint(c: ToolCall): string {
@@ -645,9 +798,20 @@ export class Gate {
     const confirmation = this.#isPaymentConfirmation(call);
     const factoryInstall = this.#isFactoryInstall(call);
     const goalActivate = this.#isGoalActivate(call);
+    const gestionEjecutar = this.#isGestionEjecutar(call);
+    // The gestor's per-step effect guard: a reason string here forces the ask
+    // path below, past every automatic allowance. Deny rules still win.
+    const forced = this.#forcedAsk.get(sessionId)?.(call) ?? null;
 
     const fp = this.#fingerprint(call);
-    if (approved.has(fp) && !confirmation && !factoryInstall && !goalActivate) {
+    if (
+      approved.has(fp) &&
+      !confirmation &&
+      !factoryInstall &&
+      !goalActivate &&
+      !gestionEjecutar &&
+      !forced
+    ) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -670,7 +834,7 @@ export class Gate {
     // asking. Checked here rather than in the loop that honours allow rules, because
     // that loop only runs when no ask rule matched and a purchase flow trips the ask
     // rules on every single click.
-    if (this.#isPreflight(call)) {
+    if (!forced && this.#isPreflight(call)) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'pre-payment stage of a purchase flow',
@@ -690,7 +854,9 @@ export class Gate {
       !this.#isCredentialish(call) &&
       !confirmation &&
       !factoryInstall &&
-      !goalActivate
+      !goalActivate &&
+      !gestionEjecutar &&
+      !forced
     ) {
       if (this.#alwaysAllow.has(call.tool)) {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
@@ -718,31 +884,49 @@ export class Gate {
         !this.#isCredentialish(call) &&
         !confirmation &&
         !factoryInstall &&
-        !goalActivate
+        !goalActivate &&
+        !gestionEjecutar &&
+        !forced
       ) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
       }
     }
 
     // A fresh grant from an earlier approval covers the rest of this task.
-    if (!factoryInstall && !goalActivate && this.#withinGrantWindow(sessionId, call)) {
+    if (
+      !factoryInstall &&
+      !goalActivate &&
+      !gestionEjecutar &&
+      !forced &&
+      this.#withinGrantWindow(sessionId, call)
+    ) {
       return this.#record(call, { verdict: 'allow', reason: 'within the approval window' });
     }
 
     // Not on the allow list and not explicitly gated: still ask. Defaulting to deny
     // would make the agent useless the moment a new tool is added, and defaulting
     // to allow would make the allow list decorative.
-    const askRule = this.#rules.find((r) => r.verdict === 'ask' && r.match(call)) ?? {
-      id: 'ask-unlisted',
-      verdict: 'ask' as const,
-      reason: 'not on the allow list',
-      match: () => true,
-    };
+    // A forced ask (the gestor's effect-class guard) names its own reason, so
+    // Nico reads WHY this call exceeds the approved plan, not a generic rule.
+    const askRule = forced
+      ? {
+          id: 'ask-gestion-effect',
+          verdict: 'ask' as const,
+          reason: forced,
+          match: () => true,
+        }
+      : (this.#rules.find((r) => r.verdict === 'ask' && r.match(call)) ?? {
+          id: 'ask-unlisted',
+          verdict: 'ask' as const,
+          reason: 'not on the allow list',
+          match: () => true,
+        });
 
     for (const rule of this.#rules) {
       if (
         rule.verdict === 'allow' &&
         !confirmation &&
+        !forced &&
         rule.match(call) &&
         askRule.id === 'ask-unlisted'
       ) {
@@ -830,6 +1014,33 @@ export function splitTarget(target: string): { element: string; places: string }
 
 /** Tools where the Spanish money and credential vocabulary applies (checkout drives a shop). */
 const WEB_TOOLS = new Set(['browser', 'computer', 'shell', 'checkout']);
+
+/**
+ * Tools whose action vocabulary is bounded and known to `classifyEffect`.
+ * Anything else - a factory-built tool, a future addition - is opaque until
+ * its actions are mapped here and gets the forced ask, never a default class.
+ * `browser`, `checkout`, `computer`, `tv`, `shell` and the booking tools are
+ * decided in `classifyEffect`'s first switch, BEFORE any money signal.
+ */
+const BOUNDED_EFFECT_TOOLS = new Set([
+  'read',
+  'list',
+  'done',
+  'memory',
+  'skills',
+  'documents',
+  'objetivo',
+  'gestion',
+  'windows',
+  'ocr',
+  'cargar_herramienta',
+  'fetch',
+  'write',
+  'edit',
+  'media',
+  'fabrica',
+  'reminder',
+]);
 
 /**
  * Page-level money signal: checkout/payment words in the URL or title. Prices alone do
