@@ -1,7 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { AgendaItem, UnifiedAgenda } from '../src/agenda/unified.js';
-import { dueStages, findConflicts, inQuietHours, isCritical, stageInstants } from '../src/ojo.js';
+import {
+  dueStages,
+  findConflicts,
+  inQuietHours,
+  isCritical,
+  occurrenceKey,
+  stageInstants,
+} from '../src/ojo.js';
 import {
   findingKey,
   getOjoEnabled,
