@@ -17,6 +17,14 @@ La tool solo habla con la API local del servidor (`/api/status`, `/api/frame.jpg
 Cada `run`, `stop` y `home` **pregunta siempre** antes de ejecutarse (mueve un telefono real);
 `status` y `screenshot` son lecturas.
 
+## Alta guiada
+
+Pidele a Asistenta "conecta el iPhone" (tool `iphone`, `action=setup`, solo lectura): consulta al servidor y lista los
+pasos (servidor, ESP32, pantalla en directo, calibrado, modelo) con lo hecho marcado y el siguiente a seguir.
+Idea tomada del onboarding de ananhq/anan-iphone-use. No hay pareo por codigo ni exportacion de config MCP: el
+servidor hidagent no los tiene (la tool habla con su API local), asi que no se simulan. Tampoco puede saber si
+AssistiveTouch esta activado: eso solo lo ve la persona.
+
 ## Limites conocidos (declarados)
 
 - El servidor upstream **no corre en Windows nativo** (usa `pass_fds` y `/proc`). En el PC de Nico va en **WSL2**.

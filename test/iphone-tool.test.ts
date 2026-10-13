@@ -6,6 +6,7 @@ import {
   type IphoneStatus,
   normalizeBaseUrl,
   readiness,
+  setupGuide,
 } from '../src/iphone/client.js';
 import { Gate } from '../src/permissions.js';
 import { createIphoneTool, type IphoneToolDeps } from '../src/tools/iphone.js';
@@ -269,5 +270,45 @@ describe('iphone: clasificacion de efecto', () => {
     expect(at({ action: 'home' })).toBeNull();
     expect(at({ action: 'otra' })).toBeNull();
     expect(at({})).toBeNull();
+  });
+});
+
+describe('alta guiada (setup)', () => {
+  it('sin servidor: primer paso falta y dice como arrancarlo', async () => {
+    const { run } = setup([READY], {
+      status: async () => {
+        throw new IphoneError('no llego');
+      },
+    });
+    const r = await run({ action: 'setup' });
+    expect(r.details.ready).toBe(false);
+    expect(r.content[0]?.text).toMatch(/Siguiente: Servidor del iPhone: no responde \(no llego\)/);
+    expect(r.content[0]?.text).toMatch(/1\. \[falta\]/);
+  });
+
+  it('marca lo hecho y apunta al primer paso pendiente, en orden', () => {
+    const g = setupGuide({ ...READY, screen: false, calibrated: false });
+    expect(g.steps.map((s) => s.done)).toEqual([true, true, false, false, true]);
+    expect(g.next).toMatch(/Duplicar pantalla/);
+  });
+
+  it('todo listo: sin siguiente paso y sin tocar el telefono', async () => {
+    const { run, calls } = setup([READY]);
+    const r = await run({ action: 'setup' });
+    expect(r.details.ready).toBe(true);
+    expect(r.content[0]?.text).toMatch(/completa/);
+    expect(calls).toEqual(['status']);
+  });
+
+  it('el modelo sin configurar tambien cuenta como paso pendiente', () => {
+    const g = setupGuide({ ...READY, models: { planner: '', actor: '' } });
+    expect(g.next).toMatch(/LLM_API_KEY/);
+  });
+
+  it('setup es una lectura para el gestor de permisos', () => {
+    const gate = new Gate({ allowUntilPayment: true, approver: () => true });
+    expect(gate.classifyEffect({ tool: 'iphone', args: { action: 'setup' }, actor: 'test' })).toBe(
+      'lee',
+    );
   });
 });

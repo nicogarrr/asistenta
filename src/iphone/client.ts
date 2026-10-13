@@ -137,3 +137,48 @@ export function readiness(s: IphoneStatus): string[] {
     missing.push('el puntero no esta calibrado (interfaz web > Manual controls > Calibrate)');
   return missing;
 }
+
+export interface SetupStep {
+  /** Texto de la accion para la persona. */
+  text: string;
+  done: boolean;
+}
+
+/**
+ * Alta guiada: la lista ordenada de pasos para tener el iPhone listo, con lo ya
+ * hecho marcado. `status` es null si no se pudo hablar con el servidor
+ * (`problem` lleva el motivo). Solo refleja lo que el servidor informa: no
+ * puede saber si AssistiveTouch esta activado ni si el cable es el adecuado.
+ */
+export function setupGuide(
+  status: IphoneStatus | null,
+  problem?: string,
+): { steps: SetupStep[]; next: string | null } {
+  const reachable = status !== null;
+  const steps: SetupStep[] = [
+    {
+      text: problem
+        ? `Servidor del iPhone: no responde (${problem}). Arrancalo con deploy/iphone/run.sh en el equipo de la misma red y guarda su URL en el vault (iphone:url) o en PA_IPHONE_URL.`
+        : 'Servidor del iPhone: responde.',
+      done: reachable,
+    },
+    {
+      text: 'ESP32 conectada al servidor: enchufala al USB-C del iPhone (el 13 usa adaptador Lightning a USB de camara) y activa en el iPhone Ajustes > Accesibilidad > Tocar > AssistiveTouch.',
+      done: status?.device === true,
+    },
+    {
+      text: 'Pantalla en directo: en el iPhone, Centro de control > Duplicar pantalla > "iPhone Agent".',
+      done: status?.screen === true,
+    },
+    {
+      text: 'Puntero calibrado: abre la interfaz web del servidor > Manual controls > Calibrate.',
+      done: status?.calibrated === true,
+    },
+    {
+      text: 'Modelo de vision configurado en el servidor (LLM_API_KEY en su .env, pegada por ti, nunca por chat).',
+      done: Boolean(status?.models.actor),
+    },
+  ];
+  const pending = steps.find((s) => !s.done);
+  return { steps, next: pending ? pending.text : null };
+}

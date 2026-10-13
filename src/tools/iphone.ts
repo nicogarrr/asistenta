@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { type IphoneStatus, readiness } from '../iphone/client.js';
+import { type IphoneStatus, readiness, setupGuide } from '../iphone/client.js';
 import { log } from '../log.js';
 
 /**
@@ -29,6 +29,7 @@ export interface IphoneToolDeps {
 const Params = Type.Object({
   action: Type.Union([
     Type.Literal('status'),
+    Type.Literal('setup'),
     Type.Literal('screenshot'),
     Type.Literal('run'),
     Type.Literal('stop'),
@@ -78,6 +79,8 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<typeof Params>
       'Maneja el iPhone real de Nico a traves de una ESP32 (raton USB) y su pantalla por AirPlay.',
       'action=status dice si el puente esta listo (ESP32 conectada, pantalla en directo, puntero calibrado)',
       'y si hay una tarea en marcha. Mira SIEMPRE el status antes de lanzar nada.',
+      'action=setup es el alta guiada: lista los pasos para dejar el telefono listo, marca los hechos y dice el siguiente.',
+      'Usala cuando Nico quiera conectarlo o status diga que no esta listo. Es de solo lectura.',
       'action=screenshot devuelve la pantalla del telefono ahora mismo.',
       'action=run con goal le da una tarea al agente del telefono y espera (waitSeconds) a que acabe;',
       'devuelve cuantos pasos dio y la pantalla final. Es un agente aparte con su propio modelo:',
@@ -108,6 +111,26 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<typeof Params>
           return {
             content: [text(lines.join(' '))],
             details: { ...s, ready: missing.length === 0 },
+          };
+        }
+        case 'setup': {
+          let status: IphoneStatus | null = null;
+          let problem: string | undefined;
+          try {
+            status = await deps.status();
+          } catch (err) {
+            problem = err instanceof Error ? err.message : String(err);
+          }
+          const guide = setupGuide(status, problem);
+          const lines = guide.steps.map(
+            (s, i) => `${i + 1}. [${s.done ? 'hecho' : 'falta'}] ${s.text}`,
+          );
+          const head = guide.next
+            ? `Alta del iPhone: faltan pasos. Siguiente: ${guide.next}`
+            : 'Alta del iPhone completa: todo listo.';
+          return {
+            content: [text([head, ...lines].join('\n'))],
+            details: { ready: guide.next === null, steps: guide.steps },
           };
         }
         case 'screenshot': {
