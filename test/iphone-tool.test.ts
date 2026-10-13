@@ -130,7 +130,36 @@ describe('iphone tool', () => {
     const s = setup([READY]);
     await s.run({ action: 'stop' });
     await s.run({ action: 'home' });
-    expect(s.calls).toEqual(['stop', 'home']);
+    expect(s.calls).toEqual(['stop', 'status', 'home']);
+  });
+
+  it('stop NO espera a un run en curso: deps.stop se llama mientras run sigue sondeando', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const done = { ...READY, agent: { running: false, task: 'g', steps: 2 } };
+    const s = setup([READY, done], { sleep: () => gate });
+    let runDone = false;
+    const runP = s.run({ action: 'run', goal: 'g', waitSeconds: 600 }).then((r) => {
+      runDone = true;
+      return r;
+    });
+    // Deja que run llegue a su espera.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.calls).toContain('start:g');
+    await s.run({ action: 'stop' });
+    expect(s.calls).toContain('stop');
+    expect(runDone).toBe(false);
+    release();
+    await runP;
+  });
+
+  it('home se niega si hay una tarea en marcha y no toca el telefono', async () => {
+    const running = { ...READY, agent: { running: true, task: 'g', steps: 1 } };
+    const s = setup([running]);
+    await expect(s.run({ action: 'home' })).rejects.toThrow(/action=stop/);
+    expect(s.calls).not.toContain('home');
   });
 });
 

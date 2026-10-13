@@ -43,16 +43,19 @@ const Params = Type.Object({
   waitSeconds: Type.Optional(
     Type.Number({
       description:
-        'Para run: cuanto esperar a que termine (0-600, por defecto 120). 0 = no esperar.',
+        'Para run: cuanto esperar a que termine (0-600, por defecto 60). 0 = no esperar.',
     }),
   ),
 });
 
 const POLL_MS = 3000;
 const MAX_WAIT_S = 600;
-const DEFAULT_WAIT_S = 120;
+const DEFAULT_WAIT_S = 60;
 
-/** Las acciones sobre el telefono van de una en una: dos agentes no se pisan. */
+/**
+ * Los `run` van de uno en uno: dos agentes no se pisan. Las PARADAS (stop, home)
+ * no pasan por aqui a proposito.
+ */
 let queue: Promise<void> = Promise.resolve();
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
@@ -172,11 +175,21 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<typeof Params>
           });
         }
         case 'stop': {
-          await enqueue(() => deps.stop());
+          // FUERA de la cola: un run puede estar esperando hasta 600 s y la
+          // parada de emergencia no puede quedar detras de el.
+          await deps.stop();
           return { content: [text('Parada de emergencia enviada al telefono.')], details: {} };
         }
         case 'home': {
-          await enqueue(() => deps.home());
+          // Tambien fuera de la cola (no debe esperar a un run), pero no se
+          // pulsa Inicio por debajo de una tarea en marcha: eso la rompe.
+          const s = await deps.status();
+          if (s.agent.running) {
+            throw new Error(
+              `Hay una tarea en marcha ("${s.agent.task ?? ''}"). Usa action=stop primero si quieres cortarla.`,
+            );
+          }
+          await deps.home();
           return {
             content: [text('He pulsado Inicio en el iPhone (sin confirmacion de la pantalla).')],
             details: {},
