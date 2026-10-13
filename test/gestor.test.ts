@@ -230,9 +230,9 @@ describe('effect classes', () => {
     });
     gestor.start(g.id);
     const raw = gestor.read(g.id);
-    expect(raw).not.toBeNull();
+    if (!raw) throw new Error('el gestor no devolvio el encargo recien creado');
     // Simulate a row whose currentStep points past the plan (corrupt).
-    const corrupt = { ...raw!, currentStep: 99 };
+    const corrupt = { ...raw, currentStep: 99 };
     expect(effectOverrideReason(corrupt, 'lee')).toBeNull();
     expect(effectOverrideReason(corrupt, 'envia-terceros')).toContain('sin cerrar');
     expect(effectOverrideReason(corrupt, null)).toContain('sin cerrar');
