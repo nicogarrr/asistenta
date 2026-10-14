@@ -183,6 +183,15 @@ export class ConversationSession {
   #generation = 0;
   #bargeIn: BargeInLevel;
   #bargeIns = 0;
+  /** Interrupciones cuya frase sembrada acabó en turno real (o cierre pedido). */
+  #bargeTrue = 0;
+  /** Interrupciones cuya frase sembrada era ruido descartado: falso disparo. */
+  #bargeFalseNoise = 0;
+  /** Interrupciones cuya frase sembrada era mi propia voz por los altavoces. */
+  #bargeFalseEcho = 0;
+  /** Interrupciones cuya frase sembrada no llegó a clasificarse (cortada, error
+   * de STT, timeout, sesión cerrada antes): ni verdadera ni falsa, desconocida. */
+  #bargeUnclassified = 0;
   /** Which turn is allowed to resume listening when it ends (an interrupted one is not). */
   #turnSeq = 0;
   #speakStop: (() => void) | null = null;
@@ -232,9 +241,25 @@ export class ConversationSession {
     lastHeard: string;
     lastError: string;
     bargeIns: number;
+    bargeTrue: number;
+    bargeFalseNoise: number;
+    bargeFalseEcho: number;
+    bargeUnclassified: number;
+    /** Sembrada con transcript aun en vuelo: ni clasificada ni desconocida todavia. */
+    bargePending: number;
   } {
     return {
       bargeIns: this.#bargeIns,
+      bargeTrue: this.#bargeTrue,
+      bargeFalseNoise: this.#bargeFalseNoise,
+      bargeFalseEcho: this.#bargeFalseEcho,
+      bargeUnclassified: this.#bargeUnclassified,
+      bargePending:
+        this.#bargeIns -
+        this.#bargeTrue -
+        this.#bargeFalseNoise -
+        this.#bargeFalseEcho -
+        this.#bargeUnclassified,
       state: this.#state,
       utterances: this.#utterances,
       lastHeard: this.#lastHeard,
@@ -242,9 +267,22 @@ export class ConversationSession {
     };
   }
 
+  /**
+   * The seeded utterance was abandoned before its transcript could classify it
+   * (too short, transcriber busy, STT error/timeout, session closed, or an
+   * unrelated submit taking the microphone). Count it as unknown - and never
+   * let the mark leak into an unrelated phrase (auditor canary, item 11 r2).
+   */
+  #dropSeededUnclassified(): void {
+    if (!this.#bargeSeeded) return;
+    this.#bargeSeeded = false;
+    this.#bargeUnclassified++;
+  }
+
   /** Close for good. Idempotent. In-flight transcriptions and turns see a closed session and drop their result. */
   close(reason: CloseReason, detail?: string): void {
     if (this.#state === 'cerrada') return;
+    this.#dropSeededUnclassified();
     this.#state = 'cerrada';
     this.#generation++;
     this.#speech = [];
@@ -352,11 +390,15 @@ export class ConversationSession {
       at += part.length;
     }
     this.#resetUtterance();
-    if (voiced < msToSamples(this.#o.minVoicedMs)) return;
+    if (voiced < msToSamples(this.#o.minVoicedMs)) {
+      this.#dropSeededUnclassified();
+      return;
+    }
 
     // A previous transcription that outlived its timeout is still running: never two
     // whisper passes at once. This utterance is dropped.
     if (this.#transcribing) {
+      this.#dropSeededUnclassified();
       this.#lastError = 'la transcripción anterior sigue en curso; descarto esta frase';
       return;
     }
@@ -377,6 +419,7 @@ export class ConversationSession {
       this.#failures = 0;
     } catch (err) {
       if (generation !== this.#generation) return;
+      this.#dropSeededUnclassified();
       this.#failures++;
       this.#lastError = err instanceof Error ? err.message : String(err);
       if (this.#failures >= this.#o.maxFailures) {
@@ -398,22 +441,28 @@ export class ConversationSession {
   async submit(text: string): Promise<void> {
     if (this.#state !== 'escuchando') return;
     this.#resetUtterance();
+    // The seeded audio is discarded here; this text did not come from it.
+    this.#dropSeededUnclassified();
     await this.#handleText(text, this.#generation);
   }
 
   async #handleText(raw: string, generation: number): Promise<void> {
     const text = raw.trim();
     this.#lastHeard = text;
+    // Was this utterance seeded by a barge-in? That decides how it counts in the
+    // false-trigger metric (item 11): noise or self-echo after interrupting is a
+    // false trigger; a real turn (or a spoken close) is a true one.
+    const seeded = this.#bargeSeeded;
+    this.#bargeSeeded = false;
     if (isNoise(text)) {
-      this.#bargeSeeded = false;
+      if (seeded) this.#bargeFalseNoise++;
       this.#resumeListening();
       return;
     }
     // The utterance that interrupted the agent may be the agent itself, heard through
     // the speakers. Mostly the same words as what it was reading: not a request.
-    const seeded = this.#bargeSeeded;
-    this.#bargeSeeded = false;
     if (seeded && this.#isSelfEcho(text)) {
+      this.#bargeFalseEcho++;
       this.#echoLoops++;
       this.#lastError = 'me he oído a mí mismo; descarto esa frase';
       // Twice in a row: the speakers feed the microphone. Stop interrupting.
@@ -425,7 +474,10 @@ export class ConversationSession {
       this.#resumeListening();
       return;
     }
-    if (seeded) this.#echoLoops = 0;
+    if (seeded) {
+      this.#echoLoops = 0;
+      this.#bargeTrue++;
+    }
     if (isClosingPhrase(text)) {
       this.close('cierre');
       return;
