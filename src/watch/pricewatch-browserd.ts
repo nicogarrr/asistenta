@@ -65,17 +65,19 @@ class PermitHook {
         void (async () => {
           let allow = false;
           try {
-            // El sidecar manda {url, resource_type, status, body} de CADA
-            // request permitida (un salto); decidimos con el mismo criterio
-            // que el lector historico: robots/presupuesto + isBlockedPage.
+            // Dos fases (#130 ronda 4): PREFLIGHT {url, resource_type} antes
+            // del fetch -> robots/presupuesto (reserve descuenta por intento,
+            // como el historico); POSTFLIGHT {url, resource_type, status,
+            // body} tras el fetch de un salto -> SOLO isBlockedPage (el
+            // presupuesto ya se desconto en preflight; no contar dos veces).
             const payload = JSON.parse(body || '{}') as { url?: unknown; status?: unknown; body?: unknown };
             const url = String(payload.url ?? '');
-            const status = typeof payload.status === 'number' ? payload.status : 0;
-            const pageBody = typeof payload.body === 'string' ? payload.body : '';
-            allow =
-              Boolean(url) &&
-              !isBlockedPage(status, pageBody) &&
-              (await permit(url));
+            if (typeof payload.status === 'number') {
+              const pageBody = typeof payload.body === 'string' ? payload.body : '';
+              allow = Boolean(url) && !isBlockedPage(payload.status, pageBody);
+            } else {
+              allow = Boolean(url) && (await permit(url));
+            }
           } catch {
             allow = false;
           }

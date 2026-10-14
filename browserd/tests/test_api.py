@@ -12,10 +12,28 @@ from browserd.server import app
 from browserd.sessions import SessionManager
 
 
-class FakePage:
+class FakeContext:
     def __init__(self):
+        self.pages: list = []
+        self.routed = None
+        self.route_history: list = []
+
+    async def route(self, pattern, handler):
+        self.routed = (pattern, handler)
+        self.route_history.append((pattern, handler))
+
+    async def unroute(self, pattern, handler):
+        self.routed = None
+
+
+class FakePage:
+    fail_close = False  # canario: close() lanza
+
+    def __init__(self, context=None):
         self.url = "about:blank"
         self._closed = False
+        self.context = context or FakeContext()
+        self.context.pages.append(self)
 
     def is_closed(self):
         return self._closed
@@ -39,24 +57,34 @@ class FakePage:
         return {"expr": expression}
 
     async def route(self, pattern, handler):
-        self.routed = (pattern, handler)
+        await self.context.route(pattern, handler)
 
     async def unroute(self, pattern, handler):
-        self.routed = None
+        await self.context.unroute(pattern, handler)
 
     async def close(self):
+        if type(self).fail_close:
+            raise RuntimeError("close roto (canario)")
         self._closed = True
+        if self in self.context.pages:
+            self.context.pages.remove(self)
 
 
 class FakeEngine:
     def __init__(self):
-        self.page = FakePage()
+        self.context = FakeContext()
+        self.page = None
+        self.closed = False
 
     async def new_page(self):
+        self.page = FakePage(self.context)
         return self.page
 
     async def close(self):
-        self.page._closed = True
+        self.closed = True
+        for pg in list(self.context.pages):
+            pg._closed = True
+        self.context.pages.clear()
 
 
 def client(tmp_path: Path, token: str = "", eval_timeout_ms: int = 30000,
@@ -164,8 +192,46 @@ def test_read_instala_la_barrera_durante_la_operacion(tmp_path):
               "allowed_hosts": ["example.com"]},
     )
     assert r.status_code == 200
-    page = app.state.manager.get(sid).engine.page
-    assert page.routed is not None and page.routed[0] == "**/*"
+    engine = app.state.manager.get(sid).engine
+    assert engine.context.route_history and engine.context.route_history[0][0] == "**/*"
+    assert engine.context.routed is None  # desinstalada al cerrar la lectura
+
+
+def test_read_cierra_popups_abiertos_durante_la_lectura(tmp_path):
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    engine = app.state.manager.get(sid).engine
+    original_goto = FakePage.goto
+
+    async def goto_con_popup(self, url, wait_until, timeout):
+        popup = FakePage(engine.context)  # popup de JS
+        popup.url = "https://popup.evil.test/"
+        return await original_goto(self, url, wait_until, timeout)
+
+    FakePage.goto = goto_con_popup
+    r = c.post(f"/sessions/{sid}/read",
+               json={"url": "https://example.com", "expression": "1",
+                     "allowed_hosts": ["example.com"]})
+    try:
+        assert r.status_code == 200
+        assert engine.context.pages == []  # principal Y popup cerradas
+    finally:
+        FakePage.goto = original_goto
+
+
+def test_read_close_fallido_es_502_y_sesion_descartada(tmp_path):
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    engine = app.state.manager.get(sid).engine
+    FakePage.fail_close = True
+    try:
+        r = c.post(f"/sessions/{sid}/read", json={"url": "https://example.com", "expression": "1"})
+    finally:
+        FakePage.fail_close = False
+    assert r.status_code == 502
+    assert engine.closed  # engine limpiado
+    with pytest.raises(Exception):
+        app.state.manager.get(sid)  # sesion descartada
 
 
 def test_read_permit_url_no_loopback_es_422(tmp_path):

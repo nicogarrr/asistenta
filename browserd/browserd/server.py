@@ -213,17 +213,26 @@ async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     async with session.lock:  # toda la operacion es atomica por sesion
         page = None
+        context = None
+        existing_pages: set = set()
+        result: dict[str, Any] | None = None
         try:
             page = await session.engine.new_page()
+            context = page.context
+            # Paginas preexistentes (p.ej. la legacy de goto): NO las toca esta
+            # lectura. Todo lo demas (la nuestra y los popups) se cierra al final.
+            existing_pages = {p for p in context.pages if p is not page}
+            # Barrera a NIVEL DE CONTEXTO (#130): los popups/ventanas que el JS
+            # abra durante la lectura heredan route y barrera.
             if guard is not None:
-                await page.route("**/*", guard.handle)
+                await context.route("**/*", guard.handle)
             resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
             if body.settle_ms:
                 await page.wait_for_timeout(body.settle_ms)
             value = await asyncio.wait_for(
                 page.evaluate(body.expression), timeout=app.state.settings.eval_timeout_ms / 1000
             )
-            return {
+            result = {
                 "status": resp.status if resp else None,
                 "url": page.url,
                 "title": await page.title(),
@@ -236,19 +245,43 @@ async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
             raise
         except Exception as exc:
             if guard is not None and guard.denied:
-                return {"status": 403, "url": "", "title": "", "value": None, "denied": True}
-            raise HTTPException(
-                status_code=502, detail=f"lectura fallida: {type(exc).__name__}"
-            ) from exc
+                result = {"status": 403, "url": "", "title": "", "value": None, "denied": True}
+            else:
+                raise HTTPException(
+                    status_code=502, detail=f"lectura fallida: {type(exc).__name__}"
+                ) from exc
         finally:
-            # La pagina NUNCA sobrevive a la lectura: nada de JS en idle con red.
-            if page is not None:
+            # Cierra TODA pagina creada por la lectura (la principal y los
+            # popups). Un fallo de cierre NO es exito silencioso (#130): la
+            # sesion se descarta con el engine cerrado y la lectura falla.
+            close_error: Exception | None = None
+            if context is not None:
+                for p in list(context.pages):
+                    if p not in existing_pages:
+                        try:
+                            await p.close()
+                        except Exception as exc:  # pragma: no cover - defensivo
+                            close_error = close_error or exc
+                if guard is not None:
+                    try:
+                        await context.unroute("**/*", guard.handle)
+                    except Exception:
+                        pass
+            if session.page is not None and session.page is not page and page is not None:
+                pass  # pagina legacy de goto: no la toca esta lectura
+            elif session.page is page:
+                session.page = None
+            if close_error is not None:
                 try:
-                    await page.close()
+                    await session.engine.close()
                 except Exception:
                     pass
-            if session.page is page:
-                session.page = None
+                app.state.manager.discard(session.id)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"cierre de pagina fallido; sesion descartada: {type(close_error).__name__}",
+                ) from close_error
+        return result
 
 
 @app.post("/sessions/{session_id}/evaluate", dependencies=[Depends(_auth)])

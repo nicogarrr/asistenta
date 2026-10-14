@@ -158,6 +158,14 @@ class SessionManager:
             async with self._lock:
                 self._closing.pop(session_id, None)
 
+    def discard(self, session_id: str) -> None:
+        """Borra la sesion SIN cerrar: el engine ya se cerro o esta roto.
+
+        La usa /read cuando el cierre de pagina falla: la sesion no puede
+        seguir sirviendo con una pagina viva fuera de la barrera.
+        """
+        self._sessions.pop(session_id, None)
+
     async def close_all(self) -> dict[str, str]:
         """Cierra todas; un fallo no impide cerrar las demas. Devuelve errores."""
         errors: dict[str, str] = {}

@@ -112,3 +112,21 @@ demas se abortan sin red), cada una de UN salto y validada por el hook con
 `{url, resource_type, status, body}`: el cliente aplica robots/presupuesto e
 isBlockedPage. Es la lectura que usa pricewatch; `goto`/`evaluate` quedan
 para usos interactivos sin barrera.
+
+### Lectura atomica `POST /sessions/{id}/read` (#130 ronda 3)
+
+`{url, expression, wait_until, timeout_ms, settle_ms, allowed_hosts,
+permit_url}`: goto + evaluate + CIERRE de pagina en una sola llamada. No queda
+pagina viva entre lecturas: nada de JS en idle con red libre ni service
+workers (ademas los contextos se crean con service workers bloqueados). Con
+barrera activa, solo salen requests de tipo document/script/xhr/fetch (las
+demas se abortan sin red), cada una de UN salto y validada por el hook con
+`{url, resource_type, status, body}`: el cliente aplica robots/presupuesto e
+isBlockedPage. Es la lectura que usa pricewatch; `goto`/`evaluate` quedan
+para usos interactivos sin barrera.
+
+Redirects: el smoke real con Camoufox demostro que el navegador NO re-intercepta
+un redirect fulfilled (lo sigue internamente). Por eso el guard sigue los
+redirects EL MISMO, salto a salto (hasta 10), y cada salto pasa host +
+preflight + postflight. Verificado contra Camoufox real: redirect 302 +
+subrecurso script, cada salto por la barrera (browserd/smoke_read.py).

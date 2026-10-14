@@ -81,8 +81,10 @@ class _Hook(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         payload = json.loads(self.rfile.read(n) or b"{}")
         type(self).seen.append(payload)
-        # Niega challenges (misma decision que isBlockedPage del cliente)
-        allow = "triggerInterstitialChallenge" not in str(payload.get("body", ""))
+        if "status" in payload:  # POSTFLIGHT: isBlockedPage (challenge -> deny)
+            allow = "triggerInterstitialChallenge" not in str(payload.get("body", ""))
+        else:  # PREFLIGHT: robots/presupuesto (/nopermit -> deny)
+            allow = "/nopermit" not in str(payload.get("url", ""))
         self.send_response(200 if allow else 403)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -106,6 +108,7 @@ def servers():
 class _FakeResp:
     def __init__(self, r: httpx.Response):
         self.status = r.status_code
+        self.headers = dict(r.headers)
         self._body = r.content
 
     async def body(self):
@@ -120,14 +123,17 @@ class _FakeRoute:
         self.aborted = False
         self.fulfilled: tuple[int, bytes] | None = None
         self.fetch_kwargs: dict = {}
+        self.fetched_urls: list[str] = []
 
     async def abort(self):
         self.aborted = True
 
     async def fetch(self, **kwargs):
         self.fetch_kwargs = kwargs
+        url = kwargs.get("url") or self.url
+        self.fetched_urls.append(url)
         async with httpx.AsyncClient(follow_redirects=False, timeout=10) as c:
-            return _FakeResp(await c.get(self.url))
+            return _FakeResp(await c.get(url))
 
     async def fulfill(self, response=None, body=None):
         self.fulfilled = (response.status, body)
@@ -147,14 +153,25 @@ def _handle(g, url, rtype):
 
 # ---------- tests con red real ----------
 
-def test_redirect_no_se_sigue_dentro_y_llega_al_hook_como_302(servers):
+def test_redirect_lo_sigue_el_guard_salto_a_salto_por_la_barrera(servers):
+    """El navegador real NO re-intercepta redirects (smoke Camoufox): el guard
+    sigue cada salto con host+preflight+postflight y sirve el destino final."""
     origin, hook = servers
     g = RequestGuard(["127.0.0.1"], hook)
     route = _handle(g, f"{origin}/redir", "document")
-    assert route.fetch_kwargs.get("max_redirects") == 0
-    assert route.fulfilled and route.fulfilled[0] == 302  # NO siguio a /final
+    assert route.fetched_urls == [f"{origin}/redir", f"{origin}/final"]
+    assert all(kw.get("max_redirects") == 0 for kw in [{ "max_redirects": route.fetch_kwargs.get("max_redirects") }])
+    assert route.fulfilled and route.fulfilled[0] == 200  # sirvio el destino final
     assert not route.aborted and not g.denied
-    assert _Hook.seen[-1]["status"] == 302  # el hook vio el 302, no el destino
+    assert any(p.get("url", "").endswith("/redir") and p.get("status") == 302 for p in _Hook.seen)
+    assert any(p.get("url", "").endswith("/final") and "status" not in p for p in _Hook.seen)  # preflight /final
+
+
+def test_redirect_a_host_fuera_de_allowlist_corta_en_el_salto(servers):
+    origin, hook = servers
+    g = RequestGuard(["127.0.0.1:1"], hook)  # el origen real NO esta cubierto -> salto denegado
+    route = _handle(g, f"{origin}/redir", "document")
+    assert route.aborted and g.denied
 
 
 def test_subrecurso_real_un_salto_y_hook_recibe_cuerpo(servers):
@@ -194,16 +211,30 @@ def test_host_fuera_de_allowlist_aborta_sin_red(servers):
     assert _Hook.seen == []  # el hook ni se entero
 
 
-def test_hook_caido_fail_closed():
-    g = RequestGuard(None, "http://127.0.0.1:9/permit", permit_timeout_s=1.0)
-    route = _FakeRoute("http://127.0.0.1:9/final")
-    # fetch al origen caido tambien falla -> el guard nunca llega a fulfill;
-    # para isolar: origen vivo solo si hay servers; aqui basta probar deny del hook
-    async def run():
-        try:
-            await g._permit("http://x/", "document", 200, b"ok")
-        except Exception:
-            return "raise"
-        return "done"
-    assert asyncio.run(run()) == "done"
-    assert asyncio.run(g._permit("http://x/", "document", 200, b"ok")) is False
+def test_hook_caido_impide_el_fetch_no_solo_oculta_la_respuesta(servers):
+    """Fail-closed real en preflight: hook muerto = la request NUNCA sale a red."""
+    origin, _hook = servers
+    g = RequestGuard(["127.0.0.1"], "http://127.0.0.1:9/permit", permit_timeout_s=1.0)
+    route = _handle(g, f"{origin}/final", "document")
+    assert route.aborted and g.denied
+    assert route.fetch_kwargs == {}  # no hubo fetch
+    assert route.fulfilled is None
+
+
+def test_preflight_deny_aborta_antes_de_cualquier_fetch(servers):
+    """Robots/presupuesto deciden antes de que la request salga (#130 ronda 4)."""
+    origin, hook = servers
+    g = RequestGuard(["127.0.0.1"], hook)
+    route = _handle(g, f"{origin}/nopermit", "document")
+    assert route.aborted and g.denied
+    assert route.fetch_kwargs == {}  # el fetch nunca ocurrio
+    assert "status" not in _Hook.seen[-1]  # la decision fue preflight
+
+
+def test_postflight_challenge_aborta_despues_del_fetch_de_un_salto(servers):
+    origin, hook = servers
+    g = RequestGuard(["127.0.0.1"], hook)
+    route = _handle(g, f"{origin}/challenge", "xhr")
+    assert route.fetch_kwargs.get("max_redirects") == 0  # hubo fetch de un salto
+    assert route.aborted and g.denied and route.fulfilled is None
+    assert _Hook.seen[-1].get("status") == 200  # postflight con la respuesta real
