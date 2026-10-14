@@ -38,10 +38,13 @@ Que hace, en orden:
    raiz del repo. Entiende la sintaxis dotenv (`export CLAVE = valor`,
    espacios), conserva el resto de lineas intactas, elimina cualquier
    asignacion previa de `BROWSER_ENGINE` y deja exactamente UNA. La escritura
-   es transaccional: temporal + `ReplaceFile` atomico con backup en
-   `.env.browserd-bak` (o move simple si el archivo no existia) y verificacion
-   post-escritura dentro de la misma transaccion; si CUALQUIER paso falla se
-   restaura el estado previo.
+   es transaccional: temporal + `ReplaceFile` atomico con backup UNICO de
+   esa corrida (`.env.browserd-bak-<timestamp>-<pid>`, borrable) o move
+   simple si el archivo no existia, y verificacion post-escritura dentro de
+   la misma transaccion. Si CUALQUIER paso falla se deshace SOLO lo de esa
+   transaccion (nunca un backup viejo de otra corrida), la restauracion se
+   verifica por hash y el error dice claramente si quedo algo por revisar a
+   mano.
 
 Los flags son independientes: `-Start` y `-Bench` se pueden repetir aunque la
 instalacion ya este hecha (los pasos 1-5 son idempotentes y rapidos).

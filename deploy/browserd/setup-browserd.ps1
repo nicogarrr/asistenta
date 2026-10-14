@@ -21,9 +21,10 @@
                    la raiz del repo (lo lee asistenta al arrancar via el
                    loader nativo de Node, src/envfile.ts). Solo se ejecuta si
                    todos los pasos anteriores fueron bien; la escritura es
-                   atomica (ReplaceFile con backup en .env.browserd-bak) y
-                   transaccional con verificacion: si algo falla se restaura
-                   el estado previo. Este script NO reinicia asistenta.
+                   atomica (ReplaceFile con backup unico de esta corrida)
+                   y transaccional con verificacion: si algo falla se
+                   deshace solo lo de esta transaccion y se verifica la
+                   restauracion. Este script NO reinicia asistenta.
 
   Estado de verificacion: script revisado estaticamente; su primera ejecucion
   real es en el PC del usuario (Windows). Cada paso falla con mensaje claro.
@@ -208,20 +209,25 @@ if ($EnableEngine) {
   $kept = @($lines | Where-Object { $_ -notmatch $keyPattern })
   $kept += 'BROWSER_ENGINE=camoufox'
 
-  $tmp = "$envFile.browserd-tmp"
-  $backup = "$envFile.browserd-bak"
-  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+  # Backup UNICO por transaccion: nunca se restaura un backup de otra corrida.
+  $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+  $tmp = "$envFile.browserd-tmp-$stamp-$PID"
+  $backup = "$envFile.browserd-bak-$stamp-$PID"
+  $mutated = $false
 
   # Escritura y verificacion en la MISMA transaccion: cualquier fallo (incluido
-  # leer de nuevo el archivo) restaura el estado previo.
+  # leer de nuevo el archivo) deshace SOLO lo que esta transaccion hizo.
   try {
     [System.IO.File]::WriteAllLines($tmp, [string[]]$kept, $utf8NoBom)
     if ($hadFile) {
-      # Reemplazo atomico con backup (Win32 ReplaceFile): tambien en PS5.1.
+      # Reemplazo atomico con backup (Win32 ReplaceFile): tambien en PS5.1. Si
+      # Replace lanza, el destino quedo intacto (es atomico), por eso $mutated
+      # solo se pone despues de que retorne.
       [System.IO.File]::Replace($tmp, $envFile, $backup)
+      $mutated = $true
     } else {
-      # Archivo nuevo: no hay nada que reemplazar, basta el move.
       Move-Item $tmp $envFile
+      $mutated = $true
     }
     $final = [System.IO.File]::ReadAllLines($envFile)
     $found = @($final | Where-Object { $_ -match $keyPattern })
@@ -229,16 +235,39 @@ if ($EnableEngine) {
       throw 'la verificacion post-escritura no encontro exactamente una asignacion valida'
     }
   } catch {
-    if ($hadFile -and (Test-Path $backup)) {
-      Copy-Item $backup $envFile -Force -ErrorAction SilentlyContinue
-    } elseif (-not $hadFile -and (Test-Path $envFile)) {
-      Remove-Item $envFile -Force -ErrorAction SilentlyContinue
+    $cause = $_.Exception.Message
+    if (-not $mutated) {
+      # WriteAllLines o el propio Replace/Move fallaron: ReplaceFile es atomico,
+      # asi que el .env original sigue intacto. No hay nada que restaurar.
+      throw "No pude escribir .env; la mutacion no llego a aplicarse y el archivo original esta intacto. $cause"
     }
-    throw "No pude dejar .env consistente; se restauro el estado previo. $_"
+    if ($hadFile) {
+      # Restaurar SOLO el backup que Replace acaba de crear en ESTA transaccion.
+      if (-not (Test-Path $backup)) {
+        throw "La escritura fallo tras mutar .env y NO existe el backup de esta transaccion ($backup). Revisa .env a mano. $cause"
+      }
+      Copy-Item $backup $envFile -Force -ErrorAction SilentlyContinue
+      $restored = $false
+      try {
+        $h1 = (Get-FileHash $backup -Algorithm SHA256).Hash
+        $h2 = (Get-FileHash $envFile -Algorithm SHA256).Hash
+        $restored = ($h1 -eq $h2)
+      } catch {}
+      if (-not $restored) {
+        throw "La escritura fallo y ADEMAS no pude confirmar la restauracion desde $backup. Revisa .env a mano. $cause"
+      }
+      throw "La escritura fallo; .env restaurado y verificado desde el backup de esta corrida ($backup). $cause"
+    }
+    # No habia .env: deshacer la creacion y comprobarlo.
+    Remove-Item $envFile -Force -ErrorAction SilentlyContinue
+    if (Test-Path $envFile) {
+      throw "La verificacion fallo y no pude borrar el .env que cree en esta corrida; borralo a mano. $cause"
+    }
+    throw "La verificacion fallo; se deshizo la creacion del .env (no existia antes). $cause"
   } finally {
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   }
-  Write-Host ".env actualizado (backup en .env.browserd-bak). Asistenta lo lee al arrancar; este script no la reinicia."
+  Write-Host ".env actualizado (backup de esta corrida: $backup; se puede borrar cuando quieras). Asistenta lo lee al arrancar; este script no la reinicia."
 }
 
 Step 'Listo'
