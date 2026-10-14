@@ -49,6 +49,11 @@ CHALLENGE_BODY = '<script>triggerInterstitialChallenge({"bm-verify":true})</scri
 
 class _Origin(BaseHTTPRequestHandler):
     def do_POST(self):
+        if self.path == "/c1":
+            self.send_response(302)
+            self.send_header("Location", "/c2")
+            self.end_headers()
+            return
         if self.path == "/r307":
             self.send_response(307)
             self.send_header("Location", "/final")
@@ -57,6 +62,16 @@ class _Origin(BaseHTTPRequestHandler):
         self._send(404, "no")
 
     def do_GET(self):
+        if self.path == "/c1":
+            self.send_response(302)
+            self.send_header("Location", "/c2")
+            self.end_headers()
+            return
+        if self.path == "/c2":
+            self.send_response(307)
+            self.send_header("Location", "/final")
+            self.end_headers()
+            return
         if self.path == "/redir":
             self.send_response(302)
             self.send_header("Location", "/final")
@@ -134,6 +149,7 @@ class _FakeRoute:
         self.fetch_kwargs: dict = {}
         self.fetched_urls: list[str] = []
         self.fetched_methods: list[str] = []
+        self.fetched_posts: list = []
 
     async def abort(self):
         self.aborted = True
@@ -145,6 +161,7 @@ class _FakeRoute:
         method = kwargs.get("method") or (self.request.method if self.request else "GET")
         self.fetched_urls.append(url)
         self.fetched_methods.append(method)
+        self.fetched_posts.append(kwargs.get("post_data", self.request.post_data if self.request else None))
         async with httpx.AsyncClient(follow_redirects=False, timeout=10) as c:
             return _FakeResp(await c.request(method, url))
 
@@ -286,3 +303,14 @@ def test_redirect_307_conserva_metodo_post(servers):
     route = _handle(g, f"{origin}/r307", "document", method="POST", post_data="x=1")
     assert route.fetched_methods == ["POST", "POST"]  # 307 conserva metodo
     assert route.fetch_kwargs.get("post_data") == "x=1"
+
+
+def test_cadena_post_302_307_no_resucita_el_post_original(servers):
+    """Canario del auditor: POST ->302->307->200. Tras el 302 la cadena sigue
+    en GET; el 307 conserva ESE GET (no el POST original con su cuerpo)."""
+    origin, hook = servers
+    g = RequestGuard(["127.0.0.1"], hook, require_https=False)
+    route = _handle(g, f"{origin}/c1", "document", method="POST", post_data="secreto=1")
+    assert route.fetched_methods == ["POST", "GET", "GET"]
+    assert route.fetched_posts[1] is None and route.fetched_posts[2] is None
+    assert route.fulfilled and route.fulfilled[0] == 200

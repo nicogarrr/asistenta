@@ -104,6 +104,12 @@ class RequestGuard:
             await route.abort()
             return
         current: str = request.url
+        # Metodo/cuerpo/headers EVOLUCIONAN por la cadena (#130 r5): un 302
+        # convierte a GET y el 307 posterior conserva ESE GET, nunca resucita
+        # el POST original (y su cuerpo) para un destino posterior.
+        method: str = request.method
+        post_data: Any = request.post_data
+        headers: dict = dict(request.headers)
         for hop in range(10):
             if self.require_https and urlsplit(current).scheme != "https":
                 self.denied = True
@@ -126,16 +132,11 @@ class RequestGuard:
                 return
             if hop == 0:
                 resp = await route.fetch(max_redirects=0)
-            elif resp_status_keep_method:
-                # 307/308: conservan metodo y cuerpo originales (#130 r4)
-                resp = await route.fetch(
-                    url=current, method=request.method,
-                    headers=dict(request.headers), post_data=request.post_data,
-                    max_redirects=0,
-                )
             else:
-                # 301/302/303: el navegador convierte a GET sin cuerpo
-                resp = await route.fetch(url=current, method="GET", max_redirects=0)
+                resp = await route.fetch(
+                    url=current, method=method, headers=headers,
+                    post_data=post_data, max_redirects=0,
+                )
             body = await resp.body()
             # POSTFLIGHT: isBlockedPage con la respuesta real, antes de fulfill.
             if not await self._permit(current, rtype, resp.status, body):
@@ -146,7 +147,14 @@ class RequestGuard:
             if 300 <= resp.status < 400 and location:
                 # El navegador NO re-intercepta el salto (smoke real): lo
                 # seguimos nosotros, pasando la barrera en cada salto.
-                resp_status_keep_method = resp.status in (307, 308)
+                if resp.status in (307, 308):
+                    pass  # conserva metodo/cuerpo/headers DEL SALTO ACTUAL
+                else:  # 301/302/303: conversion a GET, sin cuerpo ni headers de contenido
+                    method, post_data = "GET", None
+                    headers = {
+                        k: v for k, v in headers.items()
+                        if k.lower() not in ("content-type", "content-length", "content-encoding", "transfer-encoding")
+                    }
                 current = urljoin(current, location)
                 continue
             await route.fulfill(response=resp, body=body)
