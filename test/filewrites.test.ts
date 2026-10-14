@@ -112,6 +112,24 @@ describe('normalizeWritePath', () => {
   it('resolves against the cwd', () => {
     expect(normalizeWritePath('src/a.ts', '/repo', 'linux')).toBe('/repo/src/a.ts');
   });
+  it('~ and its absolute expansion count once (fs tool semantics)', () => {
+    const t = new FileWriteTracker({ cwd: '/home/u', homedir: '/home/u' });
+    t.start('1', 'write', { path: '~/docs/a.ts' });
+    t.end('1', false);
+    t.start('2', 'write', { path: '/home/u/docs/a.ts' });
+    t.end('2', false);
+    expect(t.count).toBe(1);
+  });
+
+  it('bare ~ counts as the homedir itself', () => {
+    const t = new FileWriteTracker({ cwd: '/x', homedir: '/home/u' });
+    t.start('1', 'write', { path: '~' });
+    t.end('1', false);
+    t.start('2', 'write', { path: '/home/u' });
+    t.end('2', false);
+    expect(t.count).toBe(1);
+  });
+
   it('lowercases on win32', () => {
     expect(normalizeWritePath('SRC\\A.TS', 'C:\\repo', 'win32')).toBe('c:\\repo\\src\\a.ts');
   });

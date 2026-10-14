@@ -13,6 +13,7 @@
  * name.
  */
 
+import * as os from 'node:os';
 import { resolve, win32 } from 'node:path';
 
 /**
@@ -30,23 +31,30 @@ export function normalizeWritePath(
   raw: string,
   cwd: string,
   platform: NodeJS.Platform = process.platform,
+  homedir: string = os.homedir(),
 ): string {
-  if (platform === 'win32') return win32.resolve(cwd, raw).toLowerCase();
-  return resolve(cwd, raw);
+  // The fs tool expands a leading ~ to the homedir BEFORE resolving (same
+  // regex, same order), so `~/a` and its absolute spelling are one
+  // destination; homedir is injectable for tests.
+  const expanded = raw.replace(/^~(?=$|[\\/])/, homedir);
+  if (platform === 'win32') return win32.resolve(cwd, expanded).toLowerCase();
+  return resolve(cwd, expanded);
 }
 
 export class FileWriteTracker {
   readonly #cwd: string;
   readonly #platform: NodeJS.Platform;
+  readonly #homedir: string;
   /** In-flight write calls, toolCallId -> resolved path. */
   readonly #pending = new Map<string, string>();
   /** Resolved paths confirmed written (tool_execution_end without error). */
   readonly #written = new Set<string>();
 
-  /** cwd/platform injectables para tests; por defecto los del proceso, que son los del fs tool. */
-  constructor(opts?: { cwd?: string; platform?: NodeJS.Platform }) {
+  /** cwd/platform/homedir injectables para tests; por defecto los del proceso, que son los del fs tool. */
+  constructor(opts?: { cwd?: string; platform?: NodeJS.Platform; homedir?: string }) {
     this.#cwd = opts?.cwd ?? process.cwd();
     this.#platform = opts?.platform ?? process.platform;
+    this.#homedir = opts?.homedir ?? os.homedir();
   }
 
   /** tool_execution_start: remember the path only for the fs write tool. */
@@ -54,7 +62,10 @@ export class FileWriteTracker {
     if (tool !== 'write') return;
     const path = (args as { path?: unknown } | null | undefined)?.path;
     if (typeof path !== 'string' || path === '') return;
-    this.#pending.set(toolCallId, normalizeWritePath(path, this.#cwd, this.#platform));
+    this.#pending.set(
+      toolCallId,
+      normalizeWritePath(path, this.#cwd, this.#platform, this.#homedir),
+    );
   }
 
   /** tool_execution_end: commit on success, drop on error. Unknown ids are ignored. */
