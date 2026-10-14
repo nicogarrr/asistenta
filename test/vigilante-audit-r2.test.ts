@@ -45,9 +45,20 @@ it('one local calendar day is one key across UTC boundary', () => {
 });
 it('dated pending commitment is not silently omitted', async () => {
   const db = new DatabaseSync(':memory:');
-  const a = { ...agenda([]), pending: [{ ...item(1), where: 'pendiente' as const }] };
+  // Determinista: deps.now fija el reloj del barrido y `at` se deriva de ese
+  // instante. El vigilante filtra pendientes con `at >= dayStart(now)`: un `at`
+  // absoluto fijo acaba en el pasado y el test muere de viejo (le paso al N
+  // original el 2026-10-14, cuando usaba Date.now() real).
+  const now = 1_760_500_000_000;
+  const future = { ...item(1), at: now + 86_400_000 };
+  const a = { ...agenda([]), pending: [{ ...future, where: 'pendiente' as const }] };
   expect(
-    (await runVigilanteOnce({ db, agenda: async () => a, send: async () => true }, T)).notified,
+    (
+      await runVigilanteOnce(
+        { db, agenda: async () => a, send: async () => true, now: () => now },
+        T,
+      )
+    ).notified,
   ).toBe(1);
 });
 it('stop during pending agenda prevents later notification', async () => {

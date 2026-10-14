@@ -4,6 +4,14 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     environment: 'node',
+    // The suite asserts local-wall-clock behaviour (calendar days, "tomorrow",
+    // quiet hours) and asistenta runs on a machine in Europe/Madrid. Without a
+    // fixed zone the same test passes on Nico's PC and fails in a UTC container
+    // (7 of the 10 red tests on main there trace to the zone; the other three
+    // were a stale fixed date and the pdfjs engine). Pin the zone so the suite means the same
+    // thing everywhere; Node reads TZ lazily on Linux, and on Windows the
+    // system zone already is Madrid.
+    env: { TZ: 'Europe/Madrid' },
     // Generous, because the slow tests are the honest ones: they launch a real Chromium
     // and paint frames with PowerShell and System.Drawing. Both compete for the same
     // processes when the whole suite runs at once, and a 20s budget turned that
