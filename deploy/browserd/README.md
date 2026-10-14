@@ -126,3 +126,25 @@ sondeando `/health`.
 Estado de verificación: script y launcher revisados estáticamente (parse de
 PowerShell superado); su primera ejecución real es en el PC del usuario, igual
 que `setup-browserd.ps1`.
+
+### Verificación pendiente en el PC (primera ejecución real en Windows)
+
+El parse de PowerShell está superado en pwsh real y el diseño sigue el molde
+auditado de `deploy/windows/install-autostart.ps1`, pero esto solo puede
+probarse en Windows y queda declarado como pendiente:
+
+1. **Reinicio tras crash**: matar el proceso `python.exe -m browserd` a mano y
+   comprobar que la tarea lo levanta de nuevo en ~1 minuto (`-Status` debe
+   mostrar un `LastTaskResult` reciente y `/health` volver a responder).
+2. **Quoting de rutas con espacios**: ejecutar el instalador con el repo en una
+   ruta con espacios (el launcher usa el workaround de comillas exteriores de
+   `cmd /c`; no se ha podido ejecutar fuera de Windows).
+3. **Árbol de procesos**: `-Uninstall` (o `-Force`) debe dejar cero procesos
+   `python.exe -m browserd` del venv vivos (`Get-CimInstance Win32_Process`).
+4. **Adopción de instancia manual**: con un browserd arrancado a mano
+   (`setup-browserd.ps1 -Start`), lanzar la tarea y comprobar que termina con
+   código 0 sin crear otro proceso (esa instancia manual NO queda supervisada;
+   la supervisión cubre solo instancias arrancadas por la tarea).
+5. **Puerto ocupado por otro proceso**: con 127.0.0.1:7701 sirviendo algo que
+   no es browserd, la tarea debe terminar con código 1 y dejar constancia en
+   `browserd\logs\browserd.err.log`, sin bucle de binds.

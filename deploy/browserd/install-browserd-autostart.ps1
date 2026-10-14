@@ -115,6 +115,22 @@ function Test-Browserd {
     }
 }
 
+function Stop-BrowserdProcesses {
+    param([string] $PythonExe)
+    # Stop-ScheduledTask mata el proceso supervisado (wscript); el python que
+    # queda huerfano seguiria ocupando 127.0.0.1:7701 y la siguiente instancia
+    # no podria ni arrancar ni notarse. Se mata SOLO el python de ESTE venv
+    # corriendo `-m browserd`: filtrar por CommandLine solo podria llevarse por
+    # delante un browserd de otra instalacion.
+    $escaped = [regex]::Escape($PythonExe)
+    Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $PythonExe -and $_.CommandLine -match '-m\s+browserd' } |
+        ForEach-Object {
+            Write-Step "Parando browserd huerfano (pid $($_.ProcessId))"
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+}
+
 function Get-Task {
     # SilentlyContinue: "existe?" tiene por respuesta $null, no una excepcion.
     Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
@@ -161,7 +177,10 @@ function Uninstall {
     Write-Step "Parando y borrando '$TaskName'"
     Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -InputObject $task -Confirm:$false
-    Write-Ok 'Tarea borrada. browserd deja de arrancar al iniciar sesión (el proceso que siga vivo no se mata).'
+    $repo = Resolve-Repo -Explicit $RepoDir
+    $py = Join-Path $repo 'browserd\.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $py -PathType Leaf) { Stop-BrowserdProcesses -PythonExe (Resolve-Path -LiteralPath $py).Path }
+    Write-Ok 'Tarea borrada. browserd deja de arrancar al iniciar sesión.'
 }
 
 function Install {
@@ -179,22 +198,38 @@ function Install {
     Write-Step "repo   : $repo"
     Write-Step "python : $py"
 
-    # Comprobacion real y barata: el modulo importa con ESTE python. Si el venv
-    # esta roto o a medio instalar, mejor saberlo ahora que en cada logon.
-    & $py -c "import browserd" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "El venv existe pero 'import browserd' falla con ese python. Reinstala: deploy\browserd\setup-browserd.ps1"
+    # Comprobacion real: el paquete y sus dependencias importan con ESTE python
+    # y DESDE browserdDir. El cwd importa dos veces: desde la raiz del repo,
+    # `import browserd` resolveria el DIRECTORIO browserd\ como namespace package
+    # vacio (falso positivo), y desde otro sitio cualquier paquete `browserd`
+    # instalado fuera daria otro falso positivo. browserd.server y camoufox son
+    # las dependencias reales del arranque: si el venv esta a medio instalar,
+    # fallan aqui y no en cada logon (auditoria).
+    Push-Location $browserdDir
+    try {
+        & $py -c "import browserd.server, camoufox" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "El venv existe pero 'import browserd.server, camoufox' falla con ese python. Reinstala: deploy\browserd\setup-browserd.ps1"
+        }
+    } finally {
+        Pop-Location
     }
-    Write-Ok 'import browserd OK con el python del venv'
+    Write-Ok 'import browserd.server + camoufox OK (cwd browserd, python del venv)'
 
     $existing = Get-Task
     if ($existing -and -not $Force) {
         throw "Ya existe la tarea '$TaskName'. Usa -Force para reemplazarla o -Uninstall para quitarla."
     }
+    $backupXml = $null
     if ($existing) {
-        Write-Step "Quito la tarea anterior ($($existing.State))"
+        # Respaldo ANTES de tocar nada: si el registro nuevo falla, la tarea
+        # vieja se restaura desde su XML y el PC no se queda sin autostart
+        # (auditoria: borrar primero y registrar despues deja un hueco).
+        $backupXml = Export-ScheduledTask -InputObject $existing
+        Write-Step "Quito la tarea anterior ($($existing.State)); respaldo XML en memoria"
         Stop-ScheduledTask -InputObject $existing -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -InputObject $existing -Confirm:$false
+        Stop-BrowserdProcesses -PythonExe $py
     }
 
     $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
@@ -236,7 +271,16 @@ function Install {
             -ErrorAction Stop | Out-Null
     }
     catch {
-        Write-Bad "No se pudo registrar la tarea: $($_.Exception.Message)"
+        $cause = $_.Exception.Message
+        if ($backupXml) {
+            try {
+                Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml $backupXml -Force -ErrorAction Stop | Out-Null
+                Write-Ok 'La tarea anterior quedó restaurada desde su respaldo XML.'
+            } catch {
+                Write-Bad "No se pudo registrar la tarea Y TAMPOCO restaurar la anterior: $($_.Exception.Message)"
+            }
+        }
+        Write-Bad "No se pudo registrar la tarea: $cause"
         Write-Host '     Si es un problema de permisos, vuelve a ejecutar el script desde una consola de administrador.'
         throw
     }
