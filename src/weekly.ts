@@ -7,7 +7,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import type { ActionEntry } from './audit/log.js';
-import { type BargeTotals, bargeFalseRate } from './voice/barge-stats.js';
+import { type BargeTotals, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
 
 const WEEK_MS = 7 * 24 * 3_600_000;
 
@@ -73,9 +73,9 @@ export function buildWeeklySummary(i: WeeklyInput): string {
   // D1: falsos disparos del corte por voz, la metrica que decide si algun dia
   // puede ser el defecto. Solo si hubo interrupciones esta semana.
   if (i.barge && i.barge.bargeIns > 0) {
-    const rate = bargeFalseRate(i.barge) ?? 0;
+    const rate = bargeFalseRate(i.barge);
     lines.push(
-      `- Interrupciones de voz (corte): ${i.barge.bargeIns} (${i.barge.trueIns} reales, ${Math.round(rate * 100)}% falsos disparos).`,
+      `- Interrupciones de voz (corte): ${i.barge.bargeIns} (${bargeClassified(i.barge)} clasificadas: ${i.barge.trueIns} uso estimado${rate !== null ? `, ${Math.round(rate * 100)}% falsas estimadas` : ''}${i.barge.unclassified > 0 ? `; ${i.barge.unclassified} sin clasificar` : ''}).`,
     );
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);

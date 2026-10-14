@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { BargeStats, bargeFalseRate } from '../src/voice/barge-stats.js';
+import { BargeStats, bargeClassified, bargeFalseRate } from '../src/voice/barge-stats.js';
 import { ConversationSession, SAMPLE_RATE } from '../src/voice/conversation.js';
 import { buildWeeklySummary } from '../src/weekly.js';
 
@@ -20,12 +20,22 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await tick();
 };
 
-function build(over: { bargeIn?: 'off' | 'altavoces' | 'auriculares'; transcribe?: string } = {}) {
+function build(
+  over: {
+    bargeIn?: 'off' | 'altavoces' | 'auriculares';
+    transcribe?: string;
+    transcribeImpl?: (samples: Float32Array) => Promise<string>;
+    minVoicedMs?: number;
+    transcribeTimeoutMs?: number;
+  } = {},
+) {
   const heard: string[] = [];
   const session = new ConversationSession({
     bargeIn: over.bargeIn ?? 'auriculares',
     tailMs: 0,
-    transcriber: async () => over.transcribe ?? 'qué hora es',
+    minVoicedMs: over.minVoicedMs,
+    transcribeTimeoutMs: over.transcribeTimeoutMs,
+    transcriber: over.transcribeImpl ?? (async () => over.transcribe ?? 'qué hora es'),
     onUtterance: async (t) => {
       heard.push(t);
     },
@@ -72,10 +82,11 @@ describe('barge-in: métrica de falsos disparos (item 11)', () => {
     expect(st.bargeFalseNoise).toBe(1);
     expect(st.bargeFalseEcho).toBe(0);
     expect(st.bargeTrue).toBe(0);
+    expect(st.bargeUnclassified).toBe(0);
     expect(heard).toEqual([]);
   });
 
-  it('una interrupción real cuenta como verdadera y llega a turno', async () => {
+  it('una interrupción con turno al final cuenta como uso estimado', async () => {
     const { session, heard } = build({ transcribe: 'qué hora es' });
     await speakAndFeed(session, { chunks: 4 });
     feedN(session, quiet, 10);
@@ -142,10 +153,85 @@ describe('barge-in: métrica de falsos disparos (item 11)', () => {
     expect(stopped).toBe(true);
     expect(session.stats().bargeIns).toBe(1);
   });
+
+  it('STT que falla tras la interrupción: sin clasificar, y un submit ajeno no hereda la marca', async () => {
+    let calls = 0;
+    const { session, heard } = build({
+      transcribeImpl: async () => {
+        calls++;
+        if (calls === 1) throw new Error('whisper caído');
+        return 'qué hora es';
+      },
+    });
+    await speakAndFeed(session, { chunks: 4 });
+    feedN(session, quiet, 10);
+    await settle();
+    let st = session.stats();
+    expect(st.bargeIns).toBe(1);
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeTrue).toBe(0);
+    expect(st.bargeFalseNoise).toBe(0);
+    // Un texto suministrado después NO es la frase interrumpida: no hereda clase.
+    await session.submit('qué hora es');
+    await settle();
+    st = session.stats();
+    expect(st.bargeTrue).toBe(0);
+    expect(st.bargeUnclassified).toBe(1);
+    expect(heard).toEqual(['qué hora es']);
+  });
+
+  it('cerrar la sesión antes de transcribir lo deja sin clasificar', async () => {
+    const { session } = build({});
+    await speakAndFeed(session, { chunks: 4 });
+    session.close('cierre');
+    const st = session.stats();
+    expect(st.bargeIns).toBe(1);
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeTrue).toBe(0);
+    expect(st.bargeFalseNoise).toBe(0);
+  });
+
+  it('timeout de STT: sin clasificar y el resultado tardío no reclasifica', async () => {
+    let resolveLate: (t: string) => void = () => {};
+    const { session } = build({
+      transcribeTimeoutMs: 50,
+      transcribeImpl: () =>
+        new Promise<string>((r) => {
+          resolveLate = r;
+        }),
+    });
+    await speakAndFeed(session, { chunks: 4 });
+    feedN(session, quiet, 10);
+    await settle();
+    await new Promise((r) => setTimeout(r, 150));
+    await settle();
+    let st = session.stats();
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeTrue).toBe(0);
+    // El whisper tardío llega después: no cambia la contabilidad.
+    resolveLate('qué hora es');
+    await settle();
+    st = session.stats();
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeTrue).toBe(0);
+    expect(st.utterances).toBe(0);
+  });
+
+  it('sonido que interrumpe pero no llega a frase hablada: sin clasificar', async () => {
+    const { session } = build({ minVoicedMs: 600 });
+    await speakAndFeed(session, { chunks: 4 }); // ~400 ms con voz: bajo el mínimo de 600
+    feedN(session, quiet, 10);
+    await settle();
+    const st = session.stats();
+    expect(st.bargeIns).toBe(1);
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeTrue).toBe(0);
+    expect(st.bargeFalseNoise).toBe(0);
+  });
 });
 
 describe('BargeStats (persistencia)', () => {
-  it('acumula por periodo y la tasa sin interrupciones es null, no 0', () => {
+  it('acumula por periodo; la tasa va solo sobre clasificadas y sin ellas es null', () => {
     const db = new DatabaseSync(':memory:');
     const stats = new BargeStats(db);
     expect(bargeFalseRate(stats.totals())).toBeNull();
@@ -157,6 +243,7 @@ describe('BargeStats (persistencia)', () => {
       trueIns: 3,
       falseNoise: 1,
       falseEcho: 0,
+      unclassified: 2,
       utterances: 9,
     });
     stats.record({
@@ -166,16 +253,40 @@ describe('BargeStats (persistencia)', () => {
       trueIns: 1,
       falseNoise: 0,
       falseEcho: 1,
+      unclassified: 0,
       utterances: 5,
     });
     const all = stats.totals();
     expect(all.sessions).toBe(2);
     expect(all.bargeIns).toBe(6);
     expect(all.trueIns).toBe(4);
+    expect(all.unclassified).toBe(2);
+    // 2 falsas estimadas sobre 6 clasificadas; las 2 sin clasificar NO entran.
+    expect(bargeClassified(all)).toBe(6);
     expect(bargeFalseRate(all)).toBeCloseTo(2 / 6);
     const onlyLast = stats.totals(now - 500);
     expect(onlyLast.sessions).toBe(1);
     expect(onlyLast.bargeIns).toBe(2);
+    db.close();
+  });
+
+  it('sin nada clasificado la tasa es null aunque haya interrupciones', () => {
+    const db = new DatabaseSync(':memory:');
+    const stats = new BargeStats(db);
+    stats.record({
+      endedAt: 1,
+      level: 'auriculares',
+      bargeIns: 3,
+      trueIns: 0,
+      falseNoise: 0,
+      falseEcho: 0,
+      unclassified: 3,
+      utterances: 0,
+    });
+    const t = stats.totals();
+    expect(t.bargeIns).toBe(3);
+    expect(bargeClassified(t)).toBe(0);
+    expect(bargeFalseRate(t)).toBeNull();
     db.close();
   });
 });
@@ -191,8 +302,10 @@ describe('resumen semanal', () => {
     expect(buildWeeklySummary(base)).not.toContain('Interrupciones de voz');
     const out = buildWeeklySummary({
       ...base,
-      barge: { sessions: 1, bargeIns: 4, trueIns: 3, falseNoise: 1, falseEcho: 0 },
+      barge: { sessions: 1, bargeIns: 4, trueIns: 3, falseNoise: 1, falseEcho: 0, unclassified: 0 },
     });
-    expect(out).toContain('Interrupciones de voz (corte): 4 (3 reales, 25% falsos disparos).');
+    expect(out).toContain(
+      'Interrupciones de voz (corte): 4 (4 clasificadas: 3 uso estimado, 25% falsas estimadas).',
+    );
   });
 });

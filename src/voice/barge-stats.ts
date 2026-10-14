@@ -14,6 +14,8 @@ export interface BargeSessionRow {
   trueIns: number;
   falseNoise: number;
   falseEcho: number;
+  /** Sembradas que no llegaron a clasificarse (corte, error STT, timeout). */
+  unclassified: number;
   utterances: number;
 }
 
@@ -23,6 +25,7 @@ export interface BargeTotals {
   trueIns: number;
   falseNoise: number;
   falseEcho: number;
+  unclassified: number;
 }
 
 export class BargeStats {
@@ -34,14 +37,21 @@ export class BargeStats {
       'CREATE TABLE IF NOT EXISTS barge_sessions (' +
         'ended_at INTEGER NOT NULL, level TEXT NOT NULL, barge_ins INTEGER NOT NULL, ' +
         'true_ins INTEGER NOT NULL, false_noise INTEGER NOT NULL, false_echo INTEGER NOT NULL, ' +
-        'utterances INTEGER NOT NULL)',
+        'unclassified INTEGER NOT NULL, utterances INTEGER NOT NULL)',
     );
+    // DBs creadas antes de la columna: alta aditiva con 0 (desconocido, honesto).
+    const cols = (
+      this.db.prepare('PRAGMA table_info(barge_sessions)').all() as { name: string }[]
+    ).map((c) => c.name);
+    if (!cols.includes('unclassified')) {
+      this.db.exec('ALTER TABLE barge_sessions ADD COLUMN unclassified INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   record(row: BargeSessionRow): void {
     this.db
       .prepare(
-        'INSERT INTO barge_sessions (ended_at, level, barge_ins, true_ins, false_noise, false_echo, utterances) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO barge_sessions (ended_at, level, barge_ins, true_ins, false_noise, false_echo, unclassified, utterances) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         row.endedAt,
@@ -50,6 +60,7 @@ export class BargeStats {
         row.trueIns,
         row.falseNoise,
         row.falseEcho,
+        row.unclassified,
         row.utterances,
       );
   }
@@ -59,7 +70,8 @@ export class BargeStats {
       .prepare(
         'SELECT COUNT(*) AS sessions, COALESCE(SUM(barge_ins), 0) AS barge_ins, ' +
           'COALESCE(SUM(true_ins), 0) AS true_ins, COALESCE(SUM(false_noise), 0) AS false_noise, ' +
-          'COALESCE(SUM(false_echo), 0) AS false_echo FROM barge_sessions WHERE ended_at >= ?',
+          'COALESCE(SUM(false_echo), 0) AS false_echo, COALESCE(SUM(unclassified), 0) AS unclassified ' +
+          'FROM barge_sessions WHERE ended_at >= ?',
       )
       .get(sinceMs) as {
       sessions: number;
@@ -67,6 +79,7 @@ export class BargeStats {
       true_ins: number;
       false_noise: number;
       false_echo: number;
+      unclassified: number;
     };
     return {
       sessions: r.sessions,
@@ -74,12 +87,22 @@ export class BargeStats {
       trueIns: r.true_ins,
       falseNoise: r.false_noise,
       falseEcho: r.false_echo,
+      unclassified: r.unclassified,
     };
   }
 }
 
-/** Falsos disparos por interrupción, o null sin interrupciones: 0 sin datos no es un 0 real. */
+/** Interrupciones con clase conocida (estimada por el transcript, no ground truth). */
+export function bargeClassified(t: BargeTotals): number {
+  return t.trueIns + t.falseNoise + t.falseEcho;
+}
+
+/**
+ * Falsas estimadas sobre las CLASIFICADAS; null si ninguna tiene clase. Las sin
+ * clasificar nunca entran en el denominador: sería sesgo a favor del corte.
+ */
 export function bargeFalseRate(t: BargeTotals): number | null {
-  if (t.bargeIns === 0) return null;
-  return (t.falseNoise + t.falseEcho) / t.bargeIns;
+  const classified = bargeClassified(t);
+  if (classified === 0) return null;
+  return (t.falseNoise + t.falseEcho) / classified;
 }

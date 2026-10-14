@@ -173,7 +173,7 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
-import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
+import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { speakPhrases, splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
@@ -4223,6 +4223,7 @@ async function serveCommand(): Promise<number> {
           trueIns: closeStats.bargeTrue,
           falseNoise: closeStats.bargeFalseNoise,
           falseEcho: closeStats.bargeFalseEcho,
+          unclassified: closeStats.bargeUnclassified,
           utterances: closeStats.utterances,
         });
         log.info('voice session closed', { reason, detail });
@@ -4338,13 +4339,13 @@ async function serveCommand(): Promise<number> {
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} reales, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
+            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} uso estimado, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas estimadas, ${st.bargeUnclassified} sin clasificar), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
             : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
           (currentWake()?.isRunning()
             ? ''
             : ' El micrófono está cerrado: /conversacion on lo abre.') +
-          (bargeHist.bargeIns > 0 && bargeRate !== null
-            ? ` Histórico de cortes: ${bargeHist.bargeIns} interrupciones en ${bargeHist.sessions} sesiones, ${Math.round(bargeRate * 100)}% falsas.`
+          (bargeHist.bargeIns > 0
+            ? ` Histórico de cortes: ${bargeHist.bargeIns} interrupciones en ${bargeHist.sessions} sesiones (${bargeClassified(bargeHist)} clasificadas${bargeRate !== null ? `, ${Math.round(bargeRate * 100)}% falsas estimadas` : ''}${bargeHist.unclassified > 0 ? `, ${bargeHist.unclassified} sin clasificar` : ''}).`
             : ''),
         { quote: true },
       );
@@ -4364,8 +4365,8 @@ async function serveCommand(): Promise<number> {
       const hist = bargeStats.totals();
       const histRate = bargeFalseRate(hist);
       const histLine =
-        hist.bargeIns >= 20 && histRate !== null
-          ? ` Llevas ${hist.bargeIns} interrupciones con un ${Math.round(histRate * 100)}% de falsos disparos (ruido o mi propia voz).`
+        hist.bargeIns >= 20
+          ? ` Llevas ${hist.bargeIns} interrupciones: ${bargeClassified(hist)} clasificadas${histRate !== null ? ` (${Math.round(histRate * 100)}% falsas estimadas)` : ''}${hist.unclassified > 0 ? `, ${hist.unclassified} sin clasificar` : ''}. Es una estimación por transcripción, no una medición exacta.`
           : '';
       await say(
         inbound,
