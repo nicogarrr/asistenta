@@ -3893,6 +3893,20 @@ async function serveCommand(): Promise<number> {
         result: result.error ? 'error' : 'ok',
         detail: text2.slice(0, 80).replace(/\s+/g, ' '),
       });
+      // Disparador (a) del multi-agente (ROADMAP.md): builds grandes
+      // multi-archivo de forma habitual. Un "build" es una peticion que acaba
+      // escribiendo 2+ archivos con la tool write. Limite declarado: escrituras
+      // hechas via shell no cuentan (no hay forma honesta de atribuirlas).
+      const filesWritten = toolNames.filter((t) => t === 'write').length;
+      if (filesWritten >= 2) {
+        actions.record({
+          actor: 'asistenta',
+          action: 'build_multi',
+          target: thread.name,
+          result: result.error ? 'error' : 'ok',
+          detail: `${filesWritten} archivos`,
+        });
+      }
       // A turn-level line, for counting. Never the only record of a turn.
       actions.record({
         actor: 'asistenta',

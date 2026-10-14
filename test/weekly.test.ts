@@ -24,6 +24,24 @@ describe('buildWeeklySummary', () => {
     expect(text).toContain('vigilo ahora: 2');
     expect(text).toContain('llamar a Juan');
   });
+  it('counts this week multi-file builds only (roadmap multi-agent trigger)', () => {
+    const text = buildWeeklySummary({
+      entries: [e(1, 'turn'), e(1, 'build_multi'), e(2, 'build_multi'), e(9, 'build_multi')],
+      now: NOW,
+      pending: '',
+      watching: 0,
+    });
+    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 2');
+  });
+  it('reports zero builds explicitly when there was activity but no build', () => {
+    const text = buildWeeklySummary({
+      entries: [e(1, 'turn')],
+      now: NOW,
+      pending: '',
+      watching: 0,
+    });
+    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 0');
+  });
   it('says plainly when nothing happened', () => {
     const text = buildWeeklySummary({
       entries: [e(20, 'turn')],

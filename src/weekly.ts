@@ -44,6 +44,11 @@ export function buildWeeklySummary(i: WeeklyInput): string {
       );
     }
     if (changes) lines.push(`- Cambios detectados en páginas vigiladas: ${changes}.`);
+    // Disparador (a) del multi-agente en ROADMAP.md: que Asistenta haga builds
+    // grandes multi-archivo de forma habitual. Este contador es la medicion
+    // semanal de ese disparador; el 0 tambien es dato.
+    const builds = week.filter((e) => e.action === 'build_multi').length;
+    lines.push(`- Builds multi-archivo (2+ archivos escritos en una petición): ${builds}.`);
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);
   if (i.extra?.trim()) lines.push('', i.extra.trim());
