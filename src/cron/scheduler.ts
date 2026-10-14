@@ -256,6 +256,46 @@ export function nextCronRun(schedule: ParsedSchedule, from: number): number | nu
  * day of the week, an interval. Anything without one of those is not a schedule and
  * returns null, so a caller can fall back to asking rather than guessing at 3 a.m.
  */
+/**
+ * Argument of the "/cron add" command: either a literal cron spec and the task
+ * split by "|", or the whole thing in natural language for `parseNatural`.
+ * Pure on purpose, with the validator injected: the command's canaries
+ * exercise it without a chat, and this module stays free of routines.ts.
+ */
+export function parseCronAdd(
+  body: string,
+  validate: (expr: string) => { ok: true; next: string } | { ok: false; error: string },
+): { ok: true; schedule: string; prompt: string } | { ok: false; error: string } {
+  const pipe = body.indexOf('|');
+  if (pipe >= 0) {
+    const schedule = body.slice(0, pipe).trim();
+    const prompt = body.slice(pipe + 1).trim();
+    if (!schedule || !prompt) {
+      return {
+        ok: false,
+        error: 'Faltan el horario o la tarea. Formato: /cron add 0 8 * * * | resumen del día',
+      };
+    }
+    const check = validate(schedule);
+    if (!check.ok) return { ok: false, error: `Ese horario no vale: ${check.error}` };
+    return { ok: true, schedule, prompt };
+  }
+  const parsed = parseNatural(body);
+  if (!parsed) {
+    return {
+      ok: false,
+      error:
+        'No entiendo ese horario. Prueba "/cron add 0 8 * * * | tarea" o "/cron add cada mañana a las 8 tarea".',
+    };
+  }
+  // The natural branch is heuristic output, so it goes through the SAME
+  // validator as the literal branch before anything can be persisted
+  // (auditor #135 ronda 2: "cada999minutos" must never reach saveRoutine).
+  const naturalCheck = validate(parsed.schedule);
+  if (!naturalCheck.ok) return { ok: false, error: `Ese horario no vale: ${naturalCheck.error}` };
+  return { ok: true, schedule: parsed.schedule, prompt: parsed.prompt };
+}
+
 export function parseNatural(text: string): { schedule: string; prompt: string } | null {
   const normalised = text
     .toLowerCase()
