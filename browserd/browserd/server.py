@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from .config import Settings, is_loopback_host
+from .guard import PermitUrlError, RequestGuard
 from .sessions import (
     SessionClosingError,
     SessionLimitError,
@@ -82,6 +83,29 @@ class GotoRequest(BaseModel):
     wait_until: str = Field(default="domcontentloaded", pattern="^(load|domcontentloaded|networkidle|commit)$")
     timeout_ms: int = Field(default=45000, ge=1000, le=120000)
     settle_ms: int = Field(default=0, ge=0, le=30000)
+    # Barrera por request (auditoria #130): ambas opcionales y compatibles hacia
+    # atras; con alguna activa TODA request pasa host+permit y los documentos
+    # van de un salto (redirects re-entran por la barrera).
+    allowed_hosts: list[str] | None = None
+    permit_url: str | None = None
+    require_https: bool = True
+
+
+class ReadRequest(BaseModel):
+    """Lectura atomica (#130 ronda 3): goto + evaluate + cierre de pagina.
+
+    Sin pagina viva entre llamadas: no hay JS en idle con red libre ni service
+    workers sobreviviendo a la lectura. La barrera cubre TODA la operacion.
+    """
+    url: str = Field(min_length=1, max_length=2000)
+    expression: str = Field(min_length=1, max_length=20000)
+    wait_until: str = Field(default="domcontentloaded", pattern="^(load|domcontentloaded|networkidle|commit)$")
+    timeout_ms: int = Field(default=45000, ge=1000, le=120000)
+    settle_ms: int = Field(default=0, ge=0, le=30000)
+    allowed_hosts: list[str] | None = None
+    permit_url: str | None = None
+    # HTTPS estricto con la barrera activa (#130 r4); False solo para tests loopback.
+    require_https: bool = True
 
 
 class EvalRequest(BaseModel):
@@ -143,25 +167,140 @@ def _get_session(session_id: str):
 async def goto(session_id: str, body: GotoRequest) -> dict[str, Any]:
     session = _get_session(session_id)
     async with session.lock:  # nada de evaluate/close pisando la navegacion
+        guard: RequestGuard | None = None
+        if body.allowed_hosts or body.permit_url:
+            try:
+                guard = RequestGuard(body.allowed_hosts, body.permit_url,
+                                     require_https=body.require_https)
+            except PermitUrlError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             page = session.page
             if page is None or page.is_closed():
                 page = await session.engine.new_page()
                 session.page = page
-            resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
-            if body.settle_ms:
-                await page.wait_for_timeout(body.settle_ms)
+            if guard is not None:
+                await page.route("**/*", guard.handle)
+            try:
+                resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
+                if body.settle_ms:
+                    await page.wait_for_timeout(body.settle_ms)
+            finally:
+                if guard is not None:
+                    await page.unroute("**/*", guard.handle)
             return {
                 "status": resp.status if resp else None,
                 "url": page.url,
                 "title": await page.title(),
+                "denied": bool(guard and guard.denied),
             }
         except HTTPException:
             raise
         except Exception as exc:
+            # La barrera corto la navegacion (host fuera de allowlist, robots o
+            # presupuesto): NO es un fallo del sidecar, es un 403 semantico.
+            if guard is not None and guard.denied:
+                return {"status": 403, "url": "", "title": "", "denied": True}
             raise HTTPException(
                 status_code=502, detail=f"navegacion fallida: {type(exc).__name__}"
             ) from exc
+
+
+@app.post("/sessions/{session_id}/read", dependencies=[Depends(_auth)])
+async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
+    session = _get_session(session_id)
+    guard: RequestGuard | None = None
+    if body.allowed_hosts or body.permit_url:
+        try:
+            guard = RequestGuard(body.allowed_hosts, body.permit_url, require_https=body.require_https)
+        except PermitUrlError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    async with session.lock:  # toda la operacion es atomica por sesion
+        page = None
+        context = None
+        existing_pages: set = set()
+        result: dict[str, Any] | None = None
+        try:
+            page = await session.engine.new_page()
+            context = page.context
+            # Paginas preexistentes (p.ej. la legacy de goto): NO las toca esta
+            # lectura. Todo lo demas (la nuestra y los popups) se cierra al final.
+            existing_pages = {p for p in context.pages if p is not page}
+            # Barrera a NIVEL DE CONTEXTO (#130): los popups/ventanas que el JS
+            # abra durante la lectura heredan route y barrera.
+            if guard is not None:
+                await context.route("**/*", guard.handle)
+            resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
+            if body.settle_ms:
+                await page.wait_for_timeout(body.settle_ms)
+            value = await asyncio.wait_for(
+                page.evaluate(body.expression), timeout=app.state.settings.eval_timeout_ms / 1000
+            )
+            result = {
+                "status": resp.status if resp else None,
+                "url": page.url,
+                "title": await page.title(),
+                "value": value,
+                "denied": bool(guard and guard.denied),
+            }
+        except TimeoutError:
+            raise HTTPException(status_code=504, detail="evaluate agoto su timeout") from None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if guard is not None and guard.denied:
+                result = {"status": 403, "url": "", "title": "", "value": None, "denied": True}
+            else:
+                raise HTTPException(
+                    status_code=502, detail=f"lectura fallida: {type(exc).__name__}"
+                ) from exc
+        finally:
+            # Cierra TODA pagina creada por la lectura (la principal y los
+            # popups). Un fallo de cierre NO es exito silencioso (#130): la
+            # sesion se descarta con el engine cerrado y la lectura falla.
+            close_error: Exception | None = None
+            if context is not None:
+                for p in list(context.pages):
+                    if p not in existing_pages:
+                        try:
+                            await p.close()
+                        except Exception as exc:  # pragma: no cover - defensivo
+                            close_error = close_error or exc
+                if guard is not None and close_error is None:
+                    # Si el cierre fallo la barrera SE QUEDA instalada (#130 r4):
+                    # una pagina viva nunca navega libre.
+                    try:
+                        await context.unroute("**/*", guard.handle)
+                    except Exception:
+                        pass
+            if session.page is not None and session.page is not page and page is not None:
+                pass  # pagina legacy de goto: no la toca esta lectura
+            elif session.page is page:
+                session.page = None
+            if close_error is not None:
+                # Doble fallo posible (#130 r4): si el engine TAMPOCO cierra, la
+                # sesion queda ROTA con la barrera instalada y la capacidad
+                # retenida (nunca se libera con un engine vivo sin barrera).
+                engine_ok = True
+                try:
+                    await session.engine.close()
+                except Exception:
+                    engine_ok = False
+                if engine_ok:
+                    app.state.manager.discard(session.id)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"cierre de pagina fallido; sesion descartada: {type(close_error).__name__}",
+                    ) from close_error
+                app.state.manager.mark_broken(session)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"cierre de pagina Y de engine fallidos; sesion retenida "
+                        f"rota CON barrera (capacidad no liberada): {type(close_error).__name__}"
+                    ),
+                ) from close_error
+        return result
 
 
 @app.post("/sessions/{session_id}/evaluate", dependencies=[Depends(_auth)])

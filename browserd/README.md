@@ -72,3 +72,69 @@ Los tests usan engines falsos: no levantan navegadores de verdad.
   por defecto es 4.
 - El adapter Node (src/browser/service.ts -> este servicio, con fallback al
   motor actual por flag) llega en una PR posterior.
+
+## Integracion con pricewatch (BROWSER_ENGINE)
+
+`src/watch/pricewatch-browserd.ts` enruta las lecturas publicas de tienda por
+el sidecar cuando `BROWSER_ENGINE=camoufox` (cualquier otro valor o ausencia =
+motor actual playwright, comportamiento historico). Variables: `BROWSERD_URL`
+(defecto `http://127.0.0.1:7701`) y `BROWSERD_TOKEN` (bearer; vacio en
+loopback). Si el sidecar no responde, el primer fallo de transporte conmuta al
+motor playwright para el resto del ciclo (se registra una vez); un 403 de
+bloqueo/challenge NO dispara fallback. Limitacion: el `permit` (robots/presu-
+puesto) se aplica solo al documento principal, sin interception por subrecurso.
+
+### Barrera por request en goto (opcional, #130)
+
+`POST /sessions/{id}/goto` admite ademas (compatible hacia atras; sin ellas el
+comportamiento es el de #129):
+
+- `allowed_hosts: [dominios]` - TODA request (documento y subrecursos) cuyo
+  host no este cubierto (dominio o subdominio) se aborta.
+- `permit_url: "http://127.0.0.1:..."` - hook loopback del cliente: antes de
+  cada request el sidecar le pregunta `{url, resource_type}`; 2xx permite,
+  cualquier otra cosa (o hook caido) DENIEGA (fail-closed). Solo loopback:
+  otra URL da 422 y el sidecar nunca envia datos de navegacion fuera.
+
+Con la barrera activa los documentos se traen de UN salto (redirects NO se
+siguen internamente: el navegador los pide como nuevas requests que vuelven a
+pasar la barrera) y la respuesta incluye `denied: true` si la barrera corto
+algo; una navegacion cortada por la barrera devuelve `status: 403` (no 502).
+
+### Lectura atomica `POST /sessions/{id}/read` (#130 ronda 3)
+
+`{url, expression, wait_until, timeout_ms, settle_ms, allowed_hosts,
+permit_url}`: goto + evaluate + CIERRE de pagina en una sola llamada. No queda
+pagina viva entre lecturas: nada de JS en idle con red libre ni service
+workers (ademas los contextos se crean con service workers bloqueados). Con
+barrera activa, solo salen requests de tipo document/script/xhr/fetch (las
+demas se abortan sin red), cada una de UN salto y validada por el hook con
+`{url, resource_type, status, body}`: el cliente aplica robots/presupuesto e
+isBlockedPage. Es la lectura que usa pricewatch; `goto`/`evaluate` quedan
+para usos interactivos sin barrera.
+
+### Lectura atomica `POST /sessions/{id}/read` (#130 ronda 3)
+
+`{url, expression, wait_until, timeout_ms, settle_ms, allowed_hosts,
+permit_url}`: goto + evaluate + CIERRE de pagina en una sola llamada. No queda
+pagina viva entre lecturas: nada de JS en idle con red libre ni service
+workers (ademas los contextos se crean con service workers bloqueados). Con
+barrera activa, solo salen requests de tipo document/script/xhr/fetch (las
+demas se abortan sin red), cada una de UN salto y validada por el hook con
+`{url, resource_type, status, body}`: el cliente aplica robots/presupuesto e
+isBlockedPage. Es la lectura que usa pricewatch; `goto`/`evaluate` quedan
+para usos interactivos sin barrera.
+
+Redirects: el smoke real con Camoufox demostro que el navegador NO re-intercepta
+un redirect fulfilled (lo sigue internamente). Por eso el guard sigue los
+redirects EL MISMO, salto a salto (hasta 10), y cada salto pasa host +
+preflight + postflight. Verificado contra Camoufox real: redirect 302 +
+subrecurso script, cada salto por la barrera (browserd/smoke_read.py).
+
+Ronda 4 (#130): con la barrera activa, HTTPS es estricto por defecto
+(require_https; false solo para tests loopback); denied es pegajoso (tras una
+denegacion/challenge se aborta el resto de la lectura sin hook ni fetch, y el
+preflight va serializado como el pendingPermit del lector historico);
+redirects 307/308 conservan metodo/cuerpo y 301/302/303 convierten a GET
+(nunca conversion silenciosa); si falla el cierre de pagina Y del engine, la
+sesion queda retenida rota CON barrera instalada y sin liberar capacidad.

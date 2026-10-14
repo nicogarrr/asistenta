@@ -67,6 +67,9 @@ async def _default_launcher(scope: str, profile_dir: Path, headless: bool) -> En
         persistent_context=True,
         user_data_dir=str(profile_dir),
         humanize=True,
+        # El lector historico bloquea service workers; con perfil persistente
+        # un SW registrado sobreviviria entre lecturas con red libre (#130).
+        service_workers="block",
     )
     context = await cm.__aenter__()
     return CamoufoxEngine(cm, context)
@@ -154,6 +157,24 @@ class SessionManager:
                 raise
             async with self._lock:
                 self._closing.pop(session_id, None)
+
+    def mark_broken(self, session: Session) -> None:
+        """Sesion irrecuperable con engine posiblemente VIVO (#130 r4).
+
+        Se mueve a _closing y NUNCA sale de ahi en este proceso: la capacidad
+        queda retenida hasta un cleanup verificado (reinicio del sidecar), en
+        vez de liberar hueco con un navegador fuera de la barrera.
+        """
+        self._sessions.pop(session.id, None)
+        self._closing[session.id] = session
+
+    def discard(self, session_id: str) -> None:
+        """Borra la sesion SIN cerrar: el engine ya se cerro o esta roto.
+
+        La usa /read cuando el cierre de pagina falla: la sesion no puede
+        seguir sirviendo con una pagina viva fuera de la barrera.
+        """
+        self._sessions.pop(session_id, None)
 
     async def close_all(self) -> dict[str, str]:
         """Cierra todas; un fallo no impide cerrar las demas. Devuelve errores."""
