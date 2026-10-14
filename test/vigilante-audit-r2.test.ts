@@ -45,7 +45,11 @@ it('one local calendar day is one key across UTC boundary', () => {
 });
 it('dated pending commitment is not silently omitted', async () => {
   const db = new DatabaseSync(':memory:');
-  const a = { ...agenda([]), pending: [{ ...item(1), where: 'pendiente' as const }] };
+  // La fecha tiene que estar en el futuro: el vigilante filtra pendientes con
+  // `at >= dayStart(now)`, y una fecha fija en el tiempo acaba en el pasado y
+  // el test muere de viejo (le paso al N fijo original el 2026-10-14).
+  const future = { ...item(1), at: Date.now() + 86_400_000 };
+  const a = { ...agenda([]), pending: [{ ...future, where: 'pendiente' as const }] };
   expect(
     (await runVigilanteOnce({ db, agenda: async () => a, send: async () => true }, T)).notified,
   ).toBe(1);
