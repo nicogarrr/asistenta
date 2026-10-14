@@ -38,6 +38,15 @@ class FakePage:
             await asyncio.sleep(60)
         return {"expr": expression}
 
+    async def route(self, pattern, handler):
+        self.routed = (pattern, handler)
+
+    async def unroute(self, pattern, handler):
+        self.routed = None
+
+    async def close(self):
+        self._closed = True
+
 
 class FakeEngine:
     def __init__(self):
@@ -132,3 +141,47 @@ def test_evaluate_tiene_timeout(tmp_path):
     c.post(f"/sessions/{sid}/goto", json={"url": "https://example.com"})
     r = c.post(f"/sessions/{sid}/evaluate", json={"expression": "nunca"})
     assert r.status_code == 504
+
+
+def test_read_atomico_devuelve_valor_y_cierra_la_pagina(tmp_path):
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    r = c.post(f"/sessions/{sid}/read", json={"url": "https://example.com", "expression": "1+1"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == 200 and body["value"] == {"expr": "1+1"}
+    engine_page = app.state.manager.get(sid).engine.page
+    assert engine_page.is_closed()  # sin pagina viva entre lecturas
+    assert app.state.manager.get(sid).page is None
+
+
+def test_read_instala_la_barrera_durante_la_operacion(tmp_path):
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    r = c.post(
+        f"/sessions/{sid}/read",
+        json={"url": "https://example.com", "expression": "1",
+              "allowed_hosts": ["example.com"]},
+    )
+    assert r.status_code == 200
+    page = app.state.manager.get(sid).engine.page
+    assert page.routed is not None and page.routed[0] == "**/*"
+
+
+def test_read_permit_url_no_loopback_es_422(tmp_path):
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    r = c.post(
+        f"/sessions/{sid}/read",
+        json={"url": "https://example.com", "expression": "1",
+              "permit_url": "http://169.254.169.254/permit"},
+    )
+    assert r.status_code == 422
+
+
+def test_read_evaluate_timeout_es_504_y_cierra(tmp_path):
+    c = client(tmp_path, eval_timeout_ms=50)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    r = c.post(f"/sessions/{sid}/read", json={"url": "https://example.com", "expression": "nunca"})
+    assert r.status_code == 504
+    assert app.state.manager.get(sid).engine.page.is_closed()

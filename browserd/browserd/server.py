@@ -90,6 +90,21 @@ class GotoRequest(BaseModel):
     permit_url: str | None = None
 
 
+class ReadRequest(BaseModel):
+    """Lectura atomica (#130 ronda 3): goto + evaluate + cierre de pagina.
+
+    Sin pagina viva entre llamadas: no hay JS en idle con red libre ni service
+    workers sobreviviendo a la lectura. La barrera cubre TODA la operacion.
+    """
+    url: str = Field(min_length=1, max_length=2000)
+    expression: str = Field(min_length=1, max_length=20000)
+    wait_until: str = Field(default="domcontentloaded", pattern="^(load|domcontentloaded|networkidle|commit)$")
+    timeout_ms: int = Field(default=45000, ge=1000, le=120000)
+    settle_ms: int = Field(default=0, ge=0, le=30000)
+    allowed_hosts: list[str] | None = None
+    permit_url: str | None = None
+
+
 class EvalRequest(BaseModel):
     expression: str = Field(min_length=1, max_length=20000)
     timeout_ms: int | None = Field(default=None, ge=1000, le=120000)
@@ -185,6 +200,55 @@ async def goto(session_id: str, body: GotoRequest) -> dict[str, Any]:
             raise HTTPException(
                 status_code=502, detail=f"navegacion fallida: {type(exc).__name__}"
             ) from exc
+
+
+@app.post("/sessions/{session_id}/read", dependencies=[Depends(_auth)])
+async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
+    session = _get_session(session_id)
+    guard: RequestGuard | None = None
+    if body.allowed_hosts or body.permit_url:
+        try:
+            guard = RequestGuard(body.allowed_hosts, body.permit_url)
+        except PermitUrlError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    async with session.lock:  # toda la operacion es atomica por sesion
+        page = None
+        try:
+            page = await session.engine.new_page()
+            if guard is not None:
+                await page.route("**/*", guard.handle)
+            resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
+            if body.settle_ms:
+                await page.wait_for_timeout(body.settle_ms)
+            value = await asyncio.wait_for(
+                page.evaluate(body.expression), timeout=app.state.settings.eval_timeout_ms / 1000
+            )
+            return {
+                "status": resp.status if resp else None,
+                "url": page.url,
+                "title": await page.title(),
+                "value": value,
+                "denied": bool(guard and guard.denied),
+            }
+        except TimeoutError:
+            raise HTTPException(status_code=504, detail="evaluate agoto su timeout") from None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if guard is not None and guard.denied:
+                return {"status": 403, "url": "", "title": "", "value": None, "denied": True}
+            raise HTTPException(
+                status_code=502, detail=f"lectura fallida: {type(exc).__name__}"
+            ) from exc
+        finally:
+            # La pagina NUNCA sobrevive a la lectura: nada de JS en idle con red.
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            if session.page is page:
+                session.page = None
 
 
 @app.post("/sessions/{session_id}/evaluate", dependencies=[Depends(_auth)])

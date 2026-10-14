@@ -100,3 +100,15 @@ Con la barrera activa los documentos se traen de UN salto (redirects NO se
 siguen internamente: el navegador los pide como nuevas requests que vuelven a
 pasar la barrera) y la respuesta incluye `denied: true` si la barrera corto
 algo; una navegacion cortada por la barrera devuelve `status: 403` (no 502).
+
+### Lectura atomica `POST /sessions/{id}/read` (#130 ronda 3)
+
+`{url, expression, wait_until, timeout_ms, settle_ms, allowed_hosts,
+permit_url}`: goto + evaluate + CIERRE de pagina en una sola llamada. No queda
+pagina viva entre lecturas: nada de JS en idle con red libre ni service
+workers (ademas los contextos se crean con service workers bloqueados). Con
+barrera activa, solo salen requests de tipo document/script/xhr/fetch (las
+demas se abortan sin red), cada una de UN salto y validada por el hook con
+`{url, resource_type, status, body}`: el cliente aplica robots/presupuesto e
+isBlockedPage. Es la lectura que usa pricewatch; `goto`/`evaluate` quedan
+para usos interactivos sin barrera.

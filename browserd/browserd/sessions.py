@@ -67,6 +67,9 @@ async def _default_launcher(scope: str, profile_dir: Path, headless: bool) -> En
         persistent_context=True,
         user_data_dir=str(profile_dir),
         humanize=True,
+        # El lector historico bloquea service workers; con perfil persistente
+        # un SW registrado sobreviviria entre lecturas con red libre (#130).
+        service_workers="block",
     )
     context = await cm.__aenter__()
     return CamoufoxEngine(cm, context)

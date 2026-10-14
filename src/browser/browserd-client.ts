@@ -58,10 +58,7 @@ export class BrowserdClient {
   private sessionId: string | null = null;
 
   constructor(opts: BrowserdOptions = {}) {
-    this.baseUrl = (opts.baseUrl ?? process.env.BROWSERD_URL ?? 'http://127.0.0.1:7701').replace(
-      /\/+$/,
-      '',
-    );
+    this.baseUrl = (opts.baseUrl ?? process.env.BROWSERD_URL ?? 'http://127.0.0.1:7701').replace(/\/+$/, '');
     this.token = opts.token ?? process.env.BROWSERD_TOKEN ?? '';
     this.fetchFn = opts.fetchFn ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
@@ -74,6 +71,9 @@ export class BrowserdClient {
   }
 
   private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    // fetch Y lectura del cuerpo dentro del mismo manejo: un cuelgue a mitad
+    // del JSON tambien corta por AbortSignal y cuenta como transporte (#130).
+    // Un JSON invalido (SyntaxError) es bug/protocolo y propaga sin envolver.
     let res: Response;
     try {
       res = await this.fetchFn(this.baseUrl + path, {
@@ -82,14 +82,13 @@ export class BrowserdClient {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
+      if (!res.ok) throw new BrowserdHttpError(`browserd ${method} ${path}: HTTP ${res.status}`, res.status);
+      return (await res.json()) as T;
     } catch (err) {
-      if (isTransportError(err))
-        throw new BrowserdError(`browserd inalcanzable: ${(err as Error).message}`);
+      if (err instanceof BrowserdHttpError) throw err;
+      if (isTransportError(err)) throw new BrowserdError(`browserd inalcanzable: ${(err as Error).message}`);
       throw err;
     }
-    if (!res.ok)
-      throw new BrowserdHttpError(`browserd ${method} ${path}: HTTP ${res.status}`, res.status);
-    return (await res.json()) as T;
   }
 
   async health(): Promise<{ ok?: boolean; sessions?: number }> {
@@ -127,11 +126,33 @@ export class BrowserdClient {
     });
   }
 
+  /** Lectura atomica: goto + evaluate + cierre de pagina en el sidecar (sin pagina viva entre lecturas). */
+  async readPage(
+    url: string,
+    opts: {
+      expression: string;
+      waitUntil?: string;
+      timeoutMs?: number;
+      settleMs?: number;
+      allowedHosts?: string[];
+      permitUrl?: string;
+    },
+  ): Promise<{ status: number; url: string; title: string; value: unknown; denied?: boolean }> {
+    const id = await this.ensureSession('pricewatch');
+    return this.call('POST', `/sessions/${id}/read`, {
+      url,
+      expression: opts.expression,
+      wait_until: opts.waitUntil ?? 'domcontentloaded',
+      timeout_ms: opts.timeoutMs ?? 30_000,
+      settle_ms: opts.settleMs ?? 3_000,
+      ...(opts.allowedHosts ? { allowed_hosts: opts.allowedHosts } : {}),
+      ...(opts.permitUrl ? { permit_url: opts.permitUrl } : {}),
+    });
+  }
+
   async evaluate(expression: string): Promise<unknown> {
     const id = await this.ensureSession('pricewatch');
-    const r = await this.call<{ value: unknown }>('POST', `/sessions/${id}/evaluate`, {
-      expression,
-    });
+    const r = await this.call<{ value: unknown }>('POST', `/sessions/${id}/evaluate`, { expression });
     return r.value;
   }
 

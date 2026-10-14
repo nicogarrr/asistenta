@@ -36,8 +36,9 @@ function clientWith(fetchFn: typeof fetch) {
 }
 const routesOk: Record<string, FakeRoute> = {
   'POST /sessions': { body: { id: 's1' } },
-  'POST /sessions/s1/goto': { body: { status: 200, url: AMAZON, title: 'Amazon' } },
-  'POST /sessions/s1/evaluate': { body: { value: '<html><body>Ofertas de televisores</body></html>' } },
+  'POST /sessions/s1/read': {
+    body: { status: 200, url: AMAZON, title: 'Amazon', value: '<html><body>Ofertas de televisores</body></html>' },
+  },
 };
 
 describe('browserEngine flag', () => {
@@ -55,15 +56,16 @@ describe('browserEngine flag', () => {
 });
 
 describe('CamoufoxPriceBrowser', () => {
-  it('goto lleva allowed_hosts de tiendas y permit_url loopback (barrera por request)', async () => {
+  it('read atomico lleva allowed_hosts de tiendas y permit_url loopback (barrera por request)', async () => {
     const { fetchFn, calls } = fakeBrowserd(routesOk);
     const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
     const r = await b.read(AMAZON, allow);
     expect(r.status).toBe(200);
-    const gotoCall = calls.find((c) => c.url.endsWith('/goto'));
-    const body = JSON.parse(gotoCall?.body ?? '{}');
+    const readCall = calls.find((c) => c.url.endsWith('/read'));
+    const body = JSON.parse(readCall?.body ?? '{}');
     expect(body.allowed_hosts).toEqual([...PUBLIC_STORE_HOSTS]);
     expect(body.permit_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/permit\//);
+    expect(body.expression).toContain('outerHTML');
     await b.close();
   });
   it('rechaza hosts fuera de la allowlist sin tocar el sidecar', async () => {
@@ -77,7 +79,7 @@ describe('CamoufoxPriceBrowser', () => {
   it('denied de la barrera del sidecar se propaga como 403 semantico', async () => {
     const { fetchFn } = fakeBrowserd({
       ...routesOk,
-      'POST /sessions/s1/goto': { body: { status: 403, url: '', title: '', denied: true } },
+      'POST /sessions/s1/read': { body: { status: 403, url: '', title: '', value: null, denied: true } },
     });
     const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
     expect(await b.read(AMAZON, deny)).toEqual({ status: 403, html: '' });
@@ -86,7 +88,9 @@ describe('CamoufoxPriceBrowser', () => {
   it('pagina de challenge con 200 se clasifica como bloqueo (403, html vacio)', async () => {
     const { fetchFn } = fakeBrowserd({
       ...routesOk,
-      'POST /sessions/s1/evaluate': { body: { value: '<script>triggerInterstitialChallenge({"bm-verify":1})</script>' } },
+      'POST /sessions/s1/read': {
+        body: { status: 200, url: AMAZON, title: '', value: '<script>triggerInterstitialChallenge({"bm-verify":1})</script>' },
+      },
     });
     const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
     expect(await b.read(AMAZON, allow)).toEqual({ status: 403, html: '' });

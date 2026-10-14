@@ -65,8 +65,17 @@ class PermitHook {
         void (async () => {
           let allow = false;
           try {
-            const url = String(JSON.parse(body || '{}').url ?? '');
-            allow = Boolean(url) && (await permit(url));
+            // El sidecar manda {url, resource_type, status, body} de CADA
+            // request permitida (un salto); decidimos con el mismo criterio
+            // que el lector historico: robots/presupuesto + isBlockedPage.
+            const payload = JSON.parse(body || '{}') as { url?: unknown; status?: unknown; body?: unknown };
+            const url = String(payload.url ?? '');
+            const status = typeof payload.status === 'number' ? payload.status : 0;
+            const pageBody = typeof payload.body === 'string' ? payload.body : '';
+            allow =
+              Boolean(url) &&
+              !isBlockedPage(status, pageBody) &&
+              (await permit(url));
           } catch {
             allow = false;
           }
@@ -116,14 +125,17 @@ export class CamoufoxPriceBrowser implements PricePageReader {
     let nav: { status: number; denied?: boolean };
     let html = '';
     try {
-      nav = await this.client.goto(url, {
+      // Lectura atomica en el sidecar: goto+evaluate+cierre de pagina, sin
+      // pagina viva entre lecturas (nada de JS en idle con red libre, #130).
+      const r = await this.client.readPage(url, {
+        expression: 'document.documentElement.outerHTML',
         allowedHosts: [...PUBLIC_STORE_HOSTS],
         permitUrl,
       });
-      if (nav.denied || nav.status === 403) return { status: 403, html: '' };
-      if (nav.status >= 300 && nav.status < 400) return { status: nav.status, html: '' };
-      const raw = await this.client.evaluate('document.documentElement.outerHTML');
-      html = typeof raw === 'string' ? raw : '';
+      nav = r;
+      html = typeof r.value === 'string' ? r.value : '';
+      if (r.denied || r.status === 403) return { status: 403, html: '' };
+      if (r.status >= 300 && r.status < 400) return { status: r.status, html: '' };
     } catch (err) {
       if (err instanceof BrowserdError) throw err; // transporte: lo gestiona el fallback
       if (err instanceof BrowserdHttpError) return { status: 0, html: '' }; // sidecar vivo, navegacion fallida
