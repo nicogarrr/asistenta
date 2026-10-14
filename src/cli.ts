@@ -3893,6 +3893,24 @@ async function serveCommand(): Promise<number> {
         result: result.error ? 'error' : 'ok',
         detail: text2.slice(0, 80).replace(/\s+/g, ' '),
       });
+      // Disparador (a) del multi-agente (ROADMAP.md): builds grandes
+      // multi-archivo de forma habitual. Un "build" es una peticion que acaba
+      // con 2+ RUTAS distintas escritas OK con la tool write (FileWriteTracker
+      // las resuelve contra el cwd del tool y en minusculas en Windows, sobre
+      // tool_execution_end; reintentos y fallos no cuentan). Alcance declarado:
+      // dedup por RUTA, no por archivo (symlinks/hardlinks al mismo archivo
+      // cuentan como dos), y escrituras via shell no cuentan (no hay forma
+      // honesta de atribuirlas).
+      const filesWritten = result.filesWritten;
+      if (filesWritten >= 2) {
+        actions.record({
+          actor: 'asistenta',
+          action: 'build_multi',
+          target: thread.name,
+          result: result.error ? 'error' : 'ok',
+          detail: `${filesWritten} archivos`,
+        });
+      }
       // A turn-level line, for counting. Never the only record of a turn.
       actions.record({
         actor: 'asistenta',

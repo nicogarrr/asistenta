@@ -8,6 +8,7 @@ import { actionLabel, type RunStep } from '../skills/lessons.js';
 import { DONE_TOOL_NAME, extractDoneSummary } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
+import { FileWriteTracker } from './filewrites.js';
 import { compactHistory, DEFAULT_COMPACTION, type Summarize } from './history.js';
 import { buildSystemPrompt } from './prompt.js';
 import { createProviderHandle } from './provider.js';
@@ -44,6 +45,12 @@ export interface AgentRunResult {
   outputTokens: number;
   /** Structured trail of the run (no tool output text), for learning from failures. */
   steps: RunStep[];
+  /**
+   * Distinct files actually written OK by the fs write tool in this run. Real
+   * outcome accounting (auditor #134): retries and failures count nothing.
+   * Only the count leaves the run; paths stay private to it.
+   */
+  filesWritten: number;
 }
 
 /**
@@ -757,6 +764,9 @@ export class PersonalAgent {
       fingerprints: [],
       sameTool: '',
       sameToolCount: 0,
+      // Un tracker por RUN (no por intento): un reintento transitorio no debe
+      // olvidar las escrituras que el intento anterior ya hizo (#134 ronda 3).
+      fileWrites: new FileWriteTracker(),
     };
     let attempt = 0;
     try {
@@ -821,6 +831,7 @@ export class PersonalAgent {
         if (this.#stream) process.stdout.write(event.assistantMessageEvent.delta);
       }
       if (event.type === 'tool_execution_start') {
+        shared.fileWrites.start(event.toolCallId, event.toolName, event.args);
         shared.toolCalls++;
         activeTools++;
         shared.startActions.set(event.toolCallId, actionLabel(event.args));
@@ -877,6 +888,7 @@ export class PersonalAgent {
         }
       }
       if (event.type === 'tool_execution_end') {
+        shared.fileWrites.end(event.toolCallId, event.isError);
         activeTools = Math.max(0, activeTools - 1);
         const action = shared.startActions.get(event.toolCallId) ?? '';
         shared.startActions.delete(event.toolCallId);
@@ -968,6 +980,7 @@ export class PersonalAgent {
       attempts: 1,
       inputTokens: shared.inputTokens,
       outputTokens: shared.outputTokens,
+      filesWritten: shared.fileWrites.count,
     };
   }
 
@@ -1037,4 +1050,6 @@ interface AttemptState {
   /** Last tool executed, and how many times in a row. */
   sameTool: string;
   sameToolCount: number;
+  /** Writes reales de la corrida entera, compartido entre intentos. */
+  fileWrites: FileWriteTracker;
 }
