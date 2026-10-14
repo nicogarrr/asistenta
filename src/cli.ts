@@ -1,3 +1,6 @@
+// FIRST import, always: loads the optional .env before any module that
+// captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
+import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {

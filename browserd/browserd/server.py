@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings, is_loopback_host
 from .guard import PermitUrlError, RequestGuard
+from . import __version__
 from .sessions import (
     SessionClosingError,
     SessionLimitError,
@@ -116,7 +117,14 @@ class EvalRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, Any]:
     manager: SessionManager = app.state.manager
-    return {"ok": True, "sessions": len(manager.list()), "max_sessions": manager.max_sessions}
+    return {
+        "ok": True,
+        "service": "browserd",
+        "version": __version__,
+        "capabilities": ["goto", "evaluate", "read"],
+        "sessions": len(manager.list()),
+        "max_sessions": manager.max_sessions,
+    }
 
 
 @app.post("/sessions", status_code=201, dependencies=[Depends(_auth)])

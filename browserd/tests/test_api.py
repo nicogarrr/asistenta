@@ -105,6 +105,10 @@ def test_health(tmp_path):
     c = client(tmp_path)
     r = c.get("/health")
     assert r.status_code == 200 and r.json()["ok"] is True
+    body = r.json()
+    assert body["service"] == "browserd"
+    assert body["version"]
+    assert "read" in body["capabilities"]
 
 
 def test_full_flow(tmp_path):
