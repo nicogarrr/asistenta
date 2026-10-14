@@ -18,11 +18,12 @@
                    reales; tarda varios minutos). Resultado:
                    browserd\bench\results.json
     -EnableEngine  ULTIMO paso: escribe BROWSER_ENGINE=camoufox en el .env de
-                   la raiz del repo (lo lee asistenta al arrancar via
-                   process.loadEnvFile de Node). Solo se ejecuta si todos los
-                   pasos anteriores fueron bien; si la escritura falla se
-                   restaura el .env previo. Este script NO reinicia asistenta:
-                   el flag se aplica en su proximo arranque.
+                   la raiz del repo (lo lee asistenta al arrancar via el
+                   loader nativo de Node, src/envfile.ts). Solo se ejecuta si
+                   todos los pasos anteriores fueron bien; la escritura es
+                   atomica (ReplaceFile con backup en .env.browserd-bak) y
+                   transaccional con verificacion: si algo falla se restaura
+                   el estado previo. Este script NO reinicia asistenta.
 
   Estado de verificacion: script revisado estaticamente; su primera ejecucion
   real es en el PC del usuario (Windows). Cada paso falla con mensaje claro.
@@ -201,30 +202,41 @@ if ($EnableEngine) {
   $keyPattern = '^\s*(?:export\s+)?BROWSER_ENGINE\s*='
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+  $hadFile = Test-Path $envFile
   $lines = @()
-  if (Test-Path $envFile) { $lines = [System.IO.File]::ReadAllLines($envFile) }
+  if ($hadFile) { $lines = [System.IO.File]::ReadAllLines($envFile) }
   $kept = @($lines | Where-Object { $_ -notmatch $keyPattern })
   $kept += 'BROWSER_ENGINE=camoufox'
 
-  $backup = "$envFile.browserd-bak"
-  if (Test-Path $envFile) { Copy-Item $envFile $backup -Force }
-
-  # Escritura atomica: archivo temporal en el mismo directorio + rename.
   $tmp = "$envFile.browserd-tmp"
+  $backup = "$envFile.browserd-bak"
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+
+  # Escritura y verificacion en la MISMA transaccion: cualquier fallo (incluido
+  # leer de nuevo el archivo) restaura el estado previo.
   try {
     [System.IO.File]::WriteAllLines($tmp, [string[]]$kept, $utf8NoBom)
-    Move-Item -Force $tmp $envFile
+    if ($hadFile) {
+      # Reemplazo atomico con backup (Win32 ReplaceFile): tambien en PS5.1.
+      [System.IO.File]::Replace($tmp, $envFile, $backup)
+    } else {
+      # Archivo nuevo: no hay nada que reemplazar, basta el move.
+      Move-Item $tmp $envFile
+    }
+    $final = [System.IO.File]::ReadAllLines($envFile)
+    $found = @($final | Where-Object { $_ -match $keyPattern })
+    if ($found.Count -ne 1 -or $found[0] -notmatch '=\s*"?camoufox"?\s*$') {
+      throw 'la verificacion post-escritura no encontro exactamente una asignacion valida'
+    }
   } catch {
-    if (Test-Path $backup) { Copy-Item $backup $envFile -Force }
-    throw "No pude escribir .env de forma atomica; se conservo el valor previo. $_"
-  }
-
-  # Verificacion post-escritura: exactamente una asignacion con el valor pedido.
-  $final = [System.IO.File]::ReadAllLines($envFile)
-  $found = @($final | Where-Object { $_ -match $keyPattern })
-  if ($found.Count -ne 1 -or $found[0] -notmatch '=\s*"?camoufox"?\s*$') {
-    if (Test-Path $backup) { Copy-Item $backup $envFile -Force } else { Remove-Item $envFile -Force }
-    throw '.env no quedo como se esperaba; se restauro el estado previo.'
+    if ($hadFile -and (Test-Path $backup)) {
+      Copy-Item $backup $envFile -Force -ErrorAction SilentlyContinue
+    } elseif (-not $hadFile -and (Test-Path $envFile)) {
+      Remove-Item $envFile -Force -ErrorAction SilentlyContinue
+    }
+    throw "No pude dejar .env consistente; se restauro el estado previo. $_"
+  } finally {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
   }
   Write-Host ".env actualizado (backup en .env.browserd-bak). Asistenta lo lee al arrancar; este script no la reinicia."
 }

@@ -20,7 +20,9 @@ Que hace, en orden:
    primera vez).
 5. Smoke real: levanta Camoufox con la barrera de red contra un servidor
    loopback (redirect + subrecurso), en puerto efimero y con perfiles
-   temporales, y exige PASS. Cierra sesion, servidor y sockets al acabar.
+   temporales, y exige PASS. El cierre es parte del contrato: la sesion se
+   borra via API, uvicorn se apaga y se espera su salida ANTES de soltar el
+   directorio temporal; un fallo de limpieza es un FAIL, no un aviso.
 6. `-Start`: arranca el sidecar en segundo plano con configuracion EXPLICITA
    (`BROWSERD_HOST=127.0.0.1`, `BROWSERD_PORT=7701`, token vacio) para el
    proceso hijo - no hereda sorpresas del entorno. Solo lo da por bueno si
@@ -36,9 +38,10 @@ Que hace, en orden:
    raiz del repo. Entiende la sintaxis dotenv (`export CLAVE = valor`,
    espacios), conserva el resto de lineas intactas, elimina cualquier
    asignacion previa de `BROWSER_ENGINE` y deja exactamente UNA. La escritura
-   es atomica (temporal + rename) con backup en `.env.browserd-bak`, y se
-   verifica el resultado antes de declarar exito; si algo falla se restaura
-   el estado previo.
+   es transaccional: temporal + `ReplaceFile` atomico con backup en
+   `.env.browserd-bak` (o move simple si el archivo no existia) y verificacion
+   post-escritura dentro de la misma transaccion; si CUALQUIER paso falla se
+   restaura el estado previo.
 
 Los flags son independientes: `-Start` y `-Bench` se pueden repetir aunque la
 instalacion ya este hecha (los pasos 1-5 son idempotentes y rapidos).
@@ -47,10 +50,13 @@ instalacion ya este hecha (los pasos 1-5 son idempotentes y rapidos).
 
 Al arrancar (`npm start` desde la raiz del repo), asistenta carga el `.env`
 del directorio de trabajo con `process.loadEnvFile()` de Node (parser propio
-de Node: `CLAVE=valor`, `export` opcional, comillas y comentarios; las
-variables ya presentes en el entorno del proceso siempre ganan). Un `.env`
-mal formado no tira el arranque: avisa por stderr y sigue con el entorno que
-haya. **Este script no reinicia asistenta**: el flag se aplica en su proximo
+de Node: `CLAVE=valor`, `export` opcional, comillas y comentarios). El loader
+es `src/envfile.ts`, importado como PRIMER modulo del entrypoint: `paths.ts`
+y `log.ts` capturan `process.env` al evaluarse, y cualquier orden que los
+alcance antes dejaria la configuracion partida (hay tests que lo fijan:
+`test/envfile-*.test.ts`). Las variables ya presentes en el entorno siempre
+ganan (verificado contra Node 22.23), y un `.env` mal formado no tira el
+arranque: avisa por stderr y sigue con el entorno que haya. **Este script no reinicia asistenta**: el flag se aplica en su proximo
 arranque (`npm start`). Hasta entonces el comportamiento no cambia.
 
 ## Requisitos

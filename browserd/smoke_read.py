@@ -1,7 +1,9 @@
 """Smoke real #130: Camoufox de verdad + redirect + subrecurso, todo loopback real.
 
 Puerto efimero (0) para no interferir con nada previo, perfiles en un
-TemporaryDirectory y cierre ordenado de sesion, servidor y sockets al acabar.
+TemporaryDirectory y cierre ORDENADO y OBLIGATORIO: la sesion se borra via API,
+uvicorn se apaga y se espera su join ANTES de soltar el TemporaryDirectory.
+Un fallo de limpieza es un FAIL del smoke, nunca un PASS con aviso.
 """
 import json
 import os
@@ -63,6 +65,7 @@ def main() -> int:
     op, hp = origin.server_address[1], hook.server_address[1]
 
     srv = None
+    srv_thread = None
     try:
         with tempfile.TemporaryDirectory(prefix="bdprofiles-smoke-") as profiles:
             os.environ["BROWSERD_PROFILES_DIR"] = profiles
@@ -71,7 +74,8 @@ def main() -> int:
             import uvicorn
 
             srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error"))
-            threading.Thread(target=srv.run, daemon=True).start()
+            srv_thread = threading.Thread(target=srv.run, daemon=True)
+            srv_thread.start()
 
             base = None
             for _ in range(120):
@@ -100,6 +104,9 @@ def main() -> int:
             print("creando sesion (camoufox real, tarda)...", flush=True)
             sid = post("/sessions", {"scope": "smoke"})["id"]
             print("sesion", sid, flush=True)
+
+            closed = False
+            close_error = None
             try:
                 res = post(f"/sessions/{sid}/read", {
                     "url": f"http://127.0.0.1:{op}/r",
@@ -110,15 +117,18 @@ def main() -> int:
                     "settle_ms": 2000,
                 })
             finally:
+                # El cierre de sesion (que cierra el navegador y suelta el
+                # perfil) es parte del contrato del smoke, no un aviso.
                 try:
                     req = urllib.request.Request(f"{base}/sessions/{sid}", method="DELETE")
-                    urllib.request.urlopen(req, timeout=60).read()
+                    closed = urllib.request.urlopen(req, timeout=60).status == 200
                 except Exception as e:
-                    print("aviso: no se pudo cerrar la sesion limpiamente:", e, flush=True)
+                    close_error = e
 
             print("status:", res["status"], "| url final:", res["url"], "| denied:", res["denied"], flush=True)
             html = res.get("value") or ""
             print("contiene destino-final-real:", "destino-final-real" in html, flush=True)
+            print("sesion cerrada via DELETE:", closed, ("| error: " + str(close_error)) if close_error else "", flush=True)
             print("hook vio (url, fase, status):", flush=True)
             for p in HOOK_SEEN:
                 print("  ", p.get("resource_type"), p.get("url"), "post" if "status" in p else "PRE", p.get("status", ""), flush=True)
@@ -126,16 +136,30 @@ def main() -> int:
             ok = (
                 res["status"] == 200
                 and "destino-final-real" in html
+                and closed
                 and any(p.get("url", "").endswith("/r") and "status" not in p for p in HOOK_SEEN)
                 and any(p.get("url", "").endswith("/r") and p.get("status") == 302 for p in HOOK_SEEN)
                 and any(p.get("url", "").endswith("/final") and "status" not in p for p in HOOK_SEEN)
                 and any(p.get("url", "").endswith("/s.js") for p in HOOK_SEEN)
             )
+
+            # Apagado ordenado ANTES de soltar el TemporaryDirectory: en Windows
+            # borrar perfiles con el navegador aun vivo falla o deja restos.
+            srv.should_exit = True
+            srv_thread.join(timeout=30)
+            if srv_thread.is_alive():
+                print("SMOKE-REAL: FAIL (uvicorn no cerro en 30s)", flush=True)
+                return 1
+            srv = None
+            srv_thread = None
+
             print("SMOKE-REAL:", "PASS" if ok else "FAIL", flush=True)
             return 0 if ok else 1
     finally:
         if srv is not None:
             srv.should_exit = True
+        if srv_thread is not None:
+            srv_thread.join(timeout=10)
         for s in (origin, hook):
             s.shutdown()
             s.server_close()
