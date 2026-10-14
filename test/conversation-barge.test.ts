@@ -321,6 +321,32 @@ describe('BargeStats (persistencia)', () => {
     db.close();
   });
 
+  it('migracion atomica: si el backfill falla, la columna se revierte y el retry la completa', () => {
+    const db = new DatabaseSync(':memory:');
+    // Esquema v1 con una fila con hueco (3 cortes, 1 clasificada).
+    db.exec(
+      'CREATE TABLE barge_sessions (ended_at INTEGER NOT NULL, level TEXT NOT NULL, barge_ins INTEGER NOT NULL, true_ins INTEGER NOT NULL, false_noise INTEGER NOT NULL, false_echo INTEGER NOT NULL, utterances INTEGER NOT NULL)',
+    );
+    db.prepare(
+      'INSERT INTO barge_sessions (ended_at, level, barge_ins, true_ins, false_noise, false_echo, utterances) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(1, 'altavoces', 3, 1, 0, 0, 5);
+    // Canario del auditor: el UPDATE del backfill aborta tras el ALTER.
+    db.exec(
+      "CREATE TRIGGER fail_backfill BEFORE UPDATE ON barge_sessions BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    expect(() => new BargeStats(db)).toThrow();
+    // La migracion fallo entera: la columna no queda creada a medias.
+    const cols = (db.prepare('PRAGMA table_info(barge_sessions)').all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+    expect(cols).not.toContain('unclassified');
+    // Sin el fallo, el retry migra y rellena: 2 sin clasificar.
+    db.exec('DROP TRIGGER fail_backfill');
+    const stats = new BargeStats(db);
+    expect(stats.totals().unclassified).toBe(2);
+    db.close();
+  });
+
   it('sin nada clasificado la tasa es null aunque haya interrupciones', () => {
     const db = new DatabaseSync(':memory:');
     const stats = new BargeStats(db);

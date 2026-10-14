@@ -44,13 +44,30 @@ export class BargeStats {
       this.db.prepare('PRAGMA table_info(barge_sessions)').all() as { name: string }[]
     ).map((c) => c.name);
     if (!cols.includes('unclassified')) {
-      this.db.exec('ALTER TABLE barge_sessions ADD COLUMN unclassified INTEGER NOT NULL DEFAULT 0');
       // Las filas v1 no contaban lo sembrado sin clasificar: recuperarlo por
       // diferencia, o una fila vieja con huecos mostraria cobertura completa
       // falsa (cortes = clases + desconocidas debe cuadrar en el historico).
-      this.db.exec(
-        'UPDATE barge_sessions SET unclassified = MAX(0, barge_ins - true_ins - false_noise - false_echo)',
-      );
+      // ALTER + backfill en una sola transaccion: si el UPDATE falla o el
+      // proceso cae entre medias, la columna se revierte y el proximo
+      // constructor reintenta la migracion entera; la columna por si sola
+      // nunca vale como marca de migracion terminada.
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec(
+          'ALTER TABLE barge_sessions ADD COLUMN unclassified INTEGER NOT NULL DEFAULT 0',
+        );
+        this.db.exec(
+          'UPDATE barge_sessions SET unclassified = MAX(0, barge_ins - true_ins - false_noise - false_echo)',
+        );
+        this.db.exec('COMMIT');
+      } catch (err) {
+        try {
+          this.db.exec('ROLLBACK');
+        } catch {
+          // La transaccion ya se habia revertido sola.
+        }
+        throw err;
+      }
     }
   }
 
