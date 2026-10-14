@@ -33,6 +33,15 @@ describe('buildWeeklySummary', () => {
     });
     expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 2');
   });
+  it('a failed build is not evidence: only ok builds count', () => {
+    const text = buildWeeklySummary({
+      entries: [e(1, 'turn'), e(1, 'build_multi', 'error'), e(2, 'build_multi')],
+      now: NOW,
+      pending: '',
+      watching: 0,
+    });
+    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 1');
+  });
   it('reports zero builds explicitly when there was activity but no build', () => {
     const text = buildWeeklySummary({
       entries: [e(1, 'turn')],

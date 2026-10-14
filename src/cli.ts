@@ -3895,9 +3895,11 @@ async function serveCommand(): Promise<number> {
       });
       // Disparador (a) del multi-agente (ROADMAP.md): builds grandes
       // multi-archivo de forma habitual. Un "build" es una peticion que acaba
-      // escribiendo 2+ archivos con la tool write. Limite declarado: escrituras
-      // hechas via shell no cuentan (no hay forma honesta de atribuirlas).
-      const filesWritten = toolNames.filter((t) => t === 'write').length;
+      // con 2+ archivos DISTINTOS escritos OK con la tool write (lo mide
+      // FileWriteTracker sobre tool_execution_end; reintentos y fallos no
+      // cuentan). Limite declarado: escrituras hechas via shell no cuentan
+      // (no hay forma honesta de atribuirlas).
+      const filesWritten = result.filesWritten;
       if (filesWritten >= 2) {
         actions.record({
           actor: 'asistenta',
