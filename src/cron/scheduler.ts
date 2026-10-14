@@ -288,6 +288,11 @@ export function parseCronAdd(
         'No entiendo ese horario. Prueba "/cron add 0 8 * * * | tarea" o "/cron add cada mañana a las 8 tarea".',
     };
   }
+  // The natural branch is heuristic output, so it goes through the SAME
+  // validator as the literal branch before anything can be persisted
+  // (auditor #135 ronda 2: "cada999minutos" must never reach saveRoutine).
+  const naturalCheck = validate(parsed.schedule);
+  if (!naturalCheck.ok) return { ok: false, error: `Ese horario no vale: ${naturalCheck.error}` };
   return { ok: true, schedule: parsed.schedule, prompt: parsed.prompt };
 }
 
