@@ -45,6 +45,12 @@ export class BargeStats {
     ).map((c) => c.name);
     if (!cols.includes('unclassified')) {
       this.db.exec('ALTER TABLE barge_sessions ADD COLUMN unclassified INTEGER NOT NULL DEFAULT 0');
+      // Las filas v1 no contaban lo sembrado sin clasificar: recuperarlo por
+      // diferencia, o una fila vieja con huecos mostraria cobertura completa
+      // falsa (cortes = clases + desconocidas debe cuadrar en el historico).
+      this.db.exec(
+        'UPDATE barge_sessions SET unclassified = MAX(0, barge_ins - true_ins - false_noise - false_echo)',
+      );
     }
   }
 

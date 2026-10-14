@@ -217,6 +217,33 @@ describe('barge-in: métrica de falsos disparos (item 11)', () => {
     expect(st.utterances).toBe(0);
   });
 
+  it('con el transcript en vuelo la sembrada figura pendiente, ni clasificada ni desconocida', async () => {
+    const { session } = build({
+      transcribeTimeoutMs: 60_000,
+      transcribeImpl: () => new Promise<string>(() => {}), // nunca resuelve
+    });
+    await speakAndFeed(session, { chunks: 4 });
+    feedN(session, quiet, 10);
+    await settle();
+    let st = session.stats();
+    expect(st.bargeIns).toBe(1);
+    expect(st.bargePending).toBe(1);
+    expect(st.bargeUnclassified).toBe(0);
+    expect(st.bargeTrue).toBe(0);
+    // Al cerrar, la pendiente pasa a sin clasificar y la suma cuadra.
+    session.close('cierre');
+    st = session.stats();
+    expect(st.bargePending).toBe(0);
+    expect(st.bargeUnclassified).toBe(1);
+    expect(st.bargeIns).toBe(
+      st.bargeTrue +
+        st.bargeFalseNoise +
+        st.bargeFalseEcho +
+        st.bargeUnclassified +
+        st.bargePending,
+    );
+  });
+
   it('sonido que interrumpe pero no llega a frase hablada: sin clasificar', async () => {
     const { session } = build({ minVoicedMs: 600 });
     await speakAndFeed(session, { chunks: 4 }); // ~400 ms con voz: bajo el mínimo de 600
@@ -267,6 +294,30 @@ describe('BargeStats (persistencia)', () => {
     const onlyLast = stats.totals(now - 500);
     expect(onlyLast.sessions).toBe(1);
     expect(onlyLast.bargeIns).toBe(2);
+    db.close();
+  });
+
+  it('migra una DB v1: lo sembrado sin clasificar se recupera por diferencia', () => {
+    const db = new DatabaseSync(':memory:');
+    // Esquema v1 (ronda 1 del item 11): sin columna unclassified.
+    db.exec(
+      'CREATE TABLE barge_sessions (ended_at INTEGER NOT NULL, level TEXT NOT NULL, barge_ins INTEGER NOT NULL, true_ins INTEGER NOT NULL, false_noise INTEGER NOT NULL, false_echo INTEGER NOT NULL, utterances INTEGER NOT NULL)',
+    );
+    const insert = db.prepare(
+      'INSERT INTO barge_sessions (ended_at, level, barge_ins, true_ins, false_noise, false_echo, utterances) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    );
+    // Canario del auditor: 3 cortes, 1 clasificada, hueco de 2.
+    insert.run(1, 'altavoces', 3, 1, 0, 0, 5);
+    // Fila sin hueco: no debe inventar desconocidas.
+    insert.run(2, 'auriculares', 2, 1, 1, 0, 4);
+    const stats = new BargeStats(db);
+    const t = stats.totals();
+    expect(t.bargeIns).toBe(5);
+    expect(bargeClassified(t)).toBe(3);
+    expect(t.unclassified).toBe(2);
+    expect(bargeFalseRate(t)).toBeCloseTo(1 / 3);
+    // En DB cerrada cuadra: cortes = clases + desconocidas.
+    expect(t.bargeIns).toBe(bargeClassified(t) + t.unclassified);
     db.close();
   });
 

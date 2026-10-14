@@ -245,6 +245,8 @@ export class ConversationSession {
     bargeFalseNoise: number;
     bargeFalseEcho: number;
     bargeUnclassified: number;
+    /** Sembrada con transcript aun en vuelo: ni clasificada ni desconocida todavia. */
+    bargePending: number;
   } {
     return {
       bargeIns: this.#bargeIns,
@@ -252,6 +254,12 @@ export class ConversationSession {
       bargeFalseNoise: this.#bargeFalseNoise,
       bargeFalseEcho: this.#bargeFalseEcho,
       bargeUnclassified: this.#bargeUnclassified,
+      bargePending:
+        this.#bargeIns -
+        this.#bargeTrue -
+        this.#bargeFalseNoise -
+        this.#bargeFalseEcho -
+        this.#bargeUnclassified,
       state: this.#state,
       utterances: this.#utterances,
       lastHeard: this.#lastHeard,
