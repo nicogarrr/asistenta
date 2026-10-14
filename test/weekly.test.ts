@@ -33,6 +33,26 @@ describe('buildWeeklySummary', () => {
     });
     expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 2');
   });
+  it('playbook outcomes render one honest line per domain (C3)', () => {
+    const text = buildWeeklySummary({
+      entries: [],
+      now: NOW,
+      pending: '',
+      watching: 0,
+      playbooks: [
+        { domain: 'seg-social.es', ok: 2, failed: 1 },
+        { domain: 'sin-uso.es', ok: 0, failed: 0 },
+      ],
+    });
+    expect(text).toContain('Gestiones en sitios con playbook guardado:');
+    expect(text).toContain('seg-social.es: 2 completadas, 1 no completadas');
+    expect(text).not.toContain('sin-uso.es');
+    expect(text).not.toContain('fall');
+  });
+  it('no playbook line when there are no outcomes at all', () => {
+    const text = buildWeeklySummary({ entries: [], now: NOW, pending: '', watching: 0 });
+    expect(text).not.toContain('playbook');
+  });
   it('a failed build is not evidence: only ok builds count', () => {
     const text = buildWeeklySummary({
       entries: [e(1, 'turn'), e(1, 'build_multi', 'error'), e(2, 'build_multi')],

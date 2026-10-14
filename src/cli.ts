@@ -2982,6 +2982,7 @@ async function serveCommand(): Promise<number> {
       entries: actions.recent(5000),
       now: Date.now(),
       pending: followups.safe(() => followups.summarize(), ''),
+      playbooks: gestorStore.playbookOutcomes(),
       watching: pageWatches.list(chatId).length,
     });
   };

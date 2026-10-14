@@ -18,6 +18,8 @@ export interface WeeklyInput {
   watching: number;
   /** Bloque extra ya redactado (p. ej. el resumen de gimnasio). */
   extra?: string;
+  /** C3: tally por dominio de gestiones con playbook (GestorStore.playbookOutcomes). */
+  playbooks?: { domain: string; ok: number; failed: number }[];
 }
 
 export function buildWeeklySummary(i: WeeklyInput): string {
@@ -50,6 +52,16 @@ export function buildWeeklySummary(i: WeeklyInput): string {
     // fallido no es evidencia de capacidad (auditor #134).
     const builds = week.filter((e) => e.action === 'build_multi' && e.result === 'ok').length;
     lines.push(`- Builds multi-archivo (2+ rutas distintas escritas en una petición): ${builds}.`);
+  }
+  // C3: dónde el conocimiento guardado no basta. Solo gestiones INTENTADAS
+  // en dominios con playbook; una cancelada cuenta como "no completada",
+  // nunca como fallo, porque puede ser decisión del usuario.
+  const pb = (i.playbooks ?? []).filter((p) => p.ok + p.failed > 0);
+  if (pb.length) {
+    lines.push('- Gestiones en sitios con playbook guardado:');
+    for (const p of pb) {
+      lines.push(`  - ${p.domain}: ${p.ok} completadas, ${p.failed} no completadas.`);
+    }
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);
   if (i.extra?.trim()) lines.push('', i.extra.trim());

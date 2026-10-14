@@ -55,6 +55,16 @@ export const MAX_ACTIVE_GESTIONES_PER_SCOPE = 1;
 /** Proposed errands wait for a human yes; cap the waiting room so it cannot pile up. */
 export const MAX_PROPOSED_GESTIONES = 5;
 
+export interface PlaybookOutcome {
+  domain: string;
+  ok: number;
+  /**
+   * "No completada": cancelled AFTER starting. Never called a failure — a
+   * cancel can be the user's own decision, and the copy must stay honest.
+   */
+  failed: number;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS gestiones (
   id            TEXT PRIMARY KEY,
@@ -69,6 +79,24 @@ CREATE TABLE IF NOT EXISTS gestiones (
   updated_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gestiones_scope ON gestiones(scope, status);
+-- C3: which domains a gestion declared at plan time and whether a playbook
+-- existed then. Attribution lives here (not on the gestion row) so the
+-- gestiones schema stays untouched; rows are consumed exactly once, by
+-- complete/cancel.
+CREATE TABLE IF NOT EXISTS gestion_domains (
+  gestion_id    TEXT NOT NULL,
+  domain        TEXT NOT NULL,
+  had_playbook  INTEGER NOT NULL,
+  PRIMARY KEY (gestion_id, domain)
+);
+-- The tally itself: attempted gestiones per playbook domain. Only domains
+-- that HAD a playbook at plan time - the question is where the saved
+-- knowledge falls short, not where none exists yet.
+CREATE TABLE IF NOT EXISTS playbook_outcomes (
+  domain  TEXT PRIMARY KEY,
+  ok      INTEGER NOT NULL DEFAULT 0,
+  failed  INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 type GestionRow = {
@@ -204,6 +232,7 @@ export class GestorStore {
       throw new Error(`Solo se completa una gestión activa; está ${gestion.status}.`);
     }
     this.#set(id, { status: 'done' });
+    this.#recordOutcome(id, true);
   }
 
   cancel(id: string): void {
@@ -212,6 +241,49 @@ export class GestorStore {
       throw new Error('Una gestión terminada no se cancela; ya está hecha.');
     }
     this.#set(id, { status: 'cancelled' });
+    if (gestion.status === 'active') {
+      this.#recordOutcome(id, false);
+    } else {
+      // Cancelled while merely proposed: the playbook was never tried, so it
+      // says nothing about the knowledge. Drop the attribution uncounted.
+      this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
+    }
+  }
+
+  /**
+   * C3: which domains a gestión declared at plan time and whether a playbook
+   * existed then. Written by preparar; consumed exactly once by complete /
+   * cancel.
+   */
+  noteDomains(gestionId: string, domains: { domain: string; hadPlaybook: boolean }[]): void {
+    const stmt = this.#db.prepare(
+      'INSERT OR IGNORE INTO gestion_domains (gestion_id, domain, had_playbook) VALUES (?, ?, ?)',
+    );
+    for (const d of domains) stmt.run(gestionId, d.domain, d.hadPlaybook ? 1 : 0);
+  }
+
+  /** Per-domain tally of attempted gestiones that had a playbook at plan time. */
+  playbookOutcomes(): PlaybookOutcome[] {
+    const rows = this.#db
+      .prepare('SELECT domain, ok, failed FROM playbook_outcomes ORDER BY domain')
+      .all() as Array<{ domain: string; ok: number; failed: number }>;
+    return rows.map((r) => ({ domain: r.domain, ok: Number(r.ok), failed: Number(r.failed) }));
+  }
+
+  /** One gestión, one count per declared playbook domain; then the attribution is dropped. */
+  #recordOutcome(id: string, ok: boolean): void {
+    const rows = this.#db
+      .prepare('SELECT domain FROM gestion_domains WHERE gestion_id = ? AND had_playbook = 1')
+      .all(id) as Array<{ domain: string }>;
+    for (const { domain } of rows) {
+      this.#db
+        .prepare(
+          `INSERT INTO playbook_outcomes (domain, ok, failed) VALUES (?, ?, ?)
+           ON CONFLICT(domain) DO UPDATE SET ok = ok + ?, failed = failed + ?`,
+        )
+        .run(domain, ok ? 1 : 0, ok ? 0 : 1, ok ? 1 : 0, ok ? 0 : 1);
+    }
+    this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
   }
 
   read(id: string): Gestion | null {
