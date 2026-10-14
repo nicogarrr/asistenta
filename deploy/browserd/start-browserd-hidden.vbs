@@ -17,16 +17,16 @@
 ' waitOnReturn=False, wscript terminaria OK al instante y ninguna de esas
 ' garantias tocaria al sidecar.
 '
-' IDEMPOTENCIA (auditoria): antes de arrancar nada se sondea /health con
-' probe_health.py, que valida el CONTRATO JSON real (service=browserd, version,
-' capability read; un 200 con las palabras sueltas no vale):
-'   - contrato valido  -> sale con 0 sin crear otro proceso (un segundo bind a
-'     127.0.0.1:7701 fallaria en bucle con el reinicio por minuto de la tarea).
-'     OJO: esa instancia previa NO queda supervisada por la tarea; la
-'     supervision cubre solo instancias arrancadas por la propia tarea.
-'   - responde algo que no cumple el contrato -> sale con 1 sin arrancar:
-'     competir por el puerto tampoco levantaria nada sano.
-'   - nadie escucha -> arranca.
+' IDEMPOTENCIA FAIL-CLOSED (auditoria): antes de arrancar nada se sondea
+' /health con probe_health.py, que valida el CONTRATO JSON real y solo
+' devuelve "puerto libre" (2) ante una conexion RECHAZADA:
+'   0 (browserd valido)  -> adopta: sale con 0 sin crear otro proceso. OJO: la
+'     instancia previa NO queda supervisada por la tarea; la supervision cubre
+'     solo instancias arrancadas por la propia tarea.
+'   2 (puerto libre)     -> arranca.
+'   cualquier otro codigo (1 = contrato no cumplido, timeout, error de
+'     protocolo; u otro inesperado = helper caido o ausente) -> NO arranca y
+'     sale con 1. Un timeout con el puerto ocupado no es "libre".
 '
 ' La configuracion es EXPLICITA (la misma que setup-browserd.ps1 -Start):
 ' loopback, puerto 7701 y token vacio. Escuchar fuera de loopback exigiria
@@ -55,20 +55,24 @@ Sub LogLine(path, msg)
   ts.Close
 End Sub
 
-If Not fso.FileExists(py) Then
-  WScript.Echo "No existe el python del venv: " & py & vbCrLf & _
-    "Instala el sidecar primero: deploy\browserd\setup-browserd.ps1"
-  WScript.Quit 1
-End If
-
 logs = fso.BuildPath(dir, "logs")
 If Not fso.FolderExists(logs) Then fso.CreateFolder(logs)
 outLog = fso.BuildPath(logs, "browserd.out.log")
 errLog = fso.BuildPath(logs, "browserd.err.log")
 
-' Sondeo del contrato con validacion JSON real (probe_health.py, junto a este
-' launcher). Codigos: 0 = browserd valido, 1 = responde algo ajeno, 2 = libre.
+If Not fso.FileExists(py) Then
+  LogLine errLog, "No existe el python del venv: " & py & ". Instala el sidecar: deploy\browserd\setup-browserd.ps1"
+  WScript.Quit 1
+End If
+
+' Sin el validador del contrato no hay arranque seguro: fallar cerrado.
 probeScript = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "probe_health.py")
+If Not fso.FileExists(probeScript) Then
+  LogLine errLog, "No existe probe_health.py junto al launcher; no arranco sin validar el contrato."
+  WScript.Quit 1
+End If
+
+' Sondeo del contrato: 0 = browserd valido, 2 = puerto libre, otro = no arrancar.
 cmd = "cmd /c " & Chr(34) & _
       """" & py & """ """ & probeScript & """ """ & HEALTH_URL & """" & _
       Chr(34)
@@ -77,8 +81,9 @@ probe = sh.Run(cmd, 0, True)
 If probe = 0 Then
   LogLine outLog, "Ya responde un browserd valido en 127.0.0.1:7701; no arranco otra instancia (esa instancia NO queda supervisada por la tarea)."
   WScript.Quit 0
-ElseIf probe = 1 Then
-  LogLine errLog, "127.0.0.1:7701 responde pero NO cumple el contrato browserd; no arranco. Cierra ese proceso."
+End If
+If probe <> 2 Then
+  LogLine errLog, "127.0.0.1:7701 no esta libre ni responde el contrato browserd (codigo " & probe & "); no arranco."
   WScript.Quit 1
 End If
 
