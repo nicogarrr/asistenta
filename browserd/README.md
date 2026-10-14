@@ -3,7 +3,7 @@
 Proceso Python local que mantiene sesiones de navegador con huella de Firefox
 real ([Camoufox](https://github.com/daijro/camoufox), MPL-2.0) y expone una
 API HTTP minima en `127.0.0.1:7701`. El servicio de navegador de asistenta
-(Node, `src/browser/service.ts`) lo usa como motor alternativo al actual
+(Node, `src/browser/service.ts`) lo usará como motor alternativo al actual
 (playwright + Chrome) cuando una tienda devuelve challenges o bloqueos.
 
 Por que: en el benchmark de 2026-10-14 (10 objetivos reales, VM ARM64 con IP
