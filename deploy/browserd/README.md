@@ -95,3 +95,34 @@ real re-ejecutado contra Camoufox en contenedor (PASS). La primera ejecucion
 real del .ps1 es en el PC del usuario: cada paso falla con mensaje claro y el
 smoke real (paso 5) es la prueba de que Camoufox funciona en esa maquina
 antes de activar nada.
+
+## Arranque automático al iniciar sesión (install-browserd-autostart.ps1)
+
+Una vez instalado y validado el sidecar con `setup-browserd.ps1`, puedes dejarlo
+arrancando solo en cada inicio de sesión:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\browserd\install-browserd-autostart.ps1 -Start
+```
+
+Registra una tarea en el Planificador de tareas (disparador `AtLogOn`, carpeta del
+propio usuario, sin elevación) que lanza `python -m browserd` a través de
+`start-browserd-hidden.vbs`: sin ventana de consola y con la misma configuración
+explícita que `setup-browserd.ps1 -Start` (loopback, puerto 7701, token vacío).
+Logs en `browserd\logs\` (se añaden, no se sobrescriben).
+
+Si el proceso muere, la tarea lo reintenta cada minuto (hasta 999 veces). Si sigue
+vivo pero colgado, el Planificador no puede verlo: ese caso lo detecta asistenta
+sondeando `/health`.
+
+| Parámetro | Para qué |
+| --- | --- |
+| `-Status` | Estado de la tarea, último resultado y sondeo de `/health`. Solo lectura. |
+| `-Uninstall` | Para y borra la tarea. |
+| `-Force` | Reemplaza una tarea existente en vez de negarse. |
+| `-TaskName` | Nombre de la tarea. Por defecto `browserd-sidecar`. |
+| `-RepoDir` / `-PythonExe` | Rutas si el repo o el venv no están donde se espera. |
+
+Estado de verificación: script y launcher revisados estáticamente (parse de
+PowerShell superado); su primera ejecución real es en el PC del usuario, igual
+que `setup-browserd.ps1`.
