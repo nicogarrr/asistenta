@@ -36,7 +36,8 @@ for s in (origin, hook):
 OP, HP = origin.server_address[1], hook.server_address[1]
 
 import os
-os.environ["BROWSERD_PROFILES_DIR"] = "/tmp/bdprofiles-smoke"
+import tempfile
+os.environ["BROWSERD_PROFILES_DIR"] = tempfile.mkdtemp(prefix="bdprofiles-smoke-")
 os.environ["BROWSERD_PORT"] = "17731"
 from browserd.server import app
 import uvicorn
