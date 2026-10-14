@@ -18,12 +18,16 @@ function newDb(): DatabaseSync {
   return new DatabaseSync(join(mkdtempSync(join(tmpdir(), 'pa-pbm-')), 'g.db'));
 }
 
-function activeGestion(gestor: GestorStore) {
+function activeGestion(
+  gestor: GestorStore,
+  domains: { domain: string; hadPlaybook: boolean }[] = [],
+) {
   const g = gestor.propose({
     scope: SCOPE,
     title: 'alta',
     encargo: 'hazme el alta',
     plan: [{ text: 'paso 1', effect: 'lee', done: false }],
+    domains,
   });
   gestor.start(g.id);
   return g;
@@ -32,8 +36,7 @@ function activeGestion(gestor: GestorStore) {
 describe('GestorStore playbook outcomes (C3)', () => {
   it('complete counts ok per declared domain WITH a playbook, and only those', () => {
     const gestor = new GestorStore({ db: newDb() });
-    const g = activeGestion(gestor);
-    gestor.noteDomains(g.id, [
+    const g = activeGestion(gestor, [
       { domain: 'seg-social.es', hadPlaybook: true },
       { domain: 'sin-playbook.es', hadPlaybook: false },
     ]);
@@ -43,24 +46,22 @@ describe('GestorStore playbook outcomes (C3)', () => {
 
   it('cancel counts "no completada" only when the gestión was attempted (active)', () => {
     const gestor = new GestorStore({ db: newDb() });
-    const attempted = activeGestion(gestor);
-    gestor.noteDomains(attempted.id, [{ domain: 'intentada.es', hadPlaybook: true }]);
+    const attempted = activeGestion(gestor, [{ domain: 'intentada.es', hadPlaybook: true }]);
     gestor.cancel(attempted.id);
     const proposed = gestor.propose({
       scope: SCOPE,
       title: 'x',
       encargo: 'y',
       plan: [{ text: 'paso 1', effect: 'lee', done: false }],
+      domains: [{ domain: 'solo-propuesta.es', hadPlaybook: true }],
     });
-    gestor.noteDomains(proposed.id, [{ domain: 'solo-propuesta.es', hadPlaybook: true }]);
     gestor.cancel(proposed.id);
     expect(gestor.playbookOutcomes()).toEqual([{ domain: 'intentada.es', ok: 0, failed: 1 }]);
   });
 
   it('attribution is consumed once: a later gestión starts clean', () => {
     const gestor = new GestorStore({ db: newDb() });
-    const g1 = activeGestion(gestor);
-    gestor.noteDomains(g1.id, [{ domain: 'a.es', hadPlaybook: true }]);
+    const g1 = activeGestion(gestor, [{ domain: 'a.es', hadPlaybook: true }]);
     gestor.complete(g1.id);
     const g2 = activeGestion(gestor);
     gestor.complete(g2.id);
@@ -69,13 +70,55 @@ describe('GestorStore playbook outcomes (C3)', () => {
 
   it('outcomes aggregate across gestiones of the same domain', () => {
     const gestor = new GestorStore({ db: newDb() });
-    const g1 = activeGestion(gestor);
-    gestor.noteDomains(g1.id, [{ domain: 'a.es', hadPlaybook: true }]);
+    const g1 = activeGestion(gestor, [{ domain: 'a.es', hadPlaybook: true }]);
     gestor.complete(g1.id);
-    const g2 = activeGestion(gestor);
-    gestor.noteDomains(g2.id, [{ domain: 'a.es', hadPlaybook: true }]);
+    const g2 = activeGestion(gestor, [{ domain: 'a.es', hadPlaybook: true }]);
     gestor.cancel(g2.id);
     expect(gestor.playbookOutcomes()).toEqual([{ domain: 'a.es', ok: 1, failed: 1 }]);
+  });
+});
+
+describe('GestorStore playbook outcomes: atomicidad (auditor C3 ronda 2)', () => {
+  it('complete es atómico: un fallo a mitad no deja status escrito ni tally a medias, y el retry funciona', () => {
+    const db = newDb();
+    const gestor = new GestorStore({ db });
+    const g = activeGestion(gestor, [
+      { domain: 'uno.es', hadPlaybook: true },
+      { domain: 'dos.es', hadPlaybook: true },
+    ]);
+    // La repro exacta del auditor: un trigger que aborta el SEGUNDO insert.
+    db.exec(`CREATE TRIGGER fail_second BEFORE INSERT ON playbook_outcomes
+             WHEN NEW.domain = 'uno.es' BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    expect(() => gestor.complete(g.id)).toThrow(/boom/);
+    expect(gestor.read(g.id)?.status).toBe('active');
+    expect(gestor.playbookOutcomes()).toEqual([]);
+    db.exec('DROP TRIGGER fail_second');
+    gestor.complete(g.id);
+    expect(gestor.read(g.id)?.status).toBe('done');
+    expect(gestor.playbookOutcomes()).toEqual([
+      { domain: 'dos.es', ok: 1, failed: 0 },
+      { domain: 'uno.es', ok: 1, failed: 0 },
+    ]);
+  });
+
+  it('propose + atribución también es atómico: nada queda a medias', () => {
+    const db = newDb();
+    const gestor = new GestorStore({ db });
+    db.exec(
+      `CREATE TRIGGER fail_dom BEFORE INSERT ON gestion_domains BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+    );
+    const input = {
+      scope: SCOPE,
+      title: 't',
+      encargo: 'e',
+      plan: [{ text: 'paso 1', effect: 'lee' as const, done: false }],
+      domains: [{ domain: 'a.es', hadPlaybook: true }],
+    };
+    expect(() => gestor.propose(input)).toThrow(/boom/);
+    expect(gestor.list(SCOPE)).toEqual([]);
+    db.exec('DROP TRIGGER fail_dom');
+    expect(() => gestor.propose(input)).not.toThrow();
+    expect(gestor.list(SCOPE)).toHaveLength(1);
   });
 });
 

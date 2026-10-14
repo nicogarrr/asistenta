@@ -44,7 +44,9 @@ describe('buildWeeklySummary', () => {
         { domain: 'sin-uso.es', ok: 0, failed: 0 },
       ],
     });
-    expect(text).toContain('Gestiones en sitios con playbook guardado:');
+    expect(text).toContain(
+      'Gestiones en sitios con playbook guardado (acumulado desde que se activó el registro):',
+    );
     expect(text).toContain('seg-social.es: 2 completadas, 1 no completadas');
     expect(text).not.toContain('sin-uso.es');
     expect(text).not.toContain('fall');

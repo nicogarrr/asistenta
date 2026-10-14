@@ -364,11 +364,13 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
             true,
           );
         }
-        const gestion = deps.gestor.propose({ scope, title, encargo, plan });
-        deps.gestor.noteDomains(
-          gestion.id,
-          domains.map((domain) => ({ domain, hadPlaybook: hadPlaybook.has(domain) })),
-        );
+        const gestion = deps.gestor.propose({
+          scope,
+          title,
+          encargo,
+          plan,
+          domains: domains.map((domain) => ({ domain, hadPlaybook: hadPlaybook.has(domain) })),
+        });
         return reply(formatProposal(gestion, access));
       }
 

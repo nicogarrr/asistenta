@@ -159,7 +159,14 @@ export class GestorStore {
     return Number(row?.n ?? 0);
   }
 
-  propose(input: { scope: string; title: string; encargo: string; plan: GestionStep[] }): Gestion {
+  propose(input: {
+    scope: string;
+    title: string;
+    encargo: string;
+    plan: GestionStep[];
+    /** C3: domain attribution captured at plan time, written atomically WITH the gestión. */
+    domains?: { domain: string; hadPlaybook: boolean }[];
+  }): Gestion {
     if (this.#count(input.scope, 'proposed') >= MAX_PROPOSED_GESTIONES) {
       throw new Error(
         `Ya hay ${MAX_PROPOSED_GESTIONES} gestiones propuestas esperando respuesta. Ejecuta o cancela alguna antes de preparar otra.`,
@@ -167,11 +174,14 @@ export class GestorStore {
     }
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.#db
-      .prepare(
-        `INSERT INTO gestiones (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', 0, '[]', ?, ?)`,
-      )
-      .run(id, input.scope, input.title, input.encargo, JSON.stringify(input.plan), now, now);
+    this.#tx(() => {
+      this.#db
+        .prepare(
+          `INSERT INTO gestiones (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', 0, '[]', ?, ?)`,
+        )
+        .run(id, input.scope, input.title, input.encargo, JSON.stringify(input.plan), now, now);
+      this.#insertDomains(id, input.domains ?? []);
+    });
     const gestion = this.read(id);
     if (!gestion) throw new Error('la gestión recién propuesta no se puede leer');
     return gestion;
@@ -231,8 +241,10 @@ export class GestorStore {
     if (gestion.status !== 'active') {
       throw new Error(`Solo se completa una gestión activa; está ${gestion.status}.`);
     }
-    this.#set(id, { status: 'done' });
-    this.#recordOutcome(id, true);
+    this.#tx(() => {
+      this.#set(id, { status: 'done' });
+      this.#recordOutcome(id, true);
+    });
   }
 
   cancel(id: string): void {
@@ -240,22 +252,36 @@ export class GestorStore {
     if (gestion.status === 'done') {
       throw new Error('Una gestión terminada no se cancela; ya está hecha.');
     }
-    this.#set(id, { status: 'cancelled' });
-    if (gestion.status === 'active') {
-      this.#recordOutcome(id, false);
-    } else {
-      // Cancelled while merely proposed: the playbook was never tried, so it
-      // says nothing about the knowledge. Drop the attribution uncounted.
-      this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
-    }
+    this.#tx(() => {
+      this.#set(id, { status: 'cancelled' });
+      if (gestion.status === 'active') {
+        this.#recordOutcome(id, false);
+      } else {
+        // Cancelled while merely proposed: the playbook was never tried, so it
+        // says nothing about the knowledge. Drop the attribution uncounted.
+        this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
+      }
+    });
   }
 
   /**
-   * C3: which domains a gestión declared at plan time and whether a playbook
-   * existed then. Written by preparar; consumed exactly once by complete /
-   * cancel.
+   * Several writes, one truth: autocommit would leave a half-written outcome
+   * on any error — status changed but tally empty and the retry rejected by
+   * the status guard (auditor C3 ronda 2, reproduced with a failing trigger).
    */
-  noteDomains(gestionId: string, domains: { domain: string; hadPlaybook: boolean }[]): void {
+  #tx(fn: () => void): void {
+    this.#db.exec('BEGIN');
+    try {
+      fn();
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** C3 attribution rows for one gestión; consumed exactly once by complete / cancel. */
+  #insertDomains(gestionId: string, domains: { domain: string; hadPlaybook: boolean }[]): void {
     const stmt = this.#db.prepare(
       'INSERT OR IGNORE INTO gestion_domains (gestion_id, domain, had_playbook) VALUES (?, ?, ?)',
     );
