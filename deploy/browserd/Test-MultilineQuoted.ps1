@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   dotenv (y util.parseEnv de Node) admiten valores entre comillas que ocupan
-  varias lineas. Un editor que filtra por lineas destruiria ese valor si una
+  varias lineas, con TRES delimitadores posibles: dobles, simples y backtick. Un editor que filtra por lineas destruiria ese valor si una
   de las lineas internas parece una asignacion (canario del auditor:
   PROMPT="first line\nBROWSER_ENGINE=inside-prompt\nlast line").
   Este scanner recorre el archivo consciente del estado de comillas:
@@ -31,7 +31,9 @@ function Test-MultilineQuoted {
           if ($inQuote -eq '"' -and $i -gt 0 -and $l[$i - 1] -eq '\') { continue }
           $inQuote = $null
         }
-      } elseif ($c -eq '"' -or $c -eq "'") {
+      } elseif ($c -eq '"' -or $c -eq "'" -or $c -eq [char]96) {
+        # Node (util.parseEnv/dotenv) admite TRES delimitadores: ", ' y
+        # backtick (char 96). El backtick tambien abre valor multilinea.
         $inQuote = $c
       } elseif ($c -eq '#') {
         break  # comentario fuera de comillas: el resto de la linea no cuenta

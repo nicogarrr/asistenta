@@ -28,6 +28,11 @@ Check 'comilla simple impar (conservador)' @("NAME=don't") $true
 Check 'comillas dentro de comentario' @('# un "comentario" con comillas', 'A=1') $false
 Check 'comillas escapadas dentro de dobles' @('A="dijo \"hola\" y cerro"', 'B=2') $false
 Check 'multilinea con comillas simples' @("TXT='uno", "dos'") $true
+Check 'multilinea con backtick (tercer delimitador Node)' @(
+  'PROMPT=`first line',
+  'BROWSER_ENGINE=inside-prompt',
+  'last line`'
+) $true
 
 if ($script:fail -ne 0) { exit 1 }
 Write-Host 'TODOS LOS FIXTURES OK'
