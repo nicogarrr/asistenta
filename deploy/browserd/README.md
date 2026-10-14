@@ -76,9 +76,9 @@ arranque (`npm start`). Hasta entonces el comportamiento no cambia.
 ## Que NO hace
 
 - No reinicia ni para la asistenta que este corriendo.
-- No registra arranque automatico del sidecar tras un reinicio de Windows
-  (si lo queremos, vendra como tarea del Planificador en otra PR, igual que
-  `deploy\windows\install-autostart.ps1`).
+- No registra arranque automatico del sidecar tras un reinicio de Windows:
+  para eso esta `install-browserd-autostart.ps1` (ver la seccion de arranque
+  automatico mas abajo).
 - No toca prod ni la VM.
 
 ## Problemas frecuentes
@@ -122,6 +122,22 @@ sondeando `/health`.
 | `-Force` | Reemplaza una tarea existente en vez de negarse. |
 | `-TaskName` | Nombre de la tarea. Por defecto `browserd-sidecar`. |
 | `-RepoDir` / `-PythonExe` | Rutas si el repo o el venv no están donde se espera. |
+
+Detalles que conviene saber:
+
+- El launcher sondea `/health` con `probe_health.py`, que valida el contrato
+  JSON real (un 200 con las palabras sueltas no vale). Si ya vive un browserd
+  válido, la tarea termina con código 0 sin crear otro proceso, y esa instancia
+  NO queda supervisada (la supervisión cubre solo lo que arranca la tarea).
+- `-Uninstall` y `-Force` paran los procesos `python.exe -m browserd` de este
+  venv (módulo exacto: `-m browserd_backup` no se toca). Eso incluye una
+  instancia manual arrancada desde el mismo venv: no se puede distinguir de
+  una huérfana de la tarea, y dejarla viva mantendría el puerto ocupado.
+  Cada parada se anuncia por consola; rearranca con `setup-browserd.ps1 -Start`.
+- `-Force` respalda la tarea vieja en XML antes de tocarla y la restaura si el
+  registro nuevo falla.
+- La lógica testeable vive en `Select-BrowserdProcess.ps1` con canarios en
+  `test-autostart-canaries.ps1` (`pwsh -File ...`, exit != 0 si falla alguno).
 
 Estado de verificación: script y launcher revisados estáticamente (parse de
 PowerShell superado); su primera ejecución real es en el PC del usuario, igual

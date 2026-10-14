@@ -17,21 +17,23 @@
 ' waitOnReturn=False, wscript terminaria OK al instante y ninguna de esas
 ' garantias tocaria al sidecar.
 '
-' IDEMPOTENCIA (auditoria): antes de arrancar nada se sondea /health:
-'   - si YA responde un browserd con su contrato, este launcher sale con 0 sin
-'     crear otro proceso (un segundo bind a 127.0.0.1:7701 fallaria en bucle
-'     con el reinicio por minuto de la tarea). OJO: esa instancia previa NO
-'     queda supervisada por la tarea; la supervision cubre solo instancias
-'     arrancadas por la propia tarea.
-'   - si el puerto responde pero NO es un browserd valido, sale con 1 sin
-'     arrancar: competir por el puerto tampoco levantaria nada sano.
+' IDEMPOTENCIA (auditoria): antes de arrancar nada se sondea /health con
+' probe_health.py, que valida el CONTRATO JSON real (service=browserd, version,
+' capability read; un 200 con las palabras sueltas no vale):
+'   - contrato valido  -> sale con 0 sin crear otro proceso (un segundo bind a
+'     127.0.0.1:7701 fallaria en bucle con el reinicio por minuto de la tarea).
+'     OJO: esa instancia previa NO queda supervisada por la tarea; la
+'     supervision cubre solo instancias arrancadas por la propia tarea.
+'   - responde algo que no cumple el contrato -> sale con 1 sin arrancar:
+'     competir por el puerto tampoco levantaria nada sano.
+'   - nadie escucha -> arranca.
 '
 ' La configuracion es EXPLICITA (la misma que setup-browserd.ps1 -Start):
 ' loopback, puerto 7701 y token vacio. Escuchar fuera de loopback exigiria
 ' token, y eso es una decision que no le corresponde a un arranque automatico.
 Option Explicit
 
-Dim sh, fso, py, dir, logs, outLog, errLog, cmd, exitCode, probe
+Dim sh, fso, py, dir, logs, outLog, errLog, cmd, exitCode, probe, probeScript
 
 Const HEALTH_URL = "http://127.0.0.1:7701/health"
 
@@ -53,29 +55,6 @@ Sub LogLine(path, msg)
   ts.Close
 End Sub
 
-' 0 = nadie escucha; 1 = browserd valido (contrato); 2 = responde algo ajeno.
-Function ProbeHealth(url)
-  Dim http, body
-  On Error Resume Next
-  Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
-  http.SetTimeouts 2000, 2000, 2000, 2000
-  http.Open "GET", url, False
-  http.Send
-  If Err.Number <> 0 Then
-    ProbeHealth = 0
-    Err.Clear
-    On Error GoTo 0
-    Exit Function
-  End If
-  On Error GoTo 0
-  body = http.ResponseText
-  If http.Status = 200 And InStr(body, "browserd") > 0 And InStr(body, "read") > 0 Then
-    ProbeHealth = 1
-  Else
-    ProbeHealth = 2
-  End If
-End Function
-
 If Not fso.FileExists(py) Then
   WScript.Echo "No existe el python del venv: " & py & vbCrLf & _
     "Instala el sidecar primero: deploy\browserd\setup-browserd.ps1"
@@ -87,12 +66,19 @@ If Not fso.FolderExists(logs) Then fso.CreateFolder(logs)
 outLog = fso.BuildPath(logs, "browserd.out.log")
 errLog = fso.BuildPath(logs, "browserd.err.log")
 
-probe = ProbeHealth(HEALTH_URL)
-If probe = 1 Then
+' Sondeo del contrato con validacion JSON real (probe_health.py, junto a este
+' launcher). Codigos: 0 = browserd valido, 1 = responde algo ajeno, 2 = libre.
+probeScript = fso.BuildPath(fso.GetParentFolderName(WScript.ScriptFullName), "probe_health.py")
+cmd = "cmd /c " & Chr(34) & _
+      """" & py & """ """ & probeScript & """ """ & HEALTH_URL & """" & _
+      Chr(34)
+probe = sh.Run(cmd, 0, True)
+
+If probe = 0 Then
   LogLine outLog, "Ya responde un browserd valido en 127.0.0.1:7701; no arranco otra instancia (esa instancia NO queda supervisada por la tarea)."
   WScript.Quit 0
-ElseIf probe = 2 Then
-  LogLine errLog, "127.0.0.1:7701 responde pero NO es un browserd valido; no arranco. Cierra ese proceso."
+ElseIf probe = 1 Then
+  LogLine errLog, "127.0.0.1:7701 responde pero NO cumple el contrato browserd; no arranco. Cierra ese proceso."
   WScript.Quit 1
 End If
 

@@ -70,6 +70,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Logica testeable (modulo exacto, parseo de Arguments) en un helper con
+# canarios: deploy\browserd\test-autostart-canaries.ps1
+. (Join-Path $PSScriptRoot 'Select-BrowserdProcess.ps1')
+
 function Write-Step { param([string] $Message) Write-Host "==> $Message" }
 function Write-Ok { param([string] $Message) Write-Host "  ok  $Message" -ForegroundColor Green }
 function Write-Bad { param([string] $Message) Write-Host "  !!  $Message" -ForegroundColor Red }
@@ -119,16 +123,40 @@ function Stop-BrowserdProcesses {
     param([string] $PythonExe)
     # Stop-ScheduledTask mata el proceso supervisado (wscript); el python que
     # queda huerfano seguiria ocupando 127.0.0.1:7701 y la siguiente instancia
-    # no podria ni arrancar ni notarse. Se mata SOLO el python de ESTE venv
-    # corriendo `-m browserd`: filtrar por CommandLine solo podria llevarse por
-    # delante un browserd de otra instalacion.
-    $escaped = [regex]::Escape($PythonExe)
+    # no podria ni arrancar ni notarse. Se para SOLO el python de ESTE venv
+    # (ExecutablePath exacto) corriendo el MODULO EXACTO `-m browserd`
+    # (Test-BrowserdCommandLine, con canarios): la frontera evita llevarse
+    # `-m browserd_backup` u otros modulos prefijados.
+    # OJO, dicho en voz alta (auditoria): una instancia MANUAL arrancada desde
+    # este mismo venv tambien se para, porque no se puede distinguir de una
+    # huerfana de la tarea. Se anuncia una a una y queda escrito en el README;
+    # dejarla viva mantendria el puerto ocupado tras quitar el autostart.
     Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -eq $PythonExe -and $_.CommandLine -match '-m\s+browserd' } |
+        Where-Object { $_.ExecutablePath -eq $PythonExe -and (Test-BrowserdCommandLine $_.CommandLine) } |
         ForEach-Object {
-            Write-Step "Parando browserd huerfano (pid $($_.ProcessId))"
+            Write-Step "Parando browserd de este venv (pid $($_.ProcessId)); si era una instancia manual, rearrancala con setup-browserd.ps1 -Start"
             Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
         }
+}
+
+function Resolve-CleanupPython {
+    param($Task)
+    # Que python limpiar al quitar o reemplazar, en orden de confianza
+    # (auditoria):
+    #   1. -PythonExe explicito: el llamador manda.
+    #   2. El python que la TAREA registrada lanzaba, extraido de los Arguments
+    #      verificados de su accion: es la instancia real bajo supervision,
+    #      aunque no sea el venv por defecto.
+    #   3. El venv por defecto del repo.
+    if ($PythonExe) { return (Resolve-Path -LiteralPath $PythonExe).Path }
+    if ($Task -and $Task.Actions -and $Task.Actions.Count -gt 0) {
+        $taskPy = Get-LauncherPythonPath $Task.Actions[0].Arguments
+        if ($taskPy -and (Test-Path -LiteralPath $taskPy -PathType Leaf)) { return $taskPy }
+    }
+    $repo = Resolve-Repo -Explicit $RepoDir
+    $defaultPy = Join-Path $repo 'browserd\.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $defaultPy -PathType Leaf) { return (Resolve-Path -LiteralPath $defaultPy).Path }
+    return $null
 }
 
 function Get-Task {
@@ -177,9 +205,8 @@ function Uninstall {
     Write-Step "Parando y borrando '$TaskName'"
     Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -InputObject $task -Confirm:$false
-    $repo = Resolve-Repo -Explicit $RepoDir
-    $py = Join-Path $repo 'browserd\.venv\Scripts\python.exe'
-    if (Test-Path -LiteralPath $py -PathType Leaf) { Stop-BrowserdProcesses -PythonExe (Resolve-Path -LiteralPath $py).Path }
+    $pyToClean = Resolve-CleanupPython -Task $task
+    if ($pyToClean) { Stop-BrowserdProcesses -PythonExe $pyToClean }
     Write-Ok 'Tarea borrada. browserd deja de arrancar al iniciar sesión.'
 }
 
@@ -220,18 +247,10 @@ function Install {
     if ($existing -and -not $Force) {
         throw "Ya existe la tarea '$TaskName'. Usa -Force para reemplazarla o -Uninstall para quitarla."
     }
-    $backupXml = $null
-    if ($existing) {
-        # Respaldo ANTES de tocar nada: si el registro nuevo falla, la tarea
-        # vieja se restaura desde su XML y el PC no se queda sin autostart
-        # (auditoria: borrar primero y registrar despues deja un hueco).
-        $backupXml = Export-ScheduledTask -InputObject $existing
-        Write-Step "Quito la tarea anterior ($($existing.State)); respaldo XML en memoria"
-        Stop-ScheduledTask -InputObject $existing -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -InputObject $existing -Confirm:$false
-        Stop-BrowserdProcesses -PythonExe $py
-    }
 
+    # Construir TODOS los objetos ANTES de tocar la tarea vieja (auditoria):
+    # un fallo en esta preparacion deja la tarea anterior intacta y no hace
+    # falta rollback.
     $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
     $action = New-ScheduledTaskAction -Execute $wscript `
         -Argument "`"$launcher`" `"$py`" `"$browserdDir`"" `
@@ -258,8 +277,26 @@ function Install {
 
     $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited
 
+    # Respaldo ANTES de la mutacion: si el registro nuevo falla, la tarea vieja
+    # se restaura desde su XML y el PC no se queda sin autostart.
+    $backupXml = $null
+    if ($existing) {
+        $backupXml = Export-ScheduledTask -InputObject $existing
+    }
+
     Write-Step "Registro la tarea en '$TaskPath'"
     try {
+        if ($existing) {
+            Write-Step "Quito la tarea anterior ($($existing.State)); respaldo XML en memoria"
+            Stop-ScheduledTask -InputObject $existing -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -InputObject $existing -Confirm:$false
+            # Limpia el python que la tarea VIEJA lanzaba (extraido de su
+            # accion verificada), no necesariamente el del registro nuevo.
+            $oldPy = Get-LauncherPythonPath $existing.Actions[0].Arguments
+            if ($oldPy -and (Test-Path -LiteralPath $oldPy -PathType Leaf)) {
+                Stop-BrowserdProcesses -PythonExe $oldPy
+            }
+        }
         Register-ScheduledTask `
             -TaskName $TaskName `
             -TaskPath $TaskPath `
