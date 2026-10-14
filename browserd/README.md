@@ -72,3 +72,14 @@ Los tests usan engines falsos: no levantan navegadores de verdad.
   por defecto es 4.
 - El adapter Node (src/browser/service.ts -> este servicio, con fallback al
   motor actual por flag) llega en una PR posterior.
+
+## Integracion con pricewatch (BROWSER_ENGINE)
+
+`src/watch/pricewatch-browserd.ts` enruta las lecturas publicas de tienda por
+el sidecar cuando `BROWSER_ENGINE=camoufox` (cualquier otro valor o ausencia =
+motor actual playwright, comportamiento historico). Variables: `BROWSERD_URL`
+(defecto `http://127.0.0.1:7701`) y `BROWSERD_TOKEN` (bearer; vacio en
+loopback). Si el sidecar no responde, el primer fallo de transporte conmuta al
+motor playwright para el resto del ciclo (se registra una vez); un 403 de
+bloqueo/challenge NO dispara fallback. Limitacion: el `permit` (robots/presu-
+puesto) se aplica solo al documento principal, sin interception por subrecurso.

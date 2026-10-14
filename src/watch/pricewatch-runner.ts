@@ -1,4 +1,5 @@
 import { PublicPriceBrowser, usesPublicBrowser } from './pricewatch-browser.js';
+import { createPricePageReader } from './pricewatch-browserd.js';
 import { pricewatchNotifier } from './pricewatch-notify.js';
 /**
  * Un ciclo completo del vigilante de precios: barrido de listados (capa A) + verificación en
@@ -241,7 +242,8 @@ export function realDeps(
   stdoutOnly = false,
   mainBotToken = '',
 ): CycleDeps {
-  const browser = new PublicPriceBrowser();
+  // BROWSER_ENGINE=camoufox enruta por el sidecar browserd con fallback a playwright.
+  const browser = createPricePageReader(new PublicPriceBrowser());
   const robotsCache = new Map<string, { text: string; day: string }>();
   const reserve = (url: string): boolean => {
     const db = deps.openDb();
