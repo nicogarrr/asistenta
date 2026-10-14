@@ -183,6 +183,12 @@ export class ConversationSession {
   #generation = 0;
   #bargeIn: BargeInLevel;
   #bargeIns = 0;
+  /** Interrupciones cuya frase sembrada acabó en turno real (o cierre pedido). */
+  #bargeTrue = 0;
+  /** Interrupciones cuya frase sembrada era ruido descartado: falso disparo. */
+  #bargeFalseNoise = 0;
+  /** Interrupciones cuya frase sembrada era mi propia voz por los altavoces. */
+  #bargeFalseEcho = 0;
   /** Which turn is allowed to resume listening when it ends (an interrupted one is not). */
   #turnSeq = 0;
   #speakStop: (() => void) | null = null;
@@ -232,9 +238,15 @@ export class ConversationSession {
     lastHeard: string;
     lastError: string;
     bargeIns: number;
+    bargeTrue: number;
+    bargeFalseNoise: number;
+    bargeFalseEcho: number;
   } {
     return {
       bargeIns: this.#bargeIns,
+      bargeTrue: this.#bargeTrue,
+      bargeFalseNoise: this.#bargeFalseNoise,
+      bargeFalseEcho: this.#bargeFalseEcho,
       state: this.#state,
       utterances: this.#utterances,
       lastHeard: this.#lastHeard,
@@ -404,16 +416,20 @@ export class ConversationSession {
   async #handleText(raw: string, generation: number): Promise<void> {
     const text = raw.trim();
     this.#lastHeard = text;
+    // Was this utterance seeded by a barge-in? That decides how it counts in the
+    // false-trigger metric (item 11): noise or self-echo after interrupting is a
+    // false trigger; a real turn (or a spoken close) is a true one.
+    const seeded = this.#bargeSeeded;
+    this.#bargeSeeded = false;
     if (isNoise(text)) {
-      this.#bargeSeeded = false;
+      if (seeded) this.#bargeFalseNoise++;
       this.#resumeListening();
       return;
     }
     // The utterance that interrupted the agent may be the agent itself, heard through
     // the speakers. Mostly the same words as what it was reading: not a request.
-    const seeded = this.#bargeSeeded;
-    this.#bargeSeeded = false;
     if (seeded && this.#isSelfEcho(text)) {
+      this.#bargeFalseEcho++;
       this.#echoLoops++;
       this.#lastError = 'me he oído a mí mismo; descarto esa frase';
       // Twice in a row: the speakers feed the microphone. Stop interrupting.
@@ -425,7 +441,10 @@ export class ConversationSession {
       this.#resumeListening();
       return;
     }
-    if (seeded) this.#echoLoops = 0;
+    if (seeded) {
+      this.#echoLoops = 0;
+      this.#bargeTrue++;
+    }
     if (isClosingPhrase(text)) {
       this.close('cierre');
       return;

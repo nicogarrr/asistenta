@@ -173,6 +173,7 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { speakPhrases, splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
@@ -1210,6 +1211,8 @@ async function serveCommand(): Promise<number> {
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
   const weeklyState = new WeeklyState(memoryDb);
+  const voiceDb = new DatabaseSync(join(paths.state, 'voice.db'));
+  const bargeStats = new BargeStats(voiceDb);
   // One sweep at boot: patterns the user stopped showing lose their weight and
   // the ones that hit zero go, so old accidents cannot steer the daemon forever.
   instincts.decay(90);
@@ -2983,6 +2986,7 @@ async function serveCommand(): Promise<number> {
       now: Date.now(),
       pending: followups.safe(() => followups.summarize(), ''),
       playbooks: gestorStore.playbookOutcomes(),
+      barge: bargeStats.totals(Date.now() - 7 * 24 * 3_600_000),
       watching: pageWatches.list(chatId).length,
     });
   };
@@ -4176,8 +4180,9 @@ async function serveCommand(): Promise<number> {
   }): ConversationSession | null => {
     const listener = currentWake();
     if (!conversationOn || !listener || session) return session;
+    const levelAtOpen = bargeLevel;
     const created = new ConversationSession({
-      bargeIn: bargeLevel,
+      bargeIn: levelAtOpen,
       transcriber: (samples) => defaultTranscriber(samples),
       onUtterance: async (heard) => {
         const inbound: Inbound = {
@@ -4210,6 +4215,16 @@ async function serveCommand(): Promise<number> {
         activeSpeech?.abort();
         currentWake()?.hold(false);
         lastConversationEnd = `${reason}${detail ? `: ${detail}` : ''}`;
+        const closeStats = created.stats();
+        bargeStats.record({
+          endedAt: Date.now(),
+          level: levelAtOpen,
+          bargeIns: closeStats.bargeIns,
+          trueIns: closeStats.bargeTrue,
+          falseNoise: closeStats.bargeFalseNoise,
+          falseEcho: closeStats.bargeFalseEcho,
+          utterances: closeStats.utterances,
+        });
         log.info('voice session closed', { reason, detail });
         void notifyLastChat(closeSessionText(reason, detail)).catch(() => {});
       },
@@ -4317,15 +4332,20 @@ async function serveCommand(): Promise<number> {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
       const st = session?.stats();
+      const bargeHist = bargeStats.totals();
+      const bargeRate = bargeFalseRate(bargeHist);
       await say(
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones, lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
+            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} reales, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
             : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
           (currentWake()?.isRunning()
             ? ''
-            : ' El micrófono está cerrado: /conversacion on lo abre.'),
+            : ' El micrófono está cerrado: /conversacion on lo abre.') +
+          (bargeHist.bargeIns > 0 && bargeRate !== null
+            ? ` Histórico de cortes: ${bargeHist.bargeIns} interrupciones en ${bargeHist.sessions} sesiones, ${Math.round(bargeRate * 100)}% falsas.`
+            : ''),
         { quote: true },
       );
       return;
@@ -4341,11 +4361,18 @@ async function serveCommand(): Promise<number> {
         return;
       }
       bargeLevel = level;
+      const hist = bargeStats.totals();
+      const histRate = bargeFalseRate(hist);
+      const histLine =
+        hist.bargeIns >= 20 && histRate !== null
+          ? ` Llevas ${hist.bargeIns} interrupciones con un ${Math.round(histRate * 100)}% de falsos disparos (ruido o mi propia voz).`
+          : '';
       await say(
         inbound,
-        level === 'off'
+        (level === 'off'
           ? 'No me cortaré si hablas encima: te escucho cuando termine. Vale desde la próxima sesión.'
-          : `Si hablas encima me callo (${level}). Con altavoces es aproximado y puede cortar de más o de menos; con auriculares es fiable. Vale desde la próxima sesión.`,
+          : `Si hablas encima me callo (${level}). Con altavoces es aproximado y puede cortar de más o de menos; con auriculares es fiable. Vale desde la próxima sesión.`) +
+          histLine,
         { quote: true },
       );
       return;
