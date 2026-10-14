@@ -1,8 +1,10 @@
-"""API con manager inyectado: el flujo HTTP completo sin navegador real."""
+"""API con manager inyectado: flujo HTTP completo sin navegador real."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from browserd.config import Settings
@@ -32,6 +34,8 @@ class FakePage:
         return "titulo de prueba"
 
     async def evaluate(self, expression):
+        if expression == "nunca":
+            await asyncio.sleep(60)
         return {"expr": expression}
 
 
@@ -46,13 +50,14 @@ class FakeEngine:
         self.page._closed = True
 
 
-def client(tmp_path: Path, token: str = "") -> TestClient:
-    async def launcher(scope, profile_dir, headless):
+def client(tmp_path: Path, token: str = "", eval_timeout_ms: int = 30000,
+           launcher=None) -> TestClient:
+    async def default_launcher(scope, profile_dir, headless):
         return FakeEngine()
 
-    app.state.settings = Settings(token=token)
-    app.state.manager = SessionManager(profiles_dir=tmp_path, launcher=launcher)
-    return TestClient(app)
+    app.state.settings = Settings(token=token, eval_timeout_ms=eval_timeout_ms)
+    app.state.manager = SessionManager(profiles_dir=tmp_path, launcher=launcher or default_launcher)
+    return TestClient(app, base_url="http://localhost")
 
 
 def test_health(tmp_path):
@@ -77,3 +82,53 @@ def test_token(tmp_path):
     assert c.post("/sessions", json={"scope": "a"}).status_code == 401
     r = c.post("/sessions", json={"scope": "a"}, headers={"Authorization": "Bearer secreto"})
     assert r.status_code == 201
+
+
+# --- Canarios de seguridad #129 -----------------------------------------------
+
+def test_host_ajeno_rechazado(tmp_path):
+    c = client(tmp_path)
+    r = c.post("/sessions", json={"scope": "a"}, headers={"Host": "attacker.example"})
+    assert r.status_code == 403
+
+
+def test_origin_ajeno_rechazado(tmp_path):
+    c = client(tmp_path)
+    r = c.post("/sessions", json={"scope": "a"},
+               headers={"Origin": "https://attacker.example"})
+    assert r.status_code == 403
+
+
+def test_origin_loopback_aceptado(tmp_path):
+    c = client(tmp_path)
+    r = c.post("/sessions", json={"scope": "a"},
+               headers={"Origin": "http://localhost:7701"})
+    assert r.status_code == 201
+
+
+def test_bind_externo_sin_token_no_arranca():
+    with pytest.raises(ValueError):
+        Settings(host="0.0.0.0", token="")
+
+
+def test_bind_externo_con_token_ok():
+    assert Settings(host="0.0.0.0", token="x" * 32).host == "0.0.0.0"
+
+
+# --- Menores #129 --------------------------------------------------------------
+
+def test_launcher_roto_es_503_controlado(tmp_path):
+    async def launcher_roto(scope, profile_dir, headless):
+        raise RuntimeError("camoufox no instalado")
+
+    c = client(tmp_path, launcher=launcher_roto)
+    r = c.post("/sessions", json={"scope": "a"})
+    assert r.status_code == 503 and "motor" in r.json()["detail"]
+
+
+def test_evaluate_tiene_timeout(tmp_path):
+    c = client(tmp_path, eval_timeout_ms=1000)
+    sid = c.post("/sessions", json={"scope": "a"}).json()["id"]
+    c.post(f"/sessions/{sid}/goto", json={"url": "https://example.com"})
+    r = c.post(f"/sessions/{sid}/evaluate", json={"expression": "nunca"})
+    assert r.status_code == 504

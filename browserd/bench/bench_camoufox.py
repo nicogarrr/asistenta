@@ -3,8 +3,8 @@
 
     python -m bench.bench_camoufox            (o: python bench/bench_camoufox.py)
 
-Visita los targets de bench/targets.json con Camoufox (perfil temporal en
-bench/_profile), clasifica cada respuesta con la MISMA logica que asistenta
+Visita los targets de bench/targets.json con Camoufox (perfil propio en
+bench/profile (persistente: las cookies entre corridas ayudan a parecer un cliente real)), clasifica cada respuesta con la MISMA logica que asistenta
 (classifyChallenge de src/browser/service.ts) y guarda bench/results.json.
 Una celda ok = la tienda se abrio sin challenge ni bloqueo.
 """
@@ -40,7 +40,12 @@ HTML_RE = re.compile(
 )
 
 
+MIN_TEXT_OK = 400  # una pagina real de tienda siempre supera esto
+
+
 def classify(status: int | None, title: str, text: str, html: str) -> tuple[str, str | None]:
+    """`ok` exige pagina valida: 2xx Y contenido minimo. Un 200 vacio o un
+    404/500 no cuentan como exito (auditoria #129: si no, los numeros mienten)."""
     if TITLE.search((title or "").strip()):
         return "challenge", "cloudflare-ish"
     if text and len(text) < 800 and TEXT.search(text[:3000]):
@@ -49,7 +54,9 @@ def classify(status: int | None, title: str, text: str, html: str) -> tuple[str,
         return "blocked", f"http-{status}"
     if html and HTML_RE.search(html[:200000]):
         return "blocked", "marker"
-    return "ok", None
+    if isinstance(status, int) and 200 <= status < 300 and len(text or "") >= MIN_TEXT_OK:
+        return "ok", None
+    return "invalid", f"http-{status}" if isinstance(status, int) else "sin-respuesta"
 
 
 async def main() -> int:
@@ -57,7 +64,7 @@ async def main() -> int:
 
     targets = json.loads((HERE / "targets.json").read_text(encoding="utf-8"))
     out = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "cells": []}
-    profile = HERE / "_profile"
+    profile = HERE / "profile"
     profile.mkdir(exist_ok=True)
     async with AsyncCamoufox(headless=True, persistent_context=True, user_data_dir=str(profile)) as browser:
         page = await browser.new_page()

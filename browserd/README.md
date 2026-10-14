@@ -7,9 +7,10 @@ API HTTP minima en `127.0.0.1:7701`. El servicio de navegador de asistenta
 (playwright + Chrome) cuando una tienda devuelve challenges o bloqueos.
 
 Por que: en el benchmark de 2026-10-14 (10 objetivos reales, VM ARM64 con IP
-de datacenter - escenario pesimista), Camoufox abrio 8/10 sin un solo
-challenge frente a 3/10 del stack actual. La validacion definitiva se hace en
-el PC del usuario con su IP residencial con `bench/bench_camoufox.py`.
+de datacenter - escenario pesimista; `ok` exige 2xx + contenido real),
+Camoufox abrio 8/10 sin un solo challenge frente a 3/10 del stack actual, con
+algo de varianza entre corridas (Fnac oscilo ok/403). La validacion definitiva
+se hace en el PC del usuario con su IP residencial con `bench/bench_camoufox.py`.
 
 ## Requisitos
 
@@ -23,9 +24,14 @@ el PC del usuario con su IP residencial con `bench/bench_camoufox.py`.
 python -m browserd            # 127.0.0.1:7701, perfiles en ./profiles
 ```
 
-Variables: `BROWSERD_HOST`, `BROWSERD_PORT`, `BROWSERD_PROFILES_DIR`,
-`BROWSERD_MAX_SESSIONS` (4), `BROWSERD_TOKEN` (bearer opcional; en localhost
-puede quedar vacio), `BROWSERD_VISIBLE=1` (ventana, para depurar).
+Variables: `BROWSERD_HOST` (fuera de loopback EXIGE `BROWSERD_TOKEN` o el
+arranque falla), `BROWSERD_PORT`, `BROWSERD_PROFILES_DIR`,
+`BROWSERD_MAX_SESSIONS` (4), `BROWSERD_TOKEN` (bearer; en localhost puede
+quedar vacio), `BROWSERD_VISIBLE=1` (ventana, para depurar),
+`BROWSERD_EVAL_TIMEOUT_MS` (30000).
+
+Defensas: toda ruta rechaza Host ajeno a loopback (anti DNS-rebinding) y
+Origin ajeno; goto/evaluate van serializados por sesion y con timeout.
 
 ## API (todas JSON)
 
@@ -43,7 +49,9 @@ python bench/bench_camoufox.py
 ```
 
 Recorre `bench/targets.json` (7 tiendas + Google + pagina-test de Cloudflare +
-Amazon) y deja el resultado en `bench/results.json`. Sirve para comparar la IP
+Amazon) y deja el resultado en `bench/results.json`. `ok` exige pagina valida
+(2xx + contenido minimo); un 200 vacio o un error HTTP no cuentan. Usa un
+perfil persistente propio (`bench/profile`). Sirve para comparar la IP
 residencial del PC con los numeros de la VM antes de activar el sidecar en
 produccion.
 
