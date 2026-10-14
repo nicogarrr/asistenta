@@ -76,9 +76,9 @@ arranque (`npm start`). Hasta entonces el comportamiento no cambia.
 ## Que NO hace
 
 - No reinicia ni para la asistenta que este corriendo.
-- No registra arranque automatico del sidecar tras un reinicio de Windows
-  (si lo queremos, vendra como tarea del Planificador en otra PR, igual que
-  `deploy\windows\install-autostart.ps1`).
+- No registra arranque automatico del sidecar tras un reinicio de Windows:
+  para eso esta `install-browserd-autostart.ps1` (ver la seccion de arranque
+  automatico mas abajo).
 - No toca prod ni la VM.
 
 ## Problemas frecuentes
@@ -95,3 +95,72 @@ real re-ejecutado contra Camoufox en contenedor (PASS). La primera ejecucion
 real del .ps1 es en el PC del usuario: cada paso falla con mensaje claro y el
 smoke real (paso 5) es la prueba de que Camoufox funciona en esa maquina
 antes de activar nada.
+
+## Arranque automático al iniciar sesión (install-browserd-autostart.ps1)
+
+Una vez instalado y validado el sidecar con `setup-browserd.ps1`, puedes dejarlo
+arrancando solo en cada inicio de sesión:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\browserd\install-browserd-autostart.ps1 -Start
+```
+
+Registra una tarea en el Planificador de tareas (disparador `AtLogOn`, carpeta del
+propio usuario, sin elevación) que lanza `python -m browserd` a través de
+`start-browserd-hidden.vbs`: sin ventana de consola y con la misma configuración
+explícita que `setup-browserd.ps1 -Start` (loopback, puerto 7701, token vacío).
+Logs en `browserd\logs\` (se añaden, no se sobrescriben).
+
+Si el proceso muere, la tarea lo reintenta cada minuto (hasta 999 veces). Si sigue
+vivo pero colgado, el Planificador no puede verlo: ese caso lo detecta asistenta
+sondeando `/health`.
+
+| Parámetro | Para qué |
+| --- | --- |
+| `-Status` | Estado de la tarea, último resultado y sondeo de `/health`. Solo lectura. |
+| `-Uninstall` | Para y borra la tarea. |
+| `-Force` | Reemplaza una tarea existente en vez de negarse. |
+| `-TaskName` | Nombre de la tarea. Por defecto `browserd-sidecar`. |
+| `-RepoDir` / `-PythonExe` | Rutas si el repo o el venv no están donde se espera. |
+
+Detalles que conviene saber:
+
+- El launcher sondea `/health` con `probe_health.py`, que valida el contrato
+  JSON real (un 200 con las palabras sueltas no vale). Si ya vive un browserd
+  válido, la tarea termina con código 0 sin crear otro proceso, y esa instancia
+  NO queda supervisada (la supervisión cubre solo lo que arranca la tarea).
+- `-Uninstall` y `-Force` paran los procesos `python.exe -m browserd` de este
+  venv (módulo exacto: `-m browserd_backup` no se toca). Eso incluye una
+  instancia manual arrancada desde el mismo venv: no se puede distinguir de
+  una huérfana de la tarea, y dejarla viva mantendría el puerto ocupado.
+  Cada parada se anuncia por consola; rearranca con `setup-browserd.ps1 -Start`.
+- `-Force` respalda la tarea vieja en XML antes de tocarla y la restaura si el
+  registro nuevo falla.
+- La lógica testeable vive en `Select-BrowserdProcess.ps1` con canarios en
+  `test-autostart-canaries.ps1` (`pwsh -File ...`, exit != 0 si falla alguno).
+
+Estado de verificación: script y launcher revisados estáticamente (parse de
+PowerShell superado); su primera ejecución real es en el PC del usuario, igual
+que `setup-browserd.ps1`.
+
+### Verificación pendiente en el PC (primera ejecución real en Windows)
+
+El parse de PowerShell está superado en pwsh real y el diseño sigue el molde
+auditado de `deploy/windows/install-autostart.ps1`, pero esto solo puede
+probarse en Windows y queda declarado como pendiente:
+
+1. **Reinicio tras crash**: matar el proceso `python.exe -m browserd` a mano y
+   comprobar que la tarea lo levanta de nuevo en ~1 minuto (`-Status` debe
+   mostrar un `LastTaskResult` reciente y `/health` volver a responder).
+2. **Quoting de rutas con espacios**: ejecutar el instalador con el repo en una
+   ruta con espacios (el launcher usa el workaround de comillas exteriores de
+   `cmd /c`; no se ha podido ejecutar fuera de Windows).
+3. **Árbol de procesos**: `-Uninstall` (o `-Force`) debe dejar cero procesos
+   `python.exe -m browserd` del venv vivos (`Get-CimInstance Win32_Process`).
+4. **Adopción de instancia manual**: con un browserd arrancado a mano
+   (`setup-browserd.ps1 -Start`), lanzar la tarea y comprobar que termina con
+   código 0 sin crear otro proceso (esa instancia manual NO queda supervisada;
+   la supervisión cubre solo instancias arrancadas por la tarea).
+5. **Puerto ocupado por otro proceso**: con 127.0.0.1:7701 sirviendo algo que
+   no es browserd, la tarea debe terminar con código 1 y dejar constancia en
+   `browserd\logs\browserd.err.log`, sin bucle de binds.

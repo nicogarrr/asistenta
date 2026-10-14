@@ -4,3 +4,4 @@ profiles/
 bench/_profile/
 bench/profile/
 bench/results.json
+logs/
