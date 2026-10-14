@@ -7,7 +7,8 @@ export default defineConfig({
     // The suite asserts local-wall-clock behaviour (calendar days, "tomorrow",
     // quiet hours) and asistenta runs on a machine in Europe/Madrid. Without a
     // fixed zone the same test passes on Nico's PC and fails in a UTC container
-    // (10 tests red on main there). Pin the zone so the suite means the same
+    // (7 of the 10 red tests on main there trace to the zone; the other three
+    // were a stale fixed date and the pdfjs engine). Pin the zone so the suite means the same
     // thing everywhere; Node reads TZ lazily on Linux, and on Windows the
     // system zone already is Madrid.
     env: { TZ: 'Europe/Madrid' },
