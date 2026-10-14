@@ -71,6 +71,8 @@ class FakePage:
 
 
 class FakeEngine:
+    fail_close = False  # canario doble fallo
+
     def __init__(self):
         self.context = FakeContext()
         self.page = None
@@ -81,6 +83,8 @@ class FakeEngine:
         return self.page
 
     async def close(self):
+        if type(self).fail_close:
+            raise RuntimeError("engine close roto (canario)")
         self.closed = True
         for pg in list(self.context.pages):
             pg._closed = True
@@ -251,3 +255,27 @@ def test_read_evaluate_timeout_es_504_y_cierra(tmp_path):
     r = c.post(f"/sessions/{sid}/read", json={"url": "https://example.com", "expression": "nunca"})
     assert r.status_code == 504
     assert app.state.manager.get(sid).engine.page.is_closed()
+
+
+def test_read_doble_fallo_cierre_retiene_sesion_rota_con_barrera(tmp_path):
+    """page.close Y engine.close fallan (#130 r4): 502, sesion ROTA en _closing
+    (capacidad NO liberada con engine vivo) y barrera SIN desinstalar."""
+    c = client(tmp_path)
+    sid = c.post("/sessions", json={"scope": "t"}).json()["id"]
+    engine = app.state.manager.get(sid).engine
+    FakePage.fail_close = True
+    FakeEngine.fail_close = True
+    try:
+        r = c.post(f"/sessions/{sid}/read",
+                   json={"url": "https://example.com", "expression": "1",
+                         "allowed_hosts": ["example.com"]})
+    finally:
+        FakePage.fail_close = False
+        FakeEngine.fail_close = False
+    assert r.status_code == 502
+    manager = app.state.manager
+    assert sid in manager._closing          # capacidad retenida
+    assert sid not in manager._sessions
+    assert engine.context.routed is not None  # barrera sigue instalada
+    # capacidad: el hueco NO se libero
+    assert len(manager._sessions) + len(manager._closing) >= 1

@@ -88,6 +88,7 @@ class GotoRequest(BaseModel):
     # van de un salto (redirects re-entran por la barrera).
     allowed_hosts: list[str] | None = None
     permit_url: str | None = None
+    require_https: bool = True
 
 
 class ReadRequest(BaseModel):
@@ -103,6 +104,8 @@ class ReadRequest(BaseModel):
     settle_ms: int = Field(default=0, ge=0, le=30000)
     allowed_hosts: list[str] | None = None
     permit_url: str | None = None
+    # HTTPS estricto con la barrera activa (#130 r4); False solo para tests loopback.
+    require_https: bool = True
 
 
 class EvalRequest(BaseModel):
@@ -167,7 +170,8 @@ async def goto(session_id: str, body: GotoRequest) -> dict[str, Any]:
         guard: RequestGuard | None = None
         if body.allowed_hosts or body.permit_url:
             try:
-                guard = RequestGuard(body.allowed_hosts, body.permit_url)
+                guard = RequestGuard(body.allowed_hosts, body.permit_url,
+                                     require_https=body.require_https)
             except PermitUrlError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
@@ -208,7 +212,7 @@ async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
     guard: RequestGuard | None = None
     if body.allowed_hosts or body.permit_url:
         try:
-            guard = RequestGuard(body.allowed_hosts, body.permit_url)
+            guard = RequestGuard(body.allowed_hosts, body.permit_url, require_https=body.require_https)
         except PermitUrlError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     async with session.lock:  # toda la operacion es atomica por sesion
@@ -262,7 +266,9 @@ async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
                             await p.close()
                         except Exception as exc:  # pragma: no cover - defensivo
                             close_error = close_error or exc
-                if guard is not None:
+                if guard is not None and close_error is None:
+                    # Si el cierre fallo la barrera SE QUEDA instalada (#130 r4):
+                    # una pagina viva nunca navega libre.
                     try:
                         await context.unroute("**/*", guard.handle)
                     except Exception:
@@ -272,14 +278,27 @@ async def read_page(session_id: str, body: ReadRequest) -> dict[str, Any]:
             elif session.page is page:
                 session.page = None
             if close_error is not None:
+                # Doble fallo posible (#130 r4): si el engine TAMPOCO cierra, la
+                # sesion queda ROTA con la barrera instalada y la capacidad
+                # retenida (nunca se libera con un engine vivo sin barrera).
+                engine_ok = True
                 try:
                     await session.engine.close()
                 except Exception:
-                    pass
-                app.state.manager.discard(session.id)
+                    engine_ok = False
+                if engine_ok:
+                    app.state.manager.discard(session.id)
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"cierre de pagina fallido; sesion descartada: {type(close_error).__name__}",
+                    ) from close_error
+                app.state.manager.mark_broken(session)
                 raise HTTPException(
                     status_code=502,
-                    detail=f"cierre de pagina fallido; sesion descartada: {type(close_error).__name__}",
+                    detail=(
+                        f"cierre de pagina Y de engine fallidos; sesion retenida "
+                        f"rota CON barrera (capacidad no liberada): {type(close_error).__name__}"
+                    ),
                 ) from close_error
         return result
 

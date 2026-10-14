@@ -158,6 +158,16 @@ class SessionManager:
             async with self._lock:
                 self._closing.pop(session_id, None)
 
+    def mark_broken(self, session: Session) -> None:
+        """Sesion irrecuperable con engine posiblemente VIVO (#130 r4).
+
+        Se mueve a _closing y NUNCA sale de ahi en este proceso: la capacidad
+        queda retenida hasta un cleanup verificado (reinicio del sidecar), en
+        vez de liberar hueco con un navegador fuera de la barrera.
+        """
+        self._sessions.pop(session.id, None)
+        self._closing[session.id] = session
+
     def discard(self, session_id: str) -> None:
         """Borra la sesion SIN cerrar: el engine ya se cerro o esta roto.
 

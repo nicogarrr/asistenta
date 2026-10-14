@@ -130,3 +130,11 @@ un redirect fulfilled (lo sigue internamente). Por eso el guard sigue los
 redirects EL MISMO, salto a salto (hasta 10), y cada salto pasa host +
 preflight + postflight. Verificado contra Camoufox real: redirect 302 +
 subrecurso script, cada salto por la barrera (browserd/smoke_read.py).
+
+Ronda 4 (#130): con la barrera activa, HTTPS es estricto por defecto
+(require_https; false solo para tests loopback); denied es pegajoso (tras una
+denegacion/challenge se aborta el resto de la lectura sin hook ni fetch, y el
+preflight va serializado como el pendingPermit del lector historico);
+redirects 307/308 conservan metodo/cuerpo y 301/302/303 convierten a GET
+(nunca conversion silenciosa); si falla el cierre de pagina Y del engine, la
+sesion queda retenida rota CON barrera instalada y sin liberar capacidad.

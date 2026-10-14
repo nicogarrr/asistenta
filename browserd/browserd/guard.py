@@ -56,11 +56,13 @@ def validate_permit_url(url: str) -> None:
 
 class RequestGuard:
     def __init__(self, allowed_hosts: list[str] | None, permit_url: str | None,
-                 permit_timeout_s: float = 30.0) -> None:
+                 permit_timeout_s: float = 30.0, require_https: bool = True) -> None:
         self.allowed_hosts = [d for d in (allowed_hosts or []) if d.strip()]
         self.permit_url = permit_url
         self.permit_timeout_s = permit_timeout_s
-        self.denied = False  # la barrera corto alguna request de esta navegacion
+        self.require_https = require_https
+        self.denied = False  # la barrera corto alguna request: estado PEGAJOSO (#130 r4)
+        self._preflight_lock = __import__("asyncio").Lock()  # serializa preflight (pendingPermit historico)
         if self.permit_url:
             validate_permit_url(self.permit_url)
 
@@ -87,25 +89,52 @@ class RequestGuard:
             return False
 
     async def handle(self, route: Any, request: Any) -> None:
-        """Handler de page.route: barrera por request, redirects salto a salto."""
+        """Handler de page.route: barrera por request, redirects salto a salto.
+
+        denied es PEGAJOSO (#130 r4): una vez cortada la lectura (denegacion o
+        challenge), TODA request posterior se aborta al instante, sin hook ni
+        fetch: el historico corta el resto de la lectura y no sigue consumiendo
+        presupuesto.
+        """
         rtype: str = request.resource_type
         if rtype not in ALLOWED_TYPES:
             await route.abort()
             return
+        if self.denied:
+            await route.abort()
+            return
         current: str = request.url
         for hop in range(10):
+            if self.require_https and urlsplit(current).scheme != "https":
+                self.denied = True
+                await route.abort()
+                return
             if self.allowed_hosts and not host_covered(self.allowed_hosts, current):
                 self.denied = True
                 await route.abort()
                 return
-            # PREFLIGHT: robots/presupuesto deciden ANTES de que salga a red.
-            if not await self._permit(current, rtype):
+            # PREFLIGHT serializado (pendingPermit del historico): el
+            # presupuesto se descuenta en orden, nunca en paralelo (#130 r4).
+            async with self._preflight_lock:
+                if self.denied:
+                    await route.abort()
+                    return
+                allowed = await self._permit(current, rtype)
+            if not allowed:
                 self.denied = True
                 await route.abort()
                 return
             if hop == 0:
                 resp = await route.fetch(max_redirects=0)
+            elif resp_status_keep_method:
+                # 307/308: conservan metodo y cuerpo originales (#130 r4)
+                resp = await route.fetch(
+                    url=current, method=request.method,
+                    headers=dict(request.headers), post_data=request.post_data,
+                    max_redirects=0,
+                )
             else:
+                # 301/302/303: el navegador convierte a GET sin cuerpo
                 resp = await route.fetch(url=current, method="GET", max_redirects=0)
             body = await resp.body()
             # POSTFLIGHT: isBlockedPage con la respuesta real, antes de fulfill.
@@ -117,6 +146,7 @@ class RequestGuard:
             if 300 <= resp.status < 400 and location:
                 # El navegador NO re-intercepta el salto (smoke real): lo
                 # seguimos nosotros, pasando la barrera en cada salto.
+                resp_status_keep_method = resp.status in (307, 308)
                 current = urljoin(current, location)
                 continue
             await route.fulfill(response=resp, body=body)

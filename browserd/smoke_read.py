@@ -64,6 +64,7 @@ res = post(f"/sessions/{sid}/read", {
     "expression": "document.documentElement.outerHTML",
     "allowed_hosts": ["127.0.0.1"],
     "permit_url": f"http://127.0.0.1:{HP}/permit",
+    "require_https": False,  # smoke loopback HTTP (la opcion de test)
     "settle_ms": 2000,
 })
 print("status:", res["status"], "| url final:", res["url"], "| denied:", res["denied"], flush=True)
