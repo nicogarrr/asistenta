@@ -49,7 +49,7 @@ export function buildWeeklySummary(i: WeeklyInput): string {
     // semanal de ese disparador; el 0 tambien es dato. Solo builds ok: uno
     // fallido no es evidencia de capacidad (auditor #134).
     const builds = week.filter((e) => e.action === 'build_multi' && e.result === 'ok').length;
-    lines.push(`- Builds multi-archivo (2+ archivos escritos en una petición): ${builds}.`);
+    lines.push(`- Builds multi-archivo (2+ rutas distintas escritas en una petición): ${builds}.`);
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);
   if (i.extra?.trim()) lines.push('', i.extra.trim());

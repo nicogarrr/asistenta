@@ -1,38 +1,60 @@
 /**
- * Real file-write accounting for one agent run.
+ * Real file-write accounting for one agent run (shared across retries: the
+ * tracker lives in AttemptState, so a transient-provider retry keeps the
+ * writes the earlier attempt already did — auditor #134 ronda 3).
  *
  * The audit metric "builds multi-archivo" (ROADMAP.md, multi-agent trigger)
- * has to measure outcome, not attempts: two writes to the SAME file are one
- * file, and a write that failed (tool error or gate refusal) wrote nothing.
- * `onToolCall` fires at tool_execution_start with no path and no success
- * signal, so counting calls there invents builds that never happened
- * (auditor, #134).
- *
- * This tracker captures the normalized path at tool_execution_start and only
- * commits it on tool_execution_end without error. It exposes ONLY the count:
- * paths never leave the run, because audit lines, hooks and logs are public
- * surfaces and a path can carry a user folder or a secret-looking name.
+ * has to measure outcome, not attempts: two writes to the SAME destination
+ * are one, and a write that failed (tool error or gate refusal) wrote
+ * nothing. This tracker captures the resolved path at tool_execution_start
+ * and only commits it on tool_execution_end without error. It exposes ONLY
+ * the count: paths never leave the run, because audit lines, hooks and logs
+ * are public surfaces and a path can carry a user folder or a secret-looking
+ * name.
  */
 
-import { normalize } from 'node:path';
+import { resolve, win32 } from 'node:path';
 
-/** Canonical enough to dedupe retries: trim + platform normalize ("./a.txt" ≡ "a.txt"). */
-export function normalizeWritePath(raw: string): string {
-  return normalize(raw.trim());
+/**
+ * Canonical enough to dedupe the same destination: resolved against the fs
+ * write tool's working directory (the tool resolves with `path.resolve`
+ * against `process.cwd()`, so a relative and an absolute spelling of the same
+ * file collide) and lower-cased on Windows, where the filesystem is
+ * case-insensitive ("A.ts" ≡ "a.ts"). NO trim: leading/trailing spaces are
+ * valid filename characters and trimming would merge two different files.
+ *
+ * Declared scope: this dedupes PATHS, not FILES — symlinks and hard links to
+ * the same file still count as two destinations.
+ */
+export function normalizeWritePath(
+  raw: string,
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === 'win32') return win32.resolve(cwd, raw).toLowerCase();
+  return resolve(cwd, raw);
 }
 
 export class FileWriteTracker {
-  /** In-flight write calls, toolCallId -> normalized path. */
+  readonly #cwd: string;
+  readonly #platform: NodeJS.Platform;
+  /** In-flight write calls, toolCallId -> resolved path. */
   readonly #pending = new Map<string, string>();
-  /** Normalized paths confirmed written (tool_execution_end without error). */
+  /** Resolved paths confirmed written (tool_execution_end without error). */
   readonly #written = new Set<string>();
+
+  /** cwd/platform injectables para tests; por defecto los del proceso, que son los del fs tool. */
+  constructor(opts?: { cwd?: string; platform?: NodeJS.Platform }) {
+    this.#cwd = opts?.cwd ?? process.cwd();
+    this.#platform = opts?.platform ?? process.platform;
+  }
 
   /** tool_execution_start: remember the path only for the fs write tool. */
   start(toolCallId: string, tool: string, args: unknown): void {
     if (tool !== 'write') return;
     const path = (args as { path?: unknown } | null | undefined)?.path;
-    if (typeof path !== 'string' || !path.trim()) return;
-    this.#pending.set(toolCallId, normalizeWritePath(path));
+    if (typeof path !== 'string' || path === '') return;
+    this.#pending.set(toolCallId, normalizeWritePath(path, this.#cwd, this.#platform));
   }
 
   /** tool_execution_end: commit on success, drop on error. Unknown ids are ignored. */
@@ -43,7 +65,7 @@ export class FileWriteTracker {
     if (!isError) this.#written.add(path);
   }
 
-  /** Distinct files actually written OK in this run. */
+  /** Distinct destinations actually written OK in this run (all attempts). */
   get count(): number {
     return this.#written.size;
   }

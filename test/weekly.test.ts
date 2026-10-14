@@ -31,7 +31,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 2');
+    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 2');
   });
   it('a failed build is not evidence: only ok builds count', () => {
     const text = buildWeeklySummary({
@@ -40,7 +40,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 1');
+    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 1');
   });
   it('reports zero builds explicitly when there was activity but no build', () => {
     const text = buildWeeklySummary({
@@ -49,7 +49,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ archivos escritos en una petición): 0');
+    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 0');
   });
   it('says plainly when nothing happened', () => {
     const text = buildWeeklySummary({

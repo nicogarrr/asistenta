@@ -764,6 +764,9 @@ export class PersonalAgent {
       fingerprints: [],
       sameTool: '',
       sameToolCount: 0,
+      // Un tracker por RUN (no por intento): un reintento transitorio no debe
+      // olvidar las escrituras que el intento anterior ya hizo (#134 ronda 3).
+      fileWrites: new FileWriteTracker(),
     };
     let attempt = 0;
     try {
@@ -820,7 +823,6 @@ export class PersonalAgent {
     const touch = (): void => {
       lastActivity = Date.now();
     };
-    const fileWrites = new FileWriteTracker();
 
     const off = this.#agent.subscribe((event) => {
       touch();
@@ -829,7 +831,7 @@ export class PersonalAgent {
         if (this.#stream) process.stdout.write(event.assistantMessageEvent.delta);
       }
       if (event.type === 'tool_execution_start') {
-        fileWrites.start(event.toolCallId, event.toolName, event.args);
+        shared.fileWrites.start(event.toolCallId, event.toolName, event.args);
         shared.toolCalls++;
         activeTools++;
         shared.startActions.set(event.toolCallId, actionLabel(event.args));
@@ -886,7 +888,7 @@ export class PersonalAgent {
         }
       }
       if (event.type === 'tool_execution_end') {
-        fileWrites.end(event.toolCallId, event.isError);
+        shared.fileWrites.end(event.toolCallId, event.isError);
         activeTools = Math.max(0, activeTools - 1);
         const action = shared.startActions.get(event.toolCallId) ?? '';
         shared.startActions.delete(event.toolCallId);
@@ -978,7 +980,7 @@ export class PersonalAgent {
       attempts: 1,
       inputTokens: shared.inputTokens,
       outputTokens: shared.outputTokens,
-      filesWritten: fileWrites.count,
+      filesWritten: shared.fileWrites.count,
     };
   }
 
@@ -1048,4 +1050,6 @@ interface AttemptState {
   /** Last tool executed, and how many times in a row. */
   sameTool: string;
   sameToolCount: number;
+  /** Writes reales de la corrida entera, compartido entre intentos. */
+  fileWrites: FileWriteTracker;
 }
