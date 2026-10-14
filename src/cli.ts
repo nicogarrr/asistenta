@@ -4998,6 +4998,19 @@ function isEntrypoint(): boolean {
 }
 
 if (isEntrypoint()) {
+  // Optional .env loaded from the working directory (the repo root under
+  // `npm start`) with Node's own parser: KEY=VALUE, optional `export`, quotes,
+  // comments; variables already in the process environment always win, and a
+  // malformed file only warns instead of killing startup. loadEnvFile exists
+  // since Node 20.12; asistenta already requires >= 22.5 (node:sqlite), so the
+  // optional-call guard only appeases older @types/node.
+  try {
+    (process as NodeJS.Process & { loadEnvFile?: () => void }).loadEnvFile?.();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(`.env could not be read: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
   // Set exitCode and let Node drain on its own. Calling process.exit() here trips a
   // libuv assertion on Windows ("!(handle->flags & UV_HANDLE_CLOSING)") because the
   // provider stream may still be tearing down its socket at that instant.
