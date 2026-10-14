@@ -41,7 +41,7 @@ import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
-import { parseNatural } from './cron/scheduler.js';
+import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
@@ -2820,6 +2820,108 @@ async function serveCommand(): Promise<number> {
   };
 
   /**
+   * /cron: gestión de las rutinas programadas del chat, viva y sin reinicio
+   * (routineRunner.sync tras cada cambio). Limitación declarada (hallazgo del
+   * item 14): las entradas PA_CRON del entorno se parsean y validan al boot
+   * pero NUNCA se programan ni tienen chat destino; este comando opera sobre
+   * las rutinas del store, que son las que de verdad disparan.
+   */
+  const cmdCron = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? '').toLowerCase();
+    const rest = restParts.join(' ');
+
+    if (sub === 'del' || sub === 'borra' || sub === 'rm') {
+      const name = rest.trim();
+      if (!name) {
+        await say(inbound, 'Uso: /cron del <nombre>.', { quote: true });
+        return;
+      }
+      const routine =
+        store.getRoutine(thread.key, name) ?? store.getRoutine(`${chatKey_}#main`, name);
+      if (!routine || routine.kind !== 'schedule') {
+        await say(inbound, `No tengo ninguna rutina programada llamada "${name}".`, {
+          quote: true,
+        });
+        return;
+      }
+      store.deleteRoutine(routine.scope, routine.name);
+      // Vivo sin reinicio: el runner suelta el timer en este mismo sync.
+      routineRunner.sync();
+      await say(inbound, `Rutina "${name}" borrada; ya no volverá a disparar.`, { quote: true });
+      return;
+    }
+
+    if (sub === 'add') {
+      if (!rest.trim()) {
+        await say(
+          inbound,
+          'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.',
+          { quote: true },
+        );
+        return;
+      }
+      const parsed = parseCronAdd(rest, validateSchedule);
+      if (!parsed.ok) {
+        await say(inbound, parsed.error, { quote: true });
+        return;
+      }
+      const created = store.saveRoutine({
+        scope: thread.key,
+        name: routineNameFromPrompt(parsed.prompt),
+        kind: 'schedule',
+        prompt: parsed.prompt,
+        schedule: parsed.schedule,
+      });
+      // Live at once, igual que /routine: una rutina que solo dispara tras
+      // reiniciar es una que el usuario tiene que recordar que pidió.
+      routineRunner.sync();
+      const live = routineRunner
+        .status()
+        .find((st) => st.scope === created.scope && st.name === created.name);
+      await say(
+        inbound,
+        [
+          `Rutina "${created.name}" programada con horario ${created.schedule}.`,
+          `Tarea: ${created.prompt}`,
+          `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
+        ].join('\n'),
+        { quote: true },
+      );
+      return;
+    }
+
+    // /cron (o cualquier otro subcomando desconocido): la lista.
+    const list = store
+      .listRoutines()
+      .filter((r) => r.scope.startsWith(chatKey_) && r.kind === 'schedule' && r.schedule);
+    if (!list.length) {
+      await say(
+        inbound,
+        'No hay rutinas programadas. Crea una con /cron add 0 8 * * * | resumen del día.',
+        { quote: true },
+      );
+      return;
+    }
+    const live = routineRunner.status();
+    await say(
+      inbound,
+      [
+        `Rutinas programadas: ${list.length}`,
+        ...list.map(
+          (r) =>
+            `- ${r.name} [${r.schedule}] — próxima: ${nextRunLabel(
+              r.schedule ?? null,
+              live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
+            )}`,
+        ),
+      ].join('\n'),
+      { quote: true },
+    );
+  };
+
+  /**
    * The scheduled half of the routines, with their next fire.
    *
    * The live runner is the source of truth for "when": it is what will actually
@@ -3536,6 +3638,7 @@ async function serveCommand(): Promise<number> {
         '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
+        '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
         '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
         '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
         '/memory - lo que recuerdo de ti',
@@ -4455,6 +4558,10 @@ async function serveCommand(): Promise<number> {
           case 'routine': {
             const thread = await resolveThread(inbound);
             return cmdRoutine(thread, inbound, command.args);
+          }
+          case 'cron': {
+            const thread = await resolveThread(inbound);
+            return cmdCron(thread, inbound, command.args);
           }
           case 'learn': {
             const thread = await resolveThread(inbound);
