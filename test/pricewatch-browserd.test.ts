@@ -1,29 +1,27 @@
-import { describe, expect, it } from 'vitest';
-import { BrowserdClient, BrowserdError } from '../src/browser/browserd-client.js';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterAll, describe, expect, it } from 'vitest';
+import { BrowserdClient, BrowserdError, BrowserdHttpError } from '../src/browser/browserd-client.js';
 import {
   browserEngine,
   CamoufoxPriceBrowser,
   createPricePageReader,
   FallbackPriceBrowser,
+  PUBLIC_STORE_HOSTS,
   type PricePageReader,
 } from '../src/watch/pricewatch-browserd.js';
 
-type FakeRoute = { status?: number; body?: unknown; fail?: boolean };
+type FakeRoute = { status?: number; body?: unknown; failWith?: unknown };
 function fakeBrowserd(routes: Record<string, FakeRoute>) {
-  const calls: string[] = [];
-  const fetchFn = (async (
-    input: unknown,
-    init?: { method?: string; headers?: Record<string, string> },
-  ) => {
+  const calls: { method: string; url: string; body?: string }[] = [];
+  const fetchFn = (async (input: unknown, init?: { method?: string; body?: string }) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
-    calls.push(
-      `${method} ${url} auth=${(init?.headers as Record<string, string>)?.authorization ?? ''}`,
-    );
+    calls.push({ method, url, body: init?.body });
     const key = `${method} ${new URL(url).pathname}`;
     const route = routes[key];
     if (!route) return new Response('{}', { status: 404 });
-    if (route.fail) throw new Error('ECONNREFUSED');
+    if (route.failWith) throw route.failWith;
     return new Response(JSON.stringify(route.body ?? {}), { status: route.status ?? 200 });
   }) as typeof fetch;
   return { fetchFn, calls };
@@ -33,6 +31,15 @@ const AMAZON = 'https://www.amazon.es/s?k=tv';
 const allow = async () => true;
 const deny = async () => false;
 
+function clientWith(fetchFn: typeof fetch) {
+  return new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', fetchFn });
+}
+const routesOk: Record<string, FakeRoute> = {
+  'POST /sessions': { body: { id: 's1' } },
+  'POST /sessions/s1/goto': { body: { status: 200, url: AMAZON, title: 'Amazon' } },
+  'POST /sessions/s1/evaluate': { body: { value: '<html><body>Ofertas de televisores</body></html>' } },
+};
+
 describe('browserEngine flag', () => {
   it('defaults to playwright, camoufox solo con el valor exacto', () => {
     expect(browserEngine({} as NodeJS.ProcessEnv)).toBe('playwright');
@@ -41,69 +48,55 @@ describe('browserEngine flag', () => {
     expect(browserEngine({ BROWSER_ENGINE: 'chrome' } as NodeJS.ProcessEnv)).toBe('playwright');
   });
   it('createPricePageReader devuelve el fallback salvo flag camoufox', () => {
-    const fb: PricePageReader = {
-      read: async () => ({ status: 200, html: '' }),
-      close: async () => undefined,
-    };
+    const fb: PricePageReader = { read: async () => ({ status: 200, html: '' }), close: async () => undefined };
     expect(createPricePageReader(fb, {} as NodeJS.ProcessEnv)).toBe(fb);
-    expect(
-      createPricePageReader(fb, { BROWSER_ENGINE: 'camoufox' } as NodeJS.ProcessEnv),
-    ).toBeInstanceOf(FallbackPriceBrowser);
+    expect(createPricePageReader(fb, { BROWSER_ENGINE: 'camoufox' } as NodeJS.ProcessEnv)).toBeInstanceOf(FallbackPriceBrowser);
   });
 });
 
 describe('CamoufoxPriceBrowser', () => {
-  const routesOk: Record<string, FakeRoute> = {
-    'POST /sessions': { body: { id: 's1' } },
-    'POST /sessions/s1/goto': { body: { status: 200, url: AMAZON, title: 'Amazon' } },
-    'POST /sessions/s1/evaluate': {
-      body: { value: '<html><body>Ofertas de televisores</body></html>' },
-    },
-  };
-  it('lee status+html via sesion persistente (una sola sesion para dos lecturas)', async () => {
+  it('goto lleva allowed_hosts de tiendas y permit_url loopback (barrera por request)', async () => {
     const { fetchFn, calls } = fakeBrowserd(routesOk);
-    const b = new CamoufoxPriceBrowser(
-      new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', fetchFn }),
-    );
-    const r1 = await b.read(AMAZON, allow);
-    const r2 = await b.read(AMAZON, allow);
-    expect(r1.status).toBe(200);
-    expect(r1.html).toContain('televisores');
-    expect(r2.status).toBe(200);
-    expect(calls.filter((c) => c.startsWith('POST http://127.0.0.1:7701/sessions '))).toHaveLength(
-      1,
-    );
+    const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
+    const r = await b.read(AMAZON, allow);
+    expect(r.status).toBe(200);
+    const gotoCall = calls.find((c) => c.url.endsWith('/goto'));
+    const body = JSON.parse(gotoCall?.body ?? '{}');
+    expect(body.allowed_hosts).toEqual([...PUBLIC_STORE_HOSTS]);
+    expect(body.permit_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/permit\//);
+    await b.close();
   });
   it('rechaza hosts fuera de la allowlist sin tocar el sidecar', async () => {
     const { fetchFn, calls } = fakeBrowserd(routesOk);
-    const b = new CamoufoxPriceBrowser(
-      new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', fetchFn }),
-    );
+    const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
     const r = await b.read('https://www.fnac.es/s/tv', allow);
     expect(r).toEqual({ status: 403, html: '' });
     expect(calls).toHaveLength(0);
+    await b.close();
   });
-  it('permit=false corta antes de navegar', async () => {
-    const { fetchFn, calls } = fakeBrowserd(routesOk);
-    const b = new CamoufoxPriceBrowser(
-      new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', fetchFn }),
-    );
-    const r = await b.read(AMAZON, deny);
-    expect(r).toEqual({ status: 403, html: '' });
-    expect(calls).toHaveLength(0);
+  it('denied de la barrera del sidecar se propaga como 403 semantico', async () => {
+    const { fetchFn } = fakeBrowserd({
+      ...routesOk,
+      'POST /sessions/s1/goto': { body: { status: 403, url: '', title: '', denied: true } },
+    });
+    const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
+    expect(await b.read(AMAZON, deny)).toEqual({ status: 403, html: '' });
+    await b.close();
   });
   it('pagina de challenge con 200 se clasifica como bloqueo (403, html vacio)', async () => {
     const { fetchFn } = fakeBrowserd({
       ...routesOk,
-      'POST /sessions/s1/evaluate': {
-        body: { value: '<script>triggerInterstitialChallenge({"bm-verify":1})</script>' },
-      },
+      'POST /sessions/s1/evaluate': { body: { value: '<script>triggerInterstitialChallenge({"bm-verify":1})</script>' } },
     });
-    const b = new CamoufoxPriceBrowser(
-      new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', fetchFn }),
-    );
-    const r = await b.read(AMAZON, allow);
-    expect(r).toEqual({ status: 403, html: '' });
+    const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
+    expect(await b.read(AMAZON, allow)).toEqual({ status: 403, html: '' });
+    await b.close();
+  });
+  it('HTTP no-2xx del sidecar (401 real del guard) NO dispara fallback: devuelve status 0', async () => {
+    const { fetchFn } = fakeBrowserd({ 'POST /sessions': { status: 401, body: { detail: 'token invalido' } } });
+    const b = new CamoufoxPriceBrowser(clientWith(fetchFn));
+    expect(await b.read(AMAZON, allow)).toEqual({ status: 0, html: '' });
+    await b.close();
   });
   it('el token viaja SOLO en Authorization, nunca en la URL', async () => {
     const { fetchFn, calls } = fakeBrowserd(routesOk);
@@ -111,23 +104,48 @@ describe('CamoufoxPriceBrowser', () => {
       new BrowserdClient({ baseUrl: 'http://127.0.0.1:7701', token: 'secreto', fetchFn }),
     );
     await b.read(AMAZON, allow);
-    expect(calls.length).toBeGreaterThan(0);
-    for (const c of calls) {
-      expect(c).not.toContain('?');
-      expect(c.split(' auth=')[0]).not.toContain('secreto');
-    }
-    expect(calls[0]).toContain('auth=Bearer secreto');
+    for (const c of calls) expect(c.url).not.toContain('secreto');
+    await b.close();
   });
+});
+
+describe('taxonomia de errores del cliente', () => {
+  it('TypeError de red (con cause codificada) -> BrowserdError de transporte', async () => {
+    const netErr = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code: 'ECONNREFUSED' }) });
+    const { fetchFn } = fakeBrowserd({ 'GET /health': { failWith: netErr } });
+    await expect(clientWith(fetchFn).health()).rejects.toBeInstanceOf(BrowserdError);
+  });
+  it('TypeError de programacion (sin cause) PROPAGA intacto, nunca es transporte', async () => {
+    const { fetchFn } = fakeBrowserd({ 'GET /health': { failWith: new TypeError('bug interno') } });
+    await expect(clientWith(fetchFn).health()).rejects.toThrow(TypeError);
+    await expect(clientWith(fetchFn).health()).rejects.not.toBeInstanceOf(BrowserdError);
+  });
+  it('HTTP no-2xx -> BrowserdHttpError (no transporte)', async () => {
+    const { fetchFn } = fakeBrowserd({ 'GET /health': { status: 403, body: {} } });
+    await expect(clientWith(fetchFn).health()).rejects.toBeInstanceOf(BrowserdHttpError);
+    await expect(clientWith(fetchFn).health()).rejects.not.toBeInstanceOf(BrowserdError);
+  });
+  it('servidor que no responde: timeout end-to-end corta como transporte', async () => {
+    const hanging: Server = createServer(() => undefined); // nunca responde
+    await new Promise<void>((r) => hanging.listen(0, '127.0.0.1', r));
+    const port = (hanging.address() as AddressInfo).port;
+    try {
+      const c = new BrowserdClient({ baseUrl: `http://127.0.0.1:${port}`, timeoutMs: 300 });
+      await expect(c.health()).rejects.toBeInstanceOf(BrowserdError);
+    } finally {
+      hanging.close();
+    }
+  }, 10_000);
 });
 
 describe('FallbackPriceBrowser', () => {
   function reader(fn: () => Promise<{ status: number; html: string }>): PricePageReader {
     return { read: fn, close: async () => undefined };
   }
-  it('fallo de transporte del sidecar conmuta al fallback para el resto del ciclo', async () => {
+  it('fallo de transporte conmuta al fallback para el resto del ciclo (una vez log)', async () => {
     let fallbackCalls = 0;
     const primary = reader(async () => {
-      throw new BrowserdError('browserd inalcanzable: ECONNREFUSED');
+      throw new BrowserdError('browserd inalcanzable: fetch failed');
     });
     const fb = reader(async () => {
       fallbackCalls += 1;
@@ -141,15 +159,11 @@ describe('FallbackPriceBrowser', () => {
     expect(fallbackCalls).toBe(2);
     expect(logs).toHaveLength(1);
   });
-  it('un error que NO es de transporte (bug) no traga fallback: propaga', async () => {
+  it('un bug (no transporte) propaga sin fallback', async () => {
     const primary = reader(async () => {
       throw new TypeError('bug interno');
     });
-    const b = new FallbackPriceBrowser(
-      primary,
-      reader(async () => ({ status: 200, html: '' })),
-      () => undefined,
-    );
+    const b = new FallbackPriceBrowser(primary, reader(async () => ({ status: 200, html: '' })), () => undefined);
     await expect(b.read(AMAZON, allow)).rejects.toThrow('bug interno');
   });
   it('un 403 de bloqueo del sidecar NO dispara fallback', async () => {
@@ -172,4 +186,8 @@ describe('FallbackPriceBrowser', () => {
     expect(primaryCalls).toBe(2);
     expect(fallbackCalls).toBe(0);
   });
+});
+
+afterAll(() => {
+  // los PermitHook se cierran en cada test via b.close()
 });

@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from .config import Settings, is_loopback_host
+from .guard import PermitUrlError, RequestGuard
 from .sessions import (
     SessionClosingError,
     SessionLimitError,
@@ -82,6 +83,11 @@ class GotoRequest(BaseModel):
     wait_until: str = Field(default="domcontentloaded", pattern="^(load|domcontentloaded|networkidle|commit)$")
     timeout_ms: int = Field(default=45000, ge=1000, le=120000)
     settle_ms: int = Field(default=0, ge=0, le=30000)
+    # Barrera por request (auditoria #130): ambas opcionales y compatibles hacia
+    # atras; con alguna activa TODA request pasa host+permit y los documentos
+    # van de un salto (redirects re-entran por la barrera).
+    allowed_hosts: list[str] | None = None
+    permit_url: str | None = None
 
 
 class EvalRequest(BaseModel):
@@ -143,22 +149,39 @@ def _get_session(session_id: str):
 async def goto(session_id: str, body: GotoRequest) -> dict[str, Any]:
     session = _get_session(session_id)
     async with session.lock:  # nada de evaluate/close pisando la navegacion
+        guard: RequestGuard | None = None
+        if body.allowed_hosts or body.permit_url:
+            try:
+                guard = RequestGuard(body.allowed_hosts, body.permit_url)
+            except PermitUrlError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             page = session.page
             if page is None or page.is_closed():
                 page = await session.engine.new_page()
                 session.page = page
-            resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
-            if body.settle_ms:
-                await page.wait_for_timeout(body.settle_ms)
+            if guard is not None:
+                await page.route("**/*", guard.handle)
+            try:
+                resp = await page.goto(body.url, wait_until=body.wait_until, timeout=body.timeout_ms)
+                if body.settle_ms:
+                    await page.wait_for_timeout(body.settle_ms)
+            finally:
+                if guard is not None:
+                    await page.unroute("**/*", guard.handle)
             return {
                 "status": resp.status if resp else None,
                 "url": page.url,
                 "title": await page.title(),
+                "denied": bool(guard and guard.denied),
             }
         except HTTPException:
             raise
         except Exception as exc:
+            # La barrera corto la navegacion (host fuera de allowlist, robots o
+            # presupuesto): NO es un fallo del sidecar, es un 403 semantico.
+            if guard is not None and guard.denied:
+                return {"status": 403, "url": "", "title": "", "denied": True}
             raise HTTPException(
                 status_code=502, detail=f"navegacion fallida: {type(exc).__name__}"
             ) from exc

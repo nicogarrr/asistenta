@@ -83,3 +83,20 @@ loopback). Si el sidecar no responde, el primer fallo de transporte conmuta al
 motor playwright para el resto del ciclo (se registra una vez); un 403 de
 bloqueo/challenge NO dispara fallback. Limitacion: el `permit` (robots/presu-
 puesto) se aplica solo al documento principal, sin interception por subrecurso.
+
+### Barrera por request en goto (opcional, #130)
+
+`POST /sessions/{id}/goto` admite ademas (compatible hacia atras; sin ellas el
+comportamiento es el de #129):
+
+- `allowed_hosts: [dominios]` - TODA request (documento y subrecursos) cuyo
+  host no este cubierto (dominio o subdominio) se aborta.
+- `permit_url: "http://127.0.0.1:..."` - hook loopback del cliente: antes de
+  cada request el sidecar le pregunta `{url, resource_type}`; 2xx permite,
+  cualquier otra cosa (o hook caido) DENIEGA (fail-closed). Solo loopback:
+  otra URL da 422 y el sidecar nunca envia datos de navegacion fuera.
+
+Con la barrera activa los documentos se traen de UN salto (redirects NO se
+siguen internamente: el navegador los pide como nuevas requests que vuelven a
+pasar la barrera) y la respuesta incluye `denied: true` si la barrera corto
+algo; una navegacion cortada por la barrera devuelve `status: 403` (no 502).
