@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+profiles/
+bench/_profile/
+bench/results.json
