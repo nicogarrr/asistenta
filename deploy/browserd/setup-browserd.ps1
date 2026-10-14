@@ -24,7 +24,9 @@
                    atomica (ReplaceFile con backup unico de esta corrida)
                    y transaccional con verificacion: si algo falla se
                    deshace solo lo de esta transaccion y se verifica la
-                   restauracion. Este script NO reinicia asistenta.
+                   restauracion. Un .env con valores quoted multilinea NO se
+                   muta (se detecta y se pide edicion manual). Este script
+                   NO reinicia asistenta.
 
   Estado de verificacion: script revisado estaticamente; su primera ejecucion
   real es en el PC del usuario (Windows). Cada paso falla con mensaje claro.
@@ -46,6 +48,8 @@ $browserdDir = Join-Path $RepoDir 'browserd'
 if (-not (Test-Path (Join-Path $browserdDir 'requirements.txt'))) {
   throw "No encuentro browserd\requirements.txt bajo $RepoDir. Corre el script dentro del repo de asistenta."
 }
+
+. (Join-Path $PSScriptRoot 'Test-MultilineQuoted.ps1')
 
 function Step([string]$msg) {
   Write-Host ""
@@ -206,6 +210,13 @@ if ($EnableEngine) {
   $hadFile = Test-Path $envFile
   $lines = @()
   if ($hadFile) { $lines = [System.IO.File]::ReadAllLines($envFile) }
+
+  # Un valor quoted multilinea puede contener lineas que PARECEN asignaciones
+  # (canario: PROMPT="...\nBROWSER_ENGINE=inside\n..."). Filtrar por lineas
+  # destruiria esa variable: se detecta y se RECHAZA mutar el archivo.
+  if ($hadFile -and (Test-MultilineQuoted $lines)) {
+    throw '.env contiene un valor quoted multilinea. Para no romper otra variable este script no lo muta: edita BROWSER_ENGINE a mano o pasa ese valor a una sola linea.'
+  }
   $kept = @($lines | Where-Object { $_ -notmatch $keyPattern })
   $kept += 'BROWSER_ENGINE=camoufox'
 

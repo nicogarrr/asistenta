@@ -44,7 +44,12 @@ Que hace, en orden:
    la misma transaccion. Si CUALQUIER paso falla se deshace SOLO lo de esa
    transaccion (nunca un backup viejo de otra corrida), la restauracion se
    verifica por hash y el error dice claramente si quedo algo por revisar a
-   mano.
+   mano. Excepcion declarada: un `.env` con valores quoted multilinea NO se
+   muta - un filtro por lineas podria destruir otra variable (canario:
+   `PROMPT="...\nBROWSER_ENGINE=inside\n..."`); el detector
+   `Test-MultilineQuoted.ps1` lo reconoce (conservador: una comilla impar
+   tambien rechaza) y el script pide edicion manual. Fixtures del detector:
+   `powershell -File deploy\browserd\test-envfile-detector.ps1`.
 
 Los flags son independientes: `-Start` y `-Bench` se pueden repetir aunque la
 instalacion ya este hecha (los pasos 1-5 son idempotentes y rapidos).
