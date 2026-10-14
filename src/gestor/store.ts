@@ -55,6 +55,16 @@ export const MAX_ACTIVE_GESTIONES_PER_SCOPE = 1;
 /** Proposed errands wait for a human yes; cap the waiting room so it cannot pile up. */
 export const MAX_PROPOSED_GESTIONES = 5;
 
+export interface PlaybookOutcome {
+  domain: string;
+  ok: number;
+  /**
+   * "No completada": cancelled AFTER starting. Never called a failure — a
+   * cancel can be the user's own decision, and the copy must stay honest.
+   */
+  failed: number;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS gestiones (
   id            TEXT PRIMARY KEY,
@@ -69,6 +79,24 @@ CREATE TABLE IF NOT EXISTS gestiones (
   updated_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gestiones_scope ON gestiones(scope, status);
+-- C3: which domains a gestion declared at plan time and whether a playbook
+-- existed then. Attribution lives here (not on the gestion row) so the
+-- gestiones schema stays untouched; rows are consumed exactly once, by
+-- complete/cancel.
+CREATE TABLE IF NOT EXISTS gestion_domains (
+  gestion_id    TEXT NOT NULL,
+  domain        TEXT NOT NULL,
+  had_playbook  INTEGER NOT NULL,
+  PRIMARY KEY (gestion_id, domain)
+);
+-- The tally itself: attempted gestiones per playbook domain. Only domains
+-- that HAD a playbook at plan time - the question is where the saved
+-- knowledge falls short, not where none exists yet.
+CREATE TABLE IF NOT EXISTS playbook_outcomes (
+  domain  TEXT PRIMARY KEY,
+  ok      INTEGER NOT NULL DEFAULT 0,
+  failed  INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 type GestionRow = {
@@ -131,7 +159,14 @@ export class GestorStore {
     return Number(row?.n ?? 0);
   }
 
-  propose(input: { scope: string; title: string; encargo: string; plan: GestionStep[] }): Gestion {
+  propose(input: {
+    scope: string;
+    title: string;
+    encargo: string;
+    plan: GestionStep[];
+    /** C3: domain attribution captured at plan time, written atomically WITH the gestión. */
+    domains?: { domain: string; hadPlaybook: boolean }[];
+  }): Gestion {
     if (this.#count(input.scope, 'proposed') >= MAX_PROPOSED_GESTIONES) {
       throw new Error(
         `Ya hay ${MAX_PROPOSED_GESTIONES} gestiones propuestas esperando respuesta. Ejecuta o cancela alguna antes de preparar otra.`,
@@ -139,11 +174,14 @@ export class GestorStore {
     }
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.#db
-      .prepare(
-        `INSERT INTO gestiones (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', 0, '[]', ?, ?)`,
-      )
-      .run(id, input.scope, input.title, input.encargo, JSON.stringify(input.plan), now, now);
+    this.#tx(() => {
+      this.#db
+        .prepare(
+          `INSERT INTO gestiones (${COLUMNS}) VALUES (?, ?, ?, ?, ?, 'proposed', 0, '[]', ?, ?)`,
+        )
+        .run(id, input.scope, input.title, input.encargo, JSON.stringify(input.plan), now, now);
+      this.#insertDomains(id, input.domains ?? []);
+    });
     const gestion = this.read(id);
     if (!gestion) throw new Error('la gestión recién propuesta no se puede leer');
     return gestion;
@@ -203,7 +241,10 @@ export class GestorStore {
     if (gestion.status !== 'active') {
       throw new Error(`Solo se completa una gestión activa; está ${gestion.status}.`);
     }
-    this.#set(id, { status: 'done' });
+    this.#tx(() => {
+      this.#set(id, { status: 'done' });
+      this.#recordOutcome(id, true);
+    });
   }
 
   cancel(id: string): void {
@@ -211,7 +252,64 @@ export class GestorStore {
     if (gestion.status === 'done') {
       throw new Error('Una gestión terminada no se cancela; ya está hecha.');
     }
-    this.#set(id, { status: 'cancelled' });
+    this.#tx(() => {
+      this.#set(id, { status: 'cancelled' });
+      if (gestion.status === 'active') {
+        this.#recordOutcome(id, false);
+      } else {
+        // Cancelled while merely proposed: the playbook was never tried, so it
+        // says nothing about the knowledge. Drop the attribution uncounted.
+        this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
+      }
+    });
+  }
+
+  /**
+   * Several writes, one truth: autocommit would leave a half-written outcome
+   * on any error — status changed but tally empty and the retry rejected by
+   * the status guard (auditor C3 ronda 2, reproduced with a failing trigger).
+   */
+  #tx(fn: () => void): void {
+    this.#db.exec('BEGIN');
+    try {
+      fn();
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** C3 attribution rows for one gestión; consumed exactly once by complete / cancel. */
+  #insertDomains(gestionId: string, domains: { domain: string; hadPlaybook: boolean }[]): void {
+    const stmt = this.#db.prepare(
+      'INSERT OR IGNORE INTO gestion_domains (gestion_id, domain, had_playbook) VALUES (?, ?, ?)',
+    );
+    for (const d of domains) stmt.run(gestionId, d.domain, d.hadPlaybook ? 1 : 0);
+  }
+
+  /** Per-domain tally of attempted gestiones that had a playbook at plan time. */
+  playbookOutcomes(): PlaybookOutcome[] {
+    const rows = this.#db
+      .prepare('SELECT domain, ok, failed FROM playbook_outcomes ORDER BY domain')
+      .all() as Array<{ domain: string; ok: number; failed: number }>;
+    return rows.map((r) => ({ domain: r.domain, ok: Number(r.ok), failed: Number(r.failed) }));
+  }
+
+  /** One gestión, one count per declared playbook domain; then the attribution is dropped. */
+  #recordOutcome(id: string, ok: boolean): void {
+    const rows = this.#db
+      .prepare('SELECT domain FROM gestion_domains WHERE gestion_id = ? AND had_playbook = 1')
+      .all(id) as Array<{ domain: string }>;
+    for (const { domain } of rows) {
+      this.#db
+        .prepare(
+          `INSERT INTO playbook_outcomes (domain, ok, failed) VALUES (?, ?, ?)
+           ON CONFLICT(domain) DO UPDATE SET ok = ok + ?, failed = failed + ?`,
+        )
+        .run(domain, ok ? 1 : 0, ok ? 0 : 1, ok ? 1 : 0, ok ? 0 : 1);
+    }
+    this.#db.prepare('DELETE FROM gestion_domains WHERE gestion_id = ?').run(id);
   }
 
   read(id: string): Gestion | null {

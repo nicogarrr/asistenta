@@ -312,6 +312,10 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
           if (!domains.includes(domain)) domains.push(domain);
         }
         let access: string[] = [];
+        // C3: whether a playbook existed for each declared domain AT PLAN
+        // TIME. completar/cancelar turn this attribution into the per-domain
+        // tally; a gestión without noteDomains counts nothing.
+        const hadPlaybook = new Set<string>();
         if (domains.length > 0) {
           const names = await (deps.vaultNames ?? vaultList)();
           access = ['Accesos (credenciales solo por el vault, nunca por aquí):'];
@@ -330,6 +334,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
             // playbook CONTENT never rides here - the model reads it with
             // playbook_leer, whose result content does reach it.
             if (deps.playbooks.read(domain)) {
+              hadPlaybook.add(domain);
               access.push(
                 `- ${domain}: hay un playbook guardado de este sitio (lo leo con gestion:playbook_leer).`,
               );
@@ -359,7 +364,13 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
             true,
           );
         }
-        const gestion = deps.gestor.propose({ scope, title, encargo, plan });
+        const gestion = deps.gestor.propose({
+          scope,
+          title,
+          encargo,
+          plan,
+          domains: domains.map((domain) => ({ domain, hadPlaybook: hadPlaybook.has(domain) })),
+        });
         return reply(formatProposal(gestion, access));
       }
 
