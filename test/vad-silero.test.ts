@@ -2,7 +2,7 @@
 // (inspeccionado del .onnx): input [1,512] float32, sr int64 escalar,
 // h/c [2,1,64] llevados entre ventanas; outputs output/hn/cn. Las sesiones
 // falsas implementan la LOGICA DE FORMAS oficial, no formas inventadas.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -172,7 +172,51 @@ describe('A5: reset invalida estado y audio pre-reset (generación)', () => {
   });
 });
 
+describe('A5: el frame se copia al encolar (auditor r1)', () => {
+  it('mutar el buffer del productor tras pushFrame no cambia el audio entregado', async () => {
+    const s = fakeVad([0.5]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const baseRun = s.run;
+    s.run = async (feeds) => {
+      await gate;
+      return baseRun(feeds);
+    };
+    const vad = SileroVad.overSession(s);
+    const buf = frame(0.5);
+    const p = vad.pushFrame(buf);
+    buf.fill(-9); // el productor reutiliza su buffer antes de que corra el run
+    release();
+    await p;
+    expect(s.lastFeeds?.input?.data[0]).toBeCloseTo(0.5, 6);
+  });
+});
+
 describe('A5: close drena la cadena y libera una sola vez, con reintento', () => {
+  it('close() con un run BLOQUEADO no libera hasta que el run termina (auditor r1)', async () => {
+    const s = fakeVad([0.8]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const baseRun = s.run;
+    s.run = async (feeds) => {
+      await gate;
+      return baseRun(feeds);
+    };
+    const vad = SileroVad.overSession(s);
+    const p = vad.pushFrame(frame());
+    const closing = vad.close();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(s.released).toBe(false); // sigue bloqueado: no se liberó con el run en vuelo
+    release();
+    await closing;
+    expect(await p).toBeCloseTo(0.8, 6);
+    expect(s.released).toBe(true);
+  });
+
   it('close() espera al push en curso antes de liberar', async () => {
     const s = fakeVad([0.7]);
     const vad = SileroVad.overSession(s);
@@ -228,6 +272,23 @@ describe('A5: ensureVadModel (descarga con wx+rename y sha256 verificado)', () =
     dir = mkdtempSync(join(tmpdir(), 'vad-'));
     const f = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
     await expect(ensureVadModel(dir, f)).rejects.toThrow('404');
+  });
+
+  it('invocaciones concurrentes no comparten temp ni se borran entre sí (auditor r1)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'vad-'));
+    // Fetch lento: ambas llamadas solapan descarga y escritura.
+    const slow = (async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return new Response(new Uint8Array(FAKE_MODEL), { status: 200 });
+    }) as unknown as typeof fetch;
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => ensureVadModel(dir as string, slow, FAKE_MODEL_SHA)),
+    );
+    for (const p of results) expect(readFileSync(p).equals(FAKE_MODEL)).toBe(true);
+    // No queda ningún .partial huérfano.
+    expect(
+      readdirSync(dir).filter((f) => f.includes('.partial')),
+    ).toEqual([]);
   });
 
   it('un fichero presente con sha distinto se redescarga, no se reutiliza', async () => {

@@ -16,7 +16,8 @@
  *     sostenidos le parecen voz (p95 0.92-0.98). Límite declarado.
  *   - Habla: 105/105 segmentos reales "chochi" con prob máx >= 0.996; nico1
  *     completo pasa 12/13 tramos, igual que el gate RMS. Sin pérdida de habla.
- *   - Coste: ~156s CPU/hora en Python sin optimizar (~0.4% de un core).
+ *   - Coste: 76s CPU/hora en Python naive (process_time, un solo hilo; ~2,1%
+ *     de un core; afinar con la sesión TS real en la decisión de adopción).
  *
  * Fuentes del spike: Wikimedia Commons, dominio público, con sha256
  * registrado (ruido dde19c99..., música 2e415a0e...). Modelo: release
@@ -57,6 +58,11 @@ export const VAD_MODEL_SHA256 =
 
 /** Un fichero de modelo más pequeño que esto es una página 404, no un modelo. */
 const MIN_MODEL_BYTES = 100_000;
+
+/** Sufijo único por invocación: dos ensureVadModel concurrentes en el mismo
+ * proceso nunca comparten temp (auditor A5 r1: con temp por proceso, el catch
+ * de una borraba el .partial de la otra y su rename moría con ENOENT). */
+let vadTmpCounter = 0;
 
 /** Tensor mínimo: float32 para audio/estado, int64 para sr. */
 export interface VadTensor {
@@ -140,7 +146,7 @@ export async function ensureVadModel(
   if (sha !== expectedSha256) {
     throw new Error(`descarga de silero_vad con sha256 inesperado (${sha}); esperado ${expectedSha256}`);
   }
-  const tmp = `${target}.${process.pid}.partial`;
+  const tmp = `${target}.${process.pid}.${vadTmpCounter++}.partial`;
   try {
     await writeFile(tmp, buf, { flag: 'wx' });
     renameSync(tmp, target);
