@@ -59,6 +59,7 @@ import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
+import { renderMemoryContext } from './memory/context.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -5053,9 +5054,12 @@ export function buildContextNote(
   const frozen = snapshot?.contextNote() ?? '';
   if (frozen) parts.push(frozen);
 
-  const entries = memory.all(thread.key).slice(-20);
-  if (entries.length) {
-    parts.push(`<memory>\n${entries.map((e) => `- ${e.text}`).join('\n')}\n</memory>`);
+  // 9b: memory as an index - the last 5 active entries in full, the rest as
+  // one-line rows; superseded facts are never rendered and the section is
+  // capped (see src/memory/context.ts, measured in scripts/memory-bench.ts).
+  const renderedMemory = renderMemoryContext(memory.all(thread.key));
+  if (renderedMemory) {
+    parts.push(`<memory>\n${renderedMemory.body}\n</memory>`);
   }
   const routines = store.listRoutines(thread.key).filter((r) => r.enabled);
   if (routines.length) {
