@@ -2,8 +2,9 @@
 // (inspeccionado del .onnx): input [1,512] float32, sr int64 escalar,
 // h/c [2,1,64] llevados entre ventanas; outputs output/hn/cn. Las sesiones
 // falsas implementan la LOGICA DE FORMAS oficial, no formas inventadas.
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+
 import { createHash } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -31,7 +32,9 @@ function frame(v = 0.5): Float32Array {
 
 interface FakeVad extends VadSession {
   runs: number;
-  lastFeeds: Record<string, { data: Float32Array | BigInt64Array; dims: readonly number[] }> | undefined;
+  lastFeeds:
+    | Record<string, { data: Float32Array | BigInt64Array; dims: readonly number[] }>
+    | undefined;
   probs: number[];
   released: boolean;
   failRelease: boolean;
@@ -57,7 +60,8 @@ function fakeVad(probs: number[] = [0.9]): FakeVad {
       // hn lleva la marca del nº de run para rastrear que el estado se encadena.
       const hn = new Float32Array(2 * VAD_STATE_DIM).fill(st.runs);
       const cn = new Float32Array(2 * VAD_STATE_DIM).fill(-st.runs);
-      const p = st.probs.length > 1 ? st.probs.shift()! : st.probs[0]!;
+      const head = st.probs.length > 1 ? st.probs.shift() : st.probs[0];
+      const p = head ?? 0;
       return {
         output: { data: new Float32Array([p]), dims: [1, 1] },
         hn: { data: hn, dims: [2, 1, VAD_STATE_DIM] },
@@ -286,9 +290,7 @@ describe('A5: ensureVadModel (descarga con wx+rename y sha256 verificado)', () =
     );
     for (const p of results) expect(readFileSync(p).equals(FAKE_MODEL)).toBe(true);
     // No queda ningún .partial huérfano.
-    expect(
-      readdirSync(dir).filter((f) => f.includes('.partial')),
-    ).toEqual([]);
+    expect(readdirSync(dir).filter((f) => f.includes('.partial'))).toEqual([]);
   });
 
   it('un fichero presente con sha distinto se redescarga, no se reutiliza', async () => {

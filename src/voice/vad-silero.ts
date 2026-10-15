@@ -34,9 +34,9 @@
  * una decisión medida aparte (igual que A1a -> A1b).
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { log } from '../log.js';
@@ -53,8 +53,7 @@ export const VAD_MODEL_URL =
   'https://github.com/snakers4/silero-vad/raw/v4.0/files/silero_vad.onnx';
 export const VAD_MODEL_FILE = 'silero_vad.onnx';
 /** sha256 del fichero oficial v4.0, verificado byte a byte en el spike. */
-export const VAD_MODEL_SHA256 =
-  'a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28';
+export const VAD_MODEL_SHA256 = 'a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28';
 
 /** Un fichero de modelo más pequeño que esto es una página 404, no un modelo. */
 const MIN_MODEL_BYTES = 100_000;
@@ -127,7 +126,9 @@ export async function ensureVadModel(
   mkdirSync(dir, { recursive: true });
   const target = join(dir, VAD_MODEL_FILE);
   if (existsSync(target) && statSync(target).size >= MIN_MODEL_BYTES) {
-    const sha = createHash('sha256').update(await readFile(target)).digest('hex');
+    const sha = createHash('sha256')
+      .update(await readFile(target))
+      .digest('hex');
     if (sha === expectedSha256) return target;
     log.warn('vad: modelo presente con sha256 distinto al esperado; se redescarga', { target });
   }
@@ -144,7 +145,9 @@ export async function ensureVadModel(
   }
   const sha = createHash('sha256').update(buf).digest('hex');
   if (sha !== expectedSha256) {
-    throw new Error(`descarga de silero_vad con sha256 inesperado (${sha}); esperado ${expectedSha256}`);
+    throw new Error(
+      `descarga de silero_vad con sha256 inesperado (${sha}); esperado ${expectedSha256}`,
+    );
   }
   const tmp = `${target}.${process.pid}.${vadTmpCounter++}.partial`;
   try {
@@ -157,8 +160,7 @@ export async function ensureVadModel(
   return target;
 }
 
-const zeroState = (): Float32Array =>
-  new Float32Array(VAD_STATE_LAYERS * VAD_STATE_DIM);
+const zeroState = (): Float32Array => new Float32Array(VAD_STATE_LAYERS * VAD_STATE_DIM);
 
 /**
  * Scorer VAD en streaming fiel al modelo oficial silero-vad v4.0: cada push de
@@ -263,7 +265,8 @@ export class SileroVad {
     const hn = out.hn;
     const cn = out.cn;
     if (!prob || prob.data.length === 0) throw new Error('silero_vad no devolvió prob');
-    if (!(prob.data instanceof Float32Array)) throw new Error('silero_vad devolvió prob no float32');
+    if (!(prob.data instanceof Float32Array))
+      throw new Error('silero_vad devolvió prob no float32');
     if (!hn || !cn) throw new Error('silero_vad no devolvió estado siguiente');
     if (!(hn.data instanceof Float32Array) || hn.data.length !== this.h.length) {
       throw new Error('silero_vad devolvió hn con forma inesperada');
