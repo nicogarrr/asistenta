@@ -200,9 +200,12 @@ export async function ensureOwwModels(
  * queue, so concurrent pushFrame calls cannot interleave awaits or reorder
  * carry/mel/emb state. close() blocks new pushes, waits for the in-flight
  * push to finish, and only then releases sessions — a session's run is
- * never called after its release. reset() bumps a generation counter: a
- * push that was mid-await when reset ran discards its results instead of
- * repopulating freshly cleared windows (it returns null).
+ * never called after its release. reset() bumps a generation counter and
+ * invalidates ALL audio received so far — active AND queued pushes alike:
+ * the generation is captured at enqueue time and re-checked at task start
+ * and after every await, so pre-reset audio never repopulates the windows
+ * (a stale wake is worse than a dropped frame). Frames are copied at
+ * enqueue, so a producer reusing its buffer cannot mutate delivered audio.
  */
 export class OwwWakeDetector {
   private readonly sessions: { melspec: OwwSession; embedding: OwwSession; classifier: OwwSession };
@@ -290,18 +293,24 @@ export class OwwWakeDetector {
         `frame oww debe tener ${OWW_FRAME_SAMPLES} muestras; recibido ${frame.length}`,
       );
     }
+    // Copia al encolar: el productor puede reutilizar el buffer antes de
+    // que este push encolado corra; el audio entregado no puede cambiar.
+    const owned = frame.slice();
+    // Generación al ENCOLAR: reset() invalida TODO el audio recibido antes,
+    // incluidos los pushes pendientes en cola, no solo el activo.
+    const gen = this.generation;
     // Serialised: the task runs only after every earlier push settles, so
     // concurrent callers cannot interleave awaits or reorder carry/mel/emb.
     // The chain itself never rejects, so close() can await a clean drain.
-    const task = this.chain.then(() => this.doPush(frame));
+    const task = this.chain.then(() => this.doPush(owned, gen));
     this.chain = task.catch(() => undefined);
     return task;
   }
 
-  private async doPush(frame: Float32Array): Promise<number | null> {
-    // Generation captured when the push actually starts: audio enqueued
-    // before a reset but processed after it is just fresh post-reset audio.
-    const gen = this.generation;
+  private async doPush(frame: Float32Array, gen: number): Promise<number | null> {
+    // Encolado antes de un reset: es audio pre-reset, no post-reset. Descartar
+    // SIN tocar carry ni ventanas (repoblar con él sería un falso wake).
+    if (gen !== this.generation) return null;
     // Official scale: int16 PCM as float32. The lookback is part of the model
     // input, so it converts too.
     const scaled = new Float32Array(this.carry.length + OWW_FRAME_SAMPLES);

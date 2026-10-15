@@ -394,6 +394,38 @@ describe('A1a r3: ciclo de vida async (carreras close/reset/push concurrente)', 
     }
   });
 
+  it('reset() invalida tambien la COLA: B encolado pre-reset nunca llega a melspec', async () => {
+    const { sessions, calls, openGate } = gatedSessions({ gateMelOnCall: 1 });
+    const det = OwwWakeDetector.overSessions(sessions);
+    const pushA = det.pushFrame(rampFrame()); // A: retenido en la compuerta
+    await Promise.resolve();
+    const pushB = det.pushFrame(rampFrame().reverse()); // B: en cola, pre-reset
+    det.reset(); // invalida A (activo) y B (pendiente): todo el audio pre-reset
+    openGate();
+    expect(await pushA).toBeNull();
+    expect(await pushB).toBeNull();
+    // B nunca llego a melspec: solo A ejecuto la primera llamada (retenida)
+    expect(calls.melspec).toBe(1);
+    // nada repoblo: solo pushes NUEVOS llenan el warmup otra vez
+    for (let i = 1; i <= 9; i++) await det.pushFrame(rampFrame());
+    expect(calls.embedding).toBe(0);
+    await det.pushFrame(rampFrame());
+    expect(calls.embedding).toBe(1);
+  });
+
+  it('el frame se copia al encolar: reutilizar el buffer no cambia el audio entregado', async () => {
+    const { sessions, melInputs } = fakeSessions();
+    const det = OwwWakeDetector.overSessions(sessions);
+    const f = rampFrame();
+    const p = det.pushFrame(f);
+    f.fill(0.99); // el productor reutiliza el buffer antes de que corra el push
+    await p;
+    const head = melInputs[0]?.head ?? [];
+    for (let i = 0; i < 4; i++) {
+      expect(head[i]).toBe(floatToInt16Scale(i / OWW_FRAME_SAMPLES));
+    }
+  });
+
   it('close() con release fallido: error agregado, sin doble release, reintentable', async () => {
     const released: string[] = [];
     let failEmbedding = true;
