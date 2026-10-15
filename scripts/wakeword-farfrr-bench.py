@@ -1,53 +1,58 @@
 #!/usr/bin/env python3
 """Item A1b — bench FAR/FRR del clasificador "chochi" con protocolo
-leave-one-source-out: ningun dato cuya PROCEDENCIA sea el clip evaluado entra
-en su modelo (objecion 3, ronda 1 #139: exclusion por source verificable del
-manifest, que cubre aumentos, no por prefijo de nombre).
+leave-one-source-out: ningun dato cuya PROCEDENCIA RAIZ sea el clip evaluado
+entra en su modelo.
 
-REGLA UNICA DE EVENTOS (objeciones 1 y 2): positivos y negativos se juzgan
-con el MISMO criterio operativo, el que aplicara el listener: un EVENTO es
-una racha de >= PACIENCIA ventanas CONSECUTIVAS del timeline completo con
-score >= umbral (rearme: la racha termina al caer bajo el umbral). Sobre los
-eventos, no sobre picos:
+PROCEDENCIA (objecion 3, rondas 1-2 #139): la procedencia NO se fabrica por
+prefijo en cada fold. Los segmentos de --realpos traen un manifest.json:
+  {"roots":   {"nico1": {"sha256": "<sha del clip original>"}, ...},
+   "segments": {"n1-a-0.9-0.7.pcm": "nico1", ...}}
+El bench exige que (a) todo *.pcm del directorio este en "segments", (b) la
+fuente evaluada exista en "roots", y (c) el sha256 del clip evaluado coincida
+con el declarado para su raiz — asi el segmento aumentado queda vinculado al
+original por hash, no por nombre. La exclusion es por root_source_id y el
+assert de interseccion vacia ya no es una tautologia: las fuentes las escribio
+el manifest, no el fold.
 
-  - Deteccion: cada region positiva (centro +- REGION_TOL pushes) necesita un
-    evento asignado. Cada evento se asigna COMO MUCHO a una region (la de
-    centro mas cercano entre las solapadas; se reporta la ambiguedad), asi un
-    unico evento no puede puntuar dos veces aunque las regiones se solapen.
-  - Warmup: una region cuyo centro cae antes del primer push punctuable (25,
-    el primer score del runner) NO es evaluable: se reporta aparte y no entra
-    ni en el numerador ni en el denominador.
-  - Falsos wakes: eventos que no solapan ninguna region. El timeline NUNCA se
-    trocea: la continuidad de las rachas es la real (el canario de la
-    auditoria — scores [.99,.1,.99] con la region en medio — da 0 falsos
-    wakes porque los dos picos no son consecutivos en el timeline).
-  - FAR: proporcion de ventanas negativas con score >= umbral y falsos wakes
-    por minuto de audio negativo. Si no hay audio negativo, ambas metricas se
-    reportan como NA (nunca un 0 inventado sin medicion).
+REGLA UNICA DE EVENTOS (objeciones 1-2, rondas 1-2): positivos y negativos se
+juzgan con el criterio operativo del listener: un EVENTO es una racha de >=
+PACIENCIA ventanas CONSECUTIVAS del timeline completo con score >= umbral, y
+su INSTANTE DE DISPARO (trigger) es el push en que la racha alcanza la
+paciencia: start + paciencia - 1. El listener despierta en el trigger, no al
+final de la racha: una racha larga que empezo ANTES de la palabra no puede
+lavar un falso temprano (canario del auditor: scores=1 de 25 a 124 con la
+palabra en 100 -> trigger 26 -> falso wake + palabra perdida, no un hit).
 
-Umbral: percentil --threshold-pct (por defecto 1) de los scores de los
-positivos de entrenamiento de ese modelo. El bench NO elige el umbral de
-produccion: reporta el paisaje para que la decision de adopcion contra el
-baseline whisper-fonetico sea medida, no opinada.
+  - Deteccion: region EVALUABLE (centro entre el primer push punctuable, 25,
+    y el ultimo push del audio) cuyo intervalo centro +- REGION_TOL contiene
+    el TRIGGER de un evento. Cada evento alimenta como mucho una region (la
+    de centro mas cercano; ambiguedad reportada) y cada racha tiene un unico
+    trigger: un evento activo no rearma, una racha no puede detectar dos
+    palabras.
+  - Ignorados: eventos cuyo trigger cae bajo una region NO evaluable
+    (warmup o mas alla del fin del audio). Ni hits ni falsos: se reportan
+    aparte, porque ni la deteccion ni la exposicion negativa los cubren.
+  - Falsos wakes: eventos cuyo trigger cae en territorio EXPUESTO (fuera de
+    toda region declarada). El denominador de FAR es exactamente ese mismo
+    territorio: numerador y exposicion coherentes (objecion 2, ronda 2).
+  - FAR: proporcion de ventanas expuestas con score >= umbral y falsos wakes
+    por minuto de audio expuesto. Si no hay exposicion, ambas son NA (nunca
+    un 0 inventado sin medicion).
+
+Umbral: percentil --threshold-pct (defecto 1) de los scores de los positivos
+de entrenamiento de ese modelo. El bench NO elige el umbral de produccion.
 
 Uso:
   wakeword-farfrr-bench.py --models DIR --cache train.npz --realpos DIR \
-      --eval nico1:n1:nico1.pcm:231,275,394,469 \
-      --eval nico2:n2:nico2.pcm:9,21,34,46,90,141
+      --eval nico1:nico1.pcm:231,275,394,469 \
+      --eval nico2:nico2.pcm:9,21,34,46,90,141
 
-  --eval TAG:SEGPFX:PCM:REGIONES  TAG = identificador de la fuente evaluada;
-  SEGPFX = prefijo de los segmentos de --realpos declarados derivados de esa
-  fuente (se excluyen al entrenar su modelo, con source=TAG); PCM = clip
-  int16 16 kHz; REGIONES = pushes centrales de las palabras, separados por
-  comas.
-
-Verificaciones por fold (fallan el bench si no se cumplen):
-  - la fuente evaluada EXISTE en la cache de segmentos antes de excluirla
-    (una exclusion vacia por nombre mal escrito no puede pasar desapercibida);
-  - tras la exclusion, la interseccion de sources de entrenamiento con la
-    fuente evaluada es vacia (assert, no confianza).
+  --eval TAG:PCM:REGIONES  TAG = raiz declarada en el manifest de --realpos;
+  PCM = clip int16 16 kHz (su sha256 debe coincidir con el de la raiz);
+  REGIONES = pushes centrales de las palabras, separados por comas.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -72,8 +77,9 @@ PUSHES_PER_SECOND = 12.5  # 80 ms por push
 
 def extract_events(scores: np.ndarray, ends: np.ndarray, thr: float, patience: int):
     """Eventos = rachas de >= patience ventanas consecutivas del timeline con
-    score >= thr. Devuelve [(push_inicio, push_fin, score_max)]. La misma
-    regla juzga positivos y negativos; rearme al caer bajo el umbral."""
+    score >= thr. Devuelve [(start_push, end_push, score_max, trigger_push)];
+    trigger = push en que la racha alcanza la paciencia (el instante en que
+    despertaria el listener). Una racha activa no rearma: un solo trigger."""
     events = []
     run_start = None
     for i in range(len(scores)):
@@ -82,47 +88,56 @@ def extract_events(scores: np.ndarray, ends: np.ndarray, thr: float, patience: i
                 run_start = i
         else:
             if run_start is not None and i - run_start >= patience:
-                events.append((int(ends[run_start]), int(ends[i - 1]), float(scores[run_start:i].max())))
+                events.append((
+                    int(ends[run_start]),
+                    int(ends[i - 1]),
+                    float(scores[run_start:i].max()),
+                    int(ends[run_start + patience - 1]),
+                ))
             run_start = None
     if run_start is not None and len(scores) - run_start >= patience:
-        events.append((int(ends[run_start]), int(ends[-1]), float(scores[run_start:].max())))
+        events.append((
+            int(ends[run_start]),
+            int(ends[-1]),
+            float(scores[run_start:].max()),
+            int(ends[run_start + patience - 1]),
+        ))
     return events
 
 
-def split_regions(centers, first_push: int):
-    """Separa regiones evaluables de no evaluables por warmup (centro anterior
-    al primer push punctuable). Devuelve (evaluables, no_evaluables)."""
-    evaluables = [c for c in centers if c >= first_push]
-    no_evaluables = [c for c in centers if c < first_push]
+def split_regions(centers, first_push: int, last_push: int):
+    """Evaluables = centro dentro del audio punctuable [first_push, last_push].
+    No evaluables: warmup (antes del primer score) o mas alla del fin."""
+    evaluables = [c for c in centers if first_push <= c <= last_push]
+    no_evaluables = [c for c in centers if c < first_push or c > last_push]
     return evaluables, no_evaluables
 
 
-def assign_events(events, centers, tol: int):
-    """Asigna cada evento a como mucho una region (la de centro mas cercano
-    entre las que solapa). Devuelve (detectadas, no_detectadas, falsos_wakes,
-    avisos). Un evento nunca puntua dos veces."""
-    detected, ambiguous_notes = set(), []
-    unassigned = []
-    for ev_start, ev_end, ev_max in events:
-        overlapped = [c for c in centers if ev_start <= c + tol and ev_end >= c - tol]
-        if not overlapped:
-            unassigned.append((ev_start, ev_end, ev_max))
+def assign_events(events, evaluables, no_evaluables, tol: int):
+    """Clasifica cada evento por su TRIGGER: hit (region evaluable), ignorado
+    (region no evaluable: ni hit ni falso) o falso wake (territorio expuesto).
+    Devuelve (detectadas, no_detectadas, falsos, ignorados, avisos)."""
+    detected, falsos, ignorados, notas = set(), [], [], []
+    for st, en, mx, trig in events:
+        hits = [c for c in evaluables if abs(trig - c) <= tol]
+        if hits:
+            chosen = min(hits, key=lambda c: abs(trig - c))
+            if len(hits) > 1:
+                notas.append(f"evento trigger {trig} solapa {len(hits)} regiones; asignado solo a {chosen}")
+            detected.add(chosen)
             continue
-        chosen = min(overlapped, key=lambda c: min(
-            abs(ev_start - c), abs(ev_end - c), abs((ev_start + ev_end) / 2 - c)))
-        if len(overlapped) > 1:
-            ambiguous_notes.append(
-                f"evento {ev_start}-{ev_end} solapa {len(overlapped)} regiones; "
-                f"asignado solo a {chosen}"
-            )
-        detected.add(chosen)
-    missed = [c for c in centers if c not in detected]
-    return sorted(detected), missed, unassigned, ambiguous_notes
+        if any(abs(trig - c) <= tol for c in no_evaluables):
+            ignorados.append((st, en, mx, trig))
+            continue
+        falsos.append((st, en, mx, trig))
+    missed = [c for c in evaluables if c not in detected]
+    return sorted(detected), missed, falsos, ignorados, notas
 
 
 def far_metrics(scores: np.ndarray, ends: np.ndarray, centers, tol: int, thr: float):
-    """Metricas sobre el audio negativo (fuera de TODA region declarada).
-    (far_ventanas, n_negativas, segundos_negativos); None si no hay negativos."""
+    """Exposicion negativa = ventanas fuera de TODA region declarada (la misma
+    tierra donde un trigger cuenta como falso wake).
+    (far_ventanas, n_expuestas, segundos_expuestos); None si no hay exposicion."""
     in_any = np.zeros(len(ends), dtype=bool)
     for c in centers:
         in_any |= (ends >= c - tol) & (ends <= c + tol)
@@ -132,27 +147,38 @@ def far_metrics(scores: np.ndarray, ends: np.ndarray, centers, tol: int, thr: fl
     return float((neg >= thr).mean()), int(len(neg)), float(len(neg)) / PUSHES_PER_SECOND
 
 
-def train_fold(caches: list[str], realpos: str, eval_source: str, seg_pfx: str, models: str, workdir: str, thr_pct: float):
-    """Entrena (via wakeword-train.py, sin atajos) excluyendo la fuente evaluada."""
+def train_fold(caches: list[str], realpos: str, eval_source: str, eval_pcm: str, models: str, workdir: str, thr_pct: float):
+    """Entrena (via wakeword-train.py, sin atajos) excluyendo la raiz evaluada.
+    La procedencia de cada segmento se lee del manifest.json del directorio;
+    el sha256 del clip evaluado debe coincidir con el de su raiz declarada."""
     import onnxruntime as ort
 
+    man_path = Path(realpos) / "manifest.json"
+    if not man_path.exists():
+        raise SystemExit(f"{man_path} no existe: la procedencia de los segmentos no es verificable")
+    man = json.loads(man_path.read_text())
+    roots = man.get("roots", {})
+    segments = man.get("segments", {})
+    if eval_source not in roots:
+        raise SystemExit(f"la fuente {eval_source!r} no esta en roots del manifest: exclusion vacia")
+    eval_sha = hashlib.sha256(open(eval_pcm, "rb").read()).hexdigest()
+    if roots[eval_source].get("sha256") != eval_sha:
+        raise SystemExit(
+            f"el sha256 de {eval_pcm} no coincide con el de la raiz {eval_source!r} del manifest: "
+            "no se puede garantizar que los segmentos derivan de este clip"
+        )
     segs = sorted(Path(realpos).glob("*.pcm"))
-    clips = [f"real-{s.stem}:1:{s}:{eval_source}" for s in segs if s.stem.startswith(seg_pfx)]
-    other = [f"real-{s.stem}:1:{s}:otros" for s in segs if not s.stem.startswith(seg_pfx)]
-    if not clips:
-        raise SystemExit(f"ningun segmento con prefijo {seg_pfx!r} en {realpos}")
+    unknown = [s.name for s in segs if s.name not in segments]
+    if unknown:
+        raise SystemExit(f"segmentos sin procedencia declarada en el manifest: {unknown[:5]}")
+    clips = [f"real-{s.stem}:1:{s}:{segments[s.name]}" for s in segs]
     seg_cache = str(Path(workdir) / f"segments-{eval_source}.npz")
     subprocess.run(
         [sys.executable, str(HERE / "wakeword-windows.py"), "--models", models, "--out", seg_cache]
-        + [arg for c in [*other, *clips] for arg in ("--clip", c)],
+        + [arg for c in clips for arg in ("--clip", c)],
         check=True,
         capture_output=True,
     )
-    # Verificacion 1: la fuente evaluada EXISTE en la cache antes de excluirla.
-    zs = np.load(seg_cache)
-    manifest = json.loads(str(zs["manifest_json"]))
-    if eval_source not in manifest["sources"]:
-        raise SystemExit(f"la fuente {eval_source!r} no existe en la cache de segmentos: exclusion vacia")
     out = str(Path(workdir) / f"model-{eval_source}.onnx")
     subprocess.run(
         [sys.executable, str(HERE / "wakeword-train.py"), "--exclude-source", eval_source, "--out", out]
@@ -160,18 +186,19 @@ def train_fold(caches: list[str], realpos: str, eval_source: str, seg_pfx: str, 
         check=True,
         capture_output=True,
     )
-    # Verificacion 2: tras la exclusion, interseccion de sources vacia (assert).
     xs, ys = [], []
+    excluded = 0
     for path in [*caches, seg_cache]:
         z = np.load(path)
         if "sources" not in z:
             raise SystemExit(f"{path} no tiene columna sources: regenerar con wakeword-windows.py v2")
         keep = z["sources"] != eval_source
-        assert not (z["sources"][keep] == eval_source).any()
+        excluded += int((~keep).sum())
         xs.append(z["X"][keep])
         ys.append(z["y"][keep])
     X = np.vstack(xs)
     y = np.concatenate(ys)
+    assert excluded > 0, f"la exclusion de {eval_source!r} no retiro ninguna ventana: exclusion vacia"
     sess = ort.InferenceSession(out, providers=["CPUExecutionProvider"])
     inp = sess.get_inputs()[0].name
     scores = sess.run(None, {inp: X.reshape(-1, EMB_WINDOW, 96).astype(np.float32)})[0].squeeze(1)
@@ -184,45 +211,48 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", required=True, help="dir con melspectrogram.onnx y embedding_model.onnx")
     ap.add_argument("--cache", action="append", required=True, help="cache de entrenamiento (.npz con sources)")
-    ap.add_argument("--realpos", required=True, help="dir con segmentos reales aumentados (*.pcm)")
-    ap.add_argument("--eval", action="append", required=True, metavar="TAG:SEGPFX:PCM:R1,R2,...", help="clip de evaluacion leave-one-source-out")
+    ap.add_argument("--realpos", required=True, help="dir con segmentos reales aumentados y manifest.json")
+    ap.add_argument("--eval", action="append", required=True, metavar="TAG:PCM:R1,R2,...", help="clip de evaluacion leave-one-source-out")
     ap.add_argument("--threshold-pct", type=float, default=1.0, help="percentil de positivos para el umbral (defecto 1)")
     ap.add_argument("--patience", type=int, default=PATIENCE, help="racha minima para evento (defecto 2)")
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as workdir:
         for spec_arg in args.eval:
-            tag, pfx, pcm, regions = spec_arg.split(":", 3)
+            tag, pcm, regions = spec_arg.split(":", 2)
             centers = [int(r) for r in regions.split(",")]
-            sess, thr = train_fold(args.cache, args.realpos, tag, pfx, args.models, workdir, args.threshold_pct)
+            sess, thr = train_fold(args.cache, args.realpos, tag, pcm, args.models, workdir, args.threshold_pct)
             embs = ww.embeddings_of(pcm, args.models)
             W, ends = ww.windows_of(embs)
             inp = sess.get_inputs()[0].name
             s = sess.run(None, {inp: W.reshape(-1, EMB_WINDOW, 96).astype(np.float32)})[0].squeeze(1)
 
-            evaluables, no_evaluables = split_regions(centers, FIRST_SCORE_PUSH)
+            last_push = int(ends[-1])
+            evaluables, no_evaluables = split_regions(centers, FIRST_SCORE_PUSH, last_push)
             events = extract_events(s, ends, thr, args.patience)
-            detected, missed, false_wakes, notes = assign_events(events, evaluables, REGION_TOL)
+            detected, missed, falsos, ignorados, notas = assign_events(events, evaluables, no_evaluables, REGION_TOL)
             far_w, n_neg, neg_secs = far_metrics(s, ends, centers, REGION_TOL, thr)
 
             print(f"[LOCO {tag}] thr(p{args.threshold_pct:g})={thr:.3f} paciencia={args.patience}")
             if no_evaluables:
-                print(f"  no evaluables por warmup (centro < push {FIRST_SCORE_PUSH}): {no_evaluables}")
+                print(f"  no evaluables (warmup < push {FIRST_SCORE_PUSH} o > fin {last_push}): {no_evaluables}")
             print(
                 f"  deteccion: {len(detected)}/{len(evaluables)} regiones evaluables "
                 f"(detectadas {detected}{'; MISS ' + str(missed) if missed else ''})"
             )
-            for note in notes:
-                print(f"  aviso: {note}")
+            for nota in notas:
+                print(f"  aviso: {nota}")
+            if ignorados:
+                print(f"  ignorados bajo region no evaluable (ni hits ni falsos): {[(t,) for *_, t in ignorados]}")
             if far_w is None:
-                print("  FAR: NA (0 ventanas negativas fuera de region: no hay medicion, no es 0)")
-                print(f"  falsos wakes: {len(false_wakes)} (sin audio negativo de referencia)")
+                print("  FAR: NA (0 ventanas expuestas: no hay medicion, no es 0)")
+                print(f"  falsos wakes: {len(falsos)} (sin audio expuesto de referencia)")
             else:
-                rate = len(false_wakes) / (neg_secs / 60)
+                rate = len(falsos) / (neg_secs / 60)
                 print(
-                    f"  FAR ventanas: {far_w:.4f} sobre {n_neg} ({neg_secs:.1f}s negativos) | "
-                    f"falsos wakes: {len(false_wakes)} = {rate:.2f}/min | "
-                    f"eventos: {[(a, b) for a, b, _ in false_wakes][:10]}"
+                    f"  FAR ventanas: {far_w:.4f} sobre {n_neg} ({neg_secs:.1f}s expuestos) | "
+                    f"falsos wakes: {len(falsos)} = {rate:.2f}/min | "
+                    f"triggers: {[t for *_, t in falsos][:10]}"
                 )
 
 
