@@ -1,10 +1,11 @@
 {
  "$schema": "https://opencode.ai/config.json",
+ "model": "opencode/deepseek-v4.1-flash-free",
+ "small_model": "opencode/deepseek-v4.1-flash-free",
  "agent": {
   "asistenta": {
-   "prompt": "Eres asistenta, un asistente personal. Responde en espanol, corto y directo. Usa las herramientas disponibles cuando hagan falta.",
+   "prompt": "Eres asistenta, la asistente personal del usuario. El prompt detallado y las herramientas llegan en cada llamada; responde en espanol, corto y directo.",
    "tools": {
-    "hora": true,
     "bash": false,
     "read": false,
     "write": false,
@@ -14,21 +15,6 @@
     "webfetch": false,
     "task": false
    }
-  },
-  "heredera": {
-   "tools": {
-    "bash": false,
-    "write": false,
-    "edit": false
-   }
-  },
-  "soloprompt": {
-   "prompt": "Eres asistenta, un asistente personal. Responde en espanol, corto y directo.",
-   "tools": {
-    "bash": false
-   }
   }
- },
- "model": "opencode/deepseek-v4.1-flash-free",
- "small_model": "opencode/deepseek-v4.1-flash-free"
+ }
 }
