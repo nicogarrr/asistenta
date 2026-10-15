@@ -6,32 +6,37 @@
  * 1-2s of CPU per pass, measured on this machine, plus a phonetic-folding
  * matcher because whisper spells "chochi" as "Choci"/"Chuchis"/"Chocchi".
  * openWakeWord does not transcribe at all: three tiny ONNX models score the
- * audio directly. Measured on this VM (bench harness in scripts/, real
- * models, 40.6s of real speech): 6.5ms of CPU per 80ms frame — about 8% of
- * one core for always-on listening, versus a whisper pass that costs more
- * than the window it covers.
+ * audio directly.
  *
- * The pipeline is the official openWakeWord one (Apache-2.0, models pinned
- * to the v0.5.1 release):
+ * The pipeline replicates the OFFICIAL openWakeWord v0.5.1 streaming path
+ * (openwakeword/utils.py, verified line by line):
  *
- *   1280 samples (80ms @16kHz)
- *     → melspectrogram.onnx   [1,1280]      → [1,1,5,32]   (5 mel frames)
- *     → sliding 76 mel frames [1,76,32,1]   → embedding_model.onnx → [1,1,1,96]
- *     → sliding 16 embeddings [1,16,96]     → <word>.onnx  → [1,1] score
+ *   - Audio is int16-scale PCM (the official code casts int16 to float32
+ *     WITHOUT normalising; the melspec model was trained on that scale).
+ *     This app carries float [-1,1], so pushFrame converts once: round(x *
+ *     32767), clamped to int16 range.
+ *   - Per 1280-sample push (80ms), the melspec model sees the LAST 1760
+ *     samples (the new 1280 plus a 480-sample lookback), yielding 8 mel
+ *     frames — on the very first push there is no lookback yet, so it sees
+ *     1280 and yields 5. Frames then pass through spec/10 + 2.
+ *   - A sliding 76-frame mel window feeds embedding_model.onnx → one 96-d
+ *     embedding per push once the window is full.
+ *   - A sliding 16-embedding window feeds the word classifier → one raw
+ *     score per push once full. First score on push 25 (~2.0s), then every
+ *     80ms.
  *
- * A score is therefore available once 31 frames (~2.5s) have been pushed and
- * refreshes every 80ms after that.
+ * Exactness against the official implementation is not asserted by these
+ * words but by scripts/wakeword-parity.*: same real audio through the
+ * official Python and through this runner, scores compared push by push
+ * (see the PR body for the measured deltas, including a positive clip of
+ * the pretrained model's own word — a pipeline that cannot fire is not a
+ * pipeline).
  *
- * This is A1a: the runner, the model fetch and the bench. It is NOT wired
+ * This is A1a: the runner, the model fetch and the benches. It is NOT wired
  * into the listener — the adoption decision comes in A1b with a custom
  * "chochi" model and a measured FAR/FRR comparison against the current
  * whisper-based matcher (the rule: it only ships if it beats what exists).
  * Scores here are raw; thresholding/calibration is an A1b concern.
- *
- * Sessions and fetch are injection points so the suite exercises the frame
- * math in milliseconds without downloading or loading real ONNX files; the
- * real models are exercised by the bench script and an opt-in integration
- * test, exactly like wake.ts's device path.
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -41,10 +46,12 @@ import { join } from 'node:path';
 import { log } from '../log.js';
 
 export const OWW_SAMPLE_RATE = 16_000;
-/** One input frame: 80ms at 16kHz. */
+/** One push: 80ms at 16kHz. */
 export const OWW_FRAME_SAMPLES = 1280;
-/** Mel frames per melspectrogram pass over one input frame. */
-export const OWW_MEL_FRAMES_PER_PASS = 5;
+/** Lookback the official streaming path adds to every push (3×160 samples). */
+export const OWW_MEL_LOOKBACK = 480;
+/** Samples the melspec model consumes per push in steady state. */
+export const OWW_MEL_INPUT = OWW_FRAME_SAMPLES + OWW_MEL_LOOKBACK;
 /** Mel bins per frame. */
 export const OWW_MEL_BINS = 32;
 /** Sliding mel window the embedding model consumes. */
@@ -54,11 +61,16 @@ export const OWW_EMB_WINDOW = 16;
 /** Embedding vector size. */
 export const OWW_EMB_SIZE = 96;
 /**
- * Frames to the first score: ceil(76/5)=16 pushes fill the mel window, then
- * 16 embeddings must accumulate; the first classifier call happens on push
- * 16 + 15 = 31 (~2.5s of audio). Before that, pushFrame returns null.
+ * Pushes to the first score: the mel window reaches 76 frames on push 10
+ * (5 + 8·9 = 77), the first embedding lands on that same push, and 16
+ * embeddings complete on push 25 (~2.0s of audio).
  */
-export const OWW_FIRST_SCORE_FRAME = 16 + (OWW_EMB_WINDOW - 1);
+export const OWW_FIRST_SCORE_FRAME = 25;
+/** Official transform applied to the melspec output (utils.py v0.5.1). */
+export const melTransform = (v: number): number => v / 10 + 2;
+/** Official scale: int16 PCM as float32, NOT normalised to [-1,1]. */
+export const floatToInt16Scale = (v: number): number =>
+  Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
 
 /** Official model release the runner is pinned to (Apache-2.0). */
 export const OWW_RELEASE_BASE = 'https://github.com/dscripka/openWakeWord/releases/download/v0.5.1';
@@ -67,6 +79,10 @@ export const OWW_FEATURE_MODELS = ['melspectrogram.onnx', 'embedding_model.onnx'
 
 /** A model file smaller than this is a 404 page, not a model. */
 const MIN_MODEL_BYTES = 100_000;
+/** Word model filenames are plain .onnx basenames — never paths. */
+const WORD_MODEL_RE = /^[\w.-]+\.onnx$/;
+
+let tmpCounter = 0;
 
 /** Minimal tensor shape the runner needs — satisfied by onnxruntime-node. */
 export interface OwwTensor {
@@ -123,15 +139,21 @@ type FetchLike = typeof fetch;
 
 /**
  * Download the shared feature models plus one word model into `dir`,
- * skipping files already present. Downloads go to a temp file renamed into
- * place, so a killed download never leaves a truncated model behind; a body
- * that is too small to be a model (a 404 page) is an error, not a file.
+ * skipping files already present. `wordModelFile` must be a plain .onnx
+ * basename (no path segments): it names a file inside `dir`, nothing else.
+ * Downloads go to a unique temp file created with `wx` (no clobbering, no
+ * symlink games) and renamed into place, so a killed or racing download
+ * never leaves a truncated model behind; a body too small to be a model (a
+ * 404 page) is an error, not a file.
  */
 export async function ensureOwwModels(
   dir: string,
   wordModelFile: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<OwwModelPaths> {
+  if (!WORD_MODEL_RE.test(wordModelFile) || wordModelFile.includes('..')) {
+    throw new Error(`wordModelFile debe ser un nombre .onnx simple; recibido: ${wordModelFile}`);
+  }
   mkdirSync(dir, { recursive: true });
   const files = [...OWW_FEATURE_MODELS, wordModelFile];
   for (const file of files) {
@@ -143,17 +165,18 @@ export async function ensureOwwModels(
     if (!res.ok || !res.body) {
       throw new Error(`descarga de modelo oww falló (${res.status}): ${url}`);
     }
-    const tmp = `${target}.partial`;
+    const tmp = `${target}.${process.pid}.${tmpCounter++}.partial`;
     try {
-      // res.body is a web stream; writeFile needs bytes — buffer it (models
-      // are 1-2MB, so this is small) to keep the download testable.
+      // res.body is a web stream; buffer it (models are 1-2MB) to keep the
+      // download testable, then write with wx so a stale/symlinked temp
+      // cannot be clobbered.
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.byteLength < MIN_MODEL_BYTES) {
         throw new Error(
           `descarga de modelo oww demasiado pequeña (${buf.byteLength} B, ¿404?): ${url}`,
         );
       }
-      await writeFile(tmp, buf);
+      await writeFile(tmp, buf, { flag: 'wx' });
       renameSync(tmp, target);
     } catch (err) {
       rmSync(tmp, { force: true });
@@ -168,14 +191,16 @@ export async function ensureOwwModels(
 }
 
 /**
- * Streaming wake-word scorer. Feed 1280-sample frames in real time; each
- * push returns the raw classifier score (0..1) once the sliding windows are
- * full, or null during warmup.
+ * Streaming wake-word scorer replicating the official openWakeWord pipeline.
+ * Feed 1280-sample float [-1,1] frames in real time; each push returns the
+ * raw classifier score (0..1) once the sliding windows are full, or null
+ * during warmup.
  */
 export class OwwWakeDetector {
   private readonly sessions: { melspec: OwwSession; embedding: OwwSession; classifier: OwwSession };
   private melWindow: Float32Array[] = [];
   private embWindow: Float32Array[] = [];
+  private carry: Float32Array = new Float32Array(0);
   private closed = false;
 
   private constructor(sessions: {
@@ -194,12 +219,21 @@ export class OwwWakeDetector {
   }): Promise<OwwWakeDetector> {
     const paths = await ensureOwwModels(opts.modelDir, opts.wordModelFile, opts.fetchImpl);
     const factory = opts.factory ?? onnxSessionFactory;
-    const [melspec, embedding, classifier] = await Promise.all([
-      factory(paths.melspec),
-      factory(paths.embedding),
-      factory(paths.classifier),
-    ]);
-    return new OwwWakeDetector({ melspec, embedding, classifier });
+    // Sequential, with cleanup: Promise.all would leak the sessions that did
+    // open if a later factory rejects.
+    const opened: OwwSession[] = [];
+    try {
+      const melspec = await factory(paths.melspec);
+      opened.push(melspec);
+      const embedding = await factory(paths.embedding);
+      opened.push(embedding);
+      const classifier = await factory(paths.classifier);
+      opened.push(classifier);
+      return new OwwWakeDetector({ melspec, embedding, classifier });
+    } catch (err) {
+      await Promise.allSettled(opened.map((s) => s.release()));
+      throw err;
+    }
   }
 
   /** Test seam: build over pre-made (fake) sessions, no files involved. */
@@ -211,7 +245,7 @@ export class OwwWakeDetector {
     return new OwwWakeDetector(sessions);
   }
 
-  /** Frames of audio needed before the first score (≈2.5s). */
+  /** Pushes of audio needed before the first score (~2.0s). */
   get warmupFrames(): number {
     return OWW_FIRST_SCORE_FRAME;
   }
@@ -220,6 +254,7 @@ export class OwwWakeDetector {
   reset(): void {
     this.melWindow = [];
     this.embWindow = [];
+    this.carry = new Float32Array(0);
   }
 
   async pushFrame(frame: Float32Array): Promise<number | null> {
@@ -229,15 +264,32 @@ export class OwwWakeDetector {
         `frame oww debe tener ${OWW_FRAME_SAMPLES} muestras; recibido ${frame.length}`,
       );
     }
+    // Official scale: int16 PCM as float32. The lookback is part of the model
+    // input, so it converts too.
+    const scaled = new Float32Array(this.carry.length + OWW_FRAME_SAMPLES);
+    for (let i = 0; i < this.carry.length; i++) {
+      scaled[i] = floatToInt16Scale(this.carry[i] ?? 0);
+    }
+    for (let i = 0; i < OWW_FRAME_SAMPLES; i++) {
+      scaled[this.carry.length + i] = floatToInt16Scale(frame[i] ?? 0);
+    }
+    this.carry = frame.slice(OWW_FRAME_SAMPLES - OWW_MEL_LOOKBACK);
+
     const melName = this.sessions.melspec.inputNames[0] ?? 'input';
     const melOut = await this.sessions.melspec.run({
-      [melName]: { data: frame, dims: [1, OWW_FRAME_SAMPLES] },
+      [melName]: { data: scaled, dims: [1, scaled.length] },
     });
     const mel = melOut[this.sessions.melspec.outputNames[0] ?? 'output'];
     if (!mel) throw new Error('melspectrogram.onnx no devolvió salida');
-    // [1,1,5,32]: five mel frames of 32 bins, appended to the sliding window.
-    for (let f = 0; f < OWW_MEL_FRAMES_PER_PASS; f++) {
-      this.melWindow.push(mel.data.subarray(f * OWW_MEL_BINS, (f + 1) * OWW_MEL_BINS));
+    // [1,1,F,32]: F mel frames (5 on the first push, 8 in steady state),
+    // each transformed with the official spec/10 + 2.
+    const frames = mel.dims[2] ?? 0;
+    for (let f = 0; f < frames; f++) {
+      const row = new Float32Array(OWW_MEL_BINS);
+      for (let b = 0; b < OWW_MEL_BINS; b++) {
+        row[b] = melTransform(mel.data[f * OWW_MEL_BINS + b] ?? 0);
+      }
+      this.melWindow.push(row);
     }
     while (this.melWindow.length > OWW_MEL_WINDOW) this.melWindow.shift();
     if (this.melWindow.length < OWW_MEL_WINDOW) return null;

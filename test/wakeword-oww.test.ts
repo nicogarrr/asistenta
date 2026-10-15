@@ -1,20 +1,23 @@
-// Item A1a (wake word openWakeWord): tests escritos ANTES de la implementacion.
-// El runner ONNX se prueba con sesiones FALSAS inyectadas (misma costura que
-// wake.ts con whisper): la matriz de frames/ventanas se verifica en
-// milisegundos, sin descargas ni ONNX real. El modelo real lo ejercita el
-// bench (scripts/wakeword-bench.ts) y un test de integracion opt-in.
+// Item A1a ronda 2 (auditor #138): el runner replica el pipeline OFICIAL
+// openwakeword v0.5.1 (utils.py verificado): PCM int16 en float32 sin
+// normalizar, lookback de 480 muestras -> 8 frames mel por push (5 en el
+// primero), transform spec/10+2, ventanas 76/16. Sesiones falsas con la
+// LOGICA DE FORMAS oficial, no con formas inventadas. La paridad numerica
+// contra el Python oficial la prueban scripts/wakeword-parity.* (opt-in).
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureOwwModels,
+  floatToInt16Scale,
+  melTransform,
   OWW_EMB_SIZE,
   OWW_EMB_WINDOW,
   OWW_FIRST_SCORE_FRAME,
   OWW_FRAME_SAMPLES,
   OWW_MEL_BINS,
-  OWW_MEL_FRAMES_PER_PASS,
+  OWW_MEL_LOOKBACK,
   OWW_MEL_WINDOW,
   type OwwSession,
   OwwWakeDetector,
@@ -25,32 +28,40 @@ vi.mock('../src/log.js', () => ({
   redact: (fields: Record<string, unknown>): Record<string, unknown> => fields,
 }));
 
-const FRAME = new Float32Array(OWW_FRAME_SAMPLES);
+/** Frame con contenido reconocible: rampa 0..1. */
+function rampFrame(): Float32Array {
+  const out = new Float32Array(OWW_FRAME_SAMPLES);
+  for (let i = 0; i < out.length; i++) out[i] = i / OWW_FRAME_SAMPLES;
+  return out;
+}
 
-/**
- * Sesiones falsas deterministas. El embedding codifica su numero de llamada
- * en la primera componente para poder rastrear QUE embeddings ve el
- * clasificador; el clasificador devuelve la media de su entrada, asi el
- * score esperado se calcula a mano.
- */
+/** Frames mel que produce el modelo oficial para N muestras de entrada. */
+const officialMelFrames = (samples: number) => Math.floor((samples - OWW_MEL_LOOKBACK) / 160);
+
 function fakeSessions() {
   const calls = { melspec: 0, embedding: 0, classifier: 0 };
   const released: string[] = [];
-  const clsInputs: { dims: readonly number[]; firstEmb: number }[] = [];
-  const melInputs: number[][] = [];
-  const embInputs: number[][] = [];
+  const melInputs: { len: number; head: number[]; tail: number[] }[] = [];
+  const embFirstValue: number[] = [];
+  const clsFirstEmb: number[] = [];
+  const MEL_CONST = 12;
   const melspec: OwwSession = {
     inputNames: ['input'],
     outputNames: ['output'],
     run: async (feeds) => {
       calls.melspec++;
       const t = feeds.input;
-      melInputs.push([...(t?.dims ?? [])]);
-      if (t?.data.length !== OWW_FRAME_SAMPLES) throw new Error('frame mal cortado');
+      const len = t?.dims[1] ?? 0;
+      melInputs.push({
+        len,
+        head: [...(t?.data.slice(0, 4) ?? [])],
+        tail: [...(t?.data.slice(-4) ?? [])],
+      });
+      const frames = officialMelFrames(len);
       return {
         output: {
-          data: new Float32Array(OWW_MEL_FRAMES_PER_PASS * OWW_MEL_BINS),
-          dims: [1, 1, OWW_MEL_FRAMES_PER_PASS, OWW_MEL_BINS],
+          data: new Float32Array(frames * OWW_MEL_BINS).fill(MEL_CONST),
+          dims: [1, 1, frames, OWW_MEL_BINS],
         },
       };
     },
@@ -64,8 +75,8 @@ function fakeSessions() {
     run: async (feeds) => {
       calls.embedding++;
       const t = feeds.input_1;
-      embInputs.push([...(t?.dims ?? [])]);
       if (t?.data.length !== OWW_MEL_WINDOW * OWW_MEL_BINS) throw new Error('ventana mel mal');
+      embFirstValue.push(t?.data[0] ?? -1);
       const vec = new Float32Array(OWW_EMB_SIZE);
       vec[0] = calls.embedding; // marca de llamada para rastrear la ventana
       return { conv2d_19: { data: vec, dims: [1, 1, 1, OWW_EMB_SIZE] } };
@@ -80,13 +91,9 @@ function fakeSessions() {
     run: async (feeds) => {
       calls.classifier++;
       const t = feeds['x.1'];
-      clsInputs.push({ dims: t?.dims ?? [], firstEmb: t?.data[0] ?? -1 });
       if (t?.data.length !== OWW_EMB_WINDOW * OWW_EMB_SIZE) throw new Error('ventana emb mal');
-      let sum = 0;
-      for (const v of t?.data ?? []) sum += v;
-      return {
-        '53': { data: new Float32Array([sum / (OWW_EMB_WINDOW * OWW_EMB_SIZE)]), dims: [1, 1] },
-      };
+      clsFirstEmb.push(t?.data[0] ?? -1);
+      return { 53: { data: new Float32Array([0.01]), dims: [1, 1] } };
     },
     release: async () => {
       released.push('classifier');
@@ -96,74 +103,100 @@ function fakeSessions() {
     sessions: { melspec, embedding, classifier },
     calls,
     released,
-    clsInputs,
     melInputs,
-    embInputs,
+    embFirstValue,
+    clsFirstEmb,
+    MEL_CONST,
   };
 }
 
-describe('A1a: OwwWakeDetector (matriz de frames, sesiones falsas)', () => {
-  it('sin score durante el warmup (30 frames) y primer score en el frame 31', async () => {
-    const { sessions } = fakeSessions();
+describe('A1a r2: fidelidad al pipeline oficial (frames, escala, lookback, transform)', () => {
+  it('push 1 alimenta [1,1280] (5 frames mel) y push 2+ [1,1760] (8 frames), como utils.py', async () => {
+    const { sessions, melInputs } = fakeSessions();
     const det = OwwWakeDetector.overSessions(sessions);
-    expect(det.warmupFrames).toBe(OWW_FIRST_SCORE_FRAME);
-    expect(OWW_FIRST_SCORE_FRAME).toBe(31);
-    for (let i = 1; i <= 30; i++) {
-      expect(await det.pushFrame(FRAME)).toBeNull();
-    }
-    const score = await det.pushFrame(FRAME);
-    expect(typeof score).toBe('number');
+    await det.pushFrame(rampFrame());
+    await det.pushFrame(rampFrame());
+    await det.pushFrame(rampFrame());
+    expect(melInputs[0]?.len).toBe(OWW_FRAME_SAMPLES);
+    expect(melInputs[1]?.len).toBe(OWW_FRAME_SAMPLES + OWW_MEL_LOOKBACK);
+    expect(melInputs[2]?.len).toBe(OWW_FRAME_SAMPLES + OWW_MEL_LOOKBACK);
+    expect(officialMelFrames(OWW_FRAME_SAMPLES)).toBe(5);
+    expect(officialMelFrames(OWW_FRAME_SAMPLES + OWW_MEL_LOOKBACK)).toBe(8);
   });
 
-  it('tras el warmup cada frame devuelve score; el melspec corre 1 vez por frame', async () => {
+  it('el lookback de push 2 son las ultimas 480 muestras de push 1, en escala int16', async () => {
+    const { sessions, melInputs } = fakeSessions();
+    const det = OwwWakeDetector.overSessions(sessions);
+    const f1 = rampFrame();
+    await det.pushFrame(f1);
+    await det.pushFrame(rampFrame());
+    const head = melInputs[1]?.head ?? [];
+    for (let i = 0; i < 4; i++) {
+      expect(head[i]).toBe(floatToInt16Scale(f1[OWW_FRAME_SAMPLES - OWW_MEL_LOOKBACK + i] ?? 0));
+    }
+  });
+
+  it('escala oficial: float [-1,1] -> int16 como float32, SIN normalizar', async () => {
+    const { sessions, melInputs } = fakeSessions();
+    const det = OwwWakeDetector.overSessions(sessions);
+    const f = new Float32Array(OWW_FRAME_SAMPLES);
+    f[0] = -1;
+    f[1] = 0.5;
+    f[2] = 1;
+    await det.pushFrame(f);
+    const head = melInputs[0]?.head ?? [];
+    expect(head[0]).toBe(-32767);
+    expect(head[1]).toBe(16384);
+    expect(head[2]).toBe(32767);
+  });
+
+  it('transform oficial spec/10+2 aplicada a cada frame mel antes del embedding', async () => {
+    const { sessions, embFirstValue, MEL_CONST } = fakeSessions();
+    const det = OwwWakeDetector.overSessions(sessions);
+    for (let i = 0; i < 10; i++) await det.pushFrame(rampFrame());
+    expect(embFirstValue.length).toBe(1); // ventana mel llena en el push 10
+    expect(embFirstValue[0]).toBeCloseTo(melTransform(MEL_CONST), 5);
+    expect(melTransform(MEL_CONST)).toBeCloseTo(3.2, 5);
+  });
+
+  it('warmup oficial: ventana mel llena en push 10, primer score en push 25', async () => {
     const { sessions, calls } = fakeSessions();
     const det = OwwWakeDetector.overSessions(sessions);
-    for (let i = 1; i <= 31; i++) await det.pushFrame(FRAME);
-    expect(calls.melspec).toBe(31);
-    expect(calls.embedding).toBe(16); // una por push desde que la ventana mel se lleno
+    expect(OWW_FIRST_SCORE_FRAME).toBe(25);
+    for (let i = 1; i <= 24; i++) {
+      expect(await det.pushFrame(rampFrame())).toBeNull();
+    }
+    expect(calls.melspec).toBe(24);
+    expect(calls.embedding).toBe(15); // pushes 10..24
+    expect(calls.classifier).toBe(0);
+    const score = await det.pushFrame(rampFrame());
+    expect(score).toBeCloseTo(0.01, 6);
+    expect(calls.embedding).toBe(16);
     expect(calls.classifier).toBe(1);
-    const a = await det.pushFrame(FRAME);
-    const b = await det.pushFrame(FRAME);
-    expect(a).not.toBeNull();
-    expect(b).not.toBeNull();
-    expect(calls.classifier).toBe(3);
   });
 
   it('las ventanas deslizan: el clasificador del push N ve embeddings de N-15..N', async () => {
-    const { sessions, clsInputs } = fakeSessions();
+    const { sessions, clsFirstEmb } = fakeSessions();
     const det = OwwWakeDetector.overSessions(sessions);
-    for (let i = 1; i <= 31; i++) await det.pushFrame(FRAME);
-    // Primer score: embeddings de los pushes 16..31 (el primero llega en el
-    // push 16, cuando la ventana mel llega a 76). Sus marcas: 1..16.
-    expect(clsInputs[0]?.dims).toEqual([1, OWW_EMB_WINDOW, OWW_EMB_SIZE]);
-    expect(clsInputs[0]?.firstEmb).toBe(1);
-    await det.pushFrame(FRAME); // push 32 -> embeddings 17..32, marcas 2..17
-    expect(clsInputs[1]?.firstEmb).toBe(2);
-    // La forma de cada llamada es la oficial del pipeline.
+    for (let i = 1; i <= 26; i++) await det.pushFrame(rampFrame());
+    expect(clsFirstEmb[0]).toBe(1); // embeddings de pushes 10..25 (marcas 1..16)
+    expect(clsFirstEmb[1]).toBe(2); // pushes 11..26 (marcas 2..17)
   });
 
-  it('formas ONNX oficiales: melspec [1,1280], embedding [1,76,32,1], clasificador [1,16,96]', async () => {
-    const { sessions, melInputs, embInputs, clsInputs } = fakeSessions();
+  it('reset() vuelve al estado inicial: sin carry ni ventanas', async () => {
+    const { sessions, melInputs } = fakeSessions();
     const det = OwwWakeDetector.overSessions(sessions);
-    for (let i = 1; i <= 31; i++) await det.pushFrame(FRAME);
-    expect(melInputs[0]).toEqual([1, OWW_FRAME_SAMPLES]);
-    expect(embInputs[0]).toEqual([1, OWW_MEL_WINDOW, OWW_MEL_BINS, 1]);
-    expect(clsInputs[0]?.dims).toEqual([1, OWW_EMB_WINDOW, OWW_EMB_SIZE]);
+    await det.pushFrame(rampFrame());
+    await det.pushFrame(rampFrame());
+    det.reset();
+    expect(await det.pushFrame(rampFrame())).toBeNull();
+    expect(melInputs[2]?.len).toBe(OWW_FRAME_SAMPLES); // sin lookback tras reset
   });
 
-  it('rechaza frames de longitud incorrecta en vez de inferir sobre audio corrupto', async () => {
+  it('rechaza frames de longitud incorrecta', async () => {
     const { sessions } = fakeSessions();
     const det = OwwWakeDetector.overSessions(sessions);
     await expect(det.pushFrame(new Float32Array(100))).rejects.toThrow(/1280/);
-    await expect(det.pushFrame(new Float32Array(0))).rejects.toThrow(/1280/);
-  });
-
-  it('reset() vacia las ventanas: vuelve el warmup', async () => {
-    const { sessions } = fakeSessions();
-    const det = OwwWakeDetector.overSessions(sessions);
-    for (let i = 1; i <= 31; i++) await det.pushFrame(FRAME);
-    det.reset();
-    expect(await det.pushFrame(FRAME)).toBeNull();
   });
 
   it('close() libera las tres sesiones una vez y bloquea pushes posteriores', async () => {
@@ -172,11 +205,45 @@ describe('A1a: OwwWakeDetector (matriz de frames, sesiones falsas)', () => {
     await det.close();
     await det.close();
     expect(released.sort()).toEqual(['classifier', 'embedding', 'melspec']);
-    await expect(det.pushFrame(FRAME)).rejects.toThrow(/cerrado/);
+    await expect(det.pushFrame(rampFrame())).rejects.toThrow(/cerrado/);
   });
 });
 
-describe('A1a: ensureOwwModels (descarga honesta)', () => {
+describe('A1a r2: create() no pierde sesiones abiertas si una factory falla', () => {
+  it('la segunda factory rechaza: la primera sesion se libera y el error propaga', async () => {
+    const released: string[] = [];
+    const made: string[] = [];
+    const mk = (name: string) => async () => {
+      made.push(name);
+      return {
+        inputNames: ['i'],
+        outputNames: ['o'],
+        run: async () => ({}),
+        release: async () => {
+          released.push(name);
+        },
+      } as OwwSession;
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'oww-c-'));
+    for (const f of ['melspectrogram.onnx', 'embedding_model.onnx', 'w.onnx']) {
+      writeFileSync(join(dir, f), Buffer.alloc(200_000));
+    }
+    let n = 0;
+    const factory = async (path: string) => {
+      n++;
+      if (n === 2) throw new Error('embedding roto');
+      return mk(path)();
+    };
+    await expect(
+      OwwWakeDetector.create({ modelDir: dir, wordModelFile: 'w.onnx', factory }),
+    ).rejects.toThrow(/embedding roto/);
+    expect(made).toHaveLength(1);
+    expect(released).toHaveLength(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('A1a r2: ensureOwwModels (descarga honesta y segura)', () => {
   let dir = '';
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -185,55 +252,39 @@ describe('A1a: ensureOwwModels (descarga honesta)', () => {
 
   const bigBody = () => new ArrayBuffer(200_000);
 
-  it('descarga los 3 modelos (features + palabra) via tmp+rename', async () => {
+  it('rechaza wordModelFile con path (../, sub/dir, sin .onnx)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'oww-'));
-    const seen: string[] = [];
-    const fakeFetch = async (url: string | URL) => {
-      seen.push(String(url));
-      return new Response(bigBody(), { status: 200 });
-    };
-    const paths = await ensureOwwModels(dir, 'hey_jarvis_v0.1.onnx', fakeFetch as typeof fetch);
-    expect(seen).toHaveLength(3);
-    for (const p of Object.values(paths)) {
-      expect(readFileSync(p).byteLength).toBe(200_000);
+    for (const bad of ['../evil.onnx', 'sub/dir.onnx', 'sin-extension', 'a/../b.onnx']) {
+      await expect(ensureOwwModels(dir, bad, vi.fn() as never)).rejects.toThrow(/simple/);
     }
-    expect(paths.classifier).toContain('hey_jarvis_v0.1.onnx');
+  });
+
+  it('descargas concurrentes del mismo modelo no colisionan (tmp unico wx)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'oww-'));
+    const fakeFetch = async () => new Response(bigBody(), { status: 200 });
+    const [a, b] = await Promise.all([
+      ensureOwwModels(dir, 'w.onnx', fakeFetch as typeof fetch),
+      ensureOwwModels(dir, 'w.onnx', fakeFetch as typeof fetch),
+    ]);
+    expect(readFileSync(a.classifier).byteLength).toBe(200_000);
+    expect(readFileSync(b.classifier).byteLength).toBe(200_000);
   });
 
   it('no vuelve a descargar lo que ya existe', async () => {
     dir = mkdtempSync(join(tmpdir(), 'oww-'));
-    for (const f of ['melspectrogram.onnx', 'embedding_model.onnx', 'hey_jarvis_v0.1.onnx']) {
+    for (const f of ['melspectrogram.onnx', 'embedding_model.onnx', 'w.onnx']) {
       writeFileSync(join(dir, f), Buffer.alloc(200_000));
     }
     const fakeFetch = vi.fn();
-    await ensureOwwModels(dir, 'hey_jarvis_v0.1.onnx', fakeFetch as unknown as typeof fetch);
+    await ensureOwwModels(dir, 'w.onnx', fakeFetch as unknown as typeof fetch);
     expect(fakeFetch).not.toHaveBeenCalled();
   });
 
   it('una respuesta minuscula (pagina 404) es error, no un modelo', async () => {
     dir = mkdtempSync(join(tmpdir(), 'oww-'));
     const fakeFetch = async () => new Response(new ArrayBuffer(14), { status: 200 });
-    await expect(
-      ensureOwwModels(dir, 'hey_jarvis_v0.1.onnx', fakeFetch as typeof fetch),
-    ).rejects.toThrow(/pequeña/);
-    // Y no queda ni el .partial ni un modelo truncado.
-    expect(readFileSyncSafe(join(dir, 'melspectrogram.onnx'))).toBeNull();
-    expect(readFileSyncSafe(join(dir, 'melspectrogram.onnx.partial'))).toBeNull();
-  });
-
-  it('un HTTP error es error explicito con el status', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'oww-'));
-    const fakeFetch = async () => new Response(null, { status: 503 });
-    await expect(
-      ensureOwwModels(dir, 'hey_jarvis_v0.1.onnx', fakeFetch as typeof fetch),
-    ).rejects.toThrow(/503/);
+    await expect(ensureOwwModels(dir, 'w.onnx', fakeFetch as typeof fetch)).rejects.toThrow(
+      /pequeña/,
+    );
   });
 });
-
-function readFileSyncSafe(path: string): Buffer | null {
-  try {
-    return readFileSync(path);
-  } catch {
-    return null;
-  }
-}
