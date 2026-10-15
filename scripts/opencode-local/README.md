@@ -28,10 +28,12 @@ a el (preset `opencode-local`, ver `src/core/opencode-local.ts`).
 
 ## Limites honestos (medidos)
 
-- Los modelos -free rechazan custom tools de opencode: las tools de
-  asistenta viajan en el prompt y el modelo pide la llamada en JSON. Si el
-  modelo se desvia del formato, la respuesta llega como texto (nunca se
-  ejecuta una llamada inventada).
+- Los modelos -free rechazan custom tools de opencode Y rechazan
+  desactivar sus tools builtin (ambos medidos con 403 FreeTierError): por
+  eso las tools de asistenta viajan en el prompt y las builtin de opencode
+  quedan REGISTRADAS pero BLOQUEADAS con permission deny (bash, edit,
+  write, webfetch). Si el modelo se desvia del formato JSON, la respuesta
+  llega como texto (nunca se ejecuta una llamada inventada).
 - v1 no hace streaming token a token: la respuesta llega entera.
 - El free tier es gratis pero con limites de Zen por cuenta; si se agota,
   el error llega como `error` del stream y asistenta lo reporta.

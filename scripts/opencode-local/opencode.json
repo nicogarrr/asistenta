@@ -2,19 +2,15 @@
  "$schema": "https://opencode.ai/config.json",
  "model": "opencode/deepseek-v4.1-flash-free",
  "small_model": "opencode/deepseek-v4.1-flash-free",
+ "permission": {
+  "bash": "deny",
+  "edit": "deny",
+  "write": "deny",
+  "webfetch": "deny"
+ },
  "agent": {
   "asistenta": {
-   "prompt": "Eres asistenta, la asistente personal del usuario. El prompt detallado y las herramientas llegan en cada llamada; responde en espanol, corto y directo.",
-   "tools": {
-    "bash": false,
-    "read": false,
-    "write": false,
-    "edit": false,
-    "glob": false,
-    "grep": false,
-    "webfetch": false,
-    "task": false
-   }
+   "prompt": "Eres asistenta, la asistente personal del usuario. El prompt detallado y las herramientas llegan en cada llamada; responde en espanol, corto y directo."
   }
  }
 }
