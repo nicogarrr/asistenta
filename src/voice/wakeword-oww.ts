@@ -195,6 +195,14 @@ export async function ensureOwwModels(
  * Feed 1280-sample float [-1,1] frames in real time; each push returns the
  * raw classifier score (0..1) once the sliding windows are full, or null
  * during warmup.
+ *
+ * Lifecycle (auditor #138 r3): pushes are SERIALISED through an internal
+ * queue, so concurrent pushFrame calls cannot interleave awaits or reorder
+ * carry/mel/emb state. close() blocks new pushes, waits for the in-flight
+ * push to finish, and only then releases sessions — a session's run is
+ * never called after its release. reset() bumps a generation counter: a
+ * push that was mid-await when reset ran discards its results instead of
+ * repopulating freshly cleared windows (it returns null).
  */
 export class OwwWakeDetector {
   private readonly sessions: { melspec: OwwSession; embedding: OwwSession; classifier: OwwSession };
@@ -202,6 +210,14 @@ export class OwwWakeDetector {
   private embWindow: Float32Array[] = [];
   private carry: Float32Array = new Float32Array(0);
   private closed = false;
+  /** Serialisation chain: at most one push runs its awaits at a time. */
+  private chain: Promise<unknown> = Promise.resolve();
+  /** Bumped by reset(); in-flight pushes with an older generation discard. */
+  private generation = 0;
+  /** Sessions not yet successfully released; close() retried until empty. */
+  private unreleased: OwwSession[];
+  /** In-flight close attempt; cleared on failure so close() can retry. */
+  private closeInFlight: Promise<void> | undefined;
 
   private constructor(sessions: {
     melspec: OwwSession;
@@ -209,6 +225,7 @@ export class OwwWakeDetector {
     classifier: OwwSession;
   }) {
     this.sessions = sessions;
+    this.unreleased = [sessions.melspec, sessions.embedding, sessions.classifier];
   }
 
   static async create(opts: {
@@ -231,7 +248,11 @@ export class OwwWakeDetector {
       opened.push(classifier);
       return new OwwWakeDetector({ melspec, embedding, classifier });
     } catch (err) {
-      await Promise.allSettled(opened.map((s) => s.release()));
+      const cleanups = await Promise.allSettled(opened.map((s) => s.release()));
+      const failed = cleanups.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        log.error('oww create: cleanup de sesiones falló', { failed, opened: opened.length });
+      }
       throw err;
     }
   }
@@ -250,8 +271,13 @@ export class OwwWakeDetector {
     return OWW_FIRST_SCORE_FRAME;
   }
 
-  /** Drop all buffered audio context (e.g. after a long suppression gap). */
+  /**
+   * Drop all buffered audio context (e.g. after a long suppression gap).
+   * Bumps the generation so a push that was mid-await discards its stale
+   * results instead of repopulating the freshly cleared windows.
+   */
   reset(): void {
+    this.generation++;
     this.melWindow = [];
     this.embWindow = [];
     this.carry = new Float32Array(0);
@@ -264,6 +290,18 @@ export class OwwWakeDetector {
         `frame oww debe tener ${OWW_FRAME_SAMPLES} muestras; recibido ${frame.length}`,
       );
     }
+    // Serialised: the task runs only after every earlier push settles, so
+    // concurrent callers cannot interleave awaits or reorder carry/mel/emb.
+    // The chain itself never rejects, so close() can await a clean drain.
+    const task = this.chain.then(() => this.doPush(frame));
+    this.chain = task.catch(() => undefined);
+    return task;
+  }
+
+  private async doPush(frame: Float32Array): Promise<number | null> {
+    // Generation captured when the push actually starts: audio enqueued
+    // before a reset but processed after it is just fresh post-reset audio.
+    const gen = this.generation;
     // Official scale: int16 PCM as float32. The lookback is part of the model
     // input, so it converts too.
     const scaled = new Float32Array(this.carry.length + OWW_FRAME_SAMPLES);
@@ -279,6 +317,7 @@ export class OwwWakeDetector {
     const melOut = await this.sessions.melspec.run({
       [melName]: { data: scaled, dims: [1, scaled.length] },
     });
+    if (gen !== this.generation) return null; // reset durante el await: descartar
     const mel = melOut[this.sessions.melspec.outputNames[0] ?? 'output'];
     if (!mel) throw new Error('melspectrogram.onnx no devolvió salida');
     // [1,1,F,32]: F mel frames (5 on the first push, 8 in steady state),
@@ -303,6 +342,7 @@ export class OwwWakeDetector {
     const embOut = await this.sessions.embedding.run({
       [embName]: { data: melFlat, dims: [1, OWW_MEL_WINDOW, OWW_MEL_BINS, 1] },
     });
+    if (gen !== this.generation) return null; // reset durante el await: descartar
     const emb = embOut[this.sessions.embedding.outputNames[0] ?? 'conv2d_19'];
     if (!emb) throw new Error('embedding_model.onnx no devolvió salida');
     this.embWindow.push(new Float32Array(emb.data));
@@ -318,6 +358,7 @@ export class OwwWakeDetector {
     const clsOut = await this.sessions.classifier.run({
       [clsName]: { data: embFlat, dims: [1, OWW_EMB_WINDOW, OWW_EMB_SIZE] },
     });
+    if (gen !== this.generation) return null; // reset durante el await: descartar
     const score = clsOut[this.sessions.classifier.outputNames[0] ?? '53'];
     if (!score || score.data.length === 0) {
       throw new Error('clasificador oww no devolvió score');
@@ -325,13 +366,38 @@ export class OwwWakeDetector {
     return score.data[0] ?? null;
   }
 
+  /**
+   * Block new pushes, wait for the in-flight push to finish, and only then
+   * release sessions: run is never called on a released session. A failed
+   * release is logged and rethrown keeping the session in `unreleased`, so
+   * a later close() retries it — nothing is claimed released that is not.
+   */
   async close(): Promise<void> {
-    if (this.closed) return;
     this.closed = true;
-    await Promise.all([
-      this.sessions.melspec.release(),
-      this.sessions.embedding.release(),
-      this.sessions.classifier.release(),
-    ]);
+    if (this.unreleased.length === 0) return;
+    this.closeInFlight ??= (async () => {
+      await this.chain; // never rejects; drains the in-flight push
+      const pending = [...this.unreleased];
+      const results = await Promise.allSettled(pending.map((s) => s.release()));
+      const stillPending: OwwSession[] = [];
+      let failed = 0;
+      for (let i = 0; i < results.length; i++) {
+        if (results[i]?.status === 'fulfilled') continue;
+        failed++;
+        const s = pending[i];
+        if (s) stillPending.push(s);
+      }
+      this.unreleased = stillPending;
+      if (failed > 0) {
+        log.error('oww close: releases fallaron', { failed, pending: stillPending.length });
+        throw new Error(`oww close: ${failed} release(s) fallaron; reintenta close()`);
+      }
+    })();
+    try {
+      await this.closeInFlight;
+    } finally {
+      // A failed attempt must not memoize itself out of retries.
+      if (this.unreleased.length > 0) this.closeInFlight = undefined;
+    }
   }
 }

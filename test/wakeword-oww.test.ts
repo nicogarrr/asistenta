@@ -1,4 +1,4 @@
-// Item A1a ronda 2 (auditor #138): el runner replica el pipeline OFICIAL
+// Item A1a rondas 2-3 (auditor #138): el runner replica el pipeline OFICIAL
 // openwakeword v0.5.1 (utils.py verificado): PCM int16 en float32 sin
 // normalizar, lookback de 480 muestras -> 8 frames mel por push (5 en el
 // primero), transform spec/10+2, ventanas 76/16. Sesiones falsas con la
@@ -286,5 +286,139 @@ describe('A1a r2: ensureOwwModels (descarga honesta y segura)', () => {
     await expect(ensureOwwModels(dir, 'w.onnx', fakeFetch as typeof fetch)).rejects.toThrow(
       /pequeña/,
     );
+  });
+});
+
+describe('A1a r3: ciclo de vida async (carreras close/reset/push concurrente)', () => {
+  /** Sesiones con log de eventos y compuertas diferidas para forzar interleavings. */
+  function gatedSessions(opts: { gateMelOnCall?: number } = {}) {
+    const events: string[] = [];
+    const calls = { melspec: 0, embedding: 0, classifier: 0 };
+    let gateResolve: (() => void) | null = null;
+    const gate = new Promise<void>((r) => {
+      gateResolve = r;
+    });
+    const mk = (
+      name: 'melspec' | 'embedding' | 'classifier',
+      outName: string,
+      out: () => { data: Float32Array; dims: number[] },
+    ): OwwSession => ({
+      inputNames: ['in'],
+      outputNames: [outName],
+      run: async () => {
+        calls[name]++;
+        events.push(`run:${name}`);
+        if (name === 'melspec' && calls.melspec === opts.gateMelOnCall) await gate;
+        return { [outName]: out() };
+      },
+      release: async () => {
+        events.push(`release:${name}`);
+      },
+    });
+    const melspec = mk('melspec', 'o', () => {
+      // 8 frames constantes (steady state) salvo en la primera llamada (5)
+      const frames = calls.melspec === 1 ? 5 : 8;
+      return {
+        data: new Float32Array(frames * OWW_MEL_BINS).fill(12),
+        dims: [1, 1, frames, OWW_MEL_BINS],
+      };
+    });
+    const embedding = mk('embedding', 'e', () => ({
+      data: new Float32Array(OWW_EMB_SIZE).fill(1),
+      dims: [1, 1, 1, OWW_EMB_SIZE],
+    }));
+    const classifier = mk('classifier', 'c', () => ({
+      data: new Float32Array([0.5]),
+      dims: [1, 1],
+    }));
+    return {
+      sessions: { melspec, embedding, classifier },
+      events,
+      calls,
+      openGate: () => gateResolve?.(),
+    };
+  }
+
+  it('close() espera al push en curso: ningun run tras su release (canario use-after-release)', async () => {
+    const { sessions, events, openGate } = gatedSessions({ gateMelOnCall: 10 });
+    const det = OwwWakeDetector.overSessions(sessions);
+    for (let i = 1; i <= 9; i++) await det.pushFrame(rampFrame());
+    const push = det.pushFrame(rampFrame()); // push 10: queda retenido en la compuerta
+    const closing = det.close();
+    await Promise.resolve();
+    expect(events.filter((e) => e.startsWith('release:'))).toEqual([]); // close aun no libera
+    openGate();
+    await push;
+    await closing;
+    const idx = (e: string) => events.indexOf(e);
+    expect(idx('run:embedding')).toBeGreaterThanOrEqual(0);
+    expect(idx('run:embedding')).toBeLessThan(idx('release:embedding'));
+    expect(idx('run:melspec')).toBeLessThan(idx('release:melspec'));
+    // ningun run despues de su propio release
+    for (const n of ['melspec', 'embedding', 'classifier']) {
+      const lastRun = events.lastIndexOf(`run:${n}`);
+      const firstRelease = events.indexOf(`release:${n}`);
+      expect(lastRun === -1 || lastRun < firstRelease).toBe(true);
+    }
+  });
+
+  it('reset() durante un await: el push descarta y no repuebla las ventanas', async () => {
+    const { sessions, calls, openGate } = gatedSessions({ gateMelOnCall: 1 });
+    const det = OwwWakeDetector.overSessions(sessions);
+    const push = det.pushFrame(rampFrame()); // retenido en melspec
+    await Promise.resolve();
+    det.reset(); // invalida la generacion del push en curso
+    openGate();
+    expect(await push).toBeNull();
+    // las ventanas quedaron vacias: hacen falta 10 pushes nuevos para el 1er embedding
+    for (let i = 1; i <= 9; i++) await det.pushFrame(rampFrame());
+    expect(calls.embedding).toBe(0);
+    await det.pushFrame(rampFrame());
+    expect(calls.embedding).toBe(1);
+  });
+
+  it('pushes concurrentes se serializan en orden de llamada (carry/mel no se reordenan)', async () => {
+    const { sessions, melInputs } = fakeSessions();
+    const det = OwwWakeDetector.overSessions(sessions);
+    const f1 = rampFrame();
+    const f2 = rampFrame().reverse();
+    const p1 = det.pushFrame(f1);
+    const p2 = det.pushFrame(f2); // sin await: llega "a la vez"
+    await Promise.all([p1, p2]);
+    expect(melInputs[0]?.len).toBe(OWW_FRAME_SAMPLES);
+    expect(melInputs[1]?.len).toBe(OWW_FRAME_SAMPLES + OWW_MEL_LOOKBACK);
+    // el lookback del segundo push es la cola del PRIMERO (orden preservado)
+    const head = melInputs[1]?.head ?? [];
+    for (let i = 0; i < 4; i++) {
+      expect(head[i]).toBe(floatToInt16Scale(f1[OWW_FRAME_SAMPLES - OWW_MEL_LOOKBACK + i] ?? 0));
+    }
+  });
+
+  it('close() con release fallido: error agregado, sin doble release, reintentable', async () => {
+    const released: string[] = [];
+    let failEmbedding = true;
+    const mk = (name: string): OwwSession => ({
+      inputNames: ['i'],
+      outputNames: ['o'],
+      run: async () => ({ o: { data: new Float32Array([0]), dims: [1, 1] } }),
+      release: async () => {
+        if (name === 'embedding' && failEmbedding) {
+          failEmbedding = false;
+          throw new Error('release roto');
+        }
+        released.push(name);
+      },
+    });
+    const det = OwwWakeDetector.overSessions({
+      melspec: mk('melspec'),
+      embedding: mk('embedding'),
+      classifier: mk('classifier'),
+    });
+    await expect(det.close()).rejects.toThrow(/release/);
+    expect(released.sort()).toEqual(['classifier', 'melspec']); // embedding pendiente
+    await det.close(); // reintento: solo libera lo pendiente
+    expect(released.sort()).toEqual(['classifier', 'embedding', 'melspec']);
+    await det.close(); // ya no queda nada: no-op
+    expect(released).toHaveLength(3);
   });
 });
