@@ -14,18 +14,33 @@ $ErrorActionPreference = "Stop"
 $NodeImage = "node@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8"
 $OpencodeVersion = "1.19.0"
 
-function Fail($msg) { Write-Host "FALLO: $msg"; exit 1 }
+function Fail($msg) {
+  Write-Host "FALLO: $msg"
+  docker rm -f asistenta-opencode 2>$null | Out-Null  # no dejar un servicio no conforme en marcha
+  exit 1
+}
+
+function Assert-RegularPath($path, $kind) {
+  # $kind: "container" (directorio) o "leaf" (archivo). Sin ReparsePoint (symlink/junction).
+  $item = Get-Item -Force $path
+  if ($kind -eq "container" -and -not $item.PSIsContainer) { Fail "$path no es un directorio" }
+  if ($kind -eq "leaf" -and $item.PSIsContainer) { Fail "$path es un directorio; se exige archivo regular" }
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail "$path es symlink/junction (ReparsePoint): no permitido" }
+}
 
 if (-not (Test-Path $AuthJson)) { Fail "no existe $AuthJson - ejecuta primero: opencode auth login (OpenCode Zen)" }
-if ((Get-Item $AuthJson).LinkType) { Fail "$AuthJson es un symlink/enlace: el auth debe ser un archivo regular" }
+Assert-RegularPath $AuthJson "leaf"
 
-# Workdir dedicado y limpio: solo la config de la jaula y el señuelo benigno.
+# Workdir dedicado y limpio: validar ANTES de copiar (directorio regular, sin enlaces,
+# sin ficheros ajenos - incluidos ocultos, de ahi el -Force).
+if (Test-Path $WorkDir) { Assert-RegularPath $WorkDir "container" }
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+$extra = Get-ChildItem -Force $WorkDir | Where-Object { $_.Name -notin @("opencode.json", "LEEME.txt") }
+if ($extra) { Fail "el workdir $WorkDir contiene ficheros ajenos a la jaula: $($extra.Name -join ', '). Usa un workdir dedicado vacio." }
 Copy-Item -Force (Join-Path $PSScriptRoot "opencode.json") (Join-Path $WorkDir "opencode.json")
 Copy-Item -Force (Join-Path $PSScriptRoot "LEEME.txt") (Join-Path $WorkDir "LEEME.txt")
-$extra = Get-ChildItem $WorkDir | Where-Object { $_.Name -notin @("opencode.json", "LEEME.txt") }
-if ($extra) { Fail "el workdir $WorkDir contiene ficheros ajenos a la jaula: $($extra.Name -join ', '). Usa un workdir dedicado vacio." }
-if ((Get-Item (Join-Path $WorkDir "LEEME.txt")).LinkType) { Fail "LEEME.txt es un symlink: debe ser un archivo regular benigno" }
+Assert-RegularPath (Join-Path $WorkDir "opencode.json") "leaf"
+Assert-RegularPath (Join-Path $WorkDir "LEEME.txt") "leaf"
 
 docker rm -f asistenta-opencode 2>$null | Out-Null
 $cid = docker run -d --name asistenta-opencode --restart unless-stopped `
@@ -58,8 +73,11 @@ $workExpect = "$((Resolve-Path $WorkDir).Path)->/work:rw=True"
 if ($mounts -notcontains $authExpect) { Fail "montaje auth.json no es el esperado (RO, archivo). Efectivos: $($mounts -join ' | ')" }
 if ($mounts -notcontains $workExpect) { Fail "montaje /work no es el esperado. Efectivos: $($mounts -join ' | ')" }
 if ($mounts.Count -ne 2) { Fail "hay montajes inesperados: $($mounts -join ' | ')" }
-$pb = $insp[0].HostConfig.PortBindings."4096/tcp"
-if (-not $pb -or $pb[0].HostIp -ne "127.0.0.1" -or $pb[0].HostPort -ne "$Port") { Fail "puerto no es loopback puro: $($pb | ConvertTo-Json -Compress)" }
+$pb = @($insp[0].HostConfig.PortBindings."4096/tcp")
+if ($pb.Count -ne 1) { Fail "el puerto 4096 tiene $($pb.Count) asignaciones; se exige exactamente una" }
+foreach ($b in $pb) {
+  if ($b.HostIp -ne "127.0.0.1" -or $b.HostPort -ne "$Port") { Fail "puerto no es loopback puro: $($pb | ConvertTo-Json -Compress)" }
+}
 if ($insp[0].Config.Image -ne $NodeImage) { Fail "imagen distinta a la fijada: $($insp[0].Config.Image)" }
 
 Write-Host "Serve enjaulado y VERIFICADO en http://127.0.0.1:${Port} (opencode $OpencodeVersion, imagen fijada por digest)."

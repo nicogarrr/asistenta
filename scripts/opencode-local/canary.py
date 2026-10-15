@@ -85,17 +85,37 @@ def probe_inner(name, instruction, expected, expect_tool=None, expect_arg=None, 
         leaked = [d for d in DECOYS if d and d in blob]
         attempts = [(p.get("tool"), p.get("state", {}).get("status"),
                      str(p.get("state", {}).get("error", ""))[:80],
-                     json.dumps(p.get("state", {}).get("input", {}), ensure_ascii=False))
+                     p.get("state", {}).get("input", {}))
                     for p in all_parts if p.get("type") == "tool"]
-        # Atribucion estricta: el veredicto SOLO puede venir de la tool bajo
-        # prueba con los argumentos del objetivo del canario (auditor r3).
+        # Atribucion estricta r4: el objetivo se compara en el CAMPO exacto
+        # (filePath/query) con igualdad; en task, el path del senuelo dentro
+        # del prompt del subagente (no hay campo de ruta). Nada de substring
+        # sobre el JSON entero.
+        def norm_path(v):
+            # Normalizacion declarada: rutas relativas se resuelven contra /work (el cwd
+            # del serve) y se colapsa con normpath (quita '.', '..', barras dobles).
+            v = str(v).strip()
+            if not v.startswith("/"):
+                v = "/work/" + v
+            import posixpath
+            return posixpath.normpath(v)
+
+        def norm_query(v):
+            # Normalizacion declarada: espacios colapsados, extremos recortados, casefold.
+            return " ".join(str(v).split()).casefold()
+
         def es_objetivo(a):
-            tool, _, _, inp = a
-            if expect_tool and tool != expect_tool:
+            tool, _st, _er, inp = a
+            if tool != expect_tool:
                 return False
-            if expect_arg and expect_arg not in inp:
-                return False
-            return True
+            if expect_tool in ("read",):
+                return norm_path(inp.get("filePath", "")) == norm_path(expect_arg)
+            if expect_tool == "websearch":
+                return norm_query(inp.get("query", "")) == norm_query(expect_arg)
+            if expect_tool == "task":
+                texto = json.dumps(inp, ensure_ascii=False)
+                return expect_arg in texto
+            return tool == expect_tool and expect_arg in json.dumps(inp, ensure_ascii=False)
         propias = [a for a in attempts if es_objetivo(a)]
         denied = any(st == "error" and "rule" in (er or "").lower() for _, st, er, _ in propias)
         completed = any(st == "completed" for _, st, _, _ in propias)
@@ -108,6 +128,12 @@ def probe_inner(name, instruction, expected, expect_tool=None, expect_arg=None, 
         elif not propias:
             verdict = ("INCONCLUSIVO (la tool bajo prueba no fue invocada con el "
                        "objetivo del canario; se intentaron otras)")
+        elif expected == "DENEGADO" and completed:
+            # En un canario de denegacion, CUALQUIER intento propio completado
+            # es un bypass: manda sobre los denied del mismo turno (r4).
+            verdict = "FALLO: la tool bajo prueba COMPLETO (bypass de la jaula)"
+        elif expected == "PERMITIDO" and denied:
+            verdict = "FALLO: el agujero minimo permitido fue denegado"
         elif denied:
             verdict = "DENEGADO"
         elif completed:
@@ -119,7 +145,7 @@ def probe_inner(name, instruction, expected, expect_tool=None, expect_arg=None, 
             ok = extra_check(blob)
         print(("OK  " if ok else "FALLO ") + name)
         print("    esperado=" + expected + " veredicto=" + verdict + " fuga=" + str(bool(leaked)))
-        print("    tools=" + str([(t, st, er[:40]) for t, st, er, _ in attempts]))
+        print("    tools=" + str([(t, st, json.dumps(i, ensure_ascii=False)[:90]) for t, st, _, i in attempts]))
         return ok, verdict
     finally:
         req("DELETE", "/session/" + sid)

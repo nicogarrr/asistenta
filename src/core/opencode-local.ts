@@ -399,17 +399,19 @@ export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
     const ok =
       t === 'string'
         ? typeof v === 'string'
-        : t === 'number'
-          ? typeof v === 'number'
-          : t === 'integer'
-            ? typeof v === 'number' && Number.isInteger(v)
-            : t === 'boolean'
-              ? typeof v === 'boolean'
-              : t === 'object'
-                ? typeof v === 'object' && v !== null && !Array.isArray(v)
-                : t === 'array'
-                  ? Array.isArray(v)
-                  : true;
+        : t === 'null'
+          ? v === null
+          : t === 'number'
+            ? typeof v === 'number'
+            : t === 'integer'
+              ? typeof v === 'number' && Number.isInteger(v)
+              : t === 'boolean'
+                ? typeof v === 'boolean'
+                : t === 'object'
+                  ? typeof v === 'object' && v !== null && !Array.isArray(v)
+                  : t === 'array'
+                    ? Array.isArray(v)
+                    : true;
     if (!ok) return false;
   }
   if (schema.enum && !schema.enum.some((e) => JSON.stringify(e) === JSON.stringify(v)))
@@ -433,56 +435,45 @@ export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
 }
 
 /**
- * Subconjunto DECLARADO de JSON Schema soportado por matchesSchema: type
- * (escalar simple), enum, required, properties recursivo, items recursivo,
- * additionalProperties (false o schema). NO es JSON Schema completo: un
- * schema con cualquier keyword de validacion fuera de esa lista NO se puede
- * verificar -> schemaIsSupported devuelve false y la llamada se rechaza
- * (fail-closed: nunca se ejecuta una tool cuyo schema no entendemos).
+ * Subconjunto DECLARADO de JSON Schema soportado por matchesSchema. ALLOWLIST
+ * (auditor r4): solo los keywords y tipos listados aqui; TODO lo demas -
+ * conocido o futuro - hace rechazar la llamada (fail-closed: nunca se
+ * ejecuta una tool cuyo schema no entendemos).
+ *   Keywords: type, enum, required, properties, items, additionalProperties.
+ *   Metadata inocua (sin efecto de validacion): title, description, default, examples.
+ *   Tipos: string, number, integer, boolean, object, array, null.
+ * Boolean schemas (true/false) y type union (array) NO soportados.
  */
-const UNSUPPORTED_SCHEMA_KEYS = new Set([
-  'anyOf',
-  'oneOf',
-  'allOf',
-  'not',
-  'const',
-  'minimum',
-  'maximum',
-  'exclusiveMinimum',
-  'exclusiveMaximum',
-  'multipleOf',
-  'pattern',
-  'format',
-  'minLength',
-  'maxLength',
-  'minItems',
-  'maxItems',
-  'uniqueItems',
-  'contains',
-  'minProperties',
-  'maxProperties',
-  'patternProperties',
-  'propertyNames',
-  'dependencies',
-  'dependentRequired',
-  'dependentSchemas',
-  'if',
-  'then',
-  'else',
-  '$ref',
-  'definitions',
-  '$defs',
+const SCHEMA_KEYS = new Set([
+  'type',
+  'enum',
+  'required',
+  'properties',
+  'items',
+  'additionalProperties',
+  'title',
+  'description',
+  'default',
+  'examples',
 ]);
+const SCHEMA_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']);
 
 export function schemaIsSupported(schema: SchemaNode): boolean {
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
   const node = schema as Record<string, unknown>;
-  for (const k of Object.keys(node)) if (UNSUPPORTED_SCHEMA_KEYS.has(k)) return false;
-  if (Array.isArray(node.type)) return false; // type union: no soportado
+  for (const k of Object.keys(node)) if (!SCHEMA_KEYS.has(k)) return false;
+  if (node.type !== undefined) {
+    if (typeof node.type !== 'string' || !SCHEMA_TYPES.has(node.type)) return false;
+  }
+  if (node.required !== undefined && !Array.isArray(node.required)) return false;
   for (const sub of Object.values(node.properties ?? {}))
     if (!schemaIsSupported(sub as SchemaNode)) return false;
-  if (node.items && !schemaIsSupported(node.items as SchemaNode)) return false;
-  if (node.additionalProperties && typeof node.additionalProperties === 'object')
+  if (node.items !== undefined && !schemaIsSupported(node.items as SchemaNode)) return false;
+  if (
+    node.additionalProperties !== undefined &&
+    node.additionalProperties !== false &&
+    node.additionalProperties !== true
+  )
     if (!schemaIsSupported(node.additionalProperties as SchemaNode)) return false;
   return true;
 }
@@ -491,8 +482,8 @@ export function schemaIsSupported(schema: SchemaNode): boolean {
  * subconjunto soportado; schema no soportado = llamada rechazada. */
 export function argsMatchSchema(args: JsonObject, tool: Tool): boolean {
   const schema = (tool as { parameters?: SchemaNode }).parameters;
-  if (!schema) return true;
-  if (!schemaIsSupported(schema)) return false;
+  if (schema === undefined) return true; // tool sin parametros declarados
+  if (!schemaIsSupported(schema)) return false; // incluye boolean schemas y null
   return matchesSchema(args, schema);
 }
 

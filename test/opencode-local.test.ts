@@ -402,6 +402,29 @@ describe('matchesSchema (validacion real)', () => {
     });
     expect(argsMatchSchema({ cmd: 'rm -rf' } as never, t)).toBe(false);
   });
+  it('canario auditor r4: keyword desconocida (unevaluatedProperties) -> rechazada (allowlist)', () => {
+    const t = fakeTool({ type: 'object', unevaluatedProperties: false });
+    expect(argsMatchSchema({ cualquier: 1 } as never, t)).toBe(false);
+  });
+  it('canario auditor r4: prefixItems anidado -> rechazada', () => {
+    const t = fakeTool({ type: 'array', prefixItems: [{ const: 'safe' }] });
+    expect(argsMatchSchema(['bad'] as never, t)).toBe(false);
+    expect(argsMatchSchema(['safe'] as never, t)).toBe(false);
+  });
+  it("canario auditor r4: type 'null' valida null, no strings", () => {
+    expect(matchesSchema(null, { type: 'null' })).toBe(true);
+    expect(matchesSchema('null', { type: 'null' })).toBe(false);
+    expect(matchesSchema('cualquier string', { type: 'null' })).toBe(false);
+  });
+  it('boolean schema no soportado -> rechazada', () => {
+    expect(argsMatchSchema({} as never, fakeTool(true))).toBe(false);
+    expect(argsMatchSchema({} as never, fakeTool(false))).toBe(false);
+  });
+  it('metadata inocua (title/description/default) -> soportada', () => {
+    const t = fakeTool({ type: 'string', title: 'x', description: 'y', default: 'z' });
+    expect(argsMatchSchema('vale' as never, t)).toBe(true);
+    expect(argsMatchSchema(3 as never, t)).toBe(false);
+  });
 });
 
 describe('ciclo de vida del stream (fetch mockeado)', () => {
