@@ -40,6 +40,7 @@ import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
+import { normalizeFactText } from './core/history.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
@@ -1788,6 +1789,29 @@ async function serveCommand(): Promise<number> {
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
       deferTools: true,
+      // P6b: la extraccion pre-compactacion escribe en la memoria durable del
+      // hilo (scope = thread.key, como el resto de herramientas de memoria).
+      // Dedupe normalizado contra lo ya recordado; el store rechaza el resto
+      // (secretos, lineas largas) y eso NO frena la compactacion.
+      factMemory: {
+        existing: () => memory.all(key).map((e) => e.text),
+        write: (facts) => {
+          let written = 0;
+          const seen = new Set(memory.all(key).map((e) => normalizeFactText(e.text)));
+          for (const fact of facts) {
+            const k = normalizeFactText(fact);
+            if (seen.has(k)) continue;
+            try {
+              memory.remember(key, fact, { tags: ['compaction'] });
+              seen.add(k);
+              written++;
+            } catch (err) {
+              log.warn('compaction fact refused by memory store', { err: String(err) });
+            }
+          }
+          return written;
+        },
+      },
     });
     const syncFactory = createFactorySync(
       (t) => thread.agent.registerFactoryTool(t),
