@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "small_model": "opencode/deepseek-v4.1-flash-free",
+  "permission": {
+    "bash": "deny",
+    "edit": "deny",
+    "write": "deny",
+    "webfetch": "deny",
+    "glob": "deny",
+    "grep": "deny",
+    "websearch": "deny",
+    "task": "deny",
+    "skill": "deny",
+    "read": {
+      "*": "deny",
+      "*/LEEME.txt": "allow"
+    },
+    "external_directory": "deny"
+  },
+  "agent": {
+    "asistenta": {
+      "prompt": "Eres asistenta, la asistente personal del usuario. El prompt detallado y las herramientas llegan en cada llamada; responde en espanol, corto y directo."
+    }
+  }
+}

@@ -128,9 +128,9 @@ export function loadConfig(): Config {
   // todos los defaults a OpenRouter (PA_PROVIDER/PA_MODEL/PA_BASE_URL siguen
   // pudiendo anular cada valor por encima del preset elegido).
   const providerPreset = process.env.PA_PROVIDER_PRESET ?? 'opencode';
-  if (!['opencode', 'openrouter'].includes(providerPreset)) {
+  if (!['opencode', 'openrouter', 'opencode-local'].includes(providerPreset)) {
     throw new Error(
-      `PA_PROVIDER_PRESET must be 'opencode' or 'openrouter', got ${JSON.stringify(providerPreset)}`,
+      `PA_PROVIDER_PRESET must be 'opencode', 'openrouter' or 'opencode-local', got ${JSON.stringify(providerPreset)}`,
     );
   }
   const presetDefaults =
@@ -140,11 +140,19 @@ export function loadConfig(): Config {
           model: 'thinkingmachines/inkling-small:free',
           baseUrl: 'https://openrouter.ai/api/v1',
         }
-      : {
-          provider: 'opencode-go',
-          model: 'space-bunny-free',
-          baseUrl: 'https://opencode.ai/zen/v1',
-        };
+      : providerPreset === 'opencode-local'
+        ? {
+            // `opencode serve` local (ver src/core/opencode-local.ts): la unica
+            // via legitima para los modelos -free de Zen desde asistenta.
+            provider: 'opencode-local',
+            model: 'deepseek-v4.1-flash-free',
+            baseUrl: 'http://127.0.0.1:4096',
+          }
+        : {
+            provider: 'opencode-go',
+            model: 'space-bunny-free',
+            baseUrl: 'https://opencode.ai/zen/v1',
+          };
   cached = {
     providerPreset,
     provider: process.env.PA_PROVIDER ?? presetDefaults.provider,
