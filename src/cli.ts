@@ -40,7 +40,7 @@ import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
-import { normalizeFactText } from './core/history.js';
+import { dedupeNewFacts } from './core/history.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
@@ -1794,16 +1794,22 @@ async function serveCommand(): Promise<number> {
       // Dedupe normalizado contra lo ya recordado; el store rechaza el resto
       // (secretos, lineas largas) y eso NO frena la compactacion.
       factMemory: {
-        existing: () => memory.all(key).map((e) => e.text),
+        // Solo hechos ACTIVOS: uno sustituido (supersededBy) no esta vigente y
+        // no puede bloquear re-registrar la preferencia anterior (A->B->A).
+        existing: () =>
+          memory
+            .all(key)
+            .filter((e) => e.supersededBy === null)
+            .map((e) => e.text),
         write: (facts) => {
           let written = 0;
-          const seen = new Set(memory.all(key).map((e) => normalizeFactText(e.text)));
-          for (const fact of facts) {
-            const k = normalizeFactText(fact);
-            if (seen.has(k)) continue;
+          const active = memory
+            .all(key)
+            .filter((e) => e.supersededBy === null)
+            .map((e) => e.text);
+          for (const fact of dedupeNewFacts(active, facts)) {
             try {
               memory.remember(key, fact, { tags: ['compaction'] });
-              seen.add(k);
               written++;
             } catch (err) {
               log.warn('compaction fact refused by memory store', { err: String(err) });
