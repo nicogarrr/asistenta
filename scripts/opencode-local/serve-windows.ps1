@@ -37,6 +37,18 @@ if (Test-Path $WorkDir) { Assert-RegularPath $WorkDir "container" }
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $extra = Get-ChildItem -Force $WorkDir | Where-Object { $_.Name -notin @("opencode.json", "LEEME.txt") }
 if ($extra) { Fail "el workdir $WorkDir contiene ficheros ajenos a la jaula: $($extra.Name -join ', '). Usa un workdir dedicado vacio." }
+
+# ANTES de CUALQUIER copia: fuentes regulares y, si ya existen, destinos regulares
+# (un destino preexistente con ReparsePoint haria que Copy-Item escribiera FUERA del workdir).
+$fuentes = @((Join-Path $PSScriptRoot "opencode.json"), (Join-Path $PSScriptRoot "LEEME.txt"))
+$destinos = @((Join-Path $WorkDir "opencode.json"), (Join-Path $WorkDir "LEEME.txt"))
+foreach ($f in $fuentes) {
+  if (-not (Test-Path $f)) { Fail "falta la fuente $f junto al script" }
+  Assert-RegularPath $f "leaf"
+}
+foreach ($d in $destinos) {
+  if (Test-Path $d) { Assert-RegularPath $d "leaf" }
+}
 Copy-Item -Force (Join-Path $PSScriptRoot "opencode.json") (Join-Path $WorkDir "opencode.json")
 Copy-Item -Force (Join-Path $PSScriptRoot "LEEME.txt") (Join-Path $WorkDir "LEEME.txt")
 Assert-RegularPath (Join-Path $WorkDir "opencode.json") "leaf"
