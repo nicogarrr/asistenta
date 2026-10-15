@@ -96,11 +96,25 @@ export function assertNotRunning(stateDir: string, name: string): void {
   } catch {}
 }
 
-function processAlive(pid: number): boolean {
+/**
+ * Is `pid` a live process?
+ *
+ * On Unix, `kill(pid, 0)` throws EPERM for "alive but not ours to signal", which
+ * is a true positive worth keeping. Windows cannot tell that case apart from a
+ * dead pid: libuv maps the failure to open the process handle to EPERM either
+ * way, so treating EPERM as alive there declares a corpse running and
+ * `assertNotRunning` refuses to boot after any exit that did not shut down
+ * cleanly (measured on this PC: a killed daemon blocked the next start with
+ * "another agent is already running"). On Windows EPERM therefore counts as
+ * "not running"; a genuine second instance is caught moments later by the
+ * watchdog and by the port the listener needs.
+ */
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
+    if (process.platform === 'win32') return false;
     // EPERM means alive but not ours to signal.
     return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
