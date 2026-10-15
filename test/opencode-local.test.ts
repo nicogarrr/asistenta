@@ -9,6 +9,7 @@ import {
   parseReply,
   renderToolContract,
   renderTranscript,
+  renderTranscriptWithImages,
 } from '../src/core/opencode-local.js';
 import { log } from '../src/log.js';
 
@@ -174,7 +175,7 @@ describe('renderTranscript', () => {
     expect(renderTranscript(msgs)).toContain('RESULTADO clima (ERROR): timeout');
   });
 
-  it('imagenes se marcan como [imagen], nunca se omite el turno', () => {
+  it('imagenes de USUARIO se marcan como NO vistas, nunca se omite el turno', () => {
     const msgs: Message[] = [
       {
         role: 'user',
@@ -187,7 +188,7 @@ describe('renderTranscript', () => {
     ];
     const t = renderTranscript(msgs);
     expect(t).toContain('mira esto');
-    expect(t).toContain('[imagen]');
+    expect(t).toContain('[imagen sin ver]');
   });
 
   it('un toolResult NO puede fabricar un turno USUARIO (inyeccion de autoria)', () => {
@@ -238,6 +239,78 @@ describe('renderTranscript', () => {
     const r = oneLine(hostil);
     expect(r).not.toMatch(/[\r\n\v\f\u0085\u2028\u2029]/);
     expect(r).toContain('⏎');
+  });
+});
+
+/**
+ * Vision ACOTADA: solo las imagenes de los RESULTADOS viajan al serve. Las del
+ * mensaje de USUARIO siguen sin adjuntarse, asi que el prompt del usuario no se
+ * abre a pixels y el alcance del cambio es el mas estrecho posible.
+ */
+describe('renderTranscriptWithImages (vision acotada a tool-results)', () => {
+  const img = (data: string, mimeType = 'image/jpeg') =>
+    ({ type: 'image' as const, data, mimeType });
+  const res = (toolName: string, content: Message extends never ? never : unknown[]) =>
+    ({ role: 'toolResult', toolCallId: 't1', toolName, content, isError: false, timestamp: 2 }) as
+      unknown as Message;
+
+  it('adjunta la imagen de un RESULTADO y la numera en el texto', () => {
+    const r = renderTranscriptWithImages([res('captura', [img('BASE64A')])]);
+    expect(r.images).toEqual([{ label: 1, mimeType: 'image/jpeg', data: 'BASE64A' }]);
+    expect(r.text).toContain('RESULTADO captura: [imagen 1]');
+  });
+
+  it('NO adjunta imagenes de un mensaje de USUARIO y lo dice', () => {
+    const msgs = [
+      { role: 'user', content: [{ type: 'image', data: 'DELUSUARIO', mimeType: 'image/png' }], timestamp: 1 },
+    ] as unknown as Message[];
+    const r = renderTranscriptWithImages(msgs);
+    expect(r.images).toEqual([]);
+    expect(r.text).toContain('[imagen sin ver]');
+    expect(r.text).not.toContain('DELUSUARIO');
+  });
+
+  it('la numeracion sigue el orden del transcript, no el de entrega', () => {
+    const r = renderTranscriptWithImages([
+      res('uno', [img('AAA')]),
+      res('dos', [img('BBB')]),
+      res('tres', [img('CCC')]),
+    ]);
+    expect(r.images.map((i) => i.data)).toEqual(['AAA', 'BBB', 'CCC']);
+    expect(r.text).toContain('RESULTADO uno: [imagen 1]');
+    expect(r.text).toContain('RESULTADO dos: [imagen 2]');
+    expect(r.text).toContain('RESULTADO tres: [imagen 3]');
+  });
+
+  it('con mas de 4 capturas se quedan las ULTIMAS y se renumeran 1..4', () => {
+    const msgs = [0, 1, 2, 3, 4, 5].map((i) => res(`t${i}`, [img(`IMG${i}`)]));
+    const r = renderTranscriptWithImages(msgs);
+    expect(r.images.map((i) => i.data)).toEqual(['IMG2', 'IMG3', 'IMG4', 'IMG5']);
+    expect(r.images.map((i) => i.label)).toEqual([1, 2, 3, 4]);
+    // lo que se queda fuera se declara, no desaparece en silencio
+    expect(r.text).toContain('RESULTADO t0: [imagen sin ver]');
+    expect(r.text).toContain('RESULTADO t2: [imagen 1]');
+  });
+
+  it('descarta por peso y lo declara como no vista', () => {
+    const enorme = 'X'.repeat(5 * 1024 * 1024);
+    const r = renderTranscriptWithImages([res('pesada', [img(enorme)])]);
+    expect(r.images).toEqual([]);
+    expect(r.text).toContain('[imagen sin ver]');
+  });
+
+  it('renderTranscript sigue devolviendo solo texto (compatibilidad)', () => {
+    const msgs = [res('captura', [img('BASE64A')])];
+    expect(renderTranscript(msgs)).toBe(renderTranscriptWithImages(msgs).text);
+  });
+
+  it('texto e imagen conviven en el mismo RESULTADO sin perder el texto', () => {
+    const r = renderTranscriptWithImages([
+      res('mixto', [{ type: 'text', text: 'movido a (10,20)' }, img('PIX')]),
+    ]);
+    expect(r.text).toContain('movido a (10,20)');
+    expect(r.text).toContain('[imagen 1]');
+    expect(r.images).toHaveLength(1);
   });
 });
 
@@ -492,6 +565,52 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
     expect(calls).toContain('GET /session/s1/message');
     expect(calls).toContain('DELETE /session/s1');
     expect(calls.some((c) => c.includes('/abort'))).toBe(false);
+  });
+
+  it('postea la captura del RESULTADO como parte file con data-URI', async () => {
+    let posted: { parts?: Array<Record<string, unknown>> } = {};
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's1', directory: '/work' });
+      if (u.endsWith('/session/s1/message') && init?.method === 'POST') {
+        posted = JSON.parse(String(init.body));
+        return jsonRes({});
+      }
+      if (u.endsWith('/session/s1/message'))
+        return jsonRes([
+          {
+            info: { role: 'assistant', finish: 'stop', tokens: { input: 10, output: 4 }, cost: 0 },
+            parts: [{ type: 'text', text: 'veo un boton' }],
+          },
+        ]);
+      if (u.endsWith('/session/s1')) return jsonRes({});
+      throw new Error(`fetch inesperado: ${u}`);
+    });
+    const withShot = {
+      messages: [
+        { role: 'user', content: 'que hay en pantalla', timestamp: 1 },
+        {
+          role: 'toolResult',
+          toolCallId: 't1',
+          toolName: 'captura',
+          content: [{ type: 'image', data: 'BASE64PIX', mimeType: 'image/jpeg' }],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    } as unknown as TranscriptContext;
+    const stream = createOpenCodeLocalStream(cfg)(model, withShot, undefined);
+    await stream.result();
+    const parts = posted.parts ?? [];
+    expect(parts[0]).toMatchObject({ type: 'text' });
+    expect(String((parts[0] as { text?: string }).text)).toContain('[imagen 1]');
+    expect(parts[1]).toEqual({
+      type: 'file',
+      mime: 'image/jpeg',
+      filename: 'captura-1.jpg',
+      url: 'data:image/jpeg;base64,BASE64PIX',
+    });
   });
 
   it('signal pre-abortada: la PRIMERA peticion ya la recibe abortada', async () => {
