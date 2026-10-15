@@ -63,6 +63,9 @@ describe('9c: renderTimeline (capa historia)', () => {
     expect(r?.days).toBe(4);
     expect(r?.inRange).toBe(6);
     expect(r?.nextCursor).toBeNull();
+    // Dentro del dia tambien reciente primero (insercion inversa del store).
+    expect(body.indexOf('- [a2]')).toBeLessThan(body.indexOf('- [a1]'));
+    expect(body.indexOf('- [a4]')).toBeLessThan(body.indexOf('- [a3]'));
   });
 
   it('las fechas se titulan como DE REGISTRO, no como cuando ocurrio el hecho', () => {
@@ -196,6 +199,8 @@ describe('9c: renderTimeline (capa historia)', () => {
         expect(firstHidden).toBe(50 - rows.length);
         expect(r?.nextCursor).toBe(`2026-10-15:${rows.length}`);
         expect(r?.body).toContain(`${firstHidden} entradas sin mostrar`);
+        // Reciente primero: la primera fila de la primera pagina es e49.
+        expect(rows[0]).toContain('[e49]');
       }
       if (!r?.nextCursor) {
         expect(r?.hiddenByCap).toBe(0);
@@ -203,10 +208,37 @@ describe('9c: renderTimeline (capa historia)', () => {
       }
       cursor = r.nextCursor;
     }
-    // Sumas exactas: todas las filas alcanzables, en orden, sin duplicar.
+    // Sumas exactas: todas las filas alcanzables, reciente primero, sin duplicar.
     expect(seenIds).toHaveLength(50);
-    expect(seenIds).toEqual(sameDay.map((e) => e.id));
+    expect(seenIds).toEqual(sameDay.map((e) => e.id).reverse());
+    expect(seenIds[0]).toBe('e49');
+    expect(seenIds[49]).toBe('e00');
     expect(pages).toBeGreaterThan(1);
+  });
+
+  it('CANARIO auditor #137 r3: 100 tags de 31c - fila compacta, cap duro, id y marca intactos', () => {
+    const tags = Array.from({ length: 100 }, (_, i) => `t${String(i).padStart(30, '0')}`);
+    expect(tags[0]).toHaveLength(31);
+    const e: MemoryEntry = {
+      id: 'big',
+      date: '2026-10-15',
+      text: 'entrada con muchos tags',
+      tags,
+      supersedes: [],
+      supersededBy: 'repl',
+    };
+    for (const cap of [TIMELINE_CAP, 1200]) {
+      const r = renderTimeline([e], { cap });
+      expect(r).not.toBeNull();
+      expect((r?.body ?? '').length).toBeLessThanOrEqual(cap);
+      expect(r?.hiddenByCap).toBe(0);
+      expect(r?.nextCursor).toBeNull();
+      const row = (r?.body ?? '').split('\n').find((l) => l.includes('[big]')) ?? '';
+      expect(row.startsWith('- [big]')).toBe(true);
+      expect(row).toContain('SUSTITUIDA→[repl]');
+      expect(row).toContain('…');
+      expect(row).toContain('tags)');
+    }
   });
 
   it('cursor gastado o malformado: null (la tool responde "fin de la historia")', () => {

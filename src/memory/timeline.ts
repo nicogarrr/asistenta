@@ -64,10 +64,36 @@ export function isValidISODate(s: string): boolean {
 const snip = (text: string) =>
   text.length > TIMELINE_SNIPPET ? `${text.slice(0, TIMELINE_SNIPPET)}…` : text;
 
-function timelineRow(e: MemoryEntry): string {
-  const tags = e.tags.map((t) => `#${t}`).join(' ');
+/**
+ * Every row is bounded so one row + header + tail ALWAYS fits the cap (the
+ * store caps tag LENGTH, not tag COUNT). Over budget, tags are cut to a
+ * whole-tag boundary with their hidden count declared and the snippet takes
+ * the remaining room, always with an explicit ellipsis; the [id] and the
+ * SUSTITUIDA→[id] mark are never cut.
+ */
+function timelineRow(e: MemoryEntry, budget: number): string {
+  const prefix = `- [${e.id}]`;
   const mark = e.supersededBy ? ` SUSTITUIDA→[${e.supersededBy}]` : '';
-  return `- [${e.id}]${tags ? ` ${tags}` : ''}${mark} ${snip(e.text)}`;
+  const tags = e.tags.map((t) => `#${t}`).join(' ');
+  const full = `${prefix}${tags ? ` ${tags}` : ''}${mark} ${snip(e.text)}`;
+  if (full.length <= budget) return full;
+  // Reserve 20 for the " (+NNN tags) …" marker itself so out.length <= budget.
+  const room = budget - prefix.length - mark.length - 20;
+  if (room < 8) return `${prefix} …${mark}`;
+  const tagPieces = e.tags.map((t) => `#${t}`);
+  let tagsShown = 0;
+  let tagsLen = 0;
+  for (const piece of tagPieces) {
+    const add = (tagsShown > 0 ? 1 : 0) + piece.length;
+    if (tagsLen + add > room) break;
+    tagsLen += add;
+    tagsShown++;
+  }
+  const hiddenTags = e.tags.length - tagsShown;
+  const tagsNote = hiddenTags > 0 ? ` (+${hiddenTags} tags)` : '';
+  const snipRoom = room - tagsLen;
+  const textPart = snipRoom > 8 ? ` ${snip(e.text).slice(0, snipRoom)}…` : '';
+  return `${prefix} ${tagPieces.slice(0, tagsShown).join(' ')}${tagsNote}${textPart} …${mark}`;
 }
 
 const dayKey = (e: MemoryEntry): string => (isValidISODate(e.date) ? e.date : UNKNOWN_DAY);
@@ -142,8 +168,11 @@ export function renderTimeline(
         cursorDay === UNKNOWN_DAY ? d === UNKNOWN_DAY : d <= cursorDay || d === UNKNOWN_DAY,
       )
     : orderedDays;
+  // Newest first WITHIN the day too: MemoryStore.all is chronological
+  // (newest last), so each day's list is reversed once; cursor offsets count
+  // over that stable order.
   const plan: DayPlan[] = days.map((d) => {
-    const all = byDay.get(d) ?? [];
+    const all = [...(byDay.get(d) ?? [])].reverse();
     const start = d === cursorDay ? Math.min(cursorOffset, all.length) : 0;
     return { day: d, total: all.length, start, rows: all.slice(start) };
   });
@@ -162,6 +191,8 @@ export function renderTimeline(
     `${inRange.length} entradas (${replaced} sustituidas)${span}${unknownNote}${rangeNote}. ` +
     'Detalle exacto: memory action=get con el [id].';
 
+  // One row + header + a day header + the tail always fits the cap.
+  const rowBudget = Math.max(80, Math.min(400, cap - header.length - TAIL_RESERVE - 60));
   const remainingFrom = (i: number) => plan.slice(i).reduce((n, p) => n + p.rows.length, 0);
   // Rows are atomic: a page stops BETWEEN rows, counts what it leaves out and
   // says where to resume. The only overshoot is the forced first row of a
@@ -185,7 +216,7 @@ export function renderTimeline(
             ? `${p.day} (${p.total}, continúa en la ${p.start + 1}):`
             : `${p.day} (${p.total}):`;
       // Never a day header with zero rows under it: stop at the boundary.
-      const firstRow = timelineRow(firstEntry);
+      const firstRow = timelineRow(firstEntry, rowBudget);
       if (shown > 0 && used + 1 + dayHead.length + 1 + firstRow.length > budget) {
         stopDay = p.day;
         stopOffset = p.start;
@@ -195,7 +226,7 @@ export function renderTimeline(
       let shownHere = 0;
       let pushedHead = false;
       for (const [r, rowEntry] of p.rows.entries()) {
-        const row = timelineRow(rowEntry);
+        const row = timelineRow(rowEntry, rowBudget);
         const fits = used + 1 + (pushedHead ? 0 : dayHead.length + 1) + row.length <= budget;
         if (!fits && shown > 0) {
           stopDay = p.day;
