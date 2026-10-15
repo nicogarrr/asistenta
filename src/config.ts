@@ -17,6 +17,7 @@ export interface Config {
   provider: string;
   model: string;
   baseUrl: string;
+  variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
   toolTimeoutMs: number;
   /** Hard ceiling on one agent run, so a runaway loop cannot pin the daemon. */
@@ -139,6 +140,7 @@ export function loadConfig(): Config {
           provider: 'openrouter',
           model: 'thinkingmachines/inkling-small:free',
           baseUrl: 'https://openrouter.ai/api/v1',
+          variant: undefined as string | undefined,
         }
       : providerPreset === 'opencode-local'
         ? {
@@ -147,17 +149,22 @@ export function loadConfig(): Config {
             provider: 'opencode-local',
             model: 'deepseek-v4.1-flash-free',
             baseUrl: 'http://127.0.0.1:4096',
+            // Modo max: el serve expone variants low|high|max para este modelo
+            // (verificado 2026-10-16 contra /provider en vivo: ~7x mas reasoning).
+            variant: 'max' as string | undefined,
           }
         : {
             provider: 'opencode-go',
             model: 'space-bunny-free',
             baseUrl: 'https://opencode.ai/zen/v1',
+            variant: undefined as string | undefined,
           };
   cached = {
     providerPreset,
     provider: process.env.PA_PROVIDER ?? presetDefaults.provider,
     model: process.env.PA_MODEL ?? presetDefaults.model,
     baseUrl: process.env.PA_BASE_URL ?? presetDefaults.baseUrl,
+    variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),
     runTimeoutMs: num('PA_RUN_TIMEOUT_MS', 900_000),
     idleTimeoutMs: num('PA_IDLE_TIMEOUT_MS', 180_000),

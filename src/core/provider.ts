@@ -182,6 +182,7 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
   const stream = createOpenCodeLocalStream({
     url: config.baseUrl,
     model: config.model,
+    variant: config.variant,
     ...DEFAULT_OPENCODE_LOCAL,
   });
   const models = createModels({

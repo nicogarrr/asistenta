@@ -58,6 +58,8 @@ export interface OpenCodeLocalConfig {
   url: string;
   /** Modelo Zen, p.ej. deepseek-v4.1-flash-free */
   model: string;
+  /** Variante del serve (p.ej. reasoningEffort max). */
+  variant?: string;
   /** Agente de opencode.json a usar (prompt minimal propio de asistenta). */
   agent: string;
   /** Presupuesto total por llamada (crear sesion + generacion + polling). */
@@ -636,6 +638,7 @@ export function createOpenCodeLocalStream(
             method: 'POST',
             body: JSON.stringify({
               model: { providerID: 'opencode', modelID: cfg.model },
+              ...(cfg.variant ? { variant: cfg.variant } : {}),
               agent: cfg.agent,
               system,
               parts: [{ type: 'text', text: userText }],
