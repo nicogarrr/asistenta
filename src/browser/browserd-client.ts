@@ -58,7 +58,10 @@ export class BrowserdClient {
   private sessionId: string | null = null;
 
   constructor(opts: BrowserdOptions = {}) {
-    this.baseUrl = (opts.baseUrl ?? process.env.BROWSERD_URL ?? 'http://127.0.0.1:7701').replace(/\/+$/, '');
+    this.baseUrl = (opts.baseUrl ?? process.env.BROWSERD_URL ?? 'http://127.0.0.1:7701').replace(
+      /\/+$/,
+      '',
+    );
     this.token = opts.token ?? process.env.BROWSERD_TOKEN ?? '';
     this.fetchFn = opts.fetchFn ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
@@ -82,11 +85,13 @@ export class BrowserdClient {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-      if (!res.ok) throw new BrowserdHttpError(`browserd ${method} ${path}: HTTP ${res.status}`, res.status);
+      if (!res.ok)
+        throw new BrowserdHttpError(`browserd ${method} ${path}: HTTP ${res.status}`, res.status);
       return (await res.json()) as T;
     } catch (err) {
       if (err instanceof BrowserdHttpError) throw err;
-      if (isTransportError(err)) throw new BrowserdError(`browserd inalcanzable: ${(err as Error).message}`);
+      if (isTransportError(err))
+        throw new BrowserdError(`browserd inalcanzable: ${(err as Error).message}`);
       throw err;
     }
   }
@@ -152,7 +157,9 @@ export class BrowserdClient {
 
   async evaluate(expression: string): Promise<unknown> {
     const id = await this.ensureSession('pricewatch');
-    const r = await this.call<{ value: unknown }>('POST', `/sessions/${id}/evaluate`, { expression });
+    const r = await this.call<{ value: unknown }>('POST', `/sessions/${id}/evaluate`, {
+      expression,
+    });
     return r.value;
   }
 

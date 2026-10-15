@@ -18,7 +18,9 @@ try {
   (process as NodeJS.Process & { loadEnvFile?: (path?: string) => void }).loadEnvFile?.();
 } catch (err) {
   if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-    process.stderr.write(`.env could not be read: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(
+      `.env could not be read: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
   }
 }
 
