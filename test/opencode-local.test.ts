@@ -1,8 +1,10 @@
 import type { Message, Model, Tool, TranscriptContext } from '@earendil-works/pi-ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  argsMatchSchema,
   checkEffectivePermissions,
   createOpenCodeLocalStream,
+  matchesSchema,
   oneLine,
   parseReply,
   renderToolContract,
@@ -275,13 +277,13 @@ describe('checkEffectivePermissions (fail-closed)', () => {
     const c = {
       permission: { ...good.permission, read: { '*': 'deny', '/home/nico/*': 'allow' } },
     };
-    expect(checkEffectivePermissions(c).join(' ')).toContain('escapa del sandbox');
+    expect(checkEffectivePermissions(c).join(' ')).toContain('no es el señuelo exacto');
   });
   it('allowlist con ".." -> problema', () => {
     const c = {
       permission: { ...good.permission, read: { '*': 'deny', '../otro/x.txt': 'allow' } },
     };
-    expect(checkEffectivePermissions(c).join(' ')).toContain('escapa del sandbox');
+    expect(checkEffectivePermissions(c).join(' ')).toContain('no es el señuelo exacto');
   });
   it('permiso inesperado no-deny -> problema (fail-closed)', () => {
     const c = { permission: { ...good.permission, patch: 'allow' } };
@@ -289,6 +291,62 @@ describe('checkEffectivePermissions (fail-closed)', () => {
   });
   it('permission escalar -> problema', () => {
     expect(checkEffectivePermissions({ permission: 'allow' }).length).toBeGreaterThan(0);
+  });
+  it('canario auditor: "**":"allow" no es agujero minimo -> problema', () => {
+    const c = { permission: { ...good.permission, read: { '*': 'deny', '**': 'allow' } } };
+    expect(checkEffectivePermissions(c).join(' ')).toContain('no es el señuelo exacto');
+  });
+  it('canario auditor: "*auth*":"allow" -> problema', () => {
+    const c = { permission: { ...good.permission, read: { '*': 'deny', '*auth*': 'allow' } } };
+    expect(checkEffectivePermissions(c).join(' ')).toContain('no es el señuelo exacto');
+  });
+  it('override permisivo del agente -> problema', () => {
+    const c = {
+      ...good,
+      agent: { asistenta: { permission: { read: 'allow', bash: 'allow' } } },
+    };
+    const probs = checkEffectivePermissions(c).join(' ');
+    expect(probs).toContain('agent.asistenta.permission.read');
+    expect(probs).toContain('agent.asistenta.permission.bash');
+  });
+  it('mcp configurado -> problema', () => {
+    expect(checkEffectivePermissions({ ...good, mcp: { x: {} } }).join(' ')).toContain('mcp');
+  });
+  it('plugin configurado -> problema', () => {
+    expect(checkEffectivePermissions({ ...good, plugin: ['x'] }).join(' ')).toContain('plugin');
+  });
+});
+
+describe('matchesSchema (validacion real)', () => {
+  const chooseSchema = (choose as unknown as { parameters: never }).parameters;
+  it('canario auditor: mode fuera del enum -> rechaza', () => {
+    expect(matchesSchema({ mode: 'danger', data: { amount: 1 } }, chooseSchema)).toBe(false);
+    expect(matchesSchema({ mode: 'safe', data: { amount: 1 } }, chooseSchema)).toBe(true);
+  });
+  it('canario auditor: required anidado -> rechaza data:{}', () => {
+    expect(matchesSchema({ data: {} }, chooseSchema)).toBe(false);
+  });
+  it('integer NO acepta 1.5', () => {
+    expect(matchesSchema(1.5, { type: 'integer' })).toBe(false);
+    expect(matchesSchema(2, { type: 'integer' })).toBe(true);
+  });
+  it('additionalProperties:false rechaza extras', () => {
+    const schema = {
+      type: 'object',
+      properties: { a: { type: 'string' } },
+      additionalProperties: false,
+    };
+    expect(matchesSchema({ a: 'x', extra: true }, schema)).toBe(false);
+    expect(matchesSchema({ a: 'x' }, schema)).toBe(true);
+  });
+  it('items valida cada elemento del array', () => {
+    const schema = { type: 'array', items: { type: 'string' } };
+    expect(matchesSchema(['a', 'b'], schema)).toBe(true);
+    expect(matchesSchema(['a', 3], schema)).toBe(false);
+  });
+  it('argsMatchSchema delega en la validacion completa', () => {
+    expect(argsMatchSchema({ mode: 'danger', data: { amount: 1 } }, choose)).toBe(false);
+    expect(argsMatchSchema({ mode: 'strict', data: { amount: 2 } }, choose)).toBe(true);
   });
 });
 
@@ -316,6 +374,7 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
     model: 'm',
     agent: 'asistenta',
     timeoutMs: 5000,
+    expectedServeDirectory: '/work',
   };
   const ctx = (text: string): TranscriptContext =>
     ({ messages: [{ role: 'user', content: text, timestamp: 1 }] }) as TranscriptContext;
@@ -333,7 +392,7 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
       const u = String(url);
       calls.push(`${init?.method ?? 'GET'} ${u.replace(cfg.url, '')}`);
       if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
-      if (u.endsWith('/session')) return jsonRes({ id: 's1' });
+      if (u.endsWith('/session')) return jsonRes({ id: 's1', directory: '/work' });
       if (u.endsWith('/session/s1/message') && init?.method === 'POST') return jsonRes({});
       if (u.endsWith('/session/s1/message'))
         return jsonRes([
@@ -381,7 +440,7 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
       const u = String(url);
       calls.push(`${init?.method ?? 'GET'} ${u.replace(cfg.url, '')}`);
       if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
-      if (u.endsWith('/session')) return jsonRes({ id: 's2' });
+      if (u.endsWith('/session')) return jsonRes({ id: 's2', directory: '/work' });
       if (u.endsWith('/session/s2/message') && init?.method === 'POST') return jsonRes({});
       if (u.endsWith('/session/s2/message'))
         return new Promise<Response>((_res, rej) =>
@@ -408,7 +467,7 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const u = String(url);
       if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
-      if (u.endsWith('/session')) return jsonRes({ id: 's3' });
+      if (u.endsWith('/session')) return jsonRes({ id: 's3', directory: '/work' });
       if (u.endsWith('/session/s3/message') && init?.method === 'POST') return jsonRes({});
       if (u.endsWith('/session/s3/message'))
         return jsonRes([
@@ -439,13 +498,76 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
     expect(calls.some((c) => c.includes('POST /session'))).toBe(false);
   });
 
+  it('canario auditor: finish intermedio "tool-calls" NO es la respuesta; espera la final', async () => {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's5', directory: '/work' });
+      if (u.endsWith('/session/s5/message') && init?.method === 'POST') return jsonRes({});
+      if (u.endsWith('/session/s5/message'))
+        return jsonRes([
+          {
+            info: { role: 'assistant', finish: 'tool-calls' },
+            parts: [{ type: 'text', text: 'Voy a leer LEEME' }],
+          },
+          {
+            info: { role: 'assistant', finish: 'stop', tokens: { input: 1, output: 2 }, cost: 0 },
+            parts: [{ type: 'text', text: 'Respuesta final' }],
+          },
+        ]);
+      return jsonRes({});
+    });
+    const stream = createOpenCodeLocalStream(cfg)(model, ctx('lee'), undefined);
+    const done = await stream.result();
+    expect(done.stopReason).toBe('stop');
+    expect(done.content).toEqual([{ type: 'text', text: 'Respuesta final' }]);
+  });
+
+  it('canario auditor: el deadline acota el sleep (40ms, no 1505ms)', async () => {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's6', directory: '/work' });
+      if (u.endsWith('/session/s6/message') && init?.method === 'POST') return jsonRes({});
+      if (u.endsWith('/session/s6/message')) return jsonRes([]); // polling vacio
+      return jsonRes({});
+    });
+    const t0 = Date.now();
+    const stream = createOpenCodeLocalStream({ ...cfg, timeoutMs: 40 })(
+      model,
+      ctx('hola'),
+      undefined,
+    );
+    const done = await stream.result();
+    const elapsed = Date.now() - t0;
+    expect(done.stopReason).toBe('error');
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('fail-closed: el serve trabaja fuera del directorio de la jaula -> error y sesion limpiada', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(`${init?.method ?? 'GET'} ${u.replace(cfg.url, '')}`);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's7', directory: '/home/nico' });
+      return jsonRes({});
+    });
+    const stream = createOpenCodeLocalStream(cfg)(model, ctx('hola'), undefined);
+    const done = await stream.result();
+    await new Promise((r) => setTimeout(r, 25));
+    expect(done.stopReason).toBe('error');
+    expect(done.errorMessage).toContain('jaula');
+    expect(calls).toContain('DELETE /session/s7');
+  });
+
   it('presupuesto global: con timeoutMs pequeno el fetch aborta por deadline y la sesion se limpia', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const u = String(url);
       calls.push(`${init?.method ?? 'GET'} ${u.replace('http://127.0.0.1:9', '')}`);
       if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
-      if (u.endsWith('/session')) return jsonRes({ id: 's4' });
+      if (u.endsWith('/session')) return jsonRes({ id: 's4', directory: '/work' });
       if (u.endsWith('/session/s4/message') && init?.method === 'POST') return jsonRes({});
       if (u.endsWith('/session/s4/message'))
         return new Promise<Response>((_res, rej) =>

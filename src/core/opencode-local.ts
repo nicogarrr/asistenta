@@ -38,10 +38,12 @@ import { log } from '../log.js';
  *   nos da el transcript completo en cada llamada, cada peticion a serve es
  *   una sesion NUEVA con todo el historial serializado.
  *
- * Defensas (auditor r1):
- * - La opencode.json de referencia lleva `permission: "deny"` GLOBAL: todas
- *   las tools builtin quedan registradas (el free lo exige) pero su ejecucion
- *   esta bloqueada, incluidas read/glob/grep/task/skill/websearch y futuras.
+ * Defensas (auditor r1/r2):
+ * - La opencode.json de referencia deniega TODAS las builtin salvo un agujero
+ *   minimo medido en read (deny a todo salvo el señuelo LEEME.txt: deny global o
+ *   read sin allows disparan la pared del free tier, medido con llamadas
+ *   reales) y `external_directory` denegado; el serve va en contenedor sin
+ *   mounts de host salvo auth.json (archivo RO) y la carpeta efimera.
  * - El transcript serializado escapa TODOS los separadores de linea como ⏎,
  *   de modo que un texto externo (resultado de tool, historial) no puede
  *   fabricar una linea "USUARIO:" nueva: cada turno es una sola linea logica.
@@ -60,11 +62,14 @@ export interface OpenCodeLocalConfig {
   agent: string;
   /** Presupuesto total por llamada (crear sesion + generacion + polling). */
   timeoutMs: number;
+  /** Directorio que debe reportar el serve enjaulado (el launcher fija /work). */
+  expectedServeDirectory: string;
 }
 
 export const DEFAULT_OPENCODE_LOCAL: Omit<OpenCodeLocalConfig, 'url' | 'model'> = {
   agent: 'asistenta',
   timeoutMs: 120_000,
+  expectedServeDirectory: '/work',
 };
 
 /**
@@ -92,18 +97,23 @@ const REQUIRED_DENIES = [
 ] as const;
 
 /**
+ * Agujero minimo EXACTO de read: el señuelo benigno entregado (LEEME.txt).
+ * Los patrones casan contra la ruta relativa al worktree del serve; el free
+ * tier exige al menos una regla allow (medido). Nada mas puede ser legible.
+ */
+const EXPECTED_READ_ALLOW = new Set(['*/LEEME.txt', 'LEEME.txt']);
+
+/**
  * Problemas de la config efectiva del serve frente al aislamiento exigido;
  * [] = conforme. Cualquier permiso inesperado o allowlist fuera del sandbox
  * bloquea el proveedor antes de mandar nada.
  */
-export function checkEffectivePermissions(serveConfig: { permission?: unknown }): string[] {
+/** Problemas de UN bloque permission (global o de agente) frente a la jaula. */
+function checkPermissionBlock(perm: Record<string, unknown>, where: string): string[] {
   const problems: string[] = [];
-  const perm = (serveConfig.permission ?? {}) as Record<string, unknown>;
-  if (typeof perm !== 'object' || perm === null || Array.isArray(perm))
-    return [`permission=${JSON.stringify(serveConfig.permission)} (se exige objeto con denies)`];
   for (const t of REQUIRED_DENIES)
     if (perm[t] !== 'deny')
-      problems.push(`${t}=${JSON.stringify(perm[t] ?? 'ausente')} (se exige "deny")`);
+      problems.push(`${where}.${t}=${JSON.stringify(perm[t] ?? 'ausente')} (se exige "deny")`);
   const read = perm.read;
   if (read === 'deny') {
     // mas cerrado aun: conforme (el free tier lo rechaza, pero no es inseguro)
@@ -111,30 +121,62 @@ export function checkEffectivePermissions(serveConfig: { permission?: unknown })
     const rules = read as Record<string, unknown>;
     if (rules['*'] !== 'deny')
       problems.push(
-        `read.${JSON.stringify('*')}=${JSON.stringify(rules['*'] ?? 'ausente')} (se exige "deny")`,
+        `${where}.read["*"]=${JSON.stringify(rules['*'] ?? 'ausente')} (se exige "deny")`,
       );
     for (const [pattern, action] of Object.entries(rules)) {
       if (pattern === '*') continue;
       if (action === 'deny') continue;
-      // Los patrones casan contra la ruta RELATIVA al worktree: un allow
-      // absoluto o con ".." lee fuera del sandbox -> fail-closed.
-      const normalized = pattern.replaceAll('\\', '/');
-      if (
-        normalized.startsWith('/') ||
-        /^[A-Za-z]:\//.test(normalized) ||
-        normalized.split('/').includes('..')
-      )
-        problems.push(`read allowlist ${JSON.stringify(pattern)} escapa del sandbox`);
+      // Allowlist EXACTA del señuelo entregado: cualquier otro patron (incl.
+      // "**" o "*auth*", aun siendo relativo) abre lectura real -> fail-closed.
+      if (!EXPECTED_READ_ALLOW.has(pattern))
+        problems.push(`${where}.read allowlist ${JSON.stringify(pattern)} no es el señuelo exacto`);
     }
   } else {
     problems.push(
-      `read=${JSON.stringify(read ?? 'ausente')} (se exige "deny" o {"*":"deny", allowlist sandbox})`,
+      `${where}.read=${JSON.stringify(read ?? 'ausente')} (se exige "deny" o {"*":"deny", allowlist exacta del señuelo})`,
     );
   }
   for (const [k, v] of Object.entries(perm)) {
     if ((REQUIRED_DENIES as readonly string[]).includes(k) || k === 'read') continue;
-    if (v !== 'deny') problems.push(`permiso inesperado ${k}=${JSON.stringify(v)} (fail-closed)`);
+    if (v !== 'deny') problems.push(`${where}.${k}=${JSON.stringify(v)} inesperado (fail-closed)`);
   }
+  return problems;
+}
+
+/**
+ * Config efectiva COMBINADA: los permisos de agente prevalecen sobre los
+ * globales (docs oficiales), asi que se exige la jaula en global Y en cada
+ * agente definido; y se rechazan mcp/plugins (tools fuera de la lista).
+ */
+export function checkEffectivePermissions(serveConfig: {
+  permission?: unknown;
+  agent?: unknown;
+  mcp?: unknown;
+  plugin?: unknown;
+}): string[] {
+  const perm = (serveConfig.permission ?? {}) as Record<string, unknown>;
+  if (typeof perm !== 'object' || perm === null || Array.isArray(perm))
+    return [`permission=${JSON.stringify(serveConfig.permission)} (se exige objeto con denies)`];
+  const problems = checkPermissionBlock(perm, 'permission');
+  const agents = (serveConfig.agent ?? {}) as Record<string, { permission?: unknown }>;
+  if (typeof agents === 'object' && agents !== null && !Array.isArray(agents))
+    for (const [name, a] of Object.entries(agents)) {
+      const ap = a?.permission;
+      if (ap === undefined || ap === null) continue;
+      if (typeof ap === 'object' && !Array.isArray(ap))
+        for (const [k, v] of Object.entries(ap as Record<string, unknown>))
+          if (v !== 'deny')
+            problems.push(
+              `agent.${name}.permission.${k}=${JSON.stringify(v)} (override permisivo)`,
+            );
+          else problems.push(`agent.${name}.permission=${JSON.stringify(ap)} (override permisivo)`);
+    }
+  const mcp = serveConfig.mcp;
+  if (mcp && typeof mcp === 'object' && Object.keys(mcp as object).length > 0)
+    problems.push('mcp configurado: tools fuera de la lista de la jaula (fail-closed)');
+  const plugin = serveConfig.plugin;
+  if (Array.isArray(plugin) && plugin.length > 0)
+    problems.push('plugins configurados: tools fuera de la lista de la jaula (fail-closed)');
   return problems;
 }
 
@@ -160,6 +202,7 @@ interface OcTokens {
 }
 interface OcMessage {
   info: {
+    id?: string;
     role?: string;
     finish?: string | null;
     error?: { data?: { message?: string } };
@@ -168,6 +211,9 @@ interface OcMessage {
   };
   parts?: OcPart[];
 }
+
+/** Finishes terminales del serve: 'tool-calls' es INTERMEDIO (la generacion sigue). */
+const INTERMEDIATE_FINISH = new Set(['tool-calls', 'tool_use', 'toolCalls']);
 
 /** Presupuesto unico de la llamada: deadline absoluto + signal del caller. */
 interface CallBudget {
@@ -185,6 +231,8 @@ async function ocFetch<T>(
   init: RequestInit | undefined,
   budget: CallBudget,
 ): Promise<T> {
+  if (Date.now() > budget.deadline)
+    throw new Error(`opencode serve: presupuesto ${cfg.timeoutMs}ms agotado antes de ${path}`);
   const res = await fetch(cfg.url.replace(/\/$/, '') + path, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
@@ -316,35 +364,60 @@ export interface ParsedReply {
   toolCall?: { name: string; arguments: JsonObject };
 }
 
-type SchemaProps = { properties?: Record<string, { type?: string }>; required?: string[] };
-
-function matchesType(v: unknown, type?: string): boolean {
-  if (!type || type === 'any') return true;
-  switch (type) {
-    case 'string':
-      return typeof v === 'string';
-    case 'number':
-    case 'integer':
-      return typeof v === 'number';
-    case 'boolean':
-      return typeof v === 'boolean';
-    case 'object':
-      return typeof v === 'object' && v !== null && !Array.isArray(v);
-    case 'array':
-      return Array.isArray(v);
-    default:
-      return true;
-  }
+interface SchemaNode {
+  type?: string;
+  properties?: Record<string, SchemaNode>;
+  required?: string[];
+  items?: SchemaNode;
+  enum?: unknown[];
+  additionalProperties?: boolean | SchemaNode;
 }
 
-/** Validacion minima del schema: required presentes y tipos top-level correctos. */
-export function argsMatchSchema(args: JsonObject, tool: Tool): boolean {
-  const schema = (tool as { parameters?: SchemaProps }).parameters;
-  if (!schema) return true;
-  for (const req of schema.required ?? []) if (!(req in args)) return false;
-  for (const [name, prop] of Object.entries(schema.properties ?? {}))
-    if (name in args && !matchesType(args[name], prop?.type)) return false;
+/** Validacion JSON Schema (subconjunto usado por las tools): recursiva y estricta. */
+export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
+  const t = schema.type;
+  if (t && t !== 'any') {
+    const ok =
+      t === 'string'
+        ? typeof v === 'string'
+        : t === 'number'
+          ? typeof v === 'number'
+          : t === 'integer'
+            ? typeof v === 'number' && Number.isInteger(v)
+            : t === 'boolean'
+              ? typeof v === 'boolean'
+              : t === 'object'
+                ? typeof v === 'object' && v !== null && !Array.isArray(v)
+                : t === 'array'
+                  ? Array.isArray(v)
+                  : true;
+    if (!ok) return false;
+  }
+  if (schema.enum && !schema.enum.some((e) => JSON.stringify(e) === JSON.stringify(v)))
+    return false;
+  if (Array.isArray(v) && schema.items)
+    return v.every((item) => matchesSchema(item, schema.items as SchemaNode));
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    const obj = v as Record<string, unknown>;
+    const props = schema.properties ?? {};
+    for (const req of schema.required ?? []) if (!(req in obj)) return false;
+    for (const [name, propSchema] of Object.entries(props))
+      if (name in obj && !matchesSchema(obj[name], propSchema)) return false;
+    if (schema.additionalProperties === false)
+      for (const name of Object.keys(obj)) if (!(name in props)) return false;
+    if (typeof schema.additionalProperties === 'object')
+      for (const [name, val] of Object.entries(obj))
+        if (!(name in props) && !matchesSchema(val, schema.additionalProperties as SchemaNode))
+          return false;
+  }
   return true;
+}
+
+/** Los args de una toolCall deben cumplir el schema COMPLETO de la tool. */
+export function argsMatchSchema(args: JsonObject, tool: Tool): boolean {
+  const schema = (tool as { parameters?: SchemaNode }).parameters;
+  if (!schema) return true;
+  return matchesSchema(args, schema);
 }
 
 /**
@@ -398,35 +471,40 @@ function usageOf(t?: OcTokens, cost?: number): Usage {
   };
 }
 
-/** Espera a que el mensaje assistant termine (finish o error) con polling acotado al presupuesto global. */
+/**
+ * Espera la respuesta FINAL del assistant: el ULTIMO mensaje assistant con un
+ * finish terminal. Con builtin tools habilitadas hay mensajes intermedios con
+ * finish 'tool-calls' que NO son la respuesta (medido por el auditor r2).
+ * El deadline global se comprueba ANTES de cada fetch y acota tambien el sleep.
+ */
 async function waitReply(
   cfg: OpenCodeLocalConfig,
   sessionId: string,
   budget: CallBudget,
-): Promise<{ text: string; usage: Usage }> {
+): Promise<{ text: string; usage: Usage; finish: string }> {
   for (;;) {
+    if (Date.now() > budget.deadline)
+      throw new Error(`opencode serve: timeout ${cfg.timeoutMs}ms esperando respuesta`);
     const msgs = await ocFetch<OcMessage[]>(
       cfg,
       `/session/${sessionId}/message`,
       undefined,
       budget,
     );
-    for (const m of msgs) {
-      const i = m.info;
-      if (i.role !== 'assistant') continue;
-      if (i.error)
-        throw new Error(`opencode serve: ${i.error.data?.message ?? 'error desconocido'}`);
-      if (i.finish) {
-        const text = (m.parts ?? [])
-          .filter((p) => p.type === 'text')
-          .map((p) => p.text ?? '')
-          .join('');
-        return { text, usage: usageOf(i.tokens, i.cost) };
-      }
+    const assistants = msgs.filter((m) => m.info.role === 'assistant');
+    for (const m of assistants)
+      if (m.info.error)
+        throw new Error(`opencode serve: ${m.info.error.data?.message ?? 'error desconocido'}`);
+    const last = assistants[assistants.length - 1];
+    if (last?.info.finish && !INTERMEDIATE_FINISH.has(last.info.finish)) {
+      const i = last.info;
+      const text = (last.parts ?? [])
+        .filter((p) => p.type === 'text')
+        .map((p) => p.text ?? '')
+        .join('');
+      return { text, usage: usageOf(i.tokens, i.cost), finish: i.finish ?? 'stop' };
     }
-    if (Date.now() > budget.deadline)
-      throw new Error(`opencode serve: timeout ${cfg.timeoutMs}ms esperando respuesta`);
-    await sleep(1500, budget.userSignal);
+    await sleep(Math.min(1500, remainingMs(budget)), budget.userSignal);
   }
 }
 
@@ -471,13 +549,19 @@ export function createOpenCodeLocalStream(
           .join('\n\n');
         const userText = renderTranscript(context.messages);
         await verifyServeIsolation(cfg, budget);
-        const session = await ocFetch<{ id: string }>(
+        const session = await ocFetch<{ id: string; directory?: string }>(
           cfg,
           '/session',
           { method: 'POST', body: '{}' },
           budget,
         );
         sessionId = session.id;
+        // El serve enjaulado trabaja en el directorio efemero del launcher; otro
+        // directorio = despliegue fuera de la jaula certificada -> fail-closed.
+        if (session.directory && session.directory !== cfg.expectedServeDirectory)
+          throw new Error(
+            `opencode-local fail-closed: el serve trabaja en ${JSON.stringify(session.directory)}, se exige ${JSON.stringify(cfg.expectedServeDirectory)} (jaula del launcher)`,
+          );
         await ocFetch(
           cfg,
           `/session/${sessionId}/message`,
@@ -493,6 +577,7 @@ export function createOpenCodeLocalStream(
           budget,
         );
         const reply = await waitReply(cfg, sessionId, budget);
+        const finishReason = reply.finish === 'length' ? ('length' as const) : ('stop' as const);
         const parsed = parseReply(reply.text, new Map(tools.map((t) => [t.name, t])));
         let done: AssistantMessage;
         if (parsed.kind === 'toolCall' && parsed.toolCall) {
@@ -520,11 +605,11 @@ export function createOpenCodeLocalStream(
           done = {
             ...partial,
             content: text ? [{ type: 'text', text }] : [],
-            stopReason: 'stop',
+            stopReason: finishReason,
             usage: reply.usage,
             timestamp: Date.now(),
           };
-          events.push({ type: 'done', reason: 'stop', message: done });
+          events.push({ type: 'done', reason: finishReason, message: done });
         }
         events.end(done);
         log.info('opencode-local reply', {
