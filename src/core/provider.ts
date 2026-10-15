@@ -1,12 +1,11 @@
 import type { Model, MutableModels } from '@earendil-works/pi-ai';
-import { createModels, envApiKeyAuth } from '@earendil-works/pi-ai';
+import { createModels, envApiKeyAuth, normalizeContext } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { createProvider } from '@earendil-works/pi-ai/models';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } from './opencode-local.js';
-import { normalizeContext } from '@earendil-works/pi-ai';
 
 /**
  * Provider wiring.
@@ -185,7 +184,9 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
     model: config.model,
     ...DEFAULT_OPENCODE_LOCAL,
   });
-  const models = createModels({ authContext: { env: async () => undefined, fileExists: async () => false } });
+  const models = createModels({
+    authContext: { env: async () => undefined, fileExists: async () => false },
+  });
   const provider = createProvider({
     id: config.provider,
     name: config.provider,
@@ -215,10 +216,18 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
   // Los resumenes y la extraccion de hechos llaman a models.completeSimple con
   // un Context simple: lo normalizamos y lo mandamos por el stream local.
   const originalComplete = models.completeSimple.bind(models);
-  models.completeSimple = (async (m: Model<string>, ctx: Parameters<typeof originalComplete>[1], opts?: Parameters<typeof originalComplete>[2]) => {
+  models.completeSimple = (async (
+    m: Model<string>,
+    ctx: Parameters<typeof originalComplete>[1],
+    opts?: Parameters<typeof originalComplete>[2],
+  ) => {
     if ((m as Model<string>).provider !== config.provider) return originalComplete(m, ctx, opts);
     const normalized = normalizeContext(ctx as never);
-    const result = await stream(m as Model<'openai-completions'>, normalized, opts as never).result();
+    const result = await stream(
+      m as Model<'openai-completions'>,
+      normalized,
+      opts as never,
+    ).result();
     return result as never;
   }) as typeof models.completeSimple;
   log.info('provider ready (opencode-local)', {

@@ -1,7 +1,21 @@
-import type { AssistantMessage, JsonObject, Message, Model, Tool, ToolCall, Usage } from '@earendil-works/pi-ai';
-import type { TranscriptContext } from '@earendil-works/pi-ai';
-import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
-import type { AssistantMessageEventStream, StreamFunction, SimpleStreamOptions } from '@earendil-works/pi-ai';
+import type {
+  AssistantMessage,
+  AssistantMessageEventStream,
+  JsonObject,
+  Message,
+  Model,
+  SimpleStreamOptions,
+  StreamFunction,
+  Tool,
+  ToolCall,
+  TranscriptContext,
+  Usage,
+} from '@earendil-works/pi-ai';
+import {
+  createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
+} from '@earendil-works/pi-ai';
 import { log } from '../log.js';
 
 /**
@@ -41,17 +55,27 @@ export const DEFAULT_OPENCODE_LOCAL: Omit<OpenCodeLocalConfig, 'url' | 'model'> 
   timeoutMs: 120_000,
 };
 
-interface OcPart { type: string; text?: string }
+interface OcPart {
+  type: string;
+  text?: string;
+}
 interface OcMessage {
   info: { role?: string; finish?: string | null; error?: { data?: { message?: string } } };
   parts?: OcPart[];
 }
 
-async function ocFetch<T>(cfg: OpenCodeLocalConfig, path: string, init?: RequestInit): Promise<T> {
+async function ocFetch<T>(
+  cfg: OpenCodeLocalConfig,
+  path: string,
+  init?: RequestInit,
+  userSignal?: AbortSignal,
+): Promise<T> {
   const res = await fetch(cfg.url.replace(/\/$/, '') + path, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    signal: AbortSignal.timeout(cfg.timeoutMs),
+    signal: AbortSignal.any(
+      [AbortSignal.timeout(cfg.timeoutMs), ...(userSignal ? [userSignal] : [])].filter(Boolean),
+    ),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -77,7 +101,9 @@ export function renderToolContract(tools: Tool[]): string {
 }
 
 function renderParams(t: Tool): string {
-  const schema = (t as { parameters?: { properties?: Record<string, unknown>; required?: string[] } }).parameters;
+  const schema = (
+    t as { parameters?: { properties?: Record<string, unknown>; required?: string[] } }
+  ).parameters;
   if (!schema?.properties) return '';
   const req = new Set(schema.required ?? []);
   return Object.entries(schema.properties)
@@ -99,7 +125,9 @@ export function renderTranscript(messages: Message[]): string {
       for (const block of m.content) {
         if (block.type === 'text') out.push('ASISTENTA: ' + block.text);
         else if (block.type === 'toolCall')
-          out.push('ASISTENTA (llamada): ' + JSON.stringify({ tool: block.name, args: block.arguments }));
+          out.push(
+            'ASISTENTA (llamada): ' + JSON.stringify({ tool: block.name, args: block.arguments }),
+          );
       }
     } else if (m.role === 'toolResult') {
       const body = m.content.map((c) => (c.type === 'text' ? c.text : '[imagen]')).join('\n');
@@ -145,25 +173,43 @@ export function parseReply(raw: string, knownTools: Set<string>): ParsedReply {
 }
 
 const ZERO_USAGE: Usage = {
-  input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
 /** Espera a que el mensaje assistant termine (finish o error) con polling acotado. */
-async function waitReply(cfg: OpenCodeLocalConfig, sessionId: string): Promise<{ text: string; tokens: number }> {
+async function waitReply(
+  cfg: OpenCodeLocalConfig,
+  sessionId: string,
+  userSignal?: AbortSignal,
+): Promise<{ text: string; tokens: number }> {
   const deadline = Date.now() + cfg.timeoutMs;
   for (;;) {
-    const msgs = await ocFetch<OcMessage[]>(cfg, `/session/${sessionId}/message`);
+    const msgs = await ocFetch<OcMessage[]>(
+      cfg,
+      `/session/${sessionId}/message`,
+      undefined,
+      userSignal,
+    );
     for (const m of msgs) {
       const i = m.info;
       if (i.role !== 'assistant') continue;
-      if (i.error) throw new Error(`opencode serve: ${i.error.data?.message ?? 'error desconocido'}`);
+      if (i.error)
+        throw new Error(`opencode serve: ${i.error.data?.message ?? 'error desconocido'}`);
       if (i.finish) {
-        const text = (m.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? '').join('');
+        const text = (m.parts ?? [])
+          .filter((p) => p.type === 'text')
+          .map((p) => p.text ?? '')
+          .join('');
         return { text, tokens: 0 };
       }
     }
-    if (Date.now() > deadline) throw new Error(`opencode serve: timeout ${cfg.timeoutMs}ms esperando respuesta`);
+    if (Date.now() > deadline)
+      throw new Error(`opencode serve: timeout ${cfg.timeoutMs}ms esperando respuesta`);
     await new Promise((r) => setTimeout(r, 1500));
   }
 }
@@ -173,37 +219,60 @@ async function waitReply(cfg: OpenCodeLocalConfig, sessionId: string): Promise<{
  * (auto-contenida, ver cabecera). No hay streaming real en v1: se emite el
  * texto completo como un unico delta al recibirlo (la interfaz lo admite).
  */
-export function createOpenCodeLocalStream(cfg: OpenCodeLocalConfig): StreamFunction<'openai-completions', SimpleStreamOptions> {
-  return (model: Model<'openai-completions'>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream => {
+export function createOpenCodeLocalStream(
+  cfg: OpenCodeLocalConfig,
+): StreamFunction<'openai-completions', SimpleStreamOptions> {
+  return (
+    model: Model<'openai-completions'>,
+    context: TranscriptContext,
+    options?: SimpleStreamOptions,
+  ): AssistantMessageEventStream => {
     const events = createAssistantMessageEventStream();
+    const userSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
     const tools: Tool[] = getCurrentTools(context.messages);
     void (async () => {
       const partial: AssistantMessage = {
-        role: 'assistant', content: [], api: model.api, provider: model.provider,
-        model: model.id, usage: ZERO_USAGE, stopReason: 'pending', timestamp: Date.now(),
+        role: 'assistant',
+        content: [],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: ZERO_USAGE,
+        stopReason: 'pending',
+        timestamp: Date.now(),
       };
       events.push({ type: 'start', partial });
       try {
         const systemBase = getCurrentSystemPrompt(context.messages);
         const system = [systemBase, renderToolContract(tools)].filter(Boolean).join('\n\n');
         const userText = renderTranscript(context.messages);
-        const session = await ocFetch<{ id: string }>(cfg, '/session', { method: 'POST', body: '{}' });
-        await ocFetch(cfg, `/session/${session.id}/message`, {
+        const session = await ocFetch<{ id: string }>(cfg, '/session', {
           method: 'POST',
-          body: JSON.stringify({
-            model: { providerID: 'opencode', modelID: cfg.model },
-            agent: cfg.agent,
-            system,
-            parts: [{ type: 'text', text: userText }],
-          }),
+          body: '{}',
         });
-        const reply = await waitReply(cfg, session.id);
+        await ocFetch(
+          cfg,
+          `/session/${session.id}/message`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              model: { providerID: 'opencode', modelID: cfg.model },
+              agent: cfg.agent,
+              system,
+              parts: [{ type: 'text', text: userText }],
+            }),
+          },
+          userSignal,
+        );
+        const reply = await waitReply(cfg, session.id, userSignal);
         const parsed = parseReply(reply.text, new Set(tools.map((t) => t.name)));
         let done: AssistantMessage;
         if (parsed.kind === 'toolCall' && parsed.toolCall) {
           const call: ToolCall = {
-            type: 'toolCall', id: `ocl-${Date.now()}`,
-            name: parsed.toolCall.name, arguments: parsed.toolCall.arguments,
+            type: 'toolCall',
+            id: `ocl-${Date.now()}`,
+            name: parsed.toolCall.name,
+            arguments: parsed.toolCall.arguments,
           };
           events.push({ type: 'toolcall_start', contentIndex: 0, partial });
           events.push({ type: 'toolcall_end', contentIndex: 0, toolCall: call, partial });
@@ -215,16 +284,20 @@ export function createOpenCodeLocalStream(cfg: OpenCodeLocalConfig): StreamFunct
           events.push({ type: 'text_delta', contentIndex: 0, delta: text, partial });
           events.push({ type: 'text_end', contentIndex: 0, content: text, partial });
           done = {
-            ...partial, content: text ? [{ type: 'text', text }] : [],
-            stopReason: 'stop', timestamp: Date.now(),
+            ...partial,
+            content: text ? [{ type: 'text', text }] : [],
+            stopReason: 'stop',
+            timestamp: Date.now(),
           };
           events.push({ type: 'done', reason: 'stop', message: done });
         }
         events.end(done);
       } catch (err) {
         const failed: AssistantMessage = {
-          ...partial, stopReason: 'error',
-          errorMessage: err instanceof Error ? err.message : String(err), timestamp: Date.now(),
+          ...partial,
+          stopReason: 'error',
+          errorMessage: err instanceof Error ? err.message : String(err),
+          timestamp: Date.now(),
         };
         events.push({ type: 'error', reason: 'error', error: failed });
         events.end(failed);

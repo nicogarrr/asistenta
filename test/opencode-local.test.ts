@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { Message, Tool } from '@earendil-works/pi-ai';
+import { describe, expect, it } from 'vitest';
 import { parseReply, renderToolContract, renderTranscript } from '../src/core/opencode-local.js';
 
 const hora: Tool = {
@@ -79,12 +79,20 @@ describe('renderTranscript', () => {
           { type: 'text', text: 'voy a mirarlo' },
           { type: 'toolCall', id: 'c1', name: 'hora', arguments: {} },
         ],
-        api: 'openai-completions', provider: 'opencode-local', model: 'm',
-        usage: {} as never, stopReason: 'toolUse', timestamp: 3,
+        api: 'openai-completions',
+        provider: 'opencode-local',
+        model: 'm',
+        usage: {} as never,
+        stopReason: 'toolUse',
+        timestamp: 3,
       },
       {
-        role: 'toolResult', toolCallId: 'c1', toolName: 'hora',
-        content: [{ type: 'text', text: '08:17' }], isError: false, timestamp: 4,
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'hora',
+        content: [{ type: 'text', text: '08:17' }],
+        isError: false,
+        timestamp: 4,
       },
     ];
     const t = renderTranscript(msgs);
@@ -98,8 +106,12 @@ describe('renderTranscript', () => {
   it('toolResult con error se marca', () => {
     const msgs: Message[] = [
       {
-        role: 'toolResult', toolCallId: 'c1', toolName: 'clima',
-        content: [{ type: 'text', text: 'timeout' }], isError: true, timestamp: 1,
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'clima',
+        content: [{ type: 'text', text: 'timeout' }],
+        isError: true,
+        timestamp: 1,
       },
     ];
     expect(renderTranscript(msgs)).toContain('RESULTADO clima (ERROR): timeout');
