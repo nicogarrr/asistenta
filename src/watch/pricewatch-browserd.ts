@@ -21,8 +21,9 @@
  * huella estable es parte del valor anti-bot; robots/presupuesto no dependen
  * del estado de cookies.
  */
-import { createServer, type Server } from 'node:http';
+
 import { randomUUID } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { BrowserdClient, BrowserdError, BrowserdHttpError } from '../browser/browserd-client.js';
 import { isBlockedPage, STORES } from './pricewatch.js';
@@ -36,7 +37,10 @@ export const PUBLIC_STORE_HOSTS: readonly string[] = [
 ];
 
 export interface PricePageReader {
-  read(url: string, permit: (url: string) => Promise<boolean>): Promise<{ status: number; html: string }>;
+  read(
+    url: string,
+    permit: (url: string) => Promise<boolean>,
+  ): Promise<{ status: number; html: string }>;
   close(): Promise<void>;
 }
 
@@ -70,7 +74,11 @@ class PermitHook {
             // como el historico); POSTFLIGHT {url, resource_type, status,
             // body} tras el fetch de un salto -> SOLO isBlockedPage (el
             // presupuesto ya se desconto en preflight; no contar dos veces).
-            const payload = JSON.parse(body || '{}') as { url?: unknown; status?: unknown; body?: unknown };
+            const payload = JSON.parse(body || '{}') as {
+              url?: unknown;
+              status?: unknown;
+              body?: unknown;
+            };
             const url = String(payload.url ?? '');
             if (typeof payload.status === 'number') {
               const pageBody = typeof payload.body === 'string' ? payload.body : '';
@@ -187,17 +195,25 @@ export class FallbackPriceBrowser implements PricePageReader {
     } catch (err) {
       if (!(err instanceof BrowserdError)) throw err;
       this.failed = true;
-      this.log(`[pricewatch] browserd no disponible (${err.message}); sigo con el motor playwright`);
+      this.log(
+        `[pricewatch] browserd no disponible (${err.message}); sigo con el motor playwright`,
+      );
       return this.fallback.read(url, permit);
     }
   }
   async close(): Promise<void> {
-    await Promise.all([this.primary.close().catch(() => undefined), this.fallback.close().catch(() => undefined)]);
+    await Promise.all([
+      this.primary.close().catch(() => undefined),
+      this.fallback.close().catch(() => undefined),
+    ]);
   }
 }
 
 /** Factoria del lector segun BROWSER_ENGINE. `fallback` lo inyecta el caller (PublicPriceBrowser). */
-export function createPricePageReader(fallback: PricePageReader, env: NodeJS.ProcessEnv = process.env): PricePageReader {
+export function createPricePageReader(
+  fallback: PricePageReader,
+  env: NodeJS.ProcessEnv = process.env,
+): PricePageReader {
   if (browserEngine(env) !== 'camoufox') return fallback;
   return new FallbackPriceBrowser(new CamoufoxPriceBrowser(), fallback);
 }
