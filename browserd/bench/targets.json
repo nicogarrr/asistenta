@@ -1,12 +1,12 @@
 [
-  {"id": "amazon", "url": "https://www.amazon.es/s?k=auriculares"},
-  {"id": "amazon-home", "url": "https://www.amazon.es/"},
-  {"id": "mediamarkt", "url": "https://www.mediamarkt.es/"},
-  {"id": "pccomponentes", "url": "https://www.pccomponentes.com/"},
-  {"id": "carrefour", "url": "https://www.carrefour.es/"},
-  {"id": "elcorteingles", "url": "https://www.elcorteingles.es/"},
-  {"id": "fnac", "url": "https://www.fnac.es/"},
-  {"id": "worten", "url": "https://www.worten.es/"},
-  {"id": "google", "url": "https://www.google.com/search?q=camoufox"},
-  {"id": "nowsecure", "url": "https://nowsecure.nl/"}
+  { "id": "amazon", "url": "https://www.amazon.es/s?k=auriculares" },
+  { "id": "amazon-home", "url": "https://www.amazon.es/" },
+  { "id": "mediamarkt", "url": "https://www.mediamarkt.es/" },
+  { "id": "pccomponentes", "url": "https://www.pccomponentes.com/" },
+  { "id": "carrefour", "url": "https://www.carrefour.es/" },
+  { "id": "elcorteingles", "url": "https://www.elcorteingles.es/" },
+  { "id": "fnac", "url": "https://www.fnac.es/" },
+  { "id": "worten", "url": "https://www.worten.es/" },
+  { "id": "google", "url": "https://www.google.com/search?q=camoufox" },
+  { "id": "nowsecure", "url": "https://nowsecure.nl/" }
 ]
