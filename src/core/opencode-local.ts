@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, Model, Tool, ToolCall, Usage } from '@earendil-works/pi-ai';
+import type { AssistantMessage, JsonObject, Message, Model, Tool, ToolCall, Usage } from '@earendil-works/pi-ai';
 import type { TranscriptContext } from '@earendil-works/pi-ai';
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
 import type { AssistantMessageEventStream, StreamFunction, SimpleStreamOptions } from '@earendil-works/pi-ai';
@@ -117,7 +117,7 @@ function textOf(content: string | Array<{ type: string; text?: string }>): strin
 export interface ParsedReply {
   kind: 'text' | 'toolCall';
   text?: string;
-  toolCall?: { name: string; arguments: Record<string, unknown> };
+  toolCall?: { name: string; arguments: JsonObject };
 }
 
 /** Parser del contrato: primera linea JSON {"tool":...} = llamada; si no, texto. */
@@ -134,7 +134,7 @@ export function parseReply(raw: string, knownTools: Set<string>): ParsedReply {
       ) {
         return {
           kind: 'toolCall',
-          toolCall: { name: obj.tool, arguments: (obj.args as Record<string, unknown>) ?? {} },
+          toolCall: { name: obj.tool, arguments: (obj.args as JsonObject) ?? {} },
         };
       }
     } catch {

@@ -5,6 +5,8 @@ import { createProvider } from '@earendil-works/pi-ai/models';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
+import { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } from './opencode-local.js';
+import { normalizeContext } from '@earendil-works/pi-ai';
 
 /**
  * Provider wiring.
@@ -62,6 +64,9 @@ export function goHeaders(sessionId: string | undefined): Record<string, string>
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
+  if (config.provider === 'opencode-local') {
+    return createLocalHandle(config);
+  }
   const key = await resolveApiKey(config.baseUrl);
 
   const models = createModels({
@@ -161,4 +166,71 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
   throw new Error(
     'no API key: run `pa vault set provider:apiKey <key>` or set OPENCODE_GO_API_KEY',
   );
+}
+
+/** True para el preset opencode-local (serve local en la maquina del usuario). */
+export function isOpenCodeLocalProvider(provider: string): boolean {
+  return provider === 'opencode-local';
+}
+
+/**
+ * Handle para `opencode serve` local: sin key aqui (la guarda el propio serve),
+ * streamFn va al cliente local y completeSimple (resumenes y extraccion de
+ * hechos) se rutea por el mismo stream porque serve NO habla OpenAI
+ * chat-completions (medido: su API es de sesiones).
+ */
+async function createLocalHandle(config: Config): Promise<ProviderHandle> {
+  const stream = createOpenCodeLocalStream({
+    url: config.baseUrl,
+    model: config.model,
+    ...DEFAULT_OPENCODE_LOCAL,
+  });
+  const models = createModels({ authContext: { env: async () => undefined, fileExists: async () => false } });
+  const provider = createProvider({
+    id: config.provider,
+    name: config.provider,
+    baseUrl: config.baseUrl,
+    auth: { apiKey: envApiKeyAuth('API key', ['OPENCODE_API_KEY']) },
+    models: [
+      {
+        id: config.model,
+        name: config.model,
+        api: 'openai-completions',
+        provider: config.provider,
+        baseUrl: config.baseUrl,
+        input: ['text', 'image'],
+        reasoning: false,
+        contextWindow: 1_048_576,
+        maxTokens: 32_000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+    ],
+    api: { 'openai-completions': openAICompletionsApi() },
+  });
+  models.setProvider(provider);
+  const model = models.getModel(config.provider, config.model);
+  if (!model) {
+    throw new Error(`model ${config.provider}/${config.model} not registered`);
+  }
+  // Los resumenes y la extraccion de hechos llaman a models.completeSimple con
+  // un Context simple: lo normalizamos y lo mandamos por el stream local.
+  const originalComplete = models.completeSimple.bind(models);
+  models.completeSimple = (async (m: Model<string>, ctx: Parameters<typeof originalComplete>[1], opts?: Parameters<typeof originalComplete>[2]) => {
+    if ((m as Model<string>).provider !== config.provider) return originalComplete(m, ctx, opts);
+    const normalized = normalizeContext(ctx as never);
+    const result = await stream(m as Model<'openai-completions'>, normalized, opts as never).result();
+    return result as never;
+  }) as typeof models.completeSimple;
+  log.info('provider ready (opencode-local)', {
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.baseUrl,
+  });
+  return {
+    models,
+    model,
+    streamFn: (m, context, options) =>
+      stream(m as Model<'openai-completions'>, context as never, options),
+    modelFor: () => model,
+  };
 }
