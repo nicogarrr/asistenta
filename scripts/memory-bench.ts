@@ -18,10 +18,14 @@
  * propuestas (índice/híbrido) filtran y trabajan con 20 ACTIVAS, y cada modo
  * declara su número de entradas en la tabla.
  *
+ * 9c: brazos de timeline sobre corpus sintetico con fechas repartidas
+ * (90 dias x 2), porque el corpus del store nace con fecha de HOY.
+ *
  * Librería pura; runner: npx vitest run test/memory-bench.test.ts.
  */
 import { performance } from 'node:perf_hooks';
 import { MEMORY_CONTEXT_CAP, renderMemoryContext } from '../src/memory/context.js';
+import { renderTimeline, TIMELINE_CAP } from '../src/memory/timeline.js';
 import type { MemoryEntry, MemoryStore } from '../src/memory.js';
 
 const SNIPPET = 80;
@@ -217,6 +221,27 @@ export function runBench(store: MemoryStore, scope = 'bench:corpus#main'): Bench
   const real = renderMemoryContext(all);
   if (!real) throw new Error('corpus sin memoria: imposible medir el modo real');
 
+  // 9c: corpus sintetico con fechas repartidas (90 dias x 2 entradas).
+  const DAY_MS = 86_400_000;
+  const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const now = Date.now();
+  const corpus90: MemoryEntry[] = [];
+  for (let d = 89; d >= 0; d--) {
+    for (let k = 0; k < 2; k++) {
+      corpus90.push({
+        id: `dc${d}k${k}`,
+        date: isoDay(now - d * DAY_MS),
+        text: `dia -${d} hecho ${k}: ${'w'.repeat(180)}`,
+        tags: ['t'],
+        supersedes: [],
+        supersededBy: null,
+      });
+    }
+  }
+  const timelineAll = renderTimeline(corpus90);
+  const timeline7 = renderTimeline(corpus90, { from: isoDay(now - 6 * DAY_MS) });
+  if (!timelineAll || !timeline7) throw new Error('corpus 90d sin timeline: imposible');
+
   const modes = [
     {
       name: 'full HOY = CLI real (20 raw, INCLUYE superadas)',
@@ -239,6 +264,21 @@ export function runBench(store: MemoryStore, scope = 'bench:corpus#main'): Bench
       name: `9b REAL buildContextNote (5 completas + índice, cap ${MEMORY_CONTEXT_CAP})`,
       text: real.body,
       entries: real.active - real.hiddenByCap,
+    },
+    {
+      name: '9c list cruda (corpus 90d×2: lo que costaba consultar la historia)',
+      text: corpus90.map((e) => `- [${e.id}] (${e.date}) ${e.text}`).join('\n'),
+      entries: corpus90.length,
+    },
+    {
+      name: `9c timeline completa (corpus 90d×2, cap ${TIMELINE_CAP})`,
+      text: timelineAll.body,
+      entries: timelineAll.inRange - timelineAll.hiddenByCap,
+    },
+    {
+      name: '9c timeline 7 dias (corpus 90d×2)',
+      text: timeline7.body,
+      entries: timeline7.inRange - timeline7.hiddenByCap,
     },
   ];
 

@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
+import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
 import { looksLikeCredential, type MemoryEntry, type MemoryStore } from '../memory.js';
 
 /**
@@ -35,6 +36,7 @@ const MemoryParams = Type.Object({
     Type.Literal('forget'),
     Type.Literal('get'),
     Type.Literal('list'),
+    Type.Literal('timeline'),
     Type.Literal('save_profile'),
     Type.Literal('profile'),
     Type.Literal('suggest_nudge'),
@@ -59,6 +61,17 @@ const MemoryParams = Type.Object({
       description:
         'For list/recall without query: also show replaced entries, marked and ' +
         'linked to their replacement. Default false: current facts only.',
+    }),
+  ),
+  from: Type.Optional(
+    Type.String({ description: 'For timeline: first day, YYYY-MM-DD inclusive.' }),
+  ),
+  to: Type.Optional(Type.String({ description: 'For timeline: last day, YYYY-MM-DD inclusive.' })),
+  cursor: Type.Optional(
+    Type.String({
+      description:
+        'For timeline: continuation token from a truncated page ("YYYY-MM-DD:offset" or ' +
+        '"unknown:offset"), copied exactly from the page tail.',
     }),
   ),
   tags: Type.Optional(Type.Array(Type.String())),
@@ -160,6 +173,10 @@ export function createMemoryTool(
       'scratchpad for what is already in this conversation.',
       'action=recall searches them; action=list shows the current entries for this chat;',
       'action=get fetches one entry by its id (from the context index, recall or list);',
+      'action=timeline shows every saved note grouped by day (newest first). Dates are',
+      'registration dates: when the note was saved, not when the fact happened.',
+      'Replaced entries appear marked. from/to (YYYY-MM-DD) bound the range; a truncated',
+      'page ends with a cursor token that continues exactly where it stopped.',
       'action=forget deletes by id.',
       'action=save_profile appends a durable fact about the user to their profile,',
       'the part of memory that travels to every chat. action=profile shows it.',
@@ -241,6 +258,60 @@ export function createMemoryTool(
           return {
             content: [{ type: 'text', text: renderEntry(entry) }],
             details: { found: true, superseded: entry.supersededBy !== null },
+          };
+        }
+
+        case 'timeline': {
+          const from = String(args.from ?? '').trim() || undefined;
+          const to = String(args.to ?? '').trim() || undefined;
+          const cursor = String(args.cursor ?? '').trim() || undefined;
+          // Real calendar dates, not just the shape: 2026-02-31 is an error,
+          // and an inverted range is an explicit error, never a silent empty.
+          for (const [name, value] of [
+            ['from', from],
+            ['to', to],
+          ] as const) {
+            if (value && !isValidISODate(value)) {
+              throw new Error(
+                `${name} debe ser una fecha real YYYY-MM-DD (ej.: 2026-10-01); recibido: ${value}`,
+              );
+            }
+          }
+          if (from && to && from > to) {
+            throw new Error(`rango inválido: from (${from}) es posterior a to (${to})`);
+          }
+          if (cursor) {
+            const m = /^(.+):(\d+)$/.exec(cursor);
+            const cursorDay = m?.[1];
+            if (!cursorDay || (cursorDay !== UNKNOWN_DAY && !isValidISODate(cursorDay))) {
+              throw new Error(
+                `cursor debe ser "YYYY-MM-DD:offset" o "unknown:offset" (lo imprime una página truncada); recibido: ${cursor}`,
+              );
+            }
+          }
+          // The timeline is the history layer: replaced entries appear, marked.
+          const rendered = renderTimeline(store.all(scope), { from, to, cursor });
+          if (!rendered) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: cursor
+                    ? 'Ese cursor ya no tiene más entradas: fin de la historia.'
+                    : 'No hay nada guardado en ese rango de fechas.',
+                },
+              ],
+              details: { count: 0 },
+            };
+          }
+          return {
+            content: [{ type: 'text', text: rendered.body }],
+            details: {
+              count: rendered.inRange,
+              hiddenByCap: rendered.hiddenByCap,
+              days: rendered.days,
+              nextCursor: rendered.nextCursor,
+            },
           };
         }
 
