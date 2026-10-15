@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
+import { renderTimeline } from '../memory/timeline.js';
 import { looksLikeCredential, type MemoryEntry, type MemoryStore } from '../memory.js';
 
 /**
@@ -35,6 +36,7 @@ const MemoryParams = Type.Object({
     Type.Literal('forget'),
     Type.Literal('get'),
     Type.Literal('list'),
+    Type.Literal('timeline'),
     Type.Literal('save_profile'),
     Type.Literal('profile'),
     Type.Literal('suggest_nudge'),
@@ -61,6 +63,10 @@ const MemoryParams = Type.Object({
         'linked to their replacement. Default false: current facts only.',
     }),
   ),
+  from: Type.Optional(
+    Type.String({ description: 'For timeline: first day, YYYY-MM-DD inclusive.' }),
+  ),
+  to: Type.Optional(Type.String({ description: 'For timeline: last day, YYYY-MM-DD inclusive.' })),
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
@@ -160,6 +166,8 @@ export function createMemoryTool(
       'scratchpad for what is already in this conversation.',
       'action=recall searches them; action=list shows the current entries for this chat;',
       'action=get fetches one entry by its id (from the context index, recall or list);',
+      'action=timeline shows the whole history grouped by day (newest first): when things',
+      'happened. Replaced entries appear marked. from/to (YYYY-MM-DD) bound the range.',
       'action=forget deletes by id.',
       'action=save_profile appends a durable fact about the user to their profile,',
       'the part of memory that travels to every chat. action=profile shows it.',
@@ -241,6 +249,31 @@ export function createMemoryTool(
           return {
             content: [{ type: 'text', text: renderEntry(entry) }],
             details: { found: true, superseded: entry.supersededBy !== null },
+          };
+        }
+
+        case 'timeline': {
+          const from = String(args.from ?? '').trim() || undefined;
+          const to = String(args.to ?? '').trim() || undefined;
+          const ISO = /^\d{4}-\d{2}-\d{2}$/;
+          if ((from && !ISO.test(from)) || (to && !ISO.test(to))) {
+            throw new Error('from/to deben ser fechas YYYY-MM-DD (ej.: 2026-10-01)');
+          }
+          // The timeline is the history layer: replaced entries appear, marked.
+          const rendered = renderTimeline(store.all(scope), { from, to });
+          if (!rendered) {
+            return {
+              content: [{ type: 'text', text: 'No hay nada guardado en ese rango de fechas.' }],
+              details: { count: 0 },
+            };
+          }
+          return {
+            content: [{ type: 'text', text: rendered.body }],
+            details: {
+              count: rendered.inRange,
+              hiddenByCap: rendered.hiddenByCap,
+              days: rendered.days,
+            },
           };
         }
 
