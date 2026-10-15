@@ -136,8 +136,13 @@ export function renderForSummary(messages: readonly AgentMessage[]): string {
     // Un mensaje = una linea, SIEMPRE: un toolResult multilinea podria
     // contener "\nuser: ..." y falsificar una linea de usuario dentro del
     // transcript (auditor P6b r1: esa linea falsa alimentaria el resumen y la
-    // extraccion a memoria durable). Se escapan TODOS los saltos internos.
-    let text = parts.join(' ').trim().replaceAll('\n', ' ⏎ ');
+    // extraccion a memoria durable). Se escapan TODOS los separadores de
+    // linea (auditor P6b r2: no solo LF — tambien CR, CRLF, U+2028 y U+2029,
+    // que JS y los terminales tratan como salto).
+    let text = parts
+      .join(' ')
+      .trim()
+      .replace(/[\r\n\u2028\u2029]+/g, ' ⏎ ');
     if (r === 'toolResult' && text.length > TOOL_RESULT_CHARS) {
       text = `${text.slice(0, TOOL_RESULT_CHARS)} [...${text.length - TOOL_RESULT_CHARS} caracteres omitidos]`;
     }
@@ -308,39 +313,24 @@ export function parseExtractedFacts(raw: string): string[] {
 }
 
 /**
- * Normalización para dedupe de hechos: minúsculas, sin tildes, sin puntuación
- * DECORATIVA — pero conservando la semántica numérica (auditor P6b r1):
- * separadores entre dígitos ("1.000" vs "10,00" NO son el mismo hecho) se
- * canonizan a '.', y el signo pegado a un número ("-5", "+3") se conserva.
+ * Normalización para dedupe de hechos — CONSERVADORA (auditor P6b r2): solo
+ * se iguala lo inequívoco — espacios, caso, tildes, el menos tipográfico
+ * U+2212 → '-' y la decoración final (. , ; : ! ? …). TODA la puntuación
+ * interna se conserva: "1.000" ≠ "10,00", "-5" ≠ "5", "límite<5" ≠
+ * "límite>5", "umbral:-5" ≠ "umbral:5". Un duplicado extra es preferible a
+ * perder una corrección numérica en silencio.
  */
 export function normalizeFactText(text: string): string {
-  const flat = text
+  return text
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  // Proteger lo significativo ANTES de barrer puntuación:
-  const protected_ = flat
-    .replace(/(\d)[.,](?=\d)/g, '$1\u0000') // separador entre dígitos
-    .replace(/(^|\s)-(?=\d)/gm, '$1\u0001') // signo menos de un número
-    .replace(/(^|\s)\+(?=\d)/gm, '$1\u0002'); // signo más de un número
-  // biome (noControlCharactersInRegex) no admite estos placeholders en
-  // literales: se construyen como RegExp. Los chars \u0000-\u0002 nunca
-  // aparecen en texto real y no sobreviven al barrido salvo como placeholder.
-  // biome-ignore lint/complexity/useRegexLiterals: un literal con chars de control choca con noControlCharactersInRegex
-  const sweep = new RegExp('[^\\p{L}\\p{N} \\u0000-\\u0002]', 'gu');
-  const swept = protected_
-    .replace(sweep, '')
-    .replaceAll('\u0000', '.')
-    .replaceAll('\u0001', '-')
-    .replaceAll('\u0002', '+');
-  return swept.replace(/\s+/g, ' ').trim();
+    .replace(/[\u0300-\u036f]/g, '')
+    .replaceAll('\u2212', '-') // menos tipográfico → ASCII
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\s.,;:!?…]+$/u, '');
 }
 
-/**
- * Dedupe normalizado de candidatos contra los hechos ACTIVOS ya recordados
- * (auditor P6b r1: el caller filtra los supersededBy antes de llamar — un
- * hecho sustituido no puede bloquear re-registrar la preferencia anterior).
- */
 export function dedupeNewFacts(
   existingActiveTexts: readonly string[],
   candidates: readonly string[],
