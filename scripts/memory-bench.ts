@@ -13,7 +13,7 @@
  * de inserción (reciente = último, antiguo = primero), medido como
  * target-hit SIN afirmar que sea "el hecho correcto".
  *
- * El render "HOY" reproduce EXACTAMENTE buildContextNote en este SHA:
+ * El render "HOY" reproduce EXACTAMENTE el buildContextNote ANTERIOR a 9b:
  * memory.all(scope).slice(-20) SIN filtrar supersededBy. Las variantes
  * propuestas (índice/híbrido) filtran y trabajan con 20 ACTIVAS, y cada modo
  * declara su número de entradas en la tabla.
@@ -21,6 +21,7 @@
  * Librería pura; runner: npx vitest run test/memory-bench.test.ts.
  */
 import { performance } from 'node:perf_hooks';
+import { MEMORY_CONTEXT_CAP, renderMemoryContext } from '../src/memory/context.js';
 import type { MemoryEntry, MemoryStore } from '../src/memory.js';
 
 const SNIPPET = 80;
@@ -211,6 +212,11 @@ export function runBench(store: MemoryStore, scope = 'bench:corpus#main'): Bench
     return frac(flat);
   };
 
+  // 9b: el modo REAL ya cableado en buildContextNote (misma funcion, mismo
+  // cap), para que la tabla compare baseline contra lo que de verdad se sirve.
+  const real = renderMemoryContext(all);
+  if (!real) throw new Error('corpus sin memoria: imposible medir el modo real');
+
   const modes = [
     {
       name: 'full HOY = CLI real (20 raw, INCLUYE superadas)',
@@ -229,6 +235,11 @@ export function runBench(store: MemoryStore, scope = 'bench:corpus#main'): Bench
     },
     { name: 'híbrido 5 completas + 15 índice', text: renderHybrid(active, 5), entries: 20 },
     { name: 'híbrido 10 completas + 10 índice', text: renderHybrid(active, 10), entries: 20 },
+    {
+      name: `9b REAL buildContextNote (5 completas + índice, cap ${MEMORY_CONTEXT_CAP})`,
+      text: real.body,
+      entries: real.active - real.hiddenByCap,
+    },
   ];
 
   const lines = [
