@@ -109,6 +109,27 @@ describe('parseReply', () => {
     expect(r.kind).toBe('toolCall');
     expect(r.toolCall?.arguments).toEqual({ ciudad: 'Gijon', dias: 3 });
   });
+
+  it('r6: llamada estilo computer (action como union de literales) se ejecuta', () => {
+    const computer = {
+      name: 'computer',
+      description: 'control del escritorio',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { anyOf: [{ const: 'screenshot' }, { const: 'click' }, { const: 'move' }] },
+          x: { type: 'number' },
+        },
+        required: ['action'],
+      },
+    } as unknown as Tool;
+    const mapa = new Map([['computer', computer]]);
+    const ok = parseReply('{"tool":"computer","args":{"action":"screenshot"}}', mapa);
+    expect(ok.kind).toBe('toolCall');
+    expect(ok.toolCall?.arguments).toEqual({ action: 'screenshot' });
+    // action fuera de la union -> texto, nunca se ejecuta
+    expect(parseReply('{"tool":"computer","args":{"action":"rm-rf"}}', mapa).kind).toBe('text');
+  });
 });
 
 describe('renderToolContract', () => {
@@ -456,13 +477,52 @@ describe('matchesSchema (validacion real)', () => {
     expect(argsMatchSchema({ mode: 'strict', data: { amount: 2 } }, choose)).toBe(true);
   });
   const fakeTool = (parameters: unknown) => ({ name: 'fake', parameters }) as never;
-  it('canario auditor: maximum no soportado -> llamada rechazada (99 contra maximum:5)', () => {
-    expect(argsMatchSchema(99 as never, fakeTool({ type: 'number', maximum: 5 }))).toBe(false);
+  it('r6: maximum SI se soporta y se APLICA (99 contra maximum:5 -> rechazada; 4 -> aceptada)', () => {
+    const t = fakeTool({ type: 'number', maximum: 5 });
+    expect(argsMatchSchema(99 as never, t)).toBe(false);
+    expect(argsMatchSchema(4 as never, t)).toBe(true);
   });
-  it('canario auditor: anyOf no soportado -> llamada rechazada', () => {
+  it('r6: minLength/maxLength se APLICAN (estilo done: summary 1..1500)', () => {
+    const t = fakeTool({
+      type: 'object',
+      properties: { summary: { type: 'string', minLength: 1, maxLength: 10 } },
+      required: ['summary'],
+    });
+    expect(argsMatchSchema({ summary: 'vale' } as never, t)).toBe(true);
+    expect(argsMatchSchema({ summary: '' } as never, t)).toBe(false);
+    expect(argsMatchSchema({ summary: 'x'.repeat(11) } as never, t)).toBe(false);
+  });
+  it('r6: cota no numerica en el schema -> schema rechazado (fail-closed)', () => {
+    const t = fakeTool({ type: 'number', maximum: 'cinco' });
+    expect(argsMatchSchema(1 as never, t)).toBe(false);
+  });
+  it('r6: patternProperties catch-all (Record de TypeBox) se acepta y se aplica', () => {
+    const t = fakeTool({ type: 'object', patternProperties: { '^.*$': { type: 'string' } } });
+    expect(argsMatchSchema({ a: 'x', b: 'y' } as never, t)).toBe(true);
+    expect(argsMatchSchema({ a: 3 } as never, t)).toBe(false);
+  });
+  it('r6: patternProperties con patron NO catch-all -> schema rechazado', () => {
+    const t = fakeTool({ type: 'object', patternProperties: { '^x-': { type: 'string' } } });
+    expect(argsMatchSchema({ 'x-a': 'v' } as never, t)).toBe(false);
+  });
+  it('r6: anyOf de literales (Type.Union) SI se valida; fuera de la union -> rechaza', () => {
     const t = fakeTool({ anyOf: [{ const: 'safe' }, { const: 'strict' }] });
+    expect(argsMatchSchema('safe' as never, t)).toBe(true);
+    expect(argsMatchSchema('strict' as never, t)).toBe(true);
     expect(argsMatchSchema('bad' as never, t)).toBe(false);
+  });
+  it('r6: const directo exige igualdad exacta', () => {
+    const t = fakeTool({ const: 'screenshot' });
+    expect(argsMatchSchema('screenshot' as never, t)).toBe(true);
+    expect(argsMatchSchema('click' as never, t)).toBe(false);
+  });
+  it('r6: anyOf con keyword no soportada DENTRO -> rechazada igualmente (fail-closed)', () => {
+    const t = fakeTool({ anyOf: [{ const: 'safe' }, { type: 'string', pattern: '^x' }] });
     expect(argsMatchSchema('safe' as never, t)).toBe(false);
+  });
+  it('r6: anyOf vacio o no-array -> rechazada', () => {
+    expect(argsMatchSchema('x' as never, fakeTool({ anyOf: [] }))).toBe(false);
+    expect(argsMatchSchema('x' as never, fakeTool({ anyOf: 'const' }))).toBe(false);
   });
   it('type union (array) no soportado -> llamada rechazada', () => {
     const t = fakeTool({ type: ['string', 'null'] });
@@ -611,6 +671,59 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
       filename: 'captura-1.jpg',
       url: 'data:image/jpeg;base64,BASE64PIX',
     });
+  });
+
+  it('r6: no anuncia tools con schema fuera del subconjunto (log + fuera del contrato)', async () => {
+    let posted: { system?: string } = {};
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's1', directory: '/work' });
+      if (u.endsWith('/session/s1/message') && init?.method === 'POST') {
+        posted = JSON.parse(String(init.body));
+        return jsonRes({});
+      }
+      if (u.endsWith('/session/s1/message'))
+        return jsonRes([
+          {
+            info: { role: 'assistant', finish: 'stop', tokens: { input: 10, output: 4 }, cost: 0 },
+            parts: [{ type: 'text', text: 'hola' }],
+          },
+        ]);
+      if (u.endsWith('/session/s1')) return jsonRes({});
+      throw new Error(`fetch inesperado: ${u}`);
+    });
+    const withTools = {
+      messages: [
+        {
+          role: 'system',
+          content: 'base',
+          timestamp: 0,
+          toolsAdded: [
+            {
+              name: 'inocua',
+              description: 'schema valido',
+              parameters: { type: 'object', properties: { a: { type: 'string' } } },
+            },
+            {
+              name: 'exotica',
+              description: 'schema fuera del subconjunto',
+              parameters: { type: 'object', properties: { a: { type: 'string', pattern: '^x' } } },
+            },
+          ],
+        },
+        { role: 'user', content: 'hola', timestamp: 1 },
+      ],
+    } as unknown as TranscriptContext;
+    const stream = createOpenCodeLocalStream(cfg)(model, withTools, undefined);
+    await stream.result();
+    expect(posted.system).toContain('inocua');
+    expect(posted.system).not.toContain('exotica');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('fuera del contrato'),
+      expect.objectContaining({ tool: 'exotica' }),
+    );
   });
 
   it('signal pre-abortada: la PRIMERA peticion ya la recibe abortada', async () => {

@@ -469,6 +469,13 @@ interface SchemaNode {
   required?: string[];
   items?: SchemaNode;
   enum?: unknown[];
+  const?: unknown;
+  anyOf?: SchemaNode[];
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  patternProperties?: Record<string, SchemaNode>;
   additionalProperties?: boolean | SchemaNode;
 }
 
@@ -496,6 +503,32 @@ export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
   }
   if (schema.enum && !schema.enum.some((e) => JSON.stringify(e) === JSON.stringify(v)))
     return false;
+  // `const` es el literal unico de TypeBox (Type.Literal): igualdad estricta.
+  if ('const' in schema && JSON.stringify(schema.const) !== JSON.stringify(v)) return false;
+  // `anyOf` es la union de TypeBox (Type.Union): basta un subesquema valido.
+  if (schema.anyOf && !schema.anyOf.some((sub) => matchesSchema(v, sub))) return false;
+  // Cotas: SI se soportan, se APLICAN (no se allowlistean y se ignoran).
+  if (typeof v === 'string') {
+    if (schema.minLength !== undefined && v.length < schema.minLength) return false;
+    if (schema.maxLength !== undefined && v.length > schema.maxLength) return false;
+  }
+  if (typeof v === 'number') {
+    if (schema.minimum !== undefined && v < schema.minimum) return false;
+    if (schema.maximum !== undefined && v > schema.maximum) return false;
+  }
+  // patternProperties: regex ECMA por clave; regex invalida -> rechazo (fail-closed).
+  if (schema.patternProperties && typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    for (const [pat, sub] of Object.entries(schema.patternProperties)) {
+      let re: RegExp;
+      try {
+        re = new RegExp(pat);
+      } catch {
+        return false;
+      }
+      for (const [k, val] of Object.entries(v as Record<string, unknown>))
+        if (re.test(k) && !matchesSchema(val, sub)) return false;
+    }
+  }
   if (Array.isArray(v) && schema.items)
     return v.every((item) => matchesSchema(item, schema.items as SchemaNode));
   if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
@@ -519,18 +552,31 @@ export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
  * (auditor r4): solo los keywords y tipos listados aqui; TODO lo demas -
  * conocido o futuro - hace rechazar la llamada (fail-closed: nunca se
  * ejecuta una tool cuyo schema no entendemos).
- *   Keywords: type, enum, required, properties, items, additionalProperties.
+ *   Keywords: type, enum, const, anyOf, required, properties, items,
+ *             additionalProperties, minLength, maxLength, minimum, maximum,
+ *             patternProperties (solo Record de TypeBox: clave unica `^.*$`).
  *   Metadata inocua (sin efecto de validacion): title, description, default, examples.
  *   Tipos: string, number, integer, boolean, object, array, null.
  * Boolean schemas (true/false) y type union (array) NO soportados.
+ * (r6: const/anyOf entran porque Type.Literal/Type.Union los generan y sin
+ * ellos la tool `computer` y casi todas las demas quedaban incallables aunque
+ * el contrato si las anunciaba. minLength/maxLength/minimum/maximum entran
+ * porque done/calendar los usan; se APLICAN al validar, nunca se ignoran.)
  */
 const SCHEMA_KEYS = new Set([
   'type',
   'enum',
+  'const',
+  'anyOf',
   'required',
   'properties',
   'items',
   'additionalProperties',
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
+  'patternProperties',
   'title',
   'description',
   'default',
@@ -546,9 +592,25 @@ export function schemaIsSupported(schema: SchemaNode): boolean {
     if (typeof node.type !== 'string' || !SCHEMA_TYPES.has(node.type)) return false;
   }
   if (node.required !== undefined && !Array.isArray(node.required)) return false;
+  for (const k of ['minLength', 'maxLength', 'minimum', 'maximum'] as const)
+    if (node[k] !== undefined && (typeof node[k] !== 'number' || !Number.isFinite(node[k] as number)))
+      return false;
+  if (node.anyOf !== undefined) {
+    if (!Array.isArray(node.anyOf) || node.anyOf.length === 0) return false;
+    for (const sub of node.anyOf) if (!schemaIsSupported(sub as SchemaNode)) return false;
+  }
   for (const sub of Object.values(node.properties ?? {}))
     if (!schemaIsSupported(sub as SchemaNode)) return false;
   if (node.items !== undefined && !schemaIsSupported(node.items as SchemaNode)) return false;
+  if (node.patternProperties !== undefined) {
+    // Solo el idioma `Type.Record(Type.String(), T)`: una unica clave catch-all.
+    const pp = node.patternProperties;
+    if (pp === null || typeof pp !== 'object' || Array.isArray(pp)) return false;
+    const keys = Object.keys(pp);
+    if (keys.length !== 1 || keys[0] !== '^.*$') return false;
+    const sub = (pp as Record<string, SchemaNode | undefined>)['^.*$'];
+    if (sub === undefined || !schemaIsSupported(sub)) return false;
+  }
   if (
     node.additionalProperties !== undefined &&
     node.additionalProperties !== false &&
@@ -556,6 +618,12 @@ export function schemaIsSupported(schema: SchemaNode): boolean {
   )
     if (!schemaIsSupported(node.additionalProperties as SchemaNode)) return false;
   return true;
+}
+
+/** Una tool es invocable por opencode-local solo si su schema esta en el subconjunto. */
+export function toolSchemaSupported(tool: Tool): boolean {
+  const schema = (tool as { parameters?: SchemaNode }).parameters;
+  return schema === undefined || schemaIsSupported(schema);
 }
 
 /** Los args de una toolCall deben cumplir el schema de la tool dentro del
@@ -671,7 +739,15 @@ export function createOpenCodeLocalStream(
   ): AssistantMessageEventStream => {
     const events = createAssistantMessageEventStream();
     const userSignal = (options as { signal?: AbortSignal } | undefined)?.signal;
-    const tools: Tool[] = getCurrentTools(context.messages);
+    const declared: Tool[] = getCurrentTools(context.messages);
+    // r6: no se anuncian tools cuyo schema quede fuera del subconjunto validable.
+    // Anunciarlas producia llamadas que parseReply degradaba a texto: el modelo
+    // veia una tool que no podia ejecutar y se ponia a inventar excusas. Fuera
+    // del contrato con aviso, en vez de un no-op silencioso (fail-closed).
+    const tools = declared.filter(toolSchemaSupported);
+    for (const t of declared)
+      if (!toolSchemaSupported(t))
+        log.warn('opencode-local: tool fuera del contrato (schema no soportado)', { tool: t.name });
     void (async () => {
       const budget: CallBudget = {
         deadline: Date.now() + cfg.timeoutMs,
