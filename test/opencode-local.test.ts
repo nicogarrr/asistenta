@@ -309,6 +309,40 @@ describe('checkEffectivePermissions (fail-closed)', () => {
     expect(probs).toContain('agent.asistenta.permission.read');
     expect(probs).toContain('agent.asistenta.permission.bash');
   });
+  it('override escalar de agente: "allow" y "ask" -> problema; "deny" -> conforme', () => {
+    const allow = { ...good, agent: { asistenta: { permission: 'allow' } } };
+    expect(checkEffectivePermissions(allow).join(' ')).toContain('override escalar permisivo');
+    const ask = { ...good, agent: { asistenta: { permission: 'ask' } } };
+    expect(checkEffectivePermissions(ask).join(' ')).toContain('override escalar permisivo');
+    const deny = { ...good, agent: { asistenta: { permission: 'deny' } } };
+    expect(checkEffectivePermissions(deny)).toEqual([]);
+  });
+  it('override de agente con solo denies -> conforme (sin falso positivo)', () => {
+    const c = { ...good, agent: { asistenta: { permission: { bash: 'deny' } } } };
+    expect(checkEffectivePermissions(c)).toEqual([]);
+  });
+  it('override de agente malformed (array, numero) -> problema', () => {
+    const arr = { ...good, agent: { asistenta: { permission: ['deny'] } } };
+    expect(checkEffectivePermissions(arr).join(' ')).toContain('malformed');
+    const num = { ...good, agent: { asistenta: { permission: 3 } } };
+    expect(checkEffectivePermissions(num).join(' ')).toContain('malformed');
+  });
+  it('override de agente null -> sin override (conforme)', () => {
+    const c = { ...good, agent: { asistenta: { permission: null } } };
+    expect(checkEffectivePermissions(c)).toEqual([]);
+  });
+  it('override anidado de agente: hoja no-deny -> problema; todo deny -> conforme', () => {
+    const leaf = {
+      ...good,
+      agent: { asistenta: { permission: { read: { '*': 'deny', '*/LEEME.txt': 'allow' } } } },
+    };
+    expect(checkEffectivePermissions(leaf).join(' ')).toContain('override permisivo');
+    const alldeny = {
+      ...good,
+      agent: { asistenta: { permission: { read: { '*': 'deny', '*/x': 'deny' } } } },
+    };
+    expect(checkEffectivePermissions(alldeny)).toEqual([]);
+  });
   it('mcp configurado -> problema', () => {
     expect(checkEffectivePermissions({ ...good, mcp: { x: {} } }).join(' ')).toContain('mcp');
   });
@@ -347,6 +381,26 @@ describe('matchesSchema (validacion real)', () => {
   it('argsMatchSchema delega en la validacion completa', () => {
     expect(argsMatchSchema({ mode: 'danger', data: { amount: 1 } }, choose)).toBe(false);
     expect(argsMatchSchema({ mode: 'strict', data: { amount: 2 } }, choose)).toBe(true);
+  });
+  const fakeTool = (parameters: unknown) => ({ name: 'fake', parameters }) as never;
+  it('canario auditor: maximum no soportado -> llamada rechazada (99 contra maximum:5)', () => {
+    expect(argsMatchSchema(99 as never, fakeTool({ type: 'number', maximum: 5 }))).toBe(false);
+  });
+  it('canario auditor: anyOf no soportado -> llamada rechazada', () => {
+    const t = fakeTool({ anyOf: [{ const: 'safe' }, { const: 'strict' }] });
+    expect(argsMatchSchema('bad' as never, t)).toBe(false);
+    expect(argsMatchSchema('safe' as never, t)).toBe(false);
+  });
+  it('type union (array) no soportado -> llamada rechazada', () => {
+    const t = fakeTool({ type: ['string', 'null'] });
+    expect(argsMatchSchema('x' as never, t)).toBe(false);
+  });
+  it('keyword no soportado ANIDADO -> llamada rechazada', () => {
+    const t = fakeTool({
+      type: 'object',
+      properties: { cmd: { type: 'string', pattern: '^echo' } },
+    });
+    expect(argsMatchSchema({ cmd: 'rm -rf' } as never, t)).toBe(false);
   });
 });
 
@@ -558,7 +612,43 @@ describe('ciclo de vida del stream (fetch mockeado)', () => {
     await new Promise((r) => setTimeout(r, 25));
     expect(done.stopReason).toBe('error');
     expect(done.errorMessage).toContain('jaula');
+    expect(calls).toContain('POST /session/s7/abort');
     expect(calls).toContain('DELETE /session/s7');
+  });
+
+  it('fail-closed: respuesta SIN directory -> error y sesion abortada+borrada', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(`${init?.method ?? 'GET'} ${u.replace(cfg.url, '')}`);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's8' });
+      return jsonRes({});
+    });
+    const stream = createOpenCodeLocalStream(cfg)(model, ctx('hola'), undefined);
+    const done = await stream.result();
+    await new Promise((r) => setTimeout(r, 25));
+    expect(done.stopReason).toBe('error');
+    expect(done.errorMessage).toContain('ausente');
+    expect(calls).toContain('POST /session/s8/abort');
+    expect(calls).toContain('DELETE /session/s8');
+  });
+
+  it('fail-closed: directory vacia -> error y sesion abortada+borrada', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(`${init?.method ?? 'GET'} ${u.replace(cfg.url, '')}`);
+      if (u.endsWith('/config')) return jsonRes({ permission: GOOD_PERMISSIONS });
+      if (u.endsWith('/session')) return jsonRes({ id: 's9', directory: '' });
+      return jsonRes({});
+    });
+    const stream = createOpenCodeLocalStream(cfg)(model, ctx('hola'), undefined);
+    const done = await stream.result();
+    await new Promise((r) => setTimeout(r, 25));
+    expect(done.stopReason).toBe('error');
+    expect(calls).toContain('POST /session/s9/abort');
+    expect(calls).toContain('DELETE /session/s9');
   });
 
   it('presupuesto global: con timeoutMs pequeno el fetch aborta por deadline y la sesion se limpia', async () => {

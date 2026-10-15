@@ -49,7 +49,7 @@ import { log } from '../log.js';
  *   fabricar una linea "USUARIO:" nueva: cada turno es una sola linea logica.
  * - Cada llamada crea su sesion, aborta la generacion remota si el caller
  *   cancela o salta el presupuesto, y BORRA la sesion en finally (con warn
- *   visible si el borrado falla). Sin copias permanentes del historial.
+ *   visible si el borrado falla: cleanup intentado SIEMPRE, con aviso; si el DELETE falla puede quedar copia en el volumen del serve).
  * - Un deadline UNICO cubre crear sesion + generacion + polling.
  */
 
@@ -162,14 +162,33 @@ export function checkEffectivePermissions(serveConfig: {
   if (typeof agents === 'object' && agents !== null && !Array.isArray(agents))
     for (const [name, a] of Object.entries(agents)) {
       const ap = a?.permission;
-      if (ap === undefined || ap === null) continue;
-      if (typeof ap === 'object' && !Array.isArray(ap))
-        for (const [k, v] of Object.entries(ap as Record<string, unknown>))
-          if (v !== 'deny')
-            problems.push(
-              `agent.${name}.permission.${k}=${JSON.stringify(v)} (override permisivo)`,
-            );
-          else problems.push(`agent.${name}.permission=${JSON.stringify(ap)} (override permisivo)`);
+      if (ap === undefined || ap === null) continue; // sin override: manda la config global
+      if (typeof ap === 'string') {
+        if (ap !== 'deny')
+          problems.push(
+            `agent.${name}.permission=${JSON.stringify(ap)} (override escalar permisivo)`,
+          );
+        continue;
+      }
+      if (typeof ap !== 'object' || Array.isArray(ap)) {
+        problems.push(
+          `agent.${name}.permission=${JSON.stringify(ap)} (override malformed: se exige objeto o "deny")`,
+        );
+        continue;
+      }
+      for (const [k, v] of Object.entries(ap as Record<string, unknown>)) {
+        if (v === 'deny') continue;
+        if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+          // Objeto anidado (p.ej. read: {...}): cada hoja debe ser "deny".
+          for (const [pat, leaf] of Object.entries(v as Record<string, unknown>))
+            if (leaf !== 'deny')
+              problems.push(
+                `agent.${name}.permission.${k}[${JSON.stringify(pat)}]=${JSON.stringify(leaf)} (override permisivo)`,
+              );
+        } else {
+          problems.push(`agent.${name}.permission.${k}=${JSON.stringify(v)} (override permisivo)`);
+        }
+      }
     }
   const mcp = serveConfig.mcp;
   if (mcp && typeof mcp === 'object' && Object.keys(mcp as object).length > 0)
@@ -413,10 +432,67 @@ export function matchesSchema(v: unknown, schema: SchemaNode): boolean {
   return true;
 }
 
-/** Los args de una toolCall deben cumplir el schema COMPLETO de la tool. */
+/**
+ * Subconjunto DECLARADO de JSON Schema soportado por matchesSchema: type
+ * (escalar simple), enum, required, properties recursivo, items recursivo,
+ * additionalProperties (false o schema). NO es JSON Schema completo: un
+ * schema con cualquier keyword de validacion fuera de esa lista NO se puede
+ * verificar -> schemaIsSupported devuelve false y la llamada se rechaza
+ * (fail-closed: nunca se ejecuta una tool cuyo schema no entendemos).
+ */
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  'anyOf',
+  'oneOf',
+  'allOf',
+  'not',
+  'const',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'pattern',
+  'format',
+  'minLength',
+  'maxLength',
+  'minItems',
+  'maxItems',
+  'uniqueItems',
+  'contains',
+  'minProperties',
+  'maxProperties',
+  'patternProperties',
+  'propertyNames',
+  'dependencies',
+  'dependentRequired',
+  'dependentSchemas',
+  'if',
+  'then',
+  'else',
+  '$ref',
+  'definitions',
+  '$defs',
+]);
+
+export function schemaIsSupported(schema: SchemaNode): boolean {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const node = schema as Record<string, unknown>;
+  for (const k of Object.keys(node)) if (UNSUPPORTED_SCHEMA_KEYS.has(k)) return false;
+  if (Array.isArray(node.type)) return false; // type union: no soportado
+  for (const sub of Object.values(node.properties ?? {}))
+    if (!schemaIsSupported(sub as SchemaNode)) return false;
+  if (node.items && !schemaIsSupported(node.items as SchemaNode)) return false;
+  if (node.additionalProperties && typeof node.additionalProperties === 'object')
+    if (!schemaIsSupported(node.additionalProperties as SchemaNode)) return false;
+  return true;
+}
+
+/** Los args de una toolCall deben cumplir el schema de la tool dentro del
+ * subconjunto soportado; schema no soportado = llamada rechazada. */
 export function argsMatchSchema(args: JsonObject, tool: Tool): boolean {
   const schema = (tool as { parameters?: SchemaNode }).parameters;
   if (!schema) return true;
+  if (!schemaIsSupported(schema)) return false;
   return matchesSchema(args, schema);
 }
 
@@ -558,9 +634,9 @@ export function createOpenCodeLocalStream(
         sessionId = session.id;
         // El serve enjaulado trabaja en el directorio efemero del launcher; otro
         // directorio = despliegue fuera de la jaula certificada -> fail-closed.
-        if (session.directory && session.directory !== cfg.expectedServeDirectory)
+        if (session.directory !== cfg.expectedServeDirectory)
           throw new Error(
-            `opencode-local fail-closed: el serve trabaja en ${JSON.stringify(session.directory)}, se exige ${JSON.stringify(cfg.expectedServeDirectory)} (jaula del launcher)`,
+            `opencode-local fail-closed: el serve devolvio directory=${JSON.stringify(session.directory ?? '(ausente)')}, se exige exactamente ${JSON.stringify(cfg.expectedServeDirectory)} (jaula del launcher)`,
           );
         await ocFetch(
           cfg,
