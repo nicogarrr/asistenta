@@ -6,7 +6,17 @@
     "bash": "deny",
     "edit": "deny",
     "write": "deny",
-    "webfetch": "deny"
+    "webfetch": "deny",
+    "glob": "deny",
+    "grep": "deny",
+    "websearch": "deny",
+    "task": "deny",
+    "skill": "deny",
+    "read": {
+      "*": "deny",
+      "*/LEEME.txt": "allow"
+    },
+    "external_directory": "deny"
   },
   "agent": {
     "asistenta": {
