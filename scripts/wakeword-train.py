@@ -33,9 +33,12 @@ Uso:
   wakeword-train.py --cache train.npz [--cache mas.npz ...] \
       [--exclude-tag-prefix nico] --out chochi.onnx
 
---exclude-tag-prefix descarta ventanas cuyo tag empiece por el prefijo dado
-(p.ej. para no filtrar clips de evaluacion al entrenamiento; el bench leave-
-one-clip-out lo usa por modelo).
+--exclude-source descarta las ventanas cuya PROCEDENCIA declarada (columna
+sources de la cache, escrita por wakeword-windows.py v2) coincide con la
+fuente evaluada; la exclusion por procedencia cubre todos los aumentos de esa
+fuente. Tras los filtros se validan AMBOS grupos (objecion 4, ronda 1 #139):
+sin positivos o sin negativos, el entrenamiento aborta en vez de producir un
+modelo cojo.
 """
 import argparse
 
@@ -51,24 +54,26 @@ LR = 3e-4
 PARITY_TOL = 1e-5
 
 
-def load_caches(paths: list[str], exclude_prefix: str | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    xs, ys, tags = [], [], []
+def load_caches(paths: list[str], exclude_source: str | None) -> tuple[np.ndarray, np.ndarray]:
+    xs, ys = [], []
     for path in paths:
         z = np.load(path)
-        keep = np.ones(len(z["X"]), dtype=bool)
-        if exclude_prefix:
-            keep = np.array([not t.startswith(exclude_prefix) for t in z["tags"]])
+        if exclude_source is not None:
+            if "sources" not in z:
+                raise SystemExit(f"{path} no tiene columna sources: regenerar con wakeword-windows.py v2")
+            keep = z["sources"] != exclude_source
+        else:
+            keep = np.ones(len(z["X"]), dtype=bool)
         xs.append(z["X"][keep])
         ys.append(z["y"][keep])
-        tags.append(z["tags"][keep])
         print(f"[train] {path}: {int(keep.sum())} ventanas ({int(z['y'][keep].sum())} positivas)")
-    return np.vstack(xs), np.concatenate(ys), np.concatenate(tags)
+    return np.vstack(xs), np.concatenate(ys)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cache", action="append", required=True, help="cache .npz de wakeword-windows.py")
-    ap.add_argument("--exclude-tag-prefix", default=None, help="descarta ventanas con este prefijo de tag")
+    ap.add_argument("--exclude-source", default=None, help="descarta ventanas de esta fuente (procedencia)")
     ap.add_argument("--out", required=True, help="ruta del .onnx de salida")
     args = ap.parse_args()
 
@@ -79,9 +84,11 @@ def main() -> None:
     np.random.seed(0)
     torch.use_deterministic_algorithms(True, warn_only=True)
 
-    X, y, _tags = load_caches(args.cache, args.exclude_tag_prefix)
+    X, y = load_caches(args.cache, args.exclude_source)
     if int(y.sum()) == 0:
         raise SystemExit("sin positivos tras los filtros: no hay nada que entrenar")
+    if int((y == 0).sum()) == 0:
+        raise SystemExit("sin negativos tras los filtros: un clasificador sin negativos no discrimina")
     xt = torch.from_numpy(X.astype(np.float32))
     yt = torch.from_numpy(y.astype(np.float32)).unsqueeze(1)
 
