@@ -108,6 +108,26 @@ config efectiva, que se verifica en la misma corrida. Los modelos longcat-2.5-pr
 y step-5-preview-free no completan llamadas en el free tier (timeout a los 90s): medido, no
 usables aqui.
 
+## Bancos (capacidad de los modelos, informativos)
+
+Tres bancos contra el mismo serve, con respuesta verificable y sin juicio humano:
+- scripts/opencode-local/model-bench.py — ronda 1: llega (completa la llamada, con latencia)
+  y cumple el contrato de tools por prompt (JSON unico {"tool","args"} con valores exactos;
+  sin tool call el agente no hace nada).
+- scripts/opencode-local/model-bench-round2.py — estabilidad: 3 intentos del contrato con
+  mediana, esquema anidado mas exigente (acentos y comillas dentro del JSON) y razonamiento
+  verificable (3*7-5=16).
+- scripts/opencode-local/vision-bench.py — vision y computer-use: 8 pruebas sobre imagenes
+  generadas con jueces automaticos (color, OCR, conteo, tamano, accion anclada, honestidad)
+  y control NEGATIVO: cat-jam-free declara image=false y debe sacar 0/8, o el banco no
+  discrimina. Requiere Pillow.
+
+Ultima corrida (2026-10-15/16): contrato — deepseek-v4.1-flash-free y space-bunny-free son
+los unicos estables (el resto: sin tool call, JSON invalido o timeout en el free tier;
+longcat-2.5-preview-free y step-5-preview-free no completan llamadas). Vision — deepseek
+8/8 (media 1976 ms) y space-bunny 8/8 (2174 ms); control cat-jam 0/8. Los bancos son
+informativos: no son gate; el gate es el canario.
+
 ## Alcance del aislamiento (declarado)
 
 El adaptador garantiza en cada llamada (fail-closed): permisos efectivos del serve (10

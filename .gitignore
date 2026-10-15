@@ -2,6 +2,8 @@ node_modules/
 dist/
 var/
 .data/
+__pycache__/
+.venv/
 .env
 .env.*
 !.env.example
@@ -13,6 +15,7 @@ coverage/
 # Local scratch: daemon output, probe screenshots, debugging scripts.
 serve.out
 serve.err
+daemon.err
 *.png
 wa*.ps1
 cuahelper.ps1
