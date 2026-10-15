@@ -355,6 +355,15 @@ export class MemoryStore {
     return this.#load(scope).entries;
   }
 
+  /**
+   * One entry by id, inside the scope's own shelf. The context index and
+   * recall/list hand out ids, so the tool needs an exact lookup that never
+   * crosses scopes. Returns null when the id is unknown here.
+   */
+  get(scope: string, id: string): MemoryEntry | null {
+    return this.#load(scope).entries.find((e) => e.id === id) ?? null;
+  }
+
   remember(scope: string, text: string, opts: RememberOptions = {}): MemoryEntry {
     const clean = text.trim();
     if (!clean) throw new Error('refusing to store an empty memory');

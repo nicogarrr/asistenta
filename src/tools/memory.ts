@@ -3,7 +3,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
-import { looksLikeCredential, type MemoryStore } from '../memory.js';
+import { looksLikeCredential, type MemoryEntry, type MemoryStore } from '../memory.js';
 
 /**
  * Long-term memory as a tool.
@@ -33,6 +33,7 @@ const MemoryParams = Type.Object({
     Type.Literal('remember'),
     Type.Literal('recall'),
     Type.Literal('forget'),
+    Type.Literal('get'),
     Type.Literal('list'),
     Type.Literal('save_profile'),
     Type.Literal('profile'),
@@ -48,7 +49,18 @@ const MemoryParams = Type.Object({
     }),
   ),
   query: Type.Optional(Type.String({ description: 'For recall: what you want to remember.' })),
-  id: Type.Optional(Type.String({ description: 'For forget: the entry id from recall/list.' })),
+  id: Type.Optional(
+    Type.String({
+      description: 'For forget/get: the entry id from the context index, recall or list.',
+    }),
+  ),
+  include_superseded: Type.Optional(
+    Type.Boolean({
+      description:
+        'For list/recall without query: also show replaced entries, marked and ' +
+        'linked to their replacement. Default false: current facts only.',
+    }),
+  ),
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
@@ -108,6 +120,29 @@ function safeError(err: unknown): string {
   return looksLikeSecret(message) ? 'el disco rechazó la escritura' : message;
 }
 
+/** Current facts only: a replaced entry is history, not something to act on. */
+function activeOnly(entries: MemoryEntry[]): MemoryEntry[] {
+  return entries.filter((e) => e.supersededBy === null);
+}
+
+/**
+ * One entry as an answer line. A replaced entry always carries its mark and a
+ * link to the replacement, so history can never pass for a current fact.
+ */
+function renderEntry(e: MemoryEntry): string {
+  return e.supersededBy
+    ? `- [${e.id}] (${e.date}) SUSTITUIDA por [${e.supersededBy}], ya no vigente: ${e.text}`
+    : `- [${e.id}] (${e.date}) ${e.text}`;
+}
+
+/** The empty answer says WHICH empty it is: no match, nothing stored, or all replaced. */
+function emptyMemoryText(store: MemoryStore, scope: string, query: string): string {
+  if (query) return 'No hay nada guardado que coincida con eso.';
+  return store.all(scope).length === 0
+    ? 'Este chat no tiene memoria guardada todavía.'
+    : 'No queda nada vigente: todo está sustituido. include_superseded=true muestra la historia.';
+}
+
 export function createMemoryTool(
   store: MemoryStore,
   scopeOf: () => string,
@@ -123,12 +158,16 @@ export function createMemoryTool(
       'Use it for things that will still matter tomorrow: preferences, recurring',
       'tasks, where things live, how the user likes things done. Do not use it as a',
       'scratchpad for what is already in this conversation.',
-      'action=recall searches them; action=list shows everything for this chat;',
+      'action=recall searches them; action=list shows the current entries for this chat;',
+      'action=get fetches one entry by its id (from the context index, recall or list);',
       'action=forget deletes by id.',
       'action=save_profile appends a durable fact about the user to their profile,',
       'the part of memory that travels to every chat. action=profile shows it.',
       'action=suggest_nudge analyses a user message and says whether it revealed',
       'something durable worth saving; ask the user before saving anything.',
+      '',
+      'Corrected entries are history, never current facts: hidden by default, and',
+      'include_superseded=true shows them marked and linked to their replacement.',
       '',
       'Credentials, keys and card numbers are refused, not stored.',
     ].join('\n'),
@@ -164,33 +203,56 @@ export function createMemoryTool(
 
         case 'recall': {
           const query = String(args.query ?? '').trim();
-          const hits = query ? store.recall(scope, query) : store.all(scope);
+          // Default is current facts only: a replaced entry never comes back
+          // as if it were still true. include_superseded adds it WITH its mark.
+          const hits = query
+            ? store.recall(scope, query)
+            : args.include_superseded
+              ? store.all(scope)
+              : activeOnly(store.all(scope));
           if (hits.length === 0) {
             return {
-              content: [{ type: 'text', text: 'No hay nada guardado que coincida con eso.' }],
+              content: [{ type: 'text', text: emptyMemoryText(store, scope, query) }],
               details: { count: 0 },
             };
           }
           return {
-            content: [
-              {
-                type: 'text',
-                text: hits.map((e) => `- [${e.id}] (${e.date}) ${e.text}`).join('\n'),
-              },
-            ],
+            content: [{ type: 'text', text: hits.map(renderEntry).join('\n') }],
             details: { count: hits.length, ids: hits.map((e) => e.id) },
           };
         }
 
+        case 'get': {
+          const id = String(args.id ?? '').trim();
+          if (!id) {
+            throw new Error(
+              'la acción get necesita el id (lo ves en el índice del contexto o en recall/list)',
+            );
+          }
+          const entry = store.get(scope, id);
+          if (!entry) {
+            return {
+              content: [
+                { type: 'text', text: `No hay nada con id ${id} en la memoria de este chat.` },
+              ],
+              details: { found: false },
+            };
+          }
+          return {
+            content: [{ type: 'text', text: renderEntry(entry) }],
+            details: { found: true, superseded: entry.supersededBy !== null },
+          };
+        }
+
         case 'list': {
-          const entries = store.all(scope);
+          const entries = args.include_superseded ? store.all(scope) : activeOnly(store.all(scope));
           return {
             content: [
               {
                 type: 'text',
                 text: entries.length
-                  ? entries.map((e) => `- [${e.id}] (${e.date}) ${e.text}`).join('\n')
-                  : 'Este chat no tiene memoria guardada todavía.',
+                  ? entries.map(renderEntry).join('\n')
+                  : emptyMemoryText(store, scope, ''),
               },
             ],
             details: { count: entries.length },

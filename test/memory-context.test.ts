@@ -1,8 +1,9 @@
 // Item 9b (indice de memoria en la nota de contexto): tests escritos ANTES de
 // la implementacion (TDD). La nota deja de volcar las ultimas 20 crudas
-// (incluidas superadas) y pasa a indice hibrido: ultimas 5 completas + resto
+// (incluidas superadas) y pasa a indice hibrido: recientes completas + resto
 // como indice [id] (fecha) #tags snippet80, con cap de chars y recuento
-// declarado. El detalle completo ya existe via memory action=recall/list.
+// declarado. Ronda 2 (auditor #136): el cap compacta las largas a indice
+// ANTES de ocultar nada, y la cabecera nombra el lookup exacto por id.
 // biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que paths.ts lo capture
 import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
 import { mkdtempSync } from 'node:fs';
@@ -39,7 +40,7 @@ describe('9b: renderMemoryContext (indice hibrido para buildContextNote)', () =>
     expect(r?.superseded).toBe(1);
   });
 
-  it('el recuento declarado en cabecera coincide con el store', () => {
+  it('el recuento declarado en cabecera coincide con el store y nombra el get por id', () => {
     const store = seededStore();
     const a = store.remember(SCOPE, 'dato uno');
     store.remember(SCOPE, 'dato dos');
@@ -48,6 +49,8 @@ describe('9b: renderMemoryContext (indice hibrido para buildContextNote)', () =>
     expect(r?.body).toContain('2 activas');
     expect(r?.body).toContain('1 superadas ocultas');
     expect(r?.body).toContain('memory action=recall');
+    // Auditor r1: la cabecera debe decir como recuperar UNA entrada exacta.
+    expect(r?.body).toContain('memory action=get');
   });
 
   it('las 5 mas recientes van COMPLETAS; las antiguas solo snippet de 80 chars', () => {
@@ -74,6 +77,26 @@ describe('9b: renderMemoryContext (indice hibrido para buildContextNote)', () =>
     expect(idxLine).toMatch(/^- \[[a-z0-9]+\] \(\d{4}-\d{2}-\d{2}\) #banco hecho antiguo x+…$/);
   });
 
+  it('CANARIO AUDITOR r1: 5 activas largas se COMPACTAN a indice, no se ocultan', () => {
+    const store = seededStore();
+    const ids: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      ids.push(store.remember(SCOPE, `hecho ${i}: ${'y'.repeat(1900)}`).id);
+    }
+    const r = renderMemoryContext(store.all(SCOPE));
+    expect(r).not.toBeNull();
+    // Antes de la ronda 2 esto ocultaba 3 de las 5 sin dejar ni el id.
+    expect(r?.hiddenByCap).toBe(0);
+    expect(r?.fullShown).toBe(1);
+    expect((r?.body ?? '').length).toBeLessThanOrEqual(MEMORY_CONTEXT_CAP);
+    // Las 5 visibles: la mas reciente completa, las 4 antiguas como indice.
+    expect(r?.body).toContain(`hecho 5: ${'y'.repeat(1900)}`);
+    for (let i = 1; i <= 4; i++) {
+      expect(r?.body).toContain(`[${ids[i - 1]}]`);
+      expect(r?.body).not.toContain(`hecho ${i}: ${'y'.repeat(1900)}`);
+    }
+  });
+
   it('CAP: el cuerpo nunca supera el cap y la cola declara las ocultas', () => {
     const store = seededStore();
     for (let i = 1; i <= 120; i++) store.remember(SCOPE, `factura ${i}: ${LONG}${LONG}`);
@@ -94,6 +117,7 @@ describe('9b: renderMemoryContext (indice hibrido para buildContextNote)', () =>
     expect(r?.body).toContain(`unica ${LONG}`);
     expect(r?.body).not.toContain('…');
     expect(r?.hiddenByCap).toBe(0);
+    expect(r?.fullShown).toBe(1);
   });
 
   it('todas superadas: seccion honesta con 0 activas, sin texto de superadas', () => {
