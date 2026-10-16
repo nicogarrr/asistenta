@@ -4105,7 +4105,7 @@ async function serveCommand(): Promise<number> {
       const opened = openSession(chat);
       if (opened) {
         if (request) await opened.submit(request);
-        else await opened.speak(() => speakAloud('Dime.', opened));
+        else await speakAloud('Dime.', opened);
         return;
       }
     }
@@ -4250,13 +4250,20 @@ async function serveCommand(): Promise<number> {
     // The close hook (below) does the rest; this keeps /off and shutdown synchronous.
   };
 
-  const openSession = (chat: {
-    key: string;
-    chatId: string;
-    threadId?: string;
-  }): ConversationSession | null => {
+  const openSession = (
+    chat: {
+      key: string;
+      chatId: string;
+      threadId?: string;
+    },
+    opts: { force?: boolean } = {},
+  ): ConversationSession | null => {
     const listener = currentWake();
-    if (!conversationOn || !listener || session) return session;
+    // force: the TV remote button is an activation of its own — pressing a
+    // physical button IS the intent — so it opens a session even with
+    // conversation mode off (it resets at every boot, which used to make the
+    // button a silent no-op; audit, "botón TV").
+    if ((!conversationOn && !opts.force) || !listener || session) return session;
     const levelAtOpen = bargeLevel;
     const created = new ConversationSession({
       bargeIn: levelAtOpen,
@@ -4358,6 +4365,46 @@ async function serveCommand(): Promise<number> {
   };
 
   /**
+   * El boton del mando: una via de activacion propia, no un alias de la
+   * palabra de activacion. handleWake('') con la conversacion apagada (cada
+   * reinicio la apaga) caia en el log "wake word heard with no request" y no
+   * hacia NADA — el no-op silencioso de la auditoria, contradiciendo el
+   * comentario de abajo. La decision vive en tvButtonAction (exportada, pura)
+   * para que el canario la corra sin daemon.
+   */
+  const handleButton = async (source: string): Promise<void> => {
+    const chat = lastChat;
+    const action = tvButtonAction({
+      hasChat: Boolean(chat),
+      hasListener: Boolean(currentWake()),
+      sessionOpen: Boolean(session),
+    });
+    if (action === 'no-chat') {
+      log.warn('tv button pressed but nobody has talked yet', { source });
+      return;
+    }
+    if (action === 'need-mic') {
+      // Sin listener no hay audio que darle a la sesion: se dice, no se calla.
+      log.info('tv button pressed with the mic off', { source });
+      void notifyLastChat(
+        'Has pulsado el botón del mando pero el micrófono está apagado: actívalo con /wake on o /conversacion on.',
+      ).catch(() => {});
+      return;
+    }
+    if (action === 'already-open') {
+      log.info('tv button pressed with a session already open', { source });
+      return;
+    }
+    const opened = openSession(chat as NonNullable<typeof chat>, { force: true });
+    if (opened) {
+      log.info('tv button opened a voice session', { source, chatId: (chat as { chatId: string }).chatId });
+      // speakAloud directo: envolverlo en opened.speak() anidaria dos speak y
+      // el interior volveria 'fin' sin sonar (conversation.ts: guarda de estado).
+      await speakAloud('Dime.', opened);
+    }
+  };
+
+  /**
    * Listener HTTP del boton del mando (:8765).
    *
    * Vive fuera de `wake` a proposito: el boton es una via de activacion mas,
@@ -4384,7 +4431,8 @@ async function serveCommand(): Promise<number> {
     if (tvButton) return;
     const listener = startTvButtonListener({
       token: await vaultGet('tv:buttonToken'),
-      onButton: (source) => handleWake('').then(() => log.info('tv button wake', { source })),
+      onButton: (source) =>
+        handleButton(source).then(() => log.info('tv button wake', { source })),
     });
     tvButton = listener;
     try {
@@ -5025,6 +5073,29 @@ export interface CronCommandDeps {
   threadKey: string;
   /** chatKey without the `#thread` suffix. */
   chatKey: string;
+}
+
+/**
+ * What the TV remote button does when pressed. It is an activation path of
+ * its own — pressing a physical button IS the intent — so conversation mode
+ * is NOT an input: /conversacion resets to off at every boot, and that used
+ * to turn the button into a silent no-op (audit, "botón TV"). Without a chat
+ * (nobody has talked yet) there is nowhere to open the session; without a
+ * live wake listener there is no audio to feed it: the chat notice says so
+ * instead of staying silent, and with no chat at all the log line is all
+ * there is.
+ */
+export type TvButtonAction = 'open-session' | 'need-mic' | 'no-chat' | 'already-open';
+
+export function tvButtonAction(opts: {
+  hasChat: boolean;
+  hasListener: boolean;
+  sessionOpen: boolean;
+}): TvButtonAction {
+  if (!opts.hasChat) return 'no-chat';
+  if (opts.sessionOpen) return 'already-open';
+  if (!opts.hasListener) return 'need-mic';
+  return 'open-session';
 }
 
 /**
