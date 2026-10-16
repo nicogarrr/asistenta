@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { openDaemonControl } from './daemon-control.js';
 import type { Lifecycle } from './lifecycle.js';
 import { paths } from './paths.js';
+import { desktopEnabled } from './platform.js';
 
 export interface ControlStartup {
   beginResources(): void;
@@ -13,6 +14,10 @@ export async function controlledDaemon(
   run: (control?: ControlStartup) => Promise<number>,
 ): Promise<number> {
   if (process.platform !== 'linux') return run();
+  if (desktopEnabled())
+    throw new Error(
+      'El control Linux requiere modo servidor (PA_DESKTOP=off); el cierre del micrófono Windows todavía no se puede verificar.',
+    );
   // Newly created state is private. Existing open permissions fail closed, not silently changed.
   mkdirSync(paths.state, { mode: 0o700, recursive: true });
   let lifecycle: Lifecycle | undefined;

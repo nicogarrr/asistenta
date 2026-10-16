@@ -149,3 +149,15 @@ it('uses the actual 10-second thread-tail drain timeout and never writes a clean
   expect(child.exitCode).toBe(1);
   expect(existsSync(join(dir, 'agent.pid.stale'))).toBe(true);
 }, 15000);
+
+it('blocks forced desktop on Linux before vault, channels or microphone startup', async () => {
+  const { readdirSync } = await import('node:fs');
+  const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'serve'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'on' },
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('requiere modo servidor');
+  expect(readdirSync(dir)).toEqual([]);
+});
