@@ -35,9 +35,9 @@ export interface Inbound {
   photoFileId?: string;
   /**
    * Voice note or audio file, also fetched lazily. Telegram voice notes are
-   * ogg/opus at 16-48kbps; the mime type matters because the transcriber only
-   * accepts what it can actually decode, and silently mis-decoding mp3 as opus
-   * produces a confident, wrong transcript.
+   * ogg/opus at 16-48kbps; the mime type matters because it picks the decoder
+   * (in-process opus vs. ffmpeg for everything else), and silently mis-decoding
+   * mp3 as opus produces a confident, wrong transcript.
    */
   audioFileId?: string;
   audioMimeType?: string;

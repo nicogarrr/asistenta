@@ -401,13 +401,13 @@ describe('transcribeVoiceNote', () => {
     await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/llego vacia/);
   });
 
-  it('refuses non-opus audio instead of decoding it as opus', async () => {
-    // Telegram sends audio/mpeg for ordinary uploads. Feeding those bytes to the
-    // opus decoder yields a garbled transcript rather than an error, which reads
-    // as a working feature.
+  it('reports undecodable mp3 bytes honestly instead of inventing a transcript', async () => {
+    // Telegram sends audio/mpeg for ordinary uploads. Real mp3s decode through
+    // ffmpeg (voice-decode.test.ts covers that); bytes that are not audio at all
+    // must surface as an honest failure, never as a garbled "transcript".
     await expect(
       transcribeVoiceNote(Buffer.from('ID3 not really audio'), { mimeType: 'audio/mpeg' }),
-    ).rejects.toThrow(/ogg\/opus/);
+    ).rejects.toThrow(/no pude leer ese audio/);
   });
 });
 

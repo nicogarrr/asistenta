@@ -9,12 +9,15 @@
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { withTimeout } from '../utils.js';
-import { decodeOggOpusToPcm, looksSilent } from './audio.js';
+import { looksSilent } from './audio.js';
+import { decodeForWhisper } from './decode.js';
 
 export interface SttResult {
   text: string;
   language?: string;
   durationSeconds: number;
+  /** Set when the audio was longer than the decode cap and only its head was read. */
+  truncated?: boolean;
 }
 
 export interface Stt {
@@ -107,18 +110,15 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
       input: Buffer,
       transcribeOpts: { mimeType?: string } = {},
     ): Promise<SttResult> {
-      // Only the mime types that can actually be decoded are attempted. Whisper
-      // takes float PCM here, not a container, so there is no mp3/wav decoder in
-      // this process: Telegram does send `audio/mpeg` for regular audio uploads,
-      // and silently decoding those bytes as opus produces a garbled transcript
-      // that looks like a working feature. A missing or generic mime type falls
-      // through to the decoder, which reports properly if it is not opus.
-      const mime = transcribeOpts.mimeType?.toLowerCase() ?? '';
-      if (mime && !mime.includes('ogg') && !mime.includes('opus')) {
-        throw new Error(`unsupported audio type ${mime}: solo se transcriben notas ogg/opus`);
-      }
-
-      const { samples, sampleRate } = await decodeOggOpusToPcm(input);
+      // Whisper takes float PCM here, not a container. Voice notes are ogg/opus
+      // and decode in-process; anything else (Telegram sends `audio/mpeg` for
+      // regular audio uploads) goes through the bundled ffmpeg, which sniffs the
+      // real format from the bytes — including a wrong or missing mime, which
+      // tries opus first and falls to ffmpeg only after opus fails. What never
+      // happens is feeding mp3 bytes to the opus decoder and keeping the output:
+      // that produces a garbled transcript that looks like a working feature.
+      const decoded = await decodeForWhisper(input, transcribeOpts.mimeType);
+      const { samples, sampleRate } = decoded;
       if (looksSilent(samples)) {
         // Refused here rather than transcribed: an empty note sent to whisper
         // reliably returns a hallucinated sentence, and a hallucinated
@@ -149,6 +149,7 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
         text,
         language: 'spanish',
         durationSeconds: Math.round((samples.length / sampleRate) * 100) / 100,
+        truncated: decoded.capped || undefined,
       };
     },
   };
@@ -187,8 +188,15 @@ export async function transcribeVoiceNote(
     if (detail.includes('no opus frames')) {
       throw new SttError('no pude entender el audio recibido (no es un ogg/opus valido)');
     }
-    if (detail.includes('unsupported audio type')) {
-      throw new SttError('solo puedo transcribir notas de voz ogg/opus, no ese formato');
+    if (detail.includes('no pude leer ese audio') || detail.includes('pista de sonido')) {
+      throw new SttError(
+        'no pude leer ese audio; prueba a mandarlo como nota de voz o en mp3, m4a o wav',
+      );
+    }
+    if (detail.includes('ffmpeg no esta disponible')) {
+      throw new SttError(
+        'no pude leer ese audio: falta ffmpeg en esta instalacion; prueba a mandarlo como nota de voz',
+      );
     }
     if (detail.includes('whisper model')) {
       throw new SttError(
