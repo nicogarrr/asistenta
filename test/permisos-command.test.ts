@@ -113,6 +113,99 @@ describe('/permisos command', () => {
     expect(runPermisosCommand([gateWith()], dbPath, 'revocar')).toContain('Uso:');
   });
 
+  it('revocar kills the trust DERIVED from the approval: the same action asks again (approver path, auditor #155 r1)', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      dbPath,
+      grantWindowMs: 90_000,
+      // The daemon's real "Siempre" flow: the approver grants the scope and
+      // check() then memoizes the exact call and opens the trust window.
+      approver: (call) => {
+        asked += 1;
+        gate.setScope('s', call.tool, 'always');
+        return true;
+      },
+    });
+    gate.registerSession('s');
+    const call = { tool: 'exec', args: { command: 'ls' }, actor: 'local' } as const;
+    expect((await gate.check('s', call)).verdict).toBe('allow');
+    expect(asked).toBe(1);
+    // Same exact call: the memo waves it through WITHOUT asking.
+    expect((await gate.check('s', call)).verdict).toBe('allow');
+    expect(asked).toBe(1);
+    const msg = runPermisosCommand([gate], dbPath, 'revocar exec');
+    expect(msg).toContain('quitado');
+    // After the revoke the very same action asks again: no memo, no scope.
+    const again = await gate.check('s', call);
+    expect(again.verdict).toBe('allow'); // the approver says yes...
+    expect(asked).toBe(2); // ...but it HAD to ask
+    expect(again.reason).not.toContain('previously approved');
+  });
+
+  it('revokeAlways kills the computer trust window: new clicks ask again inside 90s', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      dbPath,
+      grantWindowMs: 90_000,
+      approver: () => {
+        asked += 1;
+        return true;
+      },
+    });
+    gate.registerSession('s');
+    const clickA = { tool: 'computer', args: { action: 'click', x: 1, y: 1 }, actor: 'local' } as const;
+    const clickB = { tool: 'computer', args: { action: 'click', x: 9, y: 9 }, actor: 'local' } as const;
+    expect((await gate.check('s', clickA)).verdict).toBe('allow');
+    expect(asked).toBe(1);
+    // Different click, same tool: only the trust window can wave it through.
+    const viaWindow = await gate.check('s', clickB);
+    expect(viaWindow.verdict).toBe('allow');
+    expect(viaWindow.reason).toContain('window');
+    expect(asked).toBe(1);
+    gate.revokeAlways('computer');
+    await gate.check('s', clickB);
+    expect(asked).toBe(2); // the window died with the grant
+  });
+
+  it('lists and revokes memory-only grants (union DB + live gates, auditor #155 r1)', () => {
+    const memoryOnly = new Gate({ allow: ['read'], approver: YES }); // no dbPath
+    memoryOnly.registerSession('s');
+    memoryOnly.setScope('s', 'exec', 'always');
+    expect(listAlwaysGrants(dbPath)).toEqual([]); // nothing on disk
+    const msg = runPermisosCommand([memoryOnly], dbPath, 'estado');
+    expect(msg).toContain('exec');
+    const revoked = runPermisosCommand([memoryOnly], dbPath, 'revocar exec');
+    expect(revoked).toContain('quitado');
+    expect(memoryOnly.listPersistedAlways()).not.toContain('exec');
+  });
+
+  it('revocar una herramienta no toca el memo ni la ventana de OTRAS', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      dbPath,
+      grantWindowMs: 90_000,
+      approver: () => {
+        asked += 1;
+        return true;
+      },
+    });
+    gate.registerSession('s');
+    gate.setScope('s', 'exec', 'always');
+    const clickA = { tool: 'computer', args: { action: 'click', x: 1, y: 1 }, actor: 'local' } as const;
+    const clickB = { tool: 'computer', args: { action: 'click', x: 9, y: 9 }, actor: 'local' } as const;
+    await gate.check('s', clickA); // approver: memo clickA + window
+    expect((await gate.check('s', clickB)).reason).toContain('window');
+    expect(asked).toBe(1);
+    runPermisosCommand([gate], dbPath, 'revocar exec');
+    // computer's memo and window survive the exec revoke:
+    expect((await gate.check('s', clickA)).reason).toContain('previously approved');
+    expect((await gate.check('s', clickB)).reason).toContain('window');
+    expect(asked).toBe(1);
+  });
+
   it('deleteAlwaysGrant is idempotent and reports existence', () => {
     const g = gateWith();
     g.registerSession('s');

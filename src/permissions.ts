@@ -884,6 +884,17 @@ export class Gate {
   revokeAlways(tool: string): boolean {
     const inMemory = this.#alwaysAllow.delete(tool);
     const inDb = deleteAlwaysGrant(this.#dbPath, tool);
+    // Trust DERIVED from the revoked grant dies with it, or "te volvere a
+    // pedir permiso" would be a lie until the session ended: exact-call
+    // fingerprints (the `previously approved` memo), open trust windows and
+    // declared scopes for THIS tool, in every session of this gate. Other
+    // tools' fingerprints, windows and scopes stay untouched.
+    const prefix = `${tool}:`;
+    for (const fps of this.#approved.values()) {
+      for (const fp of [...fps]) if (fp.startsWith(prefix)) fps.delete(fp);
+    }
+    for (const windows of this.#grants.values()) windows.delete(tool);
+    for (const scopes of this.#scopes.values()) scopes.delete(tool);
     return inMemory || inDb;
   }
 
@@ -1441,7 +1452,14 @@ export function runPermisosCommand(
 ): string {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   const sub = (parts[0] ?? '').toLowerCase();
-  const tools = listAlwaysGrants(dbPath);
+  // DB + every live gate's memory: a grant one process holds but never
+  // persisted (or whose row is already gone) is still listed and revoked.
+  const tools = [
+    ...new Set([
+      ...listAlwaysGrants(dbPath),
+      ...gates.flatMap((gate) => gate.listPersistedAlways()),
+    ]),
+  ].sort();
   if (sub === '' || sub === 'estado') {
     if (tools.length === 0)
       return 'No me has dado ningún permiso "siempre". Los de "esta sesión" o "una vez" no salen aquí: mueren solos al terminar su tarea.';
