@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -98,4 +106,36 @@ describe('pa status is evidence only', () => {
     expect(out).toContain('no inicia ni reinicia');
     expect(out).toContain('no comprueba si hay supervisor instalado');
   });
+});
+
+it.each(['not-a-timestamp', '', 'NaN', 'Infinity', '1e12', '-1'])(
+  'never confirms invalid heartbeat content %s from mtime',
+  (raw) => {
+    writeFileSync(join(dir, 'agent.heartbeat'), raw);
+    const report = daemonStatus({ stateDir: dir });
+    expect(report.heartbeatSource).toBe('mtime');
+    expect(report.heartbeatState).toBe('unverified');
+    expect(report.ageMs).toBe(null);
+    expect(report.modifiedAt).not.toBe(null);
+    let out = '';
+    statusCommand([], { stateDir: dir }, (s) => {
+      out += s;
+    });
+    expect(out).toContain('contenido no es verificable');
+    expect(out).not.toContain('Latido reciente:');
+  },
+);
+
+it('rejects a directory as heartbeat instead of using its fresh mtime', () => {
+  mkdirSync(join(dir, 'agent.heartbeat'));
+  const report = daemonStatus({ stateDir: dir });
+  expect(report.heartbeatSource).toBe('invalid');
+  expect(report.heartbeatState).toBe('invalid');
+  expect(report.ageMs).toBe(null);
+  let out = '';
+  statusCommand([], { stateDir: dir }, (s) => {
+    out += s;
+  });
+  expect(out).toContain('inválido o ilegible');
+  expect(out).not.toContain('Latido reciente:');
 });

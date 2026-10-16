@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from './paths.js';
-import { readHeartbeat, staleThresholdMs } from './watchdog.js';
+import { staleThresholdMs } from './watchdog.js';
 
 export interface DaemonStatusDeps {
   stateDir?: string;
@@ -46,16 +46,48 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
     }
   }
   const now = (deps.now ?? Date.now)();
-  const beat = readHeartbeat(heartbeatFile);
-  const ageMs = beat.at === null ? null : now - beat.at;
+  let heartbeatSource: 'content' | 'mtime' | 'missing' | 'invalid' = 'missing';
+  let heartbeatAt: number | null = null;
+  let modifiedAt: number | null = null;
+  try {
+    const stat = statSync(heartbeatFile);
+    if (!stat.isFile()) {
+      heartbeatSource = 'invalid';
+    } else {
+      modifiedAt = stat.mtimeMs;
+      const raw = readFileSync(heartbeatFile, 'utf8').trim();
+      const value = Number(raw);
+      if (/^[1-9]\d*$/.test(raw) && Number.isSafeInteger(value)) {
+        heartbeatSource = 'content';
+        heartbeatAt = value;
+      } else {
+        heartbeatSource = 'mtime';
+      }
+    }
+  } catch (error) {
+    heartbeatSource = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid';
+  }
+  const ageMs = heartbeatAt === null ? null : now - heartbeatAt;
   const staleAfterMs = staleThresholdMs();
   const heartbeatState =
-    ageMs === null ? 'missing' : ageMs < 0 ? 'future' : ageMs >= staleAfterMs ? 'stale' : 'fresh';
+    heartbeatSource === 'missing'
+      ? 'missing'
+      : heartbeatSource === 'invalid'
+        ? 'invalid'
+        : heartbeatSource === 'mtime'
+          ? 'unverified'
+          : ageMs !== null && ageMs < 0
+            ? 'future'
+            : ageMs !== null && ageMs >= staleAfterMs
+              ? 'stale'
+              : 'fresh';
   return {
     pid,
     pidState,
     processState,
     heartbeatState,
+    heartbeatSource,
+    modifiedAt,
     ageMs,
     staleAfterMs,
     pidFile,
@@ -88,12 +120,16 @@ export function statusCommand(
         : `PID ${report.pid}: ${report.processState === 'alive' ? 'el proceso existe' : report.processState === 'dead' ? 'el proceso no existe' : 'no se pudo comprobar el proceso'}.`;
     const beatText =
       report.heartbeatState === 'fresh'
-        ? `Latido reciente: hace ${Math.floor((report.ageMs ?? 0) / 1000)} s.`
+        ? `Latido con timestamp legible: hace ${Math.floor((report.ageMs ?? 0) / 1000)} s.`
         : report.heartbeatState === 'stale'
           ? `Latido atrasado: hace ${Math.floor((report.ageMs ?? 0) / 1000)} s.`
           : report.heartbeatState === 'future'
             ? 'Latido con fecha futura: revisar el reloj; no prueba salud.'
-            : 'No hay latido legible.';
+            : report.heartbeatState === 'unverified'
+              ? 'Archivo de latido modificado, pero su contenido no es verificable; no confirma un latido.'
+              : report.heartbeatState === 'invalid'
+                ? 'Archivo de latido inválido o ilegible; no confirma un latido.'
+                : 'No hay latido legible.';
     write(
       `${pidText}\n${beatText}\nUmbral de latido: ${report.staleAfterMs / 1000} s.\nUn PID vivo y un latido reciente no prueban que Telegram o el LLM funcionen.\nConsulta puntual: no vigila, no inicia ni reinicia el daemon; no comprueba si hay supervisor instalado.\nPID: ${report.pidFile}\nLatido: ${report.heartbeatFile}\n`,
     );
