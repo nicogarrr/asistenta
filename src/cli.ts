@@ -21,7 +21,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { upcomingEvents } from './agenda/ics.js';
 import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
-import { formatApprovalQuestion } from './approval-text.js';
+import { formatApproval } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
@@ -571,11 +571,21 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     approver: async (call, reason) => {
       options.onAwaiting?.(true);
       try {
+        const approval = formatApproval(call, reason);
+        if (!approval.complete) {
+          // Fail-closed: si la accion no cabe entera en la pregunta se deniega,
+          // en vez de dejar aprobar a ciegas algo que no se ha mostrado entero.
+          log.error('approval denied: action not fully displayable', {
+            tool: call.tool,
+            questionChars: approval.question.length,
+          });
+          return false;
+        }
         const choice = await options.ask(
           options.threadKey,
           call.tool,
           reason,
-          formatApprovalQuestion(call, reason),
+          approval.question,
         );
         if (choice.approved && choice.scope !== 'once') {
           try {
