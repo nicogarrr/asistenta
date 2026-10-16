@@ -87,7 +87,12 @@ import {
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
-import { BROWSER_FREE_ACTIONS, Gate, protectedRepoPaths } from './permissions.js';
+import {
+  BROWSER_FREE_ACTIONS,
+  Gate,
+  protectedRepoPaths,
+  runPermisosCommand,
+} from './permissions.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -3657,6 +3662,7 @@ async function serveCommand(): Promise<number> {
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
         '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (cortarme: apagado por defecto)',
+        '/permisos [revocar <herramienta>|todo] - los permisos "siempre" que me diste: verlos y quitarlos',
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
         '/play [volumen] - suena en el PC el último audio que me mandaste',
         '/mic [segundos] - escuchar lo que oye el microfono',
@@ -4454,6 +4460,23 @@ async function serveCommand(): Promise<number> {
     log.info('tv button listener stopped');
   };
 
+  /**
+   * `/permisos [revocar <herramienta>|todo]`: los permisos "siempre" viven en
+   * approvals.db y los cachea cada gate en memoria; revocar limpia AMBOS (la
+   * lógica y sus límites en runPermisosCommand). Solo el dueño: cambia la
+   * postura de seguridad del daemon entero.
+   */
+  const cmdPermisos = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const gates = [...threads.values()].map((thread) => thread.gate);
+    await say(inbound, runPermisosCommand(gates, approvalsDb, args), { quote: true });
+  };
+
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
@@ -4712,6 +4735,8 @@ async function serveCommand(): Promise<number> {
             return cmdAgenda(inbound);
           case 'ojo':
             return cmdOjo(inbound, command.args);
+          case 'permisos':
+            return cmdPermisos(inbound, command.args);
           case 'ignora':
             return cmdIgnora(inbound, command.args);
           case 'ignorados':
