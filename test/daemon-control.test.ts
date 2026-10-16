@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
@@ -111,7 +112,9 @@ it('refuses unsafe state and symlink state', async () => {
   try {
     await expect(openDaemonControl(alias, () => {})).rejects.toThrow('Permisos');
   } finally {
-    rmSync(alias);
+    unlinkSync(alias);
+    expect(existsSync(alias)).toBe(false);
+    expect(existsSync(dir)).toBe(true);
   }
 });
 it('refuses symlink and open metadata', async () => {
