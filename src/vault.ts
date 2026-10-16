@@ -1,8 +1,13 @@
 import { execFile } from 'node:child_process';
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   statSync,
@@ -400,4 +405,111 @@ export async function vaultSnapshotValues(): Promise<string[]> {
 
 export function clearVaultCache(): void {
   cache.clear();
+}
+
+export interface VaultFieldSource {
+  key: string;
+  source: 'environment' | 'file' | 'missing';
+}
+function portableVersion(file: string): string {
+  let fd: number | undefined;
+  try {
+    const stat = lstatSync(file);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o077) !== 0
+    )
+      throw new Error('Almacén ambiguo.');
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const actual = fstatSync(fd);
+    if (actual.ino !== stat.ino || actual.dev !== stat.dev) throw new Error('Almacén modificado.');
+    const bytes = readFileSync(fd);
+    try {
+      return createHash('sha256')
+        .update(bytes)
+        .update(JSON.stringify([stat.dev, stat.ino, stat.mode, stat.mtimeMs, stat.ctimeMs]))
+        .digest('hex');
+    } finally {
+      bytes.fill(0);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+    throw new Error('No se puede verificar el almacén actual.');
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+function environmentVersion(): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify(
+        Object.entries(process.env)
+          .filter(
+            ([key]) =>
+              key.startsWith('PA_SECRET_') ||
+              key === 'PA_SECRETS_FILE' ||
+              key === 'PA_VAULT_BACKEND',
+          )
+          .sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    )
+    .digest('hex');
+}
+/** Internal wizard API: daemon ownership must already be held. Never expose values to prompts. */
+export async function configurePortableVault(
+  keys: readonly string[],
+  review: (fields: readonly VaultFieldSource[]) => Promise<Record<string, string> | undefined>,
+): Promise<boolean> {
+  if (process.platform !== 'linux' || vaultBackend() !== 'portable')
+    throw new Error(
+      'Configuración con cambios solo disponible para portable en Linux; Windows es solo guía.',
+    );
+  if (!keys.length || keys.some((key) => !/^[a-zA-Z][a-zA-Z0-9:_.-]{0,127}$/.test(key)))
+    throw new Error('Campos de configuración inválidos.');
+  return runWriteExclusive(async () => {
+    const file = portableSecretsFile();
+    const version = portableVersion(file);
+    const envVersion = environmentVersion();
+    let original: Record<string, string>;
+    try {
+      original = readPortableFile(file);
+    } catch {
+      throw new Error(
+        'No se pudo abrir el almacén; no se inicializa ni reemplaza automáticamente.',
+      );
+    }
+    const fields = keys.map(
+      (key) =>
+        ({
+          key,
+          source: hasEnvOverride(key) ? 'environment' : original[key] ? 'file' : 'missing',
+        }) as VaultFieldSource,
+    );
+    const changes = await review(fields);
+    if (changes === undefined) return false;
+    if (
+      environmentVersion() !== envVersion ||
+      portableSecretsFile() !== file ||
+      portableVersion(file) !== version
+    )
+      throw new Error('La configuración cambió durante la revisión; no se guarda.');
+    if (
+      Object.keys(changes).some(
+        (key) =>
+          !keys.includes(key) ||
+          hasEnvOverride(key) ||
+          typeof changes[key] !== 'string' ||
+          !changes[key] ||
+          /[\r\n\0]/.test(changes[key] as string),
+      )
+    )
+      throw new Error('Cambios inválidos o gestionados desde entorno; no se guarda.');
+    if (!Object.keys(changes).length) return false;
+    writePortableFile(file, { ...original, ...changes });
+    for (const [key, value] of Object.entries(changes)) syncCacheAfterWrite(key, value);
+    return true;
+  });
 }

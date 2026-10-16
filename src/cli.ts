@@ -233,6 +233,7 @@ import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 const USAGE = `personal-agent - a personal agent for your own PC
 
 Usage:
+  pa setup                configuración local guiada, sin red ni autostart
   pa serve                run the daemon: Telegram, with approvals over chat
   pa chat                 talk to the agent in the console
   pa run "<prompt>"       run one prompt unattended (read-only tools, no prompts)
@@ -283,6 +284,10 @@ export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
 
   switch (command) {
+    case 'setup': {
+      const { setupCommand } = await import('./setup.js');
+      return setupCommand(rest);
+    }
     case 'vault':
       return vaultCommand(rest);
     case 'opengym':
