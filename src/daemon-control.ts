@@ -302,8 +302,9 @@ export async function openDaemonControl(
         if (published && recordAt(file).instanceId === id) {
           if (clean !== undefined) {
             const proofFile = join(dir, `${id}.stopped`);
+            const proofTemporary = `${proofFile}.tmp`;
             writeFileSync(
-              proofFile,
+              proofTemporary,
               JSON.stringify({
                 instanceId: id,
                 clean,
@@ -311,6 +312,7 @@ export async function openDaemonControl(
               }),
               { flag: 'wx', mode: 0o600 },
             );
+            renameSync(proofTemporary, proofFile);
           }
           unlinkSync(file);
         }
