@@ -11,9 +11,12 @@
  *
  * There used to be a second snapshot, MEMORIA.md, feeding a frozen <memory>
  * block next to <profile>. Nothing in runtime ever wrote to it — the only
- * writer lived in tests — so the block was always empty and the file was a
- * dead writer with a seat in the system prompt. It is gone; the durable
- * per-chat memory it duplicated already lives in the MemoryStore.
+ * writer lived in tests — so the writer is gone: the file is never created
+ * and never saved. But the file was human-editable, so a preexisting
+ * non-empty MEMORIA.md is still READ and emitted as <memory> (read-compat)
+ * until its entries are migrated into the per-chat MemoryStore and the file
+ * is removed by hand. Dropping those bytes silently would be lying by
+ * omission about what the assistant remembers.
  *
  * The format is prose entries separated by `\n§\n`, most recent last. Not JSON,
  * not a database: `§` is rare enough that natural prose never contains it and
@@ -205,11 +208,20 @@ export class MemorySnapshot {
     }
   }
 
-  /** The block for the system prompt. An empty profile would be dead tokens. */
+  /**
+   * The blocks for the system prompt. Empty blocks would be dead tokens. A
+   * legacy MEMORIA.md found on disk is still honored (read-only, never
+   * created): its entries may be manual, and ignoring them would silently
+   * forget something the user wrote.
+   */
   contextNote(): string {
     try {
+      const blocks: string[] = [];
+      const legacy = this.#legacyMemoria();
+      if (legacy) blocks.push(`<memory>\n${legacy}\n</memory>`);
       const profile = this.load().trim();
-      return profile ? `<profile>\n${profile}\n</profile>` : '';
+      if (profile) blocks.push(`<profile>\n${profile}\n</profile>`);
+      return blocks.join('\n');
     } catch (err) {
       log.warn('memory snapshot context note failed', { err: String(err) });
       return '';
@@ -218,6 +230,32 @@ export class MemorySnapshot {
 
   #path(): string {
     return join(this.dir, SPEC.name);
+  }
+
+  /**
+   * Legacy MEMORIA.md, strictly read-only: an existing file is honored, a
+   * missing one is NOT created (unlike PERFIL.md) and nothing ever writes to
+   * it. A present file logs a migration nudge once per read; the day the user
+   * moves its entries into chat memory and deletes the file, this reader
+   * becomes a no-op and can go away.
+   */
+  #legacyMemoria(): string {
+    try {
+      const path = join(this.dir, 'MEMORIA.md');
+      if (!existsSync(path)) return '';
+      const text = readFileSync(path, 'utf8');
+      const body = text.startsWith('# MEMORIA\n\n') ? text.slice('# MEMORIA\n\n'.length) : text;
+      const trimmed = body.trim();
+      if (trimmed) {
+        log.warn(
+          'legacy MEMORIA.md is still in use; move its entries into chat memory and delete the file',
+        );
+      }
+      return trimmed;
+    } catch (err) {
+      log.warn('legacy MEMORIA.md read failed', { err: String(err) });
+      return '';
+    }
   }
 
   /**

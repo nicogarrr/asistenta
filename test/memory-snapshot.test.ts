@@ -73,6 +73,28 @@ describe('MemorySnapshot', () => {
     expect(snapshot.contextNote()).toBe('<profile>\nse llama Ana\n</profile>');
   });
 
+  it('contextNote lee un MEMORIA.md legado sin crearlo ni escribirlo', () => {
+    // Legado: el fichero era editable a mano, así que uno preexistente con
+    // contenido se honra aunque ya nadie lo escriba.
+    writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\nprefiere respuestas cortas', 'utf8');
+    const snapshot = new MemorySnapshot({ dir });
+    expect(snapshot.contextNote()).toBe('<memory>\nprefiere respuestas cortas\n</memory>');
+    snapshot.appendEntry('se llama Ana');
+    expect(snapshot.contextNote()).toBe(
+      '<memory>\nprefiere respuestas cortas\n</memory>\n<profile>\nse llama Ana\n</profile>',
+    );
+    // Ni un byte cambiado: lectura estricta.
+    expect(readFileSync(join(dir, 'MEMORIA.md'), 'utf8')).toBe(
+      '# MEMORIA\n\nprefiere respuestas cortas',
+    );
+  });
+
+  it('un MEMORIA.md legado vacío (solo plantilla) no emite bloque', () => {
+    writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\n', 'utf8');
+    const snapshot = new MemorySnapshot({ dir });
+    expect(snapshot.contextNote()).toBe('');
+  });
+
   it('savePerfil corta en el último separador dentro del límite', () => {
     const snapshot = new MemorySnapshot({ dir, maxChars: 60 });
     const first = 'a'.repeat(20);
