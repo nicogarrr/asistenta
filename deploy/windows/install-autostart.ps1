@@ -23,7 +23,7 @@
     3. The task runs the daemon only. It does *not* restart a hung daemon: Task Scheduler
        can restart a process that exited, but a process that is alive and stuck looks
        healthy to it. That case belongs to the watchdog (`src/watchdog.ts`), which reads
-       the heartbeat file. Both are installed; they cover different failures.
+       the heartbeat file. This script does NOT install that watchdog process.
 
 .PARAMETER Uninstall
     Stop and remove the task. Idempotent: removing a task that is not there is not an error.
@@ -217,7 +217,7 @@ function Install {
             -Trigger $trigger `
             -Settings $settings `
             -Principal $principal `
-            -Description 'personal-agent daemon (pa serve). Reinicia solo si el proceso sale; si se cuelga, lo ve el watchdog por el heartbeat.' `
+            -Description 'personal-agent daemon (pa serve). Reinicia solo si el proceso sale; este instalador no cubre cuelgues.' `
             -ErrorAction Stop | Out-Null
     }
     catch {

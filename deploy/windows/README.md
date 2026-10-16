@@ -107,14 +107,15 @@ pegarlo en un chat y `data` con los mismos hechos como objetos. Enchúfalo en un
 **Un daemon vivo pero colgado.** Si el proceso existe y no hace nada —un turno
 bloqueado, un `await` que no vuelve, un evento loop tapado por un `await` síncrono— Task
 Scheduler lo ve perfectamente sano, porque para él la tarea es el proceso y el proceso
-está ahí. Por eso existe el watchdog (`src/watchdog.ts`): lee
-`agent.heartbeat` y, si pasan 3 intervalos de escritura (con un suelo de 120 s) sin que se
-escriba, da el daemon por muerto y lo relanza. Y si relanza más de 5 veces en 15 minutos,
-deja de relanzar y avisa: un bucle de fallos tiene que llegar a una persona, no gastarse
-en un bucle infinito.
+está ahí. El módulo `src/watchdog.ts` contiene la lógica de vigilancia y reinicio,
+pero este instalador NO instala un proceso watchdog. No hay cobertura automática
+contra cuelgues por el mero hecho de ejecutar este script.
 
-Los dos mecanismos se complementan y no se sustituyen: Task Scheduler ve el proceso, el
-watchdog ve el pulso.
+`pa status [--json]` y `pa watchdog --status [--json]` consultan el PID y el latido
+una sola vez, sin matar, arrancar ni reiniciar nada. Un latido reciente no prueba
+que Telegram o el proveedor LLM funcionen. Estos comandos no verifican si existe
+un supervisor externo instalado. `pa diagnose` añade evidencia de logs y acciones.
+La instalación de vigilancia continua queda pendiente.
 
 ## Desinstalarlo
 

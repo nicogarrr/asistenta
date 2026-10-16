@@ -250,6 +250,8 @@ Usage:
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
+  pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
+  pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
   pa doctor               check the environment
   pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
@@ -294,6 +296,20 @@ export async function main(argv: string[]): Promise<number> {
       return new Promise<number>(() => {});
     case 'tv':
       return tvCommand(rest);
+    case 'status': {
+      const { statusCommand } = await import('./daemon-status.js');
+      return statusCommand(rest);
+    }
+    case 'watchdog': {
+      if (rest[0] !== '--status') {
+        process.stderr.write(
+          'uso: pa watchdog --status [--json] (solo consulta; no activa vigilancia)\n',
+        );
+        return 2;
+      }
+      const { statusCommand } = await import('./daemon-status.js');
+      return statusCommand(rest.slice(1));
+    }
     case 'diagnose': {
       const { diagnoseCommand } = await import('./diagnose-cli.js');
       return diagnoseCommand(rest);
