@@ -1946,7 +1946,7 @@ export class BrowserService {
    * in session lives, and throwing it away on every close would mean logging in again
    * for every task.
    */
-  async close(scope: string): Promise<void> {
+  async close(scope: string, strict = false): Promise<void> {
     const session = this.#sessions.get(scope);
     if (!session) return;
     this.#sessions.delete(scope);
@@ -1957,15 +1957,16 @@ export class BrowserService {
       session.adSkip.timer = null;
     }
     this.#saveGrants(scope, session);
-    await session.context
-      .close()
-      .catch((err: unknown) => log.warn('browser close failed', { err }));
+    await session.context.close().catch((err: unknown) => {
+      log.warn('browser close failed', { err });
+      if (strict) throw new Error('No se pudo confirmar el cierre del navegador.', { cause: err });
+    });
     log.info('browser closed', { scope });
   }
 
   /** Close everything, so no Chromium outlives the daemon and holds its profile lock. */
-  async closeAll(): Promise<void> {
-    await Promise.all([...this.#sessions.keys()].map((scope) => this.close(scope)));
+  async closeAll(strict = false): Promise<void> {
+    await Promise.all([...this.#sessions.keys()].map((scope) => this.close(scope, strict)));
   }
 
   /** Domains approved for a chat, for the turn summary and for tests. */

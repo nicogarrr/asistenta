@@ -41,8 +41,12 @@ export class ChannelRegistry {
     }
   }
 
-  async stopAll(): Promise<void> {
-    await Promise.allSettled([...this.#adapters.values()].map((a) => a.stop()));
+  async stopAll(strict = false): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.#adapters.values()].map((a) => a.stop(strict)),
+    );
+    const failed = results.some((result) => result.status === 'rejected');
+    if (strict && failed) throw new Error('No se pudo confirmar el cierre de todos los canales.');
     this.#adapters.clear();
   }
 

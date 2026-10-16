@@ -1,0 +1,30 @@
+# Parada local autenticada en Linux
+
+`pa stop` solicita parada por el endpoint autenticado de la instancia, espera el drenaje y verifica una prueba final HMAC ligada al instanceId, más liberación real de la cerradura OS. ACK STOPPING no es éxito. No mata por PID, no arranca otra copia y no solicita modelos, Telegram ni datos de cuenta.
+
+`pa restart` se rechaza sin tocar el daemon porque el repositorio aún no proporciona evidencia fiable del supervisor que lo relanzaría. No se presenta restart como implementado. Windows conserva su arranque actual, sin endpoint de control ni stop nuevo: DACL/pipe verificados siguen pendientes. Linux requiere `flock`, directorio de estado privado y longitud compatible con sockets Unix.
+
+## Cableado
+
+La misma propiedad cubre `chat` y `serve`, antes de assertNotRunning y su limpieza de PID. El directorio nuevo se crea con 700; los directorios existentes con permisos abiertos se rechazan sin cambiarlos. Si necesitas migrar uno, revisa propietario/contenido y restringe manualmente su acceso antes de arrancar; no se ha modificado la máquina de Nico.
+
+READY se publica después de conectar lifecycle y acabar el arranque. La parada de serve corta avisos, inicia el cierre de polling Telegram, aborta acciones y espera los drenajes y recursos ya presentes antes de terminar. Chat aborta su turno y espera su resultado, cierra readline y recursos. El heartbeat se detiene al acabar el cierre. Vencer el límite real de 10 segundos esperando thread.tail es un fallo de drenaje, no un cierre limpio. Los cierres esenciales Telegram/navegador/micrófono/listener propagan errores en este camino estricto en lugar de silenciarlos. Los demás usos mantienen el comportamiento best-effort anterior.
+
+Un error de cierre registra resultado no limpio y conserva la propiedad hasta salir del proceso; si quedan recursos vivos, un límite fatal de 15 segundos evita una espera sin fin. Un fallo antes de instalar lifecycle tampoco libera propiedad para permitir otro daemon junto a recursos sin drainer: conserva lock hasta salida fatal en 15 segundos. No se declara resultado limpio por timeout ni por desaparición del socket. El hard-exit de lifecycle sigue registrando el marcador stale y no produce prueba limpia.
+
+La prueba final está en un archivo privado propio por instancia. Contiene instanceId, booleano clean y HMAC; no contiene token. Su acumulación es una deuda de retención acotada pendiente de diseñar sin borrar evidencia que aún consulta un cliente. El callback limpio significa que terminaron los drenajes declarados, no que se ha verificado salud del modelo ni que el proceso OS ya desapareció. Stop verifica propiedad liberada; no usa un PID para concluir esto.
+
+## QA
+
+Pruebas con procesos hijos propios y lifecycle real, sin credenciales reales ni cuenta/sesión de Nico: parada posterior al drenaje, CLI stop compilado, fallo de shutdown no limpio/stale, hard-exit no limpio, rechazo restart sin tocar instancia, lock retenido durante error con recurso que sigue vivo y PID antiguo sin metadata no tocado. Un fixture usa el helper real de drenaje con su límite íntegro de 10 segundos y comprueba exit1/stale/sin prueba limpia. Canarios de Telegram y navegador inyectan fallo de cierre y exigen propagación en modo estricto. Se ejecutan en la fase serial de recursos. Las primitivas HMAC, concurrencia, permisos y crash de #170 siguen cubiertas por sus 16 canarios.
+
+No se presenta como prueba Telegram real ni de un daemon completo de producción. Falta QA nativa Windows y un supervisor con autoridad de restart. Fresh suite completa y auditoría independientes: pendientes al publicar borrador.
+
+Corrección preflight: se distingue explícitamente beginResources de las comprobaciones previas. Un retorno/fallo anterior a esa fase libera la propiedad; un error de arranque parcial sin lifecycle no lo hace hasta la muerte del proceso. Los dos tests previos de preflight usan estado temporal privado real para probar también el nuevo wrapper; no se simula el lock.
+
+ChannelRegistry tiene modo de cierre estricto: propaga fallos de adaptadores y no los marca retirados si fallaron. Se inicia un único drenaje de todos los canales y se espera al final; evita llamar dos veces a Telegram.stop. La limpieza de archivos temporales de capturas sigue siendo best-effort: no representa un canal/proceso vivo ni respalda por sí sola la prueba de parada.
+
+
+Frontera del micrófono: FfmpegMicCapture.stop aún registra sin propagar su timeout interno. Este PR NO declara corregida esa API. El controlador Linux rechaza PA_DESKTOP=on (incluidos alias 1/true) antes de abrir estado/vault/canales; solo admite modo servidor, así que startWake no puede crear FfmpegMicCapture en esta ruta. Un canario del CLI compilado fuerza on y exige fallo previo sin control/PID/vault; el logger puede crear log/ para registrar el rechazo. Windows no usa el controlador ni publica pruebas clean nuevas. El cierre del micrófono Windows sigue pendiente de DACL y propagación interna verificada, no se presenta completado por quitar un catch externo.
+
+La suite fresca V5 encontró una carrera real: el cliente leyó la prueba final mientras writeFileSync aún escribía su contenido. La prueba final ahora se publica con temporal privado exclusivo y rename atómico, igual que READY. Un canario intercepta writeFileSync antes y después de escribir el temporal y exige que el nombre final aún no exista; solo aparece tras rename y contiene JSON completo. El resultado rojo de V5 no se declara superado por pruebas dirigidas: requiere otra suite completa del SHA corregido.

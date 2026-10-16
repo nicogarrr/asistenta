@@ -36,6 +36,7 @@ export interface Lifecycle {
   done: Promise<void>;
   heartbeat: () => Promise<void>;
   stop: (reason: string) => void;
+  outcome: () => 'running' | 'clean' | 'failed';
 }
 
 function stalePath(stateDir: string, name: string): string {
@@ -130,6 +131,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   const beatFile = `${stateDir}/${deps.name}.heartbeat`;
 
   let closing = false;
+  let outcome: 'running' | 'clean' | 'failed' = 'running';
   let resolveDone: () => void;
   const done = new Promise<void>((r) => {
     resolveDone = r;
@@ -175,10 +177,14 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
         try {
           unlinkSync(pidFile);
         } catch {}
+        clearInterval(timer);
+        outcome = code === 0 ? 'clean' : 'failed';
         process.exitCode = code;
       } catch (err) {
         log.error('shutdown failed', { reason, err });
         clearTimeout(hard);
+        clearInterval(timer);
+        outcome = 'failed';
         process.exitCode = 1;
       } finally {
         resolveDone();
@@ -223,7 +229,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
     }
   })();
 
-  return { done, heartbeat, stop };
+  return { done, heartbeat, stop, outcome: () => outcome };
 }
 
 export function newRequestId(): string {

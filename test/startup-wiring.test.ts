@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const state = vi.hoisted(() => ({ path: '' }));
 const mocks = vi.hoisted(() => ({ provider: vi.fn(), telegram: vi.fn() }));
 vi.mock('../src/core/provider.js', async (original) => ({
   ...(await original<typeof import('../src/core/provider.js')>()),
@@ -12,6 +16,12 @@ vi.mock('../src/startup.js', async (original) => ({
 vi.mock('../src/paths.js', async (original) => ({
   ...(await original<typeof import('../src/paths.js')>()),
   ensureDirs: vi.fn(),
+  paths: {
+    ...(await original<typeof import('../src/paths.js')>()).paths,
+    get state() {
+      return state.path;
+    },
+  },
 }));
 vi.mock('../src/vault.js', async (original) => ({
   ...(await original<typeof import('../src/vault.js')>()),
@@ -27,6 +37,8 @@ vi.mock('../src/vault.js', async (original) => ({
 
 import { main } from '../src/cli.js';
 
+state.path = mkdtempSync(join(tmpdir(), 'pa-startup-wiring-'));
+afterAll(() => rmSync(state.path, { recursive: true, force: true }));
 beforeEach(() => {
   vi.restoreAllMocks();
   mocks.provider.mockReset();
