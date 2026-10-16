@@ -223,6 +223,38 @@ export function findTotalPrice(text: string): PriceText | null {
   }
   return found;
 }
+
+/**
+ * Words that turn "a total" into "an instalment": monthly, instalments,
+ * subscription, financing. Any of them attached to the total's own sentence
+ * means the labelled amount is NOT the full commitment ("29,99 al mes durante
+ * 24 meses" commits 719,76, not 29,99) and a confirm must never quote it as
+ * one. `\d+ meses` needs the number so "garantia" prose elsewhere is fine -
+ * and only the total's own sentence counts (nothing past `.`, `;` or a line
+ * break), so "Total: 45,20. Garantia: 24 meses" stays a plain purchase.
+ */
+const RECURRENCE =
+  /\b(?:al\s+mes|por\s+mes|cada\s+mes|mensual(?:idad|idades)?|mensualmente|cuotas?|plazos?|suscripci\w*|recurrent\w*|per\s+month|monthly|installments?|durante\s+\d+\s+meses|\d+\s+meses|financia\w*)\b/iu;
+
+/**
+ * The recurrence marker attached to the page's total, or null when the total
+ * reads as a one-shot amount. Recurring or financed purchases are not capped
+ * here - they are refused for manual review, because the cap would be lying
+ * about a partial instalment.
+ */
+export function recurrenceNearTotal(text: string): string | null {
+  for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
+    const re = new RegExp(PRICE_RE.source, 'yi');
+    re.lastIndex = m.index + m[0].length;
+    if (!re.exec(text)) continue;
+    const rest = text.slice(re.lastIndex, re.lastIndex + 80);
+    const end = rest.search(/[.\n;]/);
+    const sentence = end === -1 ? rest : rest.slice(0, end);
+    const hit = sentence.match(RECURRENCE);
+    if (hit) return hit[0];
+  }
+  return null;
+}
 /** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
   const out: string[] = [];
@@ -818,6 +850,22 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
                 },
               ],
               details: { asked: false, reason: 'moneda no EUR', amount: total.text },
+            };
+          }
+          const recurrence = recurrenceNearTotal(visible);
+          if (recurrence) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    `El total de la pagina (${total.text}) va unido a un pago recurrente o a plazos ` +
+                    `("${recurrence}"): no puedo afirmar que ese importe sea el compromiso completo, ` +
+                    'asi que queda denegado. Las suscripciones y los plazos se revisan a mano: ' +
+                    'haz esa compra tu directamente.',
+                },
+              ],
+              details: { asked: false, reason: 'pago recurrente', amount: total.text },
             };
           }
           if (!item) {

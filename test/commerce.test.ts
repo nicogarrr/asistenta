@@ -27,6 +27,7 @@ import {
   parsePriceToCents,
   extractPrices,
   findTotalPrice,
+  recurrenceNearTotal,
   looksLikePaymentSubmission,
 } from '../src/tools/checkout.js';
 
@@ -991,6 +992,34 @@ describe('tope de importe en confirm (maxAmountCents)', () => {
     expect(findTotalPrice('Grand total 29,99\u20ac')?.text).toBe('29,99 \u20ac');
     // Dos totales que discrepan: no hay total.
     expect(findTotalPrice('Total: 29,99\u20ac Total: 950,00\u20ac')).toBeNull();
+  });
+
+  it('canario r4: total con recurrencia NO es un importe cerrado ("29,99 EUR al mes durante 24 meses")', async () => {
+    expect(recurrenceNearTotal('Total: 29,99 \u20ac al mes durante 24 meses')).toBeTruthy();
+    const page = new FakePage();
+    page.body = 'Total: 29,99 \u20ac al mes durante 24 meses';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    const res = await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+    expect(res.details?.reason).toBe('pago recurrente');
+    // Plazos tambien bloquean.
+    expect(recurrenceNearTotal('Total a pagar 29,99\u20ac en 3 plazos')).toBeTruthy();
+    // Pero "24 meses" en OTRA frase (garantia) no bloquea una compra unica.
+    expect(recurrenceNearTotal('Total: 45,20 \u20ac. Garant\u00eda: 24 meses.')).toBeNull();
+    const page2 = new FakePage();
+    page2.body = 'Total: 45,20 \u20ac. Garant\u00eda: 24 meses.';
+    const seen: string[] = [];
+    const tool2 = toolWith(page2, BUYER, async (_a, summary) => {
+      seen.push(summary);
+      return true;
+    });
+    await call(tool2, { action: 'confirm', item: 'x' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('45,20 \u20ac');
   });
 
   it('cap invalido (NaN/Infinity/negativo) rompe en la creacion, no en el pago', async () => {
