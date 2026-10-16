@@ -186,6 +186,31 @@ describe('tv button listener', () => {
     expect(onButton).toHaveBeenCalledTimes(1);
   });
 
+  it('una firma con ts en el futuro no es rejugable mientras su ventana siga abierta', async () => {
+    // Canario del auditor: la cache podaba a los 5 min de ACEPTAR, pero una
+    // firma con ts = ahora+4min sigue valida hasta ahora+9min -> replay.
+    // La retencion es hasta tsMs + WINDOW, no hasta aceptada + WINDOW.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = Date.now();
+      const { base, onButton } = await listen({ token: SECRET });
+      const headers = signedHeaders('POST', '/tv/button', {
+        ts: String(Math.floor(t0 / 1000) + 240), // t0 + 4 min, dentro de ventana
+      });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+      // Avanza el reloj: la cache vieja ya habria podado, la firma aun vale.
+      vi.setSystemTime(t0 + 5 * 60 * 1000 + 1000);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+      // Y cuando la ventana de la firma cierra de verdad, la firma caduca.
+      vi.setSystemTime(t0 + 9 * 60 * 1000 + 2000);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('dos pulsaciones en el mismo segundo con nonce distinto pasan las dos', async () => {
     const { base, onButton } = await listen({ token: SECRET });
     const ts = String(Math.floor(Date.now() / 1000));

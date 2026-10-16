@@ -163,8 +163,12 @@ export function startTvButtonListener(opts: TvButtonListenerOptions): TvButtonLi
   const port = opts.port ?? TV_BUTTON_PORT;
   const host = opts.host ?? '0.0.0.0';
   const token = opts.token?.trim() || null;
-  // Firmas ya aceptadas (anti-replay dentro de la ventana). Se poda en cada
-  // verificacion: acotada por la propia ventana, no puede crecer sin mas.
+  // Firmas ya aceptadas -> instante en que DEJAN de ser validas (tsMs +
+  // WINDOW). No basta guardar el instante de aceptacion: una firma con ts
+  // hasta WINDOW en el futuro sigue siendo valida hasta WINDOW despues de
+  // podarse la entrada, y ahi entraria el replay. Como el ts aceptado esta a
+  // lo sumo WINDOW en el futuro, cada entrada vive < 2 * WINDOW y el mapa
+  // esta acotado. Se poda en cada verificacion.
   const seenSignatures = new Map<string, number>();
 
   /** Verifica ventana de reloj, HMAC en tiempo constante y anti-replay. */
@@ -181,10 +185,9 @@ export function startTvButtonListener(opts: TvButtonListenerOptions): TvButtonLi
     const expected = Buffer.from(signTvButton(token, presented.ts, presented.nonce, method, path));
     const got = Buffer.from(presented.sig);
     if (expected.length !== got.length || !timingSafeEqual(expected, got)) return false;
-    for (const [sig, at] of seenSignatures)
-      if (now - at > TV_BUTTON_SIGNATURE_WINDOW_MS) seenSignatures.delete(sig);
+    for (const [sig, expiresAt] of seenSignatures) if (now >= expiresAt) seenSignatures.delete(sig);
     if (seenSignatures.has(presented.sig)) return false; // replay dentro de la ventana
-    seenSignatures.set(presented.sig, now);
+    seenSignatures.set(presented.sig, tsMs + TV_BUTTON_SIGNATURE_WINDOW_MS);
     return true;
   };
 
