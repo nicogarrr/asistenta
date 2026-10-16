@@ -18,6 +18,10 @@ const FLAKY_MARKERS = [
   /model access is disabled/i,
   /overloaded/i,
   /rate limit/i,
+  // Quota exhaustion must enter the retry loop so the loop can FALL BACK to the
+  // secondary model (isQuotaError decides the swap). Without this marker a bare
+  // "daily quota exhausted" was neither retried nor fallen back (auditor #162).
+  /quota/i,
   /\b(429|500|502|503|504)\b/,
   /timeout/i,
   /timed out/i,
@@ -44,10 +48,12 @@ export function isTransientProviderError(message: string | null | undefined): bo
 /**
  * Quota/rate-limit failures: the subset of transient errors where retrying the
  * SAME model is the wrong move - the free tier is exhausted and the next call
- * fails the same way. Deliberately narrower than isTransientProviderError:
- * timeouts and 5xx stay same-model retries (the provider hiccuped, the quota
- * is fine). PERMANENT_MARKERS still win: a 402 with "quota" in the text is a
- * billing error, not a free-tier hiccup.
+ * fails the same way. A REAL subset of isTransientProviderError (every marker
+ * here is also a flaky marker), so a quota error always enters the retry loop
+ * first and the loop decides the swap. Timeouts and 5xx stay same-model
+ * retries (the provider hiccuped, the quota is fine). PERMANENT_MARKERS still
+ * win: a 402 with "quota" in the text is a billing error, not a free-tier
+ * hiccup.
  */
 const QUOTA_MARKERS = [
   /\b429\b/,

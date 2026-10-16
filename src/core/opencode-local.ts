@@ -805,7 +805,10 @@ export function createOpenCodeLocalStream(
           {
             method: 'POST',
             body: JSON.stringify({
-              model: { providerID: 'opencode', modelID: cfg.model },
+              // model.id (el modelo de ESTA llamada), nunca cfg.model: un
+              // fallback de cuota swappeado por agent.run() debe llegar al
+              // serve; con cfg.model el swap era mudo (auditor #162).
+              model: { providerID: 'opencode', modelID: model.id },
               ...(cfg.variant ? { variant: cfg.variant } : {}),
               agent: cfg.agent,
               system,
@@ -851,7 +854,7 @@ export function createOpenCodeLocalStream(
         }
         events.end(done);
         log.info('opencode-local reply', {
-          model: cfg.model,
+          model: model.id,
           input: done.usage.input,
           output: done.usage.output,
         });
