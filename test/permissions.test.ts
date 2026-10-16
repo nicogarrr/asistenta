@@ -82,6 +82,47 @@ describe('Gate', () => {
     expect(ok.verdict).toBe('allow');
   });
 
+  it('denies READING secret files even though read is allow-listed', async () => {
+    const gate = new Gate({
+      allow: ['read'],
+      protectedPaths: ['C:\\repo\\state', 'C:\\repo\\.env'],
+      secretPaths: ['C:\\repo\\state', 'C:\\repo\\.env'],
+      approver: allow,
+    });
+    const secretReads = [
+      'C:\\repo\\state\\vault.enc',
+      'C:\\repo\\state\\approvals.db',
+      'C:\\repo\\state\\sessions\\main.json',
+      'C:\\repo\\.env',
+      // Evasions: case, forward slashes, dotdots.
+      'c:/repo/state/VAULT.ENC',
+      'C:\\repo\\state\\..\\state\\approvals.db',
+    ];
+    for (const [i, path] of secretReads.entries()) {
+      const r = await gate.check(`sr${i}`, {
+        tool: 'read',
+        args: { path },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    // Writing them is denied too (via protectedPaths): a written approvals.db
+    // is a self-granted standing approval.
+    const w = await gate.check('sw', {
+      tool: 'write',
+      args: { path: 'C:\\repo\\state\\approvals.db', content: 'x' },
+      actor: 'local',
+    });
+    expect(w.verdict).toBe('deny');
+    // Ordinary files still read fine (read stays allow-listed).
+    const ok = await gate.check('srok', {
+      tool: 'read',
+      args: { path: 'C:\\repo\\src\\cli.ts' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
   it('denies guardrail writes spelled relative, dotted or with parent detours', async () => {
     const gate = new Gate({
       allow: ['write'],

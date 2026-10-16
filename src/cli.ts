@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -104,7 +104,23 @@ function protectedPaths(): string[] {
     ...(home ? [`${home}\\.ssh`, `${home}\\.aws`] : []),
     'C:\\Windows\\System32',
     ...protectedRepoPaths(),
+    // Writing a secret is as bad as reading it: a written approvals.db is a
+    // self-granted standing approval, a written vault is a planted secret.
+    ...secretStatePaths(),
   ];
+}
+
+/**
+ * Files the agent must never read through a tool call: its own secrets. The
+ * vault, the approvals database and the .env decrypt or grant everything
+ * else; they are only ever opened by the code that owns them. The same files
+ * are write-protected too (a written approvals.db is a self-granted standing
+ * approval), via protectedPaths below. Note the fs tools already confine
+ * paths to the cwd - this is the explicit wall for the in-cwd case (.env) and
+ * defense in depth for the rest.
+ */
+function secretStatePaths(): string[] {
+  return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
 import {
@@ -574,6 +590,7 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     stageOf: checkoutStageOf,
     fullControl: options.fullControl ?? false,
     protectedPaths: protectedPaths(),
+    secretPaths: secretStatePaths(),
     maxAmountCents: 30_000,
     grantWindowMs: 90_000,
     // The load-bearing line. Without it every "Siempre" dies with the process and an
@@ -865,6 +882,7 @@ async function chatCommand(): Promise<number> {
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
     protectedPaths: protectedPaths(),
+    secretPaths: secretStatePaths(),
     maxAmountCents: 30_000,
     // Reads the same standing grants the daemon writes, and nothing more: the console
     // has no scope buttons, so it never records one. They apply here because "always"
@@ -971,6 +989,7 @@ async function runCommand(prompt: string): Promise<number> {
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
     protectedPaths: protectedPaths(),
+    secretPaths: secretStatePaths(),
     maxAmountCents: 30_000,
     // Unattended one-shot run: there is no human at the keyboard, so anything that
     // would need approval is refused rather than guessed at. Screenshot and read

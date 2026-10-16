@@ -94,6 +94,14 @@ export interface GateOptions {
   deny?: string[];
   /** Paths the agent may never write to, matched against the resolved path. */
   protectedPaths?: string[];
+  /**
+   * Files the agent must never READ through a tool call: its own secrets (the
+   * vault, the approvals database, the .env). Reading them decrypts or grants
+   * everything else, so they are opened only by the code that owns them. A
+   * hard deny, not an ask: there is no legitimate tool-level read of a secret
+   * to approve. Same resolution semantics as protectedPaths.
+   */
+  secretPaths?: string[];
   /** Max spend for a single purchase intent, in cents. */
   maxAmountCents?: number;
   /**
@@ -240,6 +248,7 @@ function blobOf(c: ToolCall): string {
 export class Gate {
   readonly #rules: Rule[];
   readonly #protected: string[];
+  readonly #secrets: string[];
   readonly #maxAmountCents: number;
   readonly #approver: Approver | undefined;
   readonly #fullControl: boolean;
@@ -272,6 +281,7 @@ export class Gate {
 
   constructor(options: GateOptions = {}) {
     this.#protected = (options.protectedPaths ?? []).map((p) => lexicalNormalize(p));
+    this.#secrets = (options.secretPaths ?? []).map((p) => lexicalNormalize(p));
     this.#maxAmountCents = options.maxAmountCents ?? 30_000;
     this.#approver = options.approver;
     this.#fullControl = options.fullControl ?? false;
@@ -289,6 +299,15 @@ export class Gate {
         verdict: 'deny',
         reason: 'tool is on the deny list',
         match: (c) => (options.deny ?? []).includes(c.tool),
+      },
+      {
+        id: 'deny-read-secrets',
+        verdict: 'deny',
+        reason: 'read target is a secret file (vault, approvals db, .env)',
+        match: (c) => {
+          if (c.tool !== 'read') return false;
+          return this.#isSecret(argString(c.args, 'path'));
+        },
       },
       {
         id: 'allow-tools',
@@ -417,15 +436,31 @@ export class Gate {
     // protected list is bypassed by spelling the same file relatively
     // (`write path='src/permissions.ts'`). Windows drive/UNC spellings count
     // as absolute on any host, since the daemon runs on Windows.
+    const lower = this.#resolvePath(path);
+    return this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`));
+  }
+
+  #isSecret(path: string): boolean {
+    if (!path) return false;
+    const lower = this.#resolvePath(path);
+    return this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`));
+  }
+
+  /**
+   * Resolve a tool-call path before comparing, with the same semantics the fs
+   * tools apply (src/tools/fs.ts guardPath): `~` is the home directory and a
+   * relative path resolves against the process cwd. Windows drive/UNC
+   * spellings count as absolute on any host, since the daemon runs on
+   * Windows. Lexical normalization at the end: `..`, mixed separators and
+   * case must not smuggle a protected path past a prefix check.
+   */
+  #resolvePath(path: string): string {
     const expanded = path.replace(/^~(?=$|[\\/])/, homedir());
     const resolved =
       /^[a-zA-Z]:[\\/]/.test(expanded) || expanded.startsWith('\\\\') || isAbsolute(expanded)
         ? expanded
         : resolve(process.cwd(), expanded);
-    // Lexical normalization before comparing: `..`, mixed separators and case must
-    // not smuggle a protected path past a prefix check.
-    const lower = lexicalNormalize(resolved);
-    return this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`));
+    return lexicalNormalize(resolved);
   }
 
   #isPaymentish(c: ToolCall): boolean {

@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalChoice, ApprovalScope } from '../src/channels/telegram.js';
 import { approvalsDbPath, createDaemonGate } from '../src/cli.js';
+import { paths } from '../src/paths.js';
 
 const MAIN = 'telegram:main:42#main';
 
@@ -225,6 +226,28 @@ describe('createDaemonGate policy', () => {
     const ok = await gate.check(MAIN, {
       tool: 'write',
       args: { path: 'src/tools/other.ts', content: 'x' },
+      actor: 'asistenta',
+    });
+    expect(ok.verdict).not.toBe('deny');
+  });
+
+  it('denies reading the daemon secrets (.env, vault, approvals db)', async () => {
+    const gate = createDaemonGate({
+      threadKey: MAIN,
+      dbPath: approvalsDbPath(dir),
+      ask: channel('always'),
+    });
+    for (const p of ['.env', paths.vault, approvalsDbPath()]) {
+      const r = await gate.check(MAIN, {
+        tool: 'read',
+        args: { path: p },
+        actor: 'asistenta',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    const ok = await gate.check(MAIN, {
+      tool: 'read',
+      args: { path: 'src/cli.ts' },
       actor: 'asistenta',
     });
     expect(ok.verdict).not.toBe('deny');
