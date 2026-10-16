@@ -4528,6 +4528,19 @@ async function serveCommand(): Promise<number> {
   };
 
   await registry.startAll({
+    // Un canal caido avisa una vez por caida y reintenta solo (antes: una linea
+    // de log y canal muerto hasta reinicio, sin aviso — auditoria, linea 120).
+    // El aviso va por el propio Telegram: si el fallo es de polling (conflicto
+    // de getUpdates, el caso tipico) sendMessage sigue funcionando; si la red
+    // esta caida, el catch lo traga y queda el log.
+    onPollingLost: (_channel, message) => {
+      void notifyLastChat(
+        `He perdido la conexion con Telegram: ${message}. Reintento solo cada poco y te aviso al volver.`,
+      ).catch(() => {});
+    },
+    onPollingRecovered: () => {
+      void notifyLastChat('Telegram reconectado.').catch(() => {});
+    },
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
       const chatKey_ = chatKey(inbound);

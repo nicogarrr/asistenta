@@ -33,6 +33,8 @@ export class ChannelRegistry {
       await adapter.start({
         onMessage: (inbound) => handlers.onMessage(inbound),
         onApprovalNeeded: (req) => this.dispatchApproval(req),
+        onPollingLost: (channel, message) => handlers.onPollingLost?.(channel, message),
+        onPollingRecovered: (channel) => handlers.onPollingRecovered?.(channel),
         log: (level, msg, fields) => log[level](`[${adapter.name}] ${msg}`, fields ?? {}),
       });
       log.info('channel started', { channel: adapter.name });
