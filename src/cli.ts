@@ -250,6 +250,7 @@ Usage:
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
+  pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
   pa doctor               check the environment
   pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
 `;
@@ -293,6 +294,10 @@ export async function main(argv: string[]): Promise<number> {
       return new Promise<number>(() => {});
     case 'tv':
       return tvCommand(rest);
+    case 'diagnose': {
+      const { diagnoseCommand } = await import('./diagnose-cli.js');
+      return diagnoseCommand(rest);
+    }
     case 'doctor':
       return doctorCommand();
     case 'llm-health':
