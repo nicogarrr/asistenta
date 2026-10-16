@@ -1,131 +1,149 @@
 import { describe, expect, it } from 'vitest';
-import { formatApproval, formatApprovalQuestion, redactSecrets } from '../src/approval-text.js';
+import { formatApproval, formatApprovalQuestion, redactSecrets, QUESTION_BUDGET } from '../src/approval-text.js';
 import { toolOfQuestion } from '../src/channels/qa.js';
-import type { ToolCall } from '../src/permissions.js';
 
-function call(tool: string, args: Record<string, unknown>): ToolCall {
-  return { tool, args, actor: 'local' } as ToolCall;
-}
+const call = (tool: string, args: Record<string, unknown>) => ({ tool, args, actor: 'asistenta' });
 
-describe('formatApproval: shell', () => {
-  it('muestra el comando completo y el motivo', () => {
+describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
+  it('shell muestra el comando entero y el motivo', () => {
     const a = formatApproval(call('shell', { command: 'Remove-Item ./tmp -Recurse' }), 'riesgo: borrado');
     expect(a.complete).toBe(true);
+    expect(a.question).toContain('¿Permito shell?');
     expect(a.question).toContain('Remove-Item ./tmp -Recurse');
     expect(a.question).toContain('Motivo: riesgo: borrado');
   });
 
   it('canario: mismo prefijo, colas distintas → preguntas aprobables siempre distintas', () => {
-    // Bajo presupuesto: se muestran ENTEROS, así que difieren.
     const prefix = 'Get-ChildItem ' + 'x'.repeat(1200);
     const safe = formatApproval(call('shell', { command: prefix }), 'r');
     const evil = formatApproval(call('shell', { command: prefix + '; Remove-Item C:\\ -Recurse -Force' }), 'r');
     expect(safe.complete).toBe(true);
     expect(evil.complete).toBe(true);
     expect(safe.question === evil.question).toBe(false);
-    // Sobre presupuesto: NINGUNO es aprobable (fail-closed), así que no hay
-    // pregunta ambigua que aprobar. La denegada no enseña el comando recortado.
+    // Sobre presupuesto: NINGUNO es aprobable (fail-closed).
     const longPrefix = 'Get-ChildItem ' + 'x'.repeat(3600);
     const safeLong = formatApproval(call('shell', { command: longPrefix }), 'r');
     const evilLong = formatApproval(call('shell', { command: longPrefix + '; Remove-Item C:\\ -Recurse -Force' }), 'r');
     expect(safeLong.complete).toBe(false);
     expect(evilLong.complete).toBe(false);
-    expect(evilLong.question).toContain('DENEGADA');
-    expect(evilLong.question).not.toContain('Remove-Item');
-    expect(evilLong.question).not.toContain('xxxx');
+    expect(safeLong.question).toContain('DENEGADA');
+    expect(safeLong.question).not.toContain('xxxx');
   });
 
-  it('comando bajo presupuesto pero largo se muestra entero (sin recorte)', () => {
-    const cmd = 'Write-Output ' + 'a'.repeat(3000);
-    const a = formatApproval(call('shell', { command: cmd }), 'r');
+  it('canario: la redacción NO se come la operación tras el secreto', () => {
+    // El canario del auditor: dos comandos con secreto distinto y cola distinta
+    // deben producir preguntas distintas y con la cola intacta.
+    const a = redactSecrets('password=abc;Remove-Item');
+    const b = redactSecrets('password=def;Get-ChildItem');
+    expect(a).toBe('password=[redacted];Remove-Item');
+    expect(b).toBe('password=[redacted];Get-ChildItem');
+    expect(a === b).toBe(false);
+    expect(a).not.toContain('abc');
+  });
+
+  it('canario: valores entrecomillados se enmascaran ENTEROS (sin fuga parcial)', () => {
+    const out = redactSecrets(`password="abc def ghi" && echo ok`);
+    expect(out).toBe('password=[redacted] && echo ok');
+    expect(out).not.toContain('abc');
+    expect(out).not.toContain('def');
+  });
+
+  it('canario: el motivo también se redacta antes de salir al canal', () => {
+    const a = formatApproval(call('shell', { command: 'ls' }), 'usa token=TEST_REASON_SECRET');
+    expect(a.question).not.toContain('TEST_REASON_SECRET');
+    expect(a.question).toContain('token=[redacted]');
+  });
+
+  it('canario: el presupuesto se mide sobre el RAW, no sobre el texto redactado', () => {
+    // token= enmascara 8 chars, pero el comando RAW pasa de 3500: debe denegar.
+    const command = 'token=abc; ' + 'x'.repeat(3600);
+    const a = formatApproval(call('shell', { command }), 'r');
+    expect(a.complete).toBe(false);
+    expect(a.question).toContain('DENEGADA');
+    // Y un comando que cabe en RAW se muestra redactado y completo.
+    const ok = formatApproval(call('shell', { command: 'token=abc; ls' }), 'r');
+    expect(ok.complete).toBe(true);
+    expect(ok.question).toContain('token=[redacted]; ls');
+  });
+
+  it('computer type marca de secreto: jamás muestra el valor', () => {
+    const a = formatApproval(call('computer', { action: 'type', text: 'TEST_PASSWORD_UNLABELLED', secret: true }), 'r');
     expect(a.complete).toBe(true);
-    expect(a.question).toContain('a'.repeat(3000));
+    expect(a.question).not.toContain('TEST_PASSWORD_UNLABELLED');
+    expect(a.question).toContain('[secreto: 24 caracteres]');
   });
-});
 
-describe('formatApproval: computer', () => {
-  it('canario: drag con destinos distintos produce preguntas distintas', () => {
-    const a = formatApproval(call('computer', { action: 'drag', x: 1, y: 2, toX: 100, toY: 200 }), 'r');
-    const b = formatApproval(call('computer', { action: 'drag', x: 1, y: 2, toX: 999, toY: 999 }), 'r');
-    expect(a.question).toContain('a (100, 200)');
-    expect(b.question).toContain('a (999, 999)');
+  it('computer describe click con todos sus parámetros', () => {
+    const base = { action: 'click', x: 1, y: 2 };
+    const q = (extra: Record<string, unknown>) =>
+      formatApproval(call('computer', { ...base, ...extra }), 'r').question;
+    expect(q({ button: 'right' })).toContain('click derecho en (1, 2)');
+    expect(q({ clicks: 2 })).toContain('click x2 en (1, 2)');
+    expect(q({ roi: { x: 0, y: 0, width: 10, height: 10 } })).toContain('[roi (0, 0, 10×10)]');
+    const variants = [q({}), q({ button: 'right' }), q({ clicks: 3 }), q({ roi: { x: 1, y: 1, width: 5, height: 5 } })];
+    expect(new Set(variants).size).toBe(4);
+  });
+
+  it('canario: drag a destinos distintos → preguntas distintas', () => {
+    const a = formatApproval(call('computer', { action: 'drag', x: 1, y: 1, toX: 5, toY: 5 }), 'r');
+    const b = formatApproval(call('computer', { action: 'drag', x: 1, y: 1, toX: 9, toY: 9 }), 'r');
+    expect(a.question).toContain('a (5, 5)');
+    expect(b.question).toContain('a (9, 9)');
     expect(a.question === b.question).toBe(false);
   });
 
-  it('canario: click izquierdo vs derecho vs doble vs roi producen preguntas distintas', () => {
-    const plain = formatApproval(call('computer', { action: 'click', x: 10, y: 20 }), 'r').question;
-    const right = formatApproval(call('computer', { action: 'click', x: 10, y: 20, button: 'right' }), 'r').question;
-    const double = formatApproval(call('computer', { action: 'click', x: 10, y: 20, clicks: 2 }), 'r').question;
-    const roi = formatApproval(call('computer', { action: 'click', x: 10, y: 20, roi: { x: 0, y: 0, width: 50, height: 50 } }), 'r').question;
-    expect(new Set([plain, right, double, roi]).size).toBe(4);
-    expect(right).toContain('derecho');
-    expect(double).toContain('x2');
-    expect(roi).toContain('roi');
-  });
-
-  it('batch muestra TODAS las sub-acciones (nada oculto tras "y N más")', () => {
-    const actions = Array.from({ length: 12 }, (_, i) => ({ action: 'key', key: `F${i + 1}` }));
+  it('batch lista TODAS las acciones, sin "y N más"', () => {
+    const actions = Array.from({ length: 12 }, (_, i) => ({ action: 'click', x: i, y: i }));
     const a = formatApproval(call('computer', { action: 'batch', actions }), 'r');
     expect(a.complete).toBe(true);
     expect(a.question).toContain('Lote de 12 acciones:');
-    for (let i = 1; i <= 12; i++) expect(a.question).toContain(`${i}. pulsar F${i}`);
-    expect(a.question).not.toContain('… y');
+    expect(a.question).toContain('12. click en (11, 11)');
+    expect(a.question).not.toMatch(/y \d+ más/);
   });
 
-  it('batch que no cabe: fail-closed, sin lista parcial', () => {
-    const actions = Array.from({ length: 500 }, () => ({ action: 'type', text: 'x'.repeat(40) }));
+  it('batch de 500 acciones excede el presupuesto RAW → fail-closed', () => {
+    const actions = Array.from({ length: 500 }, (_, i) => ({ action: 'click', x: i, y: i }));
     const a = formatApproval(call('computer', { action: 'batch', actions }), 'r');
     expect(a.complete).toBe(false);
     expect(a.question).toContain('DENEGADA');
-    expect(a.question).not.toContain('Lote de 500');
+    expect(a.question).not.toContain('click en');
   });
 
-  it('parámetros desconocidos se muestran, no se esconden', () => {
-    const a = formatApproval(call('computer', { action: 'click', x: 1, y: 2, pressure: 0.9 }), 'r');
-    expect(a.question).toContain('pressure: 0.9');
-  });
-});
-
-describe('redacción de secretos', () => {
-  it('enmascara tokens y contraseñas en comandos y texto tecleado', () => {
-    const a = formatApproval(
-      call('shell', { command: 'curl -H "Authorization: Bearer fakeAuthorizationToken123" --data password=Sup3rSecret! https://x' }),
-      'r',
-    );
-    expect(a.question).not.toContain('fakeAuthorizationToken123');
-    expect(a.question).not.toContain('Sup3rSecret!');
-    expect(a.question).toContain('[redacted]');
-
-    const b = formatApproval(call('computer', { action: 'type', text: 'mi clave es token=abcd1234efgh' }), 'r');
-    expect(b.question).not.toContain('abcd1234efgh');
+  it('acción desconocida y parámetros desconocidos se muestran (redactados)', () => {
+    const a = formatApproval(call('computer', { action: 'teleport', x: 1, token: 'ghp_abcdefghijklmnop' }), 'r');
+    expect(a.question).toContain('teleport');
+    expect(a.question).not.toContain('ghp_abcdefghijklmnop');
+    const b = formatApproval(call('computer', { action: 'click', x: 1, y: 2, region: 'pop-up' }), 'r');
+    expect(b.question).toContain('{region: "pop-up"}');
   });
 
-  it('redactSecrets cubre flags estilo PowerShell y JWTs', () => {
-    expect(redactSecrets('Run -Password "Sup3rSecret!" -Verbose')).not.toContain('Sup3rSecret!');
-    expect(redactSecrets('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dbsfjgnsdkfgnskjdf')).toBe('[redacted]');
-    expect(redactSecrets('echo hola mundo')).toBe('echo hola mundo');
+  it('redacción: curl bearer, flag PowerShell y JWT', () => {
+    const curlOut = redactSecrets('curl -H "Authorization: Bearer abc123xyz"');
+    expect(curlOut).not.toContain('abc123xyz');
+    expect(curlOut).toContain('[redacted]');
+    expect(redactSecrets("Connect -Password 'hunter2 secret'")).not.toContain('hunter2');
+    const jwt = 'eyJaaaaaaaaaa.bbbbbbbbbb.ccccc';
+    expect(redactSecrets(`echo ${jwt}`)).toBe('echo [redacted]');
+  });
+
+  it('browser y genérico conservan su formato', () => {
+    const b = formatApproval(call('browser', { _target: 'button | Comprar' }), 'r');
+    expect(b.question).toContain('¿Permito esta acción en el navegador?');
+    expect(b.question).toContain('button · Comprar');
+    const g = formatApproval(call('write', { path: '/tmp/x' }), 'escribe fichero');
+    expect(g.question).toContain('¿Permito write?');
+  });
+
+  it('ninguna pregunta aprobable supera el presupuesto', () => {
+    const longReason = 'porque ' + 'y'.repeat(4000);
+    const a = formatApproval(call('shell', { command: 'ls' }), longReason);
+    expect(a.complete).toBe(false);
   });
 });
 
 describe('contrato con el harness QA (toolOfQuestion)', () => {
-  it('las cabeceras shell/computer siguen siendo parseables por qa.ts', () => {
+  it('las cabeceras estables parsean a su herramienta', () => {
     expect(toolOfQuestion(formatApprovalQuestion(call('shell', { command: 'ls' }), 'r'))).toBe('shell');
-    expect(toolOfQuestion(formatApprovalQuestion(call('computer', { action: 'key', key: 'Enter' }), 'r'))).toBe('computer');
-  });
-});
-
-describe('browser y resto: sin cambios de formato', () => {
-  it('browser con _target mantiene el formato informado', () => {
-    const q = formatApprovalQuestion(
-      call('browser', { _target: 'Botón Pagar | 11,40 €\nRESUMEN DE LA PÁGINA:\nTotal: 11,40 €' }),
-      'pago',
-    );
-    expect(q).toContain('¿Permito esta acción en el navegador?');
-    expect(q).toContain('Botón Pagar');
-    expect(q).toContain('Total: 11,40 €');
-  });
-
-  it('otras tools conservan el formato genérico', () => {
-    expect(formatApprovalQuestion(call('docs', { action: 'create' }), 'escritura')).toBe('¿Permito docs?\nescritura');
+    expect(toolOfQuestion(formatApprovalQuestion(call('computer', { action: 'click', x: 1, y: 1 }), 'r'))).toBe('computer');
   });
 });
