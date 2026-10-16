@@ -1,9 +1,18 @@
 import { execFile } from 'node:child_process';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { paths } from './paths.js';
+import { withPortableVaultLock } from './vault-file-lock.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -105,10 +114,17 @@ const PORTABLE_KEYS = [
 ];
 
 function writePortableFile(file: string, map: Record<string, string>): void {
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(map, null, 2), { encoding: 'utf8', mode: 0o600 });
-  renameSync(tmp, file);
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(map, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    renameSync(tmp, file);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw error;
+  }
 }
 
 /**
@@ -163,7 +179,7 @@ export function vaultExists(): boolean {
 }
 
 /** Create the vault with an empty secret map. Idempotent: refuses to clobber. */
-export async function initVault(): Promise<void> {
+async function initVaultUnlocked(): Promise<void> {
   if (vaultBackend() === 'portable') {
     const file = portableSecretsFile();
     if (!existsSync(file)) writePortableFile(file, {});
@@ -259,8 +275,14 @@ export async function unlock(): Promise<void> {
 // backend DPAPI, async, basta un await en medio).
 let writeChain: Promise<void> = Promise.resolve();
 
+export async function initVault(): Promise<void> {
+  return runWriteExclusive(initVaultUnlocked);
+}
+
 function runWriteExclusive<T>(op: () => Promise<T>): Promise<T> {
-  const run = writeChain.then(op);
+  const run = writeChain.then(() =>
+    vaultBackend() === 'portable' ? withPortableVaultLock(portableSecretsFile(), op) : op(),
+  );
   writeChain = run.then(
     () => undefined,
     () => undefined,
@@ -302,9 +324,9 @@ export async function vaultSet(key: string, value: string): Promise<void> {
  * Set several keys in ONE load+save: the batch either lands together or not
  * at all (single file write). Use it for values that are only meaningful as a
  * group (e.g. mail:address + mail:password), so a failure mid-write never
- * leaves half a pair confirmed. Serialized against other writes in THIS
- * process via the shared write queue; writers in OTHER processes are not
- * serialized (shared vault).
+ * leaves half a pair confirmed. Serialized against writes in this process. Linux portable writers also
+ * hold an OS file lock keyed by the effective secrets file, including init/set/rm.
+ * Other platforms retain their existing behavior; no Windows mutex is claimed.
  */
 export async function vaultSetMany(entries: Record<string, string>): Promise<void> {
   return runWriteExclusive(async () => {
