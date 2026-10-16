@@ -29,3 +29,30 @@ it('routes the built CLI without provider keys or Telegram token', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it.each([
+  ['status', '--json'],
+  ['watchdog', '--status', '--json'],
+])('routes the built status CLI %s without state writes', (...args) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pa-status-process-'));
+  try {
+    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), ...args], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        PA_STATE_DIR: dir,
+        PA_DESKTOP: 'off',
+        PA_PROVIDER_API_KEY: '',
+        TELEGRAM_BOT_TOKEN: '',
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.pidState).toBe('missing');
+    expect(report.supervisionInstalled).toBe(null);
+    expect(readdirSync(dir)).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
