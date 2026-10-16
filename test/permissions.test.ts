@@ -123,6 +123,83 @@ describe('Gate', () => {
     expect(ok.verdict).toBe('allow');
   });
 
+  it('ronda 2: dbPath custom + WAL/SHM son secretos y no escribibles', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      dbPath: 'C:\\repo\\custom\\grants.db',
+      approver: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    for (const [i, path] of [
+      'C:\\repo\\custom\\grants.db',
+      'C:\\repo\\custom\\grants.db-wal',
+      'C:\\repo\\custom\\grants.db-shm',
+    ].entries()) {
+      const r = await gate.check(`db${i}`, { tool: 'read', args: { path }, actor: 'local' });
+      expect(r.verdict).toBe('deny');
+      const w = await gate.check(`dw${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(w.verdict).toBe('deny');
+    }
+    expect(asked).toBe(0);
+  });
+
+  it('ronda 2: rutas de config RELATIVAS se absolutizan al crear el gate', async () => {
+    // PA_STATE_DIR puede ser relativo ('./state'); el gate debe resolverlo con
+    // la misma semantica que los calls o la muralla no machea nada.
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      secretPaths: ['state'],
+      approver: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    const r = await gate.check('rel', {
+      tool: 'read',
+      args: { path: 'state/vault.enc' },
+      actor: 'local',
+    });
+    expect(r.verdict).toBe('deny');
+    expect(asked).toBe(0);
+  });
+
+  it('ronda 2: cualquier .env* es secreto salvo examples publicos (asked=0)', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      approver: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    for (const [i, path] of ['.env', '.env.local', '.env.production', 'config/.env.test'].entries()) {
+      const r = await gate.check(`e${i}`, { tool: 'read', args: { path }, actor: 'local' });
+      expect(r.verdict).toBe('deny');
+      const w = await gate.check(`ew${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(w.verdict).toBe('deny');
+    }
+    expect(asked).toBe(0);
+    // Excepcion explicita: examples publicos sin secretos.
+    const ok = await gate.check('ex', {
+      tool: 'read',
+      args: { path: '.env.example' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
   it('denies guardrail writes spelled relative, dotted or with parent detours', async () => {
     const gate = new Gate({
       allow: ['write'],

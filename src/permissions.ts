@@ -280,8 +280,18 @@ export class Gate {
   }> = [];
 
   constructor(options: GateOptions = {}) {
-    this.#protected = (options.protectedPaths ?? []).map((p) => lexicalNormalize(p));
-    this.#secrets = (options.secretPaths ?? []).map((p) => lexicalNormalize(p));
+    // The gate's own database is a secret wherever it lives (custom dbPath
+    // included), sidecars too: a written approvals.db(-wal) is a self-granted
+    // standing approval.
+    const dbFiles = options.dbPath
+      ? [options.dbPath, `${options.dbPath}-wal`, `${options.dbPath}-shm`]
+      : [];
+    this.#protected = [...(options.protectedPaths ?? []), ...dbFiles].map((p) =>
+      lexicalNormalize(absolutizePath(p)),
+    );
+    this.#secrets = [...(options.secretPaths ?? []), ...dbFiles].map((p) =>
+      lexicalNormalize(absolutizePath(p)),
+    );
     this.#maxAmountCents = options.maxAmountCents ?? 30_000;
     this.#approver = options.approver;
     this.#fullControl = options.fullControl ?? false;
@@ -437,13 +447,19 @@ export class Gate {
     // (`write path='src/permissions.ts'`). Windows drive/UNC spellings count
     // as absolute on any host, since the daemon runs on Windows.
     const lower = this.#resolvePath(path);
-    return this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`));
+    return (
+      isDotEnvFile(lower) ||
+      this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`))
+    );
   }
 
   #isSecret(path: string): boolean {
     if (!path) return false;
     const lower = this.#resolvePath(path);
-    return this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`));
+    return (
+      isDotEnvFile(lower) ||
+      this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`))
+    );
   }
 
   /**
@@ -455,12 +471,7 @@ export class Gate {
    * case must not smuggle a protected path past a prefix check.
    */
   #resolvePath(path: string): string {
-    const expanded = path.replace(/^~(?=$|[\\/])/, homedir());
-    const resolved =
-      /^[a-zA-Z]:[\\/]/.test(expanded) || expanded.startsWith('\\\\') || isAbsolute(expanded)
-        ? expanded
-        : resolve(process.cwd(), expanded);
-    return lexicalNormalize(resolved);
+    return lexicalNormalize(absolutizePath(path));
   }
 
   #isPaymentish(c: ToolCall): boolean {
@@ -1303,6 +1314,36 @@ export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
     p.replace(`${r}\\src\\`, `${r}\\dist\\`).replace(/\.ts$/, '.js'),
   );
   return [...src, ...dist];
+}
+
+/**
+ * Absolute form of a path coming from config or a tool call, with the same
+ * semantics the fs tools apply (src/tools/fs.ts guardPath): `~` is the home
+ * directory and a relative path resolves against the process cwd. Windows
+ * drive/UNC spellings count as absolute on any host, since the daemon runs
+ * on Windows. Configuration entries (PA_STATE_DIR may be RELATIVE) must go
+ * through this too, or a relative secret dir never matches a resolved call.
+ */
+function absolutizePath(path: string): string {
+  const expanded = path.replace(/^~(?=$|[\\/])/, homedir());
+  return /^[a-zA-Z]:[\\/]/.test(expanded) || expanded.startsWith('\\\\') || isAbsolute(expanded)
+    ? expanded
+    : resolve(process.cwd(), expanded);
+}
+
+/** Public example files: the only .env* a tool may touch. No secrets inside. */
+const ENV_PUBLIC_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template']);
+
+/**
+ * Any `.env` or `.env.*` is a secret container (credentials live in
+ * .env.local, .env.production... as surely as in .env). Only public examples
+ * are exempt. `normalizedPath` is the lexical-normalized (lowercase,
+ * backslash) form.
+ */
+function isDotEnvFile(normalizedPath: string): boolean {
+  const base = normalizedPath.split('\\').pop() ?? '';
+  if (ENV_PUBLIC_EXAMPLES.has(base)) return false;
+  return base === '.env' || base.startsWith('.env.');
 }
 
 /** Constant-time compare for shared secrets, so auth checks cannot be timed. */

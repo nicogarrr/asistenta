@@ -237,7 +237,8 @@ describe('createDaemonGate policy', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('always'),
     });
-    for (const p of ['.env', paths.vault, approvalsDbPath()]) {
+    const ownDb = approvalsDbPath(dir);
+    for (const p of ['.env', '.env.local', paths.vault, approvalsDbPath(), ownDb, `${ownDb}-wal`]) {
       const r = await gate.check(MAIN, {
         tool: 'read',
         args: { path: p },
