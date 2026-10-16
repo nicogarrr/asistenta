@@ -84,7 +84,15 @@ node --env-file=.env dist/cli.js serve
 
 Envía `/start` a tu bot desde el usuario autorizado. Un comando que responde no prueba que una petición al modelo funcione: prueba después una pregunta genérica, sin datos privados. Si faltan credenciales o el token es inválido, corrige la configuración; no abras el bot a todos los usuarios para resolverlo.
 
-Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mates un proceso solo por un PID copiado de un archivo. `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada. Los comandos `setup`, `stop` y `restart` y la supervisión continua aún no están disponibles en main al escribir esta guía. La primitiva Linux de control local existe, pero no activa un endpoint en el daemon por sí sola. No se afirma que haya un watchdog instalado. El instalador de Windows cubre procesos que terminan, no cuelgues de procesos que siguen vivos.
+Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mates un proceso solo por un PID copiado de un archivo.
+
+- `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada.
+- En Linux, solo en modo servidor, `node --env-file=.env dist/cli.js stop` usa control local autenticado y exige cierre limpio y propiedad liberada. Requiere `flock`, directorio de estado privado y un daemon arrancado con esta versión. No puede detener un daemon antiguo que no publique ese control. Un timeout o cierre no limpio es un fallo, no una invitación a matar por PID.
+- En Windows todavía no hay controlador `stop`/`restart`. No uses la cobertura Linux como prueba de tu PC Windows.
+- `restart` se rechaza sin cambiar el daemon porque no se puede verificar si un supervisor lo relanzará.
+- `setup` y la supervisión continua aún no están disponibles. El instalador de Windows cubre procesos que terminan, no cuelgues de procesos que siguen vivos. No se afirma que haya un watchdog instalado.
+
+En Linux el nuevo controlador exige que el directorio de estado sea privado (700, propietario actual, sin symlink) y que la ruta del socket quepa en el límite Unix. Si una instalación antigua tiene permisos abiertos, el arranque falla cerrado: revisa primero su contenido y propietario antes de restringirlos. No cambia esos permisos silenciosamente. `PA_DESKTOP=on` no se admite en este camino Linux.
 
 ## Arranque automático
 
@@ -104,3 +112,4 @@ El runner ejecuta una fase general y una fase serial para pruebas de recursos. L
 - [`ROADMAP.md`](ROADMAP.md): contexto de trabajo y deudas; puede contener planes aún no implementados.
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
+- [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): parada Linux, pruebas y límites.
