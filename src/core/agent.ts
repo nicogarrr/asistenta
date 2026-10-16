@@ -17,8 +17,10 @@ import {
   type Summarize,
 } from './history.js';
 import { buildSystemPrompt } from './prompt.js';
+import type { Model } from '@earendil-works/pi-ai';
 import { createProviderHandle } from './provider.js';
 import {
+  isQuotaError,
   DEFAULT_RETRY,
   isTransientProviderError,
   type RetryPolicy,
@@ -407,6 +409,8 @@ export class PersonalAgent {
    * counter for its whole life is a daily quota wearing a safety net's clothes.
    */
   readonly #sharedBudget: boolean;
+  /** Quota fallback for one run (P2-17); undefined when no fallback is configured. */
+  readonly #fallbackFor?: (sessionId?: string) => Model<string>;
 
   private constructor(
     agent: Agent,
@@ -416,6 +420,7 @@ export class PersonalAgent {
     sessionId: string,
     budget: IterationBudget,
     sharedBudget: boolean,
+    fallbackFor?: (sessionId?: string) => Model<string>,
   ) {
     this.#agent = agent;
     this.#config = config;
@@ -425,6 +430,7 @@ export class PersonalAgent {
     this.#budget = budget;
     this.#runToolCallCeiling = config.maxToolCalls;
     this.#sharedBudget = sharedBudget;
+    this.#fallbackFor = fallbackFor;
   }
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
@@ -473,7 +479,7 @@ export class PersonalAgent {
       deferTools?: boolean;
     } = {},
   ): Promise<PersonalAgent> {
-    const { models, model, streamFn, modelFor } = await createProviderHandle(config);
+    const { models, model, streamFn, modelFor, fallbackFor } = await createProviderHandle(config);
     const stream = opts.stream ?? false;
     const loadout = opts.deferTools ? new ToolLoadout(tools) : undefined;
     let seenVersion = 0;
@@ -577,6 +583,7 @@ export class PersonalAgent {
       sessionId,
       budget,
       sharedBudget,
+      fallbackFor,
     );
     // Summaries come from the same model, with no tools and a short answer cap.
     personal.#summarize = async (prompt) => {
@@ -838,6 +845,13 @@ export class PersonalAgent {
       fileWrites: new FileWriteTracker(),
     };
     let attempt = 0;
+    // Quota fallback (P2-17): a quota-class error means retrying the primary is
+    // hopeless, so the rest of THIS run streams from the configured fallback.
+    // The swap is per run and restored in finally: the primary is the better
+    // model and its quota resets, so a later run must start on it and fall
+    // back again (loudly) if the quota is still dead.
+    let fellBack = false;
+    const primaryModel = this.#agent.state.model;
     try {
       await this.#compact();
       if (this.#loadout) {
@@ -853,6 +867,14 @@ export class PersonalAgent {
         isTransientProviderError(result.error)
       ) {
         attempt++;
+        if (!fellBack && this.#fallbackFor && isQuotaError(result.error)) {
+          fellBack = true;
+          this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
+          log.warn('primary model quota exhausted: falling back for this run', {
+            from: this.#config.model,
+            to: this.#config.fallbackModel,
+          });
+        }
         const delay = retryDelay(attempt, this.#config.retry);
         log.warn('retrying after a transient provider failure', {
           attempt,
@@ -866,6 +888,7 @@ export class PersonalAgent {
 
       return { ...result, attempts: attempt + 1 };
     } finally {
+      if (fellBack) this.#agent.state.model = primaryModel;
       // Un /steer que llegó tras el último paso no debe aplicarse al turno siguiente.
       this.#agent.clearSteeringQueue();
     }

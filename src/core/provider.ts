@@ -26,6 +26,12 @@ export interface ProviderHandle {
   streamFn: MutableModels['streamSimple'];
   /** The model with the Go client headers for one session (identity for other endpoints). */
   modelFor: (sessionId?: string) => Model<string>;
+  /**
+   * The configured quota fallback (config.fallbackModel), same endpoint and
+   * auth, with the same per-session Go headers. Undefined when no fallback is
+   * configured: agent code must not invent one.
+   */
+  fallbackFor?: (sessionId?: string) => Model<string>;
 }
 
 /** Identifies this client to OpenCode Go (own user agent, never a generic SDK name). */
@@ -84,6 +90,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
       {
         id: config.model,
         name: config.model,
+        
         api: 'openai-completions',
         provider: config.provider,
         baseUrl: config.baseUrl,
@@ -100,6 +107,26 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
         // Unknown cost, not zero cost. See docs note: budget code must not treat 0 as free.
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
+      // Quota fallback (P2-17): same endpoint, same auth, same capabilities as
+      // the primary; only the model id changes. Registered here because pi-ai's
+      // catalog does not know this provider's models.
+      ...(config.fallbackModel
+        ? [
+            {
+              id: config.fallbackModel,
+              name: config.fallbackModel,
+              api: 'openai-completions' as const,
+              provider: config.provider,
+              baseUrl: config.baseUrl,
+              ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
+              input: ['text', 'image'] as Array<'text' | 'image'>,
+              reasoning: false,
+              contextWindow: 1_048_576,
+              maxTokens: 32_000,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          ]
+        : []),
     ],
     api: { 'openai-completions': openAICompletionsApi() },
   });
@@ -110,18 +137,33 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     throw new Error(`model ${config.provider}/${config.model} not registered`);
   }
   const go = isOpenCodeEndpoint(config.baseUrl);
-  const modelFor = (sessionId?: string): Model<string> =>
+  // Go needs its client + session headers on whatever model is being streamed,
+  // including a fallback the agent swapped in mid-run. Wrapping the passed
+  // model (instead of always the primary) is what makes the fallback effective
+  // on Go endpoints; for the primary the result is identical to the old
+  // override, since initialState.model carries no headers.
+  const withGoHeaders = (m: Model<string>, sessionId?: string): Model<string> =>
     go
-      ? ({ ...model, headers: { ...model.headers, ...goHeaders(sessionId) } } as Model<string>)
-      : model;
+      ? ({ ...m, headers: { ...m.headers, ...goHeaders(sessionId) } } as Model<string>)
+      : m;
+  const modelFor = (sessionId?: string): Model<string> => withGoHeaders(model, sessionId);
   const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
-    models.streamSimple(go ? modelFor(options?.sessionId) : m, context, options);
+    models.streamSimple(withGoHeaders(m, options?.sessionId), context, options);
+  const fallback = config.fallbackModel
+    ? models.getModel(config.provider, config.fallbackModel)
+    : undefined;
+  if (config.fallbackModel && !fallback) {
+    throw new Error(`fallback model ${config.provider}/${config.fallbackModel} not registered`);
+  }
+  const fallbackFor = fallback
+    ? (sessionId?: string): Model<string> => withGoHeaders(fallback, sessionId)
+    : undefined;
   log.info('provider ready', {
     provider: config.provider,
     model: config.model,
     baseUrl: config.baseUrl,
   });
-  return { models, model, streamFn, modelFor };
+  return { models, model, streamFn, modelFor, fallbackFor };
 }
 
 async function resolveApiKey(baseUrl: string): Promise<string> {
@@ -206,6 +248,26 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
         maxTokens: 32_000,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
+      // Quota fallback (P2-17): the local serve exposes the -free siblings on
+      // the same endpoint and auth, so the fallback is the same entry with a
+      // different id. Without this registration the opencode-local preset -
+      // the one with a default fallback - had none (auditor #162).
+      ...(config.fallbackModel
+        ? [
+            {
+              id: config.fallbackModel,
+              name: config.fallbackModel,
+              api: 'openai-completions' as const,
+              provider: config.provider,
+              baseUrl: config.baseUrl,
+              input: ['text', 'image'] as Array<'text' | 'image'>,
+              reasoning: false,
+              contextWindow: 1_048_576,
+              maxTokens: 32_000,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          ]
+        : []),
     ],
     api: { 'openai-completions': openAICompletionsApi() },
   });
@@ -213,6 +275,12 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
   const model = models.getModel(config.provider, config.model);
   if (!model) {
     throw new Error(`model ${config.provider}/${config.model} not registered`);
+  }
+  const localFallback = config.fallbackModel
+    ? models.getModel(config.provider, config.fallbackModel)
+    : undefined;
+  if (config.fallbackModel && !localFallback) {
+    throw new Error(`fallback model ${config.provider}/${config.fallbackModel} not registered`);
   }
   // Los resumenes y la extraccion de hechos llaman a models.completeSimple con
   // un Context simple: lo normalizamos y lo mandamos por el stream local.
@@ -242,5 +310,7 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
     streamFn: (m, context, options) =>
       stream(m as Model<'openai-completions'>, context as never, options),
     modelFor: () => model,
+    // No Go headers here: the local endpoint is never an OpenCode endpoint.
+    fallbackFor: localFallback ? () => localFallback : undefined,
   };
 }
