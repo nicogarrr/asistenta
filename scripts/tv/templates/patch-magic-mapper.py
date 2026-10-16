@@ -13,12 +13,17 @@ Cambios (seguridad del token del boton TV):
    log. El token acabaria en texto plano en /home/root/magic_mapper.log.
 2. El print del comando completo pasa a anunciar solo metodo + url: ese print
    concatenaba argv entero, cabeceras incluidas.
-3. Soporte `token_file` en inputs de la funcion curl: ruta a un archivo de
-   configuracion de curl PRIVADO (0600, fuera del JSON de config y de los
-   logs) que aporta la cabecera Authorization via `curl --config`. El token
-   nunca viaja en argv del proceso, ni en magic_mapper_config.json, ni en
-   logs. El instalador (install-magic-mapper.sh) es quien escribe ese
-   archivo y EXIGE token: sin el no se despliega el mapeo.
+3. Soporte `token_file` en inputs de la funcion curl: ruta a un archivo
+   PRIVADO (0600, fuera del JSON de config y de los logs) que contiene el
+   secreto compartido con el listener EN CRUDO (una linea, nada mas). Con el
+   NO se manda un Authorization Bearer (cada pulsacion lo exponia en claro
+   por HTTP en la LAN): se firma cada pulsacion con HMAC-SHA256 sobre
+   "ts.nonce.METODO.ruta" y se mandan solo las cabeceras X-TV-Ts,
+   X-TV-Nonce y X-TV-Sig, que no son secretas. El token nunca viaja por la
+   LAN, ni en argv del proceso, ni en magic_mapper_config.json, ni en logs.
+   El listener (src/tv/button-listener.ts) verifica la firma con ventana de
+   reloj y cache anti-replay. El instalador (install-magic-mapper.sh) es
+   quien escribe ese archivo y EXIGE token: sin el no se despliega el mapeo.
 """
 import ast
 import hashlib
@@ -27,6 +32,32 @@ import sys
 # sha256 de magic_mapper.py tal cual en andrewfraley/magic_mapper tag v1.1.0.
 EXPECTED_SHA256 = "36839ef0468c094ea64e0c3fc8811c701fb8f7961ff7f6b905a41c39c58232f0"
 
+# Bloque insertado tras `command = command_string.split()`: firma HMAC por
+# pulsacion. ts + nonce + metodo + ruta es lo unico que viaja; el secreto
+# solo se lee del archivo privado y solo vive en memoria del proceso.
+HMAC_BLOCK = (
+    "\n"
+    '    token_file = inputs.get("token_file")\n'
+    "    if token_file:\n"
+    "        import hashlib\n"
+    "        import hmac\n"
+    "        import os\n"
+    "        import time\n"
+    '        with open(token_file, "r", encoding="utf-8") as tf:\n'
+    "            secret = tf.read().strip()\n"
+    "        ts = str(int(time.time()))\n"
+    "        nonce = os.urandom(8).hex()\n"
+    '        path = "/" + url.split("/", 3)[3] if url.count("/") >= 3 else "/"\n'
+    '        msg = "%s.%s.%s.%s" % (ts, nonce, method, path)\n'
+    "        sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()\n"
+    '        command.append("-H")\n'
+    '        command.append("X-TV-Ts: %s" % ts)\n'
+    '        command.append("-H")\n'
+    '        command.append("X-TV-Nonce: %s" % nonce)\n'
+    '        command.append("-H")\n'
+    '        command.append("X-TV-Sig: %s" % sig)\n'
+)
+
 REPLACEMENTS = [
     (
         'command_string = "curl -vs -X %s" % method',
@@ -34,12 +65,7 @@ REPLACEMENTS = [
     ),
     (
         "    command = command_string.split()\n",
-        "    command = command_string.split()\n"
-        "\n"
-        '    token_file = inputs.get("token_file")\n'
-        "    if token_file:\n"
-        '        command.append("--config")\n'
-        "        command.append(token_file)\n",
+        "    command = command_string.split()\n" + HMAC_BLOCK,
     ),
     (
         'print("Running curl command: %s" % " ".join(command))',
@@ -88,7 +114,7 @@ def main() -> int:
 
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(src)
-    print("parche aplicado: curl sin -v, log sin argv, token_file via curl --config")
+    print("parche aplicado: curl sin -v, log sin argv, HMAC por pulsacion via token_file")
     return 0
 
 

@@ -10,9 +10,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   isPrivateRemote,
+  signTvButton,
   startTvButtonListener,
   type TvButtonListener,
 } from '../src/tv/button-listener.js';
+
+const SECRET = 'secreto';
+
+/** Cabeceras de firma como las genera el magic_mapper parcheado en la tele. */
+function signedHeaders(
+  method: string,
+  path: string,
+  opts: { ts?: string; nonce?: string; secret?: string } = {},
+): Record<string, string> {
+  const ts = opts.ts ?? String(Math.floor(Date.now() / 1000));
+  const nonce = opts.nonce ?? 'a1b2c3d4e5f60708';
+  const secret = opts.secret ?? SECRET;
+  return {
+    'x-tv-ts': ts,
+    'x-tv-nonce': nonce,
+    'x-tv-sig': signTvButton(secret, ts, nonce, method, path),
+  };
+}
 
 let started: TvButtonListener | null = null;
 
@@ -107,29 +126,82 @@ describe('tv button listener', () => {
     expect(onButton).toHaveBeenCalledTimes(1);
   });
 
-  it('con token, POST sin token se rechaza y no dispara', async () => {
-    const { base, onButton } = await listen({ token: 'secreto' });
+  it('con token, POST sin firma se rechaza y no dispara', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
     const res = await fetch(`${base}/tv/button`, { method: 'POST' });
     expect(res.status).toBe(401);
     expect(onButton).not.toHaveBeenCalled();
   });
 
-  it('con token, el Bearer correcto dispara', async () => {
-    const { base, onButton } = await listen({ token: 'secreto' });
+  it('con token, un Bearer con el secreto NO sirve: el token no viaja', async () => {
+    // Canario del auditor: la pulsacion no puede mandar el secreto en claro,
+    // ni siquiera el correcto - solo vale la firma HMAC de ESTA pulsacion.
+    const { base, onButton } = await listen({ token: SECRET });
     const res = await fetch(`${base}/tv/button`, {
       method: 'POST',
-      headers: { authorization: 'Bearer secreto' },
+      headers: { authorization: `Bearer ${SECRET}` },
+    });
+    expect(res.status).toBe(401);
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('con token, una firma valida dispara', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const res = await fetch(`${base}/tv/button`, {
+      method: 'POST',
+      headers: signedHeaders('POST', '/tv/button'),
     });
     expect(res.status).toBe(202);
     expect(onButton).toHaveBeenCalledTimes(1);
   });
 
-  it('sin token configurado acepta cualquiera (misma postura que Glasshouse)', async () => {
-    const { base, onButton } = await listen();
+  it('la firma es por metodo y ruta: la de otra ruta o metodo no vale', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    for (const headers of [
+      signedHeaders('POST', '/tv/button-health'),
+      signedHeaders('GET', '/tv/button'),
+    ]) {
+      const res = await fetch(`${base}/tv/button`, { method: 'POST', headers });
+      expect(res.status).toBe(401);
+    }
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('una firma con reloj fuera de la ventana se rechaza', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const vieja = String(Math.floor(Date.now() / 1000) - 600); // 10 min atras
     const res = await fetch(`${base}/tv/button`, {
       method: 'POST',
-      headers: { authorization: 'Bearer lo-que-sea' },
+      headers: signedHeaders('POST', '/tv/button', { ts: vieja }),
     });
+    expect(res.status).toBe(401);
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('la misma firma repetida es replay y se rechaza', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const headers = signedHeaders('POST', '/tv/button');
+    expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+    expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+    expect(onButton).toHaveBeenCalledTimes(1);
+  });
+
+  it('dos pulsaciones en el mismo segundo con nonce distinto pasan las dos', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const ts = String(Math.floor(Date.now() / 1000));
+    for (const nonce of ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']) {
+      const res = await fetch(`${base}/tv/button`, {
+        method: 'POST',
+        headers: signedHeaders('POST', '/tv/button', { ts, nonce }),
+      });
+      expect(res.status).toBe(202);
+    }
+    expect(onButton).toHaveBeenCalledTimes(2);
+  });
+
+  it('sin token configurado acepta cualquiera (misma postura que Glasshouse)', async () => {
+    const { base, onButton } = await listen();
+    const res = await fetch(`${base}/tv/button`, { method: 'POST' });
     expect(res.status).toBe(202);
     expect(onButton).toHaveBeenCalledTimes(1);
   });

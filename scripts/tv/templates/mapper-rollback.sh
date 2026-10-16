@@ -19,6 +19,11 @@ mm_alive() {
 [ -f "$BK/MANIFEST" ] || abort "sin MANIFEST en $BK - backup perdido o rollback equivocado"
 if [ "$(cat "$BK/MANIFEST")" != "EMPTY" ]; then
   while IFS= read -r f; do
+    # Cada entrada debe ser un basename simple: un "../algo" en el MANIFEST
+    # haria restaurar (cp) FUERA del backup. Se valida ANTES de borrar nada.
+    case "$f" in
+      ""|*/*|..|.) abort "MANIFEST con entrada invalida: '$f' - no muto" ;;
+    esac
     [ -e "$BK/$f" ] || abort "falta $f en el backup - restore incompleto, no muto"
   done < "$BK/MANIFEST"
 fi
@@ -29,7 +34,7 @@ fi
 sleep 1
 if mm_alive; then abort "magic_mapper sigue vivo tras stop - no toco ficheros con el proceso corriendo"; fi
 # 3) rm + restore desde el backup validado
-rm -f "$ROOT/magic_mapper.py" "$ROOT/magic_mapper_config.json" "$ROOT/magic_mapper_config.json.dist" "$ROOT/.tv-button-curl.conf" "$INITD/start_magic_mapper"
+rm -f "$ROOT/magic_mapper.py" "$ROOT/magic_mapper_config.json" "$ROOT/magic_mapper_config.json.dist" "$ROOT/.tv-button-token" "$INITD/start_magic_mapper"
 if [ "$(cat "$BK/MANIFEST")" != "EMPTY" ]; then
   while IFS= read -r f; do
     case "$f" in

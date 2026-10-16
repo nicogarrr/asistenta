@@ -11,10 +11,14 @@ Modos:
       Ejecuta `sh -s -- args...` en la tele con el SCRIPT leido de stdin.
       La salida remota se vuelca a stdout tal cual.
   put <host> <local> <remote> <mode> [--port N] [--timeout S]
-      Escribe <local> en <remote> via `base64 -d` y le aplica chmod <mode>.
-      El contenido viaja SOLO por el socket: nunca en argv ni en logs. La
-      salida remota no se imprime salvo error (puede contener el eco de lo
-      enviado, es decir el propio secreto en base64).
+      Escribe <local> en <remote> via `base64 -d` con `set -e`: un fallo de
+      decode, escritura, verificacion o chmod PROPAGA su exit code (nunca un
+      0 optimista con el destino vacio). El archivo se escribe en un temporal
+      (umask 077), se valida tamano y sha256 contra lo leido en local y SOLO
+      entonces se mueve (mv) al destino: un upload corrupto nunca "activa" un
+      archivo a medias. El contenido viaja SOLO por el socket: nunca en argv
+      ni en logs. La salida remota no se imprime salvo error (puede contener
+      el eco de lo enviado, es decir el propio secreto en base64).
 
 El exit code remoto viaja en un centinela __MM_TELNET_EXIT_<n>__ impreso por
 un trap EXIT del propio shell remoto (asi un `exit N` prematuro tambien lo
@@ -22,6 +26,7 @@ emite). Si el centinela no llega, es fallo de transporte (exit 3), nunca un
 exit 0 optimista.
 """
 import base64
+import hashlib
 import re
 import shlex
 import socket
@@ -111,6 +116,41 @@ def _opts(argv):
     return timeout, port, rest
 
 
+def _put_payload(remote: str, mode_str: str, data: bytes) -> bytes:
+    """Script remoto del modo put: decode + verificacion + mv atomico.
+
+    set -e es la pieza que faltaba: sin el, un `base64 -d` roto dejaba el
+    destino vacio y el centinela reportaba exit 0 porque el chmod final
+    pasaba. Ahora cada paso falla visible y el destino solo se toca con el
+    mv final, despues de validar tamano y sha256 del temporal.
+    """
+    digest = hashlib.sha256(data).hexdigest()
+    size = len(data)
+    b64 = base64.encodebytes(data)  # 76 columnas; busybox base64 -d lo acepta
+    tmp = shlex.quote(remote + ".mmtmp").encode()
+    dest = shlex.quote(remote).encode()
+    lines = [
+        b"tmp=" + tmp,
+        # El trap limpia el temporal y conserva el centinela de exit code.
+        b"trap 'rc=$?; rm -f \"$tmp\"; echo __MM_TELNET_EXIT_${rc}__' EXIT",
+        b"set -e",
+        b"umask 077",
+        b"base64 -d > \"$tmp\" <<'__MM_B64__'",
+        b64.rstrip(b"\n"),
+        b"__MM_B64__",
+        b'[ "$(wc -c < "$tmp" | tr -d " ")" = "' + str(size).encode() + b'" ]',
+        # El hash se verifica con python3 (la tele lo tiene; sha256sum no esta
+        # confirmado). Si python3 faltara, el put FALLA visible, nunca activa.
+        b'python3 - "$tmp" "' + digest.encode() + b'" <<\'__MM_HASH__\'',
+        b"import hashlib, sys",
+        b"sys.exit(0 if hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest() == sys.argv[2] else 1)",
+        b"__MM_HASH__",
+        b"chmod " + mode_str.encode() + b" \"$tmp\"",
+        b"mv \"$tmp\" " + dest,
+    ]
+    return b"\n".join(lines) + b"\n"
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
@@ -147,15 +187,10 @@ def main() -> int:
             return 2
         with open(local, "rb") as fh:
             data = fh.read()
-        b64 = base64.encodebytes(data)  # 76 columnas; busybox base64 -d lo acepta
-        payload = (
-            b"trap 'echo __MM_TELNET_EXIT_$?__' EXIT\n"
-            + b"base64 -d > " + shlex.quote(remote).encode() + b" <<'__MM_B64__'\n"
-            + b64
-            + b"__MM_B64__\n"
-            + b"chmod " + mode_str.encode() + b" " + shlex.quote(remote).encode() + b"\n"
+        return _finish(
+            _run_session(host, port, b"sh -s", _put_payload(remote, mode_str, data), timeout),
+            quiet=True,
         )
-        return _finish(_run_session(host, port, b"sh -s", payload, timeout), quiet=True)
 
     print("modo desconocido: %r" % mode)
     return 2

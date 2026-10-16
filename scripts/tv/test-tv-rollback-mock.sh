@@ -110,11 +110,30 @@ echo "$OUT" | grep -q "disco lleno" || fail "9: fallo de cp no visible"
 ok "instalador: cp de backup obligatorio - fallo aborta antes de mutar"
 
 # 10) mapper: el archivo privado del token se restaura desde el backup (0600)
+# y TODOS los modos se respetan (cp -a): el mapper con 640 vuelve con 640.
 sandbox; stub pgrep 'exit 1'
-printf 'magic_mapper.py\n.tv-button-curl.conf\n' > "$T/bk/MANIFEST"
-echo TOKBAK > "$T/bk/.tv-button-curl.conf"; chmod 600 "$T/bk/.tv-button-curl.conf"
+printf 'magic_mapper.py\n.tv-button-token\n' > "$T/bk/MANIFEST"
+echo TOKBAK > "$T/bk/.tv-button-token"; chmod 600 "$T/bk/.tv-button-token"
+chmod 640 "$T/bk/magic_mapper.py"
 OUT=$(runp "$MMRB") || fail "10: restore con token debia funcionar"
-[ "$(cat "$T/root/.tv-button-curl.conf")" = TOKBAK ] || fail "10: token no restaurado"
-[ "$(stat -c %a "$T/root/.tv-button-curl.conf")" = "600" ] || fail "10: modo 600 perdido en restore"
-ok "mapper: archivo privado del token restaurado desde backup con sus permisos"
-echo "PASS $PASS/10"
+[ "$(cat "$T/root/.tv-button-token")" = TOKBAK ] || fail "10: token no restaurado"
+[ "$(stat -c %a "$T/root/.tv-button-token")" = "600" ] || fail "10: modo 600 perdido en restore"
+[ "$(stat -c %a "$T/root/magic_mapper.py")" = "640" ] || fail "10: modo del mapper no respetado"
+ok "mapper: restore respeta modos (token 0600, mapper 640)"
+
+# 11) MANIFEST con entrada tipo "../evil": aborta ANTES de rm, sentinel intacto
+sandbox; stub pgrep 'exit 1'
+printf '../evil\n' > "$T/bk/MANIFEST"
+runp "$MMRB" 2>"$T/err" && fail "11: MANIFEST con traversal debia abortar"
+grep -q "entrada invalida" "$T/err" || fail "11: abort de entrada invalida no visible"
+[ "$(cat "$T/root/magic_mapper.py")" = SENTINEL ] || fail "11: sentinel tocado"
+ok "mapper: MANIFEST con '../' -> aborta antes de borrar nada"
+
+# 12) MANIFEST lista un fichero AUSENTE del backup: aborta antes de rm
+sandbox; stub pgrep 'exit 1'
+printf 'magic_mapper.py\nfichero-que-no-existe\n' > "$T/bk/MANIFEST"
+runp "$MMRB" 2>"$T/err" && fail "12: restore incompleto debia abortar"
+grep -q "falta fichero-que-no-existe" "$T/err" || fail "12: abort no visible"
+[ "$(cat "$T/root/magic_mapper.py")" = SENTINEL ] || fail "12: sentinel tocado"
+ok "mapper: backup incompleto (MANIFEST != contenido) -> aborta antes de rm"
+echo "PASS $PASS/12"
