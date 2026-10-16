@@ -404,7 +404,7 @@ function readApprovals(file: string): ApprovalsInfo {
   if (!existsSync(file)) return { ...empty, problem: `no existe ${file}` };
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(file);
+    db = new DatabaseSync(file, { readOnly: true });
     const rows = db
       .prepare('SELECT level, tool, COUNT(*) AS n FROM approval_scopes GROUP BY level, tool')
       .all();
