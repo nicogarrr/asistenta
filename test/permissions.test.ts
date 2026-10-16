@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
 import { protectedRepoPaths } from '../src/permissions.js';
@@ -124,30 +127,34 @@ describe('Gate', () => {
   });
 
   it('ronda 2: dbPath custom + WAL/SHM son secretos y no escribibles', async () => {
-    let asked = 0;
-    const gate = new Gate({
-      allow: ['read'],
-      dbPath: 'C:\\repo\\custom\\grants.db',
-      approver: async () => {
-        asked += 1;
-        return true;
-      },
-    });
-    for (const [i, path] of [
-      'C:\\repo\\custom\\grants.db',
-      'C:\\repo\\custom\\grants.db-wal',
-      'C:\\repo\\custom\\grants.db-shm',
-    ].entries()) {
-      const r = await gate.check(`db${i}`, { tool: 'read', args: { path }, actor: 'local' });
-      expect(r.verdict).toBe('deny');
-      const w = await gate.check(`dw${i}`, {
-        tool: 'write',
-        args: { path, content: 'x' },
-        actor: 'local',
+    // Real dbPath in a temp dir: the Gate OPENS the database at construction,
+    // so a fake Windows path would litter the repo on Linux (and vice versa).
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gate-db-'));
+    try {
+      const db = join(dir, 'grants.db');
+      let asked = 0;
+      const gate = new Gate({
+        allow: ['read'],
+        dbPath: db,
+        approver: async () => {
+          asked += 1;
+          return true;
+        },
       });
-      expect(w.verdict).toBe('deny');
+      for (const [i, path] of [db, `${db}-wal`, `${db}-shm`].entries()) {
+        const r = await gate.check(`db${i}`, { tool: 'read', args: { path }, actor: 'local' });
+        expect(r.verdict).toBe('deny');
+        const w = await gate.check(`dw${i}`, {
+          tool: 'write',
+          args: { path, content: 'x' },
+          actor: 'local',
+        });
+        expect(w.verdict).toBe('deny');
+      }
+      expect(asked).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    expect(asked).toBe(0);
   });
 
   it('ronda 2: rutas de config RELATIVAS se absolutizan al crear el gate', async () => {
