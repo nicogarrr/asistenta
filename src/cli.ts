@@ -91,16 +91,19 @@ import { BROWSER_FREE_ACTIONS, Gate, protectedRepoPaths } from './permissions.js
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
- * parts of this repo that guard the agent itself (see protectedRepoPaths).
- * The self-improve loop runs through these same gates, so it can improve any
- * code except the code that keeps it honest.
+ * parts of this repo that guard the agent itself (protectedRepoPaths locates
+ * the repo from the module's own URL, so any cwd works). The self-improve
+ * loop runs through these same gates: it can improve any code except the code
+ * that keeps it honest. This guards path-carrying tools (write/edit); shell
+ * commands that write files are a separate, unsolved surface - partial
+ * protection, not a full cage.
  */
 function protectedPaths(): string[] {
   const home = process.env.USERPROFILE;
   return [
     ...(home ? [`${home}\\.ssh`, `${home}\\.aws`] : []),
     'C:\\Windows\\System32',
-    ...protectedRepoPaths(process.cwd()),
+    ...protectedRepoPaths(),
   ];
 }
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';

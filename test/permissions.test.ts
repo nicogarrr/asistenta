@@ -78,6 +78,35 @@ describe('Gate', () => {
     expect(ok.verdict).toBe('allow');
   });
 
+  it('denies guardrail writes spelled relative, dotted or with parent detours', async () => {
+    const gate = new Gate({
+      allow: ['write'],
+      protectedPaths: protectedRepoPaths(process.cwd()),
+      approver: allow,
+    });
+    const guarded = [
+      'src/tools/fetch.ts',
+      './src/permissions.ts',
+      'src/channels/telegram.ts',
+      'src/tools/../tools/fetch.ts',
+      'src/./log.ts',
+    ];
+    for (const [i, path] of guarded.entries()) {
+      const r = await gate.check(`r${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    const ok = await gate.check('rok', {
+      tool: 'write',
+      args: { path: 'src/tools/other.ts', content: 'x' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
   it('fails closed when there is no approver to ask', async () => {
     const gate = new Gate({ allow: ['read'] });
     const d = await gate.check('s1', { tool: 'shell', args: { command: 'dir' }, actor: 'cron' });

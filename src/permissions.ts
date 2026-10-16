@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
@@ -409,9 +411,20 @@ export class Gate {
 
   #isProtected(path: string): boolean {
     if (!path) return false;
+    // Resolve before comparing, with the same semantics the fs tools apply
+    // (src/tools/fs.ts guardPath): `~` is the home directory and a relative
+    // path resolves against the process cwd. Without this, an absolute
+    // protected list is bypassed by spelling the same file relatively
+    // (`write path='src/permissions.ts'`). Windows drive/UNC spellings count
+    // as absolute on any host, since the daemon runs on Windows.
+    const expanded = path.replace(/^~(?=$|[\\/])/, homedir());
+    const resolved =
+      /^[a-zA-Z]:[\\/]/.test(expanded) || expanded.startsWith('\\\\') || isAbsolute(expanded)
+        ? expanded
+        : resolve(process.cwd(), expanded);
     // Lexical normalization before comparing: `..`, mixed separators and case must
     // not smuggle a protected path past a prefix check.
-    const lower = lexicalNormalize(path);
+    const lower = lexicalNormalize(resolved);
     return this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`));
   }
 
@@ -1234,7 +1247,11 @@ export function lexicalNormalize(path: string): string {
  * them. `root` is the repo root (usually process.cwd()). Directories match by
  * prefix, files exactly; the Gate normalizes both sides lexically.
  */
-export function protectedRepoPaths(root: string): string[] {
+/** Repo root derived from this module's own location (src/ or dist/ both sit
+ * directly under it), so the guardrails are found no matter the process cwd. */
+const MODULE_REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
   const r = root.replace(/[\\/]+$/, '');
   return [
     `${r}\\src\\tools\\fetch.ts`,
