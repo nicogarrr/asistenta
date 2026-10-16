@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const RESOURCE_TESTS = ['test/memory-office.test.ts', 'test/factory.test.ts', 'test/diagnose-cli-process.test.ts', 'test/daemon-stop-process.test.ts'];
+export const RESOURCE_TESTS = ['test/memory-office.test.ts', 'test/factory.test.ts', 'test/diagnose-cli-process.test.ts', 'test/daemon-stop-process.test.ts', 'test/vault-stdin-process.test.ts'];
 
 export function runSuite(args = [], launch = spawnSync) {
   const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url));

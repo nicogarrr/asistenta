@@ -238,6 +238,7 @@ Usage:
   pa run "<prompt>"       run one prompt unattended (read-only tools, no prompts)
   pa vault init           create the encrypted secret store
   pa vault set <k> <v>    store a secret
+  pa vault set-stdin <k>  guardar secreto desde pipe privado, sin valor en argv
   pa vault get <k>        print one secret
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
@@ -422,6 +423,15 @@ async function openGymCommand(args: string[]): Promise<number> {
 }
 
 async function vaultCommand(args: string[]): Promise<number> {
+  if (args[0] === 'set-stdin') {
+    const { setVaultFromStdin } = await import('./vault-stdin.js');
+    await setVaultFromStdin(args.slice(1), process.stdin, async (key, value) => {
+      ensureDirs();
+      await vaultSet(key, value);
+    });
+    process.stdout.write('Secreto guardado. No se muestra su valor.\n');
+    return 0;
+  }
   ensureDirs();
   const [sub, key, value] = args;
 
