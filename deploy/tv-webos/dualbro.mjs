@@ -1,9 +1,9 @@
 ﻿import { chromium } from 'playwright';
 
-const TV_IP = process.argv[2] ?? '192.168.1.237';
+const TV_IP = process.argv[2] ?? process.env.TV_IP ?? '192.168.1.237';
 const URL = 'https://e.nya.je/getroot/';
 
-const context = await chromium.launchPersistentContext('C:\\Temp\\chrome-dualbro', {
+const context = await chromium.launchPersistentContext(process.env.DUALBRO_CHROME_PROFILE ?? 'C:\\Temp\\chrome-dualbro', {
   channel: 'chrome',
   headless: false,
 args: [
