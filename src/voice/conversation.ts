@@ -49,6 +49,19 @@ export interface ConversationOptions {
   onClose: (reason: CloseReason, detail?: string) => void;
   /** Interrupt the agent while it talks. Default 'off': enabling it is explicit. */
   bargeIn?: BargeInLevel;
+  /**
+   * Speech confirmation for the barge trigger (a Silero VAD scorer, barge-vad.ts).
+   * With it, a loud-sustained candidate no longer cuts the sound at once: the
+   * buffered audio is scored by shape first and only speech interrupts. Sustained
+   * noise that passes the energy gate (vacuum, dishes, TV) no longer silences the
+   * agent for nothing. On scorer error the trigger falls back to the energy
+   * behaviour; 3 consecutive scorer errors drop the scorer for the session.
+   */
+  bargeVad?: (samples: Float32Array) => Promise<number>;
+  /** Speech probability that confirms an interruption. Default 0.5. */
+  bargeVadProb?: number;
+  /** Cooldown after a rejected candidate before another check can start. Default 1000 ms. */
+  bargeVadRecheckMs?: number;
 }
 
 export type ConversationState =
@@ -119,6 +132,11 @@ const CLOSERS = new Set([
   'ya esta gracias',
   'para',
   'para ya',
+  'espera',
+  'espera un momento',
+  'un momento',
+  'calla',
+  'callate',
   'cierra la conversacion',
   'fin de la conversacion',
   'terminar conversacion',
@@ -159,7 +177,18 @@ function rms(samples: Float32Array): number {
 const msToSamples = (ms: number): number => Math.round((ms * SAMPLE_RATE) / 1000);
 
 export class ConversationSession {
-  #o: Required<Omit<ConversationOptions, 'transcriber' | 'onUtterance' | 'onClose' | 'bargeIn'>>;
+  #o: Required<
+    Omit<
+      ConversationOptions,
+      | 'transcriber'
+      | 'onUtterance'
+      | 'onClose'
+      | 'bargeIn'
+      | 'bargeVad'
+      | 'bargeVadProb'
+      | 'bargeVadRecheckMs'
+    >
+  >;
   #transcriber: ConversationOptions['transcriber'];
   #onUtterance: ConversationOptions['onUtterance'];
   #onClose: ConversationOptions['onClose'];
@@ -211,6 +240,18 @@ export class ConversationSession {
   #speakBufSamples = 0;
   /** True until the transcriber's own promise settles, even after our timeout gave up on it. */
   #transcribing = false;
+  /** VAD confirmation of the barge trigger; undefined falls back to pure energy. */
+  #bargeVad: ConversationOptions['bargeVad'];
+  readonly #bargeVadProb: number;
+  readonly #bargeVadRecheckMs: number;
+  #vadCheckInFlight = false;
+  #vadErrors = 0;
+  /** Audio clock while speaking: samples fed since the session began. */
+  #speakClockSamples = 0;
+  /** A rejected candidate cannot re-check until the clock passes this. */
+  #vadRearmAt = 0;
+  /** Candidates the VAD rejected as not-speech: interruptions that never happened. */
+  #bargeVadRejected = 0;
 
   constructor(opts: ConversationOptions) {
     this.#o = {
@@ -226,6 +267,9 @@ export class ConversationSession {
       maxFailures: opts.maxFailures ?? 3,
     };
     this.#bargeIn = opts.bargeIn ?? 'off';
+    this.#bargeVad = opts.bargeVad;
+    this.#bargeVadProb = opts.bargeVadProb ?? 0.5;
+    this.#bargeVadRecheckMs = Math.max(0, opts.bargeVadRecheckMs ?? 1000);
     this.#transcriber = opts.transcriber;
     this.#onUtterance = opts.onUtterance;
     this.#onClose = opts.onClose;
@@ -247,6 +291,8 @@ export class ConversationSession {
     bargeUnclassified: number;
     /** Sembrada con transcript aun en vuelo: ni clasificada ni desconocida todavia. */
     bargePending: number;
+    /** Candidatos ruidosos que el VAD rechazó: cortes evitados, no falsos disparos. */
+    bargeVadRejected: number;
   } {
     return {
       bargeIns: this.#bargeIns,
@@ -254,6 +300,7 @@ export class ConversationSession {
       bargeFalseNoise: this.#bargeFalseNoise,
       bargeFalseEcho: this.#bargeFalseEcho,
       bargeUnclassified: this.#bargeUnclassified,
+      bargeVadRejected: this.#bargeVadRejected,
       bargePending:
         this.#bargeIns -
         this.#bargeTrue -
@@ -565,6 +612,7 @@ export class ConversationSession {
   #feedWhileSpeaking(pcm: Float32Array): void {
     if (this.#bargeIn === 'off' || !this.#speakStop || pcm.length === 0) return;
     const level = BARGE_IN[this.#bargeIn];
+    this.#speakClockSamples += pcm.length;
     const level_rms = rms(pcm);
     // Keep a short tail of what was heard: it seeds the interrupting utterance.
     this.#speakBuf.push(pcm);
@@ -600,7 +648,79 @@ export class ConversationSession {
     else this.#loudSamples = 0;
     if (this.#loudSamples < msToSamples(level.sustainMs)) return;
 
-    // Interruption: stop the sound NOW and make what was heard the start of an utterance.
+    // Candidate over the energy bar. With a VAD scorer the sound is NOT cut yet:
+    // the buffered audio is scored by shape first, and only speech interrupts.
+    // While a check runs the buffer keeps rolling, so a confirmed cut still seeds
+    // the utterance from its real beginning.
+    if (this.#bargeVad) {
+      if (this.#vadCheckInFlight) return;
+      if (this.#speakClockSamples < this.#vadRearmAt) {
+        // Cooldown after a rejection: a continuous noise gets one check per
+        // recheck window, and only after a fresh full sustain.
+        this.#loudSamples = 0;
+        return;
+      }
+      this.#startVadCheck();
+      return;
+    }
+
+    this.#interruptWhileSpeaking();
+  }
+
+  /**
+   * Score the current candidate with the VAD. Confirmed speech interrupts exactly
+   * like the energy trigger; rejected audio rearms after a cooldown and the agent
+   * is never cut. A scorer error falls back to the energy behaviour (the user
+   * explicitly enabled interruptions); three consecutive errors drop the scorer
+   * for the session. A check that lands after the speech ended is dropped: the
+   * tail after playback is already heard through the normal listening path.
+   */
+  #startVadCheck(): void {
+    const vad = this.#bargeVad;
+    if (!vad) return;
+    this.#vadCheckInFlight = true;
+    const generation = this.#generation;
+    void vad(this.#joinSpeakBuf()).then(
+      (prob) => {
+        this.#vadCheckInFlight = false;
+        if (generation !== this.#generation || this.#state !== 'hablando') return;
+        if (prob >= this.#bargeVadProb) {
+          this.#vadErrors = 0;
+          this.#interruptWhileSpeaking();
+          return;
+        }
+        this.#vadErrors = 0;
+        this.#bargeVadRejected++;
+        this.#loudSamples = 0;
+        this.#vadRearmAt = this.#speakClockSamples + msToSamples(this.#bargeVadRecheckMs);
+      },
+      (err) => {
+        this.#vadCheckInFlight = false;
+        this.#vadErrors++;
+        this.#lastError = `el detector de voz falló (${err instanceof Error ? err.message : String(err)}); interrumpo como antes`;
+        if (this.#vadErrors >= 3) {
+          this.#bargeVad = undefined;
+          this.#lastError =
+            'el detector de voz falló 3 veces seguidas; cortes por energía el resto de la sesión';
+        }
+        if (generation !== this.#generation || this.#state !== 'hablando') return;
+        this.#interruptWhileSpeaking();
+      },
+    );
+  }
+
+  #joinSpeakBuf(): Float32Array {
+    const joined = new Float32Array(this.#speakBufSamples);
+    let at = 0;
+    for (const part of this.#speakBuf) {
+      joined.set(part, at);
+      at += part.length;
+    }
+    return joined;
+  }
+
+  /** Interruption: stop the sound NOW and make what was heard the start of an utterance. */
+  #interruptWhileSpeaking(): void {
     this.#speakInterrupted = true;
     this.#bargeIns++;
     this.#turnSeq++;
