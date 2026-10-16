@@ -8,7 +8,8 @@
   "__BUTTON__": {
     "function": "curl",
     "inputs": {
-      "url": "__ASISTENTA_URL__"
+      "url": "__ASISTENTA_URL__",
+      "token_file": "/home/root/.tv-button-curl.conf"
     }
   }
 }

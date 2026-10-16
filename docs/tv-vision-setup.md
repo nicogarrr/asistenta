@@ -39,10 +39,21 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      imagen oficial - confirmar). El puerto a abrir: 19400 (flatbuffers).
    - Pieza pendiente (diseno propio): como la asistenta lee frames del receptor
      (poll de la API JSON del receptor o suscripcion flatbuffers). Va en su propia PR.
-4. **magic_mapper**: `sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop> --button <boton>`
+4. **magic_mapper**: `TV_BUTTON_TOKEN=<mismo valor que tv:buttonToken en el vault> sh scripts/tv/install-magic-mapper.sh 192.168.1.237 <ip-laptop> --button rakuten`
+   - Transporte TELNET por defecto (la tele solo abre telnet 23, root sin
+     contrasena); `--transport ssh` queda como opcion. Driver:
+     scripts/tv/telnet-sh.py (exit code remoto por centinela/trap EXIT).
+   - TOKEN OBLIGATORIO (TV_BUTTON_TOKEN o --token-file; nunca como argumento
+     posicional). Termina en /home/root/.tv-button-curl.conf (0600) y magic_mapper
+     lo usa via `curl --config` (parche propio sobre v1.1.0): NUNCA en claro por
+     telnet (la tele hace pull por TLS de un servidor one-shot del PC,
+     scripts/tv/tv-token-server.py, con cert efimero fijado por --cacert), ni en
+     la config JSON, ni en logs (el parche quita el -v y el print del argv).
    - El boton EXIGE flag explicito del operador (decision del owner en ejecucion;
      sin --button el script aborta). Candidatos: 0-9 (pierden long-press), guide, info.
-   - Staging en el fs propio de cada destino, backup de los 4. El rollback
+   - Staging en el fs propio de cada destino, backup de los 5 (incluye el
+     archivo privado del token) + listados forenses de init.d y /dev/input.
+     No toca 50-tvweb ni nada ajeno. El rollback
      (/home/root/mm-rollback-<ts>.sh) se genera desde scripts/tv/templates/
      mapper-rollback.sh (cubierto por scripts/tv/test-tv-rollback-mock.sh) y se
      VERIFICA ejecutable ANTES de mutar nada; el servicio viejo se para y se
@@ -54,7 +65,8 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      ||true, guard no-vivo antes de tocar ficheros y restore con fallos
      visibles (set -e; nunca declara hecho un restore roto).
      Rollback automatico ante fallos post-backup. Tests mock:
-     scripts/tv/test-tv-rollback-mock.sh (8/8, filesystem falso real).
+     scripts/tv/test-tv-rollback-mock.sh (10/10, filesystem falso real) y
+     scripts/tv/test-tv-token-patch-mock.sh (11/11: parche, telnet y canal TLS).
    - --button se valida contra la lista oficial de botones de v1.1.0
      (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
@@ -67,11 +79,14 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      desmonta solo si ella monto, restaura+relanza el init previo si existia.
      set -e: cada undo falla visible, sin "rollback hecho" falso.
      Verificado ejecutable ANTES de mutar.
-   - Version fijada v1.1.0 (3 ficheros + init.d), config renderizada con la IP real.
+   - Version fijada v1.1.0 por sha256 de los 3 ficheros (verificado EN LA
+     tele con python3) + parche determinista (templates/patch-magic-mapper.py,
+     anclas exactas o aborta); config renderizada con la IP real.
    - Boton: SIN defecto - se decide en ejecucion via --button (owner).
-   - PENDIENTE (pieza asistenta, PR aparte): listener HTTP en la asistenta
-     :8765/tv/button que despierte a la asistenta. Hoy NO existe superficie HTTP
-     (telegram es long-polling). Hasta tenerlo, el boton no hace nada - config lista.
+   - Listener HTTP YA EXISTE (src/tv/button-listener.ts): :8765/tv/button con
+     Bearer opcional desde el vault (tv:buttonToken) y /tv/button-health abierto
+     para el preflight. El instalador EXIGE token y cablea token_file: el boton
+     nunca queda sin autenticacion.
 5. **Apagar la tele** (orden de Nico) y reportar que quedo instalado.
 
 ## Semantica exclusive_mode (verificado upstream 12/10)

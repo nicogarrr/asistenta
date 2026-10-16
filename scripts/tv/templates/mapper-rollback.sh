@@ -29,7 +29,7 @@ fi
 sleep 1
 if mm_alive; then abort "magic_mapper sigue vivo tras stop - no toco ficheros con el proceso corriendo"; fi
 # 3) rm + restore desde el backup validado
-rm -f "$ROOT/magic_mapper.py" "$ROOT/magic_mapper_config.json" "$ROOT/magic_mapper_config.json.dist" "$INITD/start_magic_mapper"
+rm -f "$ROOT/magic_mapper.py" "$ROOT/magic_mapper_config.json" "$ROOT/magic_mapper_config.json.dist" "$ROOT/.tv-button-curl.conf" "$INITD/start_magic_mapper"
 if [ "$(cat "$BK/MANIFEST")" != "EMPTY" ]; then
   while IFS= read -r f; do
     case "$f" in
