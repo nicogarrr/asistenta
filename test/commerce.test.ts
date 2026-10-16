@@ -522,17 +522,29 @@ describe('checkout tool', () => {
     await expect(call(tool, { action: 'select', selector: '#ok' })).rejects.toThrow(/no pulso/);
   });
 
-  it('shows the amount with the symbol the page uses', async () => {
+  it('shows the EUR amount with the symbol the page uses', async () => {
     const page = new FakePage();
-    page.body = 'Total 45,20 $';
+    page.body = 'Total 45,20 €';
     const seen: string[] = [];
     const tool = toolWith(page, BUYER, async (_a, summary) => {
       seen.push(summary);
       return true;
     });
     await call(tool, { action: 'confirm', item: 'tren', price: '45,20' });
-    expect(seen[0]).toContain('45,20 $');
-    expect(seen[0]).not.toContain('€');
+    expect(seen[0]).toContain('45,20 €');
+  });
+
+  it('denies a total in a non-EUR currency: no FX, no cap check, no question', async () => {
+    const page = new FakePage();
+    page.body = 'Total 45,20 $';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    const res = await call(tool, { action: 'confirm', item: 'tren', price: '45,20' });
+    expect(asked).toBe(0);
+    expect(res.details?.reason).toBe('moneda no EUR');
   });
 
   it('treats Confirmar, Ir a caja and a payment screen body as charges', async () => {
@@ -636,7 +648,7 @@ describe('checkout tool', () => {
     const tool = toolWith(page, BUYER, requireApproval);
     const result = await call(tool, { action: 'confirm', item: 'tren' });
     expect(requireApproval).not.toHaveBeenCalled();
-    expect(textOf(result)).toMatch(/no conozco/);
+    expect(textOf(result)).toMatch(/verificar el total/);
   });
 
   it('confirm warns when the amount disagrees with the page', async () => {
@@ -648,7 +660,7 @@ describe('checkout tool', () => {
       return true;
     });
     await call(tool, { action: 'confirm', item: 'tren', price: '40,00' });
-    expect(seen[0]).toMatch(/la pagina muestra 45,20/);
+    expect(seen[0]).toMatch(/la pagina marca un total de 45,20/);
   });
 
   it('a new url forgets the previous purchase, approval included', async () => {
@@ -832,6 +844,95 @@ describe('tope de importe en confirm (maxAmountCents)', () => {
     });
     await call(tool, { action: 'confirm', item: 'vuelo' });
     expect(asked).toBe(0);
+  });
+
+  it('canario: el tope mira el TOTAL, no el primer precio ni el declarado', async () => {
+    // Entrega barata + total caro: el cap se aplica a 950,00, no a 9,99.
+    const page = new FakePage();
+    page.body = 'Entrega 9,99 € Total 950,00 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'vuelo' });
+    expect(asked).toBe(0);
+    // Ni declarando el barato: args.price no selecciona importe.
+    const page2 = new FakePage();
+    page2.body = 'Entrega 9,99 € Total 950,00 €';
+    let asked2 = 0;
+    const tool2 = toolWith(page2, BUYER, async () => {
+      asked2 += 1;
+      return true;
+    });
+    await call(tool2, { action: 'confirm', item: 'vuelo', price: '9,99 €' });
+    expect(asked2).toBe(0);
+  });
+
+  it('canario: el extractor no corta importes ("1000€" no es "000")', async () => {
+    expect(extractPrices('Total 1000€')).toEqual(['1000']);
+    // "450.00 EUR" es ambiguo (punto con 2 decimales): NO extrae nada, y sin
+    // total verificable confirm deniega sin preguntar.
+    expect(extractPrices('Total 450.00 EUR')).toEqual([]);
+    const page = new FakePage();
+    page.body = 'Total 450.00 EUR';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+    // Y "Total 1000€" supera el tope como 1000 EUR, no como 0.
+    const page2 = new FakePage();
+    page2.body = 'Total 1000€';
+    let asked2 = 0;
+    const tool2 = toolWith(page2, BUYER, async () => {
+      asked2 += 1;
+      return true;
+    });
+    const res2 = await call(tool2, { action: 'confirm', item: 'x' });
+    expect(asked2).toBe(0);
+    expect(res2.details?.reason).toBe('importe sobre el tope');
+  });
+
+  it('canario: varios importes sin marca de total => deniega sin preguntar', async () => {
+    const page = new FakePage();
+    page.body = 'Entrega 9,99 € Productos 45,20 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+  });
+
+  it('con total marcado bajo el tope, pregunta con ESE importe', async () => {
+    const page = new FakePage();
+    page.body = 'Entrega 9,99 € Total 45,20 €';
+    const seen: string[] = [];
+    const tool = toolWith(page, BUYER, async (_a, summary) => {
+      seen.push(summary);
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('45,20 €');
+  });
+
+  it('cap invalido (NaN/Infinity/negativo) rompe en la creacion, no en el pago', async () => {
+    const page = new FakePage();
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1, 0.5]) {
+      expect(() =>
+        createCheckoutTool({
+          page,
+          loadPassenger: async () => BUYER,
+          requireApproval: async () => true,
+          maxAmountCents: bad,
+        }),
+      ).toThrow(/maxAmountCents/);
+    }
   });
 
   it('el tope es configurable por deps', async () => {

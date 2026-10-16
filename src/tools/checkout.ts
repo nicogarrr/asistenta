@@ -140,8 +140,13 @@ export interface PriceText {
 
 /** Prices visible in a block of page text with their own currency symbol, deduplicated. */
 export function extractPriceTexts(text: string, limit = 5): PriceText[] {
+  // Strict boundaries: an amount must not be preceded or followed by digits or
+  // separators, or "1000€" yields '000' and "450.00 EUR" yields '00' - and a
+  // truncated total is a bypass of the cap. Thousands groups are exactly 3
+  // digits and decimals exactly 2 with comma; anything malformed matches
+  // NOTHING, and no price means no confirm (fail-closed).
   const re =
-    /(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)\s*(€|EUR|\$|£)|(€|EUR|\$|£)\s*(\d{1,3}(?:[.\u00a0 ]\d{3})*(?:,\d{2})?)/gi;
+    /(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,])\s*(€|EUR|\$|£)(?![A-Za-z])|(€|EUR|\$|£)\s*(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,])/gi;
   const out: PriceText[] = [];
   for (const match of text.matchAll(re)) {
     const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0 ]/g, '');
@@ -159,7 +164,33 @@ export function extractPriceTexts(text: string, limit = 5): PriceText[] {
 export function parsePriceToCents(raw: string): number | null {
   const cleaned = raw.replace(/[.\u00a0 ]/g, '').replace(',', '.');
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
-  return Math.round(Number.parseFloat(cleaned) * 100);
+  const cents = Math.round(Number.parseFloat(cleaned) * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+const TOTAL_LABEL = /\btotal\b|\bamount\s+due\b|\bgrand\s+total\b/iu;
+
+/**
+ * The one price a confirm may quote: the page's total, grounded without
+ * ambiguity. A single visible price IS the total; with several, only a
+ * total-labelled one counts (the first price right after the label), and two
+ * labels pointing at different amounts are as good as no label. Anything else
+ * is unverifiable, and an unverifiable total denies the confirm - the first
+ * price on the page is never the default answer.
+ */
+export function findTotalPrice(text: string): PriceText | null {
+  const prices = extractPriceTexts(text, 20);
+  if (prices.length === 1) return prices[0];
+  if (prices.length === 0) return null;
+  let found: PriceText | null = null;
+  for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
+    const inWindow = extractPriceTexts(text.slice(m.index, m.index + 60), 5);
+    if (inWindow.length === 0) continue;
+    const candidate = inWindow[0];
+    if (found && (found.raw !== candidate.raw || found.symbol !== candidate.symbol)) return null;
+    found = candidate;
+  }
+  return found;
 }
 
 /** Prices visible in a block of page text, normalised, deduplicated, in order. */
@@ -451,6 +482,9 @@ const CheckoutParams = Type.Object({
 export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof CheckoutParams> {
   const load = deps.loadPassenger ?? (() => loadPassenger());
   const maxCents = deps.maxAmountCents ?? 30_000;
+  if (!Number.isSafeInteger(maxCents) || maxCents < 0) {
+    throw new Error(`maxAmountCents debe ser un entero finito >= 0 (recibido: ${deps.maxAmountCents})`);
+  }
   const { page } = deps;
   let flow = freshFlow();
 
@@ -712,52 +746,48 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
           }
 
           const visible = await page.text().catch(() => '');
-          const priced = extractPriceTexts(visible);
           const item = textOf(args.item) || flow.item;
           const declared = textOf(args.price);
-          const stripped = (v: string) => v.replace(/€|EUR|\$|£/gi, '').replace(/[\u00a0\s]/g, '');
-          const declaredRaw = declared ? stripped(declared) : '';
-          const matched = declaredRaw ? priced.find((p) => p.raw === declaredRaw) : undefined;
 
-          // The amount shown is the page's own, with the symbol the page uses and where it
-          // came from. A figure only the model produced is said to be the model's.
-          let amount: string | null = null;
-          let amountRaw: string | null = null;
-          let source = '';
+          // The total comes from the page, fresh, and never from the model:
+          // args.price and prices seen earlier can corroborate or warn, NEVER
+          // select. Without a page-grounded total there is nothing to confirm.
+          const total = findTotalPrice(visible);
           let mismatch = '';
-          if (matched) {
-            amount = matched.text;
-            amountRaw = matched.raw;
-            source = 'leido en la pagina';
-          } else if (priced[0]) {
-            amount = priced[0].text;
-            amountRaw = priced[0].raw;
-            source = 'leido en la pagina';
-            if (declared) {
-              mismatch = ` Ojo: tu lees ${declared} y la pagina muestra ${priced.map((p) => p.text).join(', ')}.`;
+          if (declared && total) {
+            const declaredRaw = declared.replace(/€|EUR|\$|£/gi, '').replace(/[\u00a0\s]/g, '');
+            if (declaredRaw && declaredRaw !== total.raw) {
+              mismatch = ` Ojo: tu lees ${declared} y la pagina marca un total de ${total.text}.`;
             }
-          } else if (flow.priceText) {
-            amount = flow.priceText;
-            amountRaw = flow.price;
-            source = 'visto antes en la pagina';
-          } else if (declared) {
-            amount = declared;
-            amountRaw = declaredRaw;
-            source = 'declarado por mi, sin moneda ni confirmacion de la pagina';
           }
 
-          if (!amount) {
+          if (!total) {
             return {
               content: [
                 {
                   type: 'text',
                   text:
-                    'No he encontrado ningun importe en la pagina, asi que no te pido que ' +
-                    'confirmes una compra cuyo precio no conozco. Mira el total con el ' +
-                    'navegador y vuelve a llamar a confirm con price.',
+                    'No puedo verificar el total de la compra en la pagina ahora mismo: ' +
+                    'necesito UN importe visible, o varios con uno marcado como total. ' +
+                    'No pido confirmacion a ciegas: queda denegado. Mira la pagina con el ' +
+                    'navegador y vuelve a llamar a confirm cuando el total sea claro.',
                 },
               ],
-              details: { asked: false, reason: 'sin importe visible' },
+              details: { asked: false, reason: 'total no verificable' },
+            };
+          }
+          if (total.symbol !== '€') {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    `El total esta en ${total.symbol} y solo puedo contrastar importes en EUR: ` +
+                    'sin conversion verificada no se si supera el tope, asi que queda denegado. ' +
+                    'Si la compra es en otra moneda, hazla tu directamente.',
+                },
+              ],
+              details: { asked: false, reason: 'moneda no EUR', amount: total.text },
             };
           }
           if (!item) {
@@ -774,19 +804,26 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
             };
           }
 
-          // The cap is checked before the question exists: over it there is no
-          // approval to collect, because the agent must never collect it.
-          const cents = amountRaw ? parsePriceToCents(amountRaw) : null;
-          if (cents !== null && cents > maxCents) {
+          const amount = total.text;
+          const source = 'total leido en la pagina';
+
+          // The cap is checked before the question exists: over it - or with an
+          // amount that does not parse to a safe integer - there is no approval
+          // to collect, because the agent must never collect it.
+          const cents = parsePriceToCents(total.raw);
+          if (cents === null || cents > maxCents) {
             log.info('checkout over cap', { amount, cents, maxCents });
             return {
               content: [
                 {
                   type: 'text',
                   text:
-                    `El importe ${amount} supera el tope de ${(maxCents / 100).toFixed(0)} EUR que tengo ` +
-                    'autorizado para una compra. No te pido confirmacion porque esta por encima ' +
-                    'de mi limite: si quieres hacerla, hazla tu directamente.',
+                    cents === null
+                      ? `El importe ${amount} no lo consigo convertir a una cifra verificable, ` +
+                        'asi que no puedo aplicar el tope: queda denegado. Si quieres hacerla, hazla tu directamente.'
+                      : `El importe ${amount} supera el tope de ${(maxCents / 100).toFixed(0)} EUR que tengo ` +
+                        'autorizado para una compra. No te pido confirmacion porque esta por encima ' +
+                        'de mi limite: si quieres hacerla, hazla tu directamente.',
                 },
               ],
               details: { asked: false, reason: 'importe sobre el tope', amount },
