@@ -1,123 +1,170 @@
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { type SetupDeps, setupCommand } from '../src/setup.js';
 
-function harness(answers: string[], options: Partial<SetupDeps> = {}) {
-  const output: string[] = [];
-  const question = vi.fn(async () => answers.shift() ?? 'no');
-  const set = vi.fn(async (_key: string, _value: string) => {});
-  const deps: SetupDeps = {
-    question,
-    write: (s) => output.push(s),
-    get: async () => undefined,
-    set,
-    init: vi.fn(async () => {}),
-    backend: () => 'portable',
-    prepare: vi.fn(),
-    config: () => ({ model: 'synthetic-model', provider: 'synthetic-provider' }),
+let answers: string[];
+let committed: Record<string, string> | undefined;
+let output: string;
+let deps: SetupDeps;
+beforeEach(() => {
+  answers = [];
+  committed = undefined;
+  output = '';
+  deps = {
+    question: vi.fn(async () => answers.shift() ?? ''),
+    write: (s) => {
+      output += s;
+    },
+    inspect: vi.fn(),
+    acquire: vi.fn(() => ({ assert: vi.fn(), release: vi.fn() })),
+    configure: vi.fn(
+      async (keys: readonly string[], review: Parameters<SetupDeps['configure']>[1]) => {
+        committed = await review(keys.map((key) => ({ key, source: 'missing' as const })));
+        return committed !== undefined;
+      },
+    ),
+    config: () => ({ provider: 'opencode' }),
+    prerequisites: () => true,
+    platform: 'linux',
+    desktop: false,
+    interactive: true,
     nodeMajor: 24,
     built: true,
-    ...options,
   };
-  return { deps, output, question, set };
-}
-it('refuses arguments before touching vault or state', async () => {
-  const h = harness([]);
-  expect(await setupCommand(['secret-in-args'], h.deps)).toBe(2);
-  expect(h.deps.prepare).not.toHaveBeenCalled();
-  expect(h.output.join('')).not.toContain('secret-in-args');
 });
-it.each([{ nodeMajor: 22 }, { built: false }])(
-  'refuses missing prerequisites before prompting',
-  async (options) => {
-    const h = harness([], options);
-    expect(await setupCommand([], h.deps)).toBe(1);
-    expect(h.question).not.toHaveBeenCalled();
-    expect(h.deps.prepare).not.toHaveBeenCalled();
-  },
-);
-it('cancel does not initialize or read vault', async () => {
-  const get = vi.fn(async () => undefined);
-  const h = harness(['no'], { get });
-  expect(await setupCommand([], h.deps)).toBe(0);
-  expect(get).not.toHaveBeenCalled();
-  expect(h.deps.prepare).not.toHaveBeenCalled();
+it('Windows is guide only before inspect/config/vault/prompts', async () => {
+  expect(await setupCommand([], { ...deps, platform: 'win32' })).toBe(2);
+  expect(deps.inspect).not.toHaveBeenCalled();
+  expect(deps.acquire).not.toHaveBeenCalled();
+  expect(deps.configure).not.toHaveBeenCalled();
+  expect(deps.question).not.toHaveBeenCalled();
 });
-it('preserves existing values without printing them or asking replacement', async () => {
-  const h = harness(['sí'], { get: async () => 'private-current' });
-  expect(await setupCommand([], h.deps)).toBe(0);
-  expect(h.set).not.toHaveBeenCalled();
-  expect(h.question).toHaveBeenCalledTimes(1);
-  expect(h.output.join('')).not.toContain('private-current');
+it.each([
+  { nodeMajor: 23 },
+  { built: false },
+  { prerequisites: () => false },
+  { interactive: false },
+  { desktop: true },
+])('prerequisites fail before ownership %j', async (flag) => {
+  expect(await setupCommand([], { ...deps, ...flag })).toBe(1);
+  expect(deps.acquire).not.toHaveBeenCalled();
+  expect(deps.configure).not.toHaveBeenCalled();
 });
-it('saves only fields individually approved and hides token/key prompts', async () => {
-  const token = '123456:abcdefghijklmnopqrstuv';
-  const key = 'private-provider-key';
-  const h = harness(['sí', 'sí', token, 'sí', '123,456', 'sí', key]);
-  expect(await setupCommand([], h.deps)).toBe(0);
-  expect(h.set.mock.calls).toEqual([
-    ['telegram:botToken', token],
-    ['telegram:allowedUserIds', '123,456'],
-    ['provider:apiKey', key],
-  ]);
-  expect(h.output.join('')).not.toContain(token);
-  expect(h.output.join('')).not.toContain(key);
-  expect(h.question.mock.calls[2]).toEqual(['Token de tu bot creado en BotFather', true]);
+it('arguments are refused without echo', async () => {
+  expect(await setupCommand(['SYNTHETIC-PRIVATE'], deps)).toBe(2);
+  expect(output).not.toContain('SYNTHETIC-PRIVATE');
+  expect(deps.inspect).not.toHaveBeenCalled();
 });
-it.each(['@username', '0', '-1', '1e3', '9007199254740992', '123,'])(
-  'rejects invalid Telegram user identity %s',
-  async (invalid) => {
-    const h = harness(['sí', 'no', 'sí', invalid]);
-    expect(await setupCommand([], h.deps)).toBe(1);
-    expect(h.set).not.toHaveBeenCalled();
-  },
-);
-it('reports skipped fields as pending rather than fully configured', async () => {
-  const h = harness(['sí', 'no', 'no', 'no']);
-  expect(await setupCommand([], h.deps)).toBe(1);
-  expect(h.output.join('')).toContain('no se afirma configuración completa');
-  expect(h.set).not.toHaveBeenCalled();
+it('ambiguous legacy state is rejected before config or questions', async () => {
+  deps.inspect = () => {
+    throw Error('private-internal');
+  };
+  deps.config = vi.fn();
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(deps.config).not.toHaveBeenCalled();
+  expect(deps.question).not.toHaveBeenCalled();
+  expect(output).not.toContain('private-internal');
 });
-it('never prints a secret-bearing vault error or falls back to another backend', async () => {
-  const init = vi.fn(async () => {
-    throw new Error('private-vault-error');
+it('initial cancel acquires no ownership', async () => {
+  answers = ['no'];
+  expect(await setupCommand([], deps)).toBe(0);
+  expect(deps.acquire).not.toHaveBeenCalled();
+});
+it('initial EOF is caught without effects or internal errors', async () => {
+  deps.question = async () => {
+    throw Error('private-internal');
+  };
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(deps.acquire).not.toHaveBeenCalled();
+  expect(output).not.toContain('private-internal');
+});
+it('commits once only after final named summary and yes without values', async () => {
+  answers = [
+    'sí',
+    'sí',
+    '12345:abcdefghijklmnopqrstuv',
+    'sí',
+    '123,456',
+    'sí',
+    'synthetic-key',
+    'sí',
+  ];
+  expect(await setupCommand([], deps)).toBe(0);
+  expect(committed).toEqual({
+    'telegram:botToken': '12345:abcdefghijklmnopqrstuv',
+    'telegram:allowedUserIds': '123,456',
+    'provider:apiKey': 'synthetic-key',
   });
-  const h = harness(['sí', 'sí'], {
-    get: async () => {
-      throw new Error('private-vault-error');
+  expect(deps.configure).toHaveBeenCalledOnce();
+  expect(output).toContain(
+    'Cambios propuestos solo en: telegram:botToken, telegram:allowedUserIds, provider:apiKey',
+  );
+  expect(output).not.toContain('synthetic-key');
+  expect(output).not.toContain('abcdefghijklmnopqrstuv');
+});
+it('final cancellation commits nothing', async () => {
+  answers = ['sí', 'sí', '12345:abcdefghijklmnopqrstuv', '', '', 'no'];
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(committed).toBeUndefined();
+  expect(output).toContain('Cancelado');
+});
+it('environment fields are not offered and blank file answer conserves', async () => {
+  deps.configure = vi.fn(async (_keys, review) => {
+    committed = await review([
+      { key: 'telegram:botToken', source: 'environment' },
+      { key: 'telegram:allowedUserIds', source: 'file' },
+      { key: 'provider:apiKey', source: 'file' },
+    ]);
+    return Boolean(committed);
+  });
+  answers = ['sí', '', ''];
+  expect(await setupCommand([], deps)).toBe(0);
+  expect(committed).toBeUndefined();
+  expect(deps.question).toHaveBeenCalledTimes(3);
+});
+it('existing fields need explicit reemplazar; blank replacement conserves', async () => {
+  deps.configure = vi.fn(async (_keys, review) => {
+    committed = await review([{ key: 'provider:apiKey', source: 'file' }]);
+    return Boolean(committed);
+  });
+  answers = ['sí', 'reemplazar', ''];
+  expect(await setupCommand([], deps)).toBe(0);
+  expect(committed).toBeUndefined();
+});
+it('opencode-local does not request an API key', async () => {
+  deps.config = () => ({ provider: 'opencode-local' });
+  answers = ['sí', '', ''];
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(deps.configure).toHaveBeenCalledWith(
+    ['telegram:botToken', 'telegram:allowedUserIds'],
+    expect.any(Function),
+  );
+});
+it('prompt error releases ownership and no commit', async () => {
+  const release = vi.fn();
+  deps.acquire = () => ({ assert: vi.fn(), release });
+  let n = 0;
+  deps.question = async () => {
+    if (n++ === 0) return 'sí';
+    throw Error('synthetic-secret');
+  };
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(release).toHaveBeenCalledOnce();
+  expect(committed).toBeUndefined();
+  expect(output).not.toContain('synthetic-secret');
+});
+it('lost daemon ownership aborts before commit', async () => {
+  deps.acquire = () => ({
+    assert: () => {
+      throw Error('lost');
     },
-    init,
-    backend: () => 'dpapi',
+    release: vi.fn(),
   });
-  expect(await setupCommand([], h.deps)).toBe(1);
-  expect(init).toHaveBeenCalledOnce();
-  expect(h.output.join('')).not.toContain('private-vault-error');
-  expect(h.output.join('')).toContain('no se cambia de backend');
+  answers = ['sí'];
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(committed).toBeUndefined();
 });
-it('skips external API key collection with a local provider', async () => {
-  const h = harness(['sí', 'no', 'no'], {
-    config: () => ({ model: 'synthetic', provider: 'opencode-local' }),
-  });
-  expect(await setupCommand([], h.deps)).toBe(1);
-  expect(h.question).toHaveBeenCalledTimes(3);
-  expect(h.output.join('')).toContain('no pide ni almacena una clave externa');
-});
-it('does not leak invalid configuration values', async () => {
-  const h = harness(['sí'], {
-    config: () => {
-      throw new Error('env-private-value');
-    },
-  });
-  expect(await setupCommand([], h.deps)).toBe(1);
-  expect(h.output.join('')).not.toContain('env-private-value');
-  expect(h.deps.prepare).not.toHaveBeenCalled();
-});
-it('fails closed when existing daemon or unsafe state prevents setup', async () => {
-  const h = harness(['sí'], {
-    prepare: () => {
-      throw new Error('private-path');
-    },
-  });
-  expect(await setupCommand([], h.deps)).toBe(1);
-  expect(h.set).not.toHaveBeenCalled();
-  expect(h.output.join('')).not.toContain('private-path');
+it('unsafe ID rejects the entire proposal', async () => {
+  answers = ['sí', 'sí', '12345:abcdefghijklmnopqrstuv', 'sí', '9007199254740992'];
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(committed).toBeUndefined();
 });

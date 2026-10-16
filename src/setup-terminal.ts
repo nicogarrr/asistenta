@@ -16,6 +16,7 @@ export function terminalQuestion(prompt: string, secret = false): Promise<string
         done();
       },
     });
+    const wasRaw = Boolean(process.stdin.isRaw);
     const rl = createInterface({
       input: process.stdin,
       output: secret ? muted : process.stdout,
@@ -26,10 +27,17 @@ export function terminalQuestion(prompt: string, secret = false): Promise<string
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      process.removeListener('SIGTERM', terminate);
+      process.removeListener('SIGHUP', terminate);
       rl.close();
+      if (process.stdin.isTTY) process.stdin.setRawMode(wasRaw);
       if (secret) process.stdout.write('\n');
       error ? no(error) : yes(value);
     };
+    const terminate = () =>
+      finish(new Error('Configuración interrumpida; no se guardó esta entrada.'));
+    process.once('SIGTERM', terminate);
+    process.once('SIGHUP', terminate);
     const timer = setTimeout(
       () =>
         finish(new Error('Configuración cancelada por inactividad; no se guardó esta entrada.')),

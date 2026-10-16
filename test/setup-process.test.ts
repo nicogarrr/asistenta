@@ -14,7 +14,7 @@ it('built setup refuses non-TTY without consuming a pasted secret or opening vau
       env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
     });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('terminal local interactiva');
+    expect(result.stdout + result.stderr).toContain('terminal local interactiva');
     expect(result.stdout + result.stderr).not.toContain('synthetic-do-not-print');
     expect(readdirSync(dir).filter((n) => n !== 'log')).toEqual([]);
   } finally {

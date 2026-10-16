@@ -1,191 +1,216 @@
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { paths } from './paths.js';
+import { desktopEnabled } from './platform.js';
+import {
+  acquireSetupOwnership,
+  inspectSetupOwnership,
+  type SetupOwnership,
+} from './setup-ownership.js';
 import { terminalQuestion } from './setup-terminal.js';
-import { initVault, vaultBackend, vaultGet, vaultSet } from './vault.js';
+import { configurePortableVault, type VaultFieldSource } from './vault.js';
 
 export interface SetupDeps {
   question(prompt: string, secret?: boolean): Promise<string>;
   write(text: string): void;
-  get(key: string): Promise<string | undefined>;
-  set(key: string, value: string): Promise<void>;
-  init(): Promise<void>;
-  backend(): string;
-  prepare(): void;
-  config(): { providerPreset?: string; model: string; provider?: string };
+  inspect(): void;
+  acquire(): SetupOwnership;
+  configure(
+    keys: readonly string[],
+    review: (fields: readonly VaultFieldSource[]) => Promise<Record<string, string> | undefined>,
+  ): Promise<boolean>;
+  config(): { provider?: string };
+  prerequisites(): boolean;
+  platform: NodeJS.Platform;
+  desktop: boolean;
+  interactive: boolean;
   nodeMajor: number;
   built: boolean;
 }
-const yes = (answer: string) => /^(si|sí)$/i.test(answer.trim());
+const yes = (s: string) => /^(si|sí)$/i.test(s.trim());
 export async function setupCommand(
   args: string[],
   partial: Partial<SetupDeps> = {},
 ): Promise<number> {
+  const write = partial.write ?? ((s) => process.stdout.write(s));
   if (args.length) {
-    (partial.write ?? ((s) => process.stderr.write(s)))(
-      'uso: pa setup (terminal local interactiva, sin argumentos secretos)\n',
-    );
+    write('uso: pa setup (terminal local, sin argumentos secretos)\n');
     return 2;
   }
   const deps: SetupDeps = {
     question: terminalQuestion,
-    write: (s) => process.stdout.write(s),
-    get: vaultGet,
-    set: vaultSet,
-    init: initVault,
-    backend: vaultBackend,
-    prepare() {
-      if (existsSync(resolve(paths.state, 'agent.pid')))
-        throw new Error(
-          'Hay un marcador de daemon existente; revisa status y detén la instancia antes de configurar. Setup no mata ni borra el PID.',
-        );
-      if (existsSync(paths.state)) {
-        const stat = lstatSync(paths.state);
-        if (
-          stat.isSymbolicLink() ||
-          !stat.isDirectory() ||
-          (process.platform !== 'win32' &&
-            (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0))
-        )
-          throw new Error(
-            'Revisa el propietario y los permisos privados del directorio de estado; setup no los cambia silenciosamente.',
-          );
-      } else mkdirSync(paths.state, { recursive: true, mode: 0o700 });
-    },
+    write,
+    inspect: () => inspectSetupOwnership(paths.state),
+    acquire: () => acquireSetupOwnership(paths.state),
+    configure: configurePortableVault,
     config: loadConfig,
+    prerequisites: () =>
+      spawnSync('flock', ['--version'], { stdio: 'ignore', timeout: 3000 }).status === 0,
+    platform: process.platform,
+    desktop: desktopEnabled(),
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     nodeMajor: Number(process.versions.node.split('.')[0]),
     built: existsSync(resolve('dist/cli.js')),
     ...partial,
   };
-  if (deps.nodeMajor < 24) {
-    deps.write('Se requiere Node 24 o posterior; no se ha cambiado nada.\n');
+  // Windows guide-only, before TTY, paths, vault, ACL or prompts.
+  if (deps.platform !== 'linux') {
+    write(
+      'Guía solamente en esta plataforma. El wizard con cambios requiere Linux/servidor; Windows aún necesita mutex/DACL y prueba TTY nativa. Consulta README. No se ha creado estado ni abierto el almacén.\n',
+    );
+    return 2;
+  }
+  if (deps.desktop) {
+    write('El wizard Linux requiere modo servidor (PA_DESKTOP=off); no se ha cambiado nada.\n');
     return 1;
   }
-  if (!deps.built) {
-    deps.write(
-      'Falta dist/cli.js. Ejecuta npm run build desde la raíz del repositorio; setup no instala ni compila por sí solo.\n',
+  if (deps.nodeMajor < 24 || !deps.built || !deps.prerequisites()) {
+    write(
+      'Se requieren Node24, dist/cli.js compilado y flock disponible; no se ha cambiado nada.\n',
     );
     return 1;
   }
-  deps.write(
-    'Configuración local en español. No activa autostart ni watchdog, no arranca el daemon y no hace llamadas a Telegram ni al modelo. Cada cambio requiere tu sí. No pegues secretos en un chat.\n',
+  if (!deps.interactive) {
+    write(
+      'pa setup requiere una terminal local interactiva; no pegues secretos en chats ni argumentos.\n',
+    );
+    return 1;
+  }
+  try {
+    deps.inspect();
+  } catch {
+    write(
+      'Estado previo/legacy ambiguo o permisos no seguros. No se sondea ni borra nada; revisa el estado antes de configurar.\n',
+    );
+    return 1;
+  }
+  let provider: string | undefined;
+  try {
+    provider = deps.config().provider;
+  } catch {
+    write('Configuración no válida; revisa .env sin compartir valores. No se ha cambiado nada.\n');
+    return 1;
+  }
+  write(
+    'Configuración local parcial. Sin red, llamadas al modelo, autostart, descargas ni comprobación del token. No se cambia proveedor ni backend. Se conservarán campos existentes salvo reemplazo explícito; cambios solo tras confirmación final. No pegues secretos en un chat.\n',
   );
-  if (
-    !yes(await deps.question('¿Quieres revisar la configuración local? Escribe sí para continuar'))
-  )
-    return 0;
-  let config: ReturnType<SetupDeps['config']>;
   try {
-    config = deps.config();
+    if (!yes(await deps.question('¿Continuar? Escribe sí'))) return 0;
   } catch {
-    deps.write(
-      'La configuración actual no es válida; revisa .env sin compartir sus valores. No se ha cambiado nada.\n',
-    );
+    write('Configuración cancelada; no se ha cambiado nada.\n');
     return 1;
   }
-  deps.write(
-    'Se conservará la configuración actual del proveedor. Un nombre free no garantiza coste cero ni cuota. Revisa plan, modelo y política de datos antes de usarlo; setup no consume cuota para comprobarlos.\n',
-  );
-  // Avoid printing model/preset strings: a malformed env may carry private values.
-
+  let owner: SetupOwnership;
   try {
-    deps.prepare();
+    owner = deps.acquire();
   } catch {
-    deps.write(
-      'No se puede preparar el estado: revisa permisos/propietario y cualquier daemon existente con status. No se ha borrado ni matado nada.\n',
-    );
+    write('No se pudo adquirir propiedad exclusiva. No se cambia el almacén.\n');
     return 1;
-  }
-  try {
-    await deps.get('telegram:botToken');
-  } catch {
-    deps.write(
-      `No se pudo abrir el almacén (${deps.backend() === 'dpapi' ? 'DPAPI ligado a este usuario Windows' : 'portable sin cifrado DPAPI'}). No se muestra el error interno.\n`,
-    );
-    if (
-      !yes(
-        await deps.question('¿Inicializar el almacén? No reemplaza un vault existente; escribe sí'),
-      )
-    )
-      return 1;
-    try {
-      await deps.init();
-    } catch {
-      deps.write('No se pudo inicializar; no se cambia de backend ni se reemplaza el vault.\n');
-      return 1;
-    }
   }
   let pending = 0;
-  for (const field of [
-    {
-      key: 'telegram:botToken',
-      prompt: 'Token de tu bot creado en BotFather',
-      secret: true,
-      valid: (v: string) => v.length <= 16384 && /^\d{5,}:[A-Za-z0-9_-]{20,}$/.test(v),
-    },
-    {
-      key: 'telegram:allowedUserIds',
-      prompt:
-        'Tu ID numérico de usuario Telegram (varios separados por comas, no @nombre ni ID del bot)',
-      secret: false,
-      valid: (v: string) =>
-        v
-          .split(',')
-          .every((s) => /^[1-9]\d*$/.test(s.trim()) && Number.isSafeInteger(Number(s.trim()))),
-    },
-    {
-      key: 'provider:apiKey',
-      prompt: 'Clave del proveedor que ya has configurado, con su plan revisado',
-      secret: true,
-      valid: (v: string) => v.length > 0 && v.length <= 16384 && !/[\r\n\0]/.test(v),
-    },
-  ]) {
-    if (field.key === 'provider:apiKey' && config.provider === 'opencode-local') {
-      deps.write(
-        'Proveedor local: setup no pide ni almacena una clave externa; configura y verifica OpenCode por separado.\n',
-      );
-      continue;
-    }
-    let current: string | undefined;
-    try {
-      current = await deps.get(field.key);
-    } catch {
-      deps.write('No se pudo leer el almacén; no se cambia nada más.\n');
-      return 1;
-    }
-    if (current) {
-      deps.write(
-        `Se conserva ${field.key}; no se imprime su valor. Para rotarlo usa el comando de vault explícito.\n`,
-      );
-      continue;
-    }
-    if (!yes(await deps.question(`Falta ${field.key}. ¿Quieres guardarlo? Escribe sí`))) {
-      pending++;
-      deps.write(`Pendiente ${field.key}; no se afirma configuración completa.\n`);
-      continue;
-    }
-    if (field.key === 'telegram:botToken')
-      deps.write(
-        'Abre el perfil verificado de BotFather, usa /newbot y conserva el token en privado. No se consulta ningún bot de terceros.\n',
-      );
-    const value = await deps.question(field.prompt, field.secret);
-    if (!field.valid(value)) {
-      deps.write(`Formato no válido para ${field.key}; no se guarda ni se repite el valor.\n`);
-      return 1;
-    }
-    try {
-      await deps.set(field.key, value);
-    } catch {
-      deps.write(
-        'No se pudo guardar. Revisa el almacén y sus permisos; no se muestra su error interno.\n',
-      );
-      return 1;
-    }
-    deps.write(`Guardado ${field.key}; no se muestra el valor.\n`);
+  let cancelled = false;
+  try {
+    const saved = await deps.configure(
+      [
+        'telegram:botToken',
+        'telegram:allowedUserIds',
+        ...(provider === 'opencode-local' ? [] : ['provider:apiKey']),
+      ],
+      async (fields) => {
+        const proposed: Record<string, string> = {};
+        for (const field of fields) {
+          owner.assert();
+          if (field.source === 'environment') {
+            write(
+              `${field.key}: configurado desde entorno; no se copia a archivo ni se ofrece cambiarlo.\n`,
+            );
+            continue;
+          }
+          write(
+            `${field.key}: ${field.source === 'file' ? 'configurado desde archivo' : 'pendiente'}.\n`,
+          );
+          const choice = await deps.question(
+            field.source === 'file'
+              ? `¿Reemplazar ${field.key}? Escribe reemplazar o Enter para conservar`
+              : `¿Preparar ${field.key}? Escribe sí o Enter para omitir`,
+          );
+          if (
+            field.source === 'file' ? choice.trim().toLowerCase() !== 'reemplazar' : !yes(choice)
+          ) {
+            if (field.source === 'missing') pending++;
+            continue;
+          }
+          if (field.key === 'telegram:botToken')
+            write(
+              'Crea el bot en el perfil verificado de BotFather con /newbot. El formato no prueba que el token sea válido; no se consulta ningún bot de terceros.\n',
+            );
+          if (field.key === 'provider:apiKey')
+            write(
+              'Clave del proveedor que ya has configurado: revisa su plan y política de datos antes de usarla. Un nombre free no garantiza coste cero.\n',
+            );
+          const value = await deps.question(
+            field.key === 'telegram:allowedUserIds'
+              ? 'Tu ID numérico de usuario Telegram (no @nombre ni ID del bot; varios separados por comas)'
+              : field.key,
+            field.key !== 'telegram:allowedUserIds',
+          );
+          if (value === '') {
+            if (field.source === 'missing') pending++;
+            continue;
+          }
+          const valid =
+            field.key === 'telegram:allowedUserIds'
+              ? value
+                  .split(',')
+                  .every(
+                    (s) => /^[1-9]\d*$/.test(s.trim()) && Number.isSafeInteger(Number(s.trim())),
+                  )
+              : field.key === 'telegram:botToken'
+                ? /^\d{5,}:[A-Za-z0-9_-]{20,}$/.test(value)
+                : !/[\r\n\0]/.test(value);
+          if (!valid || value.length > 16384)
+            throw new Error('Formato de campo no válido; no se guarda ningún cambio.');
+          proposed[field.key] = value;
+        }
+        owner.assert();
+        const keys = Object.keys(proposed);
+        if (!keys.length) return undefined;
+        write(
+          `Cambios propuestos solo en: ${keys.join(', ')}. No se muestran valores ni longitudes.\n`,
+        );
+        if (
+          !yes(
+            await deps.question(
+              '¿Guardar juntos estos cambios? Escribe sí; cualquier otra respuesta cancela todos',
+            ),
+          )
+        ) {
+          cancelled = true;
+          return undefined;
+        }
+        owner.assert();
+        return proposed;
+      },
+    );
+    write(
+      cancelled
+        ? 'Cancelado: ningún secreto/configuración cambiado.\n'
+        : saved
+          ? 'Configuración guardada en un único commit local. No se ha probado que Telegram/modelo funcione ni que sea gratis.\n'
+          : 'Sin cambios guardados.\n',
+    );
+    write(
+      'Pendientes fuera de este wizard: autodetección ID, health real, descargas y autostart. Revisa doctor/README antes de arrancar serve y probar /start. Un /start que responde no prueba el modelo. Lock/directorios de coordinación privados pueden quedar, sin READY ni prueba de cierre publicados por setup.\n',
+    );
+    return pending ? 1 : 0;
+  } catch {
+    write(
+      'Configuración cancelada o no verificable; no se confirmó ningún commit. No se muestra el error interno ni valores. Revisa el almacén antes de reintentar.\n',
+    );
+    return 1;
+  } finally {
+    owner.release();
   }
-  deps.write(
-    'Revisión terminada, no verificación de conexión. No se ha hecho autodetección de ID ni health del modelo, descargado whisper ni registrado autostart. Ejecuta doctor y revisa el diagnóstico; llm-health hace llamadas reales y puede gastar cuota/dinero. Cuando revises esas condiciones, arranca serve y prueba /start desde tu usuario autorizado. Un /start que responde no prueba el modelo.\n',
-  );
-  return pending ? 1 : 0;
 }

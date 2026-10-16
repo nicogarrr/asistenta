@@ -1,11 +1,32 @@
-# Setup local guiado (primera parte, no instalación automática completa)
+# Setup local parcial
 
-`pa setup` requiere una terminal local interactiva, sin argumentos ni secretos por chat. Comprueba Node24 y dist/cli.js antes de empezar. Pide un sí inicial y un sí para guardar cada campo que falta. Conserva campos existentes sin imprimirlos ni reemplazarlos; la rotación se hace mediante comandos de vault explícitos.
+## Uso
 
-Token Telegram y clave del proveedor se leen sin eco mediante readline con salida silenciada; no van a argv, variables de entorno ni logs. No se afirma borrado garantizado de las cadenas JS. ID Telegram se introduce manualmente y se valida como entero positivo seguro (o lista de esos IDs), no @nombre. El formato de token no prueba su autenticidad ni la del bot. No consulta bots de terceros. Con proveedor opencode-local no pide una clave externa.
+Con Node 24, dependencias instaladas y build actual:
 
-No cambia el proveedor/modelo ni .env, no verifica el precio ni la cuota. No hace solicitudes Telegram o LLM, no arranca serve, no instala dependencias, no descarga whisper ni activa autostart/watchdog. Cada paso pendiente queda identificado y el resultado es exit1 si se omitieron campos que faltan. Un exit0 significa que terminó la revisión local sin campos omitidos, no que el chat funciona ni que el proveedor es gratis. El final guía doctor, revisión de planes y prueba manual de /start después de arrancar serve. El health automático facturable, la autodetección de ID, la descarga anunciada y el autostart opcional siguen pendientes; no se presenta cerrado todo el onboarding de la auditoría.
+```sh
+node --env-file=.env dist/cli.js setup
+```
 
-Estado nuevo privado700; estado existente con permisos abiertos/symlink/propietario incorrecto se rechaza sin cambiarlo silenciosamente. Un marcador agent.pid existente también bloquea antes de guardar, sin borrarlo ni matar un proceso. No se instala un controlador nuevo Windows. El vault mantiene DPAPI por defecto Windows y portable fuera: no se cambia de backend si falla DPAPI. Si no puede abrir el vault, solo intenta init con permiso explícito; el init existente se niega a sobrescribir vault cifrado. Los errores de config/vault se ocultan tras mensajes fijos, sin valores.
+Solo admite cambios en Linux, modo servidor y backend portable, con terminal local interactiva y `flock`. En Windows muestra una guía y no escribe configuración. No es un instalador Windows ni configura DPAPI.
 
-QA:17tests unitarios con dependencias inyectadas cubren prerequisitos, cancelación, conservación, escritura por campo, formatosID, erroressecretos, proveedorelocal y estado ambiguo. Dos CLIcompilados comprueban noTTY/argumentos rechazados sin leer ni imprimir entrada sintética. Una comprobación manual con PTY Linux y valor sintético verificó sin eco, recepción exacta y restauración ECHO/ICANON al terminar; no tocó vault real. No prueba nativa de TTY/DPAPI Windows ni Telegram/cuenta/sesión de Nico. Typecheck/build/Biome y suite completa se reportan en el PR cuando terminen.
+## Qué hace
+
+1. Comprueba requisitos y estado previo antes de pedir cambios. La evidencia de daemon antiguo o metadata ambigua bloquea el wizard: no sondea PID, no reclama locks y no borra pruebas previas.
+2. Pide consentimiento inicial, adquiere propiedad exclusiva del daemon y después el lock del vault. Un daemon activo impide configurar.
+3. Lee un snapshot fresco del almacén, sin copiar variables de entorno al archivo. Cada campo indica solo si viene del entorno, del archivo o falta.
+4. Pregunta por Telegram token, IDs permitidos y clave del proveedor. Los valores no se imprimen. Las teclas de edición no se guardan como parte del secreto. Un campo existente exige elegir reemplazo; dejarlo vacío lo conserva. Un campo gestionado por entorno no se reemplaza desde el wizard.
+5. Muestra solo los nombres que cambiarían y pide confirmación final. Escribe el lote en una operación atómica; si cambia el archivo o el entorno durante la revisión, aborta sin guardar el lote.
+
+Cancelar antes de confirmar no escribe secretos. Puede quedar el directorio privado y el archivo de lock de propiedad, pero no se consideran prueba de daemon detenido. Ctrl+C, EOF, SIGTERM, SIGHUP y timeout de entrada cancelan y restauran el terminal. No se promete recuperación frente a SIGKILL o pérdida de energía.
+
+No llama a Telegram ni al proveedor, no valida credenciales contra la red, no descarga modelos, no cambia proveedor, no arranca servicios y no activa autostart ni watchdog. Los campos son opcionales: guardar alguno no significa que `serve` ya tenga todos los requisitos. No se usa el PC ni la cuenta de Nico para QA.
+
+## Pruebas
+
+- Unitarias del flujo: consentimiento, plataforma, cancelación, reemplazo, entorno, resumen final y propiedad.
+- Snapshot del vault: lectura fresca, preservación de claves ajenas, merge atómico, rechazo ante cambio externo y sin persistir overrides de entorno.
+- Subprocesos del CLI construido: rechazo no-TTY y argumentos sin filtrar entrada ni crear estado.
+- PTY Linux sintético: éxito, retroceso, flechas, pegado delimitado, Ctrl+C, EOF, SIGTERM y SIGHUP; comprueba ausencia de eco, valor exacto y restauración de ECHO/ICANON/ISIG. No usa secretos reales.
+
+Las pruebas PTY requieren Python 3 y se ejecutan en la fase de recursos, después del build. No prueban un emulador gráfico concreto ni hardware Windows.
