@@ -108,4 +108,13 @@ echo "$OUT" | grep -q "backup fallo" || fail "9: abort no visible"
 echo "$OUT" | grep -q "disco lleno" || fail "9: fallo de cp no visible"
 [ ! -e "$BK/MANIFEST" ] && [ ! -e "$BK/.mlist" ] || fail "9: MANIFEST/.mlist inconsistente tras cp roto"
 ok "instalador: cp de backup obligatorio - fallo aborta antes de mutar"
-echo "PASS $PASS/9"
+
+# 10) mapper: el archivo privado del token se restaura desde el backup (0600)
+sandbox; stub pgrep 'exit 1'
+printf 'magic_mapper.py\n.tv-button-curl.conf\n' > "$T/bk/MANIFEST"
+echo TOKBAK > "$T/bk/.tv-button-curl.conf"; chmod 600 "$T/bk/.tv-button-curl.conf"
+OUT=$(runp "$MMRB") || fail "10: restore con token debia funcionar"
+[ "$(cat "$T/root/.tv-button-curl.conf")" = TOKBAK ] || fail "10: token no restaurado"
+[ "$(stat -c %a "$T/root/.tv-button-curl.conf")" = "600" ] || fail "10: modo 600 perdido en restore"
+ok "mapper: archivo privado del token restaurado desde backup con sus permisos"
+echo "PASS $PASS/10"
