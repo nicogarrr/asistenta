@@ -298,8 +298,8 @@ describe('offerApproval sin askScope', () => {
     });
     const message = harness.sent.find((m) => m.text === '¿Permito shell?');
     expect(message?.keyboard[0]).toEqual([
-      { text: 'Approve', callback_data: 'approve:req-1' },
-      { text: 'Deny', callback_data: 'deny:req-1' },
+      { text: 'Permitir', callback_data: 'approve:req-1' },
+      { text: 'Denegar', callback_data: 'deny:req-1' },
     ]);
     channel.cancelApprovals();
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
@@ -348,7 +348,7 @@ describe('caducidad y cancelación', () => {
     const pending = channel.offerApproval('req-1', '42', '¿Permito a?', { askScope: true });
     press('approve:always:req-1', 99);
     expect(await stateOf(pending)).toBe('pending');
-    expect(harness.answers).toContain('This assistant is private.');
+    expect(harness.answers).toContain('Este asistente es privado.');
     channel.cancelApprovals();
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
   });

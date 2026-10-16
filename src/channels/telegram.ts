@@ -1,6 +1,7 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { log, redact } from '../log.js';
 import { Mutex, withTimeout } from '../utils.js';
+import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
 
 /**
@@ -157,19 +158,7 @@ export class TelegramChannel implements ChannelAdapter {
     // Command menu in the Telegram UI, so the useful commands are discoverable
     // without remembering them. Telegram caps this at 100 and orders as given.
     void this.#bot.api
-      .setMyCommands([
-        { command: 'start', description: 'Saludar al asistente' },
-        { command: 'stop', description: 'Detener todo lo que esté en curso' },
-        { command: 'screen', description: 'Enviar una captura de la pantalla ahora' },
-        { command: 'watch', description: 'Ver la pantalla en directo: /watch 60 5' },
-        { command: 'topic', description: 'Abrir o cambiar de conversación: /topic renfe' },
-        { command: 'topics', description: 'Listar las conversaciones abiertas' },
-        { command: 'learn', description: 'Aprender una rutina: /learn compra, luego /learn end' },
-        { command: 'routine', description: 'Ejecutar una rutina guardada: /routine compra' },
-        { command: 'routines', description: 'Listar rutinas y horarios' },
-        { command: 'memory', description: 'Ver lo que el agente recuerda de ti' },
-        { command: 'voice', description: 'Activar o desactivar respuestas habladas: /voice off' },
-      ])
+      .setMyCommands(TELEGRAM_COMMANDS.map((command) => ({ ...command })))
       .catch(() => {});
 
     // A terminal polling failure used to be the end: one log line and the
@@ -271,7 +260,7 @@ export class TelegramChannel implements ChannelAdapter {
 
     if (!this.#options.allowedUserIds.includes(user.id)) {
       handlers.log('warn', 'unauthorised sender', { userId: user.id, username: user.username });
-      await ctx.reply('This assistant is private.').catch(() => {});
+      await ctx.reply('Este asistente es privado.').catch(() => {});
       return;
     }
 
@@ -349,7 +338,7 @@ export class TelegramChannel implements ChannelAdapter {
   #authorise(userId: number, label: string, handlers: ChannelHandlers): string | null {
     if (!this.#options.allowedUserIds.includes(userId)) {
       handlers.log('warn', 'unauthorised sender', { userId, label });
-      return 'This assistant is private.';
+      return 'Este asistente es privado.';
     }
     return null;
   }
@@ -474,8 +463,8 @@ export class TelegramChannel implements ChannelAdapter {
               { label: 'Denegar', action: `deny:${id}` },
             ]
           : [
-              { label: 'Approve', action: `approve:${id}` },
-              { label: 'Deny', action: `deny:${id}` },
+              { label: 'Permitir', action: `approve:${id}` },
+              { label: 'Denegar', action: `deny:${id}` },
             ],
       }).catch(() => settle({ approved: false, scope: 'once' }));
     });
