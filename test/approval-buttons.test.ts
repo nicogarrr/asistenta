@@ -63,6 +63,10 @@ const harness = vi.hoisted(() => {
 
   class FakeBot {
     readonly api = {
+      // The channel installs its polling-health transformer here (grammy API).
+      config: {
+        use: () => ({}),
+      },
       sendMessage: async (
         chatId: number,
         text: string,

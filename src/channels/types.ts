@@ -133,6 +133,14 @@ export interface ChannelAdapter {
 export interface ChannelHandlers {
   onMessage(inbound: Inbound): void | Promise<void>;
   /**
+   * The channel's polling died and it is reconnecting on its own. Fired once
+   * per outage, like the wake listener's notice: the failure repeats until
+   * fixed, so the message must not.
+   */
+  onPollingLost?(channel: string, message: string): void | Promise<void>;
+  /** Polling is back after an onPollingLost. */
+  onPollingRecovered?(channel: string): void | Promise<void>;
+  /**
    * Approval requests arrive here regardless of which chat asked, so the human can
    * approve from the channel they happen to be looking at.
    */
