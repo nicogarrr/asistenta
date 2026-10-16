@@ -47,6 +47,23 @@ describe('inspectionThreadKey', () => {
     expect(runMemoryCommand(store, key)).toContain('prefiere respuestas cortas');
   });
 
+  it('recupera el hilo de una notificación persistida de objetivo y rechaza un chat ajeno (auditor #152 ronda 2)', () => {
+    // Mapa volátil vacío (reinicio del daemon): la ruta durable llega por
+    // replyGoalScope y apunta al hilo del objetivo, no a main.
+    const store = new MemoryStore(dir);
+    store.remember('k#m7', 'el objetivo pidió un presupuesto');
+    expect(inspectionThreadKey({ chatKey: 'k', replyGoalScope: 'k#m7' })).toBe('k#m7');
+    expect(
+      runMemoryCommand(store, inspectionThreadKey({ chatKey: 'k', replyGoalScope: 'k#m7' })),
+    ).toContain('el objetivo pidió un presupuesto');
+    // Un scope de OTRO chat jamás se sigue: cae a main de este chat.
+    expect(inspectionThreadKey({ chatKey: 'k', replyGoalScope: 'otro:chat#m7' })).toBe('k#main');
+    // La respuesta volátil manda sobre la durable, como en resolveThread.
+    expect(
+      inspectionThreadKey({ chatKey: 'k', replyThreadKey: 'k#m99', replyGoalScope: 'k#m7' }),
+    ).toBe('k#m99');
+  });
+
   it('respeta /topic explícito, respuesta a un mensaje e hilo de Telegram, en ese orden', () => {
     expect(inspectionThreadKey({ chatKey: 'k', activeTopic: 'renfe' })).toBe('k#renfe');
     expect(inspectionThreadKey({ chatKey: 'k', replyThreadKey: 'k#m99' })).toBe('k#m99');

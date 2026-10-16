@@ -2960,6 +2960,13 @@ async function serveCommand(): Promise<number> {
       replyThreadKey: inbound.replyToMessageId
         ? messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`)
         : undefined,
+      // Fallback durable, como resolveThread: tras un reinicio messageThread
+      // está vacío y la notificación persistida de un objetivo sigue encontrando
+      // su hilo. scopeBySentId ya filtra por chatKey; inspectionThreadKey lo
+      // vuelve a validar.
+      replyGoalScope: inbound.replyToMessageId
+        ? (goalNotifier.scopeBySentId(chatKey_, inbound.replyToMessageId) ?? undefined)
+        : undefined,
       threadId: inbound.threadId,
     });
     await say(inbound, runMemoryCommand(memory, key), { quote: true });
@@ -5021,10 +5028,18 @@ export function inspectionThreadKey(opts: {
   chatKey: string;
   activeTopic?: string | undefined;
   replyThreadKey?: string | undefined;
+  /** Durable reply routing: a goal notification's owning scope, from SQLite. */
+  replyGoalScope?: string | undefined;
   threadId?: string | undefined;
 }): string {
   if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
   if (opts.replyThreadKey) return opts.replyThreadKey;
+  if (opts.replyGoalScope) {
+    // Same validation as resolveThread: the notification must belong to THIS
+    // chat — a foreign scope is ignored, never followed.
+    const { chatKey, thread } = splitGoalScope(opts.replyGoalScope);
+    if (chatKey === opts.chatKey) return `${chatKey}#${thread}`;
+  }
   if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
   return `${opts.chatKey}#main`;
 }
