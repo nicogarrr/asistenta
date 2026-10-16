@@ -349,7 +349,7 @@ export function createMemoryTool(
           if (!snapshot) return noSnapshot();
           // The result is the ground truth of the write: "saved" is only said
           // when the snapshot confirmed the bytes are on disk.
-          const result = snapshot.appendEntry('perfil', text);
+          const result = snapshot.appendEntry(text);
           if (!result.ok) {
             if (result.reason) {
               log.info('profile refused a secret-looking entry', { scope, reason: result.reason });
@@ -368,7 +368,7 @@ export function createMemoryTool(
 
         case 'profile': {
           if (!snapshot) return noSnapshot();
-          const perfil = snapshot.load().perfil.trim();
+          const perfil = snapshot.load().trim();
           return {
             content: [{ type: 'text', text: perfil || 'El perfil está vacío todavía.' }],
             details: { empty: perfil.length === 0 },

@@ -1,7 +1,7 @@
 /**
- * The snapshot files (MEMORIA.md / PERFIL.md), the memory-worthy nudge and the
- * tool actions that expose both. Everything runs against a temp dir: a snapshot
- * that writes outside its dir is a bug worth failing over.
+ * The snapshot file (PERFIL.md), the memory-worthy nudge and the tool actions
+ * that expose both. Everything runs against a temp dir: a snapshot that writes
+ * outside its dir is a bug worth failing over.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,12 +36,14 @@ function textOf(result: { content: Array<{ type: string; text?: string } | unkno
 }
 
 describe('MemorySnapshot', () => {
-  it('load crea los ficheros, devuelve vacíos y la segunda lectura es estable', () => {
+  it('load crea el fichero, devuelve vacío y la segunda lectura es estable', () => {
     const snapshot = new MemorySnapshot({ dir });
-    expect(snapshot.load()).toEqual({ memoria: '', perfil: '' });
-    expect(existsSync(join(dir, 'MEMORIA.md'))).toBe(true);
+    expect(snapshot.load()).toBe('');
     expect(existsSync(join(dir, 'PERFIL.md'))).toBe(true);
-    expect(snapshot.load()).toEqual({ memoria: '', perfil: '' });
+    // MEMORIA.md se eliminó: era un escritor muerto (nadie la escribía en
+    // runtime) con sitio en el prompt. No debe volver a crearse.
+    expect(existsSync(join(dir, 'MEMORIA.md'))).toBe(false);
+    expect(snapshot.load()).toBe('');
   });
 
   it('appendEntry respeta maxChars y elimina lo más viejo', () => {
@@ -50,66 +52,84 @@ describe('MemorySnapshot', () => {
     const second = 'b'.repeat(30);
     const third = 'c'.repeat(30);
     const fourth = 'd'.repeat(30);
-    snapshot.appendEntry('memoria', first);
-    snapshot.appendEntry('memoria', second);
-    snapshot.appendEntry('memoria', third);
-    expect(snapshot.load().memoria).toBe([first, second, third].join('\n§\n'));
-    snapshot.appendEntry('memoria', fourth);
-    expect(snapshot.load().memoria).toBe([second, third, fourth].join('\n§\n'));
+    snapshot.appendEntry(first);
+    snapshot.appendEntry(second);
+    snapshot.appendEntry(third);
+    expect(snapshot.load()).toBe([first, second, third].join('\n§\n'));
+    snapshot.appendEntry(fourth);
+    expect(snapshot.load()).toBe([second, third, fourth].join('\n§\n'));
   });
 
   it('una entrada más larga que el cap se trunca en lugar de vaciar el fichero', () => {
     const snapshot = new MemorySnapshot({ dir, maxChars: 100 });
-    snapshot.appendEntry('perfil', 'x'.repeat(250));
-    expect(snapshot.load().perfil).toBe('x'.repeat(100));
+    snapshot.appendEntry('x'.repeat(250));
+    expect(snapshot.load()).toBe('x'.repeat(100));
   });
 
-  it('contextNote formatea los bloques, omite los vacíos y devuelve vacío si no hay nada', () => {
+  it('contextNote formatea el bloque y devuelve vacío si no hay nada', () => {
     const snapshot = new MemorySnapshot({ dir });
     expect(snapshot.contextNote()).toBe('');
-    snapshot.appendEntry('memoria', 'prefiere respuestas cortas');
+    snapshot.appendEntry('se llama Ana');
+    expect(snapshot.contextNote()).toBe('<profile>\nse llama Ana\n</profile>');
+  });
+
+  it('contextNote lee un MEMORIA.md legado sin crearlo ni escribirlo', () => {
+    // Legado: el fichero era editable a mano, así que uno preexistente con
+    // contenido se honra aunque ya nadie lo escriba.
+    writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\nprefiere respuestas cortas', 'utf8');
+    const snapshot = new MemorySnapshot({ dir });
     expect(snapshot.contextNote()).toBe('<memory>\nprefiere respuestas cortas\n</memory>');
-    snapshot.appendEntry('perfil', 'se llama Ana');
+    snapshot.appendEntry('se llama Ana');
     expect(snapshot.contextNote()).toBe(
       '<memory>\nprefiere respuestas cortas\n</memory>\n<profile>\nse llama Ana\n</profile>',
     );
+    // Ni un byte cambiado: lectura estricta.
+    expect(readFileSync(join(dir, 'MEMORIA.md'), 'utf8')).toBe(
+      '# MEMORIA\n\nprefiere respuestas cortas',
+    );
   });
 
-  it('saveMemoria corta en el último separador dentro del límite', () => {
+  it('un MEMORIA.md legado vacío (solo plantilla) no emite bloque', () => {
+    writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\n', 'utf8');
+    const snapshot = new MemorySnapshot({ dir });
+    expect(snapshot.contextNote()).toBe('');
+  });
+
+  it('savePerfil corta en el último separador dentro del límite', () => {
     const snapshot = new MemorySnapshot({ dir, maxChars: 60 });
     const first = 'a'.repeat(20);
     const second = 'b'.repeat(20);
     const third = 'c'.repeat(20);
-    snapshot.saveMemoria([first, second, third].join('\n§\n'));
-    expect(snapshot.load().memoria).toBe([first, second].join('\n§\n'));
+    snapshot.savePerfil([first, second, third].join('\n§\n'));
+    expect(snapshot.load()).toBe([first, second].join('\n§\n'));
   });
 
   it('sin separador dentro del límite, savePerfil trunca', () => {
     const snapshot = new MemorySnapshot({ dir, maxChars: 60 });
     snapshot.savePerfil('y'.repeat(250));
-    expect(snapshot.load().perfil).toBe('y'.repeat(60));
+    expect(snapshot.load()).toBe('y'.repeat(60));
   });
 
   it('appendEntry rechaza una entrada con secreto y no la escribe en el fichero', () => {
     const snapshot = new MemorySnapshot({ dir });
-    const result = snapshot.appendEntry('perfil', 'mi contraseña de la banca es 1234');
+    const result = snapshot.appendEntry('mi contraseña de la banca es 1234');
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('contraseña');
     expect(result.error).toBeUndefined();
-    expect(snapshot.load().perfil).toBe('');
+    expect(snapshot.load()).toBe('');
     expect(readFileSync(join(dir, 'PERFIL.md'), 'utf8')).not.toContain('1234');
     expect(readFileSync(join(dir, 'PERFIL.md'), 'utf8')).not.toContain('contraseña');
   });
 
-  it('saveMemoria y savePerfil rechazan secretos y devuelven el motivo', () => {
+  it('savePerfil rechaza secretos y devuelve el motivo', () => {
     const snapshot = new MemorySnapshot({ dir });
     const perfil = snapshot.savePerfil('password: x');
     expect(perfil.ok).toBe(false);
     expect(perfil.reason).toContain('contraseña');
-    const memoria = snapshot.saveMemoria(`sk-${'a'.repeat(20)}`);
-    expect(memoria.ok).toBe(false);
-    expect(memoria.reason).toContain('token');
-    expect(snapshot.load()).toEqual({ memoria: '', perfil: '' });
+    const token = snapshot.savePerfil(`sk-${'a'.repeat(20)}`);
+    expect(token.ok).toBe(false);
+    expect(token.reason).toContain('token');
+    expect(snapshot.load()).toBe('');
   });
 
   it('un fallo de disco devuelve ok:false con error y no afirma éxito', () => {
@@ -120,7 +140,7 @@ describe('MemorySnapshot', () => {
     expect(saved.ok).toBe(false);
     expect(saved.error).toBeTruthy();
     expect(saved.reason).toBeUndefined();
-    const appended = snapshot.appendEntry('perfil', 'se llama Ana');
+    const appended = snapshot.appendEntry('se llama Ana');
     expect(appended.ok).toBe(false);
     expect(appended.error).toBeTruthy();
     expect(appended.reason).toBeUndefined();
@@ -276,7 +296,7 @@ describe('memory tool con snapshot', () => {
       text: 'se llama Ana y vive en Madrid',
     });
     expect(saved.isError).toBeFalsy();
-    expect(snapshot.load().perfil).toBe('se llama Ana y vive en Madrid');
+    expect(snapshot.load()).toBe('se llama Ana y vive en Madrid');
 
     const profile = await tool.execute('c2', { action: 'profile' });
     expect(textOf(profile)).toContain('se llama Ana y vive en Madrid');
@@ -345,7 +365,7 @@ describe('memory tool reporta el resultado real', () => {
     expect(textOf(rejected)).toContain('No lo he guardado');
     expect(textOf(rejected)).toContain('contraseña');
     expect(textOf(rejected)).not.toContain('Guardado en tu perfil');
-    expect(snapshot.load().perfil).toBe('');
+    expect(snapshot.load()).toBe('');
   });
 
   it('save_profile confirma solo cuando el snapshot escribió de verdad', async () => {
@@ -354,7 +374,7 @@ describe('memory tool reporta el resultado real', () => {
     const saved = await tool.execute('e3', { action: 'save_profile', text: 'se llama Ana' });
     expect(saved.isError).toBeFalsy();
     expect(textOf(saved)).toContain('Guardado en tu perfil');
-    expect(snapshot.load().perfil).toBe('se llama Ana');
+    expect(snapshot.load()).toBe('se llama Ana');
   });
 
   it('remember rechaza secretos y no los deja en la memoria', async () => {
