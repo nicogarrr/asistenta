@@ -18,7 +18,7 @@ it.skipIf(process.platform !== 'linux')(
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     const scenarios = JSON.parse(result.stdout);
-    expect(scenarios).toHaveLength(8);
+    expect(scenarios).toHaveLength(14);
     expect(
       scenarios.every(
         (x: { no_echo: boolean; modes_restored: boolean; expected_result: boolean }) =>
