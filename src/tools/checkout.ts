@@ -225,37 +225,26 @@ export function findTotalPrice(text: string): PriceText | null {
 }
 
 /**
- * Words that turn "a total" into "an instalment": monthly, instalments,
- * subscription, financing. Any of them attached to the total's own sentence
- * means the labelled amount is NOT the full commitment ("29,99 al mes durante
- * 24 meses" commits 719,76, not 29,99) and a confirm must never quote it as
- * one. `\d+ meses` needs the number so "garantia" prose elsewhere is fine -
- * and only the total's own sentence counts (nothing past `.`, `;` or a line
- * break), so "Total: 45,20. Garantia: 24 meses" stays a plain purchase.
+ * A recurrence or financing hint ANYWHERE on the page. Conservative on
+ * purpose: instalment wording before or after the total, in any sentence, no
+ * distance limit - "29,99/mes", "Mensual", "Suscripcion", "anual", "24
+ * meses" all count. False positives ("garantia 24 meses") go to manual review
+ * too: approving a real instalment as a capped one-shot purchase is the
+ * expensive direction, and telling them apart for sure would take structured
+ * order-summary context, not phrasing rules.
  */
 const RECURRENCE =
-  /\b(?:al\s+mes|por\s+mes|cada\s+mes|mensual(?:idad|idades)?|mensualmente|cuotas?|plazos?|suscripci\w*|recurrent\w*|per\s+month|monthly|installments?|durante\s+\d+\s+meses|\d+\s+meses|financia\w*)\b/iu;
+  /\b(?:al\s+mes|por\s+mes|cada\s+mes|mensual(?:idad|idades)?|mensualmente|semanal(?:mente)?|anual(?:idad|mente)?|cuotas?|plazos?|suscripci\w*|recurrent\w*|monthly|weekly|annual|yearly|installments?|financia\w*|durante\s+\d+\s+meses|\d+\s+meses)\b|\/\s*(?:mes|meses|month|semana|week|a[ñn]o|year)\b/iu;
 
 /**
- * The recurrence marker attached to the page's total, or null when the total
- * reads as a one-shot amount. Recurring or financed purchases are not capped
- * here - they are refused for manual review, because the cap would be lying
- * about a partial instalment.
+ * The first recurrence/financing hint on the page, or null when nothing reads
+ * as recurring. Any hint refuses the confirm for manual review: the cap never
+ * applies to what could be a partial instalment.
  */
-export function recurrenceNearTotal(text: string): string | null {
-  for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
-    const re = new RegExp(PRICE_RE.source, 'yi');
-    re.lastIndex = m.index + m[0].length;
-    if (!re.exec(text)) continue;
-    const rest = text.slice(re.lastIndex, re.lastIndex + 80);
-    const end = rest.search(/[.\n;]/);
-    const sentence = end === -1 ? rest : rest.slice(0, end);
-    const hit = sentence.match(RECURRENCE);
-    if (hit) return hit[0];
-  }
-  return null;
-}
-/** Prices visible in a block of page text, normalised, deduplicated, in order. */
+export function recurrenceHintInPage(text: string): string | null {
+  const hit = text.match(RECURRENCE);
+  return hit ? hit[0] : null;
+}/** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
   const out: string[] = [];
   for (const price of extractPriceTexts(text, limit * 2)) {
@@ -852,14 +841,15 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
               details: { asked: false, reason: 'moneda no EUR', amount: total.text },
             };
           }
-          const recurrence = recurrenceNearTotal(visible);
+          const recurrence = recurrenceHintInPage(visible);
           if (recurrence) {
             return {
               content: [
                 {
                   type: 'text',
                   text:
-                    `El total de la pagina (${total.text}) va unido a un pago recurrente o a plazos ` +
+                    `La pagina menciona un pago recurrente o a plazos y el total (${total.text}) ` +
+                    'podria ser solo una cuota: ' +
                     `("${recurrence}"): no puedo afirmar que ese importe sea el compromiso completo, ` +
                     'asi que queda denegado. Las suscripciones y los plazos se revisan a mano: ' +
                     'haz esa compra tu directamente.',
