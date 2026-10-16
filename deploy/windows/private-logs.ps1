@@ -1,3 +1,6 @@
+# Use the native host's module, not a PS7 module inherited via PSModulePath.
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop
+
 # Shared only by the launcher and native tests. Never repair an existing ACL silently.
 function Assert-NoReparsePath {
     param([string] $Path)
