@@ -12,7 +12,14 @@ describe('Spanish reasons without changing authority', () => {
     expect(approvalReasonSpanish(reason)).toContain(word);
   });
   it('keeps unknown and already Spanish reasons verbatim', () => {
-    for (const reason of ['Confirmar la compra de prueba', 'owner-specific reason', ''])
+    for (const reason of [
+      'Confirmar la compra de prueba',
+      'owner-specific reason',
+      '',
+      'toString',
+      'constructor',
+      '__proto__',
+    ])
       expect(approvalReasonSpanish(reason)).toBe(reason);
   });
   it('changes only prose, never the shell operation or original args', () => {
@@ -28,3 +35,11 @@ describe('Spanish reasons without changing authority', () => {
     expect(call).toEqual(original);
   });
 });
+
+it.each(['toString', 'constructor', '__proto__'])(
+  'renders unknown inherited key %s without crashing',
+  (reason) => {
+    const rendered = formatApproval({ tool: 'fetch', args: {}, actor: 'test' }, reason);
+    expect(rendered.question).toBe(`¿Permito fetch?\n${reason}`);
+  },
+);
