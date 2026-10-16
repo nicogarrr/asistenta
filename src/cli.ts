@@ -2947,12 +2947,22 @@ async function serveCommand(): Promise<number> {
     });
   };
 
-  const cmdMemory = async (thread: Thread, inbound: Inbound): Promise<void> => {
-    // La lógica vive en runMemoryCommand (exportada) para que el canario corra
-    // contra un MemoryStore real. El scope es thread.key, como todo lo demás
-    // que lee memoria: con chatKey(inbound) casi siempre decía "No recuerdo
-    // nada" aunque la hubiera (auditoría, solapamientos).
-    await say(inbound, runMemoryCommand(memory, thread.key), { quote: true });
+  const cmdMemory = async (inbound: Inbound): Promise<void> => {
+    // Resolución de inspección: NUNCA crea hilo y, a falta de intención
+    // explícita (/topic, respuesta a un mensaje nuestro, hilo de Telegram),
+    // lee main aunque esté ocupado. resolveThread aplicaría la heurística de
+    // peticiones nuevas: con main ocupado crearía #m<messageId> y /memory
+    // volvería a decir "No recuerdo nada" con la memoria llena (auditor #152).
+    const chatKey_ = chatKey(inbound);
+    const key = inspectionThreadKey({
+      chatKey: chatKey_,
+      activeTopic: activeTopic.get(chatKey_),
+      replyThreadKey: inbound.replyToMessageId
+        ? messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`)
+        : undefined,
+      threadId: inbound.threadId,
+    });
+    await say(inbound, runMemoryCommand(memory, key), { quote: true });
   };
 
   /**
@@ -4593,10 +4603,8 @@ async function serveCommand(): Promise<number> {
             const thread = await resolveThread(inbound);
             return cmdLearn(thread, inbound, command.args);
           }
-          case 'memory': {
-            const thread = await resolveThread(inbound);
-            return cmdMemory(thread, inbound);
-          }
+          case 'memory':
+            return cmdMemory(inbound);
           case 'deshacer':
           case 'undo':
             return say(inbound, undoLast(), { quote: true }).then(() => {});
@@ -4997,6 +5005,28 @@ export interface CronCommandDeps {
   threadKey: string;
   /** chatKey without the `#thread` suffix. */
   chatKey: string;
+}
+
+/**
+ * The conversation an inspection command (/memory and friends) reads. Unlike
+ * resolveThread it NEVER creates a thread — a read-only command has no
+ * business spawning a conversation — and it never looks at occupancy: the
+ * new-request heuristic ("main is busy, start #m<messageId>") is exactly what
+ * made /memory answer "No recuerdo nada" with a full memory and litter a new
+ * thread per read (auditor #152 ronda 1). Explicit intent wins, in
+ * resolveThread's order: /topic, a reply to one of our messages, a real
+ * Telegram thread id; without any of them, main is read even while busy.
+ */
+export function inspectionThreadKey(opts: {
+  chatKey: string;
+  activeTopic?: string | undefined;
+  replyThreadKey?: string | undefined;
+  threadId?: string | undefined;
+}): string {
+  if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
+  if (opts.replyThreadKey) return opts.replyThreadKey;
+  if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
+  return `${opts.chatKey}#main`;
 }
 
 /**
