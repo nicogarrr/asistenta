@@ -111,6 +111,9 @@ export class TelegramChannel implements ChannelAdapter {
   #pollingDown = false;
   #retryMs = 5_000;
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Health evidence: a getUpdates completed since the last (re)start. */
+  #pollingConfirmed = false;
+  #healthProbeInstalled = false;
   /**
    * One gate for every outbound call in the process.
    *
@@ -174,16 +177,37 @@ export class TelegramChannel implements ChannelAdapter {
     // (audit, line 120). Now it reconnects on its own with backoff and says
     // so once per outage, like the wake listener does.
     this.#stopped = false;
+    // grammY's onStart fires after init/deleteWebhook and BEFORE the first
+    // getUpdates (bot.js: onStart, then the loop), so it proves setup, NOT
+    // polling: a terminal 409 happens after it. The health signal is a
+    // completed getUpdates — an empty batch counts — observed through an API
+    // transformer. Only that marks the channel ready, resets the backoff and
+    // reports a recovery; a 409 loop escalates 5s -> 5min with a single
+    // outage notice and zero false recoveries (auditor, #153 ronda 1).
+    if (!this.#healthProbeInstalled) {
+      this.#healthProbeInstalled = true;
+      bot.api.config.use(async (prev, method, payload, signal) => {
+        const result = await prev(method, payload, signal);
+        if (method === 'getUpdates' && !this.#stopped && !this.#pollingConfirmed) {
+          this.#pollingConfirmed = true;
+          this.#ready = true;
+          this.#retryMs = 5_000;
+          const wasDown = this.#pollingDown;
+          this.#pollingDown = false;
+          this.#handlers?.log('info', 'telegram polling healthy', {});
+          if (wasDown) void this.#handlers?.onPollingRecovered?.('telegram');
+        }
+        return result;
+      });
+    }
     const poll = async (): Promise<void> => {
+      this.#pollingConfirmed = false;
       try {
         await bot.start({
           onStart: (me) => {
-            this.#ready = true;
-            this.#retryMs = 5_000;
-            const wasDown = this.#pollingDown;
-            this.#pollingDown = false;
+            // A late onStart after stop() must not resurrect the channel.
+            if (this.#stopped) return;
             handlers.log('info', 'telegram connected', { username: me.username, id: me.id });
-            if (wasDown) void handlers.onPollingRecovered?.('telegram');
           },
         });
         // A resolve means polling ended. If it was our own stop() there is
