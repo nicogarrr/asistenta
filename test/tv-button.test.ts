@@ -28,3 +28,63 @@ describe('tvButtonAction', () => {
     );
   });
 });
+
+// --- Canary de ejecución (auditor #154 ronda 1): la promesa "dice Dime." ---
+// speakAloud (cli.ts) ya llama owner.speak() por dentro. Envolverlo en otro
+// opened.speak() pone estado='hablando' y el interior devuelve 'fin' SIN
+// sintetizar ni reproducir (conversation.ts: guarda de estado). Este canario
+// ejecuta ambos patrones contra una ConversationSession real con synth/play
+// espiados: el anidado suena cero veces; el directo, exactamente una.
+import { ConversationSession } from '../src/voice/conversation.js';
+
+describe('saludo hablado de la sesión (ejecución real)', () => {
+  it('speak anidado = silencio; speakAloud directo = audio UNA vez', async () => {
+    const synthCalls: string[] = [];
+    const playCalls: string[] = [];
+    const session = new ConversationSession({
+      transcriber: async () => 'nada',
+      onUtterance: async () => {},
+      onClose: () => {},
+    });
+    // Réplica 1:1 de la estructura de speakAloud con synth/play espiados.
+    const speakOnce = async (text: string, owner: ConversationSession): Promise<void> => {
+      await owner.speak(async () => {
+        const file = await (async (t: string) => {
+          synthCalls.push(t);
+          return '/tmp/fake.mp3';
+        })(text);
+        await (async (f: string) => {
+          playCalls.push(f);
+        })(file);
+      });
+    };
+
+    // Patrón que había en handleWake y handleButton: speak(speakAloud) anidado.
+    await session.speak(() => speakOnce('Dime.', session));
+    expect(synthCalls).toHaveLength(0);
+    expect(playCalls).toHaveLength(0);
+
+    // Patrón corregido: speakAloud directo sobre la sesión abierta.
+    await speakOnce('Dime.', session);
+    expect(synthCalls).toEqual(['Dime.']);
+    expect(playCalls).toEqual(['/tmp/fake.mp3']);
+
+    session.close('apagado');
+  });
+
+  it('la sesión que abre el botón (sin /conversacion on) es una sesión normal que habla', async () => {
+    // El botón abre con openSession(force): conversationOn no interviene. La
+    // sesión resultante es una ConversationSession estándar: escucha y habla.
+    const synthCalls: string[] = [];
+    const session = new ConversationSession({
+      transcriber: async () => 'nada',
+      onUtterance: async () => {},
+      onClose: () => {},
+    });
+    await session.speak(async () => {
+      synthCalls.push('Dime.');
+    });
+    expect(synthCalls).toEqual(['Dime.']);
+    session.close('apagado');
+  });
+});

@@ -4105,7 +4105,7 @@ async function serveCommand(): Promise<number> {
       const opened = openSession(chat);
       if (opened) {
         if (request) await opened.submit(request);
-        else await opened.speak(() => speakAloud('Dime.', opened));
+        else await speakAloud('Dime.', opened);
         return;
       }
     }
@@ -4398,7 +4398,9 @@ async function serveCommand(): Promise<number> {
     const opened = openSession(chat as NonNullable<typeof chat>, { force: true });
     if (opened) {
       log.info('tv button opened a voice session', { source, chatId: (chat as { chatId: string }).chatId });
-      await opened.speak(() => speakAloud('Dime.', opened));
+      // speakAloud directo: envolverlo en opened.speak() anidaria dos speak y
+      // el interior volveria 'fin' sin sonar (conversation.ts: guarda de estado).
+      await speakAloud('Dime.', opened);
     }
   };
 
@@ -5066,8 +5068,9 @@ export interface CronCommandDeps {
  * is NOT an input: /conversacion resets to off at every boot, and that used
  * to turn the button into a silent no-op (audit, "botón TV"). Without a chat
  * (nobody has talked yet) there is nowhere to open the session; without a
- * live wake listener there is no audio to feed it. Both are said out loud,
- * never silent.
+ * live wake listener there is no audio to feed it: the chat notice says so
+ * instead of staying silent, and with no chat at all the log line is all
+ * there is.
  */
 export type TvButtonAction = 'open-session' | 'need-mic' | 'no-chat' | 'already-open';
 
