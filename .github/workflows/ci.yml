@@ -36,11 +36,10 @@ jobs:
 
   # Windows es la plataforma de producción. Solo se ejecuta un subconjunto sin
   # navegador real, micrófono ni escritorio interactivo (eso solo se prueba en el PC).
-  # Primera ejecución informativa: quitar continue-on-error cuando salga verde en main.
+  # Gate bloqueante tras primera ejecución Windows verde en el PR.
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
