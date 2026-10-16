@@ -10,7 +10,7 @@ Ejemplo de forma, NO un secreto literal:
 
 El comando no ejecuta ese marcador: sustituye el origen por el gestor que ya utilizas. No se introduce un gestor ni se conecta una cuenta automáticamente.
 
-Límite 16 KiB y 30 segundos hasta EOF; una sola línea UTF-8, sin bytes nulos, no vacía. Solo se retira un salto de línea final opcional (LF o CRLF); no se recortan espacios del secreto. Errores de stream o del almacén se convierten en mensajes fijos sin contenido secreto. Valores no viajan por argv, env ni stdout desde este comando. No se afirma borrado perfecto de memoria: JavaScript mantiene cadenas que no se pueden limpiar con garantía; se ponen a cero los buffers temporales.
+Límite 16 KiB y 30 segundos hasta EOF; una sola línea UTF-8, sin bytes nulos, no vacía. Solo se retira un salto de línea final opcional (LF o CRLF); no se recortan espacios del secreto ni se elimina un BOM U+FEFF inicial (TextDecoder ignoreBOM:true). Un canario verifica igualdad exacta y longitud en bytes antes/después. Errores de stream o del almacén se convierten en mensajes fijos sin contenido secreto. Valores no viajan por argv, env ni stdout desde este comando. No se afirma borrado perfecto de memoria: JavaScript mantiene cadenas que no se pueden limpiar con garantía; se ponen a cero los buffers temporales.
 
 Se mantiene la elección existente de vault: DPAPI en Windows, portable en otros sistemas. No se cambia a portable para eludir DPAPI. No inicializa ni sobreescribe el vault cifrado por sí solo: usa vaultSet y su política actual. El modo portable conserva los permisos600 del archivo. No ejecuta modelos, Telegram, daemon, compras ni red. Esto es un prerrequisito del onboarding seguro, NO el wizard pa setup completo.
 

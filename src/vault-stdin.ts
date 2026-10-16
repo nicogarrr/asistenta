@@ -30,7 +30,7 @@ export async function readSecretStdin(
       const combined = Buffer.concat(chunks);
       let decoded: string;
       try {
-        decoded = new TextDecoder('utf-8', { fatal: true }).decode(combined);
+        decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(combined);
       } finally {
         combined.fill(0);
       }

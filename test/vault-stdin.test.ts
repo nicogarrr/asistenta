@@ -75,3 +75,11 @@ it.each(['La entrada secreta private-forged', 'Se requiere private-forged'])(
     await expect(result).rejects.not.toThrow('private-forged');
   },
 );
+
+it('preserves an initial U+FEFF BOM without normalizing the secret', async () => {
+  const value = '\uFEFFprivate-value';
+  const save = vi.fn(async (_key: string, _value: string) => {});
+  await setVaultFromStdin(['key'], Readable.from([Buffer.from(value, 'utf8')]), save);
+  expect(save).toHaveBeenCalledWith('key', value);
+  expect(Buffer.byteLength(save.mock.calls[0]?.[1] ?? '')).toBe(Buffer.byteLength(value));
+});
