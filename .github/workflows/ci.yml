@@ -33,3 +33,35 @@ jobs:
           CI: '1'
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
+
+  # Windows es la plataforma de producción. Solo se ejecuta un subconjunto sin
+  # navegador real, micrófono ni escritorio interactivo (eso solo se prueba en el PC).
+  # Gate bloqueante tras primera ejecución Windows verde en el PR.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run build
+      - run: >-
+          npx vitest run
+          test/windows-platform.test.ts
+          test/platform-desktop-tools.test.ts
+          test/vault-portable.test.ts
+          test/vault-file-lock.test.ts
+          test/lifecycle-pidfile.test.ts
+          test/envfile-loads.test.ts
+          test/envfile-malformed.test.ts
+          test/envfile-missing.test.ts
+          test/envfile-no-override.test.ts
+          test/status.test.ts
+          test/daemon-status.test.ts
+        env:
+          CI: '1'
+          TZ: Europe/Madrid
