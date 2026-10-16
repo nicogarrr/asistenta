@@ -178,6 +178,9 @@ describe('standing approvals across a daemon restart', () => {
 
 describe('createDaemonGate policy', () => {
   it('keeps the deny wall and the protected paths of the daemon', async () => {
+    // Deterministic home: the protected list is built from USERPROFILE, and in a
+    // container it is unset. Pin it so the assertion tests the wall, not the env.
+    process.env.USERPROFILE = 'C:\\Users\\nicoi';
     const gate = createDaemonGate({
       threadKey: MAIN,
       dbPath: approvalsDbPath(dir),
