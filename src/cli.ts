@@ -3915,8 +3915,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 `Imagen reenviada "${label}"`,
               )
             : `[Imagen reenviada: ${label}. Telegram no devolvió el archivo.]`;
-        } else if (docMime.startsWith('audio/') && !/ogg|opus/.test(docMime)) {
-          documentNote = `[Audio reenviado: ${label}. No lo transcribo: solo entiendo notas de voz en formato ogg/opus (no mp3, m4a ni wav).]`;
         } else if (docMime.startsWith('audio/')) {
           const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
           if (!bytes) {
@@ -3931,7 +3929,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 inbound.documentName ?? inbound.text,
               );
               documentNote = indexed
-                ? `[Audio reenviado: "${label}", transcrito e indexado${indexed.truncated ? ' PARCIALMENTE (la transcripción era demasiado larga)' : ''} en la memoria documental (${indexed.chars} caracteres). La transcripción puede tener errores. Úsalo con la herramienta documents cuando pregunte por él.]`
+                ? `[Audio reenviado: "${label}", transcrito e indexado${indexed.truncated ? ' PARCIALMENTE (la transcripción era demasiado larga)' : ''} en la memoria documental (${indexed.chars} caracteres)${heard.truncated ? ', leyendo solo los primeros 15 minutos del audio' : ''}. La transcripción puede tener errores. Úsalo con la herramienta documents cuando pregunte por él.]`
                 : `[Audio reenviado: ${label}. No se entendió ninguna palabra; no se indexó nada.]`;
             } catch (err) {
               log.warn('audio document index failed', { err: String(err) });
@@ -3939,7 +3937,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }
           }
         } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
-          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), imágenes con texto y notas de voz ogg/opus. Los formatos antiguos (doc, xls, ppt) no.]`;
+          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), imágenes con texto y audios (notas de voz, mp3, m4a, wav). Los formatos antiguos (doc, xls, ppt) no.]`;
         } else {
           try {
             const bytes = await telegram.downloadFile(inbound.documentFileId);
@@ -3984,7 +3982,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
-          prompt = `[Nota de voz transcrita] ${heard.text}`;
+          prompt = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
           log.info('voice transcribed', {
             seconds: heard.durationSeconds,
             chars: heard.text.length,
