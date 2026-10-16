@@ -3,8 +3,8 @@ function Assert-NoReparsePath {
     param([string] $Path)
     $cursor = [IO.Path]::GetFullPath($Path)
     while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            $item = Get-Item -LiteralPath $cursor -Force
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Ruta de logs rechazada: enlace/reparse point.' }
         }
         $parent = Split-Path -Parent $cursor

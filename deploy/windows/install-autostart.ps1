@@ -193,7 +193,7 @@ function Install {
     # Run Node's own parser; emit only the state path, never the environment map.
     Push-Location -LiteralPath $repo
     try {
-        $stateResult = & $node --input-type=module -e 'import {homedir} from "node:os"; import {resolve,join} from "node:path"; try{process.loadEnvFile()}catch(e){if(e.code!=="ENOENT")process.exit(2)} console.log(resolve(process.env.PA_STATE_DIR || join(homedir(),".local","share","personal-agent")))'
+        $stateResult = & $node (Join-Path $PSScriptRoot 'resolve-state.mjs')
         if ($LASTEXITCODE -ne 0 -or -not $stateResult) { throw 'No se pudo resolver PA_STATE_DIR con el parser del CLI.' }
         $script:StateDir = [string]$stateResult
         $script:Heartbeat = Join-Path $StateDir 'agent.heartbeat'
