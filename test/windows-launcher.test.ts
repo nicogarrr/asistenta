@@ -158,7 +158,7 @@ it('instalador valida antes de reemplazar y restaura XML si el registro falla', 
   const install = source.slice(source.indexOf('function Install {'));
   expect(install).not.toContain('Unregister-ScheduledTask');
   expect(install).toContain("'resolve-state.mjs'");
-  const resolver=readFileSync('deploy/windows/resolve-state.mjs','utf8');
+  const resolver = readFileSync('deploy/windows/resolve-state.mjs', 'utf8');
   expect(resolver).toContain('process.loadEnvFile()');
   expect(resolver).toContain('process.env.PA_STATE_DIR || join(homedir()');
 });
