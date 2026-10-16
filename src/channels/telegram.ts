@@ -187,8 +187,19 @@ export class TelegramChannel implements ChannelAdapter {
     if (!this.#healthProbeInstalled) {
       this.#healthProbeInstalled = true;
       bot.api.config.use(async (prev, method, payload, signal) => {
+        // The transformer sees the RAW response: grammY throws the GrammyError
+        // AFTER the transformers, in ApiClient.callApi (client.js:92-97). A
+        // completed 409 arrives here as { ok: false, ... }, so health demands
+        // ok === true AND a real batch — never just "no throw" (auditor #153
+        // ronda 2).
         const result = await prev(method, payload, signal);
-        if (method === 'getUpdates' && !this.#stopped && !this.#pollingConfirmed) {
+        if (
+          method === 'getUpdates' &&
+          result.ok === true &&
+          Array.isArray(result.result) &&
+          !this.#stopped &&
+          !this.#pollingConfirmed
+        ) {
           this.#pollingConfirmed = true;
           this.#ready = true;
           this.#retryMs = 5_000;

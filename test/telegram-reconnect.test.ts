@@ -23,6 +23,8 @@ const harness = vi.hoisted(() => {
     deferOnStart: false,
     transformers: [] as Transformer[],
     resolveStop: undefined as undefined | (() => void),
+    /** Raw responses pushed through the transformer chain (canary evidence). */
+    rawSeen: [] as Array<{ ok: boolean; error_code?: number }>,
   };
   class FakeBot {
     readonly api = {
@@ -50,13 +52,22 @@ const harness = vi.hoisted(() => {
       }
       // Like grammY: onStart proves setup only; the first getUpdates comes next.
       opts?.onStart?.({ username: 'bot', id: 1 });
+      // Like ApiClient.callApi (client.js:92-97): the transformer chain sees
+      // the RAW response and the error is thrown only AFTER it completes.
+      let raw: { ok: boolean; result?: unknown[]; error_code?: number; description?: string };
       if (state.failTimes > 0) {
         state.failTimes--;
-        throw new Error('409 Conflict: terminated by other getUpdates request');
+        raw = { ok: false, error_code: 409, description: 'Conflict: terminated by other getUpdates request' };
+      } else {
+        raw = { ok: true, result: [] };
       }
-      // A completed getUpdates (empty batch) goes through the transformers.
+      state.rawSeen.push({ ok: raw.ok, error_code: raw.error_code });
+      let result: unknown = raw;
       for (const t of state.transformers) {
-        await t(async () => ({ ok: true, result: [] }), 'getUpdates', {}, undefined);
+        result = await t(async () => raw, 'getUpdates', {}, undefined);
+      }
+      if (typeof result === 'object' && result !== null && (result as { ok?: boolean }).ok !== true) {
+        throw new Error('409 Conflict: terminated by other getUpdates request');
       }
       // Like grammY: the promise stays pending while polling lives.
       await new Promise<void>((resolve) => {
@@ -117,6 +128,7 @@ describe('telegram reconnect', () => {
     harness.state.deferOnStart = false;
     harness.state.resolveStop = undefined;
     harness.state.transformers.length = 0;
+    harness.state.rawSeen.length = 0;
   });
 
   afterEach(() => {
@@ -136,6 +148,9 @@ describe('telegram reconnect', () => {
     expect(record.lost).toHaveLength(1);
     expect(record.lost[0]).toContain('409');
     expect(record.recovered).toHaveLength(0);
+    // El 409 paso POR el transformer como respuesta completada {ok:false} — el
+    // camino vulnerable de la ronda 1 — y aun asi no marco salud.
+    expect(harness.state.rawSeen).toContainEqual({ ok: false, error_code: 409 });
     // Backoff 5s exacto, sin atajo por onStart.
     await vi.advanceTimersByTimeAsync(4_999);
     expect(harness.state.startCalls).toBe(1);
