@@ -1,158 +1,40 @@
-# Arranque automático en Windows
+# Arranque oculto al iniciar sesión en Windows
 
-El daemon (`pa serve`) tiene que estar corriendo antes de que nadie le hable, así que
-tiene que volver solo después de un reinicio. Este script lo registra en el **Planificador
-de tareas de Windows** (Task Scheduler) con un disparador `AtLogOn`.
+Requiere Node 24, `npm ci`, `npm run build` y el vault ya configurado bajo la misma cuenta Windows (DPAPI CurrentUser), o los secretos portables ya existentes. Lee el `.env` de la raíz del repo sin sobreescribir variables del entorno. No crea secretos ni cambia aprobaciones.
 
-El script **no se ha ejecutado** en esta máquina: está escrito y verificado sintácticamente,
-pero registrar la tarea es una acción que debe hacer la persona que lo va a usar.
-
-## Requisitos
-
-- Node instalado y en el `PATH` (o pasarle `-NodeExe "C:\ruta\node.exe"`).
-- El proyecto compilado: `npm run build` deja `dist\cli.js`. El script lo comprueba y se
-  niega a crear la tarea si no existe — una tarea que falla en cada arranque sin que nadie
-  lo note es mucho peor que una que no se crea.
-- El vault ya inicializado (`pa vault init`) y con sus secretos: la tarea solo arranca el
-  daemon, no lo configura.
-
-## Instalarlo
+Desde PowerShell en la raíz del repo, después de actualizar:
 
 ```powershell
+git pull
+npm ci
 npm run build
-powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Force -Start
 ```
 
-Y para no esperar al próximo inicio de sesión:
+El último comando instala o reemplaza la tarea y la inicia ahora. También arrancará al iniciar sesión. No se necesita una terminal abierta. Usa `node.exe` por ruta absoluta, no el alias de Git Bash ni un wrapper de terminal. El launcher cierra stdin (equivalente a NUL), oculta la ventana, espera a Node y devuelve su código de salida al Planificador. No ejecuta un proceso separado que haga parecer sana una tarea ya muerta.
+
+La tarea usa la cuenta que la instala, `LogonType Interactive` y `RunLevel Limited`, nunca SYSTEM ni sesión 0. No tiene límite de 72 horas, permite batería, evita dos instancias y reintenta caídas al minuto (hasta 999). No detecta un proceso vivo pero colgado. La vigilancia continua por heartbeat no queda instalada con este script.
+
+No se han probado aquí un escritorio, micrófono ni la cuenta real del PC. CI prueba el launcher con Node y stdin cerrado, rutas con espacios/apóstrofo y salidas 0/no cero, sin registrar tareas reales. Registrar la tarea y confirmar el latido en el PC sigue siendo la comprobación final.
+
+## Estado y diagnóstico
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Start
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Status
+Get-Content "$HOME\.local\share\personal-agent\log\launcher.stderr.log" -Tail 40
+Get-Item "$HOME\.local\share\personal-agent\agent.heartbeat" | Select-Object LastWriteTime
 ```
 
-Opciones que importan:
+Si usas `PA_STATE_DIR`, los logs y el heartbeat están ahí. La tarea conserva esa ruta al instalarla, no guarda secretos en sus argumentos. `launcher.stderr.log` recoge la causa real de un fallo de arranque y el exit code; `launcher.stdout.log` recoge stdout. Se conserva una copia anterior si superan 10 MB al volver a arrancar. No limita el crecimiento dentro de una ejecución larga. Los logs pueden contener datos privados: no los publiques sin revisar. Los logs JSON diarios del daemon siguen en `log\`.
 
-| Parámetro | Para qué |
-| --- | --- |
-| `-TaskName` | Nombre de la tarea. Por defecto `personal-agent-daemon`. |
-| `-RepoDir` | Raíz del repo si el script no está donde se espera. |
-| `-NodeExe` | Ruta exacta a `node.exe`, si no quieres depender del `PATH`. |
-| `-Command` | Subcomando a lanzar. Por defecto `serve`. |
-| `-Force` | Reemplaza una tarea existente en vez de negarse. |
-| `-Start` | Arranca la tarea nada más registrarla. |
+En `taskschd.msc` busca `personal-agent-daemon` dentro de la carpeta del usuario. Estado Running y resultado `0x41301` significan que sigue en marcha, no un fallo. Un heartbeat reciente solo prueba el proceso, no conectividad con Telegram ni el modelo. Para un diagnóstico adicional: `node dist/cli.js doctor`.
 
-**No hace falta elevación.** La tarea se registra en la carpeta del propio usuario
-(`\DOMINIO\USUARIO\`) con `-RunLevel Limited`, así que una consola normal basta. Si el
-script dice que no puede registrar la tarea y el motivo es un permiso del *Task Scheduler*,
-entonces sí: consola de administrador. El script lo avisa en ese caso en vez de fallar con
-un error de COM.
+Si persiste el mensaje `stdin is not a tty`, no está demostrado que lo emita serve. Este launcher evita el wrapper de shell y deja stderr real para distinguirlo. No pide contraseñas interactivas ni fuerza autorizaciones. Las acciones que necesitan aprobación siguen bloqueadas sin un aprobador válido.
 
-## Cómo verificar que arranca
-
-Tres comprobaciones, de la más rápida a la más completa:
-
-1. **La tarea existe y está en el estado que toca**
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Status
-   ```
-
-   Imprime estado, comando, disparador, última ejecución con su código de resultado,
-   próxima, número de reinicios y límite de tiempo. Un `LastTaskResult` que no sea `0x0`
-   significa que la última ejecución terminó con error.
-
-2. **El heartbeat se está escribiendo** (esta es la buena: el fichero solo lo escribe un
-   daemon vivo)
-
-   ```powershell
-   Get-Item "$HOME\.local\share\personal-agent\agent.heartbeat" | Select-Object LastWriteTime
-   ```
-
-   `LastWriteTime` debe moverse cada 15 segundos. Si el fichero no existe, el daemon no ha
-   arrivado a arrancar: mira el log de hoy en `$HOME\.local\share\personal-agent\log\`.
-
-3. **Enredarse donde se ven las cosas**
-
-   ```powershell
-   taskschd.msc
-   ```
-
-   Biblioteca → `\DOMINIO\USUARIO\` → `personal-agent-daemon`. Botón derecho → Ejecutar para
-   arrancarla a mano, y la pestaña *Historial* para ver cada ejecución con su resultado.
-
-Y para el diagnóstico completo —con evidencia, en texto para pegar en otro chat— está
-`src/diagnose.ts`: `diagnose()` devuelve `{ text, data }`, con `text` en español pensado para
-pegarlo en un chat y `data` con los mismos hechos como objetos. Enchúfalo en un comando
-`/diagnose` y se manda tal cual.
-
-## Qué deja la tarea
-
-- **Disparador**: `AtLogOn` del usuario que instala. Nada más: no cada X minutos, no al
-  arrancar el sistema. El daemon debe arrancar cuando la persona está delante, porque
-  necesita su sesión de escritorio.
-- **Acción**: `node.exe dist\cli.js serve`, con la raíz del repo como directorio de trabajo
-  (las rutas relativas del daemon dependen de ello).
-- **`RestartCount` 999, `RestartInterval` 1 minuto**: si el proceso *sale* —crash,OOM,
-  alguien lo mata—, se relanza al minuto. Es lo que cubre las caídas.
-- **`ExecutionTimeLimit` = `[TimeSpan]::Zero`**: sin límite. Por defecto Task Scheduler mata
-  cualquier tarea a las 72 horas, y eso mataría un daemon sano un día sí y otro no.
-- **Batería**: `-AllowStartIfOnBatteries` y `-DontStopIfGoingOnBatteries`. En un portátil
-  sin cargador el agente debería seguir siendo un agente.
-- **`StartWhenAvailable`**: si el equipo estaba apagado a la hora del disparo, arranca en
-  cuanto puede en vez de saltarse ese ciclo.
-- **`MultipleInstances IgnoreNew`**: si ya hay un `node serve` corriendo, no se lanza otro.
-  El propio daemon además se niega (`assertNotRunning`), pero mejor que dos capas.
-
-## Lo que esta tarea NO cubre
-
-**Un daemon vivo pero colgado.** Si el proceso existe y no hace nada —un turno
-bloqueado, un `await` que no vuelve, un evento loop tapado por un `await` síncrono— Task
-Scheduler lo ve perfectamente sano, porque para él la tarea es el proceso y el proceso
-está ahí. El módulo `src/watchdog.ts` contiene la lógica de vigilancia y reinicio,
-pero este instalador NO instala un proceso watchdog. No hay cobertura automática
-contra cuelgues por el mero hecho de ejecutar este script.
-
-`pa status [--json]` y `pa watchdog --status [--json]` consultan el PID y el latido
-una sola vez, sin matar, arrancar ni reiniciar nada. Un latido reciente no prueba
-que Telegram o el proveedor LLM funcionen. Estos comandos no verifican si existe
-un supervisor externo instalado. `pa diagnose` añade evidencia de logs y acciones.
-La instalación de vigilancia continua queda pendiente.
-
-## Desinstalarlo
+## Quitar la tarea
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1 -Uninstall
 ```
 
-Para la tarea y la detiene si estaba corriendo. Es idempotente: si no hay ninguna tarea,
-lo dice y sale con éxito. Esto **no** borra el estado del daemon (base de datos, memoria,
-vault); para eso, borrar `$HOME\.local\share\personal-agent`.
-
-## Por qué Task Scheduler y no la clave `Run` del registro
-
-La alternativa de toda la vida es `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
-Funciona, y para un programa que arranca una vez al iniciar sesión es exactamente
-suficiente. Aun así, aquí Task Scheduler es mejor por cuatro razones concretas:
-
-1. **Se ve y se toca.** Una entrada `Run` es una línea de texto opaca en el registro: no
-   tiene historial, no tiene estado, no tiene errores y no aparece en ninguna interfaz.
-   Una tarea aparece en `taskschd.msc`, se puede arrancar a mano, se puede exportar y
-   tiene una pestaña *Historial* con el resultado de cada ejecución. Para un daemon que
-   nadie ve funcionar, esa visibilidad es la diferencia entre "está apagado" y "está
-   apagado y nadie sabe por qué".
-2. **Sobrevive a las actualizaciones de Windows.** El registro es una de las superficies
-   que más tocan los instaladores y las herramientas de limpieza de PC; una clave que
-   desaparece sin aviso deja al agente muerto y sin explicación. El servicio de Task
-   Scheduler es una pieza del sistema que Windows actualiza con Windows.
-3. **Reinicia de verdad.** `RestartCount` es una opción propia de una tarea. Una
-   entrada `Run` no se relanza: si el proceso muere, se queda muerto hasta el siguiente
-   inicio de sesión, que puede ser al día siguiente.
-4. **Se ejecuta en tu sesión de escritorio, no en la sesión 0.** Este es el punto
-   decisivo aquí. Una tarea configurada como "ejecutar tanto si el usuario ha iniciado
-   sesión como si no" corre en la sesión 0, donde no hay escritorio: sin pantalla, sin
-   ratón, sin micrófono. Un agente sin escritorio es un agente que no puede hacer lo único
-   para lo que existe. Task Scheduler con `-LogonType Interactive` y el disparador del
-   usuario mantiene el proceso dentro de su sesión, que es justo lo que necesitan las
-   herramientas de escritorio.
-
-El coste de Task Scheduler es que hay que abrir `taskschd.msc` para tocarlo, y eso ya lo
-ha hecho cualquiera que haya buscad alguna vez un programa que no arranca en Windows.
+La para y borra; no borra vault, logs ni bases de datos. `-Status` solo consulta. `-TaskName`, `-RepoDir` y `-NodeExe` permiten indicar nombre/rutas; `-Force` reemplaza y `-Start` inicia ahora. El directorio del repo debe ser escribible solo por usuarios de confianza: la tarea ejecuta su código con tu cuenta. No eleves el daemon para corregir un permiso del instalador sin revisar la causa.

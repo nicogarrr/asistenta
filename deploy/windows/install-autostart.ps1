@@ -69,7 +69,7 @@ param(
     [string] $TaskName = 'personal-agent-daemon',
     [string] $RepoDir,
     [string] $NodeExe,
-    [string] $Command = 'serve'
+    [ValidateSet('serve')][string] $Command = 'serve'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,7 +84,7 @@ $UserId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { "$env:
 
 # Where the daemon keeps its state, mirroring `paths.ts`. Printed on install so the
 # verification step does not depend on the reader remembering the layout.
-$StateDir = if ($env:PA_STATE_DIR) { $env:PA_STATE_DIR } else { Join-Path $HOME '.local\share\personal-agent' }
+$StateDir = [IO.Path]::GetFullPath($(if ($env:PA_STATE_DIR) { $env:PA_STATE_DIR } else { Join-Path $HOME '.local\share\personal-agent' }))
 $Heartbeat = Join-Path $StateDir 'agent.heartbeat'
 
 # Tasks registered under the user's own folder need no administrator rights. Registering
@@ -141,10 +141,12 @@ function Show-Status {
     Write-Host "Siguiente    : $($info.NextRunTime)"
     Write-Host "Reinicios    : $($task.Settings.RestartCount) cada $($task.Settings.RestartInterval)"
     Write-Host "Límite       : $($task.Settings.ExecutionTimeLimit) · en batería: $($task.Settings.DisallowStartIfOnBatteries -eq $false)"
-    if ($info.LastTaskResult -ne 0 -and $null -ne $info.LastRunTime) {
+    if ($info.LastTaskResult -notin @(0, 0x41301, 0x41303) -and $null -ne $info.LastRunTime) {
         Write-Bad 'La última ejecución terminó con error. Mira el log del daemon en el directorio de estado.'
     }
     Write-Host "Heartbeat    : $Heartbeat"
+    Write-Host "Salida       : $(Join-Path $StateDir 'log\launcher.stdout.log')"
+    Write-Host "Errores      : $(Join-Path $StateDir 'log\launcher.stderr.log')"
     return $true
 }
 
@@ -158,6 +160,18 @@ function Uninstall {
     Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -InputObject $task -Confirm:$false
     Write-Ok "Tarea borrada. El daemon deja de arrancar al iniciar sesión."
+}
+
+function Ensure-TaskFolder {
+    # Register-ScheduledTask does not create a missing TaskPath.
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folder = $service.GetFolder('\')
+    foreach ($part in $TaskPath.Trim('\').Split('\')) {
+        try { $next = $folder.GetFolder($part) }
+        catch { $next = $folder.CreateFolder($part, $null) }
+        $folder = $next
+    }
 }
 
 function Install {
@@ -185,7 +199,18 @@ function Install {
         Unregister-ScheduledTask -InputObject $existing -Confirm:$false
     }
 
-    $action = New-ScheduledTaskAction -Execute $node -Argument "`"$cli`" $Command" -WorkingDirectory $repo
+    $launcher = Join-Path $repo 'deploy\windows\run-hidden.ps1'
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw 'Falta deploy\windows\run-hidden.ps1.' }
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    # Values are literal single-quoted PowerShell strings, encoded as one argument.
+    # Paths with spaces, apostrophes or shell metacharacters cannot become code.
+    $repoLiteral = $repo.Replace("'", "''")
+    $nodeLiteral = $node.Replace("'", "''")
+    $stateLiteral = $StateDir.Replace("'", "''")
+    $launcherLiteral = $launcher.Replace("'", "''")
+    $invoke = "& '$launcherLiteral' -RepoDir '$repoLiteral' -NodeExe '$nodeLiteral' -StateDir '$stateLiteral'; exit `$LASTEXITCODE"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invoke))
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encoded" -WorkingDirectory $repo
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
     $settings = New-ScheduledTaskSettingsSet `
@@ -208,6 +233,7 @@ function Install {
 
     $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited
 
+    Ensure-TaskFolder
     Write-Step "Registro la tarea en '$TaskPath'"
     try {
         Register-ScheduledTask `
