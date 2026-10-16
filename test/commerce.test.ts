@@ -24,6 +24,7 @@ import {
   type CheckoutPage,
   checkoutStageOf,
   createCheckoutTool,
+  parsePriceToCents,
   extractPrices,
   looksLikePaymentSubmission,
 } from '../src/tools/checkout.js';
@@ -769,5 +770,84 @@ describe('a purchase from search to the payment screen', () => {
     // either: four attempts at a charge, four questions, zero purchases.
     expect(asked).toBe(4);
     expect(page.clicks).toHaveLength(0);
+  });
+});
+
+describe('tope de importe en confirm (maxAmountCents)', () => {
+  it('parsePriceToCents convierte los formatos de la pagina', () => {
+    expect(parsePriceToCents('45,20')).toBe(4520);
+    expect(parsePriceToCents('1.234,56')).toBe(123456);
+    expect(parsePriceToCents('300')).toBe(30000);
+    expect(parsePriceToCents('abc')).toBeNull();
+    expect(parsePriceToCents('')).toBeNull();
+  });
+
+  it('importe sobre el tope: NO pide confirmacion y lo rechaza', async () => {
+    const page = new FakePage();
+    page.body = 'Total 450,00 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    const res = await call(tool, { action: 'confirm', item: 'billete' });
+    expect(asked).toBe(0);
+    expect(res.details?.asked).toBe(false);
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toContain('tope');
+    expect(text).toContain('450,00 €');
+  });
+
+  it('importe en el tope exacto (300,00) SI pide confirmacion', async () => {
+    const page = new FakePage();
+    page.body = 'Total 300,00 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'billete' });
+    expect(asked).toBe(1);
+  });
+
+  it('importe bajo el tope SI pide confirmacion', async () => {
+    const page = new FakePage();
+    page.body = 'Total 45,20 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'billete' });
+    expect(asked).toBe(1);
+  });
+
+  it('miles con punto: 1.234,56 supera el tope y no pide', async () => {
+    const page = new FakePage();
+    page.body = 'Total 1.234,56 €';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'vuelo' });
+    expect(asked).toBe(0);
+  });
+
+  it('el tope es configurable por deps', async () => {
+    const page = new FakePage();
+    page.body = 'Total 60,00 €';
+    let asked = 0;
+    const tool = createCheckoutTool({
+      page,
+      loadPassenger: async () => BUYER,
+      requireApproval: async () => {
+        asked += 1;
+        return true;
+      },
+      maxAmountCents: 5_000,
+    });
+    await call(tool, { action: 'confirm', item: 'billete' });
+    expect(asked).toBe(0);
   });
 });

@@ -155,6 +155,13 @@ export function extractPriceTexts(text: string, limit = 5): PriceText[] {
   return out;
 }
 
+/** A page price raw ("1.234,56", "45,20", "300") as cents, or null if it does not parse. */
+export function parsePriceToCents(raw: string): number | null {
+  const cleaned = raw.replace(/[.\u00a0 ]/g, '').replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number.parseFloat(cleaned) * 100);
+}
+
 /** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
   const out: string[] = [];
@@ -385,6 +392,11 @@ export interface CheckoutToolDeps {
    * reason to leave the charge to chance.
    */
   requireApproval: (action: string, summary: string) => Promise<boolean>;
+  /**
+   * Hard cap per purchase, in cents. Above it the tool refuses BEFORE asking:
+   * a confirmation the agent must never collect is not collected. Default 300 EUR.
+   */
+  maxAmountCents?: number;
 }
 
 function textOf(value: unknown): string {
@@ -438,6 +450,7 @@ const CheckoutParams = Type.Object({
 
 export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof CheckoutParams> {
   const load = deps.loadPassenger ?? (() => loadPassenger());
+  const maxCents = deps.maxAmountCents ?? 30_000;
   const { page } = deps;
   let flow = freshFlow();
 
@@ -709,22 +722,27 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
           // The amount shown is the page's own, with the symbol the page uses and where it
           // came from. A figure only the model produced is said to be the model's.
           let amount: string | null = null;
+          let amountRaw: string | null = null;
           let source = '';
           let mismatch = '';
           if (matched) {
             amount = matched.text;
+            amountRaw = matched.raw;
             source = 'leido en la pagina';
           } else if (priced[0]) {
             amount = priced[0].text;
+            amountRaw = priced[0].raw;
             source = 'leido en la pagina';
             if (declared) {
               mismatch = ` Ojo: tu lees ${declared} y la pagina muestra ${priced.map((p) => p.text).join(', ')}.`;
             }
           } else if (flow.priceText) {
             amount = flow.priceText;
+            amountRaw = flow.price;
             source = 'visto antes en la pagina';
           } else if (declared) {
             amount = declared;
+            amountRaw = declaredRaw;
             source = 'declarado por mi, sin moneda ni confirmacion de la pagina';
           }
 
@@ -753,6 +771,25 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
                 },
               ],
               details: { asked: false, reason: 'sin producto' },
+            };
+          }
+
+          // The cap is checked before the question exists: over it there is no
+          // approval to collect, because the agent must never collect it.
+          const cents = amountRaw ? parsePriceToCents(amountRaw) : null;
+          if (cents !== null && cents > maxCents) {
+            log.info('checkout over cap', { amount, cents, maxCents });
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    `El importe ${amount} supera el tope de ${(maxCents / 100).toFixed(0)} EUR que tengo ` +
+                    'autorizado para una compra. No te pido confirmacion porque esta por encima ' +
+                    'de mi limite: si quieres hacerla, hazla tu directamente.',
+                },
+              ],
+              details: { asked: false, reason: 'importe sobre el tope', amount },
             };
           }
 
