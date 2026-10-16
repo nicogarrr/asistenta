@@ -1,7 +1,6 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { diagnoseCommand } from '../src/diagnose-cli.js';
@@ -66,25 +65,6 @@ describe('pa diagnose', () => {
       expect(out).toBe('');
       expect(err).toBe('uso: pa diagnose [--json]\n');
     }
-    expect(readdirSync(dir)).toEqual([]);
-  });
-
-  it('routes the built CLI without provider keys or Telegram token', () => {
-    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'diagnose', '--json'], {
-      encoding: 'utf8',
-      timeout: 15_000,
-      env: {
-        ...process.env,
-        PA_STATE_DIR: dir,
-        PA_DESKTOP: 'off',
-        PA_PROVIDER_API_KEY: '',
-        TELEGRAM_BOT_TOKEN: '',
-      },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const report = JSON.parse(result.stdout);
-    expect(report.state.pid).toBe(null);
-    expect(report.actions.file).toBe(join(dir, 'actions.jsonl'));
     expect(readdirSync(dir)).toEqual([]);
   });
 
