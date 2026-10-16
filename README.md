@@ -33,7 +33,7 @@ Instala también las dependencias de sistema que Playwright indique para tu plat
 
 ## Configuración sin secretos
 
-Copia `.env.example` a `.env` y ajusta solo las opciones que necesites. La aplicación no carga `.env` por sí sola: pasa el archivo expresamente en **cada** comando que lo deba usar:
+Copia `.env.example` a `.env` y ajusta solo las opciones que necesites. El CLI carga el `.env` del directorio de trabajo mediante el parser de Node antes de cargar la configuración. Las variables ya presentes en el entorno tienen prioridad. Puedes pasar el archivo expresamente para hacer visible qué configuración usas:
 
 ```sh
 node --env-file=.env dist/cli.js doctor
@@ -84,11 +84,11 @@ node --env-file=.env dist/cli.js serve
 
 Envía `/start` a tu bot desde el usuario autorizado. Un comando que responde no prueba que una petición al modelo funcione: prueba después una pregunta genérica, sin datos privados. Si faltan credenciales o el token es inválido, corrige la configuración; no abras el bot a todos los usuarios para resolverlo.
 
-Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mates un proceso solo por un PID copiado de un archivo. `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada. Los comandos `setup`, `stop` y `restart` y la supervisión continua aún no están disponibles en main al escribir esta guía. No se afirma que haya un watchdog instalado. El instalador de Windows cubre procesos que terminan, no cuelgues de procesos que siguen vivos.
+Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mates un proceso solo por un PID copiado de un archivo. `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada. Los comandos `setup`, `stop` y `restart` y la supervisión continua aún no están disponibles en main al escribir esta guía. La primitiva Linux de control local existe, pero no activa un endpoint en el daemon por sí sola. No se afirma que haya un watchdog instalado. El instalador de Windows cubre procesos que terminan, no cuelgues de procesos que siguen vivos.
 
 ## Arranque automático
 
-Consulta [`deploy/windows/README.md`](deploy/windows/README.md). No lo actives hasta comprobar el arranque manual. El script no carga el `.env` de esta guía mediante `--env-file`: prepara las opciones en el entorno del usuario que ejecutará la tarea, o mantén los valores por defecto. No coloques secretos en el comando de la tarea. No se ha validado una instalación nativa Windows en esta ronda de QA.
+Consulta [`deploy/windows/README.md`](deploy/windows/README.md). No lo actives hasta comprobar el arranque manual. El script usa la raíz del repositorio como directorio de trabajo; el CLI carga desde allí el `.env` opcional. Las variables ya presentes en el entorno del usuario de la tarea tienen prioridad sobre el archivo. No coloques secretos en el comando de la tarea. No se ha validado una instalación nativa Windows en esta ronda de QA.
 
 ## Desarrollo y QA
 
