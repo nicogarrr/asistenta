@@ -13,7 +13,10 @@
  * block next to <profile>. Nothing in runtime ever wrote to it — the only
  * writer lived in tests — so the writer is gone: the file is never created
  * and never saved. But the file was human-editable, so a preexisting
- * non-empty MEMORIA.md is still READ and emitted as <memory> (read-compat)
+ * non-empty MEMORIA.md is still READ and emitted as <memoria_legada>
+ * (read-compat) - a distinct tag on purpose: the live per-chat memory index in
+ * the prompt uses <memory> (cli.ts renderMemoryContext) and the two blocks
+ * carry different semantics, so the model must be able to tell them apart.
  * until its entries are migrated into the per-chat MemoryStore and the file
  * is removed by hand. Dropping those bytes silently would be lying by
  * omission about what the assistant remembers.
@@ -218,7 +221,7 @@ export class MemorySnapshot {
     try {
       const blocks: string[] = [];
       const legacy = this.#legacyMemoria();
-      if (legacy) blocks.push(`<memory>\n${legacy}\n</memory>`);
+      if (legacy) blocks.push(`<memoria_legada>\n${legacy}\n</memoria_legada>`);
       const profile = this.load().trim();
       if (profile) blocks.push(`<profile>\n${profile}\n</profile>`);
       return blocks.join('\n');
