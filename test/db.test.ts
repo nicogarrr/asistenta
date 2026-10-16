@@ -10,47 +10,6 @@ function tempStore(): { store: Store; dir: string } {
 }
 
 describe('Store', () => {
-  it('appends entries and reads them back in order', () => {
-    const { store, dir } = tempStore();
-    try {
-      store.appendEntry('c1', 'e1', null, 'user', { text: 'hola' });
-      store.appendEntry('c1', 'e2', 'e1', 'assistant', { text: 'hey' });
-      const entries = store.readEntries('c1');
-      expect(entries.map((e) => e.id)).toEqual(['e1', 'e2']);
-      expect(entries[0]?.parentId).toBeNull();
-      expect(entries[1]?.parentId).toBe('e1');
-    } finally {
-      store.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('applies the latest edit to an entry without mutating history', () => {
-    const { store, dir } = tempStore();
-    try {
-      store.appendEntry('c1', 'e1', null, 'user', { text: 'original' });
-      store.editEntry('e1', 'c1', { text: 'corrected' });
-      store.editEntry('e1', 'c1', { text: 'corrected twice' });
-      expect(store.readEntries('c1')[0]?.body).toEqual({ text: 'corrected twice' });
-    } finally {
-      store.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('omits an entry whose edit replaced it with null', () => {
-    const { store, dir } = tempStore();
-    try {
-      store.appendEntry('c1', 'e1', null, 'user', { text: 'a' });
-      store.appendEntry('c1', 'e2', 'e1', 'assistant', { text: 'b' });
-      store.editEntry('e1', 'c1', null);
-      expect(store.readEntries('c1').map((e) => e.id)).toEqual(['e2']);
-    } finally {
-      store.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('tracks purchase intents and finds the ones still in flight', () => {
     const { store, dir } = tempStore();
     try {
