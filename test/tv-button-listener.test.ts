@@ -211,6 +211,37 @@ describe('tv button listener', () => {
     }
   });
 
+  it('en el milisegundo exacto tsMs+WINDOW la firma vale y el replay sigue rechazado', async () => {
+    // Canario del auditor: aceptar con |now-ts| <= WINDOW pero podar la cache
+    // con now >= tsMs+WINDOW dejaba ESE milisegundo abierto al replay.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const { base, onButton } = await listen({ token: SECRET });
+      const tsSec = Math.floor(Date.now() / 1000);
+      const headers = signedHeaders('POST', '/tv/button', { ts: String(tsSec) });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+      vi.setSystemTime(tsSec * 1000 + 300_000); // el milisegundo exacto del borde
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+      // Una firma NUEVA en el borde si entra (la ventana incluye el extremo)...
+      const headers2 = signedHeaders('POST', '/tv/button', {
+        ts: String(tsSec),
+        nonce: 'cccccccccccccccc',
+      });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers: headers2 })).status).toBe(
+        202,
+      );
+      // ...y un milisegundo despues la ventana ha cerrado para todos.
+      vi.setSystemTime(tsSec * 1000 + 300_001);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers: headers2 })).status).toBe(
+        401,
+      );
+      expect(onButton).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('dos pulsaciones en el mismo segundo con nonce distinto pasan las dos', async () => {
     const { base, onButton } = await listen({ token: SECRET });
     const ts = String(Math.floor(Date.now() / 1000));

@@ -185,7 +185,11 @@ export function startTvButtonListener(opts: TvButtonListenerOptions): TvButtonLi
     const expected = Buffer.from(signTvButton(token, presented.ts, presented.nonce, method, path));
     const got = Buffer.from(presented.sig);
     if (expected.length !== got.length || !timingSafeEqual(expected, got)) return false;
-    for (const [sig, expiresAt] of seenSignatures) if (now >= expiresAt) seenSignatures.delete(sig);
+    // Poda coherente con la ventana de aceptacion: la firma es valida con
+    // |now - ts| <= WINDOW (se rechaza solo >), asi que la entrada debe
+    // sobrevivir TAMBIEN en el milisegundo exacto tsMs+WINDOW; podar con >=
+    // reabriria el replay justo en ese milisegundo.
+    for (const [sig, expiresAt] of seenSignatures) if (now > expiresAt) seenSignatures.delete(sig);
     if (seenSignatures.has(presented.sig)) return false; // replay dentro de la ventana
     seenSignatures.set(presented.sig, tsMs + TV_BUTTON_SIGNATURE_WINDOW_MS);
     return true;
