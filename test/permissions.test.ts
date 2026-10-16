@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
 import { protectedRepoPaths } from '../src/permissions.js';
@@ -77,6 +80,128 @@ describe('Gate', () => {
     const ok = await gate.check('ok', {
       tool: 'write',
       args: { path: 'C:\\repo\\src\\tools\\other.ts', content: 'x' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
+  it('denies READING secret files even though read is allow-listed', async () => {
+    const gate = new Gate({
+      allow: ['read'],
+      protectedPaths: ['C:\\repo\\state', 'C:\\repo\\.env'],
+      secretPaths: ['C:\\repo\\state', 'C:\\repo\\.env'],
+      approver: allow,
+    });
+    const secretReads = [
+      'C:\\repo\\state\\vault.enc',
+      'C:\\repo\\state\\approvals.db',
+      'C:\\repo\\state\\sessions\\main.json',
+      'C:\\repo\\.env',
+      // Evasions: case, forward slashes, dotdots.
+      'c:/repo/state/VAULT.ENC',
+      'C:\\repo\\state\\..\\state\\approvals.db',
+    ];
+    for (const [i, path] of secretReads.entries()) {
+      const r = await gate.check(`sr${i}`, {
+        tool: 'read',
+        args: { path },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    // Writing them is denied too (via protectedPaths): a written approvals.db
+    // is a self-granted standing approval.
+    const w = await gate.check('sw', {
+      tool: 'write',
+      args: { path: 'C:\\repo\\state\\approvals.db', content: 'x' },
+      actor: 'local',
+    });
+    expect(w.verdict).toBe('deny');
+    // Ordinary files still read fine (read stays allow-listed).
+    const ok = await gate.check('srok', {
+      tool: 'read',
+      args: { path: 'C:\\repo\\src\\cli.ts' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
+  it('ronda 2: dbPath custom + WAL/SHM son secretos y no escribibles', async () => {
+    // Real dbPath in a temp dir: the Gate OPENS the database at construction,
+    // so a fake Windows path would litter the repo on Linux (and vice versa).
+    const dir = mkdtempSync(join(tmpdir(), 'pa-gate-db-'));
+    try {
+      const db = join(dir, 'grants.db');
+      let asked = 0;
+      const gate = new Gate({
+        allow: ['read'],
+        dbPath: db,
+        approver: async () => {
+          asked += 1;
+          return true;
+        },
+      });
+      for (const [i, path] of [db, `${db}-wal`, `${db}-shm`].entries()) {
+        const r = await gate.check(`db${i}`, { tool: 'read', args: { path }, actor: 'local' });
+        expect(r.verdict).toBe('deny');
+        const w = await gate.check(`dw${i}`, {
+          tool: 'write',
+          args: { path, content: 'x' },
+          actor: 'local',
+        });
+        expect(w.verdict).toBe('deny');
+      }
+      expect(asked).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ronda 2: rutas de config RELATIVAS se absolutizan al crear el gate', async () => {
+    // PA_STATE_DIR puede ser relativo ('./state'); el gate debe resolverlo con
+    // la misma semantica que los calls o la muralla no machea nada.
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      secretPaths: ['state'],
+      approver: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    const r = await gate.check('rel', {
+      tool: 'read',
+      args: { path: 'state/vault.enc' },
+      actor: 'local',
+    });
+    expect(r.verdict).toBe('deny');
+    expect(asked).toBe(0);
+  });
+
+  it('ronda 2: cualquier .env* es secreto salvo examples publicos (asked=0)', async () => {
+    let asked = 0;
+    const gate = new Gate({
+      allow: ['read'],
+      approver: async () => {
+        asked += 1;
+        return true;
+      },
+    });
+    for (const [i, path] of ['.env', '.env.local', '.env.production', 'config/.env.test'].entries()) {
+      const r = await gate.check(`e${i}`, { tool: 'read', args: { path }, actor: 'local' });
+      expect(r.verdict).toBe('deny');
+      const w = await gate.check(`ew${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(w.verdict).toBe('deny');
+    }
+    expect(asked).toBe(0);
+    // Excepcion explicita: examples publicos sin secretos.
+    const ok = await gate.check('ex', {
+      tool: 'read',
+      args: { path: '.env.example' },
       actor: 'local',
     });
     expect(ok.verdict).toBe('allow');
