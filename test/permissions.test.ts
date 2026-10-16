@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
+import { protectedRepoPaths } from '../src/permissions.js';
 import { checkoutStageOf } from '../src/tools/checkout.js';
 
 const allow = () => true;
@@ -38,7 +39,43 @@ describe('Gate', () => {
       args: { path: 'C:\\Users\\nicoi\\.ssh-backup\\id_rsa', content: 'x' },
       actor: 'local',
     });
+
     expect(sibling.verdict).toBe('allow');
+  });
+
+  it('protects the guardrail source paths from writes (self-improve loop)', async () => {
+    const gate = new Gate({
+      allow: ['write'],
+      protectedPaths: protectedRepoPaths('C:\\repo'),
+      approver: allow,
+    });
+    const guarded = [
+      'C:\\repo\\src\\tools\\fetch.ts',
+      'C:\\repo\\src\\channels\\telegram.ts',
+      'C:\\repo\\src\\log.ts',
+      'C:\\repo\\src\\audit\\trail.ts',
+      'C:\\repo\\src\\permissions.ts',
+      'C:\\repo\\src\\approval-text.ts',
+      // Evasions: mixed case, forward slashes and a `..` detour.
+      'C:/repo/SRC/TOOLS/fetch.ts',
+      'C:\\repo\\src\\tools\\..\\tools\\fetch.ts',
+    ];
+    for (const [i, path] of guarded.entries()) {
+      const r = await gate.check(`g${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    // The rest of the repo stays editable: the loop must improve the code,
+    // just not its own guardrails.
+    const ok = await gate.check('ok', {
+      tool: 'write',
+      args: { path: 'C:\\repo\\src\\tools\\other.ts', content: 'x' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
   });
 
   it('fails closed when there is no approver to ask', async () => {

@@ -1226,6 +1226,26 @@ export function lexicalNormalize(path: string): string {
   return parts.join('\\');
 }
 
+/**
+ * The repo paths the agent must never write, wherever it is installed: the
+ * guardrails. The self-improve loop edits this repo with the same gated tools,
+ * so the SSRF guard, the channels, the audit trail and this very gate are as
+ * untouchable as ~/.ssh - an agent that can rewrite its own guardrails owns
+ * them. `root` is the repo root (usually process.cwd()). Directories match by
+ * prefix, files exactly; the Gate normalizes both sides lexically.
+ */
+export function protectedRepoPaths(root: string): string[] {
+  const r = root.replace(/[\\/]+$/, '');
+  return [
+    `${r}\\src\\tools\\fetch.ts`,
+    `${r}\\src\\channels`,
+    `${r}\\src\\log.ts`,
+    `${r}\\src\\audit`,
+    `${r}\\src\\permissions.ts`,
+    `${r}\\src\\approval-text.ts`,
+  ];
+}
+
 /** Constant-time compare for shared secrets, so auth checks cannot be timed. */
 export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
