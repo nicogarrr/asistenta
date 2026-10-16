@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
-import { DEFAULT_RETRY, isTransientProviderError, retryDelay } from '../src/core/retry.js';
+import {
+  DEFAULT_RETRY,
+  isQuotaError,
+  isTransientProviderError,
+  pickFallbackModel,
+  retryDelay,
+} from '../src/core/retry.js';
 
 describe('isTransientProviderError', () => {
   it('recognises the errors Zen actually returns', () => {
@@ -85,5 +91,61 @@ describe('config retry', () => {
       else process.env.PA_RETRY_ATTEMPTS = previous;
       resetConfigForTests();
     }
+  });
+});
+
+describe('isQuotaError', () => {
+  it('matches the quota failures free tiers actually return', () => {
+    const seen = [
+      '429: {"type":"rate_limit_error","message":"Rate limit exceeded"}',
+      'FreeTierError: daily quota exhausted',
+      'HTTP 429 too many requests',
+    ];
+    for (const m of seen) expect(isQuotaError(m)).toBe(true);
+  });
+
+  it('never calls a permanent error a quota error, even with quota words', () => {
+    for (const m of [
+      '401 invalid api key',
+      '402 insufficient funds: quota exceeded',
+      'model not found: 404',
+    ]) {
+      expect(isQuotaError(m)).toBe(false);
+    }
+  });
+
+  it('leaves timeouts and 5xx to same-model retries', () => {
+    for (const m of ['Requested timed out', '500 Endpoint is unavailable', 'socket hang up']) {
+      expect(isQuotaError(m)).toBe(false);
+    }
+  });
+
+  it('treats null, undefined and empty as no error', () => {
+    expect(isQuotaError(null)).toBe(false);
+    expect(isQuotaError(undefined)).toBe(false);
+    expect(isQuotaError('')).toBe(false);
+  });
+});
+
+describe('pickFallbackModel', () => {
+  it('defaults to space-bunny-free only on the opencode-local preset', () => {
+    expect(pickFallbackModel('opencode-local', undefined, 'deepseek-v4.1-flash-free')).toBe(
+      'space-bunny-free',
+    );
+    expect(pickFallbackModel('opencode', undefined, 'space-bunny-free')).toBeUndefined();
+    expect(pickFallbackModel('openrouter', undefined, 'x')).toBeUndefined();
+  });
+
+  it('lets the env value win on any preset', () => {
+    expect(pickFallbackModel('opencode', 'gemini-2.0-flash-free:free', 'x')).toBe(
+      'gemini-2.0-flash-free:free',
+    );
+  });
+
+  it('never falls back to the model that just failed', () => {
+    expect(pickFallbackModel('opencode-local', undefined, 'space-bunny-free')).toBeUndefined();
+    expect(
+      pickFallbackModel('opencode-local', 'deepseek-v4.1-flash-free', 'deepseek-v4.1-flash-free'),
+    ).toBeUndefined();
   });
 });

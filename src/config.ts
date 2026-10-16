@@ -1,4 +1,4 @@
-import type { RetryPolicy } from './core/retry.js';
+import { pickFallbackModel, type RetryPolicy } from './core/retry.js';
 import { COOKIE_BROWSERS } from './media/cookie-browsers.js';
 
 export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
@@ -16,6 +16,12 @@ export interface Config {
   /** Provider id, matching the id in the pi-ai provider registry. */
   provider: string;
   model: string;
+  /**
+   * Secondary model for one run when the primary's quota dies (see
+   * isQuotaError/pickFallbackModel). Same endpoint, same auth; undefined on
+   * presets whose endpoint never registered a second model.
+   */
+  fallbackModel?: string;
   baseUrl: string;
   variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
@@ -163,6 +169,11 @@ export function loadConfig(): Config {
     providerPreset,
     provider: process.env.PA_PROVIDER ?? presetDefaults.provider,
     model: process.env.PA_MODEL ?? presetDefaults.model,
+    fallbackModel: pickFallbackModel(
+      providerPreset,
+      process.env.PA_FALLBACK_MODEL,
+      process.env.PA_MODEL ?? presetDefaults.model,
+    ),
     baseUrl: process.env.PA_BASE_URL ?? presetDefaults.baseUrl,
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),

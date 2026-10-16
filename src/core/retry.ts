@@ -41,6 +41,46 @@ export function isTransientProviderError(message: string | null | undefined): bo
   return FLAKY_MARKERS.some((p) => p.test(message));
 }
 
+/**
+ * Quota/rate-limit failures: the subset of transient errors where retrying the
+ * SAME model is the wrong move - the free tier is exhausted and the next call
+ * fails the same way. Deliberately narrower than isTransientProviderError:
+ * timeouts and 5xx stay same-model retries (the provider hiccuped, the quota
+ * is fine). PERMANENT_MARKERS still win: a 402 with "quota" in the text is a
+ * billing error, not a free-tier hiccup.
+ */
+const QUOTA_MARKERS = [
+  /\b429\b/,
+  /rate limit/i,
+  /quota/i,
+  /freed?tiererror/i,
+];
+
+export function isQuotaError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  if (PERMANENT_MARKERS.some((p) => p.test(message))) return false;
+  return QUOTA_MARKERS.some((p) => p.test(message));
+}
+
+/**
+ * Which model a run falls back to when the primary's quota dies. The env value
+ * always wins; without it only the opencode-local preset gets a default - its
+ * local `opencode serve` is verified to expose space-bunny-free on the same
+ * endpoint and auth (see src/core/opencode-local.ts), so the swap costs
+ * nothing and leaks nothing. Other presets get no silent fallback: pointing a
+ * fallback at an endpoint that never registered it would fail louder than the
+ * original error. A fallback equal to the primary is no fallback.
+ */
+export function pickFallbackModel(
+  preset: string,
+  envValue: string | undefined,
+  primaryModel: string,
+): string | undefined {
+  const candidate = envValue ?? (preset === 'opencode-local' ? 'space-bunny-free' : undefined);
+  if (!candidate || candidate === primaryModel) return undefined;
+  return candidate;
+}
+
 export interface RetryPolicy {
   attempts: number;
   baseDelayMs: number;
