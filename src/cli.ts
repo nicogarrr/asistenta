@@ -1496,6 +1496,7 @@ async function serveCommand(): Promise<number> {
       createCheckoutTool({
         page: createCheckoutPage(browserFor(thread.key), scope),
         requireApproval: (action, summary) => askCheckout(thread, action, summary),
+        maxAmountCents: 30_000,
       }),
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
