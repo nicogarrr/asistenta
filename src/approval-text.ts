@@ -77,7 +77,7 @@ export function approvalReasonSpanish(reason: string): string {
     'runs a shell command': 'Ejecuta un comando de terminal',
     'not on the allow list': 'No está en la lista de acciones permitidas',
   };
-  return Object.hasOwn(reasons, reason) ? reasons[reason]! : reason;
+  return Object.hasOwn(reasons, reason) ? (reasons[reason] ?? reason) : reason;
 }
 
 export function formatApproval(call: ToolCall, reason: string): ApprovalText {
