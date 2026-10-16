@@ -12,6 +12,7 @@ $started = $false
 $outFile = $null
 $errFile = $null
 $exitCode = 1
+$logsValidated = $false
 try {
     # Resolve before launching: never inherit a shell alias or terminal wrapper.
     $repo = (Resolve-Path -LiteralPath $RepoDir).Path
@@ -20,10 +21,12 @@ try {
     if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { throw 'Falta dist\cli.js; ejecuta npm run build.' }
     if (-not [IO.Path]::IsPathRooted($StateDir)) { throw 'StateDir debe ser una ruta absoluta.' }
     $env:PA_STATE_DIR = $StateDir
+    . (Join-Path $PSScriptRoot 'private-logs.ps1')
+    Assert-PrivateLogTargets $StateDir
     $logDir = Join-Path $StateDir 'log'
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     # A private state directory under the current user's profile is required.
     # Do not change ACLs or take ownership of an existing directory silently.
+    $logsValidated = $true
     $outPath = Join-Path $logDir 'launcher.stdout.log'
     $errPath = Join-Path $logDir 'launcher.stderr.log'
     foreach ($file in @($outPath, $errPath)) {
@@ -61,7 +64,7 @@ catch {
     if ($started -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
     if ($errFile) { $errFile.Dispose(); $errFile = $null }
     $message = "$(Get-Date -Format o) error del launcher: $($_.Exception.Message)"
-    if ($errPath) { Add-Content -LiteralPath $errPath -Value $message -Encoding UTF8 }
+    if ($logsValidated) { Add-Content -LiteralPath $errPath -Value $message -Encoding UTF8 }
     else { [Console]::Error.WriteLine($message) }
 }
 finally {
@@ -69,5 +72,5 @@ finally {
     if ($outFile) { $outFile.Dispose() }
     if ($errFile) { $errFile.Dispose() }
 }
-if ($errPath) { Add-Content -LiteralPath $errPath -Value "$(Get-Date -Format o) serve termino: exit=$exitCode" -Encoding UTF8 }
+if ($logsValidated) { Add-Content -LiteralPath $errPath -Value "$(Get-Date -Format o) serve termino: exit=$exitCode" -Encoding UTF8 }
 exit $exitCode

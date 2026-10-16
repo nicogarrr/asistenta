@@ -189,18 +189,29 @@ function Install {
     }
     Write-Ok "cli: $cli"
 
+    # CLI precedence: ambient env wins, then optional repo .env, then home default.
+    # Run Node's own parser; emit only the state path, never the environment map.
+    Push-Location -LiteralPath $repo
+    try {
+        $stateResult = & $node --input-type=module -e 'import {homedir} from "node:os"; import {resolve,join} from "node:path"; try{process.loadEnvFile()}catch(e){if(e.code!=="ENOENT")process.exit(2)} console.log(resolve(process.env.PA_STATE_DIR || join(homedir(),".local","share","personal-agent")))'
+        if ($LASTEXITCODE -ne 0 -or -not $stateResult) { throw 'No se pudo resolver PA_STATE_DIR con el parser del CLI.' }
+        $script:StateDir = [string]$stateResult
+        $script:Heartbeat = Join-Path $StateDir 'agent.heartbeat'
+    } finally { Pop-Location }
+    $launcher = Join-Path $repo 'deploy\windows\run-hidden.ps1'
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw 'Falta deploy\windows\run-hidden.ps1.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $repo 'deploy\windows\private-logs.ps1') -PathType Leaf)) { throw 'Falta private-logs.ps1.' }
+
     $existing = Get-Task
     if ($existing -and -not $Force) {
         throw "Ya existe la tarea '$TaskName'. Usa -Force para reemplazarla o -Uninstall para quitarla."
     }
-    if ($existing) {
-        Write-Step "Quito la tarea anterior ($($existing.State))"
-        Stop-ScheduledTask -InputObject $existing -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -InputObject $existing -Confirm:$false
-    }
+    # Do not unregister an existing task. Export first, replace only after validation.
+    $previousXml = if ($existing) { Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath } else { $null }
 
     $launcher = Join-Path $repo 'deploy\windows\run-hidden.ps1'
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw 'Falta deploy\windows\run-hidden.ps1.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $repo 'deploy\windows\private-logs.ps1') -PathType Leaf)) { throw 'Falta private-logs.ps1.' }
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     # Values are literal single-quoted PowerShell strings, encoded as one argument.
     # Paths with spaces, apostrophes or shell metacharacters cannot become code.
@@ -243,12 +254,16 @@ function Install {
             -Trigger $trigger `
             -Settings $settings `
             -Principal $principal `
+            -Force:$Force `
             -Description 'personal-agent daemon (pa serve). Reinicia solo si el proceso sale; este instalador no cubre cuelgues.' `
             -ErrorAction Stop | Out-Null
     }
     catch {
         # The one case that genuinely needs elevation is a read-only or otherwise
         # locked-down Task Scheduler tree. Say so, instead of failing with a COM error.
+        if ($previousXml) {
+            Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml $previousXml -Force -ErrorAction Stop | Out-Null
+        }
         Write-Bad "No se pudo registrar la tarea: $($_.Exception.Message)"
         Write-Host '     Si es un problema de permisos, vuelve a ejecutar el script desde una consola de administrador.'
         throw
@@ -256,6 +271,7 @@ function Install {
     Write-Ok "Tarea '$TaskName' creada para $UserId"
 
     if ($Start) {
+        if ($existing) { Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction Stop }
         Write-Step 'Arranco la tarea ahora'
         Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
         Write-Ok 'Arrancada. El daemon escribe su heartbeat en unos segundos:'

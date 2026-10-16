@@ -104,3 +104,120 @@ process.stdin.on('end',()=>{fs.writeFileSync(require('path').join(process.env.PA
     });
   },
 );
+
+describe.skipIf(process.platform !== 'win32')('privacidad nativa de logs', () => {
+  it('rechaza ACL compartida y junction antes de escribir fuera del estado', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pa-log-acl-'));
+    const helper = resolve('deploy/windows/private-logs.ps1').replaceAll("'", "''");
+    const literal = root.replaceAll("'", "''");
+    const scriptText = `
+$ErrorActionPreference='Stop'
+. '${helper}'
+$root='${literal}'
+$state=Join-Path $root 'private'
+New-PrivateDirectory $state
+$outside=Join-Path $root 'outside'
+New-Item -ItemType Directory -Path $outside|Out-Null
+$log=Join-Path $state 'log'
+New-Item -ItemType Junction -Path $log -Target $outside|Out-Null
+$rejected=$false
+try{Assert-PrivateLogTargets $state}catch{$rejected=$true}
+if(-not $rejected){throw 'junction aceptada'}
+if((Get-ChildItem -LiteralPath $outside).Count){throw 'escritura fuera del estado'}
+[IO.Directory]::Delete($log)
+New-PrivateDirectory $log
+$acl=Get-Acl -LiteralPath $state
+$everyone=New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
+$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($everyone,'Read','ContainerInherit,ObjectInherit','None','Allow')))
+Set-Acl -LiteralPath $state -AclObject $acl
+$rejected=$false
+try{Assert-PrivateLogTargets $state}catch{$rejected=$true}
+if(-not $rejected){throw 'ACL compartida aceptada'}
+if((Get-ChildItem -LiteralPath $log).Count){throw 'logs escritos antes de validar ACL'}
+`;
+    try {
+      const child = spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', scriptText],
+        { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+      );
+      expect(child.status, child.stderr).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+it('instalador valida antes de reemplazar y restaura XML si el registro falla', () => {
+  const source = readFileSync('deploy/windows/install-autostart.ps1', 'utf8');
+  expect(source.indexOf("throw 'Falta private-logs.ps1.'")).toBeLessThan(
+    source.indexOf('$previousXml ='),
+  );
+  expect(source).toContain('Export-ScheduledTask');
+  expect(source).toContain('-Xml $previousXml -Force');
+  const install = source.slice(source.indexOf('function Install {'));
+  expect(install).not.toContain('Unregister-ScheduledTask');
+  expect(install).toContain('process.loadEnvFile()');
+  expect(install).toContain('process.env.PA_STATE_DIR || join(homedir()');
+});
+
+describe.skipIf(process.platform !== 'win32')(
+  'instalador con cmdlets falsos, sin tareas reales',
+  () => {
+    it('usa .env salvo ambiente y restaura la tarea anterior tras registro fallido', () => {
+      const root = mkdtempSync(join(tmpdir(), 'pa-task-mock-'));
+      const repo = join(root, 'repo');
+      mkdirSync(join(repo, 'dist'), { recursive: true });
+      mkdirSync(join(repo, 'deploy', 'windows'), { recursive: true });
+      writeFileSync(join(repo, 'dist', 'cli.js'), '');
+      for (const name of ['run-hidden.ps1', 'private-logs.ps1'])
+        writeFileSync(join(repo, 'deploy', 'windows', name), '# synthetic');
+      const fromEnvfile = join(root, 'from-dotenv');
+      writeFileSync(join(repo, '.env'), `PA_STATE_DIR="${fromEnvfile.replaceAll('\\', '/')}"\n`);
+      const quote = (s: string) => s.replaceAll("'", "''");
+      const installer = quote(resolve('deploy/windows/install-autostart.ps1'));
+      try {
+        for (const ambient of [false, true]) {
+          const calls = join(root, ambient ? 'ambient.txt' : 'dotenv.txt');
+          const scriptText = `
+$ErrorActionPreference='Stop'
+${ambient ? `$env:PA_STATE_DIR='${quote(join(root, 'ambient'))}'` : 'Remove-Item Env:PA_STATE_DIR -ErrorAction SilentlyContinue'}
+function Get-ScheduledTask { return [pscustomobject]@{State='Running'} }
+function Export-ScheduledTask { return '<previous-task/>' }
+function Unregister-ScheduledTask { throw 'NO se debe borrar la tarea anterior' }
+function Stop-ScheduledTask { throw 'NO se debe parar la tarea anterior antes de validar' }
+function New-ScheduledTaskAction { param($Execute,$Argument,$WorkingDirectory); [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($Argument -split ' ')[-1]))|Set-Content -LiteralPath '${quote(calls)}';return @{} }
+function New-ScheduledTaskTrigger { return @{} }
+function New-ScheduledTaskSettingsSet { return @{} }
+function New-ScheduledTaskPrincipal { return @{} }
+function New-Object { param($ComObject)
+ if($ComObject -ne 'Schedule.Service'){throw 'COM no esperado'}
+ $folder=[pscustomobject]@{}
+ $folder|Add-Member ScriptMethod GetFolder {param($p) return $this}
+ $service=[pscustomobject]@{Folder=$folder}
+ $service|Add-Member ScriptMethod Connect {}
+ $service|Add-Member ScriptMethod GetFolder {param($p) return $this.Folder}
+ return $service
+}
+function Register-ScheduledTask { param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force,$Xml,$ErrorAction)
+ if($Xml -eq '<previous-task/>'){Add-Content -LiteralPath '${quote(calls)}' -Value 'RESTORED';return @{}}
+ throw 'synthetic register failure'
+}
+. '${installer}' -Force -RepoDir '${quote(repo)}' -NodeExe '${quote(process.execPath)}'
+`;
+          const child = spawnSync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', scriptText],
+            { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+          );
+          expect(child.status, child.stderr).toBe(1);
+          const evidence = readFileSync(calls, 'utf8');
+          expect(evidence).toContain(ambient ? join(root, 'ambient') : fromEnvfile);
+          expect(evidence).toContain('RESTORED');
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
