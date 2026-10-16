@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalChoice, ApprovalScope } from '../src/channels/telegram.js';
 import { approvalsDbPath, createDaemonGate } from '../src/cli.js';
 
@@ -50,6 +50,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
@@ -178,6 +179,10 @@ describe('standing approvals across a daemon restart', () => {
 
 describe('createDaemonGate policy', () => {
   it('keeps the deny wall and the protected paths of the daemon', async () => {
+    // Deterministic home: the protected list is built from USERPROFILE, and in a
+    // container it is unset. Stub (and restore) so the assertion tests the wall,
+    // not the env - and leaks nothing to other tests in the process.
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\nicoi');
     const gate = createDaemonGate({
       threadKey: MAIN,
       dbPath: approvalsDbPath(dir),
@@ -193,4 +198,36 @@ describe('createDaemonGate policy', () => {
     });
     expect(write.verdict).toBe('deny');
   });
+
+  it('denies guardrail writes spelled RELATIVE to the cwd (daemon gate)', async () => {
+    // The daemon gate protects the repo guardrails by absolute path, but the fs
+    // tools resolve relative spellings against the cwd - so the gate must too.
+    const gate = createDaemonGate({
+      threadKey: MAIN,
+      dbPath: approvalsDbPath(dir),
+      ask: channel('always'),
+    });
+    for (const p of [
+      'src/tools/fetch.ts',
+      './src/permissions.ts',
+      'src/channels/telegram.ts',
+      'src/tools/../tools/fetch.ts',
+      'dist/permissions.js',
+      'dist/tools/fetch.js',
+    ]) {
+      const write = await gate.check(MAIN, {
+        tool: 'write',
+        args: { path: p, content: 'x' },
+        actor: 'asistenta',
+      });
+      expect(write.verdict).toBe('deny');
+    }
+    const ok = await gate.check(MAIN, {
+      tool: 'write',
+      args: { path: 'src/tools/other.ts', content: 'x' },
+      actor: 'asistenta',
+    });
+    expect(ok.verdict).not.toBe('deny');
+  });
 });
+

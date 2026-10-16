@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
+import { protectedRepoPaths } from '../src/permissions.js';
 import { checkoutStageOf } from '../src/tools/checkout.js';
 
 const allow = () => true;
@@ -38,7 +39,78 @@ describe('Gate', () => {
       args: { path: 'C:\\Users\\nicoi\\.ssh-backup\\id_rsa', content: 'x' },
       actor: 'local',
     });
+
     expect(sibling.verdict).toBe('allow');
+  });
+
+  it('protects the guardrail source paths from writes (self-improve loop)', async () => {
+    const gate = new Gate({
+      allow: ['write'],
+      protectedPaths: protectedRepoPaths('C:\\repo'),
+      approver: allow,
+    });
+    const guarded = [
+      'C:\\repo\\src\\tools\\fetch.ts',
+      'C:\\repo\\src\\channels\\telegram.ts',
+      'C:\\repo\\src\\log.ts',
+      'C:\\repo\\src\\audit\\trail.ts',
+      'C:\\repo\\src\\permissions.ts',
+      'C:\\repo\\src\\approval-text.ts',
+      // The runtime the daemon executes: dist persists the alteration too.
+      'C:\\repo\\dist\\tools\\fetch.js',
+      'C:\\repo\\dist\\permissions.js',
+      'C:\\repo\\dist\\channels\\telegram.js',
+      // Evasions: mixed case, forward slashes and a `..` detour.
+      'C:/repo/SRC/TOOLS/fetch.ts',
+      'C:\\repo\\src\\tools\\..\\tools\\fetch.ts',
+    ];
+    for (const [i, path] of guarded.entries()) {
+      const r = await gate.check(`g${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    // The rest of the repo stays editable: the loop must improve the code,
+    // just not its own guardrails.
+    const ok = await gate.check('ok', {
+      tool: 'write',
+      args: { path: 'C:\\repo\\src\\tools\\other.ts', content: 'x' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
+  });
+
+  it('denies guardrail writes spelled relative, dotted or with parent detours', async () => {
+    const gate = new Gate({
+      allow: ['write'],
+      protectedPaths: protectedRepoPaths(process.cwd()),
+      approver: allow,
+    });
+    const guarded = [
+      'src/tools/fetch.ts',
+      './src/permissions.ts',
+      'src/channels/telegram.ts',
+      'src/tools/../tools/fetch.ts',
+      'src/./log.ts',
+      'dist/permissions.js',
+      './dist/tools/fetch.js',
+    ];
+    for (const [i, path] of guarded.entries()) {
+      const r = await gate.check(`r${i}`, {
+        tool: 'write',
+        args: { path, content: 'x' },
+        actor: 'local',
+      });
+      expect(r.verdict).toBe('deny');
+    }
+    const ok = await gate.check('rok', {
+      tool: 'write',
+      args: { path: 'src/tools/other.ts', content: 'x' },
+      actor: 'local',
+    });
+    expect(ok.verdict).toBe('allow');
   });
 
   it('fails closed when there is no approver to ask', async () => {

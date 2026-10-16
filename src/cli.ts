@@ -87,7 +87,25 @@ import {
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
-import { BROWSER_FREE_ACTIONS, Gate } from './permissions.js';
+import { BROWSER_FREE_ACTIONS, Gate, protectedRepoPaths } from './permissions.js';
+
+/**
+ * Never-writable paths, in every mode: the user's secrets, the OS, and the
+ * parts of this repo that guard the agent itself (protectedRepoPaths locates
+ * the repo from the module's own URL, so any cwd works). The self-improve
+ * loop runs through these same gates: it can improve any code except the code
+ * that keeps it honest. This guards path-carrying tools (write/edit); shell
+ * commands that write files are a separate, unsolved surface - partial
+ * protection, not a full cage.
+ */
+function protectedPaths(): string[] {
+  const home = process.env.USERPROFILE;
+  return [
+    ...(home ? [`${home}\\.ssh`, `${home}\\.aws`] : []),
+    'C:\\Windows\\System32',
+    ...protectedRepoPaths(),
+  ];
+}
 import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
 import {
   buildMacroPrompt,
@@ -555,11 +573,7 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     allowUntilPayment: true,
     stageOf: checkoutStageOf,
     fullControl: options.fullControl ?? false,
-    protectedPaths: [
-      `${process.env.USERPROFILE}\\.ssh`,
-      `${process.env.USERPROFILE}\\.aws`,
-      'C:\\Windows\\System32',
-    ],
+    protectedPaths: protectedPaths(),
     maxAmountCents: 30_000,
     grantWindowMs: 90_000,
     // The load-bearing line. Without it every "Siempre" dies with the process and an
@@ -850,11 +864,7 @@ async function chatCommand(): Promise<number> {
     // Reading the screen and reading a public web page are not changes to the world, so
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
-    protectedPaths: [
-      `${process.env.USERPROFILE}\\.ssh`,
-      `${process.env.USERPROFILE}\\.aws`,
-      'C:\\Windows\\System32',
-    ],
+    protectedPaths: protectedPaths(),
     maxAmountCents: 30_000,
     // Reads the same standing grants the daemon writes, and nothing more: the console
     // has no scope buttons, so it never records one. They apply here because "always"
@@ -960,11 +970,7 @@ async function runCommand(prompt: string): Promise<number> {
     // Reading the screen and reading a public web page are not changes to the world, so
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
-    protectedPaths: [
-      `${process.env.USERPROFILE}\\.ssh`,
-      `${process.env.USERPROFILE}\\.aws`,
-      'C:\\Windows\\System32',
-    ],
+    protectedPaths: protectedPaths(),
     maxAmountCents: 30_000,
     // Unattended one-shot run: there is no human at the keyboard, so anything that
     // would need approval is refused rather than guessed at. Screenshot and read
