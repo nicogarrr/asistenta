@@ -3132,12 +3132,14 @@ async function serveCommand(): Promise<number> {
       const r = runBackup({
         stateDir: paths.state,
         destDir: process.env.PA_BACKUP_DIR || undefined,
+        mirrorDir: process.env.PA_BACKUP_MIRROR || undefined,
       });
       weeklyState.markSent('backup', Date.now());
       log.info('backup done', {
         dir: r.dir,
         databases: r.databases.length,
         pruned: r.pruned.length,
+        mirror: r.mirrorDir,
       });
     } catch (err) {
       log.warn('backup failed', { err });
