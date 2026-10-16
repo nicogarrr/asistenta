@@ -21,3 +21,5 @@ Pruebas con procesos hijos propios y lifecycle real, sin credenciales reales ni 
 No se presenta como prueba Telegram real ni de un daemon completo de producción. Falta QA nativa Windows y un supervisor con autoridad de restart. Fresh suite completa y auditoría independientes: pendientes al publicar borrador.
 
 Corrección preflight: se distingue explícitamente beginResources de las comprobaciones previas. Un retorno/fallo anterior a esa fase libera la propiedad; un error de arranque parcial sin lifecycle no lo hace hasta la muerte del proceso. Los dos tests previos de preflight usan estado temporal privado real para probar también el nuevo wrapper; no se simula el lock.
+
+ChannelRegistry tiene modo de cierre estricto: propaga fallos de adaptadores y no los marca retirados si fallaron. Se inicia un único drenaje de todos los canales y se espera al final; evita llamar dos veces a Telegram.stop. La limpieza de archivos temporales de capturas sigue siendo best-effort: no representa un canal/proceso vivo ni respalda por sí sola la prueba de parada.

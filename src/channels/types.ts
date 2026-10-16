@@ -125,7 +125,7 @@ export interface ChannelAdapter {
    * is what makes several concurrent conversations legible in one chat.
    */
   send(outbound: Outbound): Promise<string | null>;
-  stop(): Promise<void>;
+  stop(strict?: boolean): Promise<void>;
   /** Optional: true once the transport is authenticated and connected. */
   isReady(): boolean;
 }

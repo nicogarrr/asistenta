@@ -2069,9 +2069,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
-      const telegramDrain = telegram.stop(true);
+      const channelDrain = registry.stopAll(true);
       // Observe early rejection while aborting turns; propagate it after drains.
-      void telegramDrain.catch(() => {});
+      void channelDrain.catch(() => {});
       downloadsCtl.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
@@ -2092,10 +2092,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await stopTvButton(true);
       // Every Chromium, or the next start refuses to claim the profile dir.
       await Promise.all([...browsers.values()].map((b) => b.closeAll(true)));
-      await registry.stopAll();
       await screen.dispose();
       await vigilanteDrain;
-      await telegramDrain;
+      await channelDrain;
       store.close();
       memoryDb.close();
       goalsDb.close();
