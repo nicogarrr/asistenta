@@ -3657,7 +3657,7 @@ async function serveCommand(): Promise<number> {
       [
         'Habla conmigo normal y te contesto a cada mensaje por separado.',
         '',
-        '/screen - captura ahora',
+        '/screen [live|off] - captura ahora; live actualiza una foto; off detiene el directo',
         '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
         '/topic <nombre> - abre una conversación; /topics para verlas',
         '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos (con {parametros} es una macro)',
@@ -3686,7 +3686,7 @@ async function serveCommand(): Promise<number> {
         '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
         '/play [volumen] - suena en el PC el último audio que me mandaste',
         '/mic [segundos] - escuchar lo que oye el microfono',
-        '/watch live [segundos] - pantalla en directo (se actualiza sola)',
+        '/screen live [intervalo_segundos] - foto en directo; /screen off para parar',
         '/status on|off - avisarte de como voy mientras trabajo',
         '/stop - para todo lo que esté corriendo',
       ].join('\n'),
