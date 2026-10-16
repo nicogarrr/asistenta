@@ -151,8 +151,8 @@ export class TelegramChannel implements ChannelAdapter {
       handlers.log('error', 'grammy error', { message: err.message });
     });
 
-    bot.on('message', (ctx) => void this.#onMessage(ctx));
-    bot.on('callback_query:data', (ctx) => void this.#onCallback(ctx));
+    bot.on('message', (ctx) => this.#onMessage(ctx));
+    bot.on('callback_query:data', (ctx) => this.#onCallback(ctx));
 
     // Command menu in the Telegram UI, so the useful commands are discoverable
     // without remembering them. Telegram caps this at 100 and orders as given.

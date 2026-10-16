@@ -41,6 +41,7 @@ import { loadConfig } from './config.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { dedupeNewFacts } from './core/history.js';
+import { createProviderHandle } from './core/provider.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
@@ -93,6 +94,7 @@ import {
   protectedRepoPaths,
   runPermisosCommand,
 } from './permissions.js';
+import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -1212,6 +1214,21 @@ async function serveCommand(): Promise<number> {
     .filter((n) => Number.isInteger(n) && n > 0);
   if (!allowed?.length) {
     process.stderr.write('no allowed users. run: pa vault set telegram:allowedUserIds <id1,id2>\n');
+    return 1;
+  }
+
+  // Resolve credentials before announcing readiness or creating a thread.
+  // Provider construction does not issue a billable model request.
+  try {
+    await createProviderHandle(config);
+    if (process.env.PA_QA_CHANNEL !== '1') await checkTelegramToken(token);
+  } catch (error) {
+    const message =
+      (error instanceof Error && error.message.startsWith('Telegram')) ||
+      (error instanceof Error && /^(El token|No puedo conectar)/.test(error.message))
+        ? error.message
+        : startupFailureMessage(error);
+    process.stderr.write(`${message}\n`);
     return 1;
   }
 
@@ -4619,165 +4636,176 @@ async function serveCommand(): Promise<number> {
     },
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
-      const chatKey_ = chatKey(inbound);
-      log.info('message', {
-        chatId: inbound.chatId,
-        user: inbound.displayName,
-        chars: inbound.text.length,
-        hasPhoto: Boolean(inbound.photoFileId),
-        hasVoice: Boolean(inbound.audioFileId),
-      });
+      await withInboundFailureReply(
+        async () => {
+          const chatKey_ = chatKey(inbound);
+          log.info('message', {
+            chatId: inbound.chatId,
+            user: inbound.displayName,
+            chars: inbound.text.length,
+            hasPhoto: Boolean(inbound.photoFileId),
+            hasVoice: Boolean(inbound.audioFileId),
+          });
 
-      // Telegram delivers at-least-once; a redelivered update must not run the task
-      // twice. Bounded by a one hour TTL, which comfortably outlives a redelivery.
-      const dedupKey = `${chatKey_}:${inbound.messageId}`;
-      const seenAt = seenMessages.get(dedupKey);
-      if (seenAt !== undefined && Date.now() - seenAt < 3_600_000) {
-        log.info('duplicate update ignored', { messageId: inbound.messageId });
-        return;
-      }
-      seenMessages.set(dedupKey, Date.now());
-      if (seenMessages.size > 2000) {
-        const oldest = seenMessages.keys().next().value;
-        if (oldest !== undefined) seenMessages.delete(oldest);
-      }
-
-      // Where a wake word gets answered, and what "the last audio" means from now on.
-      lastChat = { key: chatKey_, chatId: inbound.chatId, threadId: inbound.threadId };
-
-      // Recorded before the command dispatch, because "/play" typed as the caption of
-      // an audio has to be able to find that audio by its own message id.
-      if (inbound.audioFileId) {
-        recall.record(chatKey_, {
-          fileId: inbound.audioFileId,
-          mimeType: inbound.audioMimeType ?? 'audio/ogg',
-          messageId: inbound.messageId,
-          durationSeconds: inbound.audioDurationSeconds,
-          caption: inbound.text.trim() || undefined,
-        });
-      }
-
-      const command = parseCommand(inbound.text);
-      if (command) {
-        // Commands bypass the agent entirely: they are the user's hands on the
-        // machine, not a task to delegate, and they must work even when every thread
-        // is busy or the provider is down.
-        switch (command.name) {
-          case 'stop':
-            return cmdStop(inbound);
-          case 'screen':
-            return cmdScreen(inbound, command.args);
-          case 'camera':
-          case 'play':
-          case 'suena':
-          case 'toca':
-          case 'escucha':
-          case 'mic':
-          case 'micro':
-          case 'watch':
-            if (!desktop) return say(inbound, DESKTOP_OFF_MESSAGE, { quote: true }).then(() => {});
-            if (command.name === 'camera') return cmdCamera(inbound, command.args);
-            if (command.name === 'mic' || command.name === 'micro')
-              return cmdMic(inbound, command.args);
-            if (command.name === 'watch') return cmdWatch(inbound, command.args);
-            return cmdPlay(inbound, command.args);
-          case 'topic':
-            return cmdTopic(inbound, command.args);
-          case 'topics':
-            return cmdTopics(inbound);
-          case 'routines':
-            return cmdRoutines(inbound);
-          case 'routine': {
-            const thread = await resolveThread(inbound);
-            return cmdRoutine(thread, inbound, command.args);
-          }
-          case 'cron': {
-            const thread = await resolveThread(inbound);
-            return cmdCron(thread, inbound, command.args);
-          }
-          case 'learn': {
-            const thread = await resolveThread(inbound);
-            return cmdLearn(thread, inbound, command.args);
-          }
-          case 'memory':
-            return cmdMemory(inbound);
-          case 'deshacer':
-          case 'undo':
-            return say(inbound, undoLast(), { quote: true }).then(() => {});
-          case 'steer':
-          case 'corrige':
-            return cmdSteer(inbound, command.args);
-          case 'pendientes':
-          case 'followups':
-            return cmdFollowups(inbound);
-          case 'entreno_hoy':
-            return cmdGym(inbound, 'hoy');
-          case 'ultimo':
-            return cmdGym(inbound, 'ultimo');
-          case 'peso':
-            return cmdGym(inbound, 'peso');
-          case 'resumen':
-            return cmdResumen(inbound);
-          case 'evolucion':
-            return cmdEvolucion(inbound, command.args);
-          case 'estado':
-            return cmdEstado(inbound);
-          case 'vigila':
-            return cmdVigila(inbound, command.args);
-          case 'vigilando':
-            return cmdVigilando(inbound);
-          case 'dejar_de_vigilar':
-            return cmdDejarDeVigilar(inbound, command.args);
-          case 'resolver':
-          case 'resolve':
-            return cmdResolve(inbound, command.args);
-          case 'buscar':
-          case 'search': {
-            const thread = await resolveThread(inbound);
-            return cmdSearch(thread, inbound, command.args);
-          }
-          case 'agenda':
-            return cmdAgenda(inbound);
-          case 'ojo':
-            return cmdOjo(inbound, command.args);
-          case 'permisos':
-            return cmdPermisos(inbound, command.args);
-          case 'ignora':
-            return cmdIgnora(inbound, command.args);
-          case 'ignorados':
-            return cmdIgnorados(inbound, command.args);
-          case 'voice':
-            return cmdVoice(inbound, command.args);
-          case 'conversacion':
-            return cmdConversacion(inbound, command.args);
-          case 'wake':
-          case 'asistenta':
-            return cmdWake(inbound, command.args);
-          case 'status':
-            return cmdStatus(inbound, command.args);
-          case 'start':
-          case 'help':
-            return cmdHelp(inbound);
-          default:
-            // Unknown slash command: say so instead of silently running it as a task.
-            await say(inbound, `No conozco el comando /${command.name}. /help para ver la lista.`, {
-              quote: true,
-            });
+          // Telegram delivers at-least-once; a redelivered update must not run the task
+          // twice. Bounded by a one hour TTL, which comfortably outlives a redelivery.
+          const dedupKey = `${chatKey_}:${inbound.messageId}`;
+          const seenAt = seenMessages.get(dedupKey);
+          if (seenAt !== undefined && Date.now() - seenAt < 3_600_000) {
+            log.info('duplicate update ignored', { messageId: inbound.messageId });
             return;
-        }
-      }
+          }
+          seenMessages.set(dedupKey, Date.now());
+          if (seenMessages.size > 2000) {
+            const oldest = seenMessages.keys().next().value;
+            if (oldest !== undefined) seenMessages.delete(oldest);
+          }
 
-      const thread = await resolveThread(inbound);
-      messageThread.set(dedupKey, thread.key);
+          // Where a wake word gets answered, and what "the last audio" means from now on.
+          lastChat = { key: chatKey_, chatId: inbound.chatId, threadId: inbound.threadId };
 
-      // Serialise inside the thread only. Different threads run concurrently; the
-      // machine mutex inside the tools is what keeps them from colliding.
-      const gen = thread.generation;
-      const next = thread.tail.then(async () => {
-        if (thread.generation !== gen) return;
-        await runTurn(thread, inbound, inbound.text, {});
-      });
-      thread.tail = next.catch(() => {});
+          // Recorded before the command dispatch, because "/play" typed as the caption of
+          // an audio has to be able to find that audio by its own message id.
+          if (inbound.audioFileId) {
+            recall.record(chatKey_, {
+              fileId: inbound.audioFileId,
+              mimeType: inbound.audioMimeType ?? 'audio/ogg',
+              messageId: inbound.messageId,
+              durationSeconds: inbound.audioDurationSeconds,
+              caption: inbound.text.trim() || undefined,
+            });
+          }
+
+          const command = parseCommand(inbound.text);
+          if (command) {
+            // Commands bypass the agent entirely: they are the user's hands on the
+            // machine, not a task to delegate, and they must work even when every thread
+            // is busy or the provider is down.
+            switch (command.name) {
+              case 'stop':
+                return cmdStop(inbound);
+              case 'screen':
+                return cmdScreen(inbound, command.args);
+              case 'camera':
+              case 'play':
+              case 'suena':
+              case 'toca':
+              case 'escucha':
+              case 'mic':
+              case 'micro':
+              case 'watch':
+                if (!desktop)
+                  return say(inbound, DESKTOP_OFF_MESSAGE, { quote: true }).then(() => {});
+                if (command.name === 'camera') return cmdCamera(inbound, command.args);
+                if (command.name === 'mic' || command.name === 'micro')
+                  return cmdMic(inbound, command.args);
+                if (command.name === 'watch') return cmdWatch(inbound, command.args);
+                return cmdPlay(inbound, command.args);
+              case 'topic':
+                return cmdTopic(inbound, command.args);
+              case 'topics':
+                return cmdTopics(inbound);
+              case 'routines':
+                return cmdRoutines(inbound);
+              case 'routine': {
+                const thread = await resolveThread(inbound);
+                return cmdRoutine(thread, inbound, command.args);
+              }
+              case 'cron': {
+                const thread = await resolveThread(inbound);
+                return cmdCron(thread, inbound, command.args);
+              }
+              case 'learn': {
+                const thread = await resolveThread(inbound);
+                return cmdLearn(thread, inbound, command.args);
+              }
+              case 'memory':
+                return cmdMemory(inbound);
+              case 'deshacer':
+              case 'undo':
+                return say(inbound, undoLast(), { quote: true }).then(() => {});
+              case 'steer':
+              case 'corrige':
+                return cmdSteer(inbound, command.args);
+              case 'pendientes':
+              case 'followups':
+                return cmdFollowups(inbound);
+              case 'entreno_hoy':
+                return cmdGym(inbound, 'hoy');
+              case 'ultimo':
+                return cmdGym(inbound, 'ultimo');
+              case 'peso':
+                return cmdGym(inbound, 'peso');
+              case 'resumen':
+                return cmdResumen(inbound);
+              case 'evolucion':
+                return cmdEvolucion(inbound, command.args);
+              case 'estado':
+                return cmdEstado(inbound);
+              case 'vigila':
+                return cmdVigila(inbound, command.args);
+              case 'vigilando':
+                return cmdVigilando(inbound);
+              case 'dejar_de_vigilar':
+                return cmdDejarDeVigilar(inbound, command.args);
+              case 'resolver':
+              case 'resolve':
+                return cmdResolve(inbound, command.args);
+              case 'buscar':
+              case 'search': {
+                const thread = await resolveThread(inbound);
+                return cmdSearch(thread, inbound, command.args);
+              }
+              case 'agenda':
+                return cmdAgenda(inbound);
+              case 'ojo':
+                return cmdOjo(inbound, command.args);
+              case 'permisos':
+                return cmdPermisos(inbound, command.args);
+              case 'ignora':
+                return cmdIgnora(inbound, command.args);
+              case 'ignorados':
+                return cmdIgnorados(inbound, command.args);
+              case 'voice':
+                return cmdVoice(inbound, command.args);
+              case 'conversacion':
+                return cmdConversacion(inbound, command.args);
+              case 'wake':
+              case 'asistenta':
+                return cmdWake(inbound, command.args);
+              case 'status':
+                return cmdStatus(inbound, command.args);
+              case 'start':
+              case 'help':
+                return cmdHelp(inbound);
+              default:
+                // Unknown slash command: say so instead of silently running it as a task.
+                await say(
+                  inbound,
+                  `No conozco el comando /${command.name}. /help para ver la lista.`,
+                  {
+                    quote: true,
+                  },
+                );
+                return;
+            }
+          }
+
+          const thread = await resolveThread(inbound);
+          messageThread.set(dedupKey, thread.key);
+
+          // Serialise inside the thread only. Different threads run concurrently; the
+          // machine mutex inside the tools is what keeps them from colliding.
+          const gen = thread.generation;
+          const next = thread.tail.then(async () => {
+            if (thread.generation !== gen) return;
+            await runTurn(thread, inbound, inbound.text, {});
+          });
+          thread.tail = next.catch(() => {});
+        },
+        (message) => say(inbound, message, { quote: true }),
+        (error) => log.error('inbound message failed', { error: startupFailureMessage(error) }),
+      );
     },
     log: (level, msg, fields) => log[level](msg, fields ?? {}),
   });
