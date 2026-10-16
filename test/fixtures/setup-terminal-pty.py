@@ -13,6 +13,9 @@ node, module = sys.argv[1:]
 secret = 'private-SYNTHETIC-token'
 scenarios = {
     'success': (secret.encode() + b'\r', secret, None),
+    'initial-bom': (b'\xef\xbb\xbfkey-value\r', '\ufeffkey-value', None),
+    'internal-bom': (b'key-\xef\xbb\xbfvalue\r', 'key-\ufeffvalue', None),
+    'unicode': ('clave-ñ-🔑'.encode() + b'\r', 'clave-ñ-🔑', None),
     'backspace': (b'private-SYNTHETIC-tokeX\x7fn\r', secret, None),
     'arrows': (b'private-SYNTHETIC-toke\x1b[D\x1b[Cn\r', secret, None),
     'paste': (b'\x1b[200~' + secret.encode() + b'\x1b[201~\r', secret, None),

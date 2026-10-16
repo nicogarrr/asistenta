@@ -63,7 +63,7 @@ function hiddenQuestion(prompt: string): Promise<string> {
     const input = process.stdin;
     const wasRaw = Boolean(input.isRaw);
     const wasFlowing = input.readableFlowing;
-    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     const chars: string[] = [];
     let cursor = 0;
     let received = 0;
