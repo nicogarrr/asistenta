@@ -51,6 +51,7 @@ jobs:
       - run: npm run build
       - run: >-
           npx vitest run
+          test/windows-launcher.test.ts
           test/windows-platform.test.ts
           test/platform-desktop-tools.test.ts
           test/vault-portable.test.ts
