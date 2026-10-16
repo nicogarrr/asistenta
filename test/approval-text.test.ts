@@ -60,17 +60,56 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
     const a = formatApproval(call('shell', { command }), 'r');
     expect(a.complete).toBe(false);
     expect(a.question).toContain('DENEGADA');
-    // Y un comando que cabe en RAW se muestra redactado y completo.
-    const ok = formatApproval(call('shell', { command: 'token=abc; ls' }), 'r');
+    // Y un comando sin secreto que cabe en RAW se muestra entero y aprobable.
+    const ok = formatApproval(call('shell', { command: 'ls -la /tmp' }), 'r');
     expect(ok.complete).toBe(true);
-    expect(ok.question).toContain('token=[redacted]; ls');
+    expect(ok.question).toContain('ls -la /tmp');
   });
 
-  it('computer type marca de secreto: jamás muestra el valor', () => {
+  it('computer type con secret: true se DENIEGA (ni mostrarlo ni aprobar a ciegas)', () => {
     const a = formatApproval(call('computer', { action: 'type', text: 'TEST_PASSWORD_UNLABELLED', secret: true }), 'r');
-    expect(a.complete).toBe(true);
+    expect(a.complete).toBe(false);
+    expect(a.question).toContain('DENEGADA');
     expect(a.question).not.toContain('TEST_PASSWORD_UNLABELLED');
-    expect(a.question).toContain('[secreto: 24 caracteres]');
+  });
+
+  it('canario: subexpresión de PowerShell entre comillas => DENEGADO, no enmascarado', () => {
+    // El canario del auditor: "$(...)" dentro de comillas dobles EJECUTA. Si se
+    // enmascarara como secreto, una operación destructiva quedaría oculta.
+    const evil = formatApproval(call('shell', { command: 'password="$(Remove-Item C:/Data -Recurse)"' }), 'r');
+    const benign = formatApproval(call('shell', { command: 'password="$(Get-Date)"' }), 'r');
+    expect(evil.complete).toBe(false);
+    expect(benign.complete).toBe(false);
+    expect(evil.question).toContain('DENEGADA');
+    expect(evil.question).not.toContain('Remove-Item');
+  });
+
+  it('un comando que el enmascarado alteraría se DENIEGA en vez de mostrarse alterado', () => {
+    const a = formatApproval(call('shell', { command: 'token=abc123; ls' }), 'r');
+    expect(a.complete).toBe(false);
+    expect(a.question).toContain('DENEGADA');
+    // Sin secreto, el mismo comando se muestra entero y aprobable.
+    const ok = formatApproval(call('shell', { command: 'ls' }), 'r');
+    expect(ok.complete).toBe(true);
+    expect(ok.question).toContain('ls');
+  });
+
+  it('batch con un paso type secreto => DENEGADO entero', () => {
+    const a = formatApproval(
+      call('computer', { action: 'batch', actions: [
+        { action: 'click', x: 1, y: 1 },
+        { action: 'type', text: 'x', secret: true },
+      ] }),
+      'r',
+    );
+    expect(a.complete).toBe(false);
+    expect(a.question).toContain('DENEGADA');
+  });
+
+  it('type sin marca cuyo texto tiene forma de secreto => DENEGADO (no se muestra alterado)', () => {
+    const a = formatApproval(call('computer', { action: 'type', text: 'token=abc123' }), 'r');
+    expect(a.complete).toBe(false);
+    expect(a.question).not.toContain('abc123');
   });
 
   it('computer describe click con todos sus parámetros', () => {
@@ -109,12 +148,17 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
     expect(a.question).not.toContain('click en');
   });
 
-  it('acción desconocida y parámetros desconocidos se muestran (redactados)', () => {
-    const a = formatApproval(call('computer', { action: 'teleport', x: 1, token: 'ghp_abcdefghijklmnop' }), 'r');
+  it('acción desconocida y parámetros desconocidos se muestran enteros', () => {
+    const a = formatApproval(call('computer', { action: 'teleport', x: 1, level: 3 }), 'r');
+    expect(a.complete).toBe(true);
     expect(a.question).toContain('teleport');
-    expect(a.question).not.toContain('ghp_abcdefghijklmnop');
+    expect(a.question).toContain('"level":3');
     const b = formatApproval(call('computer', { action: 'click', x: 1, y: 2, region: 'pop-up' }), 'r');
     expect(b.question).toContain('{region: "pop-up"}');
+    // Con algo con forma de secreto dentro: DENEGADO, no enmascarado.
+    const c = formatApproval(call('computer', { action: 'teleport', token: 'ghp_abcdefghijklmnop' }), 'r');
+    expect(c.complete).toBe(false);
+    expect(c.question).not.toContain('ghp_abcdefghijklmnop');
   });
 
   it('redacción: curl bearer, flag PowerShell y JWT', () => {

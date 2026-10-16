@@ -5,19 +5,20 @@
  * 1. Nothing is hidden: every parameter that changes what runs is in the text,
  *    and a batch lists every action. Two different actions never produce the
  *    same question.
- * 2. Nothing is truncated: the budget applies to the RAW text (before masking),
- *    so a long command cannot sneak past the review limit by containing a long
- *    secret. Over budget the approval is fail-closed (`complete: false`) and the
- *    caller denies without asking; the replacement text carries no clipped
- *    content.
- * 3. No secrets leave the process: secret-shaped values are masked before the
- *    text goes to a channel, and the mask eats ONLY the secret value - never the
- *    surrounding operation (`password=abc;Remove-Item` masks to
- *    `password=[redacted];Remove-Item`, so two commands that differ after the
- *    secret still differ in the question). Masking is a safety net, not DLP:
- *    text that is a secret without looking like one is indistinguishable from
- *    ordinary text; a caller typing a secret marks it (`secret: true`) and the
- *    question shows a placeholder, never the value.
+ * 2. Nothing is truncated: the budget applies to the RAW text, so a long
+ *    command cannot sneak past the review limit. Over budget the approval is
+ *    fail-closed (`complete: false`) and the caller denies without asking; the
+ *    replacement text carries no clipped content.
+ * 3. Nothing is masked in what runs: masking a shell command can hide part of
+ *    the operation itself (PowerShell executes $() subexpressions inside double
+ *    quotes; backticks and escapes are not parsed), so a command or typed text
+ *    that the mask would ALTER is denied, not shown masked - approving an
+ *    altered rendering is approving blind. Typing a secret (type with
+ *    `secret: true`) is denied too, until a vault flow can reference the secret
+ *    without showing it. redactSecrets survives only for prose that is not the
+ *    operation (the reason) and as a best-effort safety net, NOT as DLP: text
+ *    that is a secret without looking like one is indistinguishable from
+ *    ordinary prose, and no formatter can tell them apart.
  */
 import type { ToolCall } from './permissions.js';
 
@@ -42,7 +43,10 @@ const SECRET_BEARER = /\b(Bearer\s+)([^\s;&|<>]+)/gi;
 const SECRET_TOKEN =
   /\b(sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})/g;
 
-/** Best-effort masking of secret-shaped values in free text. Safety net, not DLP. */
+/**
+ * Best-effort masking of secret-shaped values in prose (the reason) and as a
+ * change-detector for operations. NOT DLP; see the file header.
+ */
 export function redactSecrets(text: string): string {
   return text
     .replace(SECRET_BEARER, '$1[redacted]')
@@ -67,43 +71,51 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     ]
       .filter(Boolean)
       .join('\n');
-    // Bounded by construction (300 + 700 + reason); the reason is masked like
-    // everything else that reaches a channel.
+    // Bounded by construction (300 + 700 + reason); the reason is prose, not the
+    // operation, so masking it hides nothing the click would do.
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');
   }
   if (call.tool === 'shell') {
     const command = typeof call.args.command === 'string' ? call.args.command.trim() : '';
-    const raw = [
-      '¿Permito shell?',
-      command ? `Comando:\n${command}` : 'Comando: (vacío)',
-      `Motivo: ${reason}`,
-    ].join('\n');
+    // The mask is a change-detector here: if it would alter the command, the
+    // masked rendering is not the command, and approving it is approving blind.
+    if (command && redactSecrets(command) !== command) return deniedAltered('shell');
     const question = [
       '¿Permito shell?',
-      command ? `Comando:\n${redactSecrets(command)}` : 'Comando: (vacío)',
+      command ? `Comando:\n${command}` : 'Comando: (vacío)',
       `Motivo: ${redactSecrets(reason)}`,
     ].join('\n');
-    return withinBudget(raw, question, 'shell');
+    return withinBudget(question, question, 'shell');
   }
   if (call.tool === 'computer') {
-    const rawLines = ['¿Permito computer?'];
-    const lines = ['¿Permito computer?'];
     if (call.args.action === 'batch' && Array.isArray(call.args.actions)) {
       const steps = call.args.actions as Array<Record<string, unknown>>;
-      rawLines.push(`Lote de ${steps.length} acciones:`);
-      lines.push(`Lote de ${steps.length} acciones:`);
-      for (const [i, step] of steps.entries()) {
-        rawLines.push(`  ${i + 1}. ${describeComputerAction(step, IDENTITY)}`);
-        lines.push(`  ${i + 1}. ${describeComputerAction(step, redactSecrets)}`);
-      }
-    } else {
-      rawLines.push(`Acción: ${describeComputerAction(call.args, IDENTITY)}`);
-      lines.push(`Acción: ${describeComputerAction(call.args, redactSecrets)}`);
+      if (steps.some((s) => s.action === 'type' && s.secret === true)) return deniedSecretType();
+      const rawSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, IDENTITY)}`);
+      const shownSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, redactSecrets)}`);
+      if (rawSteps.join('\n') !== shownSteps.join('\n')) return deniedAltered('computer');
+      const question = [
+        '¿Permito computer?',
+        `Lote de ${steps.length} acciones:`,
+        ...shownSteps,
+        `Motivo: ${redactSecrets(reason)}`,
+      ].join('\n');
+      const raw = [
+        '¿Permito computer?',
+        `Lote de ${steps.length} acciones:`,
+        ...rawSteps,
+        `Motivo: ${reason}`,
+      ].join('\n');
+      return withinBudget(raw, question, 'computer');
     }
-    rawLines.push(`Motivo: ${reason}`);
-    lines.push(`Motivo: ${redactSecrets(reason)}`);
-    return withinBudget(rawLines.join('\n'), lines.join('\n'), 'computer');
+    if (call.args.action === 'type' && call.args.secret === true) return deniedSecretType();
+    const rawAction = describeComputerAction(call.args, IDENTITY);
+    const shownAction = describeComputerAction(call.args, redactSecrets);
+    if (rawAction !== shownAction) return deniedAltered('computer');
+    const question = ['¿Permito computer?', `Acción: ${shownAction}`, `Motivo: ${redactSecrets(reason)}`].join('\n');
+    const raw = ['¿Permito computer?', `Acción: ${rawAction}`, `Motivo: ${reason}`].join('\n');
+    return withinBudget(raw, question, 'computer');
   }
   const raw = `¿Permito ${call.tool}?\n${reason}`;
   return withinBudget(raw, `¿Permito ${call.tool}?\n${redactSecrets(reason)}`, call.tool);
@@ -112,6 +124,40 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
 /** Back-compat: same text as before for callers that only need the question. */
 export function formatApprovalQuestion(call: ToolCall, reason: string): string {
   return formatApproval(call, reason).question;
+}
+
+/**
+ * The mask would change the operation: deny instead of showing an altered
+ * rendering. Denying some legitimate actions beats approving a hidden one.
+ */
+function deniedAltered(tool: string): ApprovalText {
+  return {
+    question:
+      `¿Permito ${tool}?\n` +
+      'La acción contiene algo con forma de secreto. No se muestra enmascarada ' +
+      'porque enmascarar puede ocultar parte de la operación (p. ej. PowerShell ' +
+      'ejecuta subexpresiones $() dentro de comillas dobles, y los escapes no se ' +
+      'parsean), y aprobar una versión alterada es aprobar a ciegas: queda ' +
+      'DENEGADA. Ejecútala a mano o reescríbela sin secretos literales.',
+    complete: false,
+  };
+}
+
+/**
+ * A type flagged `secret: true`: showing the value would leak it and hiding it
+ * would be a blind approval, so it is denied until a vault flow can reference
+ * the secret without showing it. The user is never asked to paste the secret.
+ */
+function deniedSecretType(): ApprovalText {
+  return {
+    question:
+      '¿Permito computer?\n' +
+      'La acción escribe un secreto (secret: true) y eso no se aprueba con una ' +
+      'pregunta: mostrarlo lo expondría y ocultarlo sería aprobar a ciegas. ' +
+      'Queda DENEGADA hasta que exista un flujo de vault que lo referencie sin ' +
+      'enseñarlo.',
+    complete: false,
+  };
 }
 
 /**
@@ -133,8 +179,7 @@ function withinBudget(raw: string, shown: string, tool: string): ApprovalText {
 }
 
 const KNOWN_ACTION_KEYS = new Set([
-  'action', 'x', 'y', 'toX', 'toY', 'text', 'key', 'button', 'clicks', 'roi', 'actions',
-  'secret', '_target',
+  'action', 'x', 'y', 'toX', 'toY', 'text', 'key', 'button', 'clicks', 'roi', 'actions', '_target',
 ]);
 
 function describeComputerAction(
@@ -145,14 +190,7 @@ function describeComputerAction(
   let base: string;
   switch (action) {
     case 'type':
-      // A caller typing a secret says so: the question shows a placeholder and
-      // never the value. Unmarked text is shown (masked best-effort): a string
-      // that does not look like a secret cannot be told apart from prose.
-      if (args.secret === true) {
-        base = `escribir [secreto: ${String(args.text ?? '').length} caracteres]`;
-      } else {
-        base = `escribir "${redact(String(args.text ?? ''))}"`;
-      }
+      base = `escribir "${redact(String(args.text ?? ''))}"`;
       break;
     case 'key':
       base = `pulsar ${String(args.key ?? '?')}`;
@@ -176,7 +214,7 @@ function describeComputerAction(
       base = `captura de pantalla${roiText(args.roi)}`;
       break;
     default:
-      // Unknown action: nothing hidden — the whole (redacted) payload is the description.
+      // Unknown action: nothing hidden — the whole payload is the description.
       base = `${action} ${redact(JSON.stringify(args))}`;
   }
   // Any parameter this formatter does not know about still shows up: the question

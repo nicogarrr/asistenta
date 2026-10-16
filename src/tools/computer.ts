@@ -45,7 +45,7 @@ export type Action =
   | { action: 'click'; x: number; y: number; button?: string; clicks?: number; roi?: Region }
   | { action: 'move'; x: number; y: number }
   | { action: 'drag'; x: number; y: number; toX: number; toY: number }
-  | { action: 'type'; text: string }
+  | { action: 'type'; text: string; secret?: boolean }
   | { action: 'key'; key: string }
   | { action: 'batch'; actions: Array<Record<string, unknown>> };
 
@@ -150,7 +150,11 @@ export function normalizeAction(text: string): Action | null {
         toY: Number(o.toY),
       };
     case 'type':
-      return { action: 'type', text: String(o.text ?? '') };
+      return {
+        action: 'type',
+        text: String(o.text ?? ''),
+        ...(o.secret === true ? { secret: true } : {}),
+      };
     case 'key':
       return { action: 'key', key: String(o.key ?? '') };
     default:
@@ -187,6 +191,14 @@ const ComputerParams = Type.Object({
   toX: Type.Optional(Type.Number()),
   toY: Type.Optional(Type.Number()),
   text: Type.Optional(Type.String({ description: 'Text for the type action.' })),
+  secret: Type.Optional(
+    Type.Boolean({
+      description:
+        'For type: mark the text as a secret (credential or token). A secret type is ' +
+        'never approved through a chat question - the approval is denied and the vault ' +
+        'flow must type it instead. Never ask the user to paste the secret.',
+    }),
+  ),
   key: Type.Optional(
     Type.String({
       description:
