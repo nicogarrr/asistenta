@@ -57,7 +57,31 @@ export function redactSecrets(text: string): string {
 
 const IDENTITY = (s: string): string => s;
 
+/** Translate known gate reasons only; never rewrite tool arguments or unknown prose. */
+export function approvalReasonSpanish(reason: string): string {
+  const reasons: Record<string, string> = {
+    'touches money or credentials': 'Afecta a dinero o credenciales',
+    'installs a tool the agent built itself': 'Instala una herramienta creada por el asistente',
+    'activates days of autonomous work on a goal':
+      'Activa varios días de trabajo autónomo para un objetivo',
+    'starts an approved errand with real-world effects':
+      'Inicia una tarea aprobada con efectos reales',
+    'pre-payment stage of a purchase flow': 'Es un paso previo al pago de una compra',
+    'reads a credential store': 'Lee un almacén de credenciales',
+    'touches a password, code or card field': 'Afecta a un campo de contraseña, código o tarjeta',
+    'the page element sends, publishes, deletes or books something':
+      'El elemento envía, publica, borra o reserva algo',
+    'drives the desktop': 'Controla el escritorio',
+    'destructive or privilege-raising shell command':
+      'Es un comando destructivo o que eleva privilegios',
+    'runs a shell command': 'Ejecuta un comando de terminal',
+    'not on the allow list': 'No está en la lista de acciones permitidas',
+  };
+  return Object.hasOwn(reasons, reason) ? (reasons[reason] ?? reason) : reason;
+}
+
 export function formatApproval(call: ToolCall, reason: string): ApprovalText {
+  reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
   if (call.tool === 'browser' && target) {
     const [element = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
