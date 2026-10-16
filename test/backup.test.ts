@@ -72,6 +72,52 @@ describe('copia de seguridad nocturna', () => {
     copy.close();
   });
 
+  it('copia docs (sqlite coherente + mirror), playbooks y undo', () => {
+    const dir = stateWithData();
+    mkdirSync(join(dir, 'docs'));
+    const ddb = new DatabaseSync(join(dir, 'docs', 'docs.sqlite'));
+    ddb.exec('PRAGMA journal_mode = WAL');
+    ddb.exec('CREATE TABLE d (v TEXT)');
+    ddb.prepare('INSERT INTO d VALUES (?)').run('doc'); // abierta a proposito
+    mkdirSync(join(dir, 'docs', 'mirror'));
+    writeFileSync(join(dir, 'docs', 'mirror', 'd.txt'), 'texto');
+    mkdirSync(join(dir, 'playbooks'));
+    writeFileSync(join(dir, 'playbooks', 'p.md'), 'playbook');
+    mkdirSync(join(dir, 'undo'));
+    writeFileSync(join(dir, 'undo', 'u.json'), '{}');
+    const r = runBackup({ stateDir: dir, now: new Date(2026, 9, 5, 3) });
+    expect(r.copiedDirs).toEqual(expect.arrayContaining(['docs', 'playbooks', 'undo']));
+    const copy = new DatabaseSync(join(r.dir, 'docs', 'docs.sqlite'));
+    expect((copy.prepare('SELECT v FROM d').get() as { v: string }).v).toBe('doc');
+    copy.close();
+    ddb.close();
+    expect(readFileSync(join(r.dir, 'docs', 'mirror', 'd.txt'), 'utf8')).toBe('texto');
+    expect(readFileSync(join(r.dir, 'playbooks', 'p.md'), 'utf8')).toBe('playbook');
+    expect(readFileSync(join(r.dir, 'undo', 'u.json'), 'utf8')).toBe('{}');
+    expect(existsSync(join(r.dir, 'vault.enc'))).toBe(false);
+  });
+
+  it('PA_BACKUP_MIRROR: segunda copia completa; un fallo del espejo no toca la local pero se canta', () => {
+    const dir = stateWithData();
+    const mirror = mkdtempSync(join(tmpdir(), 'bk-mirror-'));
+    const day = new Date(2026, 9, 5, 3);
+    const r = runBackup({ stateDir: dir, mirrorDir: mirror, now: day });
+    expect(existsSync(join(dir, 'backups', '2026-10-05', 'memory.db'))).toBe(true);
+    expect(r.mirrorDir).toBe(join(mirror, '2026-10-05'));
+    expect(readFileSync(join(mirror, '2026-10-05', 'memory', 'a.md'), 'utf8')).toBe('dato');
+    // El espejo tambien poda con el mismo keep.
+    for (let d = 6; d <= 8; d++)
+      runBackup({ stateDir: dir, mirrorDir: mirror, now: new Date(2026, 9, d, 3), keep: 2 });
+    expect(readdirSync(mirror).sort()).toEqual(['2026-10-07', '2026-10-08']);
+    // Fallo del espejo: la copia local ya cerrada sobrevive y el error nombra el destino.
+    const blocked = join(dir, 'bloqueado');
+    writeFileSync(blocked, 'soy un fichero');
+    expect(() => runBackup({ stateDir: dir, mirrorDir: join(blocked, 'x'), now: day })).toThrow(
+      /segundo destino/,
+    );
+    expect(existsSync(join(dir, 'backups', '2026-10-05', 'memory.db'))).toBe(true);
+  });
+
   it('PA_BACKUP_DIR: las copias van a otra carpeta', () => {
     const dir = stateWithData();
     const other = mkdtempSync(join(tmpdir(), 'bk-other-'));

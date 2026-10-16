@@ -8,11 +8,16 @@ import { DatabaseSync } from 'node:sqlite';
  * Todo vive en un solo directorio y se pierde junto: un borrado por error o una base
  * corrupta se llevan la memoria entera. Una copia diaria, con las últimas 7, cuesta unos
  * KB y permite volver atrás. Por defecto va al mismo disco (state/backups): eso NO protege
- * de un disco roto ni de perder el PC; para eso `PA_BACKUP_DIR` apunta a otro disco o a
- * una carpeta sincronizada. Para restaurar: parar Asistenta y copiar los .db y carpetas
- * de la fecha elegida encima del directorio de estado. No copia el navegador, los modelos ni las capturas
- * (pesan y se regeneran) ni el vault: un duplicado del vault con la misma máquina no
- * protege nada y sí multiplica donde viven los secretos.
+ * de un disco roto ni de perder el PC. Dos salidas para eso: `PA_BACKUP_DIR` cambia la
+ * raíz de las copias a otro disco o carpeta sincronizada, y `PA_BACKUP_MIRROR` escribe
+ * ADEMÁS una segunda copia completa (la local se cierra primero; si el espejo falla, el
+ * error lo nombra y la copia local sigue buena). Para restaurar: parar Asistenta y copiar
+ * los .db y carpetas de la fecha elegida encima del directorio de estado.
+ * Copia los *.db de la raíz, docs/ (docs.sqlite con VACUUM INTO, coherente aunque esté
+ * abierta, más el mirror de texto), memory/, snapshot/, skills/, playbooks/ y undo/.
+ * No copia el navegador, los modelos ni las capturas (pesan y se regeneran) ni el vault:
+ * un duplicado del vault con la misma máquina no protege nada y sí multiplica donde
+ * viven los secretos.
  */
 
 const KEEP_DEFAULT = 7;
@@ -44,12 +49,17 @@ export interface BackupResult {
   databases: string[];
   copiedDirs: string[];
   pruned: string[];
+  /** Segunda copia completa (`mirrorDir` de la llamada), si se pidió. */
+  mirrorDir?: string;
+  mirrorPruned?: string[];
 }
 
 export function runBackup(opts: {
   stateDir: string;
   /** Raíz de las copias. Por defecto `<stateDir>/backups`. */
   destDir?: string;
+  /** Segundo destino ADEMÁS del primero (otro disco, carpeta sincronizada). */
+  mirrorDir?: string;
   now?: Date;
   keep?: number;
 }): BackupResult {
@@ -72,11 +82,22 @@ export function runBackup(opts: {
       copyDb(join(opts.stateDir, name), join(tmp, name));
       databases.push(name);
     }
-    for (const name of ['memory', 'snapshot', 'skills']) {
+    for (const name of ['memory', 'snapshot', 'skills', 'playbooks', 'undo']) {
       const from = join(opts.stateDir, name);
       if (!existsSync(from)) continue;
       cpSync(from, join(tmp, name), { recursive: true });
       copiedDirs.push(name);
+    }
+    // docs/ lleva una base viva: docs.sqlite via VACUUM INTO (copia coherente
+    // aunque esté abierta) y el mirror de texto como ficheros normales.
+    const docs = join(opts.stateDir, 'docs');
+    if (existsSync(docs)) {
+      mkdirSync(join(tmp, 'docs'), { recursive: true });
+      const docsDb = join(docs, 'docs.sqlite');
+      if (existsSync(docsDb)) copyDb(docsDb, join(tmp, 'docs', 'docs.sqlite'));
+      const mirror = join(docs, 'mirror');
+      if (existsSync(mirror)) cpSync(mirror, join(tmp, 'docs', 'mirror'), { recursive: true });
+      copiedDirs.push('docs');
     }
     rmSync(dir, { recursive: true, force: true });
     renameSync(tmp, dir);
@@ -90,5 +111,38 @@ export function runBackup(opts: {
     .sort();
   const pruned = old.slice(0, Math.max(0, old.length - keep));
   for (const n of pruned) rmSync(join(root, n), { recursive: true, force: true });
-  return { dir, databases, copiedDirs, pruned };
+
+  let mirrorDir: string | undefined;
+  let mirrorPruned: string[] | undefined;
+  if (opts.mirrorDir) {
+    // La copia local YA está cerrada: un fallo del espejo no la toca, pero
+    // tampoco se calla - el error nombra el segundo destino.
+    const mroot = opts.mirrorDir;
+    const mdir = join(mroot, dayStamp(now));
+    const mtmp = `${mdir}.tmp`;
+    try {
+      mkdirSync(mroot, { recursive: true });
+      rmSync(mtmp, { recursive: true, force: true });
+      cpSync(dir, mtmp, { recursive: true });
+      rmSync(mdir, { recursive: true, force: true });
+      renameSync(mtmp, mdir);
+    } catch (err) {
+      try {
+        rmSync(mtmp, { recursive: true, force: true });
+      } catch {
+        // La limpieza puede fallar por la misma causa que el espejo (p. ej.
+        // ENOTDIR): nunca debe tapar el error que nombra el destino.
+      }
+      throw new Error(
+        `copia local hecha en ${dir}, pero el segundo destino ${mroot} falló: ${String(err)}`,
+      );
+    }
+    const mold = readdirSync(mroot)
+      .filter((n) => /^\d{4}-\d{2}-\d{2}$/.test(n))
+      .sort();
+    mirrorPruned = mold.slice(0, Math.max(0, mold.length - keep));
+    for (const n of mirrorPruned) rmSync(join(mroot, n), { recursive: true, force: true });
+    mirrorDir = mdir;
+  }
+  return { dir, databases, copiedDirs, pruned, mirrorDir, mirrorPruned };
 }
