@@ -127,7 +127,7 @@ function protectedPaths(): string[] {
 function secretStatePaths(): string[] {
   return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
-import { DESKTOP_OFF_MESSAGE, DESKTOP_ONLY_TOOLS, desktopEnabled } from './platform.js';
+import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import {
   buildMacroPrompt,
   canonicalMacroName,
@@ -1701,7 +1701,7 @@ async function serveCommand(): Promise<number> {
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
     const exclusive = new Set(['computer', 'shell', 'browser', 'checkout', 'write', 'media']);
-    const raw = desktop ? all : all.filter((tool) => !DESKTOP_ONLY_TOOLS.has(tool.name));
+    const raw = toolsForMode(all, desktop);
     return raw.map((tool): AgentTool => {
       if (!exclusive.has(tool.name)) return tool;
       const inner = tool.execute.bind(tool);

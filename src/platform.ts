@@ -26,7 +26,24 @@ export const DESKTOP_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'system',
   'shell',
   'media',
+  // LAN hardware only the desktop machine can reach: the LG TV (SSAP) and the
+  // ESP32 iPhone bridge. In server mode the daemon cannot dial them, so the
+  // model never sees the tools.
+  'tv',
+  'iphone',
 ]);
+
+/**
+ * The tools a mode offers: everything on the desktop; server mode drops the
+ * desktop-only ones. The filter lives here (not inline at the call site) so
+ * the contract is testable.
+ */
+export function toolsForMode<T extends { name: string }>(
+  all: readonly T[],
+  desktop: boolean,
+): T[] {
+  return desktop ? [...all] : all.filter((tool) => !DESKTOP_ONLY_TOOLS.has(tool.name));
+}
 
 export const DESKTOP_OFF_MESSAGE =
   'Esta función no está disponible: el asistente corre en modo servidor, sin escritorio.';
