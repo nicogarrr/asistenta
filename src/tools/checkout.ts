@@ -180,7 +180,7 @@ const TOTAL_LABEL = /\btotal\b|\bamount\s+due\b|\bgrand\s+total\b/iu;
  */
 export function findTotalPrice(text: string): PriceText | null {
   const prices = extractPriceTexts(text, 20);
-  if (prices.length === 1) return prices[0];
+  if (prices.length === 1) return prices[0] ?? null;
   if (prices.length === 0) return null;
   let found: PriceText | null = null;
   for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
