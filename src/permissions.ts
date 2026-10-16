@@ -245,6 +245,47 @@ function blobOf(c: ToolCall): string {
     .join(' ');
 }
 
+/**
+ * One open-read-close pass on the scope database: the standing `always`
+ * grants, sorted. The DB is the truth every live gate shares, so `/permisos`
+ * lists from disk instead of trusting one process's memory. A gate built
+ * without `dbPath` keeps its grants in memory only and they cannot outlive
+ * the process - those never show up here, by design.
+ */
+export function listAlwaysGrants(dbPath: string | undefined): string[] {
+  if (!dbPath) return [];
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(SCOPE_TABLE);
+    return db
+      .prepare(`SELECT tool FROM approval_scopes WHERE level = 'always' ORDER BY tool`)
+      .all()
+      .map((row) => String(row.tool));
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Delete one standing grant from the shared database. Idempotent; returns
+ * whether a row existed. Live gates ALSO keep a memory copy - deleting here
+ * alone would leave a running daemon trusting the grant until its restart,
+ * so callers pair this with `Gate.revokeAlways` on every live gate.
+ */
+export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boolean {
+  if (!dbPath) return false;
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(SCOPE_TABLE);
+    const res = db.prepare(`DELETE FROM approval_scopes WHERE scope_key = ?`).run(`always:${tool}`);
+    return Number(res.changes) > 0;
+  } finally {
+    db.close();
+  }
+}
+
 export class Gate {
   readonly #rules: Rule[];
   readonly #protected: string[];
@@ -825,6 +866,28 @@ export class Gate {
   }
 
   /**
+   * The standing grants this gate honours: the shared database plus any
+   * memory-only ones (a gate without `dbPath`).
+   */
+  listPersistedAlways(): string[] {
+    return [...new Set([...listAlwaysGrants(this.#dbPath), ...this.#alwaysAllow])].sort();
+  }
+
+  /**
+   * Take back a standing `always` grant: out of this process's memory AND out
+   * of the shared database, so gates built later never see it. Every live
+   * gate must hear this call - each caches its own copy - which is why
+   * `/permisos revocar` fans it out to all of them. Returns whether the grant
+   * existed anywhere. Narrowing a grant instead of removing it stays
+   * `setScope`'s job.
+   */
+  revokeAlways(tool: string): boolean {
+    const inMemory = this.#alwaysAllow.delete(tool);
+    const inDb = deleteAlwaysGrant(this.#dbPath, tool);
+    return inMemory || inDb;
+  }
+
+  /**
    * One open-write-close pass on the scope database. No handle is kept between
    * calls: approvals are rare and human-paced, and a second Gate over the same
    * file (tests, a restarting daemon) must never wait on a lock this one forgot.
@@ -1356,4 +1419,60 @@ export function safeEqual(a: string, b: string): boolean {
     return false;
   }
   return timingSafeEqual(ab, bb);
+}
+
+/**
+ * `/permisos`: the standing "siempre" grants, listed and taken back.
+ *
+ * Listing reads the shared approvals database (the truth every live gate
+ * loads at construction); revoking deletes the row AND clears every live
+ * gate's memory copy, because a gate built before the revoke would otherwise
+ * keep trusting the grant until restart. `session`/`once` grants are not
+ * listed: they die with their task on `clearSession`, so there is nothing
+ * standing to show. A grant only ever covers the exact tool named - money,
+ * credentials, factory installs, goal activations and `gestion ejecutar`
+ * always ask regardless; that exclusion lives in `check()` and is not this
+ * command's to weaken.
+ */
+export function runPermisosCommand(
+  gates: readonly Gate[],
+  dbPath: string | undefined,
+  args: string,
+): string {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const sub = (parts[0] ?? '').toLowerCase();
+  const tools = listAlwaysGrants(dbPath);
+  if (sub === '' || sub === 'estado') {
+    if (tools.length === 0)
+      return 'No me has dado ningún permiso "siempre". Los de "esta sesión" o "una vez" no salen aquí: mueren solos al terminar su tarea.';
+    return (
+      `Permisos "siempre" activos (${tools.length}): ${tools.join(', ')}. ` +
+      'Quita uno con /permisos revocar <herramienta> o todos con /permisos revocar todo. ' +
+      'Dinero, credenciales y activaciones te preguntan siempre, haya o no un "siempre".'
+    );
+  }
+  if (sub !== 'revocar') return 'Uso: /permisos [estado] ⬦ /permisos revocar <herramienta>|todo';
+  const target = parts.slice(1).join(' ').toLowerCase();
+  if (target === '') return 'Uso: /permisos revocar <herramienta>|todo';
+  const revokeOne = (tool: string): boolean => {
+    let had = false;
+    for (const gate of gates) had = gate.revokeAlways(tool) || had;
+    // With zero live gates (daemon with no open threads) the row still goes.
+    had = deleteAlwaysGrant(dbPath, tool) || had;
+    return had;
+  };
+  if (target === 'todo') {
+    if (tools.length === 0) return 'No había ningún permiso "siempre" que quitar.';
+    for (const tool of tools) revokeOne(tool);
+    return tools.length === 1
+      ? `He quitado el único permiso "siempre" que había (${tools[0]}). Te volveré a pedir permiso la próxima vez.`
+      : `He quitado los ${tools.length} permisos "siempre" que había (${tools.join(', ')}). Te volveré a pedir permiso la próxima vez.`;
+  }
+  const found = tools.find((tool) => tool.toLowerCase() === target);
+  if (!found)
+    return tools.length === 0
+      ? `No había un permiso "siempre" para ${target}; de hecho no hay ninguno activo.`
+      : `No había un permiso "siempre" para ${target}. Los activos: ${tools.join(', ')}.`;
+  revokeOne(found);
+  return `Permiso "siempre" de ${found} quitado. Te volveré a pedir permiso la próxima vez que haga falta.`;
 }
