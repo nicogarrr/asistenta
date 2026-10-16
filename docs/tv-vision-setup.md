@@ -79,7 +79,7 @@ piccap/magic_mapper, con todo preparado para que la ejecucion sea
      visibles (set -e; nunca declara hecho un restore roto).
      Rollback automatico ante fallos post-backup. Tests mock:
      scripts/tv/test-tv-rollback-mock.sh (12/12, filesystem falso real) y
-     scripts/tv/test-tv-token-patch-mock.sh (16/16: parche, telnet y canal TLS).
+     scripts/tv/test-tv-token-patch-mock.sh (17/17: parche, telnet y canal TLS).
    - --button se valida contra la lista oficial de botones de v1.1.0
      (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta

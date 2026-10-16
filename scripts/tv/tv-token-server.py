@@ -18,10 +18,11 @@ a extremo autenticado; la defensa real de la entrega es la combinacion de:
   que cruza por telnet junto al cert. No es un secreto fuerte (viaja en
   claro), pero cierra el escaneo a ciegas de la ruta;
 - one-shot: sirve UNA sola peticion valida y muere, con puerto efimero;
-- deadline doble: --max-age acota la vida total y CADA conexion aceptada
-  (handshake TLS + lectura + escritura) tiene su propio timeout real en el
-  socket (--conn-timeout, 10 s por defecto), asi un cliente que conecta y no
-  sigue NO bloquea el bucle;
+- deadline doble y ABSOLUTO: --max-age acota la vida total y CADA conexion
+  aceptada muere en su deadline (--conn-timeout, 10 s por defecto) AUNQUE
+  tenga trafico: un timer cierra el socket al llegar la hora, asi un
+  slowloris que gotea la peticion byte a byte no prorroga la conexion
+  (el timeout de socket solo, de inactividad, si lo permitiria);
 - exit 0 == entrega confirmada: served se marca SOLO tras completar la
   escritura al socket; si el cliente corta antes de recibir, la entrega no
   se consume y el cliente legitimo puede reintentar.
@@ -37,13 +38,22 @@ import argparse
 import http.server
 import os
 import re
+import socket
 import ssl
 import sys
+import threading
 import time
 
 
 
 class OneShotServer(http.server.HTTPServer):
+    def handle_error(self, request, client_address):
+        # Errores del handler (cliente corto a mitad de la escritura, socket
+        # cerrado por el deadline absoluto): son la via normal de "entrega no
+        # consumida", no un bug. El servidor no imprime NADA por diseno, asi
+        # que nada de tracebacks en stderr.
+        pass
+
     def get_request(self):
         # Acepta TCP en claro y envuelve AQUI, no a nivel de socket de escucha:
         # con el wrap sobre el socket de escucha el handshake ocurria dentro de
@@ -53,12 +63,42 @@ class OneShotServer(http.server.HTTPServer):
         # lleva su propio timeout ANTES del handshake, y ese mismo timeout acota
         # despues la lectura de la peticion y la escritura de la respuesta.
         newsock, addr = self.socket.accept()
-        remaining = self.deadline - time.monotonic()
-        newsock.settimeout(max(0.1, min(remaining, self.conn_timeout)))
+        now = time.monotonic()
+        # Deadline absoluto de ESTA conexion (lo lee el handler en setup()).
+        # El bucle es de un hilo: solo hay una conexion en vuelo cada vez.
+        self.conn_deadline = min(self.deadline, now + self.conn_timeout)
+        newsock.settimeout(max(0.1, min(self.deadline - now, self.conn_timeout)))
         return self.tls_context.wrap_socket(newsock, server_side=True), addr
 
 
 class OneShotHandler(http.server.BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        # Deadline ABSOLUTO por conexion: un timeout de socket es de
+        # INACTIVIDAD (cada byte lo reinicia), asi que un slowloris que gotea
+        # la peticion mantendria la conexion viva mas alla de --conn-timeout
+        # y de --max-age. Este timer cierra el socket a la hora en punto,
+        # haya trafico o no, y la lectura/escritura bloqueada falla al
+        # instante (OSError, capturado por el bucle: entrega NO consumida).
+        delay = max(0.05, self.server.conn_deadline - time.monotonic())
+        self._deadline_timer = threading.Timer(delay, self._kill_connection)
+        self._deadline_timer.daemon = True
+        self._deadline_timer.start()
+
+    def _kill_connection(self):
+        for op in (lambda: self.connection.shutdown(socket.SHUT_RDWR),
+                   self.connection.close):
+            try:
+                op()
+            except OSError:
+                pass
+
+    def finish(self):
+        # La conexion termino normalmente: el timer sobra. Se cancela ANTES
+        # del flush final para que una entrega completa nunca se corte.
+        self._deadline_timer.cancel()
+        super().finish()
+
     def do_GET(self):  # noqa: N802 (nombre impuesto por BaseHTTPRequestHandler)
         if self.client_address[0] != self.server.allow_ip:
             self.send_error(403)

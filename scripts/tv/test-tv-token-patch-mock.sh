@@ -208,7 +208,7 @@ wait "$SRV" 2>/dev/null || true; SRV=""
 [ "$RC" = "3" ] || fail "10: sin centinela debia ser fallo de transporte (rc=$RC)"
 ok "telnet sh: sin centinela -> fallo de transporte visible, nunca exit 0"
 
-command -v openssl >/dev/null || { echo "skip 11-16: sin openssl"; echo "PASS $PASS/10"; exit 0; }
+command -v openssl >/dev/null || { echo "skip 11-17: sin openssl"; echo "PASS $PASS/10"; exit 0; }
 CERTD="$T/cert"; mkdir -p "$CERTD"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERTD/key.pem" -out "$CERTD/cert.pem" \
   -days 1 -subj "/CN=tv-button" -addext "subjectAltName=IP:127.0.0.1" >/dev/null 2>&1 || fail "11: cert"
@@ -329,4 +329,32 @@ wait "$SRV" || fail "16: exit 0 solo tras la entrega REAL del reintento"
 SRV=""
 ok "one-shot TLS: write fallido no consume; reintento limpio sirve y cierra 0"
 
-echo "PASS $PASS/16"
+# 17) SLOWLORIS: el deadline de conexion es ABSOLUTO, no de inactividad
+#     (canario del auditor: handshake valido + 1 byte HTTP cada 0.12 s con
+#     max-age 0.5 / conn-timeout 0.3 mantenia vivo el servidor 1.44 s).
+python3 "$DIR/tv-token-server.py" --bind 127.0.0.1 --allow-ip 127.0.0.1 --nonce "$NONCE" \
+  --file "$T/tls.conf" --cert "$CERTD/cert.pem" --key "$CERTD/key.pem" \
+  --port-file "$CERTD/port7" --max-age 0.5 --conn-timeout 0.3 & SRV=$!
+PORT=$(wait_port "$CERTD/port7" 17)
+START=$(date +%s%N)
+python3 - "$PORT" "$CERTD/cert.pem" <<'PY' || true
+import socket, ssl, sys, time
+port, ca = int(sys.argv[1]), sys.argv[2]
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.load_verify_locations(ca)
+s = ctx.wrap_socket(socket.create_connection(("127.0.0.1", port)), server_hostname="127.0.0.1")
+try:
+    for ch in b"GET /tv-button-token/x HTTP/1.1\r\n":
+        s.sendall(bytes([ch]))
+        time.sleep(0.12)  # goteo: cada byte reinicia un timeout de inactividad
+    time.sleep(3)
+except OSError:
+    pass
+PY
+RC=0; wait "$SRV" || RC=$?; SRV=""
+ELAPSED_MS=$(( ($(date +%s%N) - START) / 1000000 ))
+[ "$RC" = "1" ] || fail "17: sin entrega debia expirar con exit 1 (rc=$RC)"
+[ "$ELAPSED_MS" -lt 1200 ] || fail "17: slowloris prorogo la conexion (${ELAPSED_MS}ms; deadline absoluto era ~500ms)"
+ok "one-shot TLS: slowloris cortado por deadline absoluto (${ELAPSED_MS}ms con max-age 0.5)"
+
+echo "PASS $PASS/17"
