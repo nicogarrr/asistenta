@@ -78,10 +78,10 @@ describe('MemorySnapshot', () => {
     // contenido se honra aunque ya nadie lo escriba.
     writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\nprefiere respuestas cortas', 'utf8');
     const snapshot = new MemorySnapshot({ dir });
-    expect(snapshot.contextNote()).toBe('<memory>\nprefiere respuestas cortas\n</memory>');
+    expect(snapshot.contextNote()).toBe('<memoria_legada>\nprefiere respuestas cortas\n</memoria_legada>');
     snapshot.appendEntry('se llama Ana');
     expect(snapshot.contextNote()).toBe(
-      '<memory>\nprefiere respuestas cortas\n</memory>\n<profile>\nse llama Ana\n</profile>',
+      '<memoria_legada>\nprefiere respuestas cortas\n</memoria_legada>\n<profile>\nse llama Ana\n</profile>',
     );
     // Ni un byte cambiado: lectura estricta.
     expect(readFileSync(join(dir, 'MEMORIA.md'), 'utf8')).toBe(

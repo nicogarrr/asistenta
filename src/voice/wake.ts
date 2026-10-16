@@ -61,19 +61,20 @@ const DEFAULT_MODEL = 'onnx-community/whisper-small';
  * "Asistenta" is a rarer word than "ordenador", so Whisper is more likely to come
  * back with a near miss ("asistente", "la asistenta", "asistenta." with the leading
  * space and no stop). That is exactly what the near-miss and truncation tiers below
- * are for, and it is why the default sensitivity is the truncated tier rather than
- * exact: a wake word that only fires on a perfect transcription is a wake word that
- * mostly does not fire.
+ * are for, and the default sensitivity sits looser still, at the phonetic tier (see
+ * DEFAULT_SENSITIVITY): a wake word that only fires on a perfect transcription is a
+ * wake word that mostly does not fire.
  */
 const DEFAULT_WORD = 'asistenta';
 
 /**
  * Matching tiers. A tier fires when its score >= sensitivity, so sensitivity 1.0
- * accepts only the exact phrase, 0.85 also accepts whisper's truncated tail
- * ("ordenad"), and 0.7 also accepts a one-edit near-miss ("ordenado"). Nothing
- * below 0.7 is a tier: the matcher gets no looser, because every looser rule
- * starts matching real Spanish words that merely sound similar ("ordena"), and
- * the false-positive bias says no.
+ * accepts only the exact phrase, 0.85 also accepts whisper's two-character
+ * truncated tail ("asistent"), and 0.7 also accepts a one-edit near-miss. With
+ * the default word that near-miss is "asistente" - a real Spanish word, so the
+ * near tier knowingly admits one; the false-positive bias is why nothing looser
+ * than 0.7 exists (below it, rules start matching words that merely sound
+ * similar, "asiste"), apart from the phonetic fold the default sits on.
  */
 const SCORE_EXACT = 1;
 const SCORE_TRUNCATED = 0.85;
@@ -101,8 +102,9 @@ const DEFAULT_SENSITIVITY = SCORE_PHONETIC;
  * variant ("ordenador" -> "ordenad"), and the truncation tier accepts only that.
  * A one-character cut is deliberately not in this tier: it lands on real Spanish
  * words ("ordenado" — "he ordenado la mesa") as often as on a cut transcription,
- * while "ordenad" is not a word at all. One-character cuts are near-misses and
- * sit in the tier below the default.
+ * while "ordenad" is not a word at all. One-character cuts are near-misses at
+ * 0.7 - above the phonetic default (0.55), so the default admits them too;
+ * they drop out only when the caller raises sensitivity past 0.7.
  */
 const TRUNCATION_DROP_CHARS = 2;
 

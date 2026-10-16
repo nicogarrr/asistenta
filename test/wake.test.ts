@@ -158,7 +158,8 @@ describe('matchesWakeWord', () => {
     expect(matchesWakeWord('ordenad', 'ordenador', 0.85)).toBe(true);
     // The truncation budget is exactly two characters: a shorter cut ("ordena")
     // is a different Spanish word, and a one-character cut ("ordenado") is too —
-    // that one lives in the near tier below.
+    // that one is a near-miss at 0.7, above the phonetic default, so the
+    // default admits it.
     expect(matchesWakeWord('ordena', 'ordenador')).toBe(false);
     expect(matchesWakeWord('ordena', 'ordenador', 0.1)).toBe(false);
     expect(matchesWakeWord('orden', 'ordenador', 0.1)).toBe(false);
