@@ -102,8 +102,9 @@ const DEFAULT_SENSITIVITY = SCORE_PHONETIC;
  * variant ("ordenador" -> "ordenad"), and the truncation tier accepts only that.
  * A one-character cut is deliberately not in this tier: it lands on real Spanish
  * words ("ordenado" — "he ordenado la mesa") as often as on a cut transcription,
- * while "ordenad" is not a word at all. One-character cuts are near-misses and
- * sit in the tier below the default.
+ * while "ordenad" is not a word at all. One-character cuts are near-misses at
+ * 0.7 - above the phonetic default (0.55), so the default admits them too;
+ * they drop out only when the caller raises sensitivity past 0.7.
  */
 const TRUNCATION_DROP_CHARS = 2;
 
