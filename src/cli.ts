@@ -2948,18 +2948,28 @@ async function serveCommand(): Promise<number> {
   };
 
   const cmdMemory = async (inbound: Inbound): Promise<void> => {
-    const entries = memory.all(chatKey(inbound));
-    const scopes = memory.scopes();
-    await say(
-      inbound,
-      entries.length
-        ? [
-            `Recuerdo ${entries.length} cosas:`,
-            ...entries.map((e) => `- [${e.id}] ${e.text}`),
-          ].join('\n')
-        : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`,
-      { quote: true },
-    );
+    // Resolución de inspección: NUNCA crea hilo y, a falta de intención
+    // explícita (/topic, respuesta a un mensaje nuestro, hilo de Telegram),
+    // lee main aunque esté ocupado. resolveThread aplicaría la heurística de
+    // peticiones nuevas: con main ocupado crearía #m<messageId> y /memory
+    // volvería a decir "No recuerdo nada" con la memoria llena (auditor #152).
+    const chatKey_ = chatKey(inbound);
+    const key = inspectionThreadKey({
+      chatKey: chatKey_,
+      activeTopic: activeTopic.get(chatKey_),
+      replyThreadKey: inbound.replyToMessageId
+        ? messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`)
+        : undefined,
+      // Fallback durable, como resolveThread: tras un reinicio messageThread
+      // está vacío y la notificación persistida de un objetivo sigue encontrando
+      // su hilo. scopeBySentId ya filtra por chatKey; inspectionThreadKey lo
+      // vuelve a validar.
+      replyGoalScope: inbound.replyToMessageId
+        ? (goalNotifier.scopeBySentId(chatKey_, inbound.replyToMessageId) ?? undefined)
+        : undefined,
+      threadId: inbound.threadId,
+    });
+    await say(inbound, runMemoryCommand(memory, key), { quote: true });
   };
 
   /**
@@ -5002,6 +5012,54 @@ export interface CronCommandDeps {
   threadKey: string;
   /** chatKey without the `#thread` suffix. */
   chatKey: string;
+}
+
+/**
+ * The conversation an inspection command (/memory and friends) reads. Unlike
+ * resolveThread it NEVER creates a thread — a read-only command has no
+ * business spawning a conversation — and it never looks at occupancy: the
+ * new-request heuristic ("main is busy, start #m<messageId>") is exactly what
+ * made /memory answer "No recuerdo nada" with a full memory and litter a new
+ * thread per read (auditor #152 ronda 1). Explicit intent wins, in
+ * resolveThread's order: /topic, a reply to one of our messages, a real
+ * Telegram thread id; without any of them, main is read even while busy.
+ */
+export function inspectionThreadKey(opts: {
+  chatKey: string;
+  activeTopic?: string | undefined;
+  replyThreadKey?: string | undefined;
+  /** Durable reply routing: a goal notification's owning scope, from SQLite. */
+  replyGoalScope?: string | undefined;
+  threadId?: string | undefined;
+}): string {
+  if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
+  if (opts.replyThreadKey) return opts.replyThreadKey;
+  if (opts.replyGoalScope) {
+    // Same validation as resolveThread: the notification must belong to THIS
+    // chat — a foreign scope is ignored, never followed.
+    const { chatKey, thread } = splitGoalScope(opts.replyGoalScope);
+    if (chatKey === opts.chatKey) return `${chatKey}#${thread}`;
+  }
+  if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
+  return `${opts.chatKey}#main`;
+}
+
+/**
+ * The whole /memory reply, free of I/O so its canary runs against a real
+ * MemoryStore without a daemon. The scope is thread.key — the same one the
+ * turn context and the memory tool use (chatKey#thread). Any other scope
+ * answers "No recuerdo nada" with a full memory, which is exactly the bug
+ * the audit flagged.
+ */
+export function runMemoryCommand(memory: MemoryStore, scope: string): string {
+  const entries = memory.all(scope);
+  const scopes = memory.scopes();
+  return entries.length
+    ? [
+        `Recuerdo ${entries.length} cosas:`,
+        ...entries.map((e) => `- [${e.id}] ${e.text}`),
+      ].join('\n')
+    : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`;
 }
 
 /**
