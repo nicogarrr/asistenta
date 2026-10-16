@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IterationBudget } from '../src/core/budget.js';
 import { Gate } from '../src/permissions.js';
 
@@ -20,6 +20,7 @@ describe('Gate approval scopes', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -87,6 +88,8 @@ describe('Gate approval scopes', () => {
   });
 
   it('lets a `session` scope expire with the grant window', async () => {
+    const start = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
     let asked = 0;
     const gate = new Gate({
       grantWindowMs: 25,
@@ -106,7 +109,10 @@ describe('Gate approval scopes', () => {
     expect(asked).toBe(0);
     expect(gate.scopeFor('s1', 'computer')).toBe('session');
 
-    await new Promise((r) => setTimeout(r, 40));
+    // Frontera exacta, sin depender de 25ms reales bajo contención de la suite.
+    clock.mockReturnValue(start + 24);
+    expect(gate.scopeFor('s1', 'computer')).toBe('session');
+    clock.mockReturnValue(start + 25);
     const expired = await gate.check('s1', {
       tool: 'computer',
       args: { action: 'click', x: 9, y: 9 },
