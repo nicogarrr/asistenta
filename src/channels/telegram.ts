@@ -824,14 +824,17 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => {});
   }
 
-  async stop(): Promise<void> {
+  async stop(strict = false): Promise<void> {
     this.#stopped = true;
     this.#ready = false;
     if (this.#retryTimer) {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;
     }
-    await this.#bot.stop().catch(() => {});
+    await this.#bot.stop().catch((error: unknown) => {
+      if (strict)
+        throw new Error('No se pudo confirmar el cierre de polling Telegram.', { cause: error });
+    });
   }
 
   /**

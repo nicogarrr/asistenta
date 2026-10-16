@@ -124,3 +124,28 @@ it('does not touch an old daemon PID when authenticated metadata is absent', asy
   await expect(stopDaemon(dir, 100)).rejects.toThrow();
   expect(readFileSync(join(dir, 'agent.pid'), 'utf8')).toBe(String(process.pid));
 });
+
+it('uses the actual 10-second thread-tail drain timeout and never writes a clean proof', async () => {
+  const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
+  const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
+  const drain = pathToFileURL(resolve('dist/shutdown-drain.js')).href;
+  const code = `import {controlledDaemon} from ${JSON.stringify(wrapper)};import {installLifecycle} from ${JSON.stringify(lifecycle)};import {drainThreadTails} from ${JSON.stringify(drain)};await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',onShutdown:async()=>{await drainThreadTails([new Promise(()=>{})]);}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+    env: { ...process.env, PA_STATE_DIR: dir },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  children.push(child);
+  await new Promise<void>((yes, no) => {
+    const t = setTimeout(() => no(new Error('startup timeout')), 5000);
+    child.stdout?.once('data', () => {
+      clearTimeout(t);
+      yes();
+    });
+  });
+  const start = Date.now();
+  await expect(stopDaemon(dir, 12000)).rejects.toThrow('no fue limpio');
+  expect(Date.now() - start).toBeGreaterThanOrEqual(9900);
+  if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
+  expect(child.exitCode).toBe(1);
+  expect(existsSync(join(dir, 'agent.pid.stale'))).toBe(true);
+}, 15000);

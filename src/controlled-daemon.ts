@@ -4,6 +4,7 @@ import type { Lifecycle } from './lifecycle.js';
 import { paths } from './paths.js';
 
 export interface ControlStartup {
+  beginResources(): void;
   attach(lifecycle: Lifecycle): void;
   ready(): void;
 }
@@ -17,8 +18,12 @@ export async function controlledDaemon(
   let lifecycle: Lifecycle | undefined;
   const control = await openDaemonControl(paths.state, () => lifecycle?.stop('local-control'));
   let attached = false;
+  let resourcesStarted = false;
   try {
     const result = await run({
+      beginResources() {
+        resourcesStarted = true;
+      },
       attach(value) {
         if (attached) throw new Error('Lifecycle ya conectado.');
         lifecycle = value;
@@ -33,7 +38,7 @@ export async function controlledDaemon(
       lifecycle.stop('command-finished');
       await lifecycle.done;
     }
-    await control.close(lifecycle?.outcome() === 'clean');
+    await control.close(lifecycle ? lifecycle.outcome() === 'clean' : undefined);
     return lifecycle?.outcome() === 'failed' ? 1 : result;
   } catch (error) {
     if (lifecycle) {
@@ -41,7 +46,8 @@ export async function controlledDaemon(
       await lifecycle.done;
       await control.close(false);
     }
-    if (!lifecycle) {
+    if (!lifecycle && !resourcesStarted) await control.close();
+    if (!lifecycle && resourcesStarted) {
       // Fail closed: ownership is retained until fatal exit rather than permitting
       // another daemon beside resources whose startup never installed a drainer.
       const fatal = setTimeout(() => process.exit(1), 15_000);

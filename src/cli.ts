@@ -95,6 +95,7 @@ import {
   protectedRepoPaths,
   runPermisosCommand,
 } from './permissions.js';
+import { drainThreadTails } from './shutdown-drain.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
 
 /**
@@ -922,6 +923,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   // Refuse to run twice: a second instance sharing channel credentials gets logged out.
   assertNotRunning(paths.state, 'agent');
 
+  control?.beginResources();
   const store = new Store();
   store.sweepExpired();
 
@@ -1283,6 +1285,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   }
 
   assertNotRunning(paths.state, 'agent');
+  control?.beginResources();
   const store = new Store();
   store.sweepExpired();
   const memory = new MemoryStore();
@@ -2066,16 +2069,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
-      const telegramDrain = telegram.stop();
+      const telegramDrain = telegram.stop(true);
+      // Observe early rejection while aborting turns; propagate it after drains.
+      void telegramDrain.catch(() => {});
       downloadsCtl.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
       telegram.cancelApprovals();
       const pending = [...threads.values()].map((t) => t.tail.catch(() => {}));
-      await Promise.race([
-        Promise.allSettled(pending),
-        new Promise((resolve) => setTimeout(resolve, 10_000)),
-      ]);
+      await drainThreadTails(pending);
       clearInterval(goalDeliveryTimer);
       routineRunner.stop();
       // Release the microphone before anything else slow: an ffmpeg that is still
@@ -2083,13 +2085,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // opening it.
       conversationOn = false;
       endSession('apagado');
-      await stopWake().catch(() => {});
+      await stopWake();
       // El listener del boton se para antes que los navegadores: sigue siendo
       // una superficie de red abierta, y el corte no deberia dejarla escuchando
       // mientras el resto de la maquinaria se desmonta.
-      await stopTvButton().catch(() => {});
+      await stopTvButton(true);
       // Every Chromium, or the next start refuses to claim the profile dir.
-      await Promise.all([...browsers.values()].map((b) => b.closeAll().catch(() => {})));
+      await Promise.all([...browsers.values()].map((b) => b.closeAll(true)));
       await registry.stopAll();
       await screen.dispose();
       await vigilanteDrain;
@@ -4527,11 +4529,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
-  const stopTvButton = async (): Promise<void> => {
+  const stopTvButton = async (strict = false): Promise<void> => {
     const listener = tvButton;
     if (!listener) return;
     tvButton = null;
-    await listener.close().catch(() => {});
+    await listener.close().catch((error: unknown) => {
+      if (strict) throw error;
+    });
     log.info('tv button listener stopped');
   };
 

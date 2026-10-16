@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => {
   ) => Promise<unknown>;
   const state = {
     startCalls: 0,
+    stopFails: false,
     /** getUpdates failures still to throw, each AFTER onStart like grammY. */
     failTimes: 0,
     /** Delay onStart by one macrotask, to test a late onStart after stop(). */
@@ -83,6 +84,7 @@ const harness = vi.hoisted(() => {
       });
     }
     async stop(): Promise<void> {
+      if (state.stopFails) throw new Error('fixture stop failed');
       state.resolveStop?.();
     }
   }
@@ -132,6 +134,7 @@ describe('telegram reconnect', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     harness.state.startCalls = 0;
+    harness.state.stopFails = false;
     harness.state.failTimes = 0;
     harness.state.deferOnStart = false;
     harness.state.resolveStop = undefined;
@@ -229,5 +232,11 @@ describe('telegram reconnect', () => {
     expect(channel.isReady()).toBe(true);
     expect(record.recovered).toHaveLength(1);
     await channel.stop();
+  });
+  it('strict stop propagates polling failure instead of claiming a clean drain', async () => {
+    const channel = new TelegramChannel({ token: 't', allowedUserIds: [1] });
+    harness.state.stopFails = true;
+    await expect(channel.stop(true)).rejects.toThrow('cierre de polling');
+    await expect(channel.stop()).resolves.toBeUndefined();
   });
 });
