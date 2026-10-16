@@ -584,6 +584,11 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
       // money, credential fields and sending/deleting/booking elements, and exec_js
       // (arbitrary code) is not in the list.
       ...BROWSER_FREE_ACTIONS,
+      // Playing audio the user already sent, and listing what is stored, are the
+      // two media actions the prompt promises free ("needs no permission"). The
+      // camera, the microphone and screen recording still ask, every time.
+      'media:play',
+      'media:list_audio',
     ],
     // Autonomous up to the last click. A purchase is a chain of ordinary browsing
     // actions, and asking about each of them is what stopped the Renfe flow before it
