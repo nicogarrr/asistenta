@@ -187,6 +187,7 @@ export function findTotalPrice(text: string): PriceText | null {
     const inWindow = extractPriceTexts(text.slice(m.index, m.index + 60), 5);
     if (inWindow.length === 0) continue;
     const candidate = inWindow[0];
+    if (!candidate) continue;
     if (found && (found.raw !== candidate.raw || found.symbol !== candidate.symbol)) return null;
     found = candidate;
   }
