@@ -26,6 +26,7 @@ import {
   createCheckoutTool,
   parsePriceToCents,
   extractPrices,
+  findTotalPrice,
   looksLikePaymentSubmission,
 } from '../src/tools/checkout.js';
 
@@ -919,6 +920,77 @@ describe('tope de importe en confirm (maxAmountCents)', () => {
     await call(tool, { action: 'confirm', item: 'x' });
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('45,20 €');
+  });
+
+  it('canario r3: total malformado junto a otro precio NO deja adivinar ("Total 950.00 EUR. Entrega 9,99 \u20ac")', async () => {
+    // La etiqueta total existe pero su importe no se lee con el formato estricto:
+    // no vale descartar el malformado y quedarse con el 9,99 que si parsea.
+    expect(findTotalPrice('Total 950.00 EUR. Entrega 9,99 \u20ac')).toBeNull();
+    const page = new FakePage();
+    page.body = 'Total 950.00 EUR. Entrega 9,99 \u20ac';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+  });
+
+  it('canario r3: un unico precio visible NO es el total ("29,99\u20ac por mes, 24 meses")', async () => {
+    expect(findTotalPrice('Producto 29,99\u20ac por mes, 24 meses')).toBeNull();
+    const page = new FakePage();
+    page.body = 'Producto 29,99\u20ac por mes, 24 meses';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    const res = await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+    expect(res.details?.reason).toBe('total no verificable');
+  });
+
+  it('canario r3: \u20ac con punto decimal tampoco se lee a medias ("Total \u20ac29.99" no es 29,00)', async () => {
+    expect(extractPrices('\u20ac450.00')).toEqual([]);
+    expect(extractPrices('Total \u20ac29.99')).toEqual([]);
+    expect(findTotalPrice('Total \u20ac29.99')).toBeNull();
+    const page = new FakePage();
+    page.body = 'Total \u20ac29.99';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+    // Y el punto de fin de frase no ensucia un importe valido.
+    expect(extractPrices('Total: \u20ac29,99.')).toEqual(['29,99']);
+  });
+
+  it('canario r3: la etiqueta total no arrastra precios a traves de texto', async () => {
+    expect(
+      findTotalPrice('Total: consulta las condiciones de la tienda. Entrega 9,99\u20ac'),
+    ).toBeNull();
+    const page = new FakePage();
+    page.body = 'Total: consulta las condiciones de la tienda. Entrega 9,99\u20ac';
+    let asked = 0;
+    const tool = toolWith(page, BUYER, async () => {
+      asked += 1;
+      return true;
+    });
+    await call(tool, { action: 'confirm', item: 'x' });
+    expect(asked).toBe(0);
+  });
+
+  it('etiquetas de total usuales ES/EN con importe pegado SI groundean', () => {
+    expect(findTotalPrice('Total: 29,99\u20ac')?.text).toBe('29,99 \u20ac');
+    expect(findTotalPrice('Total a pagar: 29,99\u20ac')?.text).toBe('29,99 \u20ac');
+    expect(findTotalPrice('Importe a pagar 29,99 \u20ac')?.text).toBe('29,99 \u20ac');
+    expect(findTotalPrice('Amount due: 29,99\u20ac')?.text).toBe('29,99 \u20ac');
+    expect(findTotalPrice('Grand total 29,99\u20ac')?.text).toBe('29,99 \u20ac');
+    // Dos totales que discrepan: no hay total.
+    expect(findTotalPrice('Total: 29,99\u20ac Total: 950,00\u20ac')).toBeNull();
   });
 
   it('cap invalido (NaN/Infinity/negativo) rompe en la creacion, no en el pago', async () => {

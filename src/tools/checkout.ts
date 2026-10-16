@@ -138,6 +138,30 @@ export interface PriceText {
   text: string;
 }
 
+/**
+ * The strict price pattern, flagless on purpose so both the global extractor and
+ * the anchored label matcher derive their own flags from `.source`.
+ *
+ * Boundaries are what make a truncated amount impossible: no digits or
+ * separators before, and after the amount neither a digit, a comma, nor a dot
+ * that continues the number - so "1000€" is not "000", "450.00 EUR" is not
+ * "00" and "€29.99" is not "29" (a dot followed by a digit is another decimal,
+ * a format this parser refuses to guess). A sentence-ending dot passes: it is
+ * not followed by a digit. Thousands groups are exactly 3 digits and decimals
+ * exactly 2 with comma; anything malformed matches NOTHING, and no price means
+ * no confirm (fail-closed).
+ */
+const PRICE_RE =
+  /(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d))\s*(€|EUR|\$|£)(?![A-Za-z])|(€|EUR|\$|£)\s*(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d))/;
+
+function toPriceText(match: RegExpMatchArray): PriceText | null {
+  const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0 ]/g, '');
+  if (!raw) return null;
+  const symbol =
+    (match[2] ?? match[3] ?? '').toUpperCase() === 'EUR' ? '€' : (match[2] ?? match[3] ?? '');
+  return { raw, symbol, text: `${raw} ${symbol}` };
+}
+
 /** Prices visible in a block of page text with their own currency symbol, deduplicated. */
 export function extractPriceTexts(text: string, limit = 5): PriceText[] {
   // Strict boundaries: an amount must not be preceded or followed by digits or
@@ -145,16 +169,12 @@ export function extractPriceTexts(text: string, limit = 5): PriceText[] {
   // truncated total is a bypass of the cap. Thousands groups are exactly 3
   // digits and decimals exactly 2 with comma; anything malformed matches
   // NOTHING, and no price means no confirm (fail-closed).
-  const re =
-    /(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,])\s*(€|EUR|\$|£)(?![A-Za-z])|(€|EUR|\$|£)\s*(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,])/gi;
   const out: PriceText[] = [];
-  for (const match of text.matchAll(re)) {
-    const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0 ]/g, '');
-    if (!raw) continue;
-    const symbol =
-      (match[2] ?? match[3] ?? '').toUpperCase() === 'EUR' ? '€' : (match[2] ?? match[3] ?? '');
-    if (out.some((p) => p.raw === raw && p.symbol === symbol)) continue;
-    out.push({ raw, symbol, text: `${raw} ${symbol}` });
+  for (const match of text.matchAll(new RegExp(PRICE_RE.source, 'gi'))) {
+    const price = toPriceText(match);
+    if (!price) continue;
+    if (out.some((p) => p.raw === price.raw && p.symbol === price.symbol)) continue;
+    out.push(price);
     if (out.length >= limit) break;
   }
   return out;
@@ -168,32 +188,41 @@ export function parsePriceToCents(raw: string): number | null {
   return Number.isSafeInteger(cents) ? cents : null;
 }
 
-const TOTAL_LABEL = /\btotal\b|\bamount\s+due\b|\bgrand\s+total\b/iu;
+/**
+ * A total only counts when the page labels it - "total", "total a pagar",
+ * "importe a pagar", "amount due", "grand total" - and the amount sits RIGHT
+ * after the label, separated by nothing but spacing and `:`/`=`/`-`. There is
+ * deliberately no window spanning words or sentences: "Total: ver condiciones.
+ * Entrega 9,99 €" must not quote the delivery fee as the total.
+ */
+const TOTAL_LABEL =
+  /(?:\btotal(?:\s+a\s+pagar)?\b|\bimporte\s+a\s+pagar\b|\bamount\s+due\b|\bgrand\s+total\b)\s*[:=\-]?\s*/iu;
+
+function matchPriceAt(text: string, at: number): PriceText | null {
+  const re = new RegExp(PRICE_RE.source, 'yi');
+  re.lastIndex = at;
+  const match = re.exec(text);
+  return match ? toPriceText(match) : null;
+}
 
 /**
- * The one price a confirm may quote: the page's total, grounded without
- * ambiguity. A single visible price IS the total; with several, only a
- * total-labelled one counts (the first price right after the label), and two
- * labels pointing at different amounts are as good as no label. Anything else
- * is unverifiable, and an unverifiable total denies the confirm - the first
- * price on the page is never the default answer.
+ * The one price a confirm may quote: an explicit, readable total. No label, no
+ * total - a single visible price is NOT assumed to be it ("29,99 € al mes, 24
+ * meses" is not a 29,99 purchase). A label whose amount does not parse strictly
+ * ("Total 950.00 EUR") is not skipped in favour of other prices on the page:
+ * the total exists and could not be read, which is exactly the case that must
+ * deny. Two labels quoting different amounts are as good as no label.
  */
 export function findTotalPrice(text: string): PriceText | null {
-  const prices = extractPriceTexts(text, 20);
-  if (prices.length === 1) return prices[0] ?? null;
-  if (prices.length === 0) return null;
   let found: PriceText | null = null;
   for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
-    const inWindow = extractPriceTexts(text.slice(m.index, m.index + 60), 5);
-    if (inWindow.length === 0) continue;
-    const candidate = inWindow[0];
-    if (!candidate) continue;
-    if (found && (found.raw !== candidate.raw || found.symbol !== candidate.symbol)) return null;
-    found = candidate;
+    const price = matchPriceAt(text, m.index + m[0].length);
+    if (!price) return null;
+    if (found && (found.raw !== price.raw || found.symbol !== price.symbol)) return null;
+    found = price;
   }
   return found;
 }
-
 /** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
   const out: string[] = [];
@@ -769,7 +798,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
                   type: 'text',
                   text:
                     'No puedo verificar el total de la compra en la pagina ahora mismo: ' +
-                    'necesito UN importe visible, o varios con uno marcado como total. ' +
+                    'necesito un importe marcado como total (Total: 45,20 €) en un formato que sepa leer. ' +
                     'No pido confirmacion a ciegas: queda denegado. Mira la pagina con el ' +
                     'navegador y vuelve a llamar a confirm cuando el total sea claro.',
                 },
