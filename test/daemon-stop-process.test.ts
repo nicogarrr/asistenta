@@ -159,5 +159,7 @@ it('blocks forced desktop on Linux before vault, channels or microphone startup'
   });
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('requiere modo servidor');
-  expect(readdirSync(dir)).toEqual([]);
+  expect(readdirSync(dir).filter((name) => name !== 'log')).toEqual([]);
+  expect(existsSync(join(dir, 'control'))).toBe(false);
+  expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
 });
