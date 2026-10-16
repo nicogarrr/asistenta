@@ -17,11 +17,19 @@
  * vengan de un rango privado. El instalador solo genera URLs
  * `http://<ip-laptop-privada>:8765/...`, que es justo lo que se acepta.
  *
- * Auth: token Bearer opcional desde el vault (`tv:buttonToken`), con la misma
- * postura que Glasshouse - si no hay token configurado, acepta todo. Con
- * token, `/tv/button` lo exige y `/tv/button-health` sigue abierto a proposito:
- * el preflight del instalador lo llama sin credenciales, y un probe de vida no
- * tiene por que revelar nada mas que "hay alguien escuchando".
+ * Auth: secreto compartido opcional desde el vault (`tv:buttonToken`), con
+ * la misma postura que Glasshouse - si no hay token configurado, acepta todo.
+ * Con token, `/tv/button` NO acepta un Bearer: el listener es HTTP plano en la
+ * LAN y un Bearer viajaria en claro en cada pulsacion. En su lugar la tele
+ * firma cada pulsacion con HMAC-SHA256 sobre `ts.nonce.METODO.ruta`
+ * (cabeceras X-TV-Ts / X-TV-Nonce / X-TV-Sig, ninguna secreta): el token no
+ * viaja NUNCA por la red, una firma vale solo para su metodo y ruta, caduca
+ * a los +-5 minutos (desfase de reloj de la tele) y la cache de firmas vistas
+ * rechaza replays dentro de la ventana. Lo unico observable por un tercero en
+ * la LAN es "alguien pulso el boton", que no es un secreto.
+ * `/tv/button-health` sigue abierto a proposito: el preflight del instalador
+ * lo llama sin credenciales, y un probe de vida no tiene por que revelar nada
+ * mas que "hay alguien escuchando".
  *
  * Que NO hace: no acepta texto, ni instrucciones, ni canal. El boton no es una
  * via de entrada para el agente, es un interruptor. Todo lo que llega por aqui
@@ -29,6 +37,7 @@
  * la peticion vacia - el mismo codigo que ya aplica allowlist, gate y voz.
  */
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { log } from '../log.js';
 
@@ -70,22 +79,50 @@ function remoteAddress(req: IncomingMessage): string {
   return raw;
 }
 
-/** Compara tokens en tiempo constante para no filtrar el secreto por tiempo. */
-function tokenMatches(expected: string, presented: string | null): boolean {
-  if (presented === null) return false;
-  if (presented.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++)
-    diff |= expected.charCodeAt(i) ^ presented.charCodeAt(i);
-  return diff === 0;
+/**
+ * Ventana de validez de una firma: la tele y el laptop no comparten NTP
+ * garantizado, asi que se tolera un desfase de reloj razonable y NADA mas.
+ * Dentro de la ventana, la cache de firmas vistas es la que impide el replay.
+ */
+export const TV_BUTTON_SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
+
+interface ButtonSignature {
+  ts: string;
+  nonce: string;
+  sig: string;
 }
 
-/** Extrae el Bearer del header Authorization. */
-function bearer(req: IncomingMessage): string | null {
-  const raw = req.headers.authorization;
-  if (typeof raw !== 'string') return null;
-  const match = /^Bearer\s+(.+)$/i.exec(raw.trim());
-  return match?.[1]?.trim() ?? null;
+/** Lee y valida la FORMA de las cabeceras de firma (sin comprobar el HMAC). */
+function readSignature(req: IncomingMessage): ButtonSignature | null {
+  const ts = req.headers['x-tv-ts'];
+  const nonce = req.headers['x-tv-nonce'];
+  const sig = req.headers['x-tv-sig'];
+  if (typeof ts !== 'string' || typeof nonce !== 'string' || typeof sig !== 'string') return null;
+  if (!/^\d{9,13}$/.test(ts)) return null;
+  if (!/^[0-9a-f]{8,64}$/.test(nonce)) return null;
+  if (!/^[0-9a-f]{64}$/.test(sig)) return null;
+  return { ts, nonce, sig };
+}
+
+/** Mensaje canonico firmado por la tele: `ts.nonce.METODO.ruta` (ruta normalizada). */
+export function tvButtonMessage(ts: string, nonce: string, method: string, path: string): string {
+  return `${ts}.${nonce}.${method}.${path}`;
+}
+
+/**
+ * HMAC-SHA256 de una pulsacion. Exportado para que el parche de magic_mapper
+ * y los tests firmen EXACTAMENTE el mismo mensaje que se verifica aqui.
+ */
+export function signTvButton(
+  secret: string,
+  ts: string,
+  nonce: string,
+  method: string,
+  path: string,
+): string {
+  return createHmac('sha256', secret)
+    .update(tvButtonMessage(ts, nonce, method, path))
+    .digest('hex');
 }
 
 export interface TvButtonListenerOptions {
@@ -98,7 +135,7 @@ export interface TvButtonListenerOptions {
    * que una peticion de fuera entre.
    */
   host?: string;
-  /** Token Bearer desde el vault. Sin token, `/tv/button` acepta cualquiera. */
+  /** Secreto HMAC desde el vault. Sin token, `/tv/button` acepta cualquiera. */
   token?: string | null;
   /** What to run when the button is pressed. */
   onButton: (source: string) => Promise<void> | void;
@@ -126,6 +163,37 @@ export function startTvButtonListener(opts: TvButtonListenerOptions): TvButtonLi
   const port = opts.port ?? TV_BUTTON_PORT;
   const host = opts.host ?? '0.0.0.0';
   const token = opts.token?.trim() || null;
+  // Firmas ya aceptadas -> instante en que DEJAN de ser validas (tsMs +
+  // WINDOW). No basta guardar el instante de aceptacion: una firma con ts
+  // hasta WINDOW en el futuro sigue siendo valida hasta WINDOW despues de
+  // podarse la entrada, y ahi entraria el replay. Como el ts aceptado esta a
+  // lo sumo WINDOW en el futuro, cada entrada vive < 2 * WINDOW y el mapa
+  // esta acotado. Se poda en cada verificacion.
+  const seenSignatures = new Map<string, number>();
+
+  /** Verifica ventana de reloj, HMAC en tiempo constante y anti-replay. */
+  const signatureValid = (
+    method: string,
+    path: string,
+    presented: ButtonSignature | null,
+  ): boolean => {
+    if (!token || presented === null) return false;
+    const tsMs = Number(presented.ts) * 1000;
+    const now = Date.now();
+    if (!Number.isFinite(tsMs) || Math.abs(now - tsMs) > TV_BUTTON_SIGNATURE_WINDOW_MS)
+      return false;
+    const expected = Buffer.from(signTvButton(token, presented.ts, presented.nonce, method, path));
+    const got = Buffer.from(presented.sig);
+    if (expected.length !== got.length || !timingSafeEqual(expected, got)) return false;
+    // Poda coherente con la ventana de aceptacion: la firma es valida con
+    // |now - ts| <= WINDOW (se rechaza solo >), asi que la entrada debe
+    // sobrevivir TAMBIEN en el milisegundo exacto tsMs+WINDOW; podar con >=
+    // reabriria el replay justo en ese milisegundo.
+    for (const [sig, expiresAt] of seenSignatures) if (now > expiresAt) seenSignatures.delete(sig);
+    if (seenSignatures.has(presented.sig)) return false; // replay dentro de la ventana
+    seenSignatures.set(presented.sig, tsMs + TV_BUTTON_SIGNATURE_WINDOW_MS);
+    return true;
+  };
 
   const send = (res: ServerResponse, status: number, body: unknown): void => {
     const payload = JSON.stringify(body);
@@ -175,8 +243,8 @@ export function startTvButtonListener(opts: TvButtonListenerOptions): TvButtonLi
         send(res, 405, { ok: false, error: 'metodo no permitido' });
         return;
       }
-      if (token && !tokenMatches(token, bearer(req))) {
-        log.warn('tv button: peticion sin token valido', { remote, path });
+      if (token && !signatureValid(method, path, readSignature(req))) {
+        log.warn('tv button: peticion sin firma valida', { remote, path });
         send(res, 401, { ok: false, error: 'no autorizado' });
         return;
       }

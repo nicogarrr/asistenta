@@ -9,7 +9,7 @@
     "function": "curl",
     "inputs": {
       "url": "__ASISTENTA_URL__",
-      "token_file": "/home/root/.tv-button-curl.conf"
+      "token_file": "/home/root/.tv-button-token"
     }
   }
 }

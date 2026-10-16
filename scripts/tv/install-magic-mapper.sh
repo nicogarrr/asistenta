@@ -1,24 +1,37 @@
 #!/bin/sh
-# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R8:
+# install-magic-mapper.sh - despliega magic_mapper v1.1.0. R9:
 # - TRANSPORTE TELNET por defecto: la tele solo abre telnet 23 con root sin
 #   contrasena (banner "~ #"); --transport ssh queda como opcion. El driver
 #   (scripts/tv/telnet-sh.py) propaga el exit code remoto con centinela y
-#   nunca imprime lo que sube en modo put (puede ser el secreto).
+#   nunca imprime lo que sube en modo put (puede ser el secreto); put va con
+#   set -e + verificacion de tamano/sha256 ANTES de activar el destino (mv).
 # - TOKEN OBLIGATORIO (TV_BUTTON_TOKEN o --token-file; nunca como argumento
-#   posicional): termina en el archivo PRIVADO /home/root/.tv-button-curl.conf
-#   (0600) - nunca por CLI, ni en la config JSON, ni en logs, NI EN CLARO
-#   POR TELNET: con --transport telnet la tele lo descarga ella misma por TLS
-#   de un servidor one-shot del PC (scripts/tv/tv-token-server.py) contra un
-#   certificado efimero autofirmado fijado con --cacert (SAN=IP del laptop;
-#   la parte publica si cruza por telnet, la clave privada jamas sale del PC).
-#   Sin token el script ABORTA: no se despliega un boton abierto.
+#   posicional): termina en el archivo PRIVADO /home/root/.tv-button-token
+#   (0600, secreto HMAC en crudo) - nunca por CLI, ni en la config JSON, ni en
+#   logs, NI EN CLARO POR TELNET: con --transport telnet la tele lo descarga
+#   ella misma por TLS de un servidor one-shot del PC
+#   (scripts/tv/tv-token-server.py) que SOLO sirve a la IP de la tele
+#   (--allow-ip), en una ruta con nonce aleatorio de un solo uso (--nonce),
+#   con deadline real por conexion (handshake incluido) y confirmando la
+#   escritura antes de dar la entrega por hecha. El cert efimero fijado con
+#   --cacert (SAN=IP del laptop) protege contra un servidor falso, pero su
+#   parte publica cruza por telnet en claro: NO es un canal extremo a extremo
+#   autenticado frente a un MITM activo; la defensa es allow-ip + nonce +
+#   one-shot. Sin token el script ABORTA: no se despliega un boton abierto.
+# - USO DEL BOTON TAMPOCO EN CLARO: cada pulsacion firma HMAC-SHA256
+#   (ts.nonce.METODO.ruta) con ese secreto (parche propio); el listener
+#   (:8765) verifica con ventana de reloj y cache anti-replay. El token NUNCA
+#   viaja por la LAN, ni en la entrega ni en el uso.
+# - Temporales locales en un directorio privado de mktemp (0700), nunca en
+#   rutas predecibles de /tmp; el token se valida (charset estricto, una
+#   linea) y el archivo servido se coteja con el valor pedido.
 # - Hash sha256 FIJADO de los 3 ficheros upstream v1.1.0 verificado EN LA
 #   TELE con python3 (sha256sum no esta confirmado en la tele); descarga con
 #   curl (confirmado en /bin/curl).
 # - Parche determinista (templates/patch-magic-mapper.py) tras verificar el
 #   hash: curl sin -v (no vuelca Authorization a stderr/log), log sin argv,
 #   y soporte token_file via `curl --config`.
-# - Backup ampliado a /home/root/.tv-button-curl.conf y listados forenses de
+# - Backup ampliado a /home/root/.tv-button-token y listados forenses de
 #   init.d y /dev/input; NO toca 50-tvweb ni ningun otro init.d ajeno.
 # R7 (se mantiene): rollback generado desde templates/mapper-rollback.sh
 # (test mock local); rollback verificado ANTES de mutar; stop del servicio
@@ -59,7 +72,7 @@ SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 SHA_MM="36839ef0468c094ea64e0c3fc8811c701fb8f7961ff7f6b905a41c39c58232f0"
 SHA_CFG="da8813752ca344c761953ab7289301cfcf5e5cf47a6f42a8972ba5ac965cf5b7"
 SHA_START="dd67ad4e73e265eef34cea6cb79de2d1c60f55b95ba264971a27fe8194571a8b"
-TOKEN_CONF_REMOTE="/home/root/.tv-button-curl.conf"
+TOKEN_CONF_REMOTE="/home/root/.tv-button-token"
 
 O1=$(echo "$LAPTOP" | cut -d. -f1); O2=$(echo "$LAPTOP" | cut -d. -f2)
 O3=$(echo "$LAPTOP" | cut -d. -f3); O4=$(echo "$LAPTOP" | cut -d. -f4)
@@ -82,7 +95,10 @@ if [ -z "$TOKEN" ] && [ -n "$TOKEN_FILE" ]; then
   TOKEN=$(head -n 1 "$TOKEN_FILE" | tr -d '\r\n')
 fi
 [ -n "$TOKEN" ] || { echo "sin token NO se instala: exporta TV_BUTTON_TOKEN o pasa --token-file"; echo "(mismo valor que tv:buttonToken en el vault del PC; el listener lo exige)"; exit 2; }
-case "$TOKEN" in *\"*|*\\*) echo "token con comillas o backslash no soportado (curl --config)"; exit 2;; esac
+case "$TOKEN" in *[!A-Za-z0-9._~=-]*)
+  echo "token con caracteres no soportados: usa solo [A-Za-z0-9._~=-] (sin espacios, CR/LF ni comillas)"; exit 2;;
+esac
+[ "${#TOKEN}" -ge 16 ] || { echo "token demasiado corto (minimo 16 chars)"; exit 2; }
 
 # --- Transporte: prerrequisitos locales.
 if [ "$TRANSPORT" = "telnet" ]; then
@@ -115,19 +131,25 @@ remote_put() {
 curl -fsS -m 3 "http://$LAPTOP:8765/tv/button-health" >/dev/null 2>&1 \
   || { echo "listener :8765/tv/button-health NO responde en $LAPTOP - despliega primero la PR del listener"; exit 2; }
 
-CFG="/tmp/mm-config-$$.json"
-TOKCFG="/tmp/mm-token-$$.conf"
+# Temporales en directorio PRIVADO de mktemp (0700): una ruta predecible en
+# /tmp permite a otro proceso local plantar un symlink antes de la escritura.
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/mm-install.XXXXXX") || { echo "mktemp fallo"; exit 1; }
+chmod 700 "$TMPD"
+CFG="$TMPD/mm-config.json"
+TOKCFG="$TMPD/mm-token"
 SRV=""
 CERTD=""
-trap 'rm -f "$CFG" "$TOKCFG"; [ -z "$SRV" ] || kill "$SRV" 2>/dev/null || true; [ -z "$CERTD" ] || rm -rf "$CERTD"' EXIT
+trap 'rm -rf "$TMPD"; [ -z "$SRV" ] || kill "$SRV" 2>/dev/null || true; [ -z "$CERTD" ] || rm -rf "$CERTD"' EXIT
 sed -e "s|__ASISTENTA_URL__|http://$LAPTOP:8765/tv/button|" -e "s|\"__BUTTON__\"|\"$BTN\"|" \
   "$SCRIPT_DIR/../../config/tv/magic_mapper_config.json" > "$CFG"
 python3 -m json.tool "$CFG" >/dev/null || { echo "config no es JSON valido"; exit 1; }
 python3 -c "import json;d=json.load(open('$CFG'));assert '$BTN' in d" || exit 1
 python3 -c "import json;i=json.load(open('$CFG'))['$BTN']['inputs'];assert i.get('token_file')=='$TOKEN_CONF_REMOTE', i" \
   || { echo "config sin token_file - el mapeo quedaria SIN autenticacion"; exit 1; }
-# Archivo curl --config con la cabecera; nace 0600 y 0600 llega a la tele.
-( umask 077; printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$TOKCFG" )
+# Archivo con el secreto HMAC EN CRUDO (una linea); nace 0600 y 0600 llega a
+# la tele. Se coteja con el valor pedido: lo que se sirve es lo que se pidio.
+( umask 077; printf '%s\n' "$TOKEN" > "$TOKCFG" )
+[ "$(cat "$TOKCFG")" = "$TOKEN" ] || { echo "el archivo del token no coteja con el valor pedido"; exit 1; }
 
 # 1) Parcheador a la tele + preflight + descarga verificada + parche.
 remote_put "$SCRIPT_DIR/templates/patch-magic-mapper.py" /home/root/.mm-patch.py 644
@@ -179,7 +201,10 @@ if [ "$TRANSPORT" = "telnet" ]; then
     -subj "/CN=tv-button" -addext "subjectAltName=IP:$LAPTOP" >/dev/null 2>&1 \
     || { echo "openssl no pudo crear el cert efimero (SAN IP:$LAPTOP)"; exit 1; }
   chmod 600 "$CERTD/key.pem"
-  python3 "$SCRIPT_DIR/tv-token-server.py" --bind "$LAPTOP" --file "$TOKCFG" \
+  # Nonce aleatorio de un solo uso: la ruta del token no es adivinable a ciegas.
+  NONCE=$(openssl rand -hex 16)
+  python3 "$SCRIPT_DIR/tv-token-server.py" --bind "$LAPTOP" --allow-ip "$TV" \
+    --nonce "$NONCE" --file "$TOKCFG" \
     --cert "$CERTD/cert.pem" --key "$CERTD/key.pem" --port-file "$CERTD/port" &
   SRV=$!
   i=0
@@ -189,11 +214,14 @@ if [ "$TRANSPORT" = "telnet" ]; then
   done
   TOKPORT=$(cat "$CERTD/port")
   remote_put "$CERTD/cert.pem" /home/root/.mm-token-ca.pem 644
-  if ! remote_sh "$LAPTOP" "$TOKPORT" <<'REMOTE_EOF'
+  if ! remote_sh "$LAPTOP" "$TOKPORT" "$NONCE" <<'REMOTE_EOF'
 set -eu
-curl -fsSL -m 15 --cacert /home/root/.mm-token-ca.pem "https://$1:$2/tv-button-token" -o /home/root/.mm-new/tv-button-curl.conf
+# umask 077 ANTES de crear el archivo: nace 0600, no se chmod despues de haber
+# existido con permisos abiertos.
+umask 077
+curl -fsSL -m 15 --cacert /home/root/.mm-token-ca.pem "https://$1:$2/tv-button-token/$3" -o /home/root/.mm-new/tv-button-token
 rm -f /home/root/.mm-token-ca.pem
-chmod 600 /home/root/.mm-new/tv-button-curl.conf
+chmod 600 /home/root/.mm-new/tv-button-token
 REMOTE_EOF
   then
     echo "la tele no pudo descargar el token por TLS - aborto ANTES de mutar"
@@ -204,7 +232,7 @@ REMOTE_EOF
   rm -rf "$CERTD"; CERTD=""
 else
   # Por ssh el canal ya va cifrado.
-  remote_put "$TOKCFG" /home/root/.mm-new/tv-button-curl.conf 600
+  remote_put "$TOKCFG" /home/root/.mm-new/tv-button-token 600
 fi
 rm -f "$CFG" "$TOKCFG"
 
@@ -214,7 +242,7 @@ remote_sh <<'REMOTE_EOF'
 set -eu
 TS=$(date +%Y%m%d-%H%M%S)
 BK=/home/root/mm-backup-$TS
-FILES="/home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /home/root/.tv-button-curl.conf /var/lib/webosbrew/init.d/start_magic_mapper"
+FILES="/home/root/magic_mapper.py /home/root/magic_mapper_config.json /home/root/magic_mapper_config.json.dist /home/root/.tv-button-token /var/lib/webosbrew/init.d/start_magic_mapper"
 mkdir -p "$BK"
 # BACKUP_BLOCK_START (cubierto por test-tv-rollback-mock.sh, caso "cp del instalador roto")
 for f in $FILES; do
@@ -251,8 +279,8 @@ rc=0; pgrep -f magic_mapper.py >/dev/null 2>&1 || rc=$?
 mv /home/root/.mm-new/magic_mapper.py /home/root/magic_mapper.py || rollback
 mv /home/root/.mm-new/magic_mapper_config.json /home/root/magic_mapper_config.json || rollback
 mv /home/root/.mm-new/magic_mapper_config.json.dist /home/root/magic_mapper_config.json.dist || rollback
-mv /home/root/.mm-new/tv-button-curl.conf /home/root/.tv-button-curl.conf || rollback
-[ "$(stat -c %a /home/root/.tv-button-curl.conf 2>/dev/null || echo 000)" = "600" ] \
+mv /home/root/.mm-new/tv-button-token /home/root/.tv-button-token || rollback
+[ "$(stat -c %a /home/root/.tv-button-token 2>/dev/null || echo 000)" = "600" ] \
   || { echo "el token privado no quedo 0600 - rollback"; rollback; }
 mv /var/lib/webosbrew/init.d/.start_magic_mapper.staged /var/lib/webosbrew/init.d/start_magic_mapper || rollback
 chmod +x /var/lib/webosbrew/init.d/start_magic_mapper || rollback

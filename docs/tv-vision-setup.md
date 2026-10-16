@@ -1,9 +1,12 @@
 # TV vision (piccap + magic_mapper) - plan de ejecucion
 
-Autoridad: Nico, 12/10 01:13-01:16 (WhatsApp, originales en el canal): trabajar la
-tele por la noche con ella apagada cuando se termine; preparar TODO en repo para
-que manana sea "tele encendida -> ejecutar"; orden: autostart tailscaled PRIMERO,
-luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al acabar.
+Este documento es un plan de trabajo preparado en repo: describe estado,
+prerequisitos y orden propuesto. NO concede ningun permiso por si mismo:
+instalar, reiniciar o apagar la tele requiere SIEMPRE la confirmacion explicita
+de Nico en su canal en el momento de ejecutar, y ese permiso no se hereda de
+este archivo. Orden propuesto: autostart tailscaled PRIMERO, luego
+piccap/magic_mapper, con todo preparado para que la ejecucion sea
+"tele encendida -> ejecutar".
 
 ## Estado del camino de red (12/10 01:14, verificado)
 - lgwebostv: nodo tailscale 100.126.88.124, OFFLINE 2h (autostart roto - esto se arregla).
@@ -44,13 +47,23 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      contrasena); `--transport ssh` queda como opcion. Driver:
      scripts/tv/telnet-sh.py (exit code remoto por centinela/trap EXIT).
    - TOKEN OBLIGATORIO (TV_BUTTON_TOKEN o --token-file; nunca como argumento
-     posicional). Termina en /home/root/.tv-button-curl.conf (0600) y magic_mapper
-     lo usa via `curl --config` (parche propio sobre v1.1.0): NUNCA en claro por
-     telnet (la tele hace pull por TLS de un servidor one-shot del PC,
-     scripts/tv/tv-token-server.py, con cert efimero fijado por --cacert), ni en
+     posicional; charset validado [A-Za-z0-9._~=-], minimo 16). Termina en
+     /home/root/.tv-button-token (0600, secreto HMAC en crudo) y magic_mapper
+     firma CADA pulsacion con el (HMAC-SHA256 de ts.nonce.METODO.ruta, parche
+     propio sobre v1.1.0): el token NUNCA viaja por la LAN, ni en la entrega ni
+     en el uso - nada de Authorization Bearer por HTTP en claro. Entrega: la
+     tele hace pull por TLS de un servidor one-shot del PC
+     (scripts/tv/tv-token-server.py) que solo sirve a la IP de la tele
+     (--allow-ip), en una ruta con nonce aleatorio de un solo uso (--nonce),
+     con deadline real por conexion y confirmando la escritura antes de dar la
+     entrega por hecha. Nota honesta: el cert efimero fijado con --cacert
+     protege contra un servidor falso, pero su parte publica cruza por telnet
+     en claro, asi que NO es un canal extremo a extremo autenticado frente a
+     un MITM activo; la defensa es allow-ip + nonce + one-shot. Ni el token en
      la config JSON, ni en logs (el parche quita el -v y el print del argv).
-   - El boton EXIGE flag explicito del operador (decision del owner en ejecucion;
-     sin --button el script aborta). Candidatos: 0-9 (pierden long-press), guide, info.
+   - El boton EXIGE flag explicito de quien ejecuta (sin --button el script
+     aborta; no hay valor por defecto). Candidatos: 0-9 (pierden long-press),
+     guide, info.
    - Staging en el fs propio de cada destino, backup de los 5 (incluye el
      archivo privado del token) + listados forenses de init.d y /dev/input.
      No toca 50-tvweb ni nada ajeno. El rollback
@@ -65,8 +78,8 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
      ||true, guard no-vivo antes de tocar ficheros y restore con fallos
      visibles (set -e; nunca declara hecho un restore roto).
      Rollback automatico ante fallos post-backup. Tests mock:
-     scripts/tv/test-tv-rollback-mock.sh (10/10, filesystem falso real) y
-     scripts/tv/test-tv-token-patch-mock.sh (11/11: parche, telnet y canal TLS).
+     scripts/tv/test-tv-rollback-mock.sh (12/12, filesystem falso real) y
+     scripts/tv/test-tv-token-patch-mock.sh (17/17: parche, telnet y canal TLS).
    - --button se valida contra la lista oficial de botones de v1.1.0
      (magic_mapper.py BUTTONS); magic_mapper_settings esta reservado y se rechaza.
    - PREFLIGHT DURO: el script ABORTA si el listener de la asistenta
@@ -82,12 +95,15 @@ luego piccap/magic_mapper. Silencio total (duerme). Si se enciende, apagarla al 
    - Version fijada v1.1.0 por sha256 de los 3 ficheros (verificado EN LA
      tele con python3) + parche determinista (templates/patch-magic-mapper.py,
      anclas exactas o aborta); config renderizada con la IP real.
-   - Boton: SIN defecto - se decide en ejecucion via --button (owner).
+   - Boton: SIN defecto - se decide en ejecucion via --button.
    - Listener HTTP YA EXISTE (src/tv/button-listener.ts): :8765/tv/button con
-     Bearer opcional desde el vault (tv:buttonToken) y /tv/button-health abierto
-     para el preflight. El instalador EXIGE token y cablea token_file: el boton
-     nunca queda sin autenticacion.
-5. **Apagar la tele** (orden de Nico) y reportar que quedo instalado.
+     verificacion HMAC por pulsacion (X-TV-Ts/X-TV-Nonce/X-TV-Sig; ventana de
+     reloj +-5 min y cache anti-replay) usando el secreto del vault
+     (tv:buttonToken), y /tv/button-health abierto para el preflight. El
+     instalador EXIGE token y cablea token_file: el boton nunca queda sin
+     autenticacion, y el secreto jamas viaja por la LAN.
+5. **Apagar la tele** solo si asi se indico en la conversacion de ejecucion,
+   y reportar que quedo instalado.
 
 ## Semantica exclusive_mode (verificado upstream 12/10)
 magic_mapper toma control exclusivo del dispositivo de entrada del mando pero solo

@@ -10,9 +10,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   isPrivateRemote,
+  signTvButton,
   startTvButtonListener,
   type TvButtonListener,
 } from '../src/tv/button-listener.js';
+
+const SECRET = 'secreto';
+
+/** Cabeceras de firma como las genera el magic_mapper parcheado en la tele. */
+function signedHeaders(
+  method: string,
+  path: string,
+  opts: { ts?: string; nonce?: string; secret?: string } = {},
+): Record<string, string> {
+  const ts = opts.ts ?? String(Math.floor(Date.now() / 1000));
+  const nonce = opts.nonce ?? 'a1b2c3d4e5f60708';
+  const secret = opts.secret ?? SECRET;
+  return {
+    'x-tv-ts': ts,
+    'x-tv-nonce': nonce,
+    'x-tv-sig': signTvButton(secret, ts, nonce, method, path),
+  };
+}
 
 let started: TvButtonListener | null = null;
 
@@ -107,29 +126,138 @@ describe('tv button listener', () => {
     expect(onButton).toHaveBeenCalledTimes(1);
   });
 
-  it('con token, POST sin token se rechaza y no dispara', async () => {
-    const { base, onButton } = await listen({ token: 'secreto' });
+  it('con token, POST sin firma se rechaza y no dispara', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
     const res = await fetch(`${base}/tv/button`, { method: 'POST' });
     expect(res.status).toBe(401);
     expect(onButton).not.toHaveBeenCalled();
   });
 
-  it('con token, el Bearer correcto dispara', async () => {
-    const { base, onButton } = await listen({ token: 'secreto' });
+  it('con token, un Bearer con el secreto NO sirve: el token no viaja', async () => {
+    // Canario del auditor: la pulsacion no puede mandar el secreto en claro,
+    // ni siquiera el correcto - solo vale la firma HMAC de ESTA pulsacion.
+    const { base, onButton } = await listen({ token: SECRET });
     const res = await fetch(`${base}/tv/button`, {
       method: 'POST',
-      headers: { authorization: 'Bearer secreto' },
+      headers: { authorization: `Bearer ${SECRET}` },
+    });
+    expect(res.status).toBe(401);
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('con token, una firma valida dispara', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const res = await fetch(`${base}/tv/button`, {
+      method: 'POST',
+      headers: signedHeaders('POST', '/tv/button'),
     });
     expect(res.status).toBe(202);
     expect(onButton).toHaveBeenCalledTimes(1);
   });
 
-  it('sin token configurado acepta cualquiera (misma postura que Glasshouse)', async () => {
-    const { base, onButton } = await listen();
+  it('la firma es por metodo y ruta: la de otra ruta o metodo no vale', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    for (const headers of [
+      signedHeaders('POST', '/tv/button-health'),
+      signedHeaders('GET', '/tv/button'),
+    ]) {
+      const res = await fetch(`${base}/tv/button`, { method: 'POST', headers });
+      expect(res.status).toBe(401);
+    }
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('una firma con reloj fuera de la ventana se rechaza', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const vieja = String(Math.floor(Date.now() / 1000) - 600); // 10 min atras
     const res = await fetch(`${base}/tv/button`, {
       method: 'POST',
-      headers: { authorization: 'Bearer lo-que-sea' },
+      headers: signedHeaders('POST', '/tv/button', { ts: vieja }),
     });
+    expect(res.status).toBe(401);
+    expect(onButton).not.toHaveBeenCalled();
+  });
+
+  it('la misma firma repetida es replay y se rechaza', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const headers = signedHeaders('POST', '/tv/button');
+    expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+    expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+    expect(onButton).toHaveBeenCalledTimes(1);
+  });
+
+  it('una firma con ts en el futuro no es rejugable mientras su ventana siga abierta', async () => {
+    // Canario del auditor: la cache podaba a los 5 min de ACEPTAR, pero una
+    // firma con ts = ahora+4min sigue valida hasta ahora+9min -> replay.
+    // La retencion es hasta tsMs + WINDOW, no hasta aceptada + WINDOW.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = Date.now();
+      const { base, onButton } = await listen({ token: SECRET });
+      const headers = signedHeaders('POST', '/tv/button', {
+        ts: String(Math.floor(t0 / 1000) + 240), // t0 + 4 min, dentro de ventana
+      });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+      // Avanza el reloj: la cache vieja ya habria podado, la firma aun vale.
+      vi.setSystemTime(t0 + 5 * 60 * 1000 + 1000);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+      // Y cuando la ventana de la firma cierra de verdad, la firma caduca.
+      vi.setSystemTime(t0 + 9 * 60 * 1000 + 2000);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('en el milisegundo exacto tsMs+WINDOW la firma vale y el replay sigue rechazado', async () => {
+    // Canario del auditor: aceptar con |now-ts| <= WINDOW pero podar la cache
+    // con now >= tsMs+WINDOW dejaba ESE milisegundo abierto al replay.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const { base, onButton } = await listen({ token: SECRET });
+      const tsSec = Math.floor(Date.now() / 1000);
+      const headers = signedHeaders('POST', '/tv/button', { ts: String(tsSec) });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(202);
+      vi.setSystemTime(tsSec * 1000 + 300_000); // el milisegundo exacto del borde
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers })).status).toBe(401);
+      expect(onButton).toHaveBeenCalledTimes(1);
+      // Una firma NUEVA en el borde si entra (la ventana incluye el extremo)...
+      const headers2 = signedHeaders('POST', '/tv/button', {
+        ts: String(tsSec),
+        nonce: 'cccccccccccccccc',
+      });
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers: headers2 })).status).toBe(
+        202,
+      );
+      // ...y un milisegundo despues la ventana ha cerrado para todos.
+      vi.setSystemTime(tsSec * 1000 + 300_001);
+      expect((await fetch(`${base}/tv/button`, { method: 'POST', headers: headers2 })).status).toBe(
+        401,
+      );
+      expect(onButton).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dos pulsaciones en el mismo segundo con nonce distinto pasan las dos', async () => {
+    const { base, onButton } = await listen({ token: SECRET });
+    const ts = String(Math.floor(Date.now() / 1000));
+    for (const nonce of ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']) {
+      const res = await fetch(`${base}/tv/button`, {
+        method: 'POST',
+        headers: signedHeaders('POST', '/tv/button', { ts, nonce }),
+      });
+      expect(res.status).toBe(202);
+    }
+    expect(onButton).toHaveBeenCalledTimes(2);
+  });
+
+  it('sin token configurado acepta cualquiera (misma postura que Glasshouse)', async () => {
+    const { base, onButton } = await listen();
+    const res = await fetch(`${base}/tv/button`, { method: 'POST' });
     expect(res.status).toBe(202);
     expect(onButton).toHaveBeenCalledTimes(1);
   });
