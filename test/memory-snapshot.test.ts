@@ -78,7 +78,9 @@ describe('MemorySnapshot', () => {
     // contenido se honra aunque ya nadie lo escriba.
     writeFileSync(join(dir, 'MEMORIA.md'), '# MEMORIA\n\nprefiere respuestas cortas', 'utf8');
     const snapshot = new MemorySnapshot({ dir });
-    expect(snapshot.contextNote()).toBe('<memoria_legada>\nprefiere respuestas cortas\n</memoria_legada>');
+    expect(snapshot.contextNote()).toBe(
+      '<memoria_legada>\nprefiere respuestas cortas\n</memoria_legada>',
+    );
     snapshot.appendEntry('se llama Ana');
     expect(snapshot.contextNote()).toBe(
       '<memoria_legada>\nprefiere respuestas cortas\n</memoria_legada>\n<profile>\nse llama Ana\n</profile>',

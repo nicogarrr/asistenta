@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Gate, isEffectText, lexicalNormalize } from '../src/permissions.js';
-import { protectedRepoPaths } from '../src/permissions.js';
+import { Gate, isEffectText, lexicalNormalize, protectedRepoPaths } from '../src/permissions.js';
 import { checkoutStageOf } from '../src/tools/checkout.js';
 
 const allow = () => true;
@@ -187,7 +186,12 @@ describe('Gate', () => {
         return true;
       },
     });
-    for (const [i, path] of ['.env', '.env.local', '.env.production', 'config/.env.test'].entries()) {
+    for (const [i, path] of [
+      '.env',
+      '.env.local',
+      '.env.production',
+      'config/.env.test',
+    ].entries()) {
       const r = await gate.check(`e${i}`, { tool: 'read', args: { path }, actor: 'local' });
       expect(r.verdict).toBe('deny');
       const w = await gate.check(`ew${i}`, {

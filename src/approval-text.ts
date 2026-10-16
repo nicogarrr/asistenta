@@ -93,7 +93,9 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
       const steps = call.args.actions as Array<Record<string, unknown>>;
       if (steps.some((s) => s.action === 'type' && s.secret === true)) return deniedSecretType();
       const rawSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, IDENTITY)}`);
-      const shownSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, redactSecrets)}`);
+      const shownSteps = steps.map(
+        (s, i) => `  ${i + 1}. ${describeComputerAction(s, redactSecrets)}`,
+      );
       if (rawSteps.join('\n') !== shownSteps.join('\n')) return deniedAltered('computer');
       const question = [
         '¿Permito computer?',
@@ -113,7 +115,11 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     const rawAction = describeComputerAction(call.args, IDENTITY);
     const shownAction = describeComputerAction(call.args, redactSecrets);
     if (rawAction !== shownAction) return deniedAltered('computer');
-    const question = ['¿Permito computer?', `Acción: ${shownAction}`, `Motivo: ${redactSecrets(reason)}`].join('\n');
+    const question = [
+      '¿Permito computer?',
+      `Acción: ${shownAction}`,
+      `Motivo: ${redactSecrets(reason)}`,
+    ].join('\n');
     const raw = ['¿Permito computer?', `Acción: ${rawAction}`, `Motivo: ${reason}`].join('\n');
     return withinBudget(raw, question, 'computer');
   }
@@ -179,7 +185,18 @@ function withinBudget(raw: string, shown: string, tool: string): ApprovalText {
 }
 
 const KNOWN_ACTION_KEYS = new Set([
-  'action', 'x', 'y', 'toX', 'toY', 'text', 'key', 'button', 'clicks', 'roi', 'actions', '_target',
+  'action',
+  'x',
+  'y',
+  'toX',
+  'toY',
+  'text',
+  'key',
+  'button',
+  'clicks',
+  'roi',
+  'actions',
+  '_target',
 ]);
 
 function describeComputerAction(

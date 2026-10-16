@@ -196,7 +196,7 @@ export function parsePriceToCents(raw: string): number | null {
  * Entrega 9,99 €" must not quote the delivery fee as the total.
  */
 const TOTAL_LABEL =
-  /(?:\btotal(?:\s+a\s+pagar)?\b|\bimporte\s+a\s+pagar\b|\bamount\s+due\b|\bgrand\s+total\b)\s*[:=\-]?\s*/iu;
+  /(?:\btotal(?:\s+a\s+pagar)?\b|\bimporte\s+a\s+pagar\b|\bamount\s+due\b|\bgrand\s+total\b)\s*[:=-]?\s*/iu;
 
 function matchPriceAt(text: string, at: number): PriceText | null {
   const re = new RegExp(PRICE_RE.source, 'yi');
@@ -244,7 +244,7 @@ const RECURRENCE =
 export function recurrenceHintInPage(text: string): string | null {
   const hit = text.match(RECURRENCE);
   return hit ? hit[0] : null;
-}/** Prices visible in a block of page text, normalised, deduplicated, in order. */
+} /** Prices visible in a block of page text, normalised, deduplicated, in order. */
 export function extractPrices(text: string, limit = 5): string[] {
   const out: string[] = [];
   for (const price of extractPriceTexts(text, limit * 2)) {
@@ -534,7 +534,9 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
   const load = deps.loadPassenger ?? (() => loadPassenger());
   const maxCents = deps.maxAmountCents ?? 30_000;
   if (!Number.isSafeInteger(maxCents) || maxCents < 0) {
-    throw new Error(`maxAmountCents debe ser un entero finito >= 0 (recibido: ${deps.maxAmountCents})`);
+    throw new Error(
+      `maxAmountCents debe ser un entero finito >= 0 (recibido: ${deps.maxAmountCents})`,
+    );
   }
   const { page } = deps;
   let flow = freshFlow();

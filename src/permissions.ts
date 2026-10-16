@@ -2,8 +2,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
@@ -489,8 +489,7 @@ export class Gate {
     // as absolute on any host, since the daemon runs on Windows.
     const lower = this.#resolvePath(path);
     return (
-      isDotEnvFile(lower) ||
-      this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`))
+      isDotEnvFile(lower) || this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`))
     );
   }
 
@@ -498,8 +497,7 @@ export class Gate {
     if (!path) return false;
     const lower = this.#resolvePath(path);
     return (
-      isDotEnvFile(lower) ||
-      this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`))
+      isDotEnvFile(lower) || this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`))
     );
   }
 
@@ -1384,9 +1382,7 @@ export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
   // The runtime the daemon actually executes (`pa` runs dist/cli.js): dist is
   // built from src, and a write to dist/*.js persists an altered guard across
   // restarts exactly like a write to the source. Same vector, same wall.
-  const dist = src.map((p) =>
-    p.replace(`${r}\\src\\`, `${r}\\dist\\`).replace(/\.ts$/, '.js'),
-  );
+  const dist = src.map((p) => p.replace(`${r}\\src\\`, `${r}\\dist\\`).replace(/\.ts$/, '.js'));
   return [...src, ...dist];
 }
 

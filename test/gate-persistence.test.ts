@@ -254,4 +254,3 @@ describe('createDaemonGate policy', () => {
     expect(ok.verdict).not.toBe('deny');
   });
 });
-

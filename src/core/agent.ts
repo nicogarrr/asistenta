@@ -1,5 +1,6 @@
 import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import { Agent } from '@earendil-works/pi-agent-core';
+import type { Model } from '@earendil-works/pi-ai';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
@@ -17,11 +18,10 @@ import {
   type Summarize,
 } from './history.js';
 import { buildSystemPrompt } from './prompt.js';
-import type { Model } from '@earendil-works/pi-ai';
 import { createProviderHandle } from './provider.js';
 import {
-  isQuotaError,
   DEFAULT_RETRY,
+  isQuotaError,
   isTransientProviderError,
   type RetryPolicy,
   retryDelay,

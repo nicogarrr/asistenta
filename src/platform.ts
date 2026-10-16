@@ -38,10 +38,7 @@ export const DESKTOP_ONLY_TOOLS: ReadonlySet<string> = new Set([
  * desktop-only ones. The filter lives here (not inline at the call site) so
  * the contract is testable.
  */
-export function toolsForMode<T extends { name: string }>(
-  all: readonly T[],
-  desktop: boolean,
-): T[] {
+export function toolsForMode<T extends { name: string }>(all: readonly T[], desktop: boolean): T[] {
   return desktop ? [...all] : all.filter((tool) => !DESKTOP_ONLY_TOOLS.has(tool.name));
 }
 

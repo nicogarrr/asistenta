@@ -90,7 +90,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
       {
         id: config.model,
         name: config.model,
-        
+
         api: 'openai-completions',
         provider: config.provider,
         baseUrl: config.baseUrl,
@@ -143,9 +143,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   // on Go endpoints; for the primary the result is identical to the old
   // override, since initialState.model carries no headers.
   const withGoHeaders = (m: Model<string>, sessionId?: string): Model<string> =>
-    go
-      ? ({ ...m, headers: { ...m.headers, ...goHeaders(sessionId) } } as Model<string>)
-      : m;
+    go ? ({ ...m, headers: { ...m.headers, ...goHeaders(sessionId) } } as Model<string>) : m;
   const modelFor = (sessionId?: string): Model<string> => withGoHeaders(model, sessionId);
   const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
     models.streamSimple(withGoHeaders(m, options?.sessionId), context, options);

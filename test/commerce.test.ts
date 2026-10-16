@@ -24,11 +24,11 @@ import {
   type CheckoutPage,
   checkoutStageOf,
   createCheckoutTool,
-  parsePriceToCents,
   extractPrices,
   findTotalPrice,
-  recurrenceHintInPage,
   looksLikePaymentSubmission,
+  parsePriceToCents,
+  recurrenceHintInPage,
 } from '../src/tools/checkout.js';
 
 const DNI = '12345678Z';

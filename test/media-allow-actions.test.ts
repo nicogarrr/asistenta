@@ -31,20 +31,31 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('media allowActions (P2-14)', () => {
-  it.each(['play', 'list_audio'])('media:%s passes without asking, as the prompt promises', async (action) => {
-    const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: channel });
-    const d = await gate.check(MAIN, media(action));
-    expect(d.verdict).toBe('allow');
-    expect(asked).toBe(0);
-  });
-
-  it.each(['camera_photo', 'camera_clip', 'camera_audio_clip', 'mic_record', 'screen_clip', 'live_view'])(
-    'media:%s still asks every time',
+  it.each(['play', 'list_audio'])(
+    'media:%s passes without asking, as the prompt promises',
     async (action) => {
-      const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: channel });
+      const gate = createDaemonGate({
+        threadKey: MAIN,
+        dbPath: approvalsDbPath(dir),
+        ask: channel,
+      });
       const d = await gate.check(MAIN, media(action));
-      expect(d.verdict).toBe('allow'); // the channel said yes...
-      expect(asked).toBe(1); // ...but it was ASKED
+      expect(d.verdict).toBe('allow');
+      expect(asked).toBe(0);
     },
   );
+
+  it.each([
+    'camera_photo',
+    'camera_clip',
+    'camera_audio_clip',
+    'mic_record',
+    'screen_clip',
+    'live_view',
+  ])('media:%s still asks every time', async (action) => {
+    const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: channel });
+    const d = await gate.check(MAIN, media(action));
+    expect(d.verdict).toBe('allow'); // the channel said yes...
+    expect(asked).toBe(1); // ...but it was ASKED
+  });
 });

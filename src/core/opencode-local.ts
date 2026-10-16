@@ -410,17 +410,19 @@ export function renderTranscriptWithImages(messages: Message[]): RenderedTranscr
     kept.push(c);
   }
   kept.reverse();
-  kept.forEach((c, idx) => labelOf.set(c.key, idx + 1));
+  kept.forEach((c, idx) => {
+    labelOf.set(c.key, idx + 1);
+  });
 
   // 3. Render: el texto declara la misma numeracion que los ficheros adjuntos.
   const out: string[] = [];
   messages.forEach((m, mi) => {
     if (m.role === 'system') return;
     if (m.role === 'user') {
-      out.push('USUARIO: ' + oneLine(textOf(m.content)));
+      out.push(`USUARIO: ${oneLine(textOf(m.content))}`);
     } else if (m.role === 'assistant') {
       for (const block of m.content) {
-        if (block.type === 'text') out.push('ASISTENTA: ' + oneLine(block.text));
+        if (block.type === 'text') out.push(`ASISTENTA: ${oneLine(block.text)}`);
         else if (block.type === 'toolCall')
           out.push(
             'ASISTENTA (llamada): ' +
@@ -452,9 +454,7 @@ export function renderTranscript(messages: Message[]): string {
 
 function textOf(content: string | Array<{ type: string; text?: string }>): string {
   if (typeof content === 'string') return content;
-  return content
-    .map((c) => (c.type === 'text' ? (c.text ?? '') : '[imagen sin ver]'))
-    .join(' ⏎ ');
+  return content.map((c) => (c.type === 'text' ? (c.text ?? '') : '[imagen sin ver]')).join(' ⏎ ');
 }
 
 export interface ParsedReply {
@@ -593,7 +593,10 @@ export function schemaIsSupported(schema: SchemaNode): boolean {
   }
   if (node.required !== undefined && !Array.isArray(node.required)) return false;
   for (const k of ['minLength', 'maxLength', 'minimum', 'maximum'] as const)
-    if (node[k] !== undefined && (typeof node[k] !== 'number' || !Number.isFinite(node[k] as number)))
+    if (
+      node[k] !== undefined &&
+      (typeof node[k] !== 'number' || !Number.isFinite(node[k] as number))
+    )
       return false;
   if (node.anyOf !== undefined) {
     if (!Array.isArray(node.anyOf) || node.anyOf.length === 0) return false;
@@ -771,9 +774,7 @@ export function createOpenCodeLocalStream(
           .filter(Boolean)
           .join('\n\n');
         const userText = renderTranscriptWithImages(context.messages);
-        const parts: Array<Record<string, unknown>> = [
-          { type: 'text', text: userText.text },
-        ];
+        const parts: Array<Record<string, unknown>> = [{ type: 'text', text: userText.text }];
         // Las capturas van DESPUES del texto para que [imagen N] en el transcript
         // y el fichero N sean el mismo objeto. data-URI: el serve no escribe
         // ficheros y la jaula solo admite /work de lectura.

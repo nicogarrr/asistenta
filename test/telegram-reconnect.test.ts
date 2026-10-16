@@ -57,7 +57,11 @@ const harness = vi.hoisted(() => {
       let raw: { ok: boolean; result?: unknown[]; error_code?: number; description?: string };
       if (state.failTimes > 0) {
         state.failTimes--;
-        raw = { ok: false, error_code: 409, description: 'Conflict: terminated by other getUpdates request' };
+        raw = {
+          ok: false,
+          error_code: 409,
+          description: 'Conflict: terminated by other getUpdates request',
+        };
       } else {
         raw = { ok: true, result: [] };
       }
@@ -66,7 +70,11 @@ const harness = vi.hoisted(() => {
       for (const t of state.transformers) {
         result = await t(async () => raw, 'getUpdates', {}, undefined);
       }
-      if (typeof result === 'object' && result !== null && (result as { ok?: boolean }).ok !== true) {
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        (result as { ok?: boolean }).ok !== true
+      ) {
         throw new Error('409 Conflict: terminated by other getUpdates request');
       }
       // Like grammY: the promise stays pending while polling lives.

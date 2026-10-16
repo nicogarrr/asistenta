@@ -269,11 +269,20 @@ describe('renderTranscript', () => {
  * abre a pixels y el alcance del cambio es el mas estrecho posible.
  */
 describe('renderTranscriptWithImages (vision acotada a tool-results)', () => {
-  const img = (data: string, mimeType = 'image/jpeg') =>
-    ({ type: 'image' as const, data, mimeType });
+  const img = (data: string, mimeType = 'image/jpeg') => ({
+    type: 'image' as const,
+    data,
+    mimeType,
+  });
   const res = (toolName: string, content: Message extends never ? never : unknown[]) =>
-    ({ role: 'toolResult', toolCallId: 't1', toolName, content, isError: false, timestamp: 2 }) as
-      unknown as Message;
+    ({
+      role: 'toolResult',
+      toolCallId: 't1',
+      toolName,
+      content,
+      isError: false,
+      timestamp: 2,
+    }) as unknown as Message;
 
   it('adjunta la imagen de un RESULTADO y la numera en el texto', () => {
     const r = renderTranscriptWithImages([res('captura', [img('BASE64A')])]);
@@ -283,7 +292,11 @@ describe('renderTranscriptWithImages (vision acotada a tool-results)', () => {
 
   it('NO adjunta imagenes de un mensaje de USUARIO y lo dice', () => {
     const msgs = [
-      { role: 'user', content: [{ type: 'image', data: 'DELUSUARIO', mimeType: 'image/png' }], timestamp: 1 },
+      {
+        role: 'user',
+        content: [{ type: 'image', data: 'DELUSUARIO', mimeType: 'image/png' }],
+        timestamp: 1,
+      },
     ] as unknown as Message[];
     const r = renderTranscriptWithImages(msgs);
     expect(r.images).toEqual([]);

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Gate,
   deleteAlwaysGrant,
+  Gate,
   listAlwaysGrants,
   runPermisosCommand,
 } from '../src/permissions.js';
@@ -155,8 +155,16 @@ describe('/permisos command', () => {
       },
     });
     gate.registerSession('s');
-    const clickA = { tool: 'computer', args: { action: 'click', x: 1, y: 1 }, actor: 'local' } as const;
-    const clickB = { tool: 'computer', args: { action: 'click', x: 9, y: 9 }, actor: 'local' } as const;
+    const clickA = {
+      tool: 'computer',
+      args: { action: 'click', x: 1, y: 1 },
+      actor: 'local',
+    } as const;
+    const clickB = {
+      tool: 'computer',
+      args: { action: 'click', x: 9, y: 9 },
+      actor: 'local',
+    } as const;
     expect((await gate.check('s', clickA)).verdict).toBe('allow');
     expect(asked).toBe(1);
     // Different click, same tool: only the trust window can wave it through.
@@ -194,8 +202,16 @@ describe('/permisos command', () => {
     });
     gate.registerSession('s');
     gate.setScope('s', 'exec', 'always');
-    const clickA = { tool: 'computer', args: { action: 'click', x: 1, y: 1 }, actor: 'local' } as const;
-    const clickB = { tool: 'computer', args: { action: 'click', x: 9, y: 9 }, actor: 'local' } as const;
+    const clickA = {
+      tool: 'computer',
+      args: { action: 'click', x: 1, y: 1 },
+      actor: 'local',
+    } as const;
+    const clickB = {
+      tool: 'computer',
+      args: { action: 'click', x: 9, y: 9 },
+      actor: 'local',
+    } as const;
     await gate.check('s', clickA); // approver: memo clickA + window
     expect((await gate.check('s', clickB)).reason).toContain('window');
     expect(asked).toBe(1);

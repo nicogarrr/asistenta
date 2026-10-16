@@ -147,7 +147,7 @@ describe('approval text for a payment', () => {
 
   it('falls back to the plain question for other tools', () => {
     expect(
-      formatApprovalQuestion({ tool: 'shell', args: {}, actor: 'a' }, 'runs a shell command'),
-    ).toBe('¿Permito shell?\nruns a shell command');
+      formatApprovalQuestion({ tool: 'fetch', args: {}, actor: 'a' }, 'runs a shell command'),
+    ).toBe('¿Permito fetch?\nruns a shell command');
   });
 });

@@ -32,7 +32,11 @@ const askCounting = (): Promise<ApprovalChoice> => {
 
 describe('fail-closed: acción no mostrable entera', () => {
   it('deniega SIN preguntar al canal (ask se llama cero veces)', async () => {
-    const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: askCounting });
+    const gate = createDaemonGate({
+      threadKey: MAIN,
+      dbPath: approvalsDbPath(dir),
+      ask: askCounting,
+    });
     const actions = Array.from({ length: 500 }, (_, i) => ({ action: 'click', x: i, y: i }));
     const verdict = await gate.check(MAIN, {
       tool: 'computer',
@@ -44,7 +48,11 @@ describe('fail-closed: acción no mostrable entera', () => {
   });
 
   it('una acción mostrable sí llega a preguntar (control)', async () => {
-    const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: askCounting });
+    const gate = createDaemonGate({
+      threadKey: MAIN,
+      dbPath: approvalsDbPath(dir),
+      ask: askCounting,
+    });
     const verdict = await gate.check(MAIN, {
       tool: 'computer',
       args: { action: 'click', x: 1, y: 2 },

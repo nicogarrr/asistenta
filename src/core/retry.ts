@@ -55,12 +55,7 @@ export function isTransientProviderError(message: string | null | undefined): bo
  * win: a 402 with "quota" in the text is a billing error, not a free-tier
  * hiccup.
  */
-const QUOTA_MARKERS = [
-  /\b429\b/,
-  /rate limit/i,
-  /quota/i,
-  /freed?tiererror/i,
-];
+const QUOTA_MARKERS = [/\b429\b/, /rate limit/i, /quota/i, /freed?tiererror/i];
 
 export function isQuotaError(message: string | null | undefined): boolean {
   if (!message) return false;

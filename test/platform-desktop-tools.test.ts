@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DESKTOP_ONLY_TOOLS, toolsForMode } from '../src/platform.js';
-import { createTvTool } from '../src/tools/tv.js';
-import type { TvToolDeps } from '../src/tools/tv.js';
-import { createIphoneTool } from '../src/tools/iphone.js';
 import type { IphoneToolDeps } from '../src/tools/iphone.js';
+import { createIphoneTool } from '../src/tools/iphone.js';
+import type { TvToolDeps } from '../src/tools/tv.js';
+import { createTvTool } from '../src/tools/tv.js';
 
 const tool = (name: string) => ({ name });
 

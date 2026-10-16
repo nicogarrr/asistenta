@@ -14,7 +14,7 @@
  */
 
 import * as os from 'node:os';
-import { resolve, win32 } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 /**
  * Canonical enough to dedupe the same destination: resolved against the fs
@@ -38,7 +38,7 @@ export function normalizeWritePath(
   // destination; homedir is injectable for tests.
   const expanded = raw.replace(/^~(?=$|[\\/])/, homedir);
   if (platform === 'win32') return win32.resolve(cwd, expanded).toLowerCase();
-  return resolve(cwd, expanded);
+  return posix.resolve(cwd, expanded);
 }
 
 export class FileWriteTracker {

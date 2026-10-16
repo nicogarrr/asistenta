@@ -127,6 +127,7 @@ function protectedPaths(): string[] {
 function secretStatePaths(): string[] {
   return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
+
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import {
   buildMacroPrompt,
@@ -622,12 +623,7 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
           });
           return false;
         }
-        const choice = await options.ask(
-          options.threadKey,
-          call.tool,
-          reason,
-          approval.question,
-        );
+        const choice = await options.ask(options.threadKey, call.tool, reason, approval.question);
         if (choice.approved && choice.scope !== 'once') {
           try {
             gate.setScope(options.threadKey, call.tool, choice.scope);
@@ -4410,7 +4406,10 @@ async function serveCommand(): Promise<number> {
     }
     const opened = openSession(chat as NonNullable<typeof chat>, { force: true });
     if (opened) {
-      log.info('tv button opened a voice session', { source, chatId: (chat as { chatId: string }).chatId });
+      log.info('tv button opened a voice session', {
+        source,
+        chatId: (chat as { chatId: string }).chatId,
+      });
       // speakAloud directo: envolverlo en opened.speak() anidaria dos speak y
       // el interior volveria 'fin' sin sonar (conversation.ts: guarda de estado).
       await speakAloud('Dime.', opened);
@@ -4444,8 +4443,7 @@ async function serveCommand(): Promise<number> {
     if (tvButton) return;
     const listener = startTvButtonListener({
       token: await vaultGet('tv:buttonToken'),
-      onButton: (source) =>
-        handleButton(source).then(() => log.info('tv button wake', { source })),
+      onButton: (source) => handleButton(source).then(() => log.info('tv button wake', { source })),
     });
     tvButton = listener;
     try {
@@ -5171,10 +5169,9 @@ export function runMemoryCommand(memory: MemoryStore, scope: string): string {
   const entries = memory.all(scope);
   const scopes = memory.scopes();
   return entries.length
-    ? [
-        `Recuerdo ${entries.length} cosas:`,
-        ...entries.map((e) => `- [${e.id}] ${e.text}`),
-      ].join('\n')
+    ? [`Recuerdo ${entries.length} cosas:`, ...entries.map((e) => `- [${e.id}] ${e.text}`)].join(
+        '\n',
+      )
     : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`;
 }
 

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { formatApproval, formatApprovalQuestion, redactSecrets, QUESTION_BUDGET } from '../src/approval-text.js';
+import { formatApproval, formatApprovalQuestion, redactSecrets } from '../src/approval-text.js';
 import { toolOfQuestion } from '../src/channels/qa.js';
 
 const call = (tool: string, args: Record<string, unknown>) => ({ tool, args, actor: 'asistenta' });
 
 describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
   it('shell muestra el comando entero y el motivo', () => {
-    const a = formatApproval(call('shell', { command: 'Remove-Item ./tmp -Recurse' }), 'riesgo: borrado');
+    const a = formatApproval(
+      call('shell', { command: 'Remove-Item ./tmp -Recurse' }),
+      'riesgo: borrado',
+    );
     expect(a.complete).toBe(true);
     expect(a.question).toContain('¿Permito shell?');
     expect(a.question).toContain('Remove-Item ./tmp -Recurse');
@@ -14,16 +17,22 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
   });
 
   it('canario: mismo prefijo, colas distintas → preguntas aprobables siempre distintas', () => {
-    const prefix = 'Get-ChildItem ' + 'x'.repeat(1200);
+    const prefix = `Get-ChildItem ${'x'.repeat(1200)}`;
     const safe = formatApproval(call('shell', { command: prefix }), 'r');
-    const evil = formatApproval(call('shell', { command: prefix + '; Remove-Item C:\\ -Recurse -Force' }), 'r');
+    const evil = formatApproval(
+      call('shell', { command: `${prefix}; Remove-Item C:\\ -Recurse -Force` }),
+      'r',
+    );
     expect(safe.complete).toBe(true);
     expect(evil.complete).toBe(true);
     expect(safe.question === evil.question).toBe(false);
     // Sobre presupuesto: NINGUNO es aprobable (fail-closed).
-    const longPrefix = 'Get-ChildItem ' + 'x'.repeat(3600);
+    const longPrefix = `Get-ChildItem ${'x'.repeat(3600)}`;
     const safeLong = formatApproval(call('shell', { command: longPrefix }), 'r');
-    const evilLong = formatApproval(call('shell', { command: longPrefix + '; Remove-Item C:\\ -Recurse -Force' }), 'r');
+    const evilLong = formatApproval(
+      call('shell', { command: `${longPrefix}; Remove-Item C:\\ -Recurse -Force` }),
+      'r',
+    );
     expect(safeLong.complete).toBe(false);
     expect(evilLong.complete).toBe(false);
     expect(safeLong.question).toContain('DENEGADA');
@@ -56,7 +65,7 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
 
   it('canario: el presupuesto se mide sobre el RAW, no sobre el texto redactado', () => {
     // token= enmascara 8 chars, pero el comando RAW pasa de 3500: debe denegar.
-    const command = 'token=abc; ' + 'x'.repeat(3600);
+    const command = `token=abc; ${'x'.repeat(3600)}`;
     const a = formatApproval(call('shell', { command }), 'r');
     expect(a.complete).toBe(false);
     expect(a.question).toContain('DENEGADA');
@@ -67,7 +76,10 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
   });
 
   it('computer type con secret: true se DENIEGA (ni mostrarlo ni aprobar a ciegas)', () => {
-    const a = formatApproval(call('computer', { action: 'type', text: 'TEST_PASSWORD_UNLABELLED', secret: true }), 'r');
+    const a = formatApproval(
+      call('computer', { action: 'type', text: 'TEST_PASSWORD_UNLABELLED', secret: true }),
+      'r',
+    );
     expect(a.complete).toBe(false);
     expect(a.question).toContain('DENEGADA');
     expect(a.question).not.toContain('TEST_PASSWORD_UNLABELLED');
@@ -76,7 +88,10 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
   it('canario: subexpresión de PowerShell entre comillas => DENEGADO, no enmascarado', () => {
     // El canario del auditor: "$(...)" dentro de comillas dobles EJECUTA. Si se
     // enmascarara como secreto, una operación destructiva quedaría oculta.
-    const evil = formatApproval(call('shell', { command: 'password="$(Remove-Item C:/Data -Recurse)"' }), 'r');
+    const evil = formatApproval(
+      call('shell', { command: 'password="$(Remove-Item C:/Data -Recurse)"' }),
+      'r',
+    );
     const benign = formatApproval(call('shell', { command: 'password="$(Get-Date)"' }), 'r');
     expect(evil.complete).toBe(false);
     expect(benign.complete).toBe(false);
@@ -96,10 +111,13 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
 
   it('batch con un paso type secreto => DENEGADO entero', () => {
     const a = formatApproval(
-      call('computer', { action: 'batch', actions: [
-        { action: 'click', x: 1, y: 1 },
-        { action: 'type', text: 'x', secret: true },
-      ] }),
+      call('computer', {
+        action: 'batch',
+        actions: [
+          { action: 'click', x: 1, y: 1 },
+          { action: 'type', text: 'x', secret: true },
+        ],
+      }),
       'r',
     );
     expect(a.complete).toBe(false);
@@ -119,7 +137,12 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
     expect(q({ button: 'right' })).toContain('click derecho en (1, 2)');
     expect(q({ clicks: 2 })).toContain('click x2 en (1, 2)');
     expect(q({ roi: { x: 0, y: 0, width: 10, height: 10 } })).toContain('[roi (0, 0, 10×10)]');
-    const variants = [q({}), q({ button: 'right' }), q({ clicks: 3 }), q({ roi: { x: 1, y: 1, width: 5, height: 5 } })];
+    const variants = [
+      q({}),
+      q({ button: 'right' }),
+      q({ clicks: 3 }),
+      q({ roi: { x: 1, y: 1, width: 5, height: 5 } }),
+    ];
     expect(new Set(variants).size).toBe(4);
   });
 
@@ -153,10 +176,16 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
     expect(a.complete).toBe(true);
     expect(a.question).toContain('teleport');
     expect(a.question).toContain('"level":3');
-    const b = formatApproval(call('computer', { action: 'click', x: 1, y: 2, region: 'pop-up' }), 'r');
+    const b = formatApproval(
+      call('computer', { action: 'click', x: 1, y: 2, region: 'pop-up' }),
+      'r',
+    );
     expect(b.question).toContain('{region: "pop-up"}');
     // Con algo con forma de secreto dentro: DENEGADO, no enmascarado.
-    const c = formatApproval(call('computer', { action: 'teleport', token: 'ghp_abcdefghijklmnop' }), 'r');
+    const c = formatApproval(
+      call('computer', { action: 'teleport', token: 'ghp_abcdefghijklmnop' }),
+      'r',
+    );
     expect(c.complete).toBe(false);
     expect(c.question).not.toContain('ghp_abcdefghijklmnop');
   });
@@ -179,7 +208,7 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
   });
 
   it('ninguna pregunta aprobable supera el presupuesto', () => {
-    const longReason = 'porque ' + 'y'.repeat(4000);
+    const longReason = `porque ${'y'.repeat(4000)}`;
     const a = formatApproval(call('shell', { command: 'ls' }), longReason);
     expect(a.complete).toBe(false);
   });
@@ -187,7 +216,13 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
 
 describe('contrato con el harness QA (toolOfQuestion)', () => {
   it('las cabeceras estables parsean a su herramienta', () => {
-    expect(toolOfQuestion(formatApprovalQuestion(call('shell', { command: 'ls' }), 'r'))).toBe('shell');
-    expect(toolOfQuestion(formatApprovalQuestion(call('computer', { action: 'click', x: 1, y: 1 }), 'r'))).toBe('computer');
+    expect(toolOfQuestion(formatApprovalQuestion(call('shell', { command: 'ls' }), 'r'))).toBe(
+      'shell',
+    );
+    expect(
+      toolOfQuestion(
+        formatApprovalQuestion(call('computer', { action: 'click', x: 1, y: 1 }), 'r'),
+      ),
+    ).toBe('computer');
   });
 });

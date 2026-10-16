@@ -58,7 +58,9 @@ let port = 0;
 function readBody(req: import('node:http').IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let data = '';
-    req.on('data', (c) => (data += c));
+    req.on('data', (c) => {
+      data += c;
+    });
     req.on('end', () => resolve(data));
   });
 }
@@ -167,27 +169,23 @@ async function makeAgent(): Promise<PersonalAgent> {
 }
 
 describe('quota fallback (P2-17)', () => {
-  it(
-    'a quota error falls back to space-bunny-free on the same endpoint with the same context, ' +
-      'and the next run starts back on the primary',
-    async () => {
-      plan = ['quota429', 'ok', 'ok'];
-      seen.length = 0;
-      const agent = await makeAgent();
-      const r1 = await agent.run('primera peticion');
-      expect(r1.error).toBeNull();
-      expect(r1.attempts).toBe(2);
-      const r2 = await agent.run('segunda peticion');
-      expect(r2.error).toBeNull();
-      expect(r2.attempts).toBe(1);
-      expect(seen.map((s) => s.modelID)).toEqual([PRIMARY, FALLBACK, PRIMARY]);
-      // Same endpoint by construction (one fake serve) and same context: the
-      // system contract and the user's parts travel again on the fallback.
-      expect(at(1).system).toBe(at(0).system);
-      expect(JSON.stringify(at(1).parts)).toContain('primera peticion');
-    },
-    30_000,
-  );
+  it('a quota error falls back to space-bunny-free on the same endpoint with the same context, ' +
+    'and the next run starts back on the primary', async () => {
+    plan = ['quota429', 'ok', 'ok'];
+    seen.length = 0;
+    const agent = await makeAgent();
+    const r1 = await agent.run('primera peticion');
+    expect(r1.error).toBeNull();
+    expect(r1.attempts).toBe(2);
+    const r2 = await agent.run('segunda peticion');
+    expect(r2.error).toBeNull();
+    expect(r2.attempts).toBe(1);
+    expect(seen.map((s) => s.modelID)).toEqual([PRIMARY, FALLBACK, PRIMARY]);
+    // Same endpoint by construction (one fake serve) and same context: the
+    // system contract and the user's parts travel again on the fallback.
+    expect(at(1).system).toBe(at(0).system);
+    expect(JSON.stringify(at(1).parts)).toContain('primera peticion');
+  }, 30_000);
 
   it('a 5xx retries the primary, never the fallback', async () => {
     plan = ['e500', 'e500', 'e500'];

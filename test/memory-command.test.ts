@@ -29,9 +29,13 @@ describe('runMemoryCommand', () => {
 
   it('sin memoria lo dice y cuenta las conversaciones con memoria', () => {
     const store = new MemoryStore(dir);
-    expect(runMemoryCommand(store, 'telegram:123#main')).toContain('(0 conversaciones con memoria)');
+    expect(runMemoryCommand(store, 'telegram:123#main')).toContain(
+      '(0 conversaciones con memoria)',
+    );
     store.remember('telegram:999#main', 'un dato de otro chat');
-    expect(runMemoryCommand(store, 'telegram:123#main')).toContain('(1 conversaciones con memoria)');
+    expect(runMemoryCommand(store, 'telegram:123#main')).toContain(
+      '(1 conversaciones con memoria)',
+    );
   });
 });
 
