@@ -4,23 +4,19 @@ import { DatabaseSync } from 'node:sqlite';
 import { paths } from './paths.js';
 
 /**
- * Session transcript + durable state, on `node:sqlite` (stable in Node 24, no
- * native build step).
+ * Durable state, on `node:sqlite` (stable in Node 24, no native build step).
  *
- * The transcript is append-only and never mutated. Corrections are new rows that
- * point at what they replace, so a crash mid-write can lose a turn but can never
- * corrupt an earlier one. `purchase_intents` is separate from the transcript on
- * purpose: money state must be queryable without replaying a conversation, and
- * must survive the conversation being compacted away.
+ * The transcript of record is SessionStore (sessions + session_turns, FTS5);
+ * this Store keeps routines, purchase_intents and kv. `purchase_intents` is
+ * separate from any transcript on purpose: money state must be queryable
+ * without replaying a conversation, and must survive the conversation being
+ * compacted away.
+ *
+ * Legacy: databases written before the dead transcript tables were removed
+ * may still carry `sessions`/`entries`/`entry_edits`. They are never read or
+ * written now; dropping them would delete old history for no benefit, so
+ * they are simply left alone.
  */
-export interface Entry {
-  seq: number;
-  id: string;
-  parentId: string | null;
-  kind: 'user' | 'assistant' | 'tool_result' | 'system' | 'compaction';
-  body: unknown;
-  createdAt: string;
-}
 
 /**
  * A learned routine. Two shapes, both stored the same way:
@@ -110,35 +106,6 @@ export interface PurchaseIntent {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 
-CREATE TABLE IF NOT EXISTS sessions (
-  id            TEXT PRIMARY KEY,
-  title         TEXT,
-  created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL,
-  archived      INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS entries (
-  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-  id         TEXT NOT NULL UNIQUE,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  parent_id  TEXT REFERENCES entries(id),
-  kind       TEXT NOT NULL,
-  body       TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_entries_session ON entries(session_id, seq);
-
--- Replaces are appended, never applied in place: the transcript stays replayable.
-CREATE TABLE IF NOT EXISTS entry_edits (
-  id           TEXT PRIMARY KEY,
-  session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  target_id    TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-  replacement  TEXT,
-  created_at   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_edits_target ON entry_edits(target_id);
-
 -- Learned routines: the agent's own notes on how to do a recurring thing.
 -- A routine is either a replayable procedure (steps) or a schedule (cron) that
 -- fires a prompt. Both live here so "learning" survives a restart.
@@ -220,102 +187,6 @@ export class Store {
 
   close(): void {
     this.#db.close();
-  }
-
-  // ---- sessions -----------------------------------------------------------
-
-  createSession(id: string, title: string | null = null): void {
-    const now = new Date().toISOString();
-    this.#db
-      .prepare(
-        'INSERT OR IGNORE INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)',
-      )
-      .run(id, title, now, now);
-  }
-
-  touchSession(id: string): void {
-    this.#db
-      .prepare('UPDATE sessions SET updated_at = ? WHERE id = ?')
-      .run(new Date().toISOString(), id);
-  }
-
-  listSessions(limit = 20): Array<{ id: string; title: string | null; updatedAt: string }> {
-    const rows = this.#db
-      .prepare(
-        'SELECT id, title, updated_at FROM sessions WHERE archived = 0 ORDER BY updated_at DESC LIMIT ?',
-      )
-      .all(limit) as Array<{ id: string; title: string | null; updated_at: string }>;
-    return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at }));
-  }
-
-  // ---- transcript ---------------------------------------------------------
-
-  appendEntry(
-    sessionId: string,
-    id: string,
-    parentId: string | null,
-    kind: Entry['kind'],
-    body: unknown,
-  ): void {
-    this.createSession(sessionId);
-    this.#db
-      .prepare(
-        'INSERT INTO entries (id, session_id, parent_id, kind, body, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      .run(id, sessionId, parentId, kind, JSON.stringify(body), new Date().toISOString());
-    this.touchSession(sessionId);
-  }
-
-  /** Entries in insertion order with the latest edit applied to each target. */
-  readEntries(sessionId: string): Entry[] {
-    const rows = this.#db
-      .prepare(
-        'SELECT seq, id, parent_id, kind, body, created_at FROM entries WHERE session_id = ? ORDER BY seq',
-      )
-      .all(sessionId) as Array<Record<string, string | number>>;
-    const edits = this.#db
-      .prepare('SELECT target_id, replacement FROM entry_edits WHERE session_id = ?')
-      .all(sessionId) as Array<{ target_id: string; replacement: string | null }>;
-    // Last write wins, so replay order matters.
-    const latest = new Map<string, string | null>();
-    for (const e of edits) latest.set(e.target_id, e.replacement);
-
-    const out: Entry[] = [];
-    for (const r of rows) {
-      const id = String(r.id);
-      const edit = latest.get(id);
-      if (edit === null) continue; // edit with null replacement omits the entry
-      out.push({
-        seq: Number(r.seq),
-        id,
-        parentId: r.parent_id === null ? null : String(r.parent_id),
-        kind: String(r.kind) as Entry['kind'],
-        body: edit === undefined ? JSON.parse(String(r.body)) : JSON.parse(edit),
-        createdAt: String(r.created_at),
-      });
-    }
-    return out;
-  }
-
-  latestEntryId(sessionId: string): string | null {
-    const row = this.#db
-      .prepare('SELECT id FROM entries WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
-      .get(sessionId) as { id: string } | undefined;
-    return row?.id ?? null;
-  }
-
-  editEntry(id: string, sessionId: string, replacement: unknown | null): void {
-    this.#db
-      .prepare(
-        'INSERT INTO entry_edits (id, session_id, target_id, replacement, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run(
-        crypto.randomUUID(),
-        sessionId,
-        id,
-        replacement === null ? null : JSON.stringify(replacement),
-        new Date().toISOString(),
-      );
   }
 
   // ---- purchase intents ---------------------------------------------------
