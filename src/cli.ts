@@ -2947,19 +2947,12 @@ async function serveCommand(): Promise<number> {
     });
   };
 
-  const cmdMemory = async (inbound: Inbound): Promise<void> => {
-    const entries = memory.all(chatKey(inbound));
-    const scopes = memory.scopes();
-    await say(
-      inbound,
-      entries.length
-        ? [
-            `Recuerdo ${entries.length} cosas:`,
-            ...entries.map((e) => `- [${e.id}] ${e.text}`),
-          ].join('\n')
-        : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`,
-      { quote: true },
-    );
+  const cmdMemory = async (thread: Thread, inbound: Inbound): Promise<void> => {
+    // La lógica vive en runMemoryCommand (exportada) para que el canario corra
+    // contra un MemoryStore real. El scope es thread.key, como todo lo demás
+    // que lee memoria: con chatKey(inbound) casi siempre decía "No recuerdo
+    // nada" aunque la hubiera (auditoría, solapamientos).
+    await say(inbound, runMemoryCommand(memory, thread.key), { quote: true });
   };
 
   /**
@@ -4600,8 +4593,10 @@ async function serveCommand(): Promise<number> {
             const thread = await resolveThread(inbound);
             return cmdLearn(thread, inbound, command.args);
           }
-          case 'memory':
-            return cmdMemory(inbound);
+          case 'memory': {
+            const thread = await resolveThread(inbound);
+            return cmdMemory(thread, inbound);
+          }
           case 'deshacer':
           case 'undo':
             return say(inbound, undoLast(), { quote: true }).then(() => {});
@@ -5002,6 +4997,24 @@ export interface CronCommandDeps {
   threadKey: string;
   /** chatKey without the `#thread` suffix. */
   chatKey: string;
+}
+
+/**
+ * The whole /memory reply, free of I/O so its canary runs against a real
+ * MemoryStore without a daemon. The scope is thread.key — the same one the
+ * turn context and the memory tool use (chatKey#thread). Any other scope
+ * answers "No recuerdo nada" with a full memory, which is exactly the bug
+ * the audit flagged.
+ */
+export function runMemoryCommand(memory: MemoryStore, scope: string): string {
+  const entries = memory.all(scope);
+  const scopes = memory.scopes();
+  return entries.length
+    ? [
+        `Recuerdo ${entries.length} cosas:`,
+        ...entries.map((e) => `- [${e.id}] ${e.text}`),
+      ].join('\n')
+    : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`;
 }
 
 /**
