@@ -64,3 +64,14 @@ it('rejects invalid UTF-8 instead of silently storing replacement characters', a
     'No se pudo leer',
   );
 });
+
+it.each(['La entrada secreta private-forged', 'Se requiere private-forged'])(
+  'does not trust a stream error that imitates our validation message',
+  async (message) => {
+    const input = new PassThrough();
+    const result = readSecretStdin(input);
+    input.destroy(new Error(message));
+    await expect(result).rejects.toThrow('No se pudo leer');
+    await expect(result).rejects.not.toThrow('private-forged');
+  },
+);

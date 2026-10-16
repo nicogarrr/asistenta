@@ -2,6 +2,7 @@ import type { Readable } from 'node:stream';
 
 export const MAX_STDIN_SECRET_BYTES = 16_384;
 const TIMEOUT_MS = 30_000;
+class SecretInputError extends Error {}
 
 /** Never echo or quote the secret in diagnostics. One final line ending is removed. */
 export async function readSecretStdin(
@@ -22,7 +23,7 @@ export async function readSecretStdin(
         bytes += buffer.length;
         if (bytes > MAX_STDIN_SECRET_BYTES) {
           buffer.fill(0);
-          throw new Error('La entrada secreta supera el límite de 16 KiB.');
+          throw new SecretInputError('La entrada secreta supera el límite de 16 KiB.');
         }
         chunks.push(buffer);
       }
@@ -35,11 +36,12 @@ export async function readSecretStdin(
       }
       const value = decoded.replace(/\r?\n$/, '');
       if (!value || value.includes('\0') || value.includes('\n') || value.includes('\r'))
-        throw new Error('Se requiere un secreto no vacío de una sola línea, sin bytes nulos.');
+        throw new SecretInputError(
+          'Se requiere un secreto no vacío de una sola línea, sin bytes nulos.',
+        );
       return value;
     } catch (error) {
-      if (error instanceof Error && /^(La entrada secreta|Se requiere)/.test(error.message))
-        throw error;
+      if (error instanceof SecretInputError) throw error;
       throw new Error('No se pudo leer la entrada secreta.');
     }
   };
