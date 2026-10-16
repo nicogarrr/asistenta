@@ -165,7 +165,7 @@ export interface DaemonControl {
   /** Publish READY only after the daemon has finished startup. */
   ready(): void;
   /** Await shutdown completion before releasing OS ownership. */
-  close(): Promise<void>;
+  close(clean?: boolean): Promise<void>;
 }
 
 export async function openDaemonControl(
@@ -292,17 +292,38 @@ export async function openDaemonControl(
       renameSync(temporary, file);
       published = true;
     },
-    async close() {
+    async close(clean?: boolean) {
       if (closed) return;
       closed = true;
       for (const client of clients) client.destroy();
       await new Promise<void>((yes) => server.close(() => yes()));
       try {
         assertLock();
-        if (published && recordAt(file).instanceId === id) unlinkSync(file);
+        if (published && recordAt(file).instanceId === id) {
+          if (clean !== undefined) {
+            const proofFile = join(dir, `${id}.stopped`);
+            writeFileSync(
+              proofFile,
+              JSON.stringify({
+                instanceId: id,
+                clean,
+                proof: mac(token, 'stopped', id, String(clean)),
+              }),
+              { flag: 'wx', mode: 0o600 },
+            );
+          }
+          unlinkSync(file);
+        }
       } finally {
-        locked = false;
-        closeSync(fd);
+        if (clean !== false) {
+          locked = false;
+          closeSync(fd);
+        } else {
+          // Failed drain must not admit a replacement beside still-open resources.
+          // Keep the OS lock until process death; close the endpoint but never kill a PID.
+          const fatal = setTimeout(() => process.exit(1), 15_000);
+          fatal.unref();
+        }
       }
     },
   };
@@ -358,11 +379,84 @@ export async function requestDaemonControl(
       )
     )
       throw new Error('Confirmación de control no autenticada.');
-    const current = recordAt(join(dir, 'ready.json'));
+    const current = action === 'stop' ? r : recordAt(join(dir, 'ready.json'));
     if (current.instanceId !== r.instanceId || current.token !== r.token)
       throw new Error('La instancia cambió durante la petición.');
     return { instanceId: r.instanceId, state: ack.state as State };
   } finally {
     socket.destroy();
   }
+}
+
+/** Stop and prove both graceful completion and release of OS ownership. */
+export async function stopDaemon(
+  stateDir: string,
+  timeoutMs = 18_000,
+): Promise<{ instanceId: string }> {
+  const dir = controlDir(stateDir);
+  const original = recordAt(join(dir, 'ready.json'));
+  const ack = await requestDaemonControl(stateDir, 'stop');
+  if (ack.instanceId !== original.instanceId)
+    throw new Error('Instancia cambiada; no se confirma la parada.');
+  const deadline = Date.now() + timeoutMs;
+  const proofFile = join(dir, `${original.instanceId}.stopped`);
+  while (Date.now() < deadline) {
+    try {
+      const stat = ownedPrivate(proofFile, false);
+      if (stat.size > LIMIT) throw new Error('Prueba de cierre inválida.');
+      const fd = openSync(proofFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let proof: { instanceId: string; clean: boolean; proof: string };
+      try {
+        const actual = fstatSync(fd);
+        if (
+          actual.ino !== stat.ino ||
+          actual.dev !== stat.dev ||
+          actual.size > LIMIT ||
+          actual.uid !== process.getuid?.() ||
+          (actual.mode & 0o077) !== 0
+        )
+          throw new Error('Prueba de cierre modificada.');
+        try {
+          proof = JSON.parse(readFileSync(fd, 'utf8')) as typeof proof;
+        } catch {
+          throw new Error('Prueba de cierre ilegible.');
+        }
+      } finally {
+        closeSync(fd);
+      }
+      if (
+        proof.instanceId !== original.instanceId ||
+        proof.clean !== true ||
+        !equal(proof.proof, mac(original.token, 'stopped', original.instanceId, 'true'))
+      )
+        throw new Error('El cierre no fue limpio o no se pudo autenticar.');
+      const lock = join(dir, 'owner.lock');
+      ownedPrivate(lock, false);
+      const lockFd = openSync(lock, constants.O_RDWR | constants.O_NOFOLLOW);
+      try {
+        const acquired = spawnSync('flock', ['--exclusive', '--nonblock', '4'], {
+          stdio: ['ignore', 'ignore', 'ignore', 'ignore', lockFd],
+          timeout: 3000,
+        });
+        if (!acquired.error && acquired.status === 0) {
+          // Holding ownership here excludes a new startup while confirming no new READY.
+          try {
+            recordAt(join(dir, 'ready.json'));
+            throw new Error('Otra instancia está publicada; parada no confirmada.');
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          }
+          return { instanceId: original.instanceId };
+        }
+      } finally {
+        closeSync(lockFd);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    'Parada aceptada pero no confirmada limpia a tiempo; no se ha matado ni relanzado ningún proceso.',
+  );
 }

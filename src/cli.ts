@@ -38,6 +38,7 @@ import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { loadConfig } from './config.js';
+import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { dedupeNewFacts } from './core/history.js';
@@ -253,6 +254,8 @@ Usage:
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
+  pa stop                 Linux: cierre graceful autenticado, sin matar por PID
+  pa restart              no disponible sin verificar supervisor
   pa doctor               check the environment
   pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
 `;
@@ -321,9 +324,26 @@ export async function main(argv: string[]): Promise<number> {
     case 'evolve':
       return evolveCommand(rest);
     case 'chat':
-      return chatCommand();
+      return controlledDaemon(chatCommand);
     case 'serve':
-      return serveCommand();
+      return controlledDaemon(serveCommand);
+    case 'stop': {
+      if (rest.length) {
+        process.stderr.write('uso: pa stop\n');
+        return 2;
+      }
+      const { stopDaemon } = await import('./daemon-control.js');
+      const result = await stopDaemon(paths.state);
+      process.stdout.write(
+        `Instancia ${result.instanceId.slice(0, 12)} detenida con cierre limpio confirmado.\n`,
+      );
+      return 0;
+    }
+    case 'restart':
+      process.stderr.write(
+        'Restart no disponible: no se puede verificar si un supervisor volverá a lanzar el daemon. No se ha detenido ni arrancado ningún proceso.\n',
+      );
+      return 2;
     case 'run':
       return runCommand(rest.join(' '));
     case '--help':
@@ -889,7 +909,7 @@ function tvToolDeps(store: Store): TvToolDeps {
   };
 }
 
-async function chatCommand(): Promise<number> {
+async function chatCommand(control?: ControlStartup): Promise<number> {
   ensureDirs();
   const config = loadConfig();
 
@@ -950,16 +970,22 @@ async function chatCommand(): Promise<number> {
   );
   await factorySyncLocal();
 
+  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
+  let activeTurn: Promise<unknown> | undefined;
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
+      agent.abort('external');
+      rl.close();
+      await activeTurn?.catch(() => {});
       await screen.dispose();
       store.close();
       log.info('shutdown complete');
     },
   });
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
+  control?.attach(lifecycle);
+  control?.ready();
   rl.prompt();
 
   for await (const line of rl) {
@@ -970,7 +996,10 @@ async function chatCommand(): Promise<number> {
       continue;
     }
     try {
-      const result = await agent.run(text);
+      const pending = agent.run(text);
+      activeTurn = pending;
+      const result = await pending;
+      activeTurn = undefined;
       log.info('turn done', {
         tools: result.toolCalls,
         blocked: result.blocked,
@@ -1207,7 +1236,7 @@ export async function capturePageIfOpen(
   return Buffer.from(shot.data, 'base64');
 }
 
-async function serveCommand(): Promise<number> {
+async function serveCommand(control?: ControlStartup): Promise<number> {
   if (!applyConfiguredTimeZone() && process.env.PA_TIMEZONE?.trim()) {
     log.warn('PA_TIMEZONE is not a valid time zone: using the system one', {
       value: process.env.PA_TIMEZONE,
@@ -2037,6 +2066,7 @@ async function serveCommand(): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
+      const telegramDrain = telegram.stop();
       downloadsCtl.stop();
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
@@ -2063,6 +2093,7 @@ async function serveCommand(): Promise<number> {
       await registry.stopAll();
       await screen.dispose();
       await vigilanteDrain;
+      await telegramDrain;
       store.close();
       memoryDb.close();
       goalsDb.close();
@@ -2071,6 +2102,7 @@ async function serveCommand(): Promise<number> {
     },
   });
 
+  control?.attach(lifecycle);
   const goalStore = new GoalStore({ db: goalsDb });
   const gestorStore = new GestorStore({ db: goalsDb });
   const goalNotifier = new GoalNotifier({
@@ -4865,6 +4897,7 @@ async function serveCommand(): Promise<number> {
   // el boton simplemente no despertara a nadie hasta que se libere el puerto.
   await startTvButton();
 
+  control?.ready();
   log.info('daemon running', {
     wake: currentWake()?.isRunning() ?? false,
     wakeWord,
