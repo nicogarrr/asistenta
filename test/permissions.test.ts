@@ -56,6 +56,10 @@ describe('Gate', () => {
       'C:\\repo\\src\\audit\\trail.ts',
       'C:\\repo\\src\\permissions.ts',
       'C:\\repo\\src\\approval-text.ts',
+      // The runtime the daemon executes: dist persists the alteration too.
+      'C:\\repo\\dist\\tools\\fetch.js',
+      'C:\\repo\\dist\\permissions.js',
+      'C:\\repo\\dist\\channels\\telegram.js',
       // Evasions: mixed case, forward slashes and a `..` detour.
       'C:/repo/SRC/TOOLS/fetch.ts',
       'C:\\repo\\src\\tools\\..\\tools\\fetch.ts',
@@ -90,6 +94,8 @@ describe('Gate', () => {
       'src/channels/telegram.ts',
       'src/tools/../tools/fetch.ts',
       'src/./log.ts',
+      'dist/permissions.js',
+      './dist/tools/fetch.js',
     ];
     for (const [i, path] of guarded.entries()) {
       const r = await gate.check(`r${i}`, {

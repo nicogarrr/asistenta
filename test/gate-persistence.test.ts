@@ -212,6 +212,8 @@ describe('createDaemonGate policy', () => {
       './src/permissions.ts',
       'src/channels/telegram.ts',
       'src/tools/../tools/fetch.ts',
+      'dist/permissions.js',
+      'dist/tools/fetch.js',
     ]) {
       const write = await gate.check(MAIN, {
         tool: 'write',

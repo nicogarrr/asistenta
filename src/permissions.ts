@@ -1253,7 +1253,7 @@ const MODULE_REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
   const r = root.replace(/[\\/]+$/, '');
-  return [
+  const src = [
     `${r}\\src\\tools\\fetch.ts`,
     `${r}\\src\\channels`,
     `${r}\\src\\log.ts`,
@@ -1261,6 +1261,13 @@ export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
     `${r}\\src\\permissions.ts`,
     `${r}\\src\\approval-text.ts`,
   ];
+  // The runtime the daemon actually executes (`pa` runs dist/cli.js): dist is
+  // built from src, and a write to dist/*.js persists an altered guard across
+  // restarts exactly like a write to the source. Same vector, same wall.
+  const dist = src.map((p) =>
+    p.replace(`${r}\\src\\`, `${r}\\dist\\`).replace(/\.ts$/, '.js'),
+  );
+  return [...src, ...dist];
 }
 
 /** Constant-time compare for shared secrets, so auth checks cannot be timed. */
