@@ -133,7 +133,9 @@ export async function ensureVadModel(
     log.warn('vad: modelo presente con sha256 distinto al esperado; se redescarga', { target });
   }
   log.info('vad model download', { url: VAD_MODEL_URL, target });
-  const res = await fetchImpl(VAD_MODEL_URL);
+  // Plazo duro a la descarga: sin señal un fetch colgado dejaría el scorer
+  // esperando para siempre (y con él cada chequeo de interrupción posterior).
+  const res = await fetchImpl(VAD_MODEL_URL, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok || !res.body) {
     throw new Error(`descarga de silero_vad falló (${res.status}): ${VAD_MODEL_URL}`);
   }

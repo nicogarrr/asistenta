@@ -220,6 +220,7 @@ import {
   startVigilanteLoop,
 } from './vigilante.js';
 import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
+import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { speakPhrases, splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
@@ -4274,6 +4275,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   let conversationCount = 0;
   let lastConversationEnd = '';
   const speaker = createMciSpeaker();
+  // Confirmación por forma (Silero VAD) de los cortes: perezoso, se descarga y
+  // carga en el primer candidato ruidoso, y se comparte entre sesiones. Con el
+  // corte apagado nunca llega a usarse.
+  const bargeVadScorer = createBargeVadScorer({ modelDir: paths.models });
 
   /**
    * Read an answer out loud on this machine's speakers, phrase by phrase, interruptible.
@@ -4360,6 +4365,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const levelAtOpen = bargeLevel;
     const created = new ConversationSession({
       bargeIn: levelAtOpen,
+      bargeVad: levelAtOpen === 'off' ? undefined : bargeVadScorer,
       transcriber: (samples) => defaultTranscriber(samples),
       onUtterance: async (heard) => {
         const inbound: Inbound = {
@@ -4578,7 +4584,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} uso estimado, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas estimadas, ${st.bargeUnclassified} sin clasificar${st.bargePending > 0 ? `, ${st.bargePending} pendiente de clasificar` : ''}), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
+            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} uso estimado, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas estimadas, ${st.bargeUnclassified} sin clasificar${st.bargePending > 0 ? `, ${st.bargePending} pendiente de clasificar` : ''}${st.bargeVadRejected > 0 ? `, ${st.bargeVadRejected} ruidos rechazados por el detector` : ''}), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
             : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
           (currentWake()?.isRunning()
             ? ''

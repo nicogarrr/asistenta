@@ -49,6 +49,27 @@ export interface ConversationOptions {
   onClose: (reason: CloseReason, detail?: string) => void;
   /** Interrupt the agent while it talks. Default 'off': enabling it is explicit. */
   bargeIn?: BargeInLevel;
+  /**
+   * Speech confirmation for the barge trigger (a Silero VAD scorer, barge-vad.ts).
+   * With it, a loud-sustained candidate no longer cuts the sound at once: the
+   * buffered audio is scored by shape first and only speech interrupts. Sustained
+   * noise that passes the energy gate (vacuum, dishes, TV) no longer silences the
+   * agent for nothing. On scorer error the trigger falls back to the energy
+   * behaviour; 3 consecutive scorer errors drop the scorer for the session.
+   */
+  bargeVad?: (samples: Float32Array) => Promise<number>;
+  /** Speech probability that confirms an interruption. Default 0.5. */
+  bargeVadProb?: number;
+  /** Cooldown after a rejected candidate before another check can start. Default 1000 ms. */
+  bargeVadRecheckMs?: number;
+  /**
+   * Deadline for one VAD check (model load included). Without it a hung scorer
+   * or a stalled model download would hold the check slot forever and every
+   * later interruption - of this and of every later playback - would be
+   * silently ignored. On expiry the check counts as a scorer error: the slot
+   * is freed and the candidate falls back to the energy behaviour. Default 1500 ms.
+   */
+  bargeVadTimeoutMs?: number;
 }
 
 export type ConversationState =
@@ -119,6 +140,11 @@ const CLOSERS = new Set([
   'ya esta gracias',
   'para',
   'para ya',
+  'espera',
+  'espera un momento',
+  'un momento',
+  'calla',
+  'callate',
   'cierra la conversacion',
   'fin de la conversacion',
   'terminar conversacion',
@@ -159,7 +185,19 @@ function rms(samples: Float32Array): number {
 const msToSamples = (ms: number): number => Math.round((ms * SAMPLE_RATE) / 1000);
 
 export class ConversationSession {
-  #o: Required<Omit<ConversationOptions, 'transcriber' | 'onUtterance' | 'onClose' | 'bargeIn'>>;
+  #o: Required<
+    Omit<
+      ConversationOptions,
+      | 'transcriber'
+      | 'onUtterance'
+      | 'onClose'
+      | 'bargeIn'
+      | 'bargeVad'
+      | 'bargeVadProb'
+      | 'bargeVadRecheckMs'
+      | 'bargeVadTimeoutMs'
+    >
+  >;
   #transcriber: ConversationOptions['transcriber'];
   #onUtterance: ConversationOptions['onUtterance'];
   #onClose: ConversationOptions['onClose'];
@@ -211,6 +249,28 @@ export class ConversationSession {
   #speakBufSamples = 0;
   /** True until the transcriber's own promise settles, even after our timeout gave up on it. */
   #transcribing = false;
+  /** VAD confirmation of the barge trigger; undefined falls back to pure energy. */
+  #bargeVad: ConversationOptions['bargeVad'];
+  readonly #bargeVadProb: number;
+  readonly #bargeVadRecheckMs: number;
+  readonly #bargeVadTimeoutMs: number;
+  /**
+   * Playback counter: bumps when a playback starts and when it ends or is cut,
+   * so anything asynchronous spawned by one playback (a VAD check) can never
+   * act on the next one. #generation only covers session close.
+   */
+  #speakSeq = 0;
+  /** Playback that owns the in-flight VAD check; null when the slot is free. */
+  #vadCheckSeq: number | null = null;
+  /** Monotonic id per check: a timed-out check's late answer is dead too. */
+  #vadCheckId = 0;
+  #vadErrors = 0;
+  /** Audio clock while speaking: samples fed since the session began. */
+  #speakClockSamples = 0;
+  /** A rejected candidate cannot re-check until the clock passes this. */
+  #vadRearmAt = 0;
+  /** Candidates the VAD rejected as not-speech: interruptions that never happened. */
+  #bargeVadRejected = 0;
 
   constructor(opts: ConversationOptions) {
     this.#o = {
@@ -226,6 +286,10 @@ export class ConversationSession {
       maxFailures: opts.maxFailures ?? 3,
     };
     this.#bargeIn = opts.bargeIn ?? 'off';
+    this.#bargeVad = opts.bargeVad;
+    this.#bargeVadProb = opts.bargeVadProb ?? 0.5;
+    this.#bargeVadRecheckMs = Math.max(0, opts.bargeVadRecheckMs ?? 1000);
+    this.#bargeVadTimeoutMs = Math.max(1, opts.bargeVadTimeoutMs ?? 1500);
     this.#transcriber = opts.transcriber;
     this.#onUtterance = opts.onUtterance;
     this.#onClose = opts.onClose;
@@ -247,6 +311,8 @@ export class ConversationSession {
     bargeUnclassified: number;
     /** Sembrada con transcript aun en vuelo: ni clasificada ni desconocida todavia. */
     bargePending: number;
+    /** Candidatos ruidosos que el VAD rechazó: cortes evitados, no falsos disparos. */
+    bargeVadRejected: number;
   } {
     return {
       bargeIns: this.#bargeIns,
@@ -254,6 +320,7 @@ export class ConversationSession {
       bargeFalseNoise: this.#bargeFalseNoise,
       bargeFalseEcho: this.#bargeFalseEcho,
       bargeUnclassified: this.#bargeUnclassified,
+      bargeVadRejected: this.#bargeVadRejected,
       bargePending:
         this.#bargeIns -
         this.#bargeTrue -
@@ -285,6 +352,8 @@ export class ConversationSession {
     this.#dropSeededUnclassified();
     this.#state = 'cerrada';
     this.#generation++;
+    this.#speakSeq++;
+    this.#vadCheckSeq = null;
     this.#speech = [];
     this.#preRoll = [];
     try {
@@ -515,6 +584,7 @@ export class ConversationSession {
     if (fromListening) this.#resetUtterance();
     const returnTo: ConversationState = fromListening ? 'escuchando' : 'respondiendo';
     const turn = this.#turnSeq;
+    this.#speakSeq++;
     this.#state = 'hablando';
     this.#speakStop = opts.stop ?? null;
     this.#spokenWords = new Set(
@@ -538,6 +608,10 @@ export class ConversationSession {
     const interrupted = this.#speakInterrupted;
     this.#speakStop = null;
     this.#speakInterrupted = false;
+    // The playback is over: its VAD check, if any is still in flight, is dead
+    // and must not touch the next playback's state, counters or interruptions.
+    this.#speakSeq++;
+    this.#vadCheckSeq = null;
     if (generation !== this.#generation) return interrupted ? 'interrumpido' : 'fin';
     if (interrupted) return 'interrumpido'; // the session already went back to listening
     if (this.#state === 'hablando' && turn === this.#turnSeq) {
@@ -565,6 +639,7 @@ export class ConversationSession {
   #feedWhileSpeaking(pcm: Float32Array): void {
     if (this.#bargeIn === 'off' || !this.#speakStop || pcm.length === 0) return;
     const level = BARGE_IN[this.#bargeIn];
+    this.#speakClockSamples += pcm.length;
     const level_rms = rms(pcm);
     // Keep a short tail of what was heard: it seeds the interrupting utterance.
     this.#speakBuf.push(pcm);
@@ -600,9 +675,108 @@ export class ConversationSession {
     else this.#loudSamples = 0;
     if (this.#loudSamples < msToSamples(level.sustainMs)) return;
 
-    // Interruption: stop the sound NOW and make what was heard the start of an utterance.
+    // Candidate over the energy bar. With a VAD scorer the sound is NOT cut yet:
+    // the buffered audio is scored by shape first, and only speech interrupts.
+    // While a check runs the buffer keeps rolling, so a confirmed cut still seeds
+    // the utterance from its real beginning.
+    if (this.#bargeVad) {
+      if (this.#vadCheckSeq !== null) return;
+      if (this.#speakClockSamples < this.#vadRearmAt) {
+        // Cooldown after a rejection: a continuous noise gets one check per
+        // recheck window, and only after a fresh full sustain.
+        this.#loudSamples = 0;
+        return;
+      }
+      this.#startVadCheck();
+      return;
+    }
+
+    this.#interruptWhileSpeaking();
+  }
+
+  /**
+   * Score the current candidate with the VAD. Confirmed speech interrupts exactly
+   * like the energy trigger; rejected audio rearms after a cooldown and the agent
+   * is never cut. A scorer error - or a check that passes its deadline - falls
+   * back to the energy behaviour (the user explicitly enabled interruptions);
+   * three consecutive errors drop the scorer for the session. A check that
+   * lands after its playback ended or was cut is dropped whole, counters
+   * included: the tail after playback is already heard through the normal
+   * listening path.
+   */
+  #startVadCheck(): void {
+    const vad = this.#bargeVad;
+    if (!vad) return;
+    const seq = this.#speakSeq;
+    const checkId = ++this.#vadCheckId;
+    this.#vadCheckSeq = seq;
+    let settled = false;
+    /**
+     * Every late answer - resolution, rejection, error, timeout - dies here,
+     * BEFORE touching vadErrors, lastError, rearm, the slot or the cut
+     * counters: a check from playback A must never act on playback B (auditor
+     * canary: A triggers, A ends, B speaks, A's late 0.99 used to stop B).
+     */
+    const live = (): boolean => !settled && seq === this.#speakSeq && this.#vadCheckId === checkId;
+    const onProb = (prob: number): void => {
+      if (!live()) return;
+      settled = true;
+      clearTimeout(timer);
+      this.#vadCheckSeq = null;
+      if (this.#state !== 'hablando') return;
+      if (prob >= this.#bargeVadProb) {
+        this.#vadErrors = 0;
+        this.#interruptWhileSpeaking();
+        return;
+      }
+      this.#vadErrors = 0;
+      this.#bargeVadRejected++;
+      this.#loudSamples = 0;
+      this.#vadRearmAt = this.#speakClockSamples + msToSamples(this.#bargeVadRecheckMs);
+    };
+    const onErr = (why: string): void => {
+      if (!live()) return;
+      settled = true;
+      clearTimeout(timer);
+      this.#vadCheckSeq = null;
+      this.#vadErrors++;
+      this.#lastError = `el detector de voz falló (${why}); interrumpo como antes`;
+      if (this.#vadErrors >= 3) {
+        this.#bargeVad = undefined;
+        this.#lastError =
+          'el detector de voz falló 3 veces seguidas; cortes por energía el resto de la sesión';
+      }
+      // Error fallback: the user explicitly enabled interruptions, so a
+      // candidate we cannot score still cuts, exactly like the energy trigger.
+      if (this.#state !== 'hablando') return;
+      this.#interruptWhileSpeaking();
+    };
+    const timer = setTimeout(
+      () => onErr(`no respondió en ${this.#bargeVadTimeoutMs}ms`),
+      this.#bargeVadTimeoutMs,
+    );
+    void vad(this.#joinSpeakBuf()).then(
+      (prob) => onProb(prob),
+      (err) => onErr(err instanceof Error ? err.message : String(err)),
+    );
+  }
+
+  #joinSpeakBuf(): Float32Array {
+    const joined = new Float32Array(this.#speakBufSamples);
+    let at = 0;
+    for (const part of this.#speakBuf) {
+      joined.set(part, at);
+      at += part.length;
+    }
+    return joined;
+  }
+
+  /** Interruption: stop the sound NOW and make what was heard the start of an utterance. */
+  #interruptWhileSpeaking(): void {
     this.#speakInterrupted = true;
     this.#bargeIns++;
+    this.#speakSeq++;
+    this.#vadCheckSeq = null;
     this.#turnSeq++;
     const stop = this.#speakStop;
     this.#speakStop = null;
