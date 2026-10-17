@@ -99,18 +99,27 @@ def _run_session(host, port, opener: bytes, payload: bytes, timeout: float) -> b
     """
     if not payload.endswith(b"\n"):
         payload += b"\n"
-    sock = socket.create_connection((host, port), timeout=timeout)
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+    except OSError:
+        return b""  # tele apagada o inalcanzable: fallo de transporte visible
     try:
         sock.settimeout(timeout)
         out = b""
         try:
-            out = _drain(sock, QUIET)  # banner ("~ #")
+            # El banner puede tardar mas que QUIET: el primer byte se espera
+            # con el timeout completo y solo entonces drena por silencio.
+            status, first = _recv_filtered(sock, timeout)
+            if status == "data":
+                out = first + _drain(sock, QUIET)  # banner ("~ #")
             if out:
                 # stty -echo: sin eco, lo enviado no vuelve mezclado con la salida.
+                sock.settimeout(timeout)
                 sock.sendall(b"stty -echo 2>/dev/null\n")
                 out += _drain(sock, QUIET)
                 sock.sendall(opener + b"\n")
                 out += _drain(sock, QUIET)  # shell interno en reposo: listo para el script
+                sock.settimeout(timeout)  # el drenaje lo dejo en QUIET; el payload puede ser grande
                 sock.sendall(payload)
                 sock.sendall(b"\x04")  # EOF de stdin del sh interno -> trap EXIT
                 deadline = time.monotonic() + timeout
