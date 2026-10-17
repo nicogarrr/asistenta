@@ -1,0 +1,13 @@
+# Parada local Windows con DACL
+
+`pa stop` no puede usar el PID como autorización ni matar un proceso de Windows. El daemon anterior a este cambio no publica control Windows: actualizar solo el cliente no permite detenerlo. Hace falta reiniciar de forma controlada la versión antigua y arrancar esta versión durante una ventana acordada; este PR no lo hace en el PC de Nico.
+
+La versión nueva envuelve `chat` y `serve` antes de abrir recursos. Un auxiliar PowerShell nativo mantiene `owner.lock` abierto con `FileShare.None` durante toda la vida del daemon. El lock es del kernel, no un PID ni un archivo que se considere ocupado por existir. Si muere el auxiliar inesperadamente, el daemon sale con error para no seguir trabajando sin propiedad. El auxiliar termina al cerrarse stdin, también al morir el padre.
+
+El estado y `control-win` deben pertenecer al SID actual, no tener reparse points en su ruta, ni entradas Allow para otros SID excepto SYSTEM y Administrators. Un directorio nuevo se crea con DACL explícita, protegida y del usuario actual. Un directorio existente inseguro se rechaza, no se repara silenciosamente. PowerShell usa ruta absoluta, `-NoProfile`, script fijo y parámetros por variables de entorno, no interpolación de comandos.
+
+La petición es un buzón local firmado con HMAC, nonce e instanceId. No hay puerto TCP/HTTP ni señal al PID. El daemon acepta solo una petición auténtica por instancia y llama al mismo `Lifecycle.stop` que drena recursos. El cliente confirma únicamente una prueba firmada de cierre limpio para su nonce y la adquisición del lock del kernel sin otra instancia READY, comprobada mientras mantiene ese lock. Un drain fallido, prueba falsa, DACL ambigua o ausencia de metadata no implica éxito. Restart sigue rechazado.
+
+Los ficheros de control contienen un token privado: no copiarlos ni publicarlos. Las pruebas usan solo estado sintético. La identidad y DACL actuales se validan de nuevo al leer; Linux conserva su control original. El cierre real de micrófono, navegador y sesiones en el PC requiere una ventana de prueba posterior, no queda demostrado por CI.
+
+Evidencia local Linux: typecheck/build y17tests de control/atomicidad verdes;5tests Windows nativos definidos y añadidos al job Windows (pendientes de ejecutarse en CI). Esos tests cubren CLI real con Lifecycle sintético, exclusión de propietario, petición falsa, drain fallido, DACL abierta, junction y ausencia de fallback por PID. No se ha usado sesión ni dispositivo de Nico.

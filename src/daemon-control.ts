@@ -172,6 +172,10 @@ export async function openDaemonControl(
   stateDir: string,
   onStop: () => void,
 ): Promise<DaemonControl> {
+  if (process.platform === 'win32') {
+    const { openWindowsDaemonControl } = await import('./windows-daemon-control.js');
+    return openWindowsDaemonControl(stateDir, onStop);
+  }
   const dir = controlDir(stateDir);
   const lock = join(dir, 'owner.lock');
   let locked = false;
@@ -395,6 +399,10 @@ export async function stopDaemon(
   stateDir: string,
   timeoutMs = 18_000,
 ): Promise<{ instanceId: string }> {
+  if (process.platform === 'win32') {
+    const { stopWindowsDaemon } = await import('./windows-daemon-control.js');
+    return stopWindowsDaemon(stateDir, Math.max(timeoutMs, 30_000));
+  }
   const dir = controlDir(stateDir);
   const original = recordAt(join(dir, 'ready.json'));
   const ack = await requestDaemonControl(stateDir, 'stop');

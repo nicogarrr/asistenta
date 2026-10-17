@@ -13,13 +13,13 @@ export interface ControlStartup {
 export async function controlledDaemon(
   run: (control?: ControlStartup) => Promise<number>,
 ): Promise<number> {
-  if (process.platform !== 'linux') return run();
-  if (desktopEnabled())
+  if (process.platform !== 'linux' && process.platform !== 'win32') return run();
+  if (process.platform === 'linux' && desktopEnabled())
     throw new Error(
       'El control Linux requiere modo servidor (PA_DESKTOP=off); el cierre del micrófono Windows todavía no se puede verificar.',
     );
   // Newly created state is private. Existing open permissions fail closed, not silently changed.
-  mkdirSync(paths.state, { mode: 0o700, recursive: true });
+  if (process.platform === 'linux') mkdirSync(paths.state, { mode: 0o700, recursive: true });
   let lifecycle: Lifecycle | undefined;
   const control = await openDaemonControl(paths.state, () => lifecycle?.stop('local-control'));
   let attached = false;
