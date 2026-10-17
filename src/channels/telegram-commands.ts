@@ -117,6 +117,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Dejar de vigilar una página',
   },
   {
+    command: 'precio',
+    description: 'Histórico de precio de una página vigilada',
+  },
+  {
     command: 'voice',
     description: 'Activar o desactivar respuestas habladas',
   },
