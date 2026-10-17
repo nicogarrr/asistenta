@@ -314,6 +314,34 @@ describe('WebRouter: puerta SSRF centralizada en routeFetch', () => {
   });
 });
 
+describe('WebRouter: la metrica registra lo ENTREGADO, no el original', () => {
+  it('una lectura de 81528 chars truncada a 20k registra 20028 chars y sus tokens', async () => {
+    const metricsPath = join(root, 'entregado.jsonl');
+    const backend = createTinyfishBackend({
+      apiKey: 'clave-de-prueba',
+      validateUrl: async () => true,
+      httpPost: async () => ({
+        status: 200,
+        text: async () =>
+          JSON.stringify({ results: [{ url: 'https://x.es', text: 'a'.repeat(81528) }] }),
+      }),
+    });
+    const router = new WebRouter({
+      backends: [backend],
+      metricsPath,
+      validateFetchUrl: async () => true,
+    });
+    const r = await router.routeFetch('https://x.es');
+    // El backend trunca a 20k + marcador: eso es lo que lee el modelo.
+    expect(r.result.chars).toBe(81528); // original, declarado por el backend
+    expect(r.result.text).toHaveLength(20028);
+    const lines = await readMetrics(metricsPath);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.chars).toBe(20028);
+    expect(lines[0]?.estTokens).toBe(Math.ceil(20028 / 4));
+  });
+});
+
 describe('backend ddg: parser del HTML de duckduckgo', () => {
   const html = `
     <div class="result results_links">
@@ -393,6 +421,20 @@ describe('tool web (integracion con backends falsos)', () => {
     expect(body).toContain('search via falso');
     expect(body).toContain('100% ok');
     expect(body).toContain('Coste declarado total: 0 €');
+  });
+
+  it('el copy nombra el tope configurado, no un €0 fijo', async () => {
+    const tool = createWebTool(
+      { webMaxCostEur: 0.25 },
+      {
+        buildBackends: async () => [fakeBackend({ id: 'falso' })],
+        metricsPath: join(root, 'tool-tope.jsonl'),
+      },
+    );
+    const res = await tool.execute('1', { action: 'fetch', url: 'https://www.ejemplo.es' });
+    const body = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+    expect(body).toContain('tope 0.25 €');
+    expect(body).not.toContain('tope €0');
   });
 });
 

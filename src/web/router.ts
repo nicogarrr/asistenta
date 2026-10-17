@@ -56,8 +56,9 @@ export interface WebMetric {
   backend: string;
   ok: boolean;
   latencyMs: number;
+  /** Chars ENTREGADOS al modelo (post-truncado), no el tamano original de la pagina. */
   chars: number;
-  /** Estimacion tokens ~= chars/4 (regla comun para texto ES/EN). */
+  /** Estimacion tokens ~= chars entregados /4 (regla comun para texto ES/EN). */
   estTokens: number;
   costEur: number;
   host?: string;
@@ -211,6 +212,9 @@ export class WebRouter {
         if (result.chars === 0) {
           throw new Error('contenido vacio');
         }
+        // Medimos lo ENTREGADO (text post-truncado), no el original: una
+        // pagina de 81528 chars entrega 20028 y eso es lo que cuesta leer.
+        const deliveredChars = result.text.length;
         const latencyMs = Date.now() - started;
         attempts.push({ backend: backend.id, ok: true, latencyMs });
         await this.record({
@@ -219,8 +223,8 @@ export class WebRouter {
           backend: backend.id,
           ok: true,
           latencyMs,
-          chars: result.chars,
-          estTokens: Math.ceil(result.chars / 4),
+          chars: deliveredChars,
+          estTokens: Math.ceil(deliveredChars / 4),
           costEur: backend.costPerCallEur,
           host: opts.host,
         });

@@ -15,7 +15,7 @@ import { isFetchableResolved } from './fetch.js';
 /**
  * Tool `web`: busqueda y lectura web enrutadas (idea de treg, hecha en casa).
  *
- * El enrutador elige entre backends gratuitos con fallback automatico, tope €0
+ * El enrutador elige entre backends gratuitos con fallback automatico, tope de coste (0 € por defecto)
  * (si no hay gratis, falla en claro y NUNCA cobra) y medida por peticion en
  * <state>/log/web-metrics.jsonl. La puerta SSRF es la misma que la tool fetch.
  *
@@ -94,7 +94,7 @@ export function createWebTool(
         );
         return {
           ...text(
-            `Busqueda: ${query} (via ${routed.via}, tope €0)\n\n<web_results query="${query.replace(/"/g, "'")}" backend="${routed.via}">\n${lines.join('\n')}\n</web_results>`,
+            `Busqueda: ${query} (via ${routed.via}, tope ${config.webMaxCostEur} €)\n\n<web_results query="${query.replace(/"/g, "'")}" backend="${routed.via}">\n${lines.join('\n')}\n</web_results>`,
           ),
           details: {
             via: routed.via,
@@ -121,7 +121,7 @@ export function createWebTool(
         log.info('web fetch', { via: routed.via, host: logHost(url), chars: routed.result.chars });
         return {
           ...text(
-            `Leido ${url} (via ${routed.via}, tope €0)\n\n<fetched_content source="${url}" backend="${routed.via}">\n${routed.result.text}\n</fetched_content>`,
+            `Leido ${url} (via ${routed.via}, tope ${config.webMaxCostEur} €)\n\n<fetched_content source="${url}" backend="${routed.via}">\n${routed.result.text}\n</fetched_content>`,
           ),
           details: {
             url,
