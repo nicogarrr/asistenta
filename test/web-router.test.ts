@@ -1,4 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -293,6 +295,42 @@ describe('backend tinyfish: la clave no sigue redirects (canario cross-origin)',
       backend.fetch?.('http://169.254.169.254/latest/meta-data', { maxChars: 100 }),
     ).rejects.toThrow(/http\(s\) publicas/);
     expect(llamadas).toBe(0);
+  });
+});
+
+describe('backend tinyfish: cableado por defecto contra servidor local', () => {
+  // Este canario NO inyecta httpPost: ejerce defaultPost, que fue el bug real
+  // detectado por el benchmark (fetch salia como GET con body y la API lo
+  // rechazaba: "Request with GET/HEAD method cannot have body").
+  it('fetch sale como POST con body JSON y ttl:0', async () => {
+    const seen: { method?: string; body: string } = { body: '' };
+    const server = createServer((req, res) => {
+      seen.method = req.method;
+      req.on('data', (chunk) => {
+        seen.body += chunk;
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ results: [{ url: 'https://x.es', text: 'contenido real' }] }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const backend = createTinyfishBackend({
+        apiKey: 'clave-sintetica-canario',
+        fetchUrl: `http://127.0.0.1:${port}/`,
+        // Loopback a proposito: el canario necesita un servidor local; la
+        // puerta SSRF real sigue probada en su propio test.
+        validateUrl: async () => true,
+      });
+      const r = await backend.fetch?.('https://x.es', { maxChars: 100 });
+      expect(seen.method).toBe('POST');
+      expect(JSON.parse(seen.body)).toMatchObject({ ttl: 0 });
+      expect(r?.text).toContain('contenido real');
+    } finally {
+      server.close();
+    }
   });
 });
 
