@@ -3114,7 +3114,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!parsed || !rawUrl) {
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
+        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. Si reconfiguras el mismo enlace, objetivo= y baja= reemplazan ambos ajustes anteriores: repite los dos si quieres conservarlos. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
         { quote: true },
       ));
     }
