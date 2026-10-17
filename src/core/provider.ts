@@ -5,6 +5,7 @@ import { createProvider } from '@earendil-works/pi-ai/models';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
+import { createGeminiSignatureFetch } from './gemini-signature.js';
 import { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } from './opencode-local.js';
 
 /**
@@ -145,8 +146,17 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   const withGoHeaders = (m: Model<string>, sessionId?: string): Model<string> =>
     go ? ({ ...m, headers: { ...m.headers, ...goHeaders(sessionId) } } as Model<string>) : m;
   const modelFor = (sessionId?: string): Model<string> => withGoHeaders(model, sessionId);
+  // Gemini 3.x: devolver extra_content.google.thought_signature de cada tool
+  // call (si no, HTTP 400 tras la primera herramienta). Solo endpoints Google.
+  const signatureFetch = isGoogleEndpoint(config.baseUrl)
+    ? createGeminiSignatureFetch()
+    : undefined;
   const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
-    models.streamSimple(withGoHeaders(m, options?.sessionId), context, options);
+    models.streamSimple(
+      withGoHeaders(m, options?.sessionId),
+      context,
+      signatureFetch && !options?.fetch ? { ...options, fetch: signatureFetch } : options,
+    );
   const fallback = config.fallbackModel
     ? models.getModel(config.provider, config.fallbackModel)
     : undefined;
