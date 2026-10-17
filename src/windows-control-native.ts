@@ -34,6 +34,12 @@ function PrivateDir([string]$p) {
  (New-Object IO.DirectoryInfo($p)).Create($acl)
  CheckPath $p $true
 }
+function PrivateFile([string]$p) {
+ $security=New-Object Security.AccessControl.FileSecurity
+ $security.SetOwner($sid);$security.SetAccessRuleProtection($true,$false)
+ $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')))
+ return New-Object IO.FileStream($p,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::None,$security)
+}
 try {
  $state=$env:PA_CONTROL_STATE
  if($env:PA_CONTROL_MODE -eq 'init'){PrivateDir $state;PrivateDir (Join-Path $state 'control-win');exit 0}
@@ -42,9 +48,10 @@ try {
  if($env:PA_CONTROL_MODE -eq 'check') {
   if($env:PA_CONTROL_LEAF){$leaf=Join-Path $dir $env:PA_CONTROL_LEAF;if(-not(Test-Path -LiteralPath $leaf)){exit 4};CheckPath $leaf $false};exit 0
  }
+ if($env:PA_CONTROL_MODE -eq 'empty'){$p=Join-Path $dir $env:PA_CONTROL_LEAF;$f=PrivateFile $p;$f.Dispose();CheckPath $p $false;exit 0}
  $lock=Join-Path $dir 'owner.lock'
  if($env:PA_CONTROL_MODE -eq 'hold' -and (Test-Path -LiteralPath $lock)){CheckPath $lock $false}
- try{$handle=[IO.File]::Open($lock,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}catch [IO.IOException]{[Console]::Out.WriteLine('BUSY');exit 3}
+ try{if(Test-Path -LiteralPath $lock){$handle=[IO.File]::Open($lock,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}else{$handle=PrivateFile $lock}}catch [IO.IOException]{[Console]::Out.WriteLine('BUSY');exit 3}
  if($env:PA_CONTROL_MODE -in @('probe','confirm')){if($env:PA_CONTROL_MODE -eq 'confirm' -and (Test-Path -LiteralPath (Join-Path $dir 'ready.json'))){$handle.Dispose();throw 'another ready'};$handle.Dispose();CheckPath $lock $false;[Console]::Out.WriteLine('FREE');exit 0}
  [Console]::Out.WriteLine('LOCKED');[Console]::Out.Flush()
  while($null -ne [Console]::In.ReadLine()){}
@@ -78,11 +85,13 @@ const executable = () =>
   );
 export function windowsNative(
   state: string,
-  mode: 'init' | 'check' | 'probe' | 'confirm',
+  mode: 'init' | 'check' | 'probe' | 'confirm' | 'empty',
   leaf = '',
 ): 'free' | 'busy' {
   if (leaf && !/^(ready\.json|request\.json|[a-f0-9]{64}\.(stopped|tmp))$/.test(leaf))
     throw new Error('Archivo de control inválido.');
+  if (mode === 'empty' && !/^[a-f0-9]{64}\.tmp$/.test(leaf))
+    throw new Error('Temporal de control inválido.');
   const result = spawnSync(executable(), args(), options(state, mode, leaf));
   if (
     (mode === 'probe' || mode === 'confirm') &&

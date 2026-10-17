@@ -92,7 +92,7 @@ it('never confirms a failed drainer as clean', async () => {
 it('rejects broad read DACL and a junction without stopping a PID or repairing ACL', async () => {
   const dir = state();
   windowsNative(dir, 'init');
-  const script = `$p=$env:PA_TEST_DIR;$a=Get-Acl -LiteralPath $p;$s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0');$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','Allow')));Set-Acl -LiteralPath $p -AclObject $a`;
+  const script = `Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop;$p=$env:PA_TEST_DIR;$a=Get-Acl -LiteralPath $p;$s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0');$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','Allow')));Set-Acl -LiteralPath $p -AclObject $a`;
   const result = spawnSync(
     'powershell.exe',
     [
@@ -121,7 +121,7 @@ it('absent signed metadata never falls back to a PID signal', async () => {
 it('rejects Everyone inherit-only on control-win before creating any ready token', async () => {
   const dir = state();
   windowsNative(dir, 'init');
-  const script = `$p=$env:PA_TEST_DIR;$a=Get-Acl -LiteralPath $p;$s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0');$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','ContainerInherit,ObjectInherit','InheritOnly','Allow')));Set-Acl -LiteralPath $p -AclObject $a`;
+  const script = `Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop;$p=$env:PA_TEST_DIR;$a=Get-Acl -LiteralPath $p;$s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0');$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','ContainerInherit,ObjectInherit','InheritOnly','Allow')));Set-Acl -LiteralPath $p -AclObject $a`;
   const result = spawnSync(
     'powershell.exe',
     [

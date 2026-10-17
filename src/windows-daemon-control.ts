@@ -72,7 +72,7 @@ function publish(state: string, leaf: string, value: unknown) {
   const temporaryLeaf = `${nonce()}.tmp`;
   const temporary = join(dir(state), temporaryLeaf);
   // Create EMPTY first, then validate the inherited native DACL before writing a token.
-  writeFileSync(temporary, '', { flag: 'wx', mode: 0o600 });
+  windowsNative(state, 'empty', temporaryLeaf);
   windowsNative(state, 'check', temporaryLeaf);
   writeFileSync(temporary, JSON.stringify(value), { flag: 'r+' });
   windowsNative(state, 'check', temporaryLeaf);
