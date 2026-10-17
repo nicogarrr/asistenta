@@ -1,8 +1,12 @@
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
-import { REPO_DIR } from './paths.js';
+import { fileURLToPath } from 'node:url';
 import { unlock, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
+
+export function autostartRepo(moduleUrl: string = import.meta.url): string {
+  return fileURLToPath(new URL('..', moduleUrl));
+}
 
 export async function autostartCommand(args: string[]): Promise<number> {
   if (process.platform !== 'win32') {
@@ -26,17 +30,18 @@ export async function autostartCommand(args: string[]): Promise<number> {
     'v1.0',
     'powershell.exe',
   );
+  const repo = autostartRepo();
   const flags = [
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy',
     'Bypass',
     '-File',
-    join(REPO_DIR, 'deploy', 'windows', 'install-all.ps1'),
+    join(repo, 'deploy', 'windows', 'install-all.ps1'),
     '-Action',
     action,
     '-RepoDir',
-    REPO_DIR,
+    repo,
     '-NodeExe',
     process.execPath,
   ];

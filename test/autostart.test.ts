@@ -1,5 +1,8 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { notifyAutostart, SUPERVISOR_MESSAGES } from '../src/autostart.js';
+import { autostartRepo, notifyAutostart, SUPERVISOR_MESSAGES } from '../src/autostart.js';
 
 describe('supervisor Telegram notices use only fixed, allowlisted owner DM', () => {
   function deps(values: Record<string, string | undefined>) {
@@ -64,4 +67,14 @@ describe('OpenCode health contract, no inference', () => {
     fetcher.mockResolvedValue(new Response('{"healthy":true,"version":"synthetic"}'));
     expect(await localLlmHealthy(fetcher)).toBe(true);
   });
+});
+
+it('CLI root decodes file URL spaces, apostrophes, percent and unicode on the native platform', () => {
+  const repo = join(tmpdir(), "repo %20 apostrophe's & ñ");
+  expect(autostartRepo(pathToFileURL(join(repo, 'dist', 'autostart.js')).href)).toBe(
+    repo + requireSeparator(),
+  );
+  function requireSeparator() {
+    return process.platform === 'win32' ? '\\' : '/';
+  }
 });
