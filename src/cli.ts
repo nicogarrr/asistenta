@@ -228,6 +228,7 @@ import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
+import { compareProduct, describeCompare } from './watch/compare.js';
 import {
   describeChange,
   describeWatch,
@@ -3113,7 +3114,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!parsed || !rawUrl) {
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
+        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. Si reconfiguras el mismo enlace, objetivo= y baja= reemplazan ambos ajustes anteriores: repite los dos si quieres conservarlos. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
         { quote: true },
       ));
     }
@@ -3172,6 +3173,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
     }
     await say(inbound, describeWatch(w, pageWatches.summary(w.id)), { quote: true });
+  };
+
+  /**
+   * /compara <enlace>: el producto de esa ficha en las 7 tiendas, con precio de ficha
+   * verificado (consenso) y emparejamiento declarado (EAN/modelo/título probable).
+   */
+  const cmdCompara = async (inbound: Inbound, args: string): Promise<void> => {
+    const url = args.trim().split(/\s+/)[0] ?? '';
+    if (!url) {
+      return void (await say(
+        inbound,
+        'Uso: /compara <enlace de una ficha>. Busco ese mismo producto en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
+        { quote: true },
+      ));
+    }
+    if (!(await isFetchableResolved(url))) {
+      return void (await say(inbound, 'Solo puedo comparar enlaces públicos http(s).', {
+        quote: true,
+      }));
+    }
+    await say(inbound, 'Voy a compararlo en las 7 tiendas; tardo unos segundos por tienda.', {
+      quote: true,
+    });
+    try {
+      const report = await compareProduct(url, {
+        fetchHtml: fetchPageHtml,
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      });
+      await say(inbound, describeCompare(report), { quote: true });
+    } catch (err) {
+      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+    }
   };
 
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
@@ -4881,6 +4914,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdDejarDeVigilar(inbound, command.args);
               case 'precio':
                 return cmdPrecio(inbound, command.args);
+              case 'compara':
+                return cmdCompara(inbound, command.args);
               case 'resolver':
               case 'resolve':
                 return cmdResolve(inbound, command.args);
