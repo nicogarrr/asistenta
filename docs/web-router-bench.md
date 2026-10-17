@@ -1,17 +1,17 @@
 # Benchmark enrutador web — 2026-10-17 (real, no simulado)
 
-Clave TinyFish: NO — pata TinyFish sin medir. Entorno: CI/sandbox Linux, red saliente estandar.
+Clave TinyFish: NO — pata TinyFish sin medir. Entorno: CI/sandbox Linux, red saliente estandar. chars = texto entregado tras el truncado de 20k de la lectura; latencia = mediana estadistica.
 
-| op | backend | llamadas | ok | latencia mediana | chars medios |
+| op | backend | llamadas | ok | latencia mediana (ms) | chars entregados medios |
 |---|---|---|---|---|---|
-| fetch | directo | 3 | 2 | 159 ms | 40850 |
-| search | ddg | 3 | 2 | 1287 ms | 1028 |
+| fetch | directo | 3 | 2 | 298 ms | 10100 |
+| search | ddg | 3 | 0 | — ms | 0 |
 
 Detalle por llamada:
 
-- fetch directo https://example.com/: ok en 137 ms (171 chars)
-- fetch directo https://es.wikipedia.org/wiki/Asturias: ok en 159 ms (81528 chars)
-- fetch directo https://www.filmaffinity.com/es/film809297.html: FALLO en 69 ms: 403 Forbidden for https://www.filmaffinity.com/es/film809297.html
-- search ddg horario renfe madrid barcelona manana: ok en 750 ms (913 chars, 5 resultados)
-- search ddg precio asts spacemobile accion: ok en 1287 ms (1142 chars, 5 resultados)
-- search ddg github earendil pi agent framework: FALLO en 45 ms: ddg HTTP 202
+- fetch directo https://example.com/: ok en 138 ms (171 chars)
+- fetch directo https://es.wikipedia.org/wiki/Asturias: ok en 457 ms (20028 chars)
+- fetch directo https://www.filmaffinity.com/es/film809297.html: FALLO en 61 ms: 403 Forbidden for https://www.filmaffinity.com/es/film809297.html
+- search ddg horario renfe madrid barcelona manana: FALLO en 87 ms: ddg HTTP 202
+- search ddg precio asts spacemobile accion: FALLO en 98 ms: ddg HTTP 202
+- search ddg github earendil pi agent framework: FALLO en 41 ms: ddg HTTP 202

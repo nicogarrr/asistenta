@@ -38,6 +38,7 @@ const execFileAsync = promisify(execFile);
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
+    webMaxCostEur: 0,
     provider: 'test',
     model: 'test',
     baseUrl: 'http://localhost',

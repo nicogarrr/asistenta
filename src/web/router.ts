@@ -1,12 +1,14 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { type HostResolver, isFetchableResolved } from '../tools/fetch.js';
 
 /**
  * Enrutador web propio (idea tomada de treg, hecha en casa, sin depender de
  * terceros): varios backends GRATIS para buscar y leer la web, fallback
  * automatico entre ellos, tope de coste €0 y medicion por peticion.
  *
- * Reglas duras (plan aprobado por Nico, 16-oct-2026):
+ * Reglas duras del plan que Nico aprobo por WhatsApp el 16-oct-2026
+ * (mensaje 'Si revisa todo y crealo', tras el plan con tope €0 y medicion):
  *
  * 1. Tope €0 fail-closed. Un backend declara su coste por llamada; el router
  *    solo llama a los que esten por debajo del tope (por defecto 0). Un coste
@@ -76,10 +78,16 @@ function declaredCostOk(cost: number): boolean {
 
 export interface WebRouterOptions {
   backends: WebBackend[];
-  /** Tope de coste por llamada en EUR. Por defecto 0: solo gratis. */
+  /** Tope de coste por llamada en EUR. Por defecto 0: solo backends declarados gratis. */
   maxCostEur?: number;
   /** JSONL de metricas; undefined = no persiste (tests). */
   metricsPath?: string;
+  /**
+   * Puerta SSRF previa a routeFetch. Por defecto la misma que la tool fetch
+   * (lexical + DNS). El guard vive AQUI (ademas de en la tool web y en el
+   * backend remoto) para que ningun consumidor del router la esquive.
+   */
+  validateFetchUrl?: (url: string, resolve?: HostResolver) => Promise<boolean>;
 }
 
 export class WebRouter {
@@ -121,7 +129,7 @@ export class WebRouter {
     const candidates = this.eligible('search').filter((b) => b.search);
     if (candidates.length === 0) {
       throw new Error(
-        'No hay ningun backend de busqueda gratuito disponible. Configura una clave gratuita (por ejemplo web:tinyfishApiKey en el vault) o intentalo mas tarde. Nunca se cobra nada: tope €0.',
+        `No hay ningun backend de busqueda dentro del tope (${this.maxCostEur} €): solo se llaman backends declarados a coste <= tope. Configura una clave gratuita (web:tinyfishApiKey en el vault) o intentalo mas tarde.`,
       );
     }
     const attempts: RouteSuccess<WebSearchResult>['attempts'] = [];
@@ -167,9 +175,11 @@ export class WebRouter {
       }
     }
     throw new Error(
-      `Todos los backends gratuitos de busqueda fallaron: ${attempts
+      `Todos los backends de busqueda dentro del tope fallaron: ${attempts
         .map((a) => `${a.backend} (${a.error ?? 'error'})`)
-        .join(', ')}. No se ha cobrado nada: tope €0.`,
+        .join(
+          ', ',
+        )}. Tope: ${this.maxCostEur} € (solo se llamaron backends declarados a coste <= tope).`,
     );
   }
 
@@ -177,10 +187,18 @@ export class WebRouter {
     url: string,
     opts: { maxChars?: number; host?: string } = {},
   ): Promise<RouteSuccess<WebFetchResult>> {
+    // SSRF antes de elegir backend: un backend remoto no debe eludir un
+    // bloqueo que el directo rechazaria. Limite declarado: URL inicial.
+    const validate = this.opts.validateFetchUrl ?? isFetchableResolved;
+    if (!(await validate(url))) {
+      throw new Error(
+        `me niego a leer ${url}: solo URLs http(s) publicas, nada de direcciones locales o privadas`,
+      );
+    }
     const candidates = this.eligible('fetch').filter((b) => b.fetch);
     if (candidates.length === 0) {
       throw new Error(
-        'No hay ningun backend de lectura web gratuito disponible. Nunca se cobra nada: tope €0.',
+        `No hay ningun backend de lectura web dentro del tope (${this.maxCostEur} €): solo se llaman backends declarados a coste <= tope.`,
       );
     }
     const attempts: RouteSuccess<WebFetchResult>['attempts'] = [];
@@ -226,9 +244,11 @@ export class WebRouter {
       }
     }
     throw new Error(
-      `Todos los backends gratuitos de lectura web fallaron: ${attempts
+      `Todos los backends de lectura web dentro del tope fallaron: ${attempts
         .map((a) => `${a.backend} (${a.error ?? 'error'})`)
-        .join(', ')}. No se ha cobrado nada: tope €0.`,
+        .join(
+          ', ',
+        )}. Tope: ${this.maxCostEur} € (solo se llamaron backends declarados a coste <= tope).`,
     );
   }
 }

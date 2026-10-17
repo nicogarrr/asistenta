@@ -1,4 +1,4 @@
-import { fetchPage } from '../tools/fetch.js';
+import { fetchPage, type HostResolver, isFetchableResolved } from '../tools/fetch.js';
 import type { WebBackend, WebFetchResult, WebSearchItem, WebSearchResult } from './router.js';
 
 /**
@@ -17,12 +17,12 @@ import type { WebBackend, WebFetchResult, WebSearchItem, WebSearchResult } from 
 /** HTTP inyectable para tests; en produccion es fetch de Node. */
 export type HttpGet = (
   url: string,
-  init: { headers: Record<string, string>; signal: AbortSignal },
+  init: { headers: Record<string, string>; signal: AbortSignal; redirect?: 'manual' },
 ) => Promise<{ status: number; text(): Promise<string> }>;
 
 export type HttpPost = (
   url: string,
-  init: { headers: Record<string, string>; body: string; signal: AbortSignal },
+  init: { headers: Record<string, string>; body: string; signal: AbortSignal; redirect?: 'manual' },
 ) => Promise<{ status: number; text(): Promise<string> }>;
 
 const defaultGet: HttpGet = (url, init) => fetch(url, init);
@@ -48,10 +48,13 @@ export function createTinyfishBackend(opts: {
   httpGet?: HttpGet;
   httpPost?: HttpPost;
   timeoutMs?: number;
+  /** Puerta SSRF previa a cada URL remota; por defecto la misma que la tool fetch. */
+  validateUrl?: (url: string, resolve?: HostResolver) => Promise<boolean>;
 }): WebBackend {
   const httpGet = opts.httpGet ?? defaultGet;
   const httpPost = opts.httpPost ?? defaultPost;
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const validateUrl = opts.validateUrl ?? isFetchableResolved;
   const headers = {
     'X-API-Key': opts.apiKey,
     Accept: 'application/json',
@@ -60,8 +63,13 @@ export function createTinyfishBackend(opts: {
   return {
     id: 'tinyfish',
     ops: ['search', 'fetch'],
-    // Search y Fetch son gratis siempre en TinyFish (no descuentan del wallet).
-    // Si algun dia cambiaran, el tope €0 del router corta antes de gastar.
+    // Declarado 0 tras verificar la fuente publica (17-oct-2026):
+    // https://www.tinyfish.ai/pricing ("Search and Fetch free at any Wallet
+    // balance") y https://docs.tinyfish.ai/search-api ("Search never draws
+    // from your wallet"). OJO: la proteccion del router es DECLARATIVA — corta
+    // backends declarados por encima del tope, pero no descubre un cambio de
+    // precio del proveedor; si TinyFish cambia su precio hay que actualizar
+    // esta declaracion.
     costPerCallEur: 0,
     search: async (query, { maxResults }): Promise<WebSearchResult> => {
       const controller = new AbortController();
@@ -77,6 +85,11 @@ export function createTinyfishBackend(opts: {
         const res = await httpGet(`${TINYFISH_SEARCH_URL}?${params}`, {
           headers,
           signal: controller.signal,
+          // redirect: 'manual' es parte de la seguridad, no una optimizacion:
+          // Node NO quita cabeceras custom en redirects cross-origin, y un
+          // 302/307 de la API reenviaria X-API-Key a otro host. Un 3xx aqui es
+          // error (abajo, status !== 200), nunca se sigue.
+          redirect: 'manual',
         });
         if (res.status !== 200) {
           throw new Error(`tinyfish search HTTP ${res.status}`);
@@ -102,13 +115,29 @@ export function createTinyfishBackend(opts: {
       }
     },
     fetch: async (url, { maxChars }): Promise<WebFetchResult> => {
+      // Puerta SSRF tambien AQUI, no solo en la tool: este backend lo puede
+      // invocar cualquier consumidor (el benchmark lo hace directo) y una URL
+      // que el fetch directo rechazaria no debe colarse por la via remota.
+      // Limite honesto: cubrimos la URL inicial; los redirects remotos los
+      // valida TinyFish en su lado (invalid_url / invalid_redirect_url en su
+      // API), no nosotros.
+      if (!(await validateUrl(url))) {
+        throw new Error(`me niego a leer ${url}: solo URLs http(s) publicas`);
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await httpPost(TINYFISH_FETCH_URL, {
           headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ urls: [url], format: 'markdown' }),
+          // ttl: 0 = pedir lectura en vivo. Sin ttl la API acepta CUALQUIER entrada
+          // de su cache. Residuo declarado por su contrato: aun con 0 puede
+          // servir cache si el Cache-Control del origen la cubre (max-age) o
+          // el host esta en su allowlist "never-expire"; eso es frescura
+          // declarada por el propio origen, no una pagina vieja cualquiera.
+          body: JSON.stringify({ urls: [url], format: 'markdown', ttl: 0 }),
           signal: controller.signal,
+          // Misma razon que en search: la clave no sigue redirects.
+          redirect: 'manual',
         });
         if (res.status !== 200) {
           throw new Error(`tinyfish fetch HTTP ${res.status}`);

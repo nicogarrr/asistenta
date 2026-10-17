@@ -74,7 +74,7 @@ export function createWebTool(
     name: 'web',
     label: 'Web',
     description:
-      'Busca en la web o lee una URL con el enrutador propio: varios backends gratis con fallback automatico, tope €0 (nunca cobra) y medicion por peticion. Usa search para buscar, fetch para leer una pagina concreta y stats para ver la medicion.',
+      'Busca en la web o lee una URL con el enrutador propio: varios backends declarados gratis con fallback automatico, tope de coste (por defecto 0 €: un backend declarado con coste nunca se llama) y medicion por peticion. Usa search para buscar, fetch para leer una pagina concreta y stats para ver la medicion.',
     parameters: WebParams,
     executionMode: 'parallel',
     execute: async (_id, args) => {
@@ -143,11 +143,12 @@ export function createWebTool(
       }
       const rows = stats.map(
         (s) =>
-          `- ${s.op} via ${s.backend}: ${s.calls} llamadas, ${s.okPct}% ok, p50 ${s.p50Ms} ms, p95 ${s.p95Ms} ms, ${s.totalChars} chars (~${s.totalEstTokens} tokens), coste ${s.totalCostEur} €`,
+          `- ${s.op} via ${s.backend}: ${s.calls} llamadas, ${s.okPct}% ok, p50 ${s.p50Ms} ms, p95 ${s.p95Ms} ms, ${s.totalChars} chars (~${s.totalEstTokens} tokens), coste declarado ${s.totalCostEur} €`,
       );
+      const totalDeclarado = stats.reduce((s, x) => s + x.totalCostEur, 0);
       return {
         ...text(
-          `Medicion del enrutador web (${metrics.length} intentos registrados):\n${rows.join('\n')}\n\nTope de coste configurado: ${config.webMaxCostEur} €. Todo lo medido ha costado 0 €.`,
+          `Medicion del enrutador web (${metrics.length} intentos registrados):\n${rows.join('\n')}\n\nTope de coste configurado: ${config.webMaxCostEur} € (solo se llaman backends declarados a coste <= tope). Coste declarado total: ${totalDeclarado} €.`,
         ),
         details: { stats },
       };

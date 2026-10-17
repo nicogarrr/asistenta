@@ -68,7 +68,7 @@ describe('WebRouter: fallback entre backends gratis', () => {
       },
     });
     const router = new WebRouter({ backends: [a] });
-    await expect(router.routeFetch('https://ejemplo.es')).rejects.toThrow(/tope €0/);
+    await expect(router.routeFetch('https://ejemplo.es')).rejects.toThrow(/dentro del tope/);
   });
 
   it('rechaza resultados vacios y pasa al siguiente backend', async () => {
@@ -104,7 +104,7 @@ describe('WebRouter: tope €0 fail-closed', () => {
   it('sin ningun backend dentro del tope: error claro, cero llamadas', async () => {
     const dePago = fakeBackend({ id: 'pago', costPerCallEur: 0.5 });
     const router = new WebRouter({ backends: [dePago], maxCostEur: 0 });
-    await expect(router.routeSearch('x')).rejects.toThrow(/gratuito/);
+    await expect(router.routeSearch('x')).rejects.toThrow(/dentro del tope/);
     expect(dePago.calls).toEqual([]);
   });
 });
@@ -178,9 +178,9 @@ describe('backend tinyfish: parseo y errores', () => {
       }),
     });
     const r = await backend.search?.('consulta', { maxResults: 5 });
-    expect(r.items).toHaveLength(2);
-    expect(r.items[0]).toMatchObject({ title: 'Uno', url: 'https://uno.es', siteName: 'uno.es' });
-    expect(r.chars).toBeGreaterThan(0);
+    expect(r?.items).toHaveLength(2);
+    expect(r?.items[0]).toMatchObject({ title: 'Uno', url: 'https://uno.es', siteName: 'uno.es' });
+    expect(r?.chars).toBeGreaterThan(0);
   });
 
   it('un HTTP que no es 200 lanza error (el router hace fallback)', async () => {
@@ -194,6 +194,7 @@ describe('backend tinyfish: parseo y errores', () => {
   it('fetch usa el campo text y convierte errors[] en fallo', async () => {
     const ok = createTinyfishBackend({
       apiKey: 'clave-de-prueba',
+      validateUrl: async () => true,
       httpPost: async () => ({
         status: 200,
         text: async () =>
@@ -201,10 +202,11 @@ describe('backend tinyfish: parseo y errores', () => {
       }),
     });
     const r = await ok.fetch?.('https://x.es', { maxChars: 1000 });
-    expect(r.text).toContain('Titulo');
+    expect(r?.text).toContain('Titulo');
 
     const fallo = createTinyfishBackend({
       apiKey: 'clave-de-prueba',
+      validateUrl: async () => true,
       httpPost: async () => ({
         status: 200,
         text: async () =>
@@ -231,6 +233,84 @@ describe('backend tinyfish: parseo y errores', () => {
     await backend.search?.('q', { maxResults: 3 });
     expect(seenKey).toBe('clave-secreta-123');
     expect(seenUrl).not.toContain('clave-secreta-123');
+  });
+});
+
+describe('backend tinyfish: la clave no sigue redirects (canario cross-origin)', () => {
+  it('search y fetch piden redirect: manual y un 302 NO se sigue a otro origen', async () => {
+    const vistos: Array<{ url: string; redirect?: string }> = [];
+    const responder = async (url: string, init: { redirect?: string }) => {
+      vistos.push({ url, redirect: init.redirect });
+      // La API devuelve 302 hacia un host de atacante: con manual no se sigue.
+      return { status: 302, text: async () => '' };
+    };
+    const backend = createTinyfishBackend({
+      apiKey: 'clave-sintetica-canario',
+      validateUrl: async () => true,
+      httpGet: responder,
+      httpPost: responder,
+    });
+    await expect(backend.search?.('q', { maxResults: 3 })).rejects.toThrow(/302/);
+    await expect(backend.fetch?.('https://www.ejemplo.es', { maxChars: 100 })).rejects.toThrow(
+      /302/,
+    );
+    // Dos llamadas (una por operacion), cero seguimientos al segundo origen.
+    expect(vistos).toHaveLength(2);
+    for (const v of vistos) {
+      expect(v.redirect).toBe('manual');
+      expect(v.url).not.toContain('atacante');
+    }
+  });
+
+  it('fetch pide lectura en vivo: el body lleva ttl: 0', async () => {
+    let body = '';
+    const backend = createTinyfishBackend({
+      apiKey: 'clave-sintetica-canario',
+      validateUrl: async () => true,
+      httpPost: async (_url, init) => {
+        body = init.body;
+        return {
+          status: 200,
+          text: async () =>
+            JSON.stringify({ results: [{ url: 'https://x.es', text: 'contenido' }] }),
+        };
+      },
+    });
+    await backend.fetch?.('https://x.es', { maxChars: 100 });
+    expect(JSON.parse(body)).toMatchObject({ ttl: 0 });
+  });
+
+  it('fetch valida la URL con la puerta SSRF aunque se invoque directo (sin tool ni router)', async () => {
+    let llamadas = 0;
+    const backend = createTinyfishBackend({
+      apiKey: 'clave-sintetica-canario',
+      httpPost: async () => {
+        llamadas++;
+        return { status: 200, text: async () => '{}' };
+      },
+    });
+    await expect(
+      backend.fetch?.('http://169.254.169.254/latest/meta-data', { maxChars: 100 }),
+    ).rejects.toThrow(/http\(s\) publicas/);
+    expect(llamadas).toBe(0);
+  });
+});
+
+describe('WebRouter: puerta SSRF centralizada en routeFetch', () => {
+  it('rechaza una URL privada antes de llamar a cualquier backend', async () => {
+    const b = fakeBackend({ id: 'b' });
+    const router = new WebRouter({ backends: [b] });
+    await expect(router.routeFetch('http://127.0.0.1:8080/admin')).rejects.toThrow(
+      /locales o privadas/,
+    );
+    expect(b.calls).toEqual([]);
+  });
+
+  it('respeta una validacion inyectada (fail-closed del consumidor)', async () => {
+    const b = fakeBackend({ id: 'b' });
+    const router = new WebRouter({ backends: [b], validateFetchUrl: async () => false });
+    await expect(router.routeFetch('https://www.ejemplo.es')).rejects.toThrow(/http\(s\) publicas/);
+    expect(b.calls).toEqual([]);
   });
 });
 
@@ -312,7 +392,7 @@ describe('tool web (integracion con backends falsos)', () => {
     const body = r2.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
     expect(body).toContain('search via falso');
     expect(body).toContain('100% ok');
-    expect(body).toContain('0 €');
+    expect(body).toContain('Coste declarado total: 0 €');
   });
 });
 

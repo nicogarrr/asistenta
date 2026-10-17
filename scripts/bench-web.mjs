@@ -35,10 +35,20 @@ async function measure(fn) {
   const started = performance.now();
   try {
     const r = await fn();
-    return { ok: true, ms: Math.round(performance.now() - started), chars: r.chars, items: r.items?.length };
+    // chars ENTREGADOS (post-truncado): para fetch es r.text.length; para
+    // search, la suma titulo+snippet que ya calcula el backend (r.chars).
+    const chars = typeof r.text === 'string' ? r.text.length : (r.chars ?? 0);
+    return { ok: true, ms: Math.round(performance.now() - started), chars, items: r.items?.length };
   } catch (err) {
     return { ok: false, ms: Math.round(performance.now() - started), error: String(err?.message ?? err).slice(0, 80) };
   }
+}
+
+/** Mediana estadistica (media de los dos centrales si hay un numero par). */
+function median(sorted) {
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
 const rows = [];
@@ -65,7 +75,7 @@ for (const r of rows) {
 const summary = Object.entries(byBackend).map(([k, list]) => {
   const ok = list.filter((r) => r.ok);
   const lat = ok.map((r) => r.ms).sort((a, b) => a - b);
-  const med = lat[Math.floor(lat.length / 2)] ?? null;
+  const med = median(lat);
   return {
     op: k.split(':')[0],
     backend: k.split(':')[1],
@@ -80,9 +90,9 @@ const fecha = new Date().toISOString().slice(0, 10);
 const md = [
   `# Benchmark enrutador web — ${fecha} (real, no simulado)`,
   '',
-  `Clave TinyFish: ${key ? 'SI (vault)' : 'NO — pata TinyFish sin medir'}. Entorno: CI/sandbox Linux, red saliente estandar.`,
+  `Clave TinyFish: ${key ? 'SI (vault)' : 'NO — pata TinyFish sin medir'}. Entorno: CI/sandbox Linux, red saliente estandar. chars = texto entregado tras el truncado de 20k de la lectura; latencia = mediana estadistica.`,
   '',
-  '| op | backend | llamadas | ok | latencia mediana | chars medios |',
+  '| op | backend | llamadas | ok | latencia mediana (ms) | chars entregados medios |',
   '|---|---|---|---|---|---|',
   ...summary.map((s) => `| ${s.op} | ${s.backend} | ${s.n} | ${s.ok} | ${s.medianaMs ?? '—'} ms | ${s.charsMedios} |`),
   '',
