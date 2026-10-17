@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ScreenBackend } from '../tools/computer.js';
 import { escapeForSendKeys, parseKeyChord, splitAsciiSegments } from './keys.js';
+import { jpegGeometry, parseCaptureGeometry, physicalScript } from './windows-geometry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,18 @@ const execFileAsync = promisify(execFile);
  * small native helper, not a rewrite.
  */
 export class WindowsScreen implements ScreenBackend {
+  private readonly runPowerShell: (script: string) => Promise<{ stdout: string; stderr: string }>;
+  constructor(runPowerShell?: (script: string) => Promise<{ stdout: string; stderr: string }>) {
+    this.runPowerShell =
+      runPowerShell ??
+      (async (script) =>
+        execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+          encoding: 'utf8',
+          maxBuffer: 16 * 1024 * 1024,
+          timeout: 30_000,
+          windowsHide: true,
+        }));
+  }
   #tempDir: string | null = null;
   /**
    * Downscaling policy for the next capture. Native capture at 1080p costs ~2.9k
@@ -48,35 +61,26 @@ export class WindowsScreen implements ScreenBackend {
   }> {
     const dir = this.#temp();
     const out = join(dir, `shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-    const { stdout } = await this.#ps(captureScript(out, this.#maxEdge));
+    const { stdout } = await this.#physicalPs(captureScript(out, this.#maxEdge));
     if (!existsSync(out)) {
       throw new Error('screen capture produced no file (is there an interactive desktop session?)');
     }
     const jpeg = readFileSync(out);
-    const native = await this.screenSize();
-    // The script echoes the size it actually wrote. Parsing it rather than
-    // recomputing the scale in JS means the two can never disagree: if PowerShell
-    // decided not to scale, the coordinates follow.
-    const written = /(\d+)x(\d+)/.exec(stdout);
-    const width = written ? Number(written[1]) : native.width;
-    const height = written ? Number(written[2]) : native.height;
-    return {
-      image: jpeg,
-      mimeType: 'image/jpeg',
-      width,
-      height,
-      nativeWidth: native.width,
-      nativeHeight: native.height,
-    };
+    const geometry = parseCaptureGeometry(stdout);
+    const actual = jpegGeometry(jpeg);
+    if (actual.width !== geometry.width || actual.height !== geometry.height) {
+      throw new Error('JPEG y geometría no coinciden; no se puede mapear el cursor.');
+    }
+    return { image: jpeg, mimeType: 'image/jpeg', ...geometry };
   }
 
   async screenSize(): Promise<{ width: number; height: number }> {
-    const { stdout } = await this.#ps(
-      'Add-Type -AssemblyName System.Windows.Forms; $s=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; Write-Output "$($s.Width)x$($s.Height)"',
+    const { stdout } = await this.#physicalPs(
+      `$b=[PaDesktop]::Bounds(); Write-Output "PA_SIZE $($b[2])x$($b[3])"`,
     );
-    const m = /(\d+)x(\d+)/.exec(stdout);
-    if (!m) throw new Error(`could not read screen size, got ${JSON.stringify(stdout)}`);
-    return { width: Number(m[1]), height: Number(m[2]) };
+    const match = /^PA_SIZE ([1-9]\d*)x([1-9]\d*)\s*$/m.exec(stdout);
+    if (!match) throw new Error('No se pudo verificar el tamaño físico de pantalla.');
+    return { width: Number(match[1]), height: Number(match[2]) };
   }
 
   async click(
@@ -95,30 +99,30 @@ export class WindowsScreen implements ScreenBackend {
         `[M]::mouse_event(${flag},0,0,0,[IntPtr]::Zero); [M]::mouse_event(${button === 'left' ? '0x0004' : flag === '0x0008' ? '0x0010' : '0x0040'},0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 40`,
     ).join('\n');
 
-    await this.#ps(`
+    await this.#physicalPs(`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 ${ADD_TYPE_MOUSE}
-[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y})
+if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
 Start-Sleep -Milliseconds 40
 ${sequence}
 `);
   }
 
   async move(x: number, y: number): Promise<void> {
-    await this.#ps(`
+    await this.#physicalPs(`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y})
+if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
 `);
   }
 
   async drag(x: number, y: number, toX: number, toY: number): Promise<void> {
-    await this.#ps(`
+    await this.#physicalPs(`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 ${ADD_TYPE_MOUSE}
-[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y})
+if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
 Start-Sleep -Milliseconds 80
 [M]::mouse_event(0x0002,0,0,0,[IntPtr]::Zero)
 $steps = 12
@@ -126,7 +130,7 @@ for ($i=1; $i -le $steps; $i++) {
   $t = $i / $steps
   $nx = [int](${x} + (${toX} - ${x}) * $t)
   $ny = [int](${y} + (${toY} - ${y}) * $t)
-  [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($nx, $ny)
+  if (-not [PaDesktop]::SetCursorPos($nx, $ny)) { throw 'No se pudo arrastrar el cursor físico.' }
   Start-Sleep -Milliseconds 25
 }
 [M]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero)
@@ -201,12 +205,12 @@ Add-Type -AssemblyName System.Windows.Forms
     return this.#tempDir;
   }
 
+  async #physicalPs(script: string): Promise<{ stdout: string; stderr: string }> {
+    return this.runPowerShell(physicalScript(script));
+  }
+
   async #ps(script: string): Promise<{ stdout: string; stderr: string }> {
-    return execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 30_000,
-    });
+    return this.runPowerShell(script);
   }
 }
 
@@ -236,15 +240,15 @@ public class M {
  * alternative would be a native image encoder, which costs more than the bytes it
  * saves.
  */
-function captureScript(out: string, maxEdge: number): string {
+export function captureScript(out: string, maxEdge: number): string {
   const path = out.replace(/'/g, "''");
   return `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$w = $b.Width
-$h = $b.Height
+$b = [PaDesktop]::Bounds()
+$w = $b[2]
+$h = $b[3]
 $maxEdge = ${Math.max(0, Math.trunc(maxEdge))}
 $long = [Math]::Max($w, $h)
 $scale = 1.0
@@ -253,7 +257,7 @@ $tw = [int][Math]::Round($w * $scale)
 $th = [int][Math]::Round($h * $scale)
 $bmp = New-Object System.Drawing.Bitmap $w, $h
 $g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+$g.CopyFromScreen($b[0], $b[1], 0, 0, $bmp.Size)
 $g.Dispose()
 if ($scale -lt 1.0) {
   $small = New-Object System.Drawing.Bitmap $tw, $th
@@ -267,7 +271,7 @@ if ($scale -lt 1.0) {
 }
 $bmp.Save('${path}', [System.Drawing.Imaging.ImageFormat]::Jpeg)
 $bmp.Dispose()
-Write-Output "$tw x $th"
+Write-Output ('PA_CAPTURE ' + (@{width=$tw;height=$th;nativeWidth=$w;nativeHeight=$h} | ConvertTo-Json -Compress))
 `;
 }
 
