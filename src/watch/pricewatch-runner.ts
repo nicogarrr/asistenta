@@ -9,7 +9,7 @@ import { pricewatchNotifier } from './pricewatch-notify.js';
  * Config (JSON, `<estado>/pricewatch.json` o PRICEWATCH_CONFIG), releída en cada ciclo:
  * { "enabled": true, "minDropPct": 70, "gapSeconds": 30,
  *   "scan": { "enabled": true, "pagesPerRun": 5, "dailyRequestsPerStore": 170,
- *             "maxCandidates": 10, "cycleMinutes": 30 },
+ *             "maxCandidates": 10, "cycleMinutes": 60 },
  *   "products": [],
  *   "telegram": { "enabled": true, "chatId": "<id>", "tokenFile": "<ruta privada>" } }
  * El token NUNCA va en la config ni en logs: solo en `tokenFile` o en PRICEWATCH_TG_TOKEN.
@@ -30,6 +30,7 @@ import {
   robotsDisallows,
   runOnce,
   STORES,
+  type StoreId,
 } from './pricewatch.js';
 
 const UA =
@@ -151,8 +152,12 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
     const last = store.getMeta('report_day');
     if (last === 0) {
       store.setMeta('report_day', today);
+      const pausedNote =
+        sc.pausedStores.length > 0
+          ? ` En pausa: ${sc.pausedStores.map((id) => STORES[id].name).join(' y ')} (bloqueaban tu IP; para reactivarlas pon "pausedStores": [] en la config).`
+          : '';
       await notify(
-        `Vigilante de precios activo. Barrido de listados: ${sc.enabled ? 'sí' : 'no'}, tope ${sc.dailyRequestsPerStore} peticiones/día por tienda, umbral ${cfg.minDropPct} %. Te aviso aquí de posibles errores de precio y de las tiendas que bloqueen tu IP.`,
+        `Vigilante de precios activo. Barrido de listados: ${sc.enabled ? 'sí' : 'no'}, cada ${cycleMinutes} min, tope ${sc.dailyRequestsPerStore} peticiones/día por tienda, umbral ${cfg.minDropPct} %. Te aviso aquí de posibles errores de precio y de las tiendas que bloqueen tu IP.${pausedNote}`,
       );
     } else if (last !== today) {
       await notify(reportText(store, last, d.now()));
@@ -185,7 +190,16 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
       bump(store, `stat:${today}:cards`, scan.cards);
       bump(store, `stat:${today}:cands`, candidates.length);
     }
-    const fixed: Product[] = cfg.products;
+    // La pausa también cubre las fichas fijas: una tienda en pausa no recibe peticiones.
+    const pausedSet = new Set<StoreId>(sc.pausedStores);
+    const fixed: Product[] = cfg.products
+      .map((p) => ({
+        ...p,
+        urls: Object.fromEntries(
+          Object.entries(p.urls).filter(([s]) => !pausedSet.has(s as StoreId)),
+        ),
+      }))
+      .filter((p) => Object.keys(p.urls).length > 0);
     const products: Product[] = [
       ...fixed,
       ...candidates.map((c) => ({ name: c.key, label: c.title, urls: { [c.store]: c.url } })),
@@ -207,9 +221,19 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
       if (store.getMeta(key) > 0) continue;
       store.setMeta(key, 1);
       bump(store, `stat:${today}:blocked`, 1);
+      // Días seguidos bloqueando: un baneo largo (como el de MediaMarkt del 11-oct)
+      // no es un "reintento en X min", y el mensaje tiene que decirlo.
+      const streakKey = `blockstreak:${host}`;
+      const streak =
+        store.getMeta(`blocknotice:${host}:${dayStr(d.now() - 24 * 3600 * 1000)}`) > 0
+          ? store.getMeta(streakKey) + 1
+          : 1;
+      store.setMeta(streakKey, streak);
       const mins = Math.max(1, Math.round((store.blockedUntil(host) - d.now()) / 60_000));
       await notify(
-        `Vigilante de precios: ${host} está bloqueando las peticiones desde tu IP (403/captcha). Lo dejo en espera ${mins} min y reintento con pausas crecientes.`,
+        streak >= 2
+          ? `Vigilante de precios: ${host} lleva ${streak} días seguidos bloqueando tu IP (403/captcha). Puede ser un baneo largo: lo dejo en espera y las demás tiendas siguen.`
+          : `Vigilante de precios: ${host} está bloqueando las peticiones desde tu IP (403/captcha). Lo dejo en espera ${mins} min y reintento con pausas crecientes.`,
       );
     }
     if (scan)
@@ -232,7 +256,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
 export function cycleMinutesOf(raw: unknown): number {
   const s = (raw as { scan?: { cycleMinutes?: unknown } } | null)?.scan;
   const v = s?.cycleMinutes;
-  return typeof v === 'number' && Number.isInteger(v) && v >= 10 && v <= 1440 ? v : 30;
+  return typeof v === 'number' && Number.isInteger(v) && v >= 10 && v <= 1440 ? v : 60;
 }
 
 export function realDeps(

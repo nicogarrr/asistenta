@@ -32,6 +32,8 @@ const cfg = (over: Record<string, unknown> = {}) => ({
   scan: {
     enabled: true,
     pagesPerRun: 1,
+    // Estas pruebas ejercitan la mecánica con MediaMarkt: quitan la pausa por defecto.
+    pausedStores: [],
     listings: [{ store: 'mediamarkt', category: 'tv', url: MM, pages: 1 }],
   },
   telegram: { enabled: false },
@@ -136,15 +138,44 @@ describe('runCycle', () => {
     expect(s.fetched).toContain('https://www.mediamarkt.es/es/product/tv1.html');
   });
 
+  it('MediaMarkt y PcComponentes arrancan en pausa por defecto, con aviso al activar', async () => {
+    const s = setup({
+      enabled: true,
+      scan: { enabled: true, pagesPerRun: 1 },
+      telegram: { enabled: false },
+    });
+    const r = await runCycle(s.deps);
+    expect(r.ran).toBe(true);
+    // Los listados por defecto incluyen mediamarkt/pccomponentes: en pausa no se piden
+    expect(
+      s.fetched.filter((u) => u.includes('mediamarkt') || u.includes('pccomponentes')),
+    ).toEqual([]);
+    expect(s.sent[0]).toContain('En pausa');
+    expect(s.sent[0]).toContain('MediaMarkt');
+    expect(s.sent[0]).toContain('pausedStores');
+  });
+
+  it('un baneo de varios días seguidos se dice como tal, no como reintento', async () => {
+    const s = setup(cfg(), { [MM]: { status: 403, html: '' } });
+    await runCycle(s.deps);
+    s.advance(DAY);
+    await runCycle(s.deps);
+    const notices = s.sent.filter((x) => x.includes('bloqueando'));
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain('está bloqueando');
+    expect(notices[1]).toContain('2 días seguidos');
+    expect(notices[1]).toContain('baneo largo');
+  });
+
   it('config inválida lanza error claro', async () => {
     const s = setup({ enabled: true, scan: { pagesPerRun: 0 } });
     await expect(runCycle(s.deps)).rejects.toThrow(/pagesPerRun/);
   });
 
-  it('cycleMinutes: por defecto 30, validado 10-1440', () => {
-    expect(cycleMinutesOf({})).toBe(30);
+  it('cycleMinutes: por defecto 60, validado 10-1440', () => {
+    expect(cycleMinutesOf({})).toBe(60);
     expect(cycleMinutesOf({ scan: { cycleMinutes: 45 } })).toBe(45);
-    expect(cycleMinutesOf({ scan: { cycleMinutes: 2 } })).toBe(30);
+    expect(cycleMinutesOf({ scan: { cycleMinutes: 2 } })).toBe(60);
   });
 });
 
@@ -192,7 +223,7 @@ describe('startPricewatchLoop', () => {
       },
     });
     await new Promise((r) => setTimeout(r, 30));
-    expect(timers).toEqual([1, 30 * 60_000]);
+    expect(timers).toEqual([1, 60 * 60_000]);
     expect(s.warns).toContain('pricewatch: ciclo fallido');
   });
 });

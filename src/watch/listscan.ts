@@ -547,6 +547,8 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
 
 export interface ScanConfig {
   enabled: boolean;
+  /** Tiendas en pausa: no se barren ni se verifican sus fichas (baneo de IP del 11-oct). */
+  pausedStores: StoreId[];
   pagesPerRun: number;
   dailyRequestsPerStore: number;
   maxCandidates: number;
@@ -569,6 +571,16 @@ export function parseScanConfig(raw: unknown): ScanConfig {
     throw new Error('scan.enabled debe ser true o false');
   if (s.focus !== undefined && typeof s.focus !== 'string')
     throw new Error('scan.focus debe ser el nombre de una categoría');
+  let pausedStores: StoreId[] = ['mediamarkt', 'pccomponentes'];
+  if (s.pausedStores !== undefined) {
+    if (!Array.isArray(s.pausedStores)) throw new Error('scan.pausedStores debe ser una lista');
+    pausedStores = s.pausedStores.map((x, i) => {
+      if (typeof x !== 'string' || !isStoreId(x)) {
+        throw new Error(`scan.pausedStores[${i}] desconocida`);
+      }
+      return x;
+    });
+  }
   let listings = DEFAULT_LISTINGS;
   if (s.listings !== undefined) {
     if (!Array.isArray(s.listings)) throw new Error('scan.listings debe ser una lista');
@@ -592,8 +604,13 @@ export function parseScanConfig(raw: unknown): ScanConfig {
     if (listings.length === 0)
       throw new Error(`scan.focus: no hay listados de la categoría ${focus}`);
   }
+  // La pausa manda sobre los listados (por defecto o explícitos): reactivar es
+  // una decisión aparte ("pausedStores": []), no un efecto lateral de configurar.
+  const paused = new Set(pausedStores);
+  listings = listings.filter((l) => !paused.has(l.store));
   return {
     enabled: s.enabled === true,
+    pausedStores,
     pagesPerRun: intIn(s.pagesPerRun, 'pagesPerRun', 5, 1, 20),
     dailyRequestsPerStore: intIn(s.dailyRequestsPerStore, 'dailyRequestsPerStore', 170, 10, 400),
     maxCandidates: intIn(s.maxCandidates, 'maxCandidates', 10, 1, 30),
