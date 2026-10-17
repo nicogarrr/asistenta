@@ -341,7 +341,7 @@ describe('book tool', () => {
         u.includes('gutendex') ? { results: [] } : { response: { docs: [] } },
     });
     expect(await run(empty.tool, { action: 'search', query: 'harry potter' })).toContain(
-      'derechos de autor',
+      'No he encontrado "harry potter"',
     );
   });
 

@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import { type ConvertResult, pdfToEpub } from '../books/convert.js';
 import { isKindleAddress, type KindleDeps, safeFilename, sendToKindle } from '../books/kindle.js';
 import { downloadBook, type Fetcher, getJson as netGetJson } from '../books/net.js';
+import type { SecretSource } from '../books/secret.js';
 import {
   type BookHit,
   describeHit,
@@ -34,6 +35,12 @@ export interface BookToolDeps {
   getJson?: GetJson;
   fetcher?: Fetcher;
   convert?: (pdf: Buffer, title: string) => Promise<ConvertResult>;
+  /**
+   * Biblioteca Secreta through the user's own Telegram account (the userbot set up
+   * with `pa books setup`). Fallback only: it is consulted when the public-domain
+   * catalogues do not have the book. Missing entirely when not wired.
+   */
+  secret?: SecretSource;
 }
 
 const Params = Type.Object({
@@ -109,7 +116,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
       };
     }
     throw new Error(
-      'id no válido: usa uno de la búsqueda (gutenberg:NUM, archive:ID, openlibrary:ID o wikisource:Título)',
+      'id no válido: usa uno de la búsqueda (gutenberg:NUM, archive:ID, openlibrary:ID, wikisource:Título o secret:CODIGO)',
     );
   }
 
@@ -175,22 +182,52 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
     );
   }
 
+  /**
+   * Consulta Biblioteca Secreta si está disponible. Nunca lanza: un fallo del
+   * userbot se convierte en una nota honesta para el mensaje, y "no configurado"
+   * también se dice (degradado limpio: la búsqueda pública sigue funcionando).
+   */
+  async function trySecret(
+    q: string,
+  ): Promise<{ hits: Array<{ title: string; code: string }>; note?: string; tried: boolean }> {
+    if (!deps.secret) return { hits: [], tried: false };
+    const st = await deps.secret.status();
+    if (!st.ok) return { hits: [], tried: false, note: `(Biblioteca Secreta: ${st.reason}.)` };
+    try {
+      const hits = await deps.secret.search(q);
+      return {
+        hits,
+        tried: true,
+        note: hits.length ? undefined : '(En Biblioteca Secreta tampoco está.)',
+      };
+    } catch (err) {
+      log.warn('secret library search failed', { error: String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      return { hits: [], tried: true, note: `(Biblioteca Secreta: ${msg}.)` };
+    }
+  }
+
   return {
     name: 'book',
     label: 'Libros',
     description: [
-      'Find a FREE or public-domain book and deliver it as EPUB to this chat and/or to the',
+      'Find a book and deliver it as EPUB to this chat and/or to the',
       "user's Kindle by email.",
-      'Sources: Project Gutenberg, Internet Archive public-domain items, Open Library and the',
-      'Spanish Wikisource. Searches are Spanish-only unless the user asks for another language;',
-      'if a book exists only in another language, say so instead of handing it over.',
+      'Sources, in order: Project Gutenberg, Internet Archive public-domain items, Open Library',
+      'and the Spanish Wikisource (free and public-domain). If none of them has the book, the',
+      "fallback is Biblioteca Secreta through the user's own Telegram account (the userbot set",
+      'up once with `pa books setup`); those hits come back with id=secret:CODE and are labeled',
+      'as Biblioteca Secreta. If the fallback is not set up or fails, say what is missing or what',
+      'happened instead of pretending the book does not exist. If it is not there either, say so.',
+      'Searches are Spanish-only unless the user asks for another language; if a book exists only',
+      'in another language, say so instead of handing it over.',
       'Use action=search with title/author, show the user the options, then action=get with the',
       'chosen id. A PDF is converted to EPUB with Calibre; only a scan without a text layer stays',
       'a PDF, and the result says so. If the user sends you a direct link, use action=get_url.',
-      'Recent or copyrighted books are NOT available: say so plainly and never look for pirated',
-      "copies. Kindle delivery needs the user's @kindle.com address (action=set_kindle) and",
+      "Kindle delivery needs the user's @kindle.com address (action=set_kindle) and",
       'a configured mailbox; if either is missing say what is missing. Never claim a Kindle',
-      'received it: Amazon only accepts mail from approved senders, so say "enviado".',
+      'received it: Amazon only accepts mail from approved senders, so say "enviado". Never',
+      'claim a book was downloaded when the download failed: the tool result says what happened.',
     ].join(' '),
     parameters: Params,
     executionMode: 'sequential',
@@ -216,7 +253,25 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
           const spanish = filter ? collected.filter((h) => isSpanish(h.language)) : collected;
           const down = results.filter((r) => r.status === 'rejected').length;
           if (!spanish.length) {
-            if (down === results.length) {
+            // Fallback acordado (11-oct-2026): Biblioteca Secreta por la cuenta de
+            // Telegram del usuario, solo cuando las fuentes públicas no lo tienen.
+            const secret = await trySecret(q);
+            if (secret.hits.length) {
+              return ok(
+                [
+                  'En las fuentes libres no está, pero en Biblioteca Secreta (tu Telegram) sí:',
+                  ...secret.hits.map(
+                    (h, i) => `${i + 1}. ${h.title} — Biblioteca Secreta (id=secret:${h.code})`,
+                  ),
+                  secret.note ?? '',
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+                { hits: secret.hits.length, secret: true, sourcesDown: down },
+              );
+            }
+            const tail = secret.note ? ` ${secret.note}` : '';
+            if (down === results.length && !secret.tried) {
               return ok('No he podido consultar las fuentes ahora mismo. Inténtalo más tarde.', {
                 hits: 0,
                 sourcesDown: down,
@@ -225,8 +280,8 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
             const others = [...new Set(collected.map((h) => h.language || '?'))].join(', ');
             return ok(
               collected.length
-                ? `He encontrado "${q}", pero solo en otros idiomas (${others}). Como pediste solo castellano, no te los propongo; si quieres alguno igualmente, dímelo.`
-                : `No he encontrado "${q}" como libro libre o de dominio público en castellano. Si es reciente, tiene derechos de autor y no puedo conseguirlo.`,
+                ? `He encontrado "${q}", pero solo en otros idiomas (${others}). Como pediste solo castellano, no te los propongo; si quieres alguno igualmente, dímelo.${tail}`
+                : `No he encontrado "${q}" como libro libre o de dominio público en castellano.${tail}`,
               { hits: 0, onlyOtherLanguages: collected.length > 0 },
             );
           }
@@ -259,7 +314,19 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
         }
 
         case 'get': {
-          const hit = await lookup((args.id ?? '').trim());
+          const id = (args.id ?? '').trim();
+          if (id.startsWith('secret:')) {
+            // Los bytes llegan por Telegram (userbot), no por URL: nada de allow
+            // list aquí, la veracidad la garantiza el pipeline (EPUB real o error).
+            if (!deps.secret) {
+              throw new Error('esa ficha es de Biblioteca Secreta y el userbot no está cableado');
+            }
+            const st = await deps.secret.status();
+            if (!st.ok) throw new Error(`Biblioteca Secreta no disponible: ${st.reason}`);
+            const got = await deps.secret.download(id.slice('secret:'.length));
+            return deliver(got.title, { bytes: got.bytes, kind: 'epub' }, false, args.deliver);
+          }
+          const hit = await lookup(id);
           const file = pickFile(hit.files);
           if (!file) throw new Error('no hay EPUB ni PDF descargable de ese libro');
           return deliver(
