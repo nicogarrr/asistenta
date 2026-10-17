@@ -71,4 +71,10 @@ function Invoke-BoundedProgram {
 Assert ((Start-OptionalOpenCode $true) -eq 'container-unsafe') 'unsafe container not started'
 Assert (($script:programs -join '|') -notmatch '^start|\|start') 'unsafe never started'
 
-Write-Output 'autostart canaries OK (mocked Scheduler and owned child; no live changes)'
+$child.HasExited=$false
+$child | Add-Member ScriptMethod WaitForExit {param($ms) return $false} -Force
+$script:kills=0;$script:stops=0;$failed=$false
+function Save-RestartBudget {param($Path,$Restarts)throw 'Synthetic durable-write failure'}
+try{Invoke-BudgetedRecovery $child {$script:stops++} {} 'synthetic' @(123)}catch{$failed=$true}
+Assert ($failed -and $script:kills -eq 0 -and $script:stops -eq 0) 'failed durable budget never reaches stop or kill'
+Write-Output 'autostart canaries OK (mocked Scheduler and owned child; no live changes)' 

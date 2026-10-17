@@ -113,3 +113,8 @@ function Invoke-OwnedChildRecovery {
  if(-not $Child.HasExited){$Child.Kill();[void]$Child.WaitForExit(5000);& $Notify 'forced';return 'forced'}
  return 'clean'
 }
+function Invoke-BudgetedRecovery {
+ param($Child,[scriptblock]$CleanStop,[scriptblock]$Notify,[string]$BudgetPath,[double[]]$Restarts)
+ Save-RestartBudget $BudgetPath $Restarts
+ return Invoke-OwnedChildRecovery $Child $CleanStop $Notify
+}

@@ -87,10 +87,9 @@ try {
             if($decision.Action -eq 'restart'){
                 # Consume durably BEFORE attempting a stop, including failed stop/restart attempts.
                 $restarts=@($decision.Recent)+@($now)
-                Save-RestartBudget $budgetPath $restarts
                 $watchdogRestart=$true
                 $clean={Invoke-BoundedProgram $node ('"'+$cli+'" stop') 40 $repo}
-                $outcome=Invoke-OwnedChildRecovery $process $clean $notify
+                $outcome=Invoke-BudgetedRecovery $process $clean $notify $budgetPath $restarts
                 Add-Content -LiteralPath (Join-Path $logDir 'launcher.stderr.log') -Value ('Watchdog: '+$outcome+'; reinicio solicitado a Task Scheduler.')
                 break
             }
