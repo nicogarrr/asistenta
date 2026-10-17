@@ -196,6 +196,7 @@ import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
 import { createTvTool } from './tools/tv.js';
+import { createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
@@ -973,6 +974,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   const tools: AgentTool[] = [
     ...fsTools,
     createFetchTool(),
+    createWebTool(config),
     createDoneTool(),
     createFactoryTool({ onChange: () => void factorySyncLocal() }),
     createShellTool(config),
@@ -1086,6 +1088,7 @@ async function runCommand(prompt: string): Promise<number> {
   const tools = [
     ...fsTools,
     createFetchTool(),
+    createWebTool(config),
     createDoneTool(),
     createFactoryTool({ onChange: () => void factorySyncRun() }),
     createShellTool(config),
@@ -1573,6 +1576,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
+      createWebTool(config),
       createDoneTool(),
       createShellTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions

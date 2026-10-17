@@ -66,6 +66,11 @@ export interface Config {
   downloadCookiesBrowser: string;
   /** Path to curl-impersonate for PDFs behind anti-bot walls. Empty = look on PATH. */
   curlImpersonatePath: string;
+  /**
+   * Tope de coste por llamada del enrutador web (src/web/router.ts), en EUR.
+   * Por defecto 0: solo backends gratis; un backend con coste nunca se llama.
+   */
+  webMaxCostEur: number;
 }
 
 /** Env var restricted to a fixed set of values. A typo is an error, not a silent default. */
@@ -206,6 +211,15 @@ export function loadConfig(): Config {
       '',
     ),
     curlImpersonatePath: process.env.PA_CURL_IMPERSONATE?.trim() ?? '',
+    webMaxCostEur: (() => {
+      const raw = process.env.PA_WEB_MAX_COST_EUR;
+      if (!raw) return 0;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`PA_WEB_MAX_COST_EUR must be a number >= 0, got ${JSON.stringify(raw)}`);
+      }
+      return parsed;
+    })(),
   };
   return cached;
 }

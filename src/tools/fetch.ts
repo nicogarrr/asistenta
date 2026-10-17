@@ -263,6 +263,88 @@ export async function isFetchableResolved(
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
 
+export interface FetchedPage {
+  url: string;
+  status: number;
+  contentType: string;
+  chars: number;
+  truncated: boolean;
+  text: string;
+}
+
+/**
+ * The fetch core shared by the `fetch` tool and the web router's direct backend:
+ * same SSRF gate (lexical + DNS, re-checked on every redirect hop), same text
+ * extraction, same 30s ceiling. One implementation, so a fix lands everywhere.
+ */
+export async function fetchPage(
+  url: string,
+  opts: { format?: 'text' | 'markdown'; maxChars?: number; timeoutMs?: number } = {},
+): Promise<FetchedPage> {
+  const limit = opts.maxChars ?? 20_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
+
+  try {
+    // Redirects are followed manually, re-validating every hop: a public URL
+    // that 302s to 169.254.169.254 must be refused at the second hop, not
+    // blindly followed by the HTTP client.
+    let current = url;
+    let res: Response | null = null;
+    for (let hop = 0; hop < 6; hop++) {
+      if (!(await isFetchableResolved(current))) {
+        throw new Error(`refusing to fetch ${current}: not a public http(s) URL`);
+      }
+      const hopRes = await fetch(current, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        },
+      });
+      if (hopRes.status < 300 || hopRes.status >= 400 || hopRes.status === 304) {
+        res = hopRes;
+        break;
+      }
+      const location = hopRes.headers.get('location');
+      await hopRes.arrayBuffer().catch(() => {});
+      if (!location) throw new Error(`redirect without location for ${current}`);
+      current = new URL(location, current).toString();
+    }
+    if (!res) throw new Error(`too many redirects for ${url}`);
+
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText} for ${url}`);
+    }
+
+    const contentType = res.headers.get('content-type') ?? '';
+    const body = await res.text();
+    log.info('fetch', { host: logHost(url), status: res.status, bytes: body.length });
+
+    const isHtml = contentType.includes('html') || /^\s*<!doctype html/i.test(body);
+    const text = isHtml ? await extractText(body, opts.format ?? 'markdown') : body;
+    const truncated = text.length > limit;
+    const content = truncated ? `${text.slice(0, limit)}\n\n[truncated at ${limit} chars]` : text;
+    return {
+      url,
+      status: res.status,
+      contentType,
+      chars: text.length,
+      truncated,
+      text: content,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`fetch timed out after 30s: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof FetchParams> {
   return {
     name: 'fetch',
@@ -278,76 +360,28 @@ export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof Fetc
           `refusing to fetch ${url}: only public http(s) URLs are allowed, not local or private addresses`,
         );
       }
-
-      const limit = args.maxChars ?? defaultMaxChars;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30_000);
-
-      try {
-        // Redirects are followed manually, re-validating every hop: a public URL
-        // that 302s to 169.254.169.254 must be refused at the second hop, not
-        // blindly followed by the HTTP client.
-        let current = url;
-        let res: Response | null = null;
-        for (let hop = 0; hop < 6; hop++) {
-          if (!(await isFetchableResolved(current))) {
-            throw new Error(`refusing to fetch ${current}: not a public http(s) URL`);
-          }
-          const hopRes = await fetch(current, {
-            signal: controller.signal,
-            redirect: 'manual',
-            headers: {
-              'User-Agent': USER_AGENT,
-              Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-              'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-            },
-          });
-          if (hopRes.status < 300 || hopRes.status >= 400 || hopRes.status === 304) {
-            res = hopRes;
-            break;
-          }
-          const location = hopRes.headers.get('location');
-          await hopRes.arrayBuffer().catch(() => {});
-          if (!location) throw new Error(`redirect without location for ${current}`);
-          current = new URL(location, current).toString();
-        }
-        if (!res) throw new Error(`too many redirects for ${url}`);
-
-        if (!res.ok) {
-          throw new Error(`${res.status} ${res.statusText} for ${url}`);
-        }
-
-        const contentType = res.headers.get('content-type') ?? '';
-        const body = await res.text();
-        log.info('fetch', { host: logHost(url), status: res.status, bytes: body.length });
-
-        const isHtml = contentType.includes('html') || /^\s*<!doctype html/i.test(body);
-        const text = isHtml ? await extractText(body, args.format ?? 'markdown') : body;
-        const truncated = text.length > limit;
-        const content = truncated
-          ? `${text.slice(0, limit)}\n\n[truncated at ${limit} chars]`
-          : text;
-
-        return {
-          content: [
-            {
-              type: 'text',
-              // The fence is a label, not a security boundary. The real defence
-              // against a page telling the model to do something is the system
-              // prompt's instruction to treat screen and page text as data.
-              text: `Fetched ${url}\n\n<fetched_content source="${url}">\n${content}\n</fetched_content>`,
-            },
-          ],
-          details: { url, status: res.status, contentType, chars: text.length, truncated },
-        };
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          throw new Error(`fetch timed out after 30s: ${url}`);
-        }
-        throw err;
-      } finally {
-        clearTimeout(timer);
-      }
+      const page = await fetchPage(url, {
+        format: args.format,
+        maxChars: args.maxChars ?? defaultMaxChars,
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            // The fence is a label, not a security boundary. The real defence
+            // against a page telling the model to do something is the system
+            // prompt's instruction to treat screen and page text as data.
+            text: `Fetched ${url}\n\n<fetched_content source="${url}">\n${page.text}\n</fetched_content>`,
+          },
+        ],
+        details: {
+          url,
+          status: page.status,
+          contentType: page.contentType,
+          chars: page.chars,
+          truncated: page.truncated,
+        },
+      };
     },
   };
 }

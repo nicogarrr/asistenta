@@ -20,6 +20,8 @@ export const paths = {
   db: join(STATE_DIR, 'agent.db'),
   vault: join(STATE_DIR, 'vault.enc'),
   log: join(STATE_DIR, 'log'),
+  /** Metricas del enrutador web (JSONL, una linea por intento). */
+  webMetrics: join(STATE_DIR, 'log', 'web-metrics.jsonl'),
   screenshots: join(STATE_DIR, 'screenshots'),
   sessions: join(STATE_DIR, 'sessions'),
   pidFile: join(STATE_DIR, 'agent.pid'),
