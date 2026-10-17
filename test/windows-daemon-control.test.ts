@@ -74,6 +74,11 @@ it('refuses a second owner, rejects forged requests, then accepts only the genui
   const child = await fixture(dir);
   await expect(openWindowsDaemonControl(dir, () => {})).rejects.toThrow('ocupado');
   const ready = JSON.parse(readFileSync(join(dir, 'control-win', 'ready.json'), 'utf8'));
+  windowsNative(dir, 'empty', `${'b'.repeat(64)}.tmp`);
+  renameSync(
+    join(dir, 'control-win', `${'b'.repeat(64)}.tmp`),
+    join(dir, 'control-win', 'request.json'),
+  );
   writeFileSync(
     join(dir, 'control-win', 'request.json'),
     JSON.stringify({ instanceId: ready.instanceId, nonce: 'a'.repeat(64), proof: '0'.repeat(64) }),
