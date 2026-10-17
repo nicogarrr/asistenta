@@ -34,6 +34,15 @@ jobs:
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
 
+  # Mocks del driver telnet y del canal del boton TV: sin red externa ni tele.
+  tv-mocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/tv/test-tv-token-patch-mock.sh
+      - run: scripts/tv/test-tv-rollback-mock.sh
+
   # Windows es la plataforma de producción. Solo se ejecuta un subconjunto sin
   # navegador real, micrófono ni escritorio interactivo (eso solo se prueba en el PC).
   # Gate bloqueante tras primera ejecución Windows verde en el PR.
