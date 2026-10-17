@@ -262,6 +262,7 @@ Usage:
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
+  pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
@@ -317,6 +318,14 @@ export async function main(argv: string[]): Promise<number> {
     case 'status': {
       const { statusCommand } = await import('./daemon-status.js');
       return statusCommand(rest);
+    }
+    case 'autostart': {
+      const { autostartCommand } = await import('./autostart.js');
+      return autostartCommand(rest);
+    }
+    case 'autostart-notify': {
+      const { notifyAutostart } = await import('./autostart.js');
+      return rest.length === 1 ? notifyAutostart(rest[0] ?? '') : 2;
     }
     case 'watchdog': {
       if (rest[0] !== '--status') {
@@ -3350,6 +3359,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
   const cmdEstado = async (inbound: Inbound): Promise<void> => {
+    const { localLlmHealthy } = await import('./autostart.js');
+    const localLlmOk = await localLlmHealthy();
     const ytdlp = process.env.ASISTENTA_YTDLP || 'yt-dlp';
     const ytdlpOk = await new Promise<boolean>((resolve) => {
       execFile(ytdlp, ['--version'], { timeout: 5000, windowsHide: true }, (err) => resolve(!err));
@@ -3367,6 +3378,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       node: process.version,
       uptimeMs: Date.now() - startedAt,
       tools: [
+        ...(config.provider === 'opencode-local'
+          ? [
+              {
+                name: 'LLM local (:4096)',
+                ok: localLlmOk,
+                note: localLlmOk
+                  ? undefined
+                  : 'modo degradado: Telegram y servicios activos; modelo no disponible',
+              },
+            ]
+          : []),
         {
           name: 'yt-dlp (vídeos)',
           ok: ytdlpOk,
