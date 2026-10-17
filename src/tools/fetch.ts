@@ -279,7 +279,7 @@ export interface FetchedPage {
  */
 export async function fetchPage(
   url: string,
-  opts: { format?: 'text' | 'markdown'; maxChars?: number; timeoutMs?: number } = {},
+  opts: { format?: 'text' | 'markdown' | 'html'; maxChars?: number; timeoutMs?: number } = {},
 ): Promise<FetchedPage> {
   const limit = opts.maxChars ?? 20_000;
   const controller = new AbortController();
@@ -324,7 +324,15 @@ export async function fetchPage(
     log.info('fetch', { host: logHost(url), status: res.status, bytes: body.length });
 
     const isHtml = contentType.includes('html') || /^\s*<!doctype html/i.test(body);
-    const text = isHtml ? await extractText(body, opts.format ?? 'markdown') : body;
+    // 'html' es uso interno (vigilancia de precios: el extractor estructurado necesita
+    // el marcado crudo). No se expone en la tool del modelo: ahí el texto extraído es
+    // la frontera de tokens.
+    const text =
+      opts.format === 'html'
+        ? body
+        : isHtml
+          ? await extractText(body, opts.format ?? 'markdown')
+          : body;
     const truncated = text.length > limit;
     const content = truncated ? `${text.slice(0, limit)}\n\n[truncated at ${limit} chars]` : text;
     return {

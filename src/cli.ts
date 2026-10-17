@@ -169,7 +169,7 @@ import { createDocsTool } from './tools/docs.js';
 import { createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createFactoryTool } from './tools/factory.js';
-import { createFetchTool, isFetchableResolved } from './tools/fetch.js';
+import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
@@ -228,7 +228,13 @@ import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
-import { describeChange, PageWatchStore, parseVigilaArgs } from './watch/pages.js';
+import {
+  describeChange,
+  describeWatch,
+  eur,
+  PageWatchStore,
+  parseVigilaArgs,
+} from './watch/pages.js';
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -3081,14 +3087,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     return m?.[1] ?? raw;
   };
 
-  /** /vigila <url> [nombre]: avisa cuando cambie el precio (o el texto) de una página. */
+  /**
+   * HTML crudo de una ficha, por el MISMO camino con control SSRF (fetchPage). Solo lo
+   * usa la lectura estructurada de tiendas de la vigilancia de precios; el extractor
+   * con consenso necesita el marcado (JSON-LD/meta), no el texto plano.
+   */
+  const fetchPageHtml = async (url: string): Promise<string> =>
+    (await fetchPage(url, { format: 'html', maxChars: 600_000 })).text;
+
+  /**
+   * /vigila <url> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]: avisa cuando
+   * cambie el precio de una página, cuando baje de un objetivo o un %, o cuando una
+   * palabra aparezca/desaparezca.
+   */
   const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
-    const parsed = parseVigilaArgs(args);
+    let parsed: ReturnType<typeof parseVigilaArgs>;
+    try {
+      parsed = parseVigilaArgs(args);
+    } catch (err) {
+      return void (await say(inbound, err instanceof Error ? err.message : String(err), {
+        quote: true,
+      }));
+    }
     const rawUrl = parsed?.url;
     if (!parsed || !rawUrl) {
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [nombre]. Te aviso si cambia el precio de la página. Con palabra=agotado (o palabra="sin stock") te aviso cuando esa palabra aparezca o desaparezca. /vigilando para ver la lista, /dejar_de_vigilar <id> para quitar una.',
+        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
         { quote: true },
       ));
     }
@@ -3098,10 +3123,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }));
     }
     try {
-      const w = pageWatches.add(inbound.chatId, rawUrl, parsed.label, parsed.keyword);
+      const w = pageWatches.add(inbound.chatId, rawUrl, parsed.label, parsed.keyword, {
+        targetCents: parsed.targetCents ?? undefined,
+        dropPct: parsed.dropPct ?? undefined,
+      });
+      const extra = [
+        w.keyword ? `buscando "${w.keyword}"` : '',
+        w.targetCents !== null ? `objetivo ${eur(w.targetCents)}` : '',
+        w.dropPct !== null ? `aviso si baja un ${w.dropPct} %` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
       await say(
         inbound,
-        `Vale, vigilo ${w.label || w.url} (id ${w.id})${w.keyword ? ` buscando "${w.keyword}"` : ''}. Miro cada 2 horas y te aviso si cambia.`,
+        `Vale, vigilo ${w.label || w.url} (id ${w.id})${extra ? ` (${extra})` : ''}. Miro cada 2 horas y te aviso si cambia.`,
         {
           quote: true,
         },
@@ -3116,10 +3151,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const list = pageWatches.list(inbound.chatId);
     const text = list.length
       ? list
-          .map((w) => `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}`)
+          .map(
+            (w) =>
+              `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}` +
+              `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
+              `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
+          )
           .join('\n')
       : 'No vigilo ninguna página. Prueba /vigila <enlace>.';
     await say(inbound, text, { quote: true });
+  };
+
+  /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
+  const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
+    const id = args.trim();
+    const w = id
+      ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
+      : undefined;
+    if (!w) {
+      return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
+    }
+    await say(inbound, describeWatch(w, pageWatches.summary(w.id)), { quote: true });
   };
 
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
@@ -3133,7 +3185,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const checkPageWatch = async (id: string): Promise<void> => {
     const w = pageWatches.get(id);
     if (!w?.active) return;
-    const outcome = await pageWatches.check(w, fetchPageText);
+    const outcome = await pageWatches.check(w, fetchPageText, fetchPageHtml);
     const msg = describeChange(w, outcome);
     if (outcome.kind === 'changed') {
       actions.record({
@@ -4827,6 +4879,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdVigilando(inbound);
               case 'dejar_de_vigilar':
                 return cmdDejarDeVigilar(inbound, command.args);
+              case 'precio':
+                return cmdPrecio(inbound, command.args);
               case 'resolver':
               case 'resolve':
                 return cmdResolve(inbound, command.args);
