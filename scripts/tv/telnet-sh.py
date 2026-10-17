@@ -31,6 +31,7 @@ import re
 import shlex
 import socket
 import sys
+import time
 
 IAC = 0xFF
 SENTINEL = re.compile(rb"__MM_TELNET_EXIT_(\d+)__")
@@ -42,7 +43,9 @@ def _filter_iac(chunk: bytes, sock: socket.socket) -> bytes:
     out = bytearray()
     i = 0
     while i < len(chunk):
-        if chunk[i] == IAC and i + 2 < len(chunk):
+        if chunk[i] == IAC:
+            if i + 2 >= len(chunk):
+                break  # secuencia IAC cortada a fin de chunk: se descarta
             cmd, opt = chunk[i + 1], chunk[i + 2]
             if cmd == 253:  # DO -> WONT
                 sock.sendall(bytes([IAC, 252, opt]))
@@ -55,36 +58,74 @@ def _filter_iac(chunk: bytes, sock: socket.socket) -> bytes:
     return bytes(out)
 
 
+def _recv_filtered(sock: socket.socket, timeout: float):
+    """Un recv filtrado. Devuelve (estado, datos) con estado en
+    'data' | 'timeout' | 'eof'; datos puede ser b'' (chunk que era solo IAC)."""
+    try:
+        sock.settimeout(timeout)
+        chunk = sock.recv(4096)
+    except socket.timeout:
+        return "timeout", b""
+    if not chunk:
+        return "eof", b""
+    return "data", _filter_iac(chunk, sock)
+
+
+# Silencio que marca "fase asentada". Este telnetd lee por delante y se traga
+# el script si llega pegado al `sh -s` (lo consume el shell externo y el
+# interno nace vacio), asi que entre fase y fase se espera a que no llegue
+# nada: con el shell en reposo, la siguiente linea va a quien debe.
+QUIET = 0.4
+
+
+def _drain(sock: socket.socket, quiet: float) -> bytes:
+    """Vacia lo pendiente de la fase anterior: lee hasta `quiet` s sin datos."""
+    got = b""
+    while True:
+        status, data = _recv_filtered(sock, quiet)
+        if status != "data":
+            return got
+        got += data
+
+
 def _run_session(host, port, opener: bytes, payload: bytes, timeout: float) -> bytes:
-    """Abre `opener` (p.ej. `sh -s`) en la tele, manda payload y lee hasta EOF."""
+    """Abre `opener` (p.ej. `sh -s`) en la tele, manda payload y lee hasta el centinela.
+
+    Handshake por fases separadas por silencio (QUIET): este telnetd lee por
+    delante y se traga el script si llega pegado al `sh -s` (lo consume el
+    shell externo y el interno nace vacio); y el FIN del cliente cierra la
+    sesion en seco, perdiendo la salida pendiente (nada de shutdown SHUT_WR).
+    El EOF de stdin del sh interno se manda como Ctrl-D sobre el pty.
+    """
+    if not payload.endswith(b"\n"):
+        payload += b"\n"
     sock = socket.create_connection((host, port), timeout=timeout)
     try:
         sock.settimeout(timeout)
-        # Banner inicial ("~ #" en esta tele). El shell buffera la entrada,
-        # pero esperar evita mezclar el banner con la salida del script.
-        banner = b""
-        while b"#" not in banner and len(banner) < 4096:
-            try:
-                chunk = sock.recv(1024)
-            except socket.timeout:
-                break  # sin banner: el shell igualmente buffera la entrada
-            if not chunk:
-                break
-            banner += _filter_iac(chunk, sock)
-        # stty -echo: sin eco, lo enviado no vuelve mezclado con la salida
-        # (en modo put lo enviado ES el secreto en base64).
-        sock.sendall(b"stty -echo 2>/dev/null\n" + opener + b"\n")
-        sock.sendall(payload)
-        sock.shutdown(socket.SHUT_WR)
         out = b""
-        while True:
-            try:
-                chunk = sock.recv(4096)
-            except socket.timeout:
-                break
-            if not chunk:
-                break
-            out += _filter_iac(chunk, sock)
+        try:
+            out = _drain(sock, QUIET)  # banner ("~ #")
+            if out:
+                # stty -echo: sin eco, lo enviado no vuelve mezclado con la salida.
+                sock.sendall(b"stty -echo 2>/dev/null\n")
+                out += _drain(sock, QUIET)
+                sock.sendall(opener + b"\n")
+                out += _drain(sock, QUIET)  # shell interno en reposo: listo para el script
+                sock.sendall(payload)
+                sock.sendall(b"\x04")  # EOF de stdin del sh interno -> trap EXIT
+                deadline = time.monotonic() + timeout
+                while SENTINEL.search(out) is None:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        break
+                    status, data = _recv_filtered(sock, min(left, 1.0))
+                    if status == "eof":
+                        break
+                    if status == "data":
+                        out += data
+                out += _drain(sock, 0.15)
+        except OSError:
+            pass  # la tele cerro: sin centinela -> fallo de transporte visible
         return out
     finally:
         sock.close()
