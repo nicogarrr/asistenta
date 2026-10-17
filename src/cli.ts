@@ -132,6 +132,7 @@ function secretStatePaths(): string[] {
   return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
 
+import { SecretLibrary } from './books/secret.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import {
   buildMacroPrompt,
@@ -1693,6 +1694,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Free and public-domain books (Gutenberg, Internet Archive): search, download as
       // EPUB, send to this chat and/or to the user's Kindle by email (approval each time).
       createBookTool({
+        // Biblioteca Secreta por la cuenta de Telegram del usuario (userbot de
+        // `pa books setup`): fallback cuando las fuentes de dominio publico no
+        // tienen el libro. Perezoso: sin setup, la tool lo dice y sigue.
+        secret: new SecretLibrary(),
         sendDocument: (bytes, filename, caption) =>
           telegram
             .sendDocumentBytes(
