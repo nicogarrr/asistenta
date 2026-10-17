@@ -104,7 +104,14 @@ try {
 }
 catch {
     # Keep diagnostics in the user's local log. Never print configuration/secrets.
-    if ($started -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
+    if ($started -and -not $process.HasExited) {
+        if($supervise){
+            # A failed budget/log/check is NOT permission to bypass the restart gate.
+            try{& $notify 'supervisor'}catch{}
+            $process.WaitForExit()
+            $exitCode=$process.ExitCode
+        }else{$process.Kill();$process.WaitForExit()}
+    }
     if ($errFile) { $errFile.Dispose(); $errFile = $null }
     $message = "$(Get-Date -Format o) error del launcher: $($_.Exception.Message)"
     if ($logsValidated) { Add-Content -LiteralPath $errPath -Value $message -Encoding UTF8 }

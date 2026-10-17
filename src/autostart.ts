@@ -68,6 +68,8 @@ export const SUPERVISOR_MESSAGES = {
     'Asistenta: el cierre limpio no terminó a tiempo. Se terminó solo el proceso propio del launcher. No se declara cierre limpio; revisa pa autostart status y los logs locales.',
   blocked:
     'Asistenta: agotados 3 reinicios del supervisor en 15 min. No forzaré otro. Revisa pa autostart status.',
+  supervisor:
+    'Asistenta: el supervisor externo no pudo completar una comprobación o guardar su presupuesto. No forzaré un reinicio ni declararé cierre limpio. Revisa pa autostart status y los logs locales.',
   heartbeat:
     'Asistenta: no puedo verificar un latido válido de esta instancia. No termino ningún proceso; revisa pa autostart status.',
 } as const;

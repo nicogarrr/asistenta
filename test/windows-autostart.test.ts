@@ -18,6 +18,9 @@ it('install entrypoint is explicit and does not silently install in serve', () =
   expect(install).toContain('SupportsShouldProcess=$true');
   expect(install).toContain('[switch]$DisableLocalLlm');
   expect(install).not.toContain('Stop-ScheduledTask');
+  const launcher = readFileSync(join(root, 'run-hidden.ps1'), 'utf8');
+  expect(launcher).toContain("try{& $notify 'supervisor'}catch{}");
+  expect(launcher).toContain('}else{$process.Kill();$process.WaitForExit()}');
   expect(install).toContain('Invoke-BoundedProgram');
   const core = readFileSync(join(root, 'autostart-core.ps1'), 'utf8').replace(/^\s*#.*$/gm, '');
   expect(core).not.toMatch(/Stop-Process|process\.kill|Read-Pid|agent\.pid/);
