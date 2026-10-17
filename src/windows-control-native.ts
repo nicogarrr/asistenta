@@ -38,7 +38,7 @@ function PrivateFile([string]$p) {
  $security=New-Object Security.AccessControl.FileSecurity
  $security.SetOwner($sid);$security.SetAccessRuleProtection($true,$false)
  $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')))
- return New-Object IO.FileStream($p,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::None,$security)
+ return [IO.FileStream]::new($p,[IO.FileMode]::CreateNew,([Security.AccessControl.FileSystemRights]::Read -bor [Security.AccessControl.FileSystemRights]::Write),[IO.FileShare]::None,4096,[IO.FileOptions]::None,$security)
 }
 try {
  $state=$env:PA_CONTROL_STATE
