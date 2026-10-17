@@ -56,7 +56,7 @@ try {
  [Console]::Out.WriteLine('LOCKED');[Console]::Out.Flush()
  while($null -ne [Console]::In.ReadLine()){}
  $handle.Dispose();exit 0
-} catch { [Console]::Error.WriteLine('DACL, propietario, reparse point o control nativo no verificables.');exit 1 }
+} catch { [Console]::Error.WriteLine(('Control nativo rechazado: '+$_.Exception.GetType().Name));exit 1 }
 `;
 function options(state: string, mode: string, leaf = '') {
   if (process.platform !== 'win32') throw new Error('Control DACL requiere Windows nativo.');
@@ -130,11 +130,16 @@ export async function windowsOwnership(
     }, 12_000);
     const fail = () => {
       clearTimeout(timer);
-      reject(new Error('Control ocupado o DACL no verificable.'));
+      const kind =
+        diagnostic.match(/Control nativo rechazado: ([A-Za-z]+Exception)/)?.[1] ?? 'no disponible';
+      reject(new Error(`Control ocupado o DACL no verificable (${kind}).`));
     };
     child.once('error', fail);
     child.once('exit', fail);
-    child.stderr.resume();
+    let diagnostic = '';
+    child.stderr.on('data', (chunk) => {
+      diagnostic = (diagnostic + String(chunk)).slice(0, 2048);
+    });
     child.stdout.on('data', (chunk) => {
       output += String(chunk);
       if (output.trim() !== 'LOCKED') return;

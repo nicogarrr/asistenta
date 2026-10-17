@@ -150,3 +150,23 @@ it('rejects Everyone inherit-only on control-win before creating any ready token
   expect(existsSync(join(dir, 'control-win', 'ready.json'))).toBe(false);
   expect(existsSync(join(dir, 'control-win', 'owner.lock'))).toBe(false);
 });
+
+it('native empty-file creation sets the actual owner SID even on elevated Windows runners', () => {
+  const dir = state();
+  windowsNative(dir, 'init');
+  const leaf = `${'c'.repeat(64)}.tmp`;
+  windowsNative(dir, 'empty', leaf);
+  const script = `Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop;$a=Get-Acl -LiteralPath $env:PA_TEST_FILE;$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($a.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid){exit 7};Write-Output 'OWNER_CURRENT_SID'`;
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    { env: { ...process.env, PA_TEST_FILE: join(dir, 'control-win', leaf) }, encoding: 'utf8' },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('OWNER_CURRENT_SID');
+});
