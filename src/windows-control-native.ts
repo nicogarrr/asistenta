@@ -19,7 +19,7 @@ function CheckPath([string]$p,[bool]$directory) {
  $acl=Get-Acl -LiteralPath $p
  if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'owner'}
  foreach($r in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-  if($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -notin @($sid.Value,'S-1-5-18','S-1-5-32-544') -and ($r.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0){throw 'shared'}
+  if($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -notin @($sid.Value,'S-1-5-18','S-1-5-32-544')){throw 'shared'}
  }
 }
 function PrivateDir([string]$p) {
@@ -81,7 +81,7 @@ export function windowsNative(
   mode: 'init' | 'check' | 'probe' | 'confirm',
   leaf = '',
 ): 'free' | 'busy' {
-  if (leaf && !/^(ready\.json|request\.json|[a-f0-9]{64}\.stopped)$/.test(leaf))
+  if (leaf && !/^(ready\.json|request\.json|[a-f0-9]{64}\.(stopped|tmp))$/.test(leaf))
     throw new Error('Archivo de control inválido.');
   const result = spawnSync(executable(), args(), options(state, mode, leaf));
   if (

@@ -69,9 +69,15 @@ function publish(state: string, leaf: string, value: unknown) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  const temporary = join(dir(state), `${nonce()}.tmp`);
-  writeFileSync(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+  const temporaryLeaf = `${nonce()}.tmp`;
+  const temporary = join(dir(state), temporaryLeaf);
+  // Create EMPTY first, then validate the inherited native DACL before writing a token.
+  writeFileSync(temporary, '', { flag: 'wx', mode: 0o600 });
+  windowsNative(state, 'check', temporaryLeaf);
+  writeFileSync(temporary, JSON.stringify(value), { flag: 'r+' });
+  windowsNative(state, 'check', temporaryLeaf);
   renameSync(temporary, join(dir(state), leaf));
+  windowsNative(state, 'check', leaf);
 }
 function removeOwned(state: string, leaf: string) {
   try {

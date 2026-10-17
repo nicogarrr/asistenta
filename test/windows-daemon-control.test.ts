@@ -117,3 +117,23 @@ it('absent signed metadata never falls back to a PID signal', async () => {
   await expect(stopWindowsDaemon(dir)).rejects.toThrow();
   expect(readFileSync(join(dir, 'agent.pid'), 'utf8')).toBe(String(process.pid));
 });
+
+it('rejects Everyone inherit-only on control-win before creating any ready token', async () => {
+  const dir = state();
+  windowsNative(dir, 'init');
+  const script = `$p=$env:PA_TEST_DIR;$a=Get-Acl -LiteralPath $p;$s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0');$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','ContainerInherit,ObjectInherit','InheritOnly','Allow')));Set-Acl -LiteralPath $p -AclObject $a`;
+  const result = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    { env: { ...process.env, PA_TEST_DIR: join(dir, 'control-win') }, encoding: 'utf8' },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  await expect(openWindowsDaemonControl(dir, () => {})).rejects.toThrow('DACL');
+  expect(existsSync(join(dir, 'control-win', 'ready.json'))).toBe(false);
+  expect(existsSync(join(dir, 'control-win', 'owner.lock'))).toBe(false);
+});
