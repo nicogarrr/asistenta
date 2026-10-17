@@ -13,6 +13,9 @@ $outFile = $null
 $errFile = $null
 $exitCode = 1
 $logsValidated = $false
+$supervise = $env:PA_AUTOSTART_SUPERVISE -eq '1'
+$supervisorLock = $null
+$watchdogRestart = $false
 try {
     # Resolve before launching: never inherit a shell alias or terminal wrapper.
     $repo = (Resolve-Path -LiteralPath $RepoDir).Path
@@ -27,6 +30,27 @@ try {
     # A private state directory under the current user's profile is required.
     # Do not change ACLs or take ownership of an existing directory silently.
     $logsValidated = $true
+    $errPath = Join-Path $logDir 'launcher.stderr.log'
+    if ($supervise) {
+        . (Join-Path $PSScriptRoot 'autostart-core.ps1')
+        # Only one supervisor per private state dir, even across user sessions.
+        $lockPath = Join-Path $logDir 'supervisor.lock'
+        Assert-NoReparsePath $lockPath
+        if(Test-Path -LiteralPath $lockPath){Assert-PrivateAcl $lockPath}
+        $supervisorLock = [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $budgetPath = Join-Path $logDir 'supervisor-restarts.json'
+        $restarts = @(Read-RestartBudget $budgetPath)
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $recent = @($restarts | Where-Object {$_ -ge ($now-900000)})
+        $notify = {
+            param($event)
+            try {
+                $notice=Invoke-BoundedProgram $node ('"'+$cli+'" autostart-notify '+$event) 12 $repo
+                if($notice.Code -ne 0){Add-Content -LiteralPath (Join-Path $logDir 'launcher.stderr.log') -Value 'Aviso Telegram no entregado; revisa owner, red y vault.'}
+            }catch{Add-Content -LiteralPath (Join-Path $logDir 'launcher.stderr.log') -Value 'Aviso Telegram no entregado dentro del plazo.'}
+        }
+        if($recent.Count -ge 3){ & $notify 'blocked';exit 0 }
+    }
     $outPath = Join-Path $logDir 'launcher.stdout.log'
     $errPath = Join-Path $logDir 'launcher.stderr.log'
     foreach ($file in @($outPath, $errPath)) {
@@ -54,14 +78,39 @@ try {
     $process.StandardInput.Close()
     $outCopy = $process.StandardOutput.BaseStream.CopyToAsync($outFile)
     $errCopy = $process.StandardError.BaseStream.CopyToAsync($errFile)
-    $process.WaitForExit()
+    if ($supervise) {
+        $began=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $reported=$false
+        while(-not $process.WaitForExit(5000)){
+            $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            $decision=Get-SupervisionDecision $now $began (Read-HeartbeatTimestamp $StateDir) $restarts
+            if($decision.Action -eq 'restart'){
+                # Consume durably BEFORE attempting a stop, including failed stop/restart attempts.
+                $restarts=@($decision.Recent)+@($now)
+                $watchdogRestart=$true
+                $clean={Invoke-BoundedProgram $node ('"'+$cli+'" stop') 40 $repo}
+                $outcome=Invoke-BudgetedRecovery $process $clean $notify $budgetPath $restarts
+                Add-Content -LiteralPath (Join-Path $logDir 'launcher.stderr.log') -Value ('Watchdog: '+$outcome+'; reinicio solicitado a Task Scheduler.')
+                break
+            }
+            if($decision.Action -in @('report','blocked') -and -not $reported){& $notify $(if($decision.Action -eq 'blocked'){'blocked'}else{'heartbeat'});$reported=$true}
+        }
+    } else { $process.WaitForExit() }
     $outCopy.GetAwaiter().GetResult()
     $errCopy.GetAwaiter().GetResult()
     $exitCode = $process.ExitCode
+    if($watchdogRestart){$exitCode=1}
 }
 catch {
     # Keep diagnostics in the user's local log. Never print configuration/secrets.
-    if ($started -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
+    if ($started -and -not $process.HasExited) {
+        if($supervise){
+            # A failed budget/log/check is NOT permission to bypass the restart gate.
+            try{& $notify 'supervisor'}catch{}
+            $process.WaitForExit()
+            $exitCode=$process.ExitCode
+        }else{$process.Kill();$process.WaitForExit()}
+    }
     if ($errFile) { $errFile.Dispose(); $errFile = $null }
     $message = "$(Get-Date -Format o) error del launcher: $($_.Exception.Message)"
     if ($logsValidated) { Add-Content -LiteralPath $errPath -Value $message -Encoding UTF8 }
@@ -69,6 +118,7 @@ catch {
 }
 finally {
     if ($process) { $process.Dispose() }
+    if ($supervisorLock) { $supervisorLock.Dispose() }
     if ($outFile) { $outFile.Dispose() }
     if ($errFile) { $errFile.Dispose() }
 }

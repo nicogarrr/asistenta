@@ -24,8 +24,7 @@ function Assert-PrivateAcl {
     $trusted = @($sid, 'S-1-5-18', 'S-1-5-32-544')
     foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            $rule.IdentityReference.Value -notin $trusted -and
-            ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0) {
+            $rule.IdentityReference.Value -notin $trusted) {
             throw 'Ruta de logs rechazada: ACL compartida con otros usuarios.'
         }
     }
