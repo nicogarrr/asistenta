@@ -26,7 +26,9 @@ export type HttpPost = (
 ) => Promise<{ status: number; text(): Promise<string> }>;
 
 const defaultGet: HttpGet = (url, init) => fetch(url, init);
-const defaultPost: HttpPost = (url, init) => fetch(url, init);
+// El metodo vive en el default, no en cada llamada: fetch() sin method usa GET
+// y un GET con body rompe ("Request with GET/HEAD method cannot have body").
+const defaultPost: HttpPost = (url, init) => fetch(url, { ...init, method: 'POST' });
 
 export function createDirectFetchBackend(): WebBackend {
   return {
@@ -50,6 +52,9 @@ export function createTinyfishBackend(opts: {
   timeoutMs?: number;
   /** Puerta SSRF previa a cada URL remota; por defecto la misma que la tool fetch. */
   validateUrl?: (url: string, resolve?: HostResolver) => Promise<boolean>;
+  /** Endpoints alternativos (tests con servidor local, proxies). */
+  searchUrl?: string;
+  fetchUrl?: string;
 }): WebBackend {
   const httpGet = opts.httpGet ?? defaultGet;
   const httpPost = opts.httpPost ?? defaultPost;
@@ -82,7 +87,7 @@ export function createTinyfishBackend(opts: {
           language: 'es',
           location: 'ES',
         });
-        const res = await httpGet(`${TINYFISH_SEARCH_URL}?${params}`, {
+        const res = await httpGet(`${opts.searchUrl ?? TINYFISH_SEARCH_URL}?${params}`, {
           headers,
           signal: controller.signal,
           // redirect: 'manual' es parte de la seguridad, no una optimizacion:
@@ -127,7 +132,7 @@ export function createTinyfishBackend(opts: {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await httpPost(TINYFISH_FETCH_URL, {
+        const res = await httpPost(opts.fetchUrl ?? TINYFISH_FETCH_URL, {
           headers: { ...headers, 'Content-Type': 'application/json' },
           // ttl: 0 = pedir lectura en vivo. Sin ttl la API acepta CUALQUIER entrada
           // de su cache. Residuo declarado por su contrato: aun con 0 puede
