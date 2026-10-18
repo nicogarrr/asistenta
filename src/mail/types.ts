@@ -46,6 +46,7 @@ export interface SendRequest {
   subject: string;
   text: string;
   inReplyTo?: string;
+  references?: string[];
   /** Files to attach (the Kindle delivery). */
   attachments?: Array<{ filename: string; content: Buffer }>;
 }

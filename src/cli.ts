@@ -62,6 +62,8 @@ import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
+import { listReplyInbox, resolveReplyCard } from './mail/reader.js';
+import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { renderMemoryContext } from './memory/context.js';
@@ -2517,6 +2519,74 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     5 * 60 * 1000,
   );
 
+  const mailReplyCards = new Map<string, string>();
+  // Explicit authenticated owner command, intentionally not exposed as an agent tool.
+  const cmdCorreo = async (inbound: Inbound, args: string): Promise<void> => {
+    if (
+      String(inbound.userId) !== String(vigilanteOwnerId) ||
+      inbound.chatId !== String(vigilanteOwnerId)
+    ) {
+      await say(inbound, 'Correo solo disponible en el DM del dueño.', { quote: true });
+      return;
+    }
+    if (args.trim() === 'lista') {
+      try {
+        const account = await loadReadMailAccount();
+        if (!account) throw new Error('No account');
+        const rows = await listReplyInbox(account);
+        for (const row of rows) {
+          const clean = (text: string) => text.replace(/\s+/g, ' ').slice(0, 180);
+          const card = await say(
+            inbound,
+            `${row.ref}\nDe (no verificado): ${clean(row.from)}\nAsunto: ${clean(row.subject)}\nResponde a ESTE mensaje con "responde a ese" y, en nueva línea, tu texto exacto.`,
+            { quote: true },
+          );
+          if (card) mailReplyCards.set(card, row.ref);
+          while (mailReplyCards.size > 100) {
+            const key = mailReplyCards.keys().next().value;
+            if (key) mailReplyCards.delete(key);
+          }
+        }
+        if (!rows.length) await say(inbound, 'INBOX no devuelve correos.', { quote: true });
+      } catch {
+        await say(inbound, 'No se pudo leer la lista de correo.', { quote: true });
+      }
+      return;
+    }
+    const chosen = resolveReplyCard(args, inbound.replyToMessageId, mailReplyCards);
+    const input = chosen ? `responder ${chosen}\n${args.slice(args.indexOf('\n') + 1)}` : args;
+    const match = /^responder\s+([1-9]\d*:[1-9]\d*)\s*\n([\s\S]+)$/.exec(input);
+    if (!match) {
+      await say(
+        inbound,
+        'Uso: /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
+        { quote: true },
+      );
+      return;
+    }
+    try {
+      const result = await replyOnOwnerRequest(match[1] ?? '', match[2] ?? '', {
+        readAccount: loadReadMailAccount,
+        sendAccount: loadSendMailAccount,
+        review: async (preview) =>
+          (await telegram.offerApproval(randomUUID(), inbound.chatId, preview)).approved,
+      });
+      await say(
+        inbound,
+        result.ok
+          ? 'Correo enviado (aceptado por SMTP, no confirma entrega).'
+          : (result.error ?? 'No enviado.'),
+        { quote: true },
+      );
+    } catch {
+      await say(
+        inbound,
+        'No se pudo preparar o enviar el correo. No se reintenta automáticamente; revisa Enviados antes de repetir si hubo un fallo de red.',
+        { quote: true },
+      );
+    }
+  };
+
   /** `/ojo [on|off]`: interruptor general del ojo de águila y su estado. */
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
@@ -4947,6 +5017,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             });
           }
 
+          if (/^responde(?:r)? a ese\s*\n/i.test(inbound.text))
+            return cmdCorreo(inbound, inbound.text);
           const command = parseCommand(inbound.text);
           if (command) {
             // Commands bypass the agent entirely: they are the user's hands on the
@@ -5033,6 +5105,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               }
               case 'agenda':
                 return cmdAgenda(inbound);
+              case 'correo':
+                return cmdCorreo(inbound, command.args);
               case 'ojo':
                 return cmdOjo(inbound, command.args);
               case 'permisos':
