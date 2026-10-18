@@ -199,3 +199,11 @@ it('transport acceptance is durable and false when off or queue refused event', 
   await off.queue.offer([event]);
   expect(off.queue.accepted(event)).toBe(false);
 });
+
+it('events offer() discards for validation count as accepted so cursors advance', () => {
+  const s = setup();
+  expect(s.queue.accepted({ ...event, text: '   ' })).toBe(true);
+  expect(s.queue.accepted({ ...event, id: '' })).toBe(true);
+  expect(s.queue.accepted({ ...event, at: Number.NaN })).toBe(true);
+  expect(s.queue.accepted({ ...event, id: 'f', at: event.at + 2 * 86_400_000 })).toBe(true);
+});

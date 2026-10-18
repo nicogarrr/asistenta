@@ -117,6 +117,9 @@ export class AttentionQueue {
   /** Durable-acceptance check for transports: queue pressure/off must not advance their cursor. */
   accepted(event: AttentionEvent): boolean {
     if (event.at < this.deps.now() - DAY) return true; // deliberately expired, not a lost new event
+    // offer() permanently discards these; they can never be queued, so they must not stall a cursor.
+    if (!event.id || !event.text.trim() || !Number.isFinite(event.at) || event.at > this.deps.now() + DAY)
+      return true;
     const key = createHash('sha256').update(`${event.source}:${event.id}`).digest('hex');
     return !!this.deps.db.prepare('SELECT key FROM attention_events WHERE key=?').get(key);
   }
