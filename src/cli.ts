@@ -904,6 +904,7 @@ function tvToolDeps(store: Store): TvToolDeps {
       }
       await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
     },
+    stats: async () => (await ghClient()).getJson('/api/stats'),
     ghControl: async (action, value) => {
       await (await ghClient()).control(action, value);
     },

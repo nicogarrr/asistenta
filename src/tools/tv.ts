@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { inspectTv } from '../tv/inspection.js';
 
 /**
  * Herramienta de la tele LG (SSAP).
@@ -33,6 +34,8 @@ export interface TvToolDeps {
   shot: () => Promise<{ image: Buffer; mimeType: string; ext?: string }>;
   foreground: () => Promise<{ appId: string; category: string[] }>;
   apps: () => Promise<Array<{ id: string; title: string }>>;
+  /** Glasshouse GET /api/stats, optional for older installations. */
+  stats?: () => Promise<unknown>;
   launch: (id: string) => Promise<void>;
   key: (name: string) => Promise<void>;
   toast: (message: string) => Promise<void>;
@@ -55,6 +58,7 @@ const Params = Type.Object({
     Type.Literal('screenshot'),
     Type.Literal('state'),
     Type.Literal('apps'),
+    Type.Literal('inspect'),
     Type.Literal('launch'),
     Type.Literal('key'),
     Type.Literal('toast'),
@@ -173,6 +177,9 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'action=state devuelve lo que la tele mostraba la ULTIMA vez que se miro, sin despertarla:',
       'sirve para responder "que estaba viendo" sin gastar una captura. No confirma nada del presente.',
       '',
+      'action=inspect consulta inventario, app actual y metricas disponibles SIN cambiar la tele ni capturar imagenes.',
+      'Es una lectura puntual no atomica: no mide mejoras ni certifica que una app se pueda borrar.',
+      'Un dato no disponible NO significa cero, tele apagada ni lista de apps vacia.',
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
       'action=power apaga o enciende.',
@@ -260,6 +267,13 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
               },
             ],
             details: { known: true, ...state },
+          };
+        }
+        case 'inspect': {
+          const report = await inspectTv(deps);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(report) }],
+            details: report,
           };
         }
         case 'apps': {
