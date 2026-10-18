@@ -41,6 +41,7 @@ import { loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
+import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
@@ -78,6 +79,7 @@ import {
   getDownloadsEnabled,
   setDownloadsEnabled,
 } from './ojo-downloads.js';
+import { AttentionQueue } from './ojo-events.js';
 import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
 import {
   getScreenEnabled,
@@ -2111,6 +2113,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
+      const attentionDrain = attention.stop();
       const channelDrain = registry.stopAll(true);
       // Observe early rejection while aborting turns; propagate it after drains.
       void channelDrain.catch(() => {});
@@ -2136,6 +2139,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await Promise.all([...browsers.values()].map((b) => b.closeAll(true)));
       await screen.dispose();
       await vigilanteDrain;
+      await attentionDrain;
       await channelDrain;
       store.close();
       memoryDb.close();
@@ -2323,6 +2327,28 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  const attention = new AttentionQueue({
+    db: memoryDb,
+    now: Date.now,
+    timeZone: localTimeZone(),
+    enabled: () =>
+      getOjoEnabled(memoryDb) &&
+      attentionFreeConfig(config) &&
+      resolveOwnerDmChatId(
+        [...threads.values()].map((t) => t.chatKey),
+        vigilanteOwnerId,
+      ) !== null,
+    judge: createAttentionJudge(config),
+    send: async (text) => {
+      const chatId = resolveOwnerDmChatId(
+        [...threads.values()].map((t) => t.chatKey),
+        vigilanteOwnerId,
+      );
+      if (!chatId) return false;
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+      return true;
+    },
+  });
   // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
   const downloadsCtl = createDownloadsController({
     db: memoryDb,
@@ -2378,8 +2404,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       downloadsSuppressed: () => downloadsCtl.suppressed(),
       agenda: () =>
         buildAgenda({
-          calendar: () =>
-            upcomingEvents({
+          calendar: async () => {
+            const events = await upcomingEvents({
               getUrl: () => vaultGet('calendar:icsUrl'),
               fetchText: async (url) => {
                 // Timeout duro: un servidor de calendario colgado no puede eternizar
@@ -2391,14 +2417,42 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
                 return res.text();
               },
-            }),
+            });
+            void attention.offer(
+              events
+                .filter(
+                  (e) => !e.allDay && e.start > Date.now() && e.start - Date.now() < 2 * 3_600_000,
+                )
+                .map((e) => ({
+                  source: 'meeting' as const,
+                  id: `${e.title}:${e.start}`,
+                  text: `${e.title} - ${new Date(e.start).toISOString()}`,
+                  at: Date.now(),
+                })),
+            );
+            return events;
+          },
           mail: async () => {
             const account = await loadMailAccount();
             if (!account) return [];
             // Tres días hacia atrás: el extractor solo propone fechas futuras, y un
             // buzón entero por barrido es ruido y tiempo de IMAP.
             // Deadline duro: un IMAP colgado no se apila entre barridos.
-            return searchMail(account, { since: Date.now() - 3 * 86_400_000 }, 30, 20_000);
+            const messages = await searchMail(
+              account,
+              { since: Date.now() - 3 * 86_400_000 },
+              30,
+              20_000,
+            );
+            void attention.offer(
+              messages.map((m) => ({
+                source: 'mail' as const,
+                id: `${account.address}:${m.folder}:${m.id}:${m.at}`,
+                text: `${m.subject}\n${m.text}`,
+                at: m.at,
+              })),
+            );
+            return messages;
           },
           followups: () => followups.list(undefined, 200),
           // 35 días: las caducidades avisan a 30 días; lo demás sigue en 7 (collectFindings).
