@@ -1,8 +1,37 @@
 /** Read-only IMAP IDLE transport. No polling fallback, no SMTP, no flag mutations. */
 import { createHash } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
+import { vaultGet } from '../vault.js';
 import { toMessage } from './client.js';
-import type { MailAccount, MailMessage } from './types.js';
+import type { MailMessage } from './types.js';
+
+/** Separate credential capability: never load mail:password or SMTP configuration. */
+export interface ReadMailAccount {
+  address: string;
+  password: string;
+  imapHost: string;
+  imapPort: number;
+}
+
+export async function loadReadMailAccount(
+  get: (key: string) => Promise<string | null | undefined> = vaultGet,
+): Promise<ReadMailAccount | null> {
+  const address = (await get('mailRead:address'))?.trim();
+  const password = await get('mailRead:password');
+  if (!address || !password) return null;
+  // Explicit Gmail-only route; no credential to arbitrary vault-configured hosts.
+  if (!/^[^@\s]+@gmail\.com$/i.test(address))
+    throw new Error('mailRead requiere una cuenta Gmail.');
+  const compact = password.replace(/ /g, '');
+  if (!/^[a-zA-Z]{16}$/.test(compact))
+    throw new Error('mailRead requiere una contraseña de aplicación de 16 caracteres.');
+  return {
+    address,
+    password: compact,
+    imapHost: 'imap.gmail.com',
+    imapPort: 993,
+  };
+}
 
 export interface IdleCursor {
   validity: string;
@@ -47,16 +76,18 @@ export interface IdleClient {
   idle(): Promise<boolean>;
 }
 export interface IdleDeps {
-  account: () => Promise<MailAccount | null>;
+  account: () => Promise<ReadMailAccount | null>;
   load: (scope: string) => IdleCursor | null;
   save: (scope: string, cursor: IdleCursor) => void;
   deliver: (messages: MailMessage[], scope: string) => Promise<void>;
   status: (state: 'connected' | 'retrying' | 'unconfigured' | 'unsupported' | 'stopped') => void;
-  factory?: (account: MailAccount) => IdleClient;
+  factory?: (account: ReadMailAccount) => IdleClient;
   now?: () => number;
 }
 
-export function idleScope(account: Pick<MailAccount, 'address' | 'imapHost' | 'imapPort'>): string {
+export function idleScope(
+  account: Pick<ReadMailAccount, 'address' | 'imapHost' | 'imapPort'>,
+): string {
   return createHash('sha256')
     .update(
       JSON.stringify([account.imapHost, account.imapPort, account.address.toLowerCase(), 'INBOX']),
@@ -78,7 +109,7 @@ export function reconcileCursor(saved: IdleCursor | null, mailbox: IdleMailbox):
     : { validity, next };
 }
 
-function defaultFactory(account: MailAccount): IdleClient {
+function defaultFactory(account: ReadMailAccount): IdleClient {
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
