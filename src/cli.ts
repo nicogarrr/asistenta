@@ -61,6 +61,7 @@ import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
+import { type IdleCursor, MailIdleTransport } from './mail/idle.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { renderMemoryContext } from './memory/context.js';
@@ -2113,6 +2114,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
+      const idleDrain = mailIdle?.stop();
       const attentionDrain = attention.stop();
       const channelDrain = registry.stopAll(true);
       // Observe early rejection while aborting turns; propagate it after drains.
@@ -2140,6 +2142,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await screen.dispose();
       await vigilanteDrain;
       await attentionDrain;
+      await idleDrain;
       await channelDrain;
       store.close();
       memoryDb.close();
@@ -2349,6 +2352,36 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return true;
     },
   });
+  // IDLE requires existing mail credentials and a verified owner DM. No new account or scope.
+  const mailIdle = attentionFreeConfig(config)
+    ? new MailIdleTransport({
+        account: loadMailAccount,
+        load: (scope) => {
+          try {
+            const raw = store.kvGet(`attention:imap:${scope}`);
+            return raw ? (JSON.parse(raw) as IdleCursor) : null;
+          } catch {
+            return null;
+          }
+        },
+        save: (scope, cursor) => store.kvSet(`attention:imap:${scope}`, JSON.stringify(cursor)),
+        deliver: async (messages, scope) => {
+          if (!getOjoEnabled(memoryDb)) throw new Error('Attention disabled');
+          const deliveries = messages.map((m) => ({
+            source: 'mail' as const,
+            id: `${scope}:${m.id}`,
+            text: `${m.subject}\n${m.text}`,
+            at: m.at,
+          }));
+          await attention.offer(deliveries);
+          if (!deliveries.every((event) => attention.accepted(event))) {
+            throw new Error('Attention queue did not accept delivery');
+          }
+        },
+        status: (state) => log.info('attention IMAP', { state }),
+      })
+    : null;
+  mailIdle?.start();
   // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
   const downloadsCtl = createDownloadsController({
     db: memoryDb,
@@ -2443,14 +2476,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               { since: Date.now() - 3 * 86_400_000 },
               30,
               20_000,
-            );
-            void attention.offer(
-              messages.map((m) => ({
-                source: 'mail' as const,
-                id: `${account.address}:${m.folder}:${m.id}:${m.at}`,
-                text: `${m.subject}\n${m.text}`,
-                at: m.at,
-              })),
             );
             return messages;
           },

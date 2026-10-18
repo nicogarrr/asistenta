@@ -60,7 +60,7 @@ export async function loadAccount(): Promise<MailAccount | null> {
  * chain, the sender's IP and every header the sending server chose to add; none of
  * that is what the agent needs and all of it is a leak.
  */
-function toMessage(
+export function toMessage(
   raw: {
     uid: number;
     envelope?: {
