@@ -43,3 +43,21 @@ No se ha conectado a Gmail real en esta prueba. Piloto debe comprobar cuenta con
 capacidad IDLE, logs connected, llegada controlada, flags sin cambiar y reconexión real.
 No afirmar latencia de segundos medida hasta hacerlo. Los cuerpos pueden quedar en SQLite
 hasta procesarse o caducar; la política de la fase 1 conserva dedupe sin cuerpo después.
+
+## Credencial aislada (fase 3)
+
+IDLE solo carga `mailRead:address` y `mailRead:password`, sin fallback a `mail:password`.
+El destino está fijado a Gmail TLS 993; no acepta host configurable para ese secreto.
+La cuenta devuelta NO contiene host ni puerto SMTP. El antiguo cliente de correo/Kindle
+sigue usando su namespace existente; no se le da esta contraseña.
+
+La contraseña debe ser una NUEVA contraseña de aplicación de Google dedicada, no la
+contraseña principal ni una app password usada por otro proyecto. Se eliminan los espacios
+de agrupación antes de autenticar; formato esperado 16 letras. No se imprimen valores.
+El piloto la incorpora por canal privado + `vault set-stdin mailRead:password`, nunca argv.
+
+Esto es aislamiento del código, NO un permiso Google de solo lectura: una app password
+puede usarse para más operaciones si se roba. Google no ofrece un scope de solo lectura
+para IMAP. Para un permiso de Google realmente limitado a lectura hace falta Gmail API
+OAuth `gmail.readonly`, que este transporte no implementa. No pedir ni instalar secreto
+hasta que el usuario elija esa ruta informado de esta diferencia.

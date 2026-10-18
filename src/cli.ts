@@ -61,7 +61,7 @@ import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
-import { type IdleCursor, MailIdleTransport } from './mail/idle.js';
+import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { renderMemoryContext } from './memory/context.js';
@@ -2355,7 +2355,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // IDLE requires existing mail credentials and a verified owner DM. No new account or scope.
   const mailIdle = attentionFreeConfig(config)
     ? new MailIdleTransport({
-        account: loadMailAccount,
+        account: loadReadMailAccount,
         load: (scope) => {
           try {
             const raw = store.kvGet(`attention:imap:${scope}`);
