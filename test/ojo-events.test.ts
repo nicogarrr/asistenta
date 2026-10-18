@@ -190,3 +190,12 @@ it('stale and future events never reach models', async () => {
   ]);
   expect(s.judge).not.toHaveBeenCalled();
 });
+it('transport acceptance is durable and false when off or queue refused event', async () => {
+  const s = setup();
+  expect(s.queue.accepted(event)).toBe(false);
+  await s.queue.offer([event]);
+  expect(s.queue.accepted(event)).toBe(true);
+  const off = setup({ enabled: () => false });
+  await off.queue.offer([event]);
+  expect(off.queue.accepted(event)).toBe(false);
+});

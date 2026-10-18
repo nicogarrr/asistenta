@@ -114,6 +114,12 @@ export class AttentionQueue {
       });
     return this.tail;
   }
+  /** Durable-acceptance check for transports: queue pressure/off must not advance their cursor. */
+  accepted(event: AttentionEvent): boolean {
+    if (event.at < this.deps.now() - DAY) return true; // deliberately expired, not a lost new event
+    const key = createHash('sha256').update(`${event.source}:${event.id}`).digest('hex');
+    return !!this.deps.db.prepare('SELECT key FROM attention_events WHERE key=?').get(key);
+  }
   private judge(
     stage: 'screen' | 'review',
     event: AttentionEvent,
