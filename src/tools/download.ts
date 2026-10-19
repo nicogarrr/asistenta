@@ -20,15 +20,25 @@ export interface DownloadToolDeps {
    * Called once per attempt with the outcome. Only the host is passed on, never the
    * full URL: links often carry session tokens, and a log is the wrong place for them.
    */
-  onResult?: (r: { ok: boolean; kind?: 'video' | 'pdf'; host: string; reason?: string }) => void;
+  onResult?: (r: {
+    ok: boolean;
+    kind?: 'video' | 'pdf' | 'audio';
+    host: string;
+    reason?: string;
+  }) => void;
 }
 
 const Params = Type.Object({
   url: Type.String({ description: 'Absolute http(s) link the user sent.' }),
   kind: Type.Optional(
-    Type.Union([Type.Literal('auto'), Type.Literal('video'), Type.Literal('pdf')], {
-      description: 'auto (default): a .pdf link is a PDF, anything else a video.',
-    }),
+    Type.Union(
+      [Type.Literal('auto'), Type.Literal('video'), Type.Literal('pdf'), Type.Literal('audio')],
+      {
+        description:
+          'auto (default): a .pdf link is a PDF, anything else a video. ' +
+          'audio: keep only the sound as MP3 (music, podcasts, SoundCloud, the audio of a video).',
+      },
+    ),
   ),
 });
 
@@ -51,6 +61,8 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
     description: [
       'Download a video (YouTube, X/Twitter, TikTok, Instagram, Vimeo and most video sites)',
       'or a PDF from a link the user sent, and send the file to the chat as MP4 / document.',
+      'With kind=audio it extracts only the sound and sends an MP3 ("quédate con el audio",',
+      '"pásame la canción", podcasts, SoundCloud).',
       'Use it for "descarga este vídeo", "pásame este PDF", or a bare video link with that',
       'intent. The file is sent by this tool itself: do not describe it as sent unless the',
       'result says it was. Limit: 50 MB (Telegram). Private or login-only content fails; say',
@@ -71,6 +83,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
           await deps.progress?.('upload_video').catch(() => undefined);
           await deps.sendVideo(result.bytes, result.seconds, result.title);
         } else {
+          // PDF and audio both travel as documents: the MP3 keeps its <title>.mp3 name.
           await deps.progress?.('upload_document').catch(() => undefined);
           await deps.sendDocument(result.bytes, result.filename, result.title);
         }
@@ -86,10 +99,13 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
         return ok(`Descargado (${mb} MB) pero Telegram no aceptó el envío: ${msg}.`, { ok: false });
       }
       deps.onResult?.({ ok: true, kind: result.kind, host: hostOf(params.url) });
-      return ok(
-        `Enviado ${result.kind === 'video' ? 'el vídeo' : 'el PDF'} "${result.title}" (${mb} MB).`,
-        { ok: true, kind: result.kind, bytes: result.bytes.length },
-      );
+      const what =
+        result.kind === 'video' ? 'el vídeo' : result.kind === 'pdf' ? 'el PDF' : 'el audio';
+      return ok(`Enviado ${what} "${result.title}" (${mb} MB).`, {
+        ok: true,
+        kind: result.kind,
+        bytes: result.bytes.length,
+      });
     },
   };
 }

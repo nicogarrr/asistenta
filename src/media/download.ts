@@ -2,8 +2,16 @@ import { execFile } from 'node:child_process';
 import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import ffmpegStatic from 'ffmpeg-static';
 import { log } from '../log.js';
 import { isFetchable, isFetchableResolved } from '../tools/fetch.js';
+
+/** Same narrowing as voice/decode.ts: typed as a module, a string at runtime. */
+const FFMPEG: string | null =
+  typeof ffmpegStatic === 'string'
+    ? ffmpegStatic
+    : ((ffmpegStatic as { default?: string }).default ?? null);
+
 import { COOKIE_BROWSERS } from './cookie-browsers.js';
 
 /**
@@ -24,6 +32,7 @@ const MAX_REDIRECTS = 5;
 export type DownloadResult =
   | { ok: true; kind: 'video'; bytes: Buffer; title: string; seconds: number; filename: string }
   | { ok: true; kind: 'pdf'; bytes: Buffer; title: string; seconds: 0; filename: string }
+  | { ok: true; kind: 'audio'; bytes: Buffer; title: string; seconds: number; filename: string }
   | { ok: false; reason: string; status?: number; blocked?: boolean };
 
 /** Optional anti-bot helpers. Everything here is off or auto-detected; see config.ts. */
@@ -94,6 +103,8 @@ export interface ExplainContext {
   youtube?: boolean;
   /** deno is installed (yt-dlp needs a JavaScript runtime for YouTube; only deno is on by default). */
   deno?: boolean;
+  /** The caller asked for the audio track, not the video: wording says so. */
+  audio?: boolean;
 }
 
 const DENO_STEP = 'instala deno (en Windows: winget install DenoLand.Deno) y reinicia el bot';
@@ -103,7 +114,11 @@ const COOKIES_STEP =
 /** Turns yt-dlp's English stderr into something honest and short, in Spanish. */
 export function explainYtdlpError(stderr: string, ctx: ExplainContext = {}): string {
   const s = stderr.toLowerCase();
-  if (/unsupported url/.test(s)) return 'ese enlace no tiene ningún vídeo que yo pueda descargar';
+  if (/unsupported url/.test(s)) {
+    return ctx.audio
+      ? 'ese enlace no tiene ningún vídeo ni audio que yo pueda descargar'
+      : 'ese enlace no tiene ningún vídeo que yo pueda descargar';
+  }
   // Reading the browser's cookie store failed: not the video's fault.
   if (/could not (copy|find)[^\n]*cookie|failed to decrypt|cookie database|dpapi/.test(s)) {
     return `no pude leer las cookies de ${ctx.cookies ?? 'tu navegador'} (Chrome y Edge suelen bloquearlas mientras están abiertos; cierra el navegador o prueba con Firefox)`;
@@ -169,9 +184,9 @@ export function parseImpersonateTargets(output: string): string | null {
 
 const impersonateCache = new Map<string, string | null>();
 
-async function impersonateTarget(ytdlp: string): Promise<string | null> {
+async function impersonateTarget(ytdlp: string, runImpl: typeof run = run): Promise<string | null> {
   if (impersonateCache.has(ytdlp)) return impersonateCache.get(ytdlp) ?? null;
-  const res = await run(ytdlp, ['--list-impersonate-targets'], 30_000);
+  const res = await runImpl(ytdlp, ['--list-impersonate-targets'], 30_000);
   // Only a real answer is cached: yt-dlp missing or a one-off failure may be fixed later.
   if (res.code !== 0) return null;
   const target = parseImpersonateTargets(res.stdout);
@@ -307,6 +322,124 @@ export async function downloadVideo(
         ? 'el vídeo pesa más de 50 MB incluso en baja calidad y Telegram no deja a los bots subir más'
         : 'no se pudo descargar',
     };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** Safe `<title>.mp3` for Telegram, same character rules as filenameFrom. */
+export function audioFilename(title: string): string {
+  let name = Array.from(title, (c) => (c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c) ? '_' : c))
+    .join('')
+    .trim();
+  if (!name) name = 'audio';
+  if (name.length > 120) name = name.slice(0, 120).trim();
+  return /\.mp3$/i.test(name) ? name : `${name}.mp3`;
+}
+
+/**
+ * "Quedate con el audio" of a link: yt-dlp takes the best audio track and ffmpeg
+ * (ffmpeg-static, already a dependency for voice) re-encodes it to MP3. Same guards
+ * as the video path: public http(s) only, the 50 MB Telegram cap, cookies and Chrome
+ * impersonation exactly as configured. Nothing here bypasses DRM: yt-dlp itself
+ * refuses protected streams and the error is reported as such.
+ */
+export async function downloadAudio(
+  rawUrl: string,
+  ytdlp = process.env.ASISTENTA_YTDLP || 'yt-dlp',
+  opts: { cookiesFromBrowser?: string } = {},
+  runImpl: typeof run = run,
+): Promise<DownloadResult> {
+  const url = parsePublicUrl(rawUrl);
+  if (!url || !(await isFetchableResolved(url.toString()))) {
+    return { ok: false, reason: 'solo puedo descargar enlaces públicos http(s)' };
+  }
+  if (!FFMPEG) {
+    return {
+      ok: false,
+      reason: 'no puedo extraer el audio: falta ffmpeg (ffmpeg-static) en este equipo',
+    };
+  }
+  const cookies = (COOKIE_BROWSERS as readonly string[]).includes(opts.cookiesFromBrowser ?? '')
+    ? (opts.cookiesFromBrowser as string)
+    : '';
+  const dir = await mkdtemp(join(tmpdir(), 'asistenta-dl-'));
+  try {
+    const impersonate = await impersonateTarget(ytdlp, runImpl);
+    const args = (imp: string | null): string[] => [
+      ...(imp ? ['--impersonate', imp] : []),
+      ...(cookies ? ['--cookies-from-browser', cookies] : []),
+      '--no-playlist',
+      '--no-warnings',
+      '--no-progress',
+      '--socket-timeout',
+      '30',
+      '--max-filesize',
+      String(MAX_UPLOAD_BYTES),
+      '-x',
+      '--audio-format',
+      'mp3',
+      '--audio-quality',
+      '192K',
+      '--ffmpeg-location',
+      FFMPEG,
+      '-o',
+      join(dir, 'audio.%(ext)s'),
+      '--print',
+      'after_move:filepath',
+      '--print',
+      'title',
+      '--print',
+      'duration',
+      '--',
+      url.toString(),
+    ];
+    let res = await runImpl(ytdlp, args(impersonate), VIDEO_TIMEOUT_MS);
+    if (impersonate && res.code !== 0 && res.code !== 'ENOENT' && /impersonat/i.test(res.stderr)) {
+      // The impersonation backend broke: the extraction is worth trying without it.
+      log.warn('yt-dlp impersonation failed, retrying without it', {
+        stderr: res.stderr.slice(0, 300),
+      });
+      res = await runImpl(ytdlp, args(null), VIDEO_TIMEOUT_MS);
+    }
+    if (res.code === 'ENOENT') {
+      return {
+        ok: false,
+        reason:
+          'no tengo yt-dlp instalado en este equipo (en Windows: winget install yt-dlp.yt-dlp y winget install Gyan.FFmpeg)',
+      };
+    }
+    if (res.code !== 0) {
+      const youtube = YOUTUBE_HOST.test(url.hostname.toLowerCase());
+      // The raw English message is the only diagnostic when the Spanish one is too coarse.
+      log.warn('yt-dlp audio failed', { host: url.hostname, stderr: res.stderr.slice(0, 500) });
+      return {
+        ok: false,
+        reason: explainYtdlpError(res.stderr, {
+          cookies: cookies || undefined,
+          youtube,
+          deno: youtube ? await hasDeno() : undefined,
+          audio: true,
+        }),
+      };
+    }
+    // Same --print contract as the video path: title and duration first, the path last.
+    const lines = res.stdout.split(/\r?\n/).filter(Boolean);
+    const filepath = lines.find((l) => l.startsWith(dir));
+    if (!filepath) return { ok: false, reason: 'no se pudo extraer el audio' };
+    const info = await stat(filepath).catch(() => null);
+    if (!info) return { ok: false, reason: 'no se pudo extraer el audio' };
+    if (info.size > MAX_UPLOAD_BYTES) {
+      return {
+        ok: false,
+        reason: 'el audio pesa más de 50 MB y Telegram no deja a los bots subir más',
+      };
+    }
+    const meta = lines.filter((l) => l !== filepath);
+    const title = (meta[0] ?? 'Audio').slice(0, 200);
+    const seconds = Math.max(0, Math.round(Number(meta[1]) || 0));
+    const bytes = await readFile(filepath);
+    return { ok: true, kind: 'audio', bytes, title, seconds, filename: audioFilename(title) };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -574,7 +707,7 @@ const PDF_URL = /\.pdf(?:$|[?#])/i;
 /** Pick by link shape when the caller did not say: a .pdf path is a PDF, anything else a video. */
 export async function downloadFromLink(
   rawUrl: string,
-  kind: 'auto' | 'video' | 'pdf' = 'auto',
+  kind: 'auto' | 'video' | 'pdf' | 'audio' = 'auto',
   opts: DownloadOptions = {},
 ): Promise<DownloadResult> {
   const pdf = () =>
@@ -583,6 +716,9 @@ export async function downloadFromLink(
     downloadVideo(rawUrl, opts.ytdlp, { cookiesFromBrowser: opts.cookiesFromBrowser });
   if (kind === 'pdf') return pdf();
   if (kind === 'video') return video();
+  if (kind === 'audio') {
+    return downloadAudio(rawUrl, opts.ytdlp, { cookiesFromBrowser: opts.cookiesFromBrowser });
+  }
   if (PDF_URL.test(rawUrl)) {
     // A .pdf link is a PDF: if it fails, say why instead of asking yt-dlp for a video.
     return pdf();
