@@ -100,6 +100,7 @@ import {
   protectedRepoPaths,
   runPermisosCommand,
 } from './permissions.js';
+import { deepResearch, renderReport } from './research/deep-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
 
@@ -202,7 +203,7 @@ import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
 import { createTvTool } from './tools/tv.js';
-import { createWebTool } from './tools/web.js';
+import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
@@ -243,6 +244,7 @@ import {
   parseVigilaArgs,
 } from './watch/pages.js';
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
+import { WebRouter } from './web/router.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
@@ -3371,6 +3373,76 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * /investiga <pregunta>: modo deep research con citas. Plan de sub-preguntas
+   * (modelo, con plan deterministico de reserva), busqueda y lectura
+   * multi-fuente via el enrutador web propio (tope 0 EUR, fail-closed) y
+   * sintesis en espanol con citas [n] a fuentes con cita verbatim. Lo no
+   * verificado queda marcado. Sin modelo disponible: informe de citas
+   * textuales, nunca una sintesis inventada.
+   */
+  const researchLlm = async (): Promise<
+    ((systemPrompt: string, userPrompt: string, maxTokens: number) => Promise<string>) | undefined
+  > => {
+    try {
+      const handle = await createProviderHandle(config);
+      return async (systemPrompt, userPrompt, maxTokens) => {
+        const reply = await handle.models.completeSimple(
+          handle.modelFor('pa-research'),
+          {
+            systemPrompt,
+            messages: [
+              {
+                role: 'user',
+                content: [{ type: 'text', text: userPrompt }],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          { maxTokens, sessionId: 'pa-research', signal: AbortSignal.timeout(60_000) },
+        );
+        return reply.content
+          .map((b) => (b.type === 'text' ? b.text : ''))
+          .join('')
+          .trim();
+      };
+    } catch (err) {
+      log.warn('research: sin modelo, modo solo citas', { err });
+      return undefined;
+    }
+  };
+
+  const cmdInvestiga = async (inbound: Inbound, args: string): Promise<void> => {
+    const question = args.trim();
+    if (!question) {
+      return void (await say(
+        inbound,
+        'Uso: /investiga <pregunta>. Hago un plan de sub-preguntas, busco y leo varias fuentes con el enrutador web (gratis) y te mando un informe con cada afirmacion citada [n] a su fuente verbatim. Lo que no pueda verificar queda marcado como tal.',
+        { quote: true },
+      ));
+    }
+    await say(
+      inbound,
+      'Me pongo: plan de preguntas, busqueda multi-fuente y sintesis con citas. Tardo 1-2 minutos.',
+      { quote: true },
+    );
+    try {
+      const router = new WebRouter({
+        backends: await buildWebBackends(),
+        maxCostEur: config.webMaxCostEur,
+        metricsPath: paths.webMetrics,
+      });
+      const report = await deepResearch(question, {
+        search: async (q, max) => (await router.routeSearch(q, { maxResults: max })).result.items,
+        fetch: async (url, maxChars) => (await router.routeFetch(url, { maxChars })).result.text,
+        llm: await researchLlm(),
+      });
+      await say(inbound, renderReport(report), { quote: true });
+    } catch (err) {
+      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+    }
+  };
+
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
     const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
@@ -4015,6 +4087,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
         '/buscar <texto> - busca en conversaciones pasadas',
+        '/investiga <pregunta> - investigo a fondo: varias fuentes y un informe con citas',
         '/voice on|off - contestar con voz',
         '/wake on|off - escuchar mi nombre en el micrófono',
         '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (cortarme: apagado por defecto)',
@@ -5095,6 +5168,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdPrecio(inbound, command.args);
               case 'compara':
                 return cmdCompara(inbound, command.args);
+              case 'investiga':
+                return cmdInvestiga(inbound, command.args);
               case 'resolver':
               case 'resolve':
                 return cmdResolve(inbound, command.args);
