@@ -71,6 +71,24 @@ export interface Config {
    * Por defecto 0: solo backends gratis; un backend con coste nunca se llama.
    */
   webMaxCostEur: number;
+  /**
+   * Motor de la palabra de activacion: 'whisper' (defecto; transcribe cada
+   * ventana de 3s y compara texto) u 'oww' (runner openWakeWord dedicado:
+   * score ONNX por frame de 80ms, ~1-2s de CPU menos por chequeo). Detras de
+   * flag porque la comparacion FAR/FRR contra whisper aun no esta medida en
+   * el PC de Nico (A1b); la ruta de entrenamiento del modelo esta en
+   * docs/wakeword-oww.md.
+   */
+  voiceWake: {
+    engine: 'whisper' | 'oww';
+    /**
+     * Nombre simple .onnx del modelo de palabra dentro de paths.models/oww,
+     * entrenado con scripts/wakeword-train.py. Requerido con engine 'oww'.
+     */
+    owwModel: string;
+    /** Umbral de score del clasificador oww (0..1). Por defecto 0.5. */
+    owwThreshold: number;
+  };
 }
 
 /** Env var restricted to a fixed set of values. A typo is an error, not a silent default. */
@@ -219,6 +237,29 @@ export function loadConfig(): Config {
         throw new Error(`PA_WEB_MAX_COST_EUR must be a number >= 0, got ${JSON.stringify(raw)}`);
       }
       return parsed;
+    })(),
+    voiceWake: (() => {
+      const engine = oneOf<'whisper' | 'oww'>('PA_WAKE_ENGINE', ['whisper', 'oww'], 'whisper');
+      const owwModel = process.env.PA_WAKE_OWW_MODEL?.trim() ?? '';
+      // Un nombre simple: el valor acaba como nombre de fichero dentro del
+      // dir de modelos; rutas o '..' aqui serian una escritura fuera de el.
+      if (engine === 'oww' && (!/^[\w.-]+\.onnx$/.test(owwModel) || owwModel.includes('..'))) {
+        throw new Error(
+          `PA_WAKE_OWW_MODEL must be a plain .onnx file name trained with scripts/wakeword-train.py (see docs/wakeword-oww.md), got ${JSON.stringify(owwModel)}`,
+        );
+      }
+      const rawThreshold = process.env.PA_WAKE_OWW_THRESHOLD;
+      let owwThreshold = 0.5;
+      if (rawThreshold) {
+        const parsed = Number(rawThreshold);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+          throw new Error(
+            `PA_WAKE_OWW_THRESHOLD must be a number between 0 and 1, got ${JSON.stringify(rawThreshold)}`,
+          );
+        }
+        owwThreshold = parsed;
+      }
+      return { engine, owwModel, owwThreshold };
     })(),
   };
   return cached;

@@ -4626,7 +4626,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const request = stripWakeWord(heard, wakeWord);
-    if (conversationOn && !session) {
+    // Motor oww: el detector solo sabe QUE sono la palabra, no lo que vino
+    // detras, asi que `heard` es siempre la palabra sola y request queda
+    // vacio. Sin abrir sesion aqui, cada wake seria un no-op silencioso.
+    if ((conversationOn || loadConfig().voiceWake.engine === 'oww') && !session) {
       // Capability 6: the wake word opens a spoken session; the request that came with
       // it is its first turn. The chat is fixed for the whole session.
       const opened = openSession(chat);
@@ -4856,8 +4859,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const startWake = async (): Promise<void> => {
     if (!desktop) throw new Error('sin micrófono en modo servidor');
     let told = false;
+    const wakeCfg = loadConfig().voiceWake;
     const listener = new WakeWordListener({
       word: wakeWord,
+      engine: wakeCfg.engine,
+      ...(wakeCfg.engine === 'oww'
+        ? {
+            oww: {
+              modelDir: join(paths.models, 'oww'),
+              wordModelFile: wakeCfg.owwModel,
+              threshold: wakeCfg.owwThreshold,
+            },
+          }
+        : {}),
       // Whisper has no vocabulary for a custom word: "Chochi" came back as
       // "Choci", "Chuchis", "Chocchi" or dropped entirely. The initial prompt
       // gives it a spelling to copy instead of one to invent.
@@ -4884,7 +4898,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     await listener.start();
     wake = listener;
-    log.info('wake word listening', { word: wakeWord, ...listener.stats() });
+    log.info('wake word listening', {
+      word: wakeWord,
+      engine: wakeCfg.engine,
+      ...listener.stats(),
+    });
   };
 
   const stopWake = async (): Promise<void> => {
