@@ -280,7 +280,10 @@ export class TelegramChannel implements ChannelAdapter {
     const voice = 'voice' in msg ? msg.voice : undefined;
     const audio = 'audio' in msg ? msg.audio : undefined;
     const note = 'video_note' in msg ? msg.video_note : undefined;
-    const incomingAudio = voice ?? audio ?? note;
+    // Audio sent "as a file" arrives as a document: same bytes, so it takes the same
+    // road (saved, transcribed, playable on the PC) instead of the document one.
+    const asFile = msg.document && isAudioDocument(msg.document) ? msg.document : undefined;
+    const incomingAudio = voice ?? audio ?? note ?? asFile;
 
     const inbound: Inbound = {
       channel: this.name,
@@ -305,7 +308,8 @@ export class TelegramChannel implements ChannelAdapter {
       // A video note has no mime type at all and is always ogg/opus.
       const reported = (incomingAudio as { mime_type?: string }).mime_type;
       inbound.audioMimeType = reported ?? 'audio/ogg';
-      inbound.audioDurationSeconds = incomingAudio.duration ?? undefined;
+      inbound.audioDurationSeconds =
+        'duration' in incomingAudio ? (incomingAudio.duration ?? undefined) : undefined;
       if (!inbound.text) inbound.text = '';
     }
 
@@ -316,7 +320,7 @@ export class TelegramChannel implements ChannelAdapter {
       if (best) inbound.photoFileId = best.file_id;
     }
 
-    if (msg.document) {
+    if (msg.document && !asFile) {
       // Kept to ids and metadata: the bytes are fetched inside the turn, which
       // is also where the document memory learns whether it can read them.
       inbound.documentFileId = msg.document.file_id;
@@ -972,4 +976,20 @@ export function chunkText(text: string, size: number): string[] {
   const out: string[] = [];
   for (let i = 0; i < points.length; i += size) out.push(points.slice(i, i + size).join(''));
   return out;
+}
+
+const AUDIO_FILE_NAME = /\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|amr|wma)$/i;
+
+/**
+ * Is a Telegram document really an audio recording?
+ *
+ * "Send as file" turns a voice note, an mp3 or a WhatsApp export into a document, and
+ * the document road neither saves it for /play nor transcribes it. The MIME type is
+ * the evidence; when Telegram sends a generic type, the extension decides.
+ */
+export function isAudioDocument(doc: { mime_type?: string; file_name?: string }): boolean {
+  const mime = (doc.mime_type ?? '').toLowerCase();
+  if (mime.startsWith('audio/') || mime === 'application/ogg') return true;
+  if (mime && mime !== 'application/octet-stream') return false;
+  return AUDIO_FILE_NAME.test(doc.file_name ?? '');
 }
