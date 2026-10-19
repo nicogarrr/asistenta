@@ -394,20 +394,40 @@ function insideAny(index: number, spans: Span[]): boolean {
  */
 const PROGRESS_PHRASES = [
   'Sigo con ello',
-  'Ya casi',
-  'Voy por la mitad',
-  'Ya está el proceso',
   'Todavía voy con ello',
   'Sigo en ello',
-  'Ya falta poco',
   'Continúo con ello',
-  'Voy bien, ya casi',
   'Sigo aquí dándole',
 ];
 
 export function progressMessage(): string {
   const index = Math.floor(Math.random() * PROGRESS_PHRASES.length);
   return PROGRESS_PHRASES[index] ?? 'Sigo con ello';
+}
+
+/**
+ * The text of a mid-turn "still working" note.
+ *
+ * It only says what is true. The old note was `<random phrase> - <lastSummary>.` with
+ * `lastSummary` starting as the placeholder "recibido": a turn that was still
+ * thinking sent "Ya casi - recibido.", and every note could claim "Voy por la mitad"
+ * or "Ya falta poco" about work whose length nobody knows. That is filler, and the
+ * user reads it as a promise. Now the note carries the elapsed time and, once a tool
+ * has really started, what the agent is doing; before that it says it is thinking.
+ */
+export function progressNote(opts: {
+  elapsedMs: number;
+  /** Public-safe description of the latest started tool call; null when none yet. */
+  summary: string | null;
+  toolCalls: number;
+}): string {
+  const seconds = Math.max(0, Math.round(opts.elapsedMs / 1000));
+  const elapsed =
+    seconds < 90 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+  const summary = opts.summary?.trim();
+  if (!summary || opts.toolCalls === 0)
+    return `${progressMessage()} (${elapsed}), todavía pensando.`;
+  return `${progressMessage()} (${elapsed}): ${summary}.`;
 }
 
 /**
