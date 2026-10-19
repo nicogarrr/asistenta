@@ -57,6 +57,32 @@ describe('Gate approval scopes', () => {
     expect(asked).toBe(0);
   });
 
+  it('honours an `always` granted in another thread by a gate built earlier', async () => {
+    // One gate lives per conversation. Thread B's gate exists before thread A's
+    // "Siempre", so loading the grants only at construction left B asking forever.
+    const dbPath = join(dir, 'scopes.db');
+    let asked = 0;
+    const approver = () => {
+      asked++;
+      return true;
+    };
+    const threadA = new Gate({ dbPath, grantWindowMs: 0, approver });
+    const threadB = new Gate({ dbPath, grantWindowMs: 0, approver });
+    threadA.setScope('a', 'shell', 'always');
+
+    expect(threadB.scopeFor('b', 'shell')).toBe('always');
+    const call = { tool: 'shell', args: { command: 'Get-Date' }, actor: 'local' } as const;
+    const decision = await threadB.check('b', call);
+    expect(decision.verdict).toBe('allow');
+    expect(asked).toBe(0);
+
+    // And the revocation reaches the live gate too, not only gates built later.
+    expect(threadA.revokeAlways('shell')).toBe(true);
+    expect(threadB.scopeFor('b', 'shell')).toBe('unset');
+    await threadB.check('b', call);
+    expect(asked).toBe(1);
+  });
+
   it('never lets an `always` scope cover payments or credentials', async () => {
     // Money and credentials always ask. An `always` grant the model could spend on
     // a card number or `id_rsa` is a standing grant on everything those unlock.
