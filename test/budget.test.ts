@@ -40,6 +40,7 @@ afterAll(() => {
 
 const CONFIG: Config = {
   webMaxCostEur: 0,
+  voiceWake: { engine: 'whisper', owwModel: '', owwThreshold: 0.5 },
   provider: 'test-provider',
   model: 'test-model',
   baseUrl: 'http://127.0.0.1:1/v1',
