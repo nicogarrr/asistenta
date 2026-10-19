@@ -161,13 +161,32 @@ async function probeSize(ffmpeg: string, file: string): Promise<{ width: number;
     : { width: 0, height: 0 };
 }
 
+/**
+ * Environment for the ffmpeg child.
+ *
+ * ffmpeg-static is not DPI aware, so on a scaled Windows desktop (125%, 150%) gdigrab
+ * sees the virtualised logical size and records only the top-left part of the screen:
+ * the clip is "cut off". `__COMPAT_LAYER=HighDpiAware` is the documented way to start
+ * a legacy exe DPI aware without a manifest, so gdigrab reads the physical desktop
+ * like the screenshot path does. Other platforms and an already-set value pass through.
+ */
+export function ffmpegEnv(
+  platform: NodeJS.Platform = process.platform,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return base;
+  const current = (base.__COMPAT_LAYER ?? '').split(/\s+/).filter(Boolean);
+  if (current.includes('HighDpiAware')) return base;
+  return { ...base, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
+}
+
 function run(
   exe: string,
   args: string[],
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { windowsHide: true });
+    const child = spawn(exe, args, { windowsHide: true, env: ffmpegEnv() });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c: Buffer) => {
