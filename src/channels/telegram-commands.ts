@@ -125,6 +125,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Comparar un producto entre las 7 tiendas',
   },
   {
+    command: 'investiga',
+    description: 'Investigar a fondo y dar un informe con citas',
+  },
+  {
     command: 'voice',
     description: 'Activar o desactivar respuestas habladas',
   },
