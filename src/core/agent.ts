@@ -6,7 +6,7 @@ import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
 import { desktopEnabled } from '../platform.js';
 import { actionLabel, type RunStep } from '../skills/lessons.js';
-import { DONE_TOOL_NAME, extractDoneSummary } from '../tools/done.js';
+import { extractDoneSummary, isTerminalToolName } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
 import { FileWriteTracker } from './filewrites.js';
@@ -994,7 +994,7 @@ export class PersonalAgent {
           if (this.#gateBlockedIds.delete(event.toolCallId)) shared.blocked++;
           else shared.toolErrors++;
         }
-        if (event.toolName === DONE_TOOL_NAME && !event.isError) {
+        if (isTerminalToolName(event.toolName) && !event.isError) {
           doneSummary = extractDoneSummary(event.result);
         }
       }

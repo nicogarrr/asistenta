@@ -20,6 +20,8 @@ export interface AttentionDeps {
     signal: AbortSignal,
   ) => Promise<string>;
   send: (text: string) => Promise<boolean>;
+  /** Optional pacing; may only be stricter than ATTENTION_LIMITS (clamped here). */
+  pace?: () => { noticesPerDay: number; cooldownMs: number };
 }
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -161,6 +163,14 @@ export class AttentionQueue {
       .all() as Array<{ key: string; payload: string }>;
     for (const row of rows) {
       const now = this.deps.now();
+      const p = this.deps.pace?.();
+      const pace = {
+        noticesPerDay: Math.max(
+          0,
+          Math.min(ATTENTION_LIMITS.noticesPerDay, p?.noticesPerDay ?? Number.POSITIVE_INFINITY),
+        ),
+        cooldownMs: Math.max(ATTENTION_LIMITS.cooldownMs, p?.cooldownMs ?? 0),
+      };
       if (
         this.stopped ||
         !this.deps.enabled() ||
@@ -169,8 +179,8 @@ export class AttentionQueue {
         return;
       if (
         this.count('call', now - HOUR) >= ATTENTION_LIMITS.callsPerHour - 1 ||
-        this.count('notice', now - DAY) >= ATTENTION_LIMITS.noticesPerDay ||
-        this.count('notice', now - ATTENTION_LIMITS.cooldownMs)
+        this.count('notice', now - DAY) >= pace.noticesPerDay ||
+        this.count('notice', now - pace.cooldownMs)
       )
         return;
       const event = JSON.parse(row.payload) as AttentionEvent;

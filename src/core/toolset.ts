@@ -50,6 +50,7 @@ export const THREAD_ALLOW_TOOLS = [
   'list',
   'fetch',
   'done',
+  'preguntar',
   'memory',
   'reminder',
   'opengym',
