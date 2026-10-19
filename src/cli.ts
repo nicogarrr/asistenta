@@ -142,6 +142,7 @@ function secretStatePaths(): string[] {
   return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
 
+import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { SecretLibrary } from './books/secret.js';
 import {
   currentLimits,
@@ -2160,6 +2161,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // una superficie de red abierta, y el corte no deberia dejarla escuchando
       // mientras el resto de la maquinaria se desmonta.
       await stopTvButton(true);
+      await stopAlerts();
       // Every Chromium, or the next start refuses to claim the profile dir.
       await Promise.all([...browsers.values()].map((b) => b.closeAll(true)));
       await screen.dispose();
@@ -4978,6 +4980,51 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * Canal de entrada de alertas (CavaAI -> dueno). Sin `alerts:token` en el vault no
+   * arranca. Entrega solo texto plano al DM del dueno; nunca pasa por el agente.
+   * Ver docs/alerts-inbox.md.
+   */
+  let alertInbox: AlertInbox | null = null;
+  const startAlerts = async (): Promise<void> => {
+    if (alertInbox) return;
+    const token = await vaultGet('alerts:token');
+    const portRaw = Number((await vaultGet('alerts:port'))?.trim());
+    const listener = startAlertInbox({
+      token,
+      host: (await vaultGet('alerts:host'))?.trim() || undefined,
+      port: Number.isInteger(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : undefined,
+      send: async (text) => {
+        const chatId = resolveOwnerDmChatId(
+          [...threads.values()].map((t) => t.chatKey),
+          vigilanteOwnerId,
+        );
+        if (!chatId) return false;
+        const id = await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId,
+          text,
+        });
+        return Boolean(id);
+      },
+    });
+    if (!listener) return;
+    alertInbox = listener;
+    try {
+      await listener.ready;
+      log.info('alert inbox ready', { port: listener.port });
+    } catch (err) {
+      alertInbox = null;
+      log.warn('alert inbox no arranco; las alertas de CavaAI no llegaran', { err });
+    }
+  };
+  const stopAlerts = async (): Promise<void> => {
+    const listener = alertInbox;
+    alertInbox = null;
+    await listener?.close().catch(() => undefined);
+  };
+
   const stopTvButton = async (strict = false): Promise<void> => {
     const listener = tvButton;
     if (!listener) return;
@@ -5361,6 +5408,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // microfono. Si el 8765 esta ocupado, el daemon sigue sirviendo Telegram y
   // el boton simplemente no despertara a nadie hasta que se libere el puerto.
   await startTvButton();
+  await startAlerts();
 
   control?.ready();
   log.info('daemon running', {
