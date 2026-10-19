@@ -850,7 +850,7 @@ export class Gate {
 
   /** The scope currently in force for `tool`, or 'unset' when none was declared. */
   scopeFor(sessionId: string, tool: string): ApprovalScope | 'unset' {
-    if (this.#alwaysAllow.has(tool)) return 'always';
+    if (this.#hasAlways(tool)) return 'always';
     const entry = this.#scopes.get(sessionId)?.get(tool);
     if (!entry) return 'unset';
     if (entry.level === 'session') {
@@ -910,6 +910,31 @@ export class Gate {
       return fn(db);
     } finally {
       db.close();
+    }
+  }
+
+  /**
+   * Whether `tool` has a standing `always` grant right now. With a database the file
+   * is the truth, not this gate's copy: one gate lives per conversation, so a grant
+   * given ("Siempre") or revoked in one thread must be honoured by gates that were
+   * built before it. The in-memory set is refreshed from the read and is only the
+   * answer when there is no database or it cannot be read.
+   */
+  #hasAlways(tool: string): boolean {
+    if (!this.#dbPath) return this.#alwaysAllow.has(tool);
+    try {
+      const found = this.#withScopeDb((db) => {
+        const row = db
+          .prepare(`SELECT 1 AS hit FROM approval_scopes WHERE scope_key = ? AND level = 'always'`)
+          .get(`always:${tool}`);
+        return row !== undefined;
+      });
+      if (found === undefined) return this.#alwaysAllow.has(tool);
+      if (found) this.#alwaysAllow.add(tool);
+      else this.#alwaysAllow.delete(tool);
+      return found;
+    } catch {
+      return this.#alwaysAllow.has(tool);
     }
   }
 
@@ -1007,7 +1032,7 @@ export class Gate {
       !gestionEjecutar &&
       !forced
     ) {
-      if (this.#alwaysAllow.has(call.tool)) {
+      if (this.#hasAlways(call.tool)) {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
       }
       if (this.scopeFor(sessionId, call.tool) === 'session') {
