@@ -108,6 +108,12 @@ import { deepResearch, renderReport } from './research/deep-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { refineFromLessons } from './skills/refine.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
+import {
+  buildTriggerPrompt,
+  formatTriggerList,
+  parseTriggerAdd,
+  TriggerEngine,
+} from './triggers.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -161,6 +167,7 @@ import {
   isMacroName,
   parseMacroArgs,
   procedurePrompt,
+  type RoutineRunContext,
   RoutineRunner,
   summarizeRoutine,
   validateSchedule,
@@ -260,6 +267,7 @@ import {
   parseVigilaArgs,
 } from './watch/pages.js';
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
+import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -2299,52 +2307,59 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
   });
 
-  const routineRunner = new RoutineRunner({
-    store,
-    run: async (prompt, ctx) => {
-      // A goal tick EXECUTES; it never delivers its prompt as a message.
-      if (isGoalRoutine(ctx.routine)) {
-        await goalRunner.tickByRoutineName(ctx.routine.name);
-        return;
-      }
-      // A scheduled routine answers into the chat it was learned in. It reuses the
-      // thread of that scope when one exists, so the conversation that created the
-      // routine also receives its output.
-      const [chatPart] = ctx.scope.split('#');
-      const chatId = chatPart?.split(':')[2] ?? '';
-      if (!chatId) return;
-      log.info('routine fired', { routine: ctx.routine.name, chatId });
-      const reminder = isReminder(ctx.routine);
-      const sent = await telegram
-        .send({
-          channel: 'telegram',
-          account: telegram.account,
-          chatId,
-          text: reminder
-            ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-            : `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
-        })
-        .then(() => true)
-        .catch((err: unknown) => {
-          log.warn('routine send failed', { err });
-          return false;
+  const runRoutineFire = async (prompt: string, ctx: RoutineRunContext) => {
+    // A goal tick EXECUTES; it never delivers its prompt as a message.
+    if (isGoalRoutine(ctx.routine)) {
+      await goalRunner.tickByRoutineName(ctx.routine.name);
+      return;
+    }
+    // A scheduled routine answers into the chat it was learned in. It reuses the
+    // thread of that scope when one exists, so the conversation that created the
+    // routine also receives its output.
+    const [chatPart] = ctx.scope.split('#');
+    const chatId = chatPart?.split(':')[2] ?? '';
+    if (!chatId) return;
+    log.info('routine fired', { routine: ctx.routine.name, chatId });
+    const reminder = isReminder(ctx.routine);
+    const sent = await telegram
+      .send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId,
+        text: reminder
+          ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
+          : `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
+      })
+      .then(() => true)
+      .catch((err: unknown) => {
+        log.warn('routine send failed', { err });
+        return false;
+      });
+    // A one-time reminder is a cron pinned to a date: it would fire again next year.
+    // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
+    // instead of vanishing.
+    if (isOneShotReminder(ctx.routine)) {
+      const outcome = settleOneShot(store, ctx.routine, sent);
+      if (outcome === 'dropped') {
+        log.warn('one-time reminder dropped after an hour of failed delivery', {
+          routine: ctx.routine.name,
         });
-      // A one-time reminder is a cron pinned to a date: it would fire again next year.
-      // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
-      // instead of vanishing.
-      if (isOneShotReminder(ctx.routine)) {
-        const outcome = settleOneShot(store, ctx.routine, sent);
-        if (outcome === 'dropped') {
-          log.warn('one-time reminder dropped after an hour of failed delivery', {
-            routine: ctx.routine.name,
-          });
-          recordDroppedReminder(join(paths.state, 'dropped-reminders.jsonl'), ctx.routine.name);
-        }
-        routineRunner.sync();
+        recordDroppedReminder(join(paths.state, 'dropped-reminders.jsonl'), ctx.routine.name);
       }
-    },
-  });
+      routineRunner.sync();
+    }
+  };
+
+  const routineRunner = new RoutineRunner({ store, run: runRoutineFire });
   routineRunner.start();
+
+  // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
+  // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las
+  // rutinas cron (runRoutineFire), así que no cuesta tokens ni duplica lógica.
+  const triggerEngine = new TriggerEngine({
+    store,
+    run: (prompt, ctx) => runRoutineFire(prompt, { scope: ctx.scope, routine: ctx.routine }),
+  });
 
   // ---- vigilante (ojo de águila) -------------------------------------------
   // Barrido proactivo: cada 30 min mira la agenda unificada (calendario + correo
@@ -2419,6 +2434,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const downloadsCtl = createDownloadsController({
     db: memoryDb,
     getOverride: async () => (await vaultGet('ojo:downloadsDir'))?.trim() || undefined,
+    // Disparador 'archivo': solo entra una descarga de verdad nueva (dedupe en
+    // recordDownload). Evento global (scope ''): dispara en cualquier chat.
+    onNew: (filename) => {
+      void triggerEngine.emit({ type: 'archivo', scope: '', text: filename }).catch((err) => {
+        log.warn('trigger archivo falló', { err: String(err) });
+      });
+    },
   });
 
   if (getDownloadsEnabled(memoryDb)) {
@@ -3229,6 +3251,106 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * pero NUNCA se programan ni tienen chat destino; este comando opera sobre
    * las rutinas del store, que son las que de verdad disparan.
    */
+  /**
+   * /disparador: event triggers for stored routines, token-zero dispatch.
+   * Same live rule as /cron: a saved trigger works without a daemon restart
+   * (the engine reads the store on every event, no timers to rebuild).
+   */
+  const cmdTrigger = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const chatKey_ = chatKey(inbound);
+    const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? '').toLowerCase();
+    const rest = restParts.join(' ');
+    if (sub === 'del' || sub === 'borra' || sub === 'rm') {
+      const n = Number(rest.trim());
+      const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
+      const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
+      if (!victim) {
+        await say(inbound, 'Uso: /disparador del <número de /disparadores>.', { quote: true });
+        return;
+      }
+      store.deleteTrigger(victim.id);
+      await say(
+        inbound,
+        `Disparador ${n} borrado: [${victim.event}] "${victim.match}" ya no dispara ${victim.routine}.`,
+        { quote: true },
+      );
+      return;
+    }
+    if (!rest.trim() && !sub) {
+      await say(
+        inbound,
+        formatTriggerList(store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_))),
+        { quote: true },
+      );
+      return;
+    }
+    const parsed = parseTriggerAdd(args.trim());
+    if (!parsed.ok) {
+      await say(inbound, parsed.error, { quote: true });
+      return;
+    }
+    const { event, match, routine: routineName, args: macroArgs } = parsed.value;
+    const routine =
+      store.getRoutine(thread.key, routineName) ??
+      store.getRoutine(`${chatKey_}#main`, routineName);
+    if (!routine) {
+      await say(
+        inbound,
+        `No tengo ninguna rutina llamada "${routineName}". Grábala primero con /learn ${routineName}.`,
+        { quote: true },
+      );
+      return;
+    }
+    if (!routine.enabled) {
+      await say(
+        inbound,
+        `La rutina "${routineName}" está desactivada: reactívala antes de dispararla.`,
+        { quote: true },
+      );
+      return;
+    }
+    // A macro is only triggerable when its fixed args satisfy the whole contract
+    // TODAY: an event can never supply what is missing later.
+    const probe = buildTriggerPrompt(routine, {
+      id: '',
+      scope: routine.scope,
+      routine: routine.name,
+      event,
+      match,
+      args: macroArgs,
+      enabled: true,
+      cooldownSeconds: 0,
+      lastFiredAt: null,
+      createdAt: '',
+    });
+    if (!probe.ok) {
+      await say(
+        inbound,
+        `Esa rutina no se puede disparar por evento: ${probe.error}. ` +
+          (isMacroName(routineName)
+            ? `Pasa sus parámetros fijos: /disparador ${args.trim()} clave=valor.`
+            : ''),
+        { quote: true },
+      );
+      return;
+    }
+    const scope = routine.scope;
+    const saved = store.saveTrigger({
+      scope,
+      routine: routine.name,
+      event,
+      match,
+      args: macroArgs,
+    });
+    await say(
+      inbound,
+      `Disparador guardado: cuando [${event}] contenga "${match}", disparo "${routine.name}" ` +
+        `(mínimo cada ${saved.cooldownSeconds}s). Lo ves con /disparadores.`,
+      { quote: true },
+    );
+  };
+
   const cmdCron = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     // La lógica vive en runCronCommand (exportada) para que los canarios del
     // comando — colisiones, aislamiento por chat, sync en vivo — corran
@@ -3698,12 +3820,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
   // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
-  startPricewatchLoop({
-    mainBotToken: token,
-    configPath: process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json'),
-    stateDir: paths.state,
-    log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
-  });
+  {
+    // Disparador 'precio': todo aviso del vigilante pasa por makeNotify; se
+    // envuelve UNA vez y además se emite el evento (global, scope '').
+    const pwLog = {
+      info: (m: string, f?: Record<string, unknown>) => log.info(m, f),
+      warn: (m: string, f?: Record<string, unknown>) => log.warn(m, f),
+    };
+    const pwPath = process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json');
+    const pwDeps = realDeps(pwPath, join(paths.state, 'pricewatch.sqlite'), pwLog, false, token);
+    const pwNotify = pwDeps.makeNotify;
+    pwDeps.makeNotify = (cfg) => {
+      const notify = pwNotify(cfg);
+      return async (text: string) => {
+        void triggerEngine.emit({ type: 'precio', scope: '', text }).catch((err) => {
+          log.warn('trigger precio falló', { err: String(err) });
+        });
+        return notify(text);
+      };
+    };
+    startPricewatchLoop({
+      mainBotToken: token,
+      configPath: pwPath,
+      stateDir: paths.state,
+      log: pwLog,
+      deps: pwDeps,
+    });
+  }
 
   const startedAt = Date.now();
 
@@ -4163,6 +4306,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/routines - lista de rutinas',
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
+        '/disparador <mensaje|archivo|precio> <coincidencia> | <rutina> - dispara una rutina cuando pasa algo (sin gastar tokens); /disparadores lista, /disparador del <n> borra',
         '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
         '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
         '/avisos [menos|minimo|normal] - ritmo de avisos del filtro',
@@ -5285,6 +5429,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             if (oldest !== undefined) seenMessages.delete(oldest);
           }
 
+          // Disparador 'mensaje': texto normal (nunca un comando) cruza los
+          // triggers del chat. No bloquea la respuesta al usuario.
+          if (inbound.text && !inbound.text.startsWith('/')) {
+            void triggerEngine
+              .emit({ type: 'mensaje', scope: chatKey_, text: inbound.text })
+              .catch((err) => {
+                log.warn('trigger mensaje falló', { err: String(err) });
+              });
+          }
+
           // Where a wake word gets answered, and what "the last audio" means from now on.
           lastChat = { key: chatKey_, chatId: inbound.chatId, threadId: inbound.threadId };
 
@@ -5340,6 +5494,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'cron': {
                 const thread = await resolveThread(inbound);
                 return cmdCron(thread, inbound, command.args);
+              }
+              case 'disparador':
+              case 'trigger': {
+                const thread = await resolveThread(inbound);
+                return cmdTrigger(thread, inbound, command.args);
+              }
+              case 'disparadores':
+              case 'triggers': {
+                const chatKey_ = chatKey(inbound);
+                return say(
+                  inbound,
+                  formatTriggerList(
+                    store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_)),
+                  ),
+                  { quote: true },
+                );
               }
               case 'learn': {
                 const thread = await resolveThread(inbound);
