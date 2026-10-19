@@ -67,6 +67,7 @@ import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
+import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { renderMemoryContext } from './memory/context.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
@@ -3620,6 +3621,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1): fusiona
+   * duplicados con supersedes y copia recuperable previa (src/memory/consolidate.ts).
+   * Mismo patron que el backup de las 03:00: solo cuenta como hecha si termina bien;
+   * un fallo se reintenta en el siguiente tick y queda en el log.
+   */
+  const consolidateIfDue = async (): Promise<void> => {
+    if (process.env.PA_MEMORY_CONSOLIDATE !== '1') return;
+    if (!isConsolidationDue(new Date(), weeklyState.lastSent('consolida'))) return;
+    try {
+      const report = await runConsolidation({
+        store: memory,
+        snapshot,
+        backupDir: join(paths.state, 'memory-consolidation'),
+        embedder: semanticRecall,
+      });
+      weeklyState.markSent('consolida', Date.now());
+      log.info('memory consolidation finished', {
+        scopes: report.scopes.length,
+        backups: report.backups.length,
+      });
+    } catch (err) {
+      log.warn('memory consolidation failed', { err: String(err) });
+    }
+  };
+
   const cmdEvolucion = async (inbound: Inbound, args: string): Promise<void> => {
     const a = args.trim();
     if (/^idea\b/i.test(a)) {
@@ -3657,6 +3684,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
+      if (process.env.PA_MEMORY_CONSOLIDATE === '1') void consolidateIfDue();
     },
     10 * 60 * 1000,
   );
