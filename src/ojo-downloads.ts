@@ -263,6 +263,8 @@ export function createDownloadsController(opts: {
   getOverride: () => Promise<string | undefined>;
   overrideTimeoutMs?: number;
   now?: () => number;
+  /** Extra sink for each recorded download (event triggers). Never blocks recording. */
+  onNew?: (filename: string) => void;
 }): {
   apply: () => Promise<DownloadsState>;
   stop: () => void;
@@ -293,10 +295,19 @@ export function createDownloadsController(opts: {
         ignore: (p) => !wantedPath(dir, p),
         onEvent: (ev) => {
           if (closed) return;
+          let recorded = false;
           try {
-            recordDownload(opts.db, dir, ev, (opts.now ?? Date.now)());
+            recorded = recordDownload(opts.db, dir, ev, (opts.now ?? Date.now)());
           } catch (err) {
             log.warn('descargas: no se pudo guardar', { err: String(err) });
+          }
+          // Only a genuinely NEW download fires: a duplicate event must not
+          // re-trigger routines for a file the user already saw.
+          if (!recorded) return;
+          try {
+            opts.onNew?.(ev.path);
+          } catch (err) {
+            log.warn('descargas: onNew falló', { err: String(err) });
           }
         },
       });
