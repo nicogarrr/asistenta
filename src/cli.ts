@@ -64,6 +64,7 @@ import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/cli
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
 import { listReplyInbox, resolveReplyCard } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
+import { mailStatus } from './mail/status.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { renderMemoryContext } from './memory/context.js';
@@ -142,6 +143,14 @@ function secretStatePaths(): string[] {
 }
 
 import { SecretLibrary } from './books/secret.js';
+import {
+  currentLimits,
+  getPace,
+  paceText,
+  parsePace,
+  recordDismissal,
+  setPace,
+} from './notice-pace.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import {
   buildMacroPrompt,
@@ -176,7 +185,7 @@ import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
 import { createDocsTool } from './tools/docs.js';
-import { createDoneTool } from './tools/done.js';
+import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
@@ -1004,6 +1013,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
     createFetchTool(),
     createWebTool(config),
     createDoneTool(),
+    createAskTool(),
     createFactoryTool({ onChange: () => void factorySyncLocal() }),
     createShellTool(config),
     createComputerTool(config, screen, (call) =>
@@ -1118,6 +1128,7 @@ async function runCommand(prompt: string): Promise<number> {
     createFetchTool(),
     createWebTool(config),
     createDoneTool(),
+    createAskTool(),
     createFactoryTool({ onChange: () => void factorySyncRun() }),
     createShellTool(config),
     createComputerTool(config, screen, (call) =>
@@ -1610,6 +1621,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createFetchTool(),
       createWebTool(config),
       createDoneTool(),
+      createAskTool(),
       createShellTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
@@ -2353,6 +2365,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         vigilanteOwnerId,
       ) !== null,
     judge: createAttentionJudge(config),
+    pace: () => currentLimits(memoryDb),
     send: async (text) => {
       const chatId = resolveOwnerDmChatId(
         [...threads.values()].map((t) => t.chatKey),
@@ -2538,6 +2551,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, 'Correo solo disponible en el DM del dueño.', { quote: true });
       return;
     }
+    if (args.trim() === 'estado') {
+      try {
+        await say(inbound, (await mailStatus()).lines.join('\n'), { quote: true });
+      } catch {
+        await say(inbound, 'No se pudo leer el estado del correo.', { quote: true });
+      }
+      return;
+    }
     if (args.trim() === 'lista') {
       try {
         const account = await loadReadMailAccount();
@@ -2568,7 +2589,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'Uso: /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
+        'Uso: /correo estado, /correo lista o /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
         { quote: true },
       );
       return;
@@ -2722,7 +2743,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
       );
     }
+    const stepped = recordDismissal(memoryDb, Date.now());
+    if (stepped) {
+      lines.push(
+        '',
+        `Has descartado 3 avisos en dos días, así que bajo el ritmo a «${stepped}». ${paceText(stepped)}`,
+      );
+    }
     await say(inbound, lines.join('\n'), { quote: true });
+  };
+
+  /** `/avisos [menos|minimo|normal]`: ritmo de avisos; solo puede ser más estricto que el límite base. */
+  const cmdAvisos = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const want = parsePace(args);
+    if (want === null) {
+      await say(inbound, 'Uso: /avisos (estado), /avisos menos, /avisos minimo o /avisos normal.', {
+        quote: true,
+      });
+      return;
+    }
+    if (want !== 'estado') setPace(memoryDb, want);
+    await say(inbound, paceText(getPace(memoryDb)), { quote: true });
   };
 
   /** `/ignorados [activar|borrar <id>]`: ver y gestionar las reglas de ignorar. */
@@ -4082,6 +4129,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
         '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
         '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
+        '/avisos [menos|minimo|normal] - ritmo de avisos del filtro',
         '/memory - lo que recuerdo de ti',
         '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
         '/pendientes - lo que te tengo que recordar',
@@ -5234,6 +5282,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdIgnora(inbound, command.args);
               case 'ignorados':
                 return cmdIgnorados(inbound, command.args);
+              case 'avisos':
+                return cmdAvisos(inbound, command.args);
               case 'voice':
                 return cmdVoice(inbound, command.args);
               case 'conversacion':

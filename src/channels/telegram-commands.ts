@@ -101,6 +101,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Ignorar un aviso por su número',
   },
   {
+    command: 'avisos',
+    description: 'Menos o más avisos del filtro de correo y citas',
+  },
+  {
     command: 'ignorados',
     description: 'Ver reglas de avisos ignorados',
   },
