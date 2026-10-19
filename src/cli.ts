@@ -245,8 +245,10 @@ import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { speakPhrases, splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
+import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { createSapiTts } from './voice/tts.js';
+import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { compareProduct, describeCompare } from './watch/compare.js';
 import {
@@ -337,6 +339,10 @@ export async function main(argv: string[]): Promise<number> {
       return new Promise<number>(() => {});
     case 'tv':
       return tvCommand(rest);
+    case 'voice': {
+      const { voiceCommand } = await import('./voice/voice-cli.js');
+      return voiceCommand(rest);
+    }
     case 'status': {
       const { statusCommand } = await import('./daemon-status.js');
       return statusCommand(rest);
@@ -4713,6 +4719,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // corte apagado nunca llega a usarse.
   const bargeVadScorer = createBargeVadScorer({ modelDir: paths.models });
 
+  // Verificación de hablante (brecha 3b): SOLO con PA_SPEAKER_VERIFY=1 y con al
+  // menos una voz enrolada (`pa voice enroll`). Sin perfiles la puerta queda
+  // desactivada (avisado): una puerta que rechaza todo dejaría la voz muerta.
+  let speakerGate: ((samples: Float32Array) => Promise<boolean>) | undefined;
+  let speakerRejected = 0;
+  if (process.env.PA_SPEAKER_VERIFY === '1') {
+    const verifier = await SpeakerVerifier.load(speakerProfilesFile(), speakerGateConfigFromEnv());
+    if (verifier.list().length === 0) {
+      log.warn('PA_SPEAKER_VERIFY=1 pero no hay voces enroladas; la puerta queda desactivada');
+    } else {
+      speakerGate = async (samples) => (await verifier.verify(samples)).accepted;
+    }
+  }
+
   /**
    * Read an answer out loud on this machine's speakers, phrase by phrase, interruptible.
    * Never touches the system volume. Runs inside the session's `speak`, so the agent's
@@ -4799,6 +4819,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const created = new ConversationSession({
       bargeIn: levelAtOpen,
       bargeVad: levelAtOpen === 'off' ? undefined : bargeVadScorer,
+      speakerGate,
+      onSpeakerRejected: () => {
+        speakerRejected++;
+        log.info('voz no enrolada rechazada en la conversación', { total: speakerRejected });
+      },
       transcriber: (samples) => defaultTranscriber(samples),
       onUtterance: async (heard) => {
         const inbound: Inbound = {

@@ -70,6 +70,17 @@ export interface ConversationOptions {
    * is freed and the candidate falls back to the energy behaviour. Default 1500 ms.
    */
   bargeVadTimeoutMs?: number;
+  /**
+   * Speaker gate (brecha 3b, PA_SPEAKER_VERIFY): before spending a whisper pass
+   * the captured audio is checked against the enrolled household voices; a voice
+   * that is not enrolled never reaches the transcriber nor the agent. Gate
+   * errors fail CLOSED (the utterance is dropped): a voice-command channel that
+   * cannot check identity must not let an unenrolled voice through. Only
+   * microphone utterances pass here; `submit()` text came from the owner.
+   */
+  speakerGate?: (samples: Float32Array) => Promise<boolean>;
+  /** Called once per utterance rejected by the speaker gate (metrics). */
+  onSpeakerRejected?: () => void;
 }
 
 export type ConversationState =
@@ -196,6 +207,8 @@ export class ConversationSession {
       | 'bargeVadProb'
       | 'bargeVadRecheckMs'
       | 'bargeVadTimeoutMs'
+      | 'speakerGate'
+      | 'onSpeakerRejected'
     >
   >;
   #transcriber: ConversationOptions['transcriber'];
@@ -249,11 +262,14 @@ export class ConversationSession {
   #speakBufSamples = 0;
   /** True until the transcriber's own promise settles, even after our timeout gave up on it. */
   #transcribing = false;
+  #gating = false;
   /** VAD confirmation of the barge trigger; undefined falls back to pure energy. */
   #bargeVad: ConversationOptions['bargeVad'];
   readonly #bargeVadProb: number;
   readonly #bargeVadRecheckMs: number;
   readonly #bargeVadTimeoutMs: number;
+  readonly #speakerGate: ConversationOptions['speakerGate'];
+  readonly #onSpeakerRejected: ConversationOptions['onSpeakerRejected'];
   /**
    * Playback counter: bumps when a playback starts and when it ends or is cut,
    * so anything asynchronous spawned by one playback (a VAD check) can never
@@ -293,6 +309,8 @@ export class ConversationSession {
     this.#transcriber = opts.transcriber;
     this.#onUtterance = opts.onUtterance;
     this.#onClose = opts.onClose;
+    this.#speakerGate = opts.speakerGate;
+    this.#onSpeakerRejected = opts.onSpeakerRejected;
   }
 
   state(): ConversationState {
@@ -465,11 +483,34 @@ export class ConversationSession {
     }
 
     // A previous transcription that outlived its timeout is still running: never two
-    // whisper passes at once. This utterance is dropped.
-    if (this.#transcribing) {
+    // whisper passes at once. This utterance is dropped. The speaker gate holds
+    // the same slot: it runs before whisper and never in parallel with it.
+    if (this.#transcribing || this.#gating) {
       this.#dropSeededUnclassified();
       this.#lastError = 'la transcripción anterior sigue en curso; descarto esta frase';
       return;
+    }
+
+    // Speaker gate (brecha 3b): the enrolled-voices check runs on the captured
+    // audio BEFORE whisper. Rejected or unverifiable audio is dropped here -
+    // never transcribed, never answered. Fail closed on error.
+    if (this.#speakerGate) {
+      this.#gating = true;
+      let allowed = false;
+      try {
+        allowed = await this.#speakerGate(joined);
+      } catch (err) {
+        this.#lastError = `no pude verificar la voz; descarto esta frase (${err instanceof Error ? err.message : String(err)})`;
+      } finally {
+        this.#gating = false;
+      }
+      // close() or /conversacion off during the check: the result is stale.
+      if (generation !== this.#generation) return;
+      if (!allowed) {
+        this.#dropSeededUnclassified();
+        this.#onSpeakerRejected?.();
+        return;
+      }
     }
     this.#state = 'transcribiendo';
     let text: string;
