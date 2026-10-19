@@ -61,6 +61,14 @@ export const TELEGRAM_COMMANDS = [
     description: 'Listar rutinas guardadas',
   },
   {
+    command: 'disparador',
+    description: 'Crear o borrar un disparador por evento',
+  },
+  {
+    command: 'disparadores',
+    description: 'Listar disparadores por evento',
+  },
+  {
     command: 'agenda',
     description: 'Ver rutinas programadas y próxima ejecución',
   },
