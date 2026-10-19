@@ -86,8 +86,9 @@ export class FollowupTracker {
   }
 
   /**
-   * Remember a promise. `dueAt` is an epoch timestamp; pass `Date.now()` for a note
-   * that has no date and is tracked purely by contact recency.
+   * Remember a promise. `dueAt` is an epoch timestamp; pass 0 for a note that has
+   * no date and is tracked purely by contact recency (`due()` only selects
+   * `due_at > 0`, so 0 is the only value that never reads as "vencio").
    */
   track(scope: string, kind: string, subject: string, dueAt: number): string {
     const id = `${kind}:${subject}`.slice(0, 200);
