@@ -103,6 +103,23 @@ export interface PurchaseIntent {
   expiresAt: string;
 }
 
+export interface RoutineTrigger {
+  id: string;
+  scope: string;
+  /** Name of the routine (in the same scope) fired when the event matches. */
+  routine: string;
+  /** Event source: 'archivo' (new download), 'precio' (price alert), 'mensaje' (inbound text). */
+  event: string;
+  /** Case-insensitive needle: message text, file name or price-alert text. */
+  match: string;
+  /** Fixed clave=valor for macro routines, validated at save time. Null for plain routines. */
+  args: Record<string, string> | null;
+  enabled: boolean;
+  cooldownSeconds: number;
+  lastFiredAt: string | null;
+  createdAt: string;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 
@@ -142,12 +159,42 @@ CREATE TABLE IF NOT EXISTS purchase_intents (
 );
 CREATE INDEX IF NOT EXISTS idx_intents_status ON purchase_intents(status, created_at);
 
+-- Event triggers: fire a stored routine (token-zero dispatch) when an event matches.
+CREATE TABLE IF NOT EXISTS routine_triggers (
+  id               TEXT PRIMARY KEY,
+  scope            TEXT NOT NULL,
+  routine          TEXT NOT NULL,
+  event            TEXT NOT NULL,
+  match            TEXT NOT NULL,
+  args             TEXT,
+  enabled          INTEGER NOT NULL DEFAULT 1,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 300,
+  last_fired_at    TEXT,
+  created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_triggers_scope ON routine_triggers(scope, event);
+
 CREATE TABLE IF NOT EXISTS kv (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 `;
+
+function mapTrigger(row: Record<string, string | number | null>): RoutineTrigger {
+  return {
+    id: String(row.id),
+    scope: String(row.scope),
+    routine: String(row.routine),
+    event: String(row.event),
+    match: String(row.match),
+    args: row.args ? (JSON.parse(String(row.args)) as Record<string, string>) : null,
+    enabled: Number(row.enabled) === 1,
+    cooldownSeconds: Number(row.cooldown_seconds),
+    lastFiredAt: row.last_fired_at ? String(row.last_fired_at) : null,
+    createdAt: String(row.created_at),
+  };
+}
 
 const VERSION = 1;
 
@@ -377,6 +424,77 @@ export class Store {
       .prepare('DELETE FROM routines WHERE scope = ? AND name = ?')
       .run(scope, name);
     return Number(r.changes) > 0;
+  }
+
+  saveTrigger(t: {
+    scope: string;
+    routine: string;
+    event: string;
+    match: string;
+    args?: Record<string, string> | null;
+    cooldownSeconds?: number;
+  }): RoutineTrigger {
+    if (!t.event.trim()) throw new Error('trigger without an event type');
+    if (!t.match.trim()) throw new Error('trigger without a match text');
+    if (!t.routine.trim()) throw new Error('trigger without a routine name');
+    const cooldown = Math.max(0, Math.trunc(t.cooldownSeconds ?? 300));
+    const existing = this.#db
+      .prepare(
+        'SELECT id FROM routine_triggers WHERE scope = ? AND routine = ? AND event = ? AND match = ?',
+      )
+      .get(t.scope, t.routine, t.event, t.match) as { id: string } | undefined;
+    if (existing) {
+      this.#db
+        .prepare(
+          'UPDATE routine_triggers SET args = ?, cooldown_seconds = ?, enabled = 1 WHERE id = ?',
+        )
+        .run(t.args ? JSON.stringify(t.args) : null, cooldown, existing.id);
+      return this.getTrigger(existing.id) as RoutineTrigger;
+    }
+    const id = crypto.randomUUID();
+    this.#db
+      .prepare(
+        `INSERT INTO routine_triggers (id, scope, routine, event, match, args, enabled, cooldown_seconds, last_fired_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)`,
+      )
+      .run(
+        id,
+        t.scope,
+        t.routine,
+        t.event,
+        t.match,
+        t.args ? JSON.stringify(t.args) : null,
+        cooldown,
+        new Date().toISOString(),
+      );
+    return this.getTrigger(id) as RoutineTrigger;
+  }
+
+  getTrigger(id: string): RoutineTrigger | null {
+    const row = this.#db.prepare('SELECT * FROM routine_triggers WHERE id = ?').get(id) as
+      | Record<string, string | number | null>
+      | undefined;
+    return row ? mapTrigger(row) : null;
+  }
+
+  listTriggers(scope?: string): RoutineTrigger[] {
+    const rows = (
+      scope
+        ? this.#db
+            .prepare('SELECT * FROM routine_triggers WHERE scope = ? ORDER BY created_at')
+            .all(scope)
+        : this.#db.prepare('SELECT * FROM routine_triggers ORDER BY scope, created_at').all()
+    ) as Array<Record<string, string | number | null>>;
+    return rows.map(mapTrigger);
+  }
+
+  deleteTrigger(id: string): boolean {
+    const r = this.#db.prepare('DELETE FROM routine_triggers WHERE id = ?').run(id);
+    return Number(r.changes) > 0;
+  }
+
+  markTriggerFired(id: string, iso: string): void {
+    this.#db.prepare('UPDATE routine_triggers SET last_fired_at = ? WHERE id = ?').run(iso, id);
   }
 
   markRoutineRun(scope: string, name: string): void {
