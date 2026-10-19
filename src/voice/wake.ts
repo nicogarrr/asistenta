@@ -51,6 +51,7 @@ import { paths } from '../paths.js';
 import { listCaptureDevices } from '../screen/media.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { WHISPER_SAMPLE_RATE } from './audio.js';
+import { OWW_FRAME_SAMPLES, OwwWakeDetector } from './wakeword-oww.js';
 
 /** Same checkpoint as `src/voice/stt.ts`, and for the same reason: `whisper-*.en` cannot do Spanish. */
 const DEFAULT_MODEL = 'onnx-community/whisper-small';
@@ -370,6 +371,29 @@ export interface WakeCapture {
   stop(): Promise<void>;
 }
 
+/** Motor de deteccion de la palabra de activacion. */
+export type WakeEngine = 'whisper' | 'oww';
+
+/**
+ * Ajustes del motor 'oww' (runner openWakeWord dedicado, A1a/A1b). A
+ * diferencia del motor whisper, oww NO transcribe: puntua cada frame de
+ * 80ms con tres modelos ONNX pequenos, asi que el coste por segundo de
+ * audio es minusculo y constante, sin pasada whisper por ventana.
+ */
+export interface OwwWakeOptions {
+  /** Dir con melspectrogram.onnx, embedding_model.onnx y el modelo de palabra. */
+  modelDir: string;
+  /**
+   * Nombre simple .onnx del modelo de palabra entrenado con
+   * scripts/wakeword-train.py (ruta completa en docs/wakeword-oww.md).
+   */
+  wordModelFile: string;
+  /** Score del clasificador que cuenta como deteccion (0..1). Defecto 0.5. */
+  threshold?: number;
+  /** Costura de tests: detector ya construido, sin sesiones ONNX reales. */
+  detector?: OwwWakeDetector;
+}
+
 export interface WakeWordOptions {
   /** Wake word or phrase. Default 'asistenta'. */
   word?: string;
@@ -405,6 +429,14 @@ export interface WakeWordOptions {
    * stream without opening a second capture on a device that only allows one.
    */
   onAudio?: (pcm: Float32Array) => void;
+  /**
+   * Motor de deteccion. Defecto 'whisper' (transcribir y comparar texto).
+   * 'oww' usa el runner openWakeWord dedicado y requiere `oww`; detras de
+   * flag (PA_WAKE_ENGINE) hasta medir FAR/FRR contra whisper en su PC.
+   */
+  engine?: WakeEngine;
+  /** Requerido cuando engine es 'oww'. */
+  oww?: OwwWakeOptions;
 }
 
 /** The pipeline type, kept structural so the heavy import stays inside a function. */
@@ -695,6 +727,12 @@ export class WakeWordListener {
   #initialPrompt: string | undefined;
   #onAudio: ((pcm: Float32Array) => void) | undefined;
   #held = false;
+  #engine: WakeEngine;
+  #owwOpts: OwwWakeOptions | undefined;
+  #oww: OwwWakeDetector | null = null;
+  #owwThreshold: number;
+  /** Resto de chunk que aun no completa un frame oww de 1280 muestras. */
+  #owwCarry = new Float32Array(0);
 
   #lock = new Mutex();
   #ring = new SampleRing(WHISPER_SAMPLE_RATE * WINDOW_SECONDS);
@@ -732,6 +770,12 @@ export class WakeWordListener {
     this.#transcriber = opts.transcriber ?? defaultTranscriber;
     this.#initialPrompt = opts.initialPrompt;
     this.#onAudio = opts.onAudio;
+    this.#engine = opts.engine ?? 'whisper';
+    if (this.#engine === 'oww' && !opts.oww) {
+      throw new Error('el motor oww necesita opts.oww (modelDir y wordModelFile)');
+    }
+    this.#owwOpts = opts.oww;
+    this.#owwThreshold = Math.max(0, Math.min(1, opts.oww?.threshold ?? 0.5));
   }
 
   isRunning(): boolean {
@@ -772,6 +816,11 @@ export class WakeWordListener {
     const until = Date.now() + Math.max(0, ms);
     if (until > this.#suppressedUntil) this.#suppressedUntil = until;
     this.#ring.clear();
+    // La voz del propio agente no puede quedar en las ventanas del detector:
+    // reset() invalida tambien los pushes ya encolados (generation), no solo
+    // el audio futuro.
+    this.#oww?.reset();
+    this.#owwCarry = new Float32Array(0);
   }
 
   /**
@@ -782,6 +831,8 @@ export class WakeWordListener {
   hold(on: boolean): void {
     this.#held = on;
     this.#ring.clear();
+    this.#oww?.reset();
+    this.#owwCarry = new Float32Array(0);
   }
 
   async start(): Promise<void> {
@@ -794,6 +845,28 @@ export class WakeWordListener {
       this.#captureActive = true;
       this.#consecutiveFailures = 0;
       try {
+        if (this.#engine === 'oww' && !this.#oww) {
+          // Antes de tocar el microfono: si el modelo no esta, el error debe
+          // llegar sin dejar una captura a medio abrir. ensureOwwModels baja
+          // los feature models solos; el modelo de palabra lo entrena Nico
+          // (scripts/wakeword-train.py), y si falta la descarga 404 se
+          // convierte aqui en la ruta de entrenamiento, no en un enigma.
+          try {
+            this.#oww =
+              this.#owwOpts?.detector ??
+              (await OwwWakeDetector.create({
+                modelDir: this.#owwOpts?.modelDir ?? '',
+                wordModelFile: this.#owwOpts?.wordModelFile ?? '',
+              }));
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `no puedo iniciar el motor oww: ${detail}. Entrena el modelo con ` +
+                'scripts/wakeword-train.py y dejalo en el dir de modelos ' +
+                '(ruta completa: docs/wakeword-oww.md).',
+            );
+          }
+        }
         await this.#capture.start(
           (pcm) => this.#handleChunk(pcm),
           (err) => this.#handleCaptureError(err),
@@ -806,7 +879,9 @@ export class WakeWordListener {
         this.#captureActive = false;
         throw err;
       }
-      this.#scheduleCheck();
+      // El motor oww puntua por frame dentro de #handleChunk: no hay ventana
+      // de 3s ni pasada whisper que programar.
+      if (this.#engine === 'whisper') this.#scheduleCheck();
     });
   }
 
@@ -823,6 +898,18 @@ export class WakeWordListener {
         this.#timer = null;
       }
       this.#ring.clear();
+      this.#owwCarry = new Float32Array(0);
+      const detector = this.#oww;
+      this.#oww = null;
+      if (detector) {
+        try {
+          await detector.close();
+        } catch (err) {
+          // Un release fallido no puede impedir parar el oyente; el detector
+          // conserva las sesiones pendientes y un close posterior reintenta.
+          this.#reportError(err);
+        }
+      }
       if (this.#captureActive) {
         this.#captureActive = false;
         await this.#capture.stop();
@@ -843,7 +930,54 @@ export class WakeWordListener {
     }
     if (this.#held) return;
     if (Date.now() < this.#suppressedUntil) return;
+    if (this.#engine === 'oww') {
+      this.#feedOww(pcm);
+      return;
+    }
     this.#ring.push(pcm);
+  }
+
+  /**
+   * Trocea el chunk en frames de 1280 muestras (80ms) y los puntua en orden.
+   * pushFrame ya serializa internamente, y los scores vuelven en orden de
+   * entrega, asi que un frame lento retrasa la decision sin reordenarla.
+   */
+  #feedOww(pcm: Float32Array): void {
+    const detector = this.#oww;
+    if (!detector) return;
+    const merged = new Float32Array(this.#owwCarry.length + pcm.length);
+    merged.set(this.#owwCarry, 0);
+    merged.set(pcm, this.#owwCarry.length);
+    let offset = 0;
+    while (merged.length - offset >= OWW_FRAME_SAMPLES) {
+      const frame = merged.slice(offset, offset + OWW_FRAME_SAMPLES);
+      offset += OWW_FRAME_SAMPLES;
+      void detector
+        .pushFrame(frame)
+        .then((score) => this.#handleOwwScore(score))
+        .catch((err: unknown) => this.#reportError(err));
+    }
+    this.#owwCarry = merged.slice(offset);
+  }
+
+  /**
+   * Un score por frame una vez llenas las ventanas (~2.0s de audio). oww no
+   * transcribe: lo unico sabido es QUE sono la palabra, asi que onWake recibe
+   * la palabra sola y la peticion hablada la recoge la sesion de conversacion
+   * (cli.ts la abre al recibir la palabra suelta con este motor).
+   */
+  #handleOwwScore(score: number | null): void {
+    if (score === null || !this.#running) return;
+    if (this.#held) return;
+    if (Date.now() < this.#suppressedUntil) return;
+    if (score < this.#owwThreshold) return;
+    this.#wakeCount++;
+    this.#lastWakeAt = new Date().toISOString();
+    // Sin reset, las ventanas deslizantes aun contienen la palabra que acaba
+    // de disparar y el mismo audio despertaria varias veces seguidas.
+    this.#oww?.reset();
+    this.#owwCarry = new Float32Array(0);
+    this.#fireWake(this.#word);
   }
 
   #handleCaptureError(err: Error): void {
