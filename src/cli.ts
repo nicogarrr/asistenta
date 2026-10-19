@@ -28,7 +28,7 @@ import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
 import {
   cleanForTelegram,
-  progressMessage,
+  progressNote,
   shorten,
   stripVoicePrefix,
 } from './channels/formatters.js';
@@ -4048,7 +4048,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
-    let lastSummary = 'recibido';
+    let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
     // happened, and /buscar must be able to find it.
@@ -4111,7 +4111,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             // Varied and short. A progress note that says the same three words every
             // time reads as an automated nag; this is the same information in the
             // voice of someone checking in.
-            text: `${progressMessage()} — ${lastSummary}.`,
+            text: progressNote({
+              elapsedMs: now - startedAt,
+              summary: lastSummary,
+              toolCalls: toolNames.length,
+            }),
           })
           .then((id) => {
             if (id) progressIds.push(id);
@@ -4346,7 +4350,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           result: result.error ? 'error' : 'ok',
           // Summarised by a human, not a dump of arguments: an argument list can hold
           // a password, a card number or a whole file, and this file lives on disk.
-          detail: summarizeToolUse(lastSummary),
+          detail: summarizeToolUse(lastSummary ?? 'recibido'),
         });
       }
       // The reply itself, so "what did you tell me?" is answerable too.

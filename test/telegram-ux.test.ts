@@ -4,6 +4,7 @@ import {
   formatAsList,
   hasRichContent,
   progressMessage,
+  progressNote,
   resultLine,
   shorten,
   stripVoicePrefix,
@@ -298,6 +299,28 @@ describe('progressMessage', () => {
       expect(phrase.length).toBeGreaterThan(0);
       expect(phrase.length).toBeLessThanOrEqual(40);
     }
+  });
+});
+
+describe('progressNote', () => {
+  it('does not report the placeholder or a fake fraction before any tool ran', () => {
+    for (let i = 0; i < 40; i++) {
+      const note = progressNote({ elapsedMs: 30_000, summary: 'recibido', toolCalls: 0 });
+      expect(note).not.toMatch(/recibido|mitad|casi|falta poco/i);
+      expect(note).toContain('30 s');
+      expect(note).toContain('pensando');
+    }
+  });
+
+  it('says what the agent is doing once a tool started, with the elapsed time', () => {
+    const note = progressNote({ elapsedMs: 125_000, summary: 'leyendo example.com', toolCalls: 2 });
+    expect(note).toContain('2 min 5 s');
+    expect(note).toContain('leyendo example.com');
+  });
+
+  it('never claims how much is left', () => {
+    const seen = new Set(Array.from({ length: 200 }, () => progressMessage()));
+    for (const phrase of seen) expect(phrase).not.toMatch(/mitad|casi|falta poco|proceso/i);
   });
 });
 
