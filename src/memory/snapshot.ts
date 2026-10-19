@@ -212,6 +212,33 @@ export class MemorySnapshot {
   }
 
   /**
+   * Borrable por diseño: quita las entradas que contienen el texto dado, sin
+   * distinguir mayúsculas ni acentos. Una query vacía no borra nada. Devuelve
+   * cuántas entradas salieron; el llamador debe decir la verdad del resultado.
+   */
+  removeEntries(query: string): number {
+    const fold = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+    const needle = fold(query).trim();
+    if (!needle) return 0;
+    try {
+      const entries = this.#entries();
+      const kept = entries.filter((e) => !fold(e).includes(needle));
+      const removed = entries.length - kept.length;
+      if (removed === 0) return 0;
+      this.#write(kept.join(ENTRY_SEPARATOR));
+      log.info('memory snapshot entries removed', { removed });
+      return removed;
+    } catch (err) {
+      log.warn('memory snapshot remove failed', { err: String(err) });
+      return 0;
+    }
+  }
+
+  /**
    * The blocks for the system prompt. Empty blocks would be dead tokens. A
    * legacy MEMORIA.md found on disk is still honored (read-only, never
    * created): its entries may be manual, and ignoring them would silently

@@ -2,9 +2,10 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
+import { type Embedder, hybridRank, SEMANTIC_CANDIDATES } from '../memory/semantic.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
 import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
-import { looksLikeCredential, type MemoryEntry, type MemoryStore } from '../memory.js';
+import { looksLikeCredential, type MemoryEntry, type MemoryStore, scoreEntry } from '../memory.js';
 
 /**
  * Long-term memory as a tool.
@@ -39,6 +40,7 @@ const MemoryParams = Type.Object({
     Type.Literal('timeline'),
     Type.Literal('save_profile'),
     Type.Literal('profile'),
+    Type.Literal('forget_profile'),
     Type.Literal('suggest_nudge'),
   ]),
   text: Type.Optional(
@@ -50,7 +52,12 @@ const MemoryParams = Type.Object({
         'Not instructions to yourself and not secrets — credentials are refused.',
     }),
   ),
-  query: Type.Optional(Type.String({ description: 'For recall: what you want to remember.' })),
+  query: Type.Optional(
+    Type.String({
+      description:
+        'For recall: what you want to remember. For forget_profile: the text to remove from the profile.',
+    }),
+  ),
   id: Type.Optional(
     Type.String({
       description: 'For forget/get: the entry id from the context index, recall or list.',
@@ -160,6 +167,7 @@ export function createMemoryTool(
   store: MemoryStore,
   scopeOf: () => string,
   snapshot?: MemorySnapshot,
+  semantic?: Embedder,
 ): AgentTool<typeof MemoryParams> {
   return {
     name: 'memory',
@@ -180,6 +188,7 @@ export function createMemoryTool(
       'action=forget deletes by id.',
       'action=save_profile appends a durable fact about the user to their profile,',
       'the part of memory that travels to every chat. action=profile shows it.',
+      'action=forget_profile removes every profile entry containing the query text.',
       'action=suggest_nudge analyses a user message and says whether it revealed',
       'something durable worth saving; ask the user before saving anything.',
       '',
@@ -222,11 +231,30 @@ export function createMemoryTool(
           const query = String(args.query ?? '').trim();
           // Default is current facts only: a replaced entry never comes back
           // as if it were still true. include_superseded adds it WITH its mark.
-          const hits = query
-            ? store.recall(scope, query)
-            : args.include_superseded
-              ? store.all(scope)
-              : activeOnly(store.all(scope));
+          let hits: MemoryEntry[];
+          if (query && semantic) {
+            // S5: hybrid lexical+semantic re-rank over the active entries; any
+            // embedder failure falls back to the exact ranking of before.
+            try {
+              hits = await hybridRank({
+                query,
+                items: activeOnly(store.all(scope)).slice(-SEMANTIC_CANDIDATES),
+                text: (e) => `${e.text} ${e.tags.join(' ')}`,
+                lexical: scoreEntry,
+                embedder: semantic,
+                limit: 10,
+              });
+            } catch (err) {
+              log.warn('semantic recall unavailable, lexical fallback', { err: safeError(err) });
+              hits = store.recall(scope, query);
+            }
+          } else {
+            hits = query
+              ? store.recall(scope, query)
+              : args.include_superseded
+                ? store.all(scope)
+                : activeOnly(store.all(scope));
+          }
           if (hits.length === 0) {
             return {
               content: [{ type: 'text', text: emptyMemoryText(store, scope, query) }],
@@ -372,6 +400,26 @@ export function createMemoryTool(
           return {
             content: [{ type: 'text', text: perfil || 'El perfil está vacío todavía.' }],
             details: { empty: perfil.length === 0 },
+          };
+        }
+
+        case 'forget_profile': {
+          const query = String(args.query ?? '').trim();
+          if (!query) throw new Error('la acción forget_profile necesita query');
+          if (!snapshot) return noSnapshot();
+          const removed = snapshot.removeEntries(query);
+          log.info('profile entries removed', { scope, removed });
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  removed > 0
+                    ? `Borrado del perfil (${removed} ${removed === 1 ? 'entrada' : 'entradas'}).`
+                    : 'El perfil no tiene nada que contenga eso.',
+              },
+            ],
+            details: { removed },
           };
         }
 

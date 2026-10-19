@@ -15,8 +15,10 @@
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { log } from '../log.js';
+import { type Embedder, hybridRank } from '../memory/semantic.js';
 import { decideToSave } from '../skills/autocreate.js';
-import type { SkillStore } from '../skills/store.js';
+import { type SkillStore, scoreSkill } from '../skills/store.js';
 
 export const SKILLS_TOOL_NAME = 'skills';
 
@@ -96,10 +98,12 @@ const SkillsParams = Type.Object({
 
 export interface SkillsToolDeps {
   store: SkillStore;
+  /** S5: present only when PA_SEMANTIC_RECALL=1; failures fall back to lexical. */
+  semantic?: Embedder;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
-  const { store } = deps;
+  const { store, semantic } = deps;
   return {
     name: SKILLS_TOOL_NAME,
     label: 'Skills',
@@ -210,7 +214,22 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
         case 'search': {
           const query = String(args.query ?? '').trim();
           if (!query) throw new Error('la acción search necesita query');
-          const hits = store.search(query);
+          let hits = store.search(query);
+          if (semantic) {
+            // S5: semantic re-rank catches paraphrases the lexical scorer misses.
+            try {
+              hits = await hybridRank({
+                query,
+                items: store.list(),
+                text: (s) => `${s.name} ${s.description} ${s.whenToUse} ${s.category}`,
+                lexical: scoreSkill,
+                embedder: semantic,
+                limit: 10,
+              });
+            } catch (err) {
+              log.warn('semantic skill search unavailable, lexical fallback', { err: String(err) });
+            }
+          }
           if (hits.length === 0) {
             return {
               content: [{ type: 'text', text: 'Ningún skill coincide con esa búsqueda.' }],

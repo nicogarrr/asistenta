@@ -71,11 +71,13 @@ import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
+import { semanticFromEnv } from './memory/semantic.js';
 import type { SessionHit } from './memory/sessions.js';
 import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
+import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
-import { MemoryStore } from './memory.js';
+import { looksLikeCredential, MemoryStore } from './memory.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import {
   createDownloadsController,
@@ -102,6 +104,7 @@ import {
 } from './permissions.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
+import { refineFromLessons } from './skills/refine.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
 
 /**
@@ -1382,6 +1385,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * rebuilding the same context from scattered rows each time.
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  // S5 (opt-in PA_SEMANTIC_RECALL=1): embeddings locales para recall híbrido.
+  const semanticRecall = semanticFromEnv(paths.models);
+  // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
+  const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
   const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
@@ -1647,7 +1654,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
-      createMemoryTool(memory, scope, snapshot),
+      createMemoryTool(memory, scope, snapshot, semanticRecall),
       createDocsTool(docMemory, scope),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createGoalTool({
@@ -1660,7 +1667,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
       createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks, routines: store }),
-      createSkillsTool({ store: skills }),
+      createSkillsTool({ store: skills, semantic: semanticRecall }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
       // install mid-chat lands on the next message via this onChange.
@@ -4378,8 +4385,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.
-      const learned = recordLessons(skills, result.steps, new Date().toISOString().slice(0, 10));
+      const learnDay = new Date().toISOString().slice(0, 10);
+      const learned = recordLessons(skills, result.steps, learnDay);
       if (learned.length) log.info('lessons saved', { thread: thread.name, ids: learned });
+      // Bucle Hermes: una lección reincidente mejora el skill afectado al
+      // momento, sin esperar al evolve semanal. Solo anota; nunca reescribe.
+      const refined = refineFromLessons(skills, learned, learnDay);
+      if (refined.length) log.info('skills refined in use', { thread: thread.name, ids: refined });
 
       log.info('task done', {
         thread: thread.name,
@@ -4475,7 +4487,35 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // costs least to write it down.
       const nudge = detectMemoryWorthy(inbound.text);
       if (nudge.worth) {
-        await say(inbound, nudge.suggestion, { quote: true }).catch(() => {});
+        // Modelo de usuario auto-enriquecido: el mismo hecho visto en
+        // AUTOSAVE_DAYS días distintos deja de ser pregunta y se guarda solo,
+        // marcado [auto], visible con action=profile y borrable con
+        // action=forget_profile. Antes del umbral se pregunta como siempre.
+        let autosaved = false;
+        try {
+          if (nudgeTracker.record(nudge.suggestion, new Date().toISOString().slice(0, 10))) {
+            const first = nudge.suggestion.indexOf('"');
+            const last = nudge.suggestion.lastIndexOf('"');
+            const clause =
+              first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
+            if (clause && !looksLikeCredential(clause)) {
+              const saved = snapshot.appendEntry(`[auto] ${clause}`);
+              if (saved.ok) autosaved = true;
+            }
+          }
+        } catch (err) {
+          log.warn('profile autosave failed', { err: String(err) });
+        }
+        if (autosaved) {
+          log.info('profile autosaved', { thread: thread.name });
+          await say(
+            inbound,
+            'Lo he apuntado en tu perfil (lo repites a menudo). Si no quieres que lo recuerde, dímelo y lo borro.',
+            { quote: true },
+          ).catch(() => {});
+        } else {
+          await say(inbound, nudge.suggestion, { quote: true }).catch(() => {});
+        }
       }
 
       // A promise with a date attached is a follow-up, not just a fact: "voy a
