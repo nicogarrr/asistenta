@@ -1,6 +1,6 @@
 #!/bin/sh
-# webOS Custom Home — on-device uninstaller. Run with:
-#   ssh root@<TV_IP> "curl -fsSL https://github.com/zzeppieri/webos-custom-home/releases/download/v0.4.2/tv-uninstall.sh | sh"
+# webOS Custom Home — on-device uninstaller. Copy this local file to the TV and run it
+# (only with Nico's window; do not fetch it from the network):
 # Removes the boot hook, stops the watcher, and removes the app. Restores stock
 # behavior — nothing touched the read-only OS, so no factory reset is needed.
 

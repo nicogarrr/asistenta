@@ -35,7 +35,7 @@ ares-package dist service -o . --no-minify
 Instalar el .ipk en la TV. Dos vías:
 - ares-install (requiere Developer Mode + key server, ya activos), o
 - subir el ipk por telnet y usar el servicio del Homebrew Channel
-  (`org.webosbrew.hbchannel.service/install`) como hace `installer/tv-install.sh`.
+  (`org.webosbrew.hbchannel.service/install`).
 
 Lanzarla a mano una vez (visible → ventana de Nico) y verificar: navegación,
 lanzamiento real de apps, tiempo de Gijón, ambient a los 60 s.

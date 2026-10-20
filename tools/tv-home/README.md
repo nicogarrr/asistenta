@@ -75,44 +75,13 @@ webOS `ares` CLI.
 
 ## Quick install (one-click)
 
-Don't want to build anything? If your TV is already
-[rooted](https://github.com/webosbrew/webos-homebrew-channel) with SSH enabled,
-grab the launcher for your OS from the
-[**latest release**](https://github.com/zzeppieri/webos-custom-home/releases/latest)
-and run it — it asks for your TV's IP and does the rest --install + boot autostart
-+ HOME-button takeover-- over SSH. No Node, no `ares` CLI, no building.
+> **Nota (fork Home de Nico):** los instaladores prefabricados de upstream
+> (`install.bat`, `install.command`, `tv-install*.sh`, que hacian `curl | ssh root@TV`)
+> se han retirado de este arbol. La instalacion es solo con el build propio,
+> segun [`installer/RUNBOOK_ES.md`](installer/RUNBOOK_ES.md). El desinstalador local
+> esta en `installer/tv-uninstall.sh`.
 
-| Your computer | File | How to run |
-|---|---|---|
-| **Windows 10/11** | `install.bat` | Double-click |
-| **macOS** | `install.command` | Double-click (right-click → Open the first time) |
-| **Linux / WSL / Git Bash** | `install.command` | `bash install.command` |
-
-Or, from any terminal, the same thing as a one-liner:
-
-```bash
-ssh root@<TV_IP> "curl -fsSL https://github.com/zzeppieri/webos-custom-home/releases/download/v0.4.2/tv-install.sh | sh"
-```
-
-See [`installer/`](installer/) for details and the uninstaller. Prefer the
-classic `ares` sideload? `ares-install --device tv <the .ipk from the release>`.
-
-> **eARC receiver losing audio on power-on?** Some LG TVs bring an eARC/ARC AV
-> receiver up *desynced* after a cold boot or standby-wake — the TV shows the
-> receiver as the sound output but nothing comes through, and you have to toggle
-> eARC off/on by hand each time. The **eARC edition** fixes this automatically: its
-> bundled service re-handshakes the eARC link ~10s after every boot and wake. It
-> elevates the service (via the Homebrew Channel's own `elevate-service`) and causes
-> a brief (~2s) audio blip on each power-on, so it's a **separate opt-in download** —
-> use it only if you have this exact problem:
->
-> ```bash
-> ssh root@<TV_IP> "curl -fsSL https://github.com/zzeppieri/webos-custom-home/releases/download/v0.4.2/tv-install-earc.sh | sh"
-> ```
->
-> Everyone else should use the standard install above (it never touches eARC).
-
-The prebuilt app starts on a placeholder location — **set your own city right in
+The app starts on a placeholder location — **set your own city right in
 the app** (Settings → Location → search), no rebuild needed. The default app
 list is baked in; to change which apps appear, edit
 [`src/lib/apps.ts`](src/lib/apps.ts) and build from source (below).
