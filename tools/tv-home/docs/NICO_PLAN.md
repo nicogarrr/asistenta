@@ -107,3 +107,11 @@ ares (o rebuild + ares-install) cuando la TV esté libre. Ideas ya apuntadas:
 pósters con acciones (OK ya lanza), fila "seguir viendo", tema por amanecer/
 atardecer (Open-Meteo ya devuelve is_day/sunrise/sunset), cripto (Binance) si lo
 pide, botones de Asistenta, salvapantallas con pósters de los picks.
+
+## v0.2.3 — salida al Home de LG + filtro de basura + disciplina de foco (20-10-2026)
+
+Ideas de CleanFrame (Tizen; código no portable, spec de interacción sí):
+- **Back → "¿Salir al Home de LG?"** (Quedarse/Salir; Quedarse por defecto; Back cancela; tecla mantenida actúa una vez). El appId `com.webos.app.home` va marcado **VERIFICAR** en la fase 2; si no es ese, el lanzamiento falla con toast y no pasa nada más.
+- **Filtro de basura** en el descubrimiento en caliente: no entran al dock `com.palm.*`, `com.lge.*`, `com.webos.service*`, el Home de LG ni nosotros mismos.
+- **Disciplina de foco**: Back mantenido actúa una sola vez (Enter ya lo hacía); al volver al launcher se conserva la selección (estado React persistente, sin temporizador de auto-retorno — ya era así).
+- Propuestas pendientes para Nico: editor de apps en el dock desde la TV (spec CleanFrame), fondo "arte" con rotación (mismo set CC0 del kit de salvapantallas).

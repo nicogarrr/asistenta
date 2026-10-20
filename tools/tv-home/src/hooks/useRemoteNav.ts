@@ -1,8 +1,9 @@
 import {useEffect} from 'react';
 
 // Navegación por zonas (pantalla única): ↑↓ alterna entre "Para ti" (hero) y el
-// dock; ←→ mueve dentro de la fila; OK lanza; Back no hace nada en el Home (es
-// la pantalla raíz). El overlay de Ajustes captura las teclas antes (enabled).
+// dock; ←→ mueve dentro de la fila; OK lanza; Back abre la salida al Home de LG
+// (diálogo Quedarse/Salir, estilo CleanFrame). Los overlays capturan antes
+// (enabled). Tecla mantenida actúa una vez (OK/Back), las flechas repiten.
 export type Zone = 'hero' | 'dock';
 
 interface Handlers {
@@ -15,16 +16,21 @@ interface Handlers {
 	dockSel: number;
 	setDockSel: (updater: (prev: number) => number) => void;
 	onLaunch: () => void;
+	onBack: () => void;
 	enabled: boolean;
 }
 
-export function useRemoteNav ({zone, setZone, heroCount, dockCount, heroSel, setHeroSel, dockSel, setDockSel, onLaunch, enabled}: Handlers) {
+export function useRemoteNav ({zone, setZone, heroCount, dockCount, heroSel, setHeroSel, dockSel, setDockSel, onLaunch, onBack, enabled}: Handlers) {
 	useEffect(() => {
 		if (!enabled) return;
 
 		const onKeyDown = (e: KeyboardEvent) => {
 			const isBack = e.keyCode === 461 || e.key === 'Escape' || e.key === 'GoBack';
-			if (isBack) { e.preventDefault(); return; }   // el Home es raíz: Back no sale
+			if (isBack) {
+				e.preventDefault();
+				if (!e.repeat) onBack();   // mantenida: una sola vez
+				return;
+			}
 
 			if (e.key === 'Enter') {
 				if (e.repeat) return;
@@ -50,5 +56,5 @@ export function useRemoteNav ({zone, setZone, heroCount, dockCount, heroSel, set
 
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [zone, setZone, heroCount, dockCount, heroSel, setHeroSel, dockSel, setDockSel, onLaunch, enabled]);
+	}, [zone, setZone, heroCount, dockCount, heroSel, setHeroSel, dockSel, setDockSel, onLaunch, onBack, enabled]);
 }
