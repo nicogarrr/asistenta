@@ -3,6 +3,7 @@ import Background from './components/Background';
 import Settings from './components/Settings';
 import Ambient from './components/Ambient';
 import Home from './screens/Home';
+import Rocket from './components/Rocket';
 import {useRemoteNav, type Zone} from './hooks/useRemoteNav';
 import type {AppItem} from './lib/apps';
 import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
@@ -79,8 +80,12 @@ export default function App () {
 			.catch(() => { /* el catálogo basta */ });
 	}, []);
 
-	// El salvapantallas de la TV no molesta: el reloj ambient lo sustituye.
-	useEffect(() => blockScreenSaver(), []);
+	// Salvapantallas: 'ambient' (por defecto) veta el de la TV y pone el reloj;
+	// 'system' lo deja pasar (kit de arte, una vez verificado en la TV).
+	useEffect(() => {
+		if (config.tvScreensaver !== 'ambient') return;
+		return blockScreenSaver();
+	}, [config.tvScreensaver]);
 
 	// Guardia eARC (ver luna.ts): LG home renegocia el audio al enfocar apps; al
 	// sustituirlo hay que reafirmar la salida configurada tras lanzar y al volver.
@@ -177,6 +182,7 @@ export default function App () {
 						opacity: ambient ? 0 : 1
 					}}
 				>
+					<Rocket />
 					<Home
 						picks={heroPicks}
 						heroSel={heroSel}

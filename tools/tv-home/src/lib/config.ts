@@ -26,6 +26,13 @@ export interface HomeConfig {
 	picksEnabled: boolean;
 	tmdbKey: string;
 	tmdbRegion: string;
+	/** Cohete CSS sutil (ASTS/SpaceX). Solo compositor; Off si pesa o molesta. */
+	rocketEnabled: boolean;
+	/** Línea "próximo lanzamiento" en el reloj ambient (Launch Library 2). */
+	launchesEnabled: boolean;
+	/** 'ambient': el reloj de la app veto al salvapantallas de la TV.
+	 *  'system': deja pasar el salvapantallas de webOS (kit de arte). */
+	tvScreensaver: 'ambient' | 'system';
 }
 
 export const APP_VERSION = '0.1.0-nico';
@@ -41,7 +48,10 @@ export const DEFAULT_CONFIG: HomeConfig = {
 	userName: 'Nico',
 	picksEnabled: true,
 	tmdbKey: '',
-	tmdbRegion: 'ES'
+	tmdbRegion: 'ES',
+	rocketEnabled: true,
+	launchesEnabled: true,
+	tvScreensaver: 'ambient'
 };
 
 const KEY = 'home-config-v2';

@@ -39,6 +39,32 @@ Decisiones de diseño (desviaciones conscientes de free-my-tv):
 - Lógica de lanzamientos off-webOS es stub; el lanzado real (LunaService) se
   verifica en la TV en fase 2.
 
+## Añadidos v0.2.0 (feedback de Nico)
+
+- Dock dentro de pantalla: altura real + margen overscan 3,5vh; el tile con
+  foco (scale 1.12) y su etiqueta nunca se cortan (verificado 1920×1080 con el
+  primer y el último tile enfocados; OVERFLOW-Y vacío).
+- Cohete sutil ASTS/SpaceX (Ajustes → Cohete): SOLO CSS, transform/opacity en
+  un ciclo de 300 s (visible ~20 s), un SVG de 46×96. Medido con CDP
+  Performance.getMetrics: heap 5,0 MB con cohete vs 6,4 MB sin cohete (ruido de
+  GC; ±1,5 MB), un canvas (el de constelaciones de la base), cero vídeo.
+  Coste ≈ 0 → se queda. Si molesta: toggle.
+- "Próximo lanzamiento" en el reloj ambient (Ajustes → Lanzamientos):
+  Launch Library 2 (gratuita, sin clave), ASTS (BlueBird) y SpaceX, con fecha y
+  fuente; cache 6 h; si falla se oculta. Nada inventado.
+- Ajustes → Salvapantallas: "Reloj (app)" (defecto; veta el de la TV) o
+  "Arte (sistema)" (deja pasar el screensaver de webOS para el kit de arte).
+- Iconos reales restaurados (Netflix, Prime, Disney+, Max, Apple TV, YouTube,
+  Homebrew, Ajustes); el resto, monograma hasta el inventario.
+
+## Fase 2 — ventana única (Home + arte + Always Ready)
+
+Runbook: `installer/RUNBOOK_VENTANA_ES.md`. El inventario de solo lectura
+(preflight) incluye además: estado del kit de arte (¿bind mount activo?,
+¿obras en /media/developer/art y tamaños?, hook init.d), existencia de
+`/usr/palm/applications/com.webos.app.screensaver/qml/main.qml` (sin él el arte
+no va en este firmware) y código real del botón HOME.
+
 ## NO verificado aún (fase 2, todo solo lectura salvo OK de Nico)
 
 - appIds marcados VERIFICAR en `src/lib/apps.ts` y `PROVIDER_MATCH` en

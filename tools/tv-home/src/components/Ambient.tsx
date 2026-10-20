@@ -1,13 +1,21 @@
 import {useEffect, useState} from 'react';
 import {Analog} from './widgets/Clock';
 import {useConfig} from '../lib/config';
+import {fetchNextLaunch, formatNet, type NextLaunch} from '../service/launches';
 
 // Ambient idle screen (60s of no input): the UI fades out, the screen dims a
 // touch, and a big analog clock floats over the constellation field. The clock
 // DRIFTS to a new spot every minute (OLED burn-in guard) and everything is
 // semi-transparent — no bright static pixels. Any input exits (handled in App).
 export default function Ambient () {
-	const {clock24} = useConfig();
+	const {clock24, launchesEnabled} = useConfig();
+	const [launch, setLaunch] = useState<NextLaunch | null>(null);
+	useEffect(() => {
+		if (!launchesEnabled) return;
+		let alive = true;
+		fetchNextLaunch().then((l) => { if (alive) setLaunch(l); });
+		return () => { alive = false; };
+	}, [launchesEnabled]);
 	const [now, setNow] = useState(() => new Date());
 	// drift offset in vw/vh around center; new spot each minute, eased by CSS
 	const [pos, setPos] = useState({x: 0, y: 0});
@@ -45,6 +53,12 @@ export default function Ambient () {
 				<div className="text-center">
 					<div className="text-[40px] font-light leading-none tracking-tight text-white/70">{digital}</div>
 					<div className="mt-3 text-lg font-normal tracking-[0.02em] text-white/35">{dateLine}</div>
+				{launch && (
+					<div className="mt-4 max-w-[520px] text-center text-base font-normal text-white/30">
+						Próximo lanzamiento: {launch.name} · {formatNet(launch.net)}
+						<span className="text-white/20"> · Fuente: Launch Library</span>
+					</div>
+				)}
 				</div>
 			</div>
 		</div>
