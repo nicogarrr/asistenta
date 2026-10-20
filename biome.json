@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**/*.ts", "**/*.json", "!dist", "!node_modules", "!var", "!.data"]
+    "includes": [
+      "**/*.ts",
+      "**/*.json",
+      "!dist",
+      "!node_modules",
+      "!tools/tv-home",
+      "!var",
+      "!.data"
+    ]
   },
   "formatter": {
     "enabled": true,
