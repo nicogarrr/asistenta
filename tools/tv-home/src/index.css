@@ -294,3 +294,25 @@ html, body, #root {
 	--input: oklch(0.22 0 0);
 	--ring: oklch(0.72 0.16 250);
 }
+/* Cohete (ASTS/SpaceX): ciclo de 300 s; cruza el cielo en el 6-13 % (~20 s),
+   el resto permanece fuera. Solo transform/opacity → animación de compositor,
+   sin repaints ni JS. Una sola capa pequeña. */
+.rocket-layer {
+	position: absolute;
+	top: 0;
+	left: 0;
+	pointer-events: none;
+	opacity: 0;
+	transform: translate3d(110vw, 70vh, 0) rotate(-38deg);
+	animation: rocket-cross 300s linear infinite;
+	will-change: transform, opacity;
+}
+
+@keyframes rocket-cross {
+	0%   { opacity: 0; transform: translate3d(110vw, 70vh, 0) rotate(-38deg); }
+	5.5% { opacity: 0; transform: translate3d(110vw, 70vh, 0) rotate(-38deg); }
+	6.5% { opacity: 0.9; }
+	12%  { opacity: 0.9; }
+	13.5% { opacity: 0; transform: translate3d(-12vw, -18vh, 0) rotate(-38deg); }
+	100% { opacity: 0; transform: translate3d(-12vw, -18vh, 0) rotate(-38deg); }
+}

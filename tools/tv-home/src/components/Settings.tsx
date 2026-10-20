@@ -34,6 +34,18 @@ const ROWS: Row[] = [
 	},
 	{kind: 'tmdbkey', label: 'Clave TMDB'},
 	{
+		kind: 'choice', label: 'Cohete', values: ['on', 'off'], labels: ['On', 'Off'],
+		get: (c) => (c.rocketEnabled ? 'on' : 'off'), set: (c, v) => ({...c, rocketEnabled: v === 'on'})
+	},
+	{
+		kind: 'choice', label: 'Lanzamientos', values: ['on', 'off'], labels: ['On', 'Off'],
+		get: (c) => (c.launchesEnabled ? 'on' : 'off'), set: (c, v) => ({...c, launchesEnabled: v === 'on'})
+	},
+	{
+		kind: 'choice', label: 'Salvapantallas', values: ['ambient', 'system'], labels: ['Reloj (app)', 'Arte (sistema)'],
+		get: (c) => c.tvScreensaver, set: (c, v) => ({...c, tvScreensaver: v as HomeConfig['tvScreensaver']})
+	},
+	{
 		kind: 'choice', label: 'Background animation', values: ['on', 'off'], labels: ['On', 'Off'],
 		get: (c) => (c.bgAnimated ? 'on' : 'off'), set: (c, v) => ({...c, bgAnimated: v === 'on'})
 	},

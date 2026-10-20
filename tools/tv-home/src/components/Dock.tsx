@@ -7,6 +7,10 @@ import type {AppItem} from '../lib/apps';
 const TILE_W = 200;
 const TILE_H = 120;
 const STEP = 224;
+// Altura del dock: tile con foco (120×1.12≈135) + etiqueta (~30) + holgura.
+const DOCK_H = 232;
+// Los tiles cuelgan de aquí: centrados en el hueco con la etiqueta debajo.
+const ROW_TOP = Math.round((DOCK_H - (TILE_H + 34)) / 2) + 6;
 
 const EASE = 'var(--m3-dur-medium) var(--m3-ease-emphasized)';
 
@@ -58,22 +62,25 @@ const Tile = memo(function Tile ({app, focused, launching}: {app: AppItem; focus
 });
 
 export default function Dock ({items, selected, active, launchingId}: {items: AppItem[]; selected: number; active: boolean; launchingId: string | null}) {
-	// La fila se centra en el tile enfocado (focus-follow sin medir: métricas fijas).
+	// La fila se centra en el tile enfocado (focus-follow sin medir: métricas
+	// fijas) — el foco siempre queda visible aunque haya más apps de las que caben.
 	const offset = `calc(50vw - ${selected * STEP + TILE_W / 2}px)`;
 	return (
-		<div className="absolute bottom-[5vh] left-0 right-0">
-			{/* Estantería de cristal */}
+		// Altura real + margen inferior de seguridad (overscan): el tile enfocado
+		// (scale 1.12) y su etiqueta quedan siempre dentro de la pantalla.
+		<div className="absolute left-0 right-0" style={{bottom: '3.5vh', height: DOCK_H}}>
+			{/* Estantería de cristal (dentro de los márgenes laterales) */}
 			<div
 				className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-[36px]"
 				style={{
-					width: 'min(92vw, 1760px)', height: 196,
+					width: 'min(90vw, 1720px)', height: 200,
 					background: 'rgba(255,255,255,0.055)',
 					border: '1px solid rgba(255,255,255,0.10)'
 				}}
 			/>
 			<div
-				className="absolute left-0 top-1/2 flex items-start"
-				style={{gap: STEP - TILE_W, transform: `translate3d(${offset}, -50%, 0)`, transition: `transform ${EASE}`, willChange: 'transform'}}
+				className="absolute left-0 flex items-start"
+				style={{top: ROW_TOP, gap: STEP - TILE_W, transform: `translate3d(${offset}, 0, 0)`, transition: `transform ${EASE}`, willChange: 'transform'}}
 			>
 				{items.map((app, i) => (
 					<Tile key={app.id} app={app} focused={active && i === selected} launching={app.id === launchingId} />
