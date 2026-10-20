@@ -17,8 +17,7 @@
    - Telemetria desactivada en el entorno antes de ejecutar el exe, y luego `telemetry disable`.
    - Arranca `cua-driver.exe serve` desde la carpeta aislada, llama SOLO a health_report,
      get_screen_size y list_windows (sin capturas, clics ni teclado), para SOLO los procesos
-     cuya ruta esta en la carpeta aislada y borra esa carpeta y las carpetas de estado que el
-     propio exe haya creado (el preflight garantiza que no existian).
+     cuya ruta esta en la carpeta aislada y borra SOLO esa carpeta aislada. Si el exe deja estado en ~\.cua-driver(-rs), NO lo borra: lo avisa.
    - Resultado completo en un fichero local; por pantalla solo un resumen (nº de ventanas,
      sin titulos, que pueden ser privados).
  NO verificado: que `serve` y `call` usen la CLI/canal igual que en Linux, nombres de ficheros
@@ -37,7 +36,7 @@ $ZipSha  = "109ab57e5c0a6e13a73e2ce2daf01b338027366eb1a20c6e0b413a10610bc8e2"
 # 0) preflight: si hay cualquier rastro de Cua Driver, no se toca nada
 $traces = @()
 if (Get-Process -Name "cua-driver","cua-driver-uia","cua-cursor-theme" -ErrorAction SilentlyContinue) { $traces += "proceso cua-driver*" }
-$t = & schtasks.exe /Query /TN "cua-driver-serve" 2>$null; if ($LASTEXITCODE -eq 0) { $traces += "tarea cua-driver-serve" }
+try { if (Get-ScheduledTask -TaskName "cua-driver-serve" -ErrorAction SilentlyContinue) { $traces += "tarea cua-driver-serve" } } catch { }
 foreach ($p in @("$env:USERPROFILE\.cua-driver","$env:USERPROFILE\.cua-driver-rs","$env:LOCALAPPDATA\Programs\Cua","$env:LOCALAPPDATA\Programs\trycua")) {
   if (Test-Path $p) { $traces += $p }
 }
@@ -95,12 +94,13 @@ try {
   # solo procesos lanzados desde la carpeta aislada
   Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 1
-  # estado que el exe haya podido crear (el preflight garantiza que no existia antes)
-  foreach ($p in @("$env:USERPROFILE\.cua-driver","$env:USERPROFILE\.cua-driver-rs")) {
-    if (Test-Path $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
-  }
 }
 Remove-Item -LiteralPath $bin -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 "Resultado completo (local, puede incluir titulos de ventana): $out"
+# El estado que el exe cree fuera de la carpeta aislada NO se borra (podria haber otro proceso
+# usando esas rutas): solo se informa, para que Nico/Asistenta decida.
+foreach ($p in @("$env:USERPROFILE\.cua-driver","$env:USERPROFILE\.cua-driver-rs")) {
+  if (Test-Path $p) { "AVISO: el exe ha dejado estado en $p (no borrado; revisar a mano)" }
+}
 "Sin instalador, sin autostart, sin PATH, sin tareas. Telemetria desactivada. Carpeta aislada borrada."
