@@ -9,7 +9,13 @@
 const API = 'https://api.themoviedb.org/3';
 // w780 (no 'original'): pósters grandes disparan la RAM de una TV con 2 GB.
 const IMG = 'https://image.tmdb.org/t/p/w780';
-const CACHE_KEY = 'tmdb-picks-v1';
+// Servicios que Nico más usa y que SÍ son proveedores TMDB: sus títulos van
+// primero en "Para ti". Nuvio no es proveedor de TMDB (es un reproductor
+// agregador), así que no podemos saber su catálogo ni priorizarlo — antes que
+// inventar disponibilidad, no aparece como proveedor en las tarjetas.
+const PREFERRED_APP_IDS = ['netflix', 'com.movistarplus.es.iptv'];
+
+const CACHE_KEY = 'tmdb-picks-v2';
 const CACHE_MS = 6 * 3600_000;   // lista completa se recalcula cada 6 h
 
 export interface Pick {
@@ -133,6 +139,12 @@ export async function fetchPicks (key: string, region: string): Promise<Pick[]> 
 				} catch { /* un título que falla no frena a los demás */ }
 			}
 		}
+		// Preferidos primero (sort estable: dentro de cada grupo manda TMDB).
+		out.sort((a, b) => {
+			const ra = PREFERRED_APP_IDS.indexOf(a.providerAppId);
+			const rb = PREFERRED_APP_IDS.indexOf(b.providerAppId);
+			return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb);
+		});
 		saveCache(out);
 		return out;
 	} catch {

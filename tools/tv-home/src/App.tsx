@@ -17,6 +17,9 @@ const PICKS_REFRESH_MS = 30 * 60_000;
 
 // Orden del dock: sus categorías de siempre en orden de uso.
 const DOCK_ORDER: CatId[] = ['stream', 'media', 'game', 'misc'];
+// Lo que más usa Nico va primero en el dock (el foco inicial cae en el primer
+// tile). El resto mantiene el orden de categorías detrás.
+const DOCK_PRIORITY = ['com.nuvio.tv', 'netflix', 'com.movistarplus.es.iptv'];
 
 export default function App () {
 	const [zone, setZone] = useState<Zone>('dock');
@@ -36,10 +39,11 @@ export default function App () {
 	const toastTimer = useRef(0);
 
 	// Dock aplanado (visibles), en orden de uso. El tile de Ajustes va en misc.
-	const dock = useMemo(
-		() => DOCK_ORDER.flatMap((cat) => lists[cat].filter((a) => !hidden.has(a.id))),
-		[lists, hidden]
-	);
+	const dock = useMemo(() => {
+		const flat = DOCK_ORDER.flatMap((cat) => lists[cat].filter((a) => !hidden.has(a.id)));
+		const rank = (a: AppItem) => { const i = DOCK_PRIORITY.indexOf(a.id); return i === -1 ? DOCK_PRIORITY.length : i; };
+		return flat.sort((a, b) => rank(a) - rank(b));   // sort estable: el resto conserva su orden
+	}, [lists, hidden]);
 
 	const showToast = useCallback((msg: string) => {
 		setToast(msg);
