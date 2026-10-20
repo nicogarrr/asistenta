@@ -1,74 +1,106 @@
 <#
- Prueba LOCAL y de SOLO LECTURA de Cua Driver (https://cua.ai/docs/cua-driver) en Windows.
- ESTADO: ESCRITO SIN PODER EJECUTARLO (sin Windows ni PowerShell en el entorno que lo preparo).
- Nunca probado. Si algo falla, el script para y lo dice; no reintenta.
+ Prueba LOCAL y de SOLO LECTURA de Cua Driver en Windows x64 (https://cua.ai/docs/cua-driver).
+ ESTADO: ESCRITO SIN PODER EJECUTARLO (sin Windows ni PowerShell donde se preparo). Nunca probado.
+ Si algo falla, el script para y lo dice; no reintenta.
 
- Que hace:
-   1. Telemetria desactivada para este proceso ANTES de ejecutar nada de Cua
-      (CUA_DRIVER_RS_TELEMETRY_ENABLED=false, DO_NOT_TRACK=1) y luego `telemetry disable`.
-   2. Descarga install.ps1 a un FICHERO (no pipe a iex), guarda copia y su SHA256
-      para revisarlo, y lo ejecuta con -NoAutoStart -NoPathUpdate.
-      OJO: el instalador oficial trae AutoStart ACTIVADO por defecto; aqui se apaga.
-   0. Si ya hay un Cua Driver instalado o en marcha, ABORTA sin tocar nada.
-   3. Arranca `cua-driver serve` en segundo plano, llama SOLO a health_report,
-      get_screen_size y list_windows (sin capturas, sin clics, sin teclado) y para el daemon.
-   4. Escribe el resultado completo en un fichero local; por pantalla solo un resumen
-      (nº de ventanas, sin titulos). Los titulos de ventana pueden ser privados.
- Que NO hace: no registra tarea programada, no toca PATH, no usa el relay/cloud de Spaces,
- no cambia Telegram, memoria ni permisos de Asistenta, no lee capturas.
- Quitar todo: borrar %USERPROFILE%\.cua-driver y %LOCALAPPDATA%\Programs\Cua.
+ Diseno (tras la revision del auditor): NO usa el instalador de cua.ai (install.ps1 trae
+ migraciones/repair, mata procesos, toca tareas programadas/PATH y descarga un modulo
+ _install-common.psm1 mutable sin hash). En su lugar:
+   - Descarga el ZIP oficial FIJADO de GitHub Releases (tag cua-driver-rs-v0.37.0) y exige
+     que su SHA256 sea el fijado abajo (coincide con SHA256SUMS de la release; el ZIP no esta
+     firmado por mi: verificado solo el hash). AVISO: GitHub marca esa release como prerelease.
+   - Extrae en una carpeta aislada en %TEMP% (nada en Program Files, PATH, registro ni tareas).
+   - Exige Authenticode Valid con firmante "Cua AI, Inc." en cada .exe.
+   - Antes de nada ABORTA si ya hay rastro de Cua Driver: tarea cua-driver-serve, procesos
+     cua-driver / cua-driver-uia, carpetas %USERPROFILE%\.cua-driver, .cua-driver-rs,
+     %LOCALAPPDATA%\Programs\Cua, Programs\trycua, o variables CUA_DRIVER_RS_*.
+   - Telemetria desactivada en el entorno antes de ejecutar el exe, y luego `telemetry disable`.
+   - Arranca `cua-driver.exe serve` desde la carpeta aislada, llama SOLO a health_report,
+     get_screen_size y list_windows (sin capturas, clics ni teclado), para SOLO los procesos
+     cuya ruta esta en la carpeta aislada y borra esa carpeta y las carpetas de estado que el
+     propio exe haya creado (el preflight garantiza que no existian).
+   - Resultado completo en un fichero local; por pantalla solo un resumen (nº de ventanas,
+     sin titulos, que pueden ser privados).
+ NO verificado: que `serve` y `call` usen la CLI/canal igual que en Linux, nombres de ficheros
+ de estado en Windows y que list_windows devuelva el JSON esperado (el conteo cae a -1 si no).
  Uso (lo ejecuta Asistenta con su aprobacion de comandos):
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\cua-driver-trial.ps1
 #>
-param([string]$Release = "latest")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# 1) telemetria fuera antes de nada
+$Tag     = "cua-driver-rs-v0.37.0"
+$ZipName = "cua-driver-rs-0.37.0-windows-x86_64.zip"
+$ZipUrl  = "https://github.com/trycua/cua/releases/download/$Tag/$ZipName"
+$ZipSha  = "109ab57e5c0a6e13a73e2ce2daf01b338027366eb1a20c6e0b413a10610bc8e2"
+
+# 0) preflight: si hay cualquier rastro de Cua Driver, no se toca nada
+$traces = @()
+if (Get-Process -Name "cua-driver","cua-driver-uia","cua-cursor-theme" -ErrorAction SilentlyContinue) { $traces += "proceso cua-driver*" }
+$t = & schtasks.exe /Query /TN "cua-driver-serve" 2>$null; if ($LASTEXITCODE -eq 0) { $traces += "tarea cua-driver-serve" }
+foreach ($p in @("$env:USERPROFILE\.cua-driver","$env:USERPROFILE\.cua-driver-rs","$env:LOCALAPPDATA\Programs\Cua","$env:LOCALAPPDATA\Programs\trycua")) {
+  if (Test-Path $p) { $traces += $p }
+}
+if (Get-Command cua-driver -ErrorAction SilentlyContinue) { $traces += "cua-driver en PATH" }
+Get-ChildItem Env: | Where-Object { $_.Name -like "CUA_DRIVER_RS_*" } | ForEach-Object { $traces += "variable $($_.Name)" }
+if ($traces.Count -gt 0) { throw "Ya hay rastro de Cua Driver, no se toca nada: $($traces -join '; ')" }
+
+# 1) telemetria fuera ANTES de ejecutar nada de Cua
 $env:CUA_DRIVER_RS_TELEMETRY_ENABLED = "false"
 $env:DO_NOT_TRACK = "1"
 $env:CUA_TELEMETRY = "0"
 
 $work = Join-Path $env:TEMP ("cua-trial-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 New-Item -ItemType Directory -Path $work | Out-Null
-$installer = Join-Path $work "install.ps1"
+$zip = Join-Path $work $ZipName
 $out = Join-Path $work "resultado.txt"
+$bin = Join-Path $work "bin"
 
-# 1b) no tocar una instalacion ni un daemon preexistentes
-$exe = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
-if ((Test-Path $exe) -or (Get-Command cua-driver -ErrorAction SilentlyContinue) -or (Get-Process -Name "cua-driver" -ErrorAction SilentlyContinue)) {
-  throw "Ya hay un Cua Driver instalado o en marcha: no se toca nada. Revisar a mano."
+# 2) ZIP fijado, hash fijado, firma Authenticode
+Invoke-WebRequest -UseBasicParsing -Uri $ZipUrl -OutFile $zip
+$h = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+"zip sha256: $h (esperado $ZipSha)" | Tee-Object -FilePath $out
+if ($h -ne $ZipSha) { Remove-Item -LiteralPath $zip -Force; throw "SHA256 del ZIP no coincide con el fijado: no se extrae nada" }
+Expand-Archive -LiteralPath $zip -DestinationPath $bin
+$exe = Get-ChildItem -LiteralPath $bin -Recurse -Filter "cua-driver.exe" | Select-Object -First 1
+if (-not $exe) { throw "no hay cua-driver.exe en el ZIP" }
+foreach ($f in Get-ChildItem -LiteralPath $bin -Recurse -File -Filter *.exe) {
+  $sig = Get-AuthenticodeSignature -FilePath $f.FullName
+  if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch 'CN="?Cua AI, Inc\."?') {
+    throw "firma Authenticode no valida o firmante inesperado en $($f.Name): $($sig.Status)"
+  }
 }
+"Authenticode OK (Cua AI, Inc.) en todos los .exe" | Tee-Object -FilePath $out -Append
+$exePath = $exe.FullName
 
-# 2) instalador a fichero, con hash, sin autostart ni PATH
-Invoke-WebRequest -UseBasicParsing -Uri "https://cua.ai/driver/install.ps1" -OutFile $installer
-$hash = (Get-FileHash -Algorithm SHA256 $installer).Hash
-"install.ps1 sha256: $hash" | Tee-Object -FilePath $out
-& powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Release $Release -NoAutoStart -NoPathUpdate
-if ($LASTEXITCODE -ne 0) { throw "install.ps1 fallo (exit $LASTEXITCODE)" }
+& $exePath --version | Tee-Object -FilePath $out -Append
+& $exePath telemetry disable | Tee-Object -FilePath $out -Append
+& $exePath telemetry status --json | Tee-Object -FilePath $out -Append
 
-if (-not (Test-Path $exe)) { throw "no encuentro $exe tras instalar" }
-& $exe --version | Tee-Object -FilePath $out -Append
-& $exe telemetry disable | Tee-Object -FilePath $out -Append
-& $exe telemetry status --json | Tee-Object -FilePath $out -Append
-
-# 3) daemon en segundo plano, solo llamadas de lectura
-$daemon = Start-Process -FilePath $exe -ArgumentList "serve" -WindowStyle Hidden -PassThru
+# 3) daemon desde la carpeta aislada, solo lectura
+$daemon = Start-Process -FilePath $exePath -ArgumentList "serve" -WindowStyle Hidden -PassThru
 try {
   Start-Sleep -Seconds 5
   "--- health_report" | Add-Content $out
-  & $exe call health_report | Add-Content $out
+  & $exePath call health_report | Add-Content $out
   "--- get_screen_size" | Add-Content $out
-  & $exe call get_screen_size | Add-Content $out
+  & $exePath call get_screen_size | Add-Content $out
   "--- list_windows" | Add-Content $out
-  $lw = & $exe call list_windows
+  $lw = & $exePath call list_windows
   $lw | Add-Content $out
-  $n = 0
+  $n = -1
   try { $n = (($lw -join "`n") | ConvertFrom-Json).windows.Count } catch { $n = -1 }
   "RESUMEN: ventanas visibles=$n (-1 = no pude contarlas)"
 } finally {
-  # solo se para el daemon que arranco este script (aqui nunca hay uno previo: se aborta arriba)
-  if ($daemon -and -not $daemon.HasExited) { Stop-Process -Id $daemon.Id -Force }
+  # solo procesos lanzados desde la carpeta aislada
+  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 1
+  # estado que el exe haya podido crear (el preflight garantiza que no existia antes)
+  foreach ($p in @("$env:USERPROFILE\.cua-driver","$env:USERPROFILE\.cua-driver-rs")) {
+    if (Test-Path $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
+  }
 }
+Remove-Item -LiteralPath $bin -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 "Resultado completo (local, puede incluir titulos de ventana): $out"
-"Sin autostart, sin cambios de PATH. Telemetria desactivada."
+"Sin instalador, sin autostart, sin PATH, sin tareas. Telemetria desactivada. Carpeta aislada borrada."
