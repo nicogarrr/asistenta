@@ -60,11 +60,16 @@ export const DEFAULT_CONFIG: HomeConfig = {
 
 const KEY = 'home-config-v2';
 
+// Defaults antiguos que se corrigen en migración: solo se pisa el valor si el
+// guardado ES el default viejo (un valor elegido por el usuario nunca se toca).
+const LEGACY_DEFAULTS = {userName: 'Nico'};
 export function loadConfig (): HomeConfig {
 	try {
 		const raw = localStorage.getItem(KEY);
 		if (!raw) return {...DEFAULT_CONFIG};
-		return {...DEFAULT_CONFIG, ...JSON.parse(raw)};
+		const stored = JSON.parse(raw) as Partial<HomeConfig>;
+		if (stored.userName === LEGACY_DEFAULTS.userName) stored.userName = DEFAULT_CONFIG.userName;
+		return {...DEFAULT_CONFIG, ...stored};
 	} catch { return {...DEFAULT_CONFIG}; }
 }
 

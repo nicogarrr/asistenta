@@ -77,7 +77,9 @@ export default function App () {
 				}
 				// Filtro de basura (idea CleanFrame): servicios internos, utilidades
 				// del sistema, nosotros mismos y el Home de LG no entran al dock.
-				const JUNK = /^(com\.palm\.|com\.lge\.|com\.webos\.service|tld\.my\.customhome$)|^com\.webos\.app\.home$/;
+				// Lista AFINADA con el inventario de la fase 2; com.lge.* NO se
+				// excluye aún (auditoría: demasiado amplio sin inventario real).
+				const JUNK = /^(com\.palm\.|com\.webos\.service|tld\.my\.customhome$)|^com\.webos\.app\.home$/;
 				const extra: AppItem[] = (res.launchPoints || [])
 					.filter((lp) => !known.has(lp.id) && lp.title && !JUNK.test(lp.id))
 					.map((lp) => ({id: lp.id, title: lp.title, color: '#8ea2ff'}));

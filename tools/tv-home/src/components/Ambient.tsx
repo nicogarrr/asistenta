@@ -15,24 +15,32 @@ const SLIDE_MS = 24_000;
 // semi-transparent — no bright static pixels. Any input exits (handled in App).
 function PhotoLayer ({photos}: {photos: string[]}) {
 	const [cur, setCur] = useState(0);
-	const [hiddenSrc, setHiddenSrc] = useState(photos[1] ?? photos[0]);
+	// Cada slot conserva SU foto: la saliente funde fuera mientras la entrante
+	// (precargada en el paso anterior) funde encima. Así el crossfade es real.
+	const [srcs, setSrcs] = useState<[string, string]>([photos[0], photos[1] ?? photos[0]]);
+	useEffect(() => {
+		setCur(0);
+		setSrcs([photos[0], photos[1] ?? photos[0]]);
+	}, [photos]);
 	useEffect(() => {
 		if (photos.length < 2) return;
-		const id = setInterval(() => {
-			setCur((c) => {
-				const n = c + 1;
-				// cuando acaba el fundido, el slot oculto precarga la siguiente
-				window.setTimeout(() => setHiddenSrc(photos[(n + 1) % photos.length]), 2200);
-				return n;
-			});
-		}, SLIDE_MS);
+		const id = setInterval(() => setCur((c) => c + 1), SLIDE_MS);
 		return () => clearInterval(id);
-	}, [photos]);
+	}, [photos.length]);
+	useEffect(() => {
+		if (photos.length < 2 || cur === 0) return;
+		// Tras el fundido, el slot oculto precarga la siguiente foto.
+		const t = window.setTimeout(() => {
+			setSrcs((prev) => {
+				const next = [...prev] as [string, string];
+				next[1 - (cur % 2)] = photos[(cur + 1) % photos.length];
+				return next;
+			});
+		}, 2200);
+		return () => clearTimeout(t);   // nada de timers vivos al desmontar
+	}, [cur, photos]);
 	if (!photos.length) return null;
-	// Truco de fundido limpio: al cambiar, ambos slots muestran la foto entrante
-	// (la saliente queda cubierta por la misma imagen mientras funde).
 	const visSlot = cur % 2;
-	const srcs = visSlot === 0 ? [photos[cur % photos.length], hiddenSrc] : [hiddenSrc, photos[cur % photos.length]];
 	return (
 		<div className="absolute inset-0 overflow-hidden">
 			{[0, 1].map((slot) => {
@@ -47,6 +55,7 @@ function PhotoLayer ({photos}: {photos: string[]}) {
 						style={{
 							opacity: visible ? 1 : 0,
 							transition: 'opacity 2s ease-in-out',
+							transform: visible ? undefined : 'scale(1.14)',   // la saliente mantiene el encuadre final
 							animation: visible ? `kenburns ${SLIDE_MS + 4000}ms linear both` : 'none'
 						}}
 					/>
