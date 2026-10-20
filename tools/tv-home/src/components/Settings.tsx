@@ -46,6 +46,10 @@ const ROWS: Row[] = [
 		get: (c) => c.tvScreensaver, set: (c, v) => ({...c, tvScreensaver: v as HomeConfig['tvScreensaver']})
 	},
 	{
+		kind: 'choice', label: 'Fotos en salvapantallas', values: ['on', 'off'], labels: ['On', 'Off'],
+		get: (c) => (c.ambientPhotos ? 'on' : 'off'), set: (c, v) => ({...c, ambientPhotos: v === 'on'})
+	},
+	{
 		kind: 'choice', label: 'Background animation', values: ['on', 'off'], labels: ['On', 'Off'],
 		get: (c) => (c.bgAnimated ? 'on' : 'off'), set: (c, v) => ({...c, bgAnimated: v === 'on'})
 	},

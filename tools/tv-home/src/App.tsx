@@ -2,6 +2,7 @@ import {useState, useEffect, useCallback, useMemo, useRef} from 'react';
 import Background from './components/Background';
 import Settings from './components/Settings';
 import Ambient from './components/Ambient';
+import ExitPrompt, {LG_HOME_APP_ID} from './components/ExitPrompt';
 import Home from './screens/Home';
 import Rocket from './components/Rocket';
 import {useRemoteNav, type Zone} from './hooks/useRemoteNav';
@@ -17,6 +18,9 @@ const PICKS_REFRESH_MS = 30 * 60_000;
 
 // Orden del dock: sus categorías de siempre en orden de uso.
 const DOCK_ORDER: CatId[] = ['stream', 'media', 'game', 'misc'];
+// Lo que más usa Nico va primero en el dock (el foco inicial cae en el primer
+// tile). El resto mantiene el orden de categorías detrás.
+const DOCK_PRIORITY = ['com.nuvio.tv', 'netflix', 'com.movistarplus.es.iptv'];
 
 export default function App () {
 	const [zone, setZone] = useState<Zone>('dock');
@@ -27,6 +31,7 @@ export default function App () {
 	const [hidden, setHidden] = useState<Set<string>>(loadHidden);
 	const [lists, setLists] = useState<Record<CatId, AppItem[]>>(() => buildLists());
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [exitAsk, setExitAsk] = useState(false);
 	const [ambient, setAmbient] = useState(false);
 	const [config, setConfig] = useState<HomeConfig>(loadConfig);
 	const [toast, setToast] = useState<string | null>(null);
@@ -36,10 +41,11 @@ export default function App () {
 	const toastTimer = useRef(0);
 
 	// Dock aplanado (visibles), en orden de uso. El tile de Ajustes va en misc.
-	const dock = useMemo(
-		() => DOCK_ORDER.flatMap((cat) => lists[cat].filter((a) => !hidden.has(a.id))),
-		[lists, hidden]
-	);
+	const dock = useMemo(() => {
+		const flat = DOCK_ORDER.flatMap((cat) => lists[cat].filter((a) => !hidden.has(a.id)));
+		const rank = (a: AppItem) => { const i = DOCK_PRIORITY.indexOf(a.id); return i === -1 ? DOCK_PRIORITY.length : i; };
+		return flat.sort((a, b) => rank(a) - rank(b));   // sort estable: el resto conserva su orden
+	}, [lists, hidden]);
 
 	const showToast = useCallback((msg: string) => {
 		setToast(msg);
@@ -69,8 +75,11 @@ export default function App () {
 				for (const cat of ['game', 'stream', 'media', 'misc'] as CatId[]) {
 					for (const a of buildLists()[cat]) known.add(a.id);
 				}
+				// Filtro de basura (idea CleanFrame): servicios internos, utilidades
+				// del sistema, nosotros mismos y el Home de LG no entran al dock.
+				const JUNK = /^(com\.palm\.|com\.lge\.|com\.webos\.service|tld\.my\.customhome$)|^com\.webos\.app\.home$/;
 				const extra: AppItem[] = (res.launchPoints || [])
-					.filter((lp) => !known.has(lp.id))
+					.filter((lp) => !known.has(lp.id) && lp.title && !JUNK.test(lp.id))
 					.map((lp) => ({id: lp.id, title: lp.title, color: '#8ea2ff'}));
 				if (extra.length) {
 					setDiscovered(extra);
@@ -152,6 +161,14 @@ export default function App () {
 	const onConfigChange = useCallback((c: HomeConfig) => { setConfig(c); saveConfig(c); }, []);
 	const onOrderReset = useCallback(() => setLists(buildLists(discovered)), [discovered]);
 	const closeSettings = useCallback(() => setSettingsOpen(false), []);
+	const onBack = useCallback(() => setExitAsk(true), []);
+	const onExitStay = useCallback(() => setExitAsk(false), []);
+	const onExitLeave = useCallback(() => {
+		setExitAsk(false);
+		if (isWebOS()) {
+			launchApp(LG_HOME_APP_ID).catch(() => showToast('No se pudo abrir el Home de LG'));
+		}
+	}, [showToast]);
 	const onToggleHide = useCallback((id: string) => {
 		setHidden((prev) => {
 			const next = new Set(prev);
@@ -165,8 +182,8 @@ export default function App () {
 		zone, setZone,
 		heroCount: heroPicks.length, dockCount: dock.length,
 		heroSel, setHeroSel, dockSel, setDockSel,
-		onLaunch,
-		enabled: !settingsOpen && !ambient
+		onLaunch, onBack,
+		enabled: !settingsOpen && !ambient && !exitAsk
 	});
 
 	return (
@@ -193,7 +210,8 @@ export default function App () {
 					/>
 				</div>
 
-				{ambient && <Ambient />}
+				{ambient && <Ambient picks={picks} />}
+				{exitAsk && <ExitPrompt onStay={onExitStay} onLeave={onExitLeave} />}
 
 				{settingsOpen && (
 					<Settings

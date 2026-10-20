@@ -316,3 +316,9 @@ html, body, #root {
 	13.5% { opacity: 0; transform: translate3d(-12vw, -18vh, 0) rotate(-38deg); }
 	100% { opacity: 0; transform: translate3d(-12vw, -18vh, 0) rotate(-38deg); }
 }
+
+/* Salvapantallas: zoom Ken Burns muy lento (una transformación, compositor) */
+@keyframes kenburns {
+	from { transform: scale(1.06); }
+	to { transform: scale(1.14); }
+}
