@@ -9,6 +9,7 @@
    2. Descarga install.ps1 a un FICHERO (no pipe a iex), guarda copia y su SHA256
       para revisarlo, y lo ejecuta con -NoAutoStart -NoPathUpdate.
       OJO: el instalador oficial trae AutoStart ACTIVADO por defecto; aqui se apaga.
+   0. Si ya hay un Cua Driver instalado o en marcha, ABORTA sin tocar nada.
    3. Arranca `cua-driver serve` en segundo plano, llama SOLO a health_report,
       get_screen_size y list_windows (sin capturas, sin clics, sin teclado) y para el daemon.
    4. Escribe el resultado completo en un fichero local; por pantalla solo un resumen
@@ -33,6 +34,12 @@ New-Item -ItemType Directory -Path $work | Out-Null
 $installer = Join-Path $work "install.ps1"
 $out = Join-Path $work "resultado.txt"
 
+# 1b) no tocar una instalacion ni un daemon preexistentes
+$exe = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
+if ((Test-Path $exe) -or (Get-Command cua-driver -ErrorAction SilentlyContinue) -or (Get-Process -Name "cua-driver" -ErrorAction SilentlyContinue)) {
+  throw "Ya hay un Cua Driver instalado o en marcha: no se toca nada. Revisar a mano."
+}
+
 # 2) instalador a fichero, con hash, sin autostart ni PATH
 Invoke-WebRequest -UseBasicParsing -Uri "https://cua.ai/driver/install.ps1" -OutFile $installer
 $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash
@@ -40,7 +47,6 @@ $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash
 & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Release $Release -NoAutoStart -NoPathUpdate
 if ($LASTEXITCODE -ne 0) { throw "install.ps1 fallo (exit $LASTEXITCODE)" }
 
-$exe = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
 if (-not (Test-Path $exe)) { throw "no encuentro $exe tras instalar" }
 & $exe --version | Tee-Object -FilePath $out -Append
 & $exe telemetry disable | Tee-Object -FilePath $out -Append
@@ -61,7 +67,7 @@ try {
   try { $n = (($lw -join "`n") | ConvertFrom-Json).windows.Count } catch { $n = -1 }
   "RESUMEN: ventanas visibles=$n (-1 = no pude contarlas)"
 } finally {
-  try { & $exe stop | Out-Null } catch {}
+  # solo se para el daemon que arranco este script (aqui nunca hay uno previo: se aborta arriba)
   if ($daemon -and -not $daemon.HasExited) { Stop-Process -Id $daemon.Id -Force }
 }
 "Resultado completo (local, puede incluir titulos de ventana): $out"
