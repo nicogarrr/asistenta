@@ -30,6 +30,9 @@ export interface HomeConfig {
 	rocketEnabled: boolean;
 	/** Línea "próximo lanzamiento" en el reloj ambient (Launch Library 2). */
 	launchesEnabled: boolean;
+	/** Salvapantallas con fotos de los picks (estilo free-my-tv): fundido entre
+	 *  backdrops TMDB detrás del reloj. Sin picks, constelaciones como siempre. */
+	ambientPhotos: boolean;
 	/** 'ambient': el reloj de la app veto al salvapantallas de la TV.
 	 *  'system': deja pasar el salvapantallas de webOS (kit de arte). */
 	tvScreensaver: 'ambient' | 'system';
@@ -45,12 +48,13 @@ export const DEFAULT_CONFIG: HomeConfig = {
 	bgSpeed: 'normal',
 	bgTheme: 'classic',
 	location: {name: 'Gijón', latitude: 43.5322, longitude: -5.6611},
-	userName: 'Nico',
+	userName: 'Nico y Nai',
 	picksEnabled: true,
 	tmdbKey: '',
 	tmdbRegion: 'ES',
 	rocketEnabled: true,
 	launchesEnabled: true,
+	ambientPhotos: true,
 	tvScreensaver: 'ambient'
 };
 

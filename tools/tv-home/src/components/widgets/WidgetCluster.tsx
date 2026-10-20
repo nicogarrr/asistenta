@@ -9,8 +9,8 @@ function DateLine () {
 		const id = setInterval(() => setD(new Date()), 60_000);
 		return () => clearInterval(id);
 	}, []);
-	const weekday = d.toLocaleDateString([], {weekday: 'long'});
-	const rest = d.toLocaleDateString([], {month: 'long', day: 'numeric'});
+	const weekday = d.toLocaleDateString('es-ES', {weekday: 'long'});
+	const rest = d.toLocaleDateString('es-ES', {month: 'long', day: 'numeric'});
 	return (
 		<div className="text-right">
 			<div className="text-[26px] font-medium leading-tight tracking-tight text-white/92">{weekday}</div>

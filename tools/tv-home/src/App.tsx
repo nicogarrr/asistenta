@@ -197,7 +197,7 @@ export default function App () {
 					/>
 				</div>
 
-				{ambient && <Ambient />}
+				{ambient && <Ambient picks={picks} />}
 
 				{settingsOpen && (
 					<Settings
