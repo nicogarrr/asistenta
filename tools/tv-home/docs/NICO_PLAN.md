@@ -115,3 +115,9 @@ Ideas de CleanFrame (Tizen; código no portable, spec de interacción sí):
 - **Filtro de basura** en el descubrimiento en caliente: no entran al dock `com.palm.*`, `com.lge.*`, `com.webos.service*`, el Home de LG ni nosotros mismos.
 - **Disciplina de foco**: Back mantenido actúa una sola vez (Enter ya lo hacía); al volver al launcher se conserva la selección (estado React persistente, sin temporizador de auto-retorno — ya era así).
 - Propuestas pendientes para Nico: editor de apps en el dock desde la TV (spec CleanFrame), fondo "arte" con rotación (mismo set CC0 del kit de salvapantallas).
+
+## v0.2.4 — correcciones del auditor (20-10-2026)
+
+- **Crossfade real del salvapantallas**: la capa saliente conserva su foto mientras funde fuera (antes cambiaba al instante = corte duro); timer con limpieza al desmontar. Verificado con ráfaga de capturas: transición gradual medida (RMSE frente a A, blend 50/50 y B) y frame a medio fundir visiblemente mezclado.
+- **Migración de config**: un localStorage guardado con el default viejo (`userName: 'Nico'`) migra a 'Nico y Nai'; un valor elegido por el usuario nunca se pisa.
+- **Filtro de descubrimiento afinado**: `com.lge.*` fuera de la exclusión hasta el inventario de la fase 2 (era demasiado amplio sin datos reales).
