@@ -63,6 +63,23 @@ async function describeOnce(page: Page, selector: string, timeoutMs: number): Pr
           location.href,
           document.title ?? '',
         ];
+        // A submit control inside a form or dialog that shows an amount of money: acting on
+        // it may commit the user (a trial that turns into a charge, a renewal, a booking)
+        // whatever the button says. Structural, no wording: currency symbol or code next
+        // to a number, within the control's own form or dialog only, so a price list
+        // elsewhere on the page does not count.
+        const box = e.closest('form, dialog, [role="dialog"]');
+        const kind = (e.getAttribute('type') ?? '').toLowerCase();
+        const submits =
+          e.tagName === 'BUTTON'
+            ? kind !== 'button' && kind !== 'reset'
+            : e.tagName === 'INPUT' && (kind === 'submit' || kind === 'image');
+        if (box && submits) {
+          const t = ((box as HTMLElement).innerText || '').slice(0, 4000);
+          if (/(\d[\d.,]*\s?(€|eur\b|usd\b|gbp\b|chf\b|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
+            places.push('[importe en el formulario]');
+          }
+        }
         return `${words.filter(Boolean).join(' | ')} @@ ${places.filter(Boolean).join(' | ')}`;
       },
       undefined,
