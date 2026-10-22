@@ -32,8 +32,9 @@ describe('delivery order: last click stays behind the gate', () => {
 
 describe('prompt keeps the order rules', () => {
   it('asks only what is missing, treats pay-on-delivery as a commitment, reports only what the page shows', () => {
-    expect(SYSTEM_PROMPT).toContain('ask only what is missing');
-    expect(SYSTEM_PROMPT).toContain('Paying on delivery is still a commitment');
+    expect(SYSTEM_PROMPT).toContain('on any site');
+    expect(SYSTEM_PROMPT).toContain('Ask only what is missing');
+    expect(SYSTEM_PROMPT).toContain('Paying later or on delivery is still a commitment');
     expect(SYSTEM_PROMPT).toContain('report only what the confirmation or tracking page shows');
   });
 });
