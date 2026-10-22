@@ -606,6 +606,44 @@ describe('checkout tool', () => {
     expect(textOf(status)).toMatch(/Compra sin confirmar/);
   });
 
+  it('delivery order paid on arrival: asks with item and total, and does not place it itself', async () => {
+    const page = new FakePage();
+    page.body =
+      'Pizza prosciutto e funghi grande\nEntrega a domicilio\nPago con tarjeta al recibirla\nTotal 36,00 EUR';
+    page.labels.set('#hacer-pedido', 'Hacer pedido');
+    page.labels.set('#seguir', 'Seguimiento del pedido');
+    const seen: string[] = [];
+    const tool = toolWith(page, BUYER, async (_action, summary) => {
+      seen.push(summary);
+      return true;
+    });
+
+    // The last click of the order is refused to the agent, whatever the payment method.
+    await expect(call(tool, { action: 'select', selector: '#hacer-pedido' })).rejects.toThrow();
+    // Following an order after it was placed is still refused as a click (not loosened).
+    await expect(call(tool, { action: 'select', selector: '#seguir' })).rejects.toThrow();
+    expect(page.clicks).toHaveLength(0);
+
+    await call(tool, { action: 'confirm', item: 'pizza prosciutto e funghi', price: '36,00' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('pizza prosciutto e funghi');
+    expect(seen[0]).toContain('36,00');
+    expect(page.clicks).toHaveLength(0);
+  });
+
+  it('a total in CHF is refused, not guessed: the cap is in EUR (known limit)', async () => {
+    const page = new FakePage();
+    page.body = 'Pizza\nTotal: 36,00 CHF';
+    const requireApproval = vi.fn(async () => true);
+    const tool = toolWith(page, BUYER, requireApproval);
+    const result = await call(tool, { action: 'confirm', item: 'pizza', price: '36,00' });
+    expect(requireApproval).not.toHaveBeenCalled();
+    expect(page.clicks).toHaveLength(0);
+    expect(textOf(result)).toMatch(
+      /importe marcado como total|solo puedo contrastar importes en EUR/,
+    );
+  });
+
   it('confirm takes no selector, so there is no pay button to point it at', async () => {
     const page = new FakePage();
     page.body = 'Total 45,20 EUR';
