@@ -26,8 +26,8 @@ describe('system prompt hygiene', () => {
     expect(SYSTEM_PROMPT).toContain('Never claim an action happened unless you verified it');
   });
 
-  it('does not grow past its current size (about 2.3k tokens at 4 chars per token; raised from 8_700 for the delivery-order rule)', () => {
-    expect(SYSTEM_PROMPT.length).toBeLessThan(9_200);
+  it('does not grow past its current size (about 2.3k tokens at 4 chars per token; raised from 8_700 for the delivery-order and current-facts rules)', () => {
+    expect(SYSTEM_PROMPT.length).toBeLessThan(9_500);
   });
 
   it('server mode keeps every rule after the first line and swaps only the opening', () => {

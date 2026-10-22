@@ -37,3 +37,12 @@ describe('prompt keeps the order rules', () => {
     expect(SYSTEM_PROMPT).toContain('report only what the confirmation or tracking page shows');
   });
 });
+
+describe('prompt: current facts need a source', () => {
+  it('asks for the web tool, the source URL and an honest not-found', () => {
+    expect(SYSTEM_PROMPT).toContain('never from memory');
+    expect(SYSTEM_PROMPT).toContain('the source URL you read');
+    expect(SYSTEM_PROMPT).toContain('date or period matches what was asked');
+    expect(SYSTEM_PROMPT).toContain('no lo he encontrado');
+  });
+});
