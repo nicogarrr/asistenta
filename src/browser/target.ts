@@ -76,7 +76,7 @@ async function describeOnce(page: Page, selector: string, timeoutMs: number): Pr
             : e.tagName === 'INPUT' && (kind === 'submit' || kind === 'image');
         if (box && submits) {
           const t = ((box as HTMLElement).innerText || '').slice(0, 4000);
-          if (/(\d[\d.,]*\s?(€|eur\b|usd\b|gbp\b|chf\b|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
+          if (/(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
             places.push('[importe en el formulario]');
           }
         }
