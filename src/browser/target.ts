@@ -63,17 +63,30 @@ async function describeOnce(page: Page, selector: string, timeoutMs: number): Pr
           location.href,
           document.title ?? '',
         ];
-        // A submit control inside a form or dialog that shows an amount of money: acting on
+        // A control that can act inside a form or dialog that shows an amount of money: acting on
         // it may commit the user (a trial that turns into a charge, a renewal, a booking)
         // whatever the button says. Structural, no wording: currency symbol or code next
         // to a number, within the control's own form or dialog only, so a price list
         // elsewhere on the page does not count.
         const box = e.closest('form, dialog, [role="dialog"]');
         const kind = (e.getAttribute('type') ?? '').toLowerCase();
-        const submits =
+        // Any control that can act (button of any type but reset, submit/image/button input,
+        // role=button, link) inside the box. A control with one character or none of its own
+        // text (a quantity stepper "+" / "-") does not commit anything by itself.
+        const own = (
+          (e.innerText || e.textContent || '').trim() ||
+          e.getAttribute('aria-label') ||
+          (typeof e.value === 'string' ? e.value : '') ||
+          ''
+        ).trim();
+        const acts =
           e.tagName === 'BUTTON'
-            ? kind !== 'button' && kind !== 'reset'
-            : e.tagName === 'INPUT' && (kind === 'submit' || kind === 'image');
+            ? kind !== 'reset'
+            : e.tagName === 'INPUT'
+              ? ['submit', 'image', 'button'].includes(kind)
+              : e.getAttribute('role') === 'button' ||
+                (e.tagName === 'A' && e.hasAttribute('href'));
+        const submits = acts && own.length > 1;
         if (box && submits) {
           const t = ((box as HTMLElement).innerText || '').slice(0, 4000);
           if (/(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
