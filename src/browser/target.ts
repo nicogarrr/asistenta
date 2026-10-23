@@ -70,9 +70,16 @@ async function describeOnce(page: Page, selector: string, timeoutMs: number): Pr
         // elsewhere on the page does not count.
         const box = e.closest('form, dialog, [role="dialog"]');
         const kind = (e.getAttribute('type') ?? '').toLowerCase();
-        // Any control that can act (button of any type but reset, submit/image/button input,
-        // role=button, link) inside the box. A control with one character or none of its own
-        // text (a quantity stepper "+" / "-") does not commit anything by itself.
+        // Previously covered, unchanged and independent of text length: a submit control
+        // (button that is not type=button/reset, input submit/image), even icon-only.
+        const submits =
+          e.tagName === 'BUTTON'
+            ? kind !== 'button' && kind !== 'reset'
+            : e.tagName === 'INPUT' && (kind === 'submit' || kind === 'image');
+        // New coverage: other acting controls (button type=button, input type=button,
+        // role=button, link). A control with one character or none of its own text (a
+        // quantity stepper "+" / "-") does not commit anything by itself, so only this
+        // new coverage skips it.
         const own = (
           (e.innerText || e.textContent || '').trim() ||
           e.getAttribute('aria-label') ||
@@ -80,14 +87,12 @@ async function describeOnce(page: Page, selector: string, timeoutMs: number): Pr
           ''
         ).trim();
         const acts =
-          e.tagName === 'BUTTON'
-            ? kind !== 'reset'
-            : e.tagName === 'INPUT'
-              ? ['submit', 'image', 'button'].includes(kind)
-              : e.getAttribute('role') === 'button' ||
-                (e.tagName === 'A' && e.hasAttribute('href'));
-        const submits = acts && own.length > 1;
-        if (box && submits) {
+          ((e.tagName === 'BUTTON' && kind !== 'reset') ||
+            (e.tagName === 'INPUT' && kind === 'button') ||
+            e.getAttribute('role') === 'button' ||
+            (e.tagName === 'A' && e.hasAttribute('href'))) &&
+          own.length > 1;
+        if (box && (submits || acts)) {
           const t = ((box as HTMLElement).innerText || '').slice(0, 4000);
           if (/(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
             places.push('[importe en el formulario]');

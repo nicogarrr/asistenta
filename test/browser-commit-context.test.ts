@@ -127,3 +127,28 @@ describe('any acting control inside a priced form or dialog asks', () => {
     expect(await ask(page, '#d')).toBe(true);
   });
 });
+
+describe('regression: submit/image controls keep asking whatever their length', () => {
+  let browser: Browser;
+  let page: Page;
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage();
+  });
+  afterAll(async () => {
+    await browser.close();
+  });
+
+  it('icon-only or one-character submit controls in a priced form still ask', async () => {
+    const html = [
+      '<form><p>Total 9,99 €</p><input id="x" type="submit" value="→"></form>',
+      '<form><p>Total 9,99 €</p><button id="x" type="submit"><svg width="8" height="8"></svg></button></form>',
+      '<form><p>Total 9,99 €</p><button id="x">+</button></form>',
+      '<form><p>Total 9,99 €</p><input id="x" type="image" src="data:," alt=""></form>',
+    ];
+    for (const h of html) {
+      await page.setContent(h);
+      expect(await ask(page, '#x'), h).toBe(true);
+    }
+  });
+});
