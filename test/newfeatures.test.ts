@@ -314,6 +314,9 @@ describe('BrowserService domain consent', () => {
     await a.open('persist#main', 'https://example.com');
     expect(first).toContain('example.com');
 
+    // A restart ends the old process first: Chromium locks its profile dir, so the second
+    // service cannot share it with a still-running first one (ProcessSingleton).
+    await a.closeAll();
     // A brand new service on the same profiles dir: what a daemon restart looks like.
     const second: string[] = [];
     const b = make({}, second);
