@@ -49,6 +49,11 @@ describe('submit control in a form that shows an amount asks', () => {
     expect(await ask(page, '#x')).toBe(true);
   });
 
+  it('asks when the currency code is glued to the control text (inline content)', async () => {
+    await page.setContent('<form><label>Total 500 EUR</label><button id="x">Listo</button></form>');
+    expect(await ask(page, '#x')).toBe(true);
+  });
+
   it('does not ask for a search form, a price list elsewhere, or a non-submit button', async () => {
     await page.setContent(
       '<p>Oferta 9,99 €</p><form><input name="q"><button id="x">Buscar</button></form>',
