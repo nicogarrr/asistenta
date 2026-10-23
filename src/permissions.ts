@@ -476,8 +476,9 @@ export class Gate {
       element.startsWith('button |') ||
       (element.startsWith('input |') && ['submit', 'button', 'image'].includes(type));
     if (isButton && pageSaysMoney(places)) return true;
-    // Additive: a submit control whose own form shows an amount (see describeTarget).
-    if (isButton && places.includes('[importe en el formulario]')) return true;
+    // Additive: a control that can act (button, role=button, link) whose own form or dialog
+    // shows an amount (see describeTarget, which only adds the marker for such controls).
+    if (places.includes('[importe en el formulario]')) return true;
     return target.includes('[destino ilegible]') || isEffectText(element);
   }
 
