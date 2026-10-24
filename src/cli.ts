@@ -211,6 +211,7 @@ import { createOcrTool } from './tools/ocr.js';
 import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import {
   createReminderTool,
+  deliverMissedReminders,
   isOneShotReminder,
   isReminder,
   readDroppedReminders,
@@ -2396,6 +2397,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const routineRunner = new RoutineRunner({ store, run: runRoutineFire });
   routineRunner.start();
+  // Reminders whose time passed while the app was off never fire late on their own
+  // (they would wait a year). Tell the user now, once, and delete them.
+  void deliverMissedReminders({
+    store,
+    send: async (scope, text) => {
+      const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
+      if (!chatId) return false;
+      return telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId, text })
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('missed reminder send failed', { err });
+          return false;
+        });
+    },
+  }).then((r) => {
+    if (r.delivered || r.failed) log.info('missed reminders', r);
+  });
 
   // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
   // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las

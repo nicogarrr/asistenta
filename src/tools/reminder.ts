@@ -171,6 +171,69 @@ export function settleOneShot(
   return 'retry';
 }
 
+/** A one-time reminder this far past its time at startup counts as missed, not as "about to fire". */
+export const MISSED_GRACE_MS = 3 * 60_000;
+
+/**
+ * One-time reminders whose time passed while the app was off. The scheduler never
+ * fires them late: they would sit in the store and fire a YEAR later (the pinned cron
+ * has no year), so the user simply never hears about them. Only valid, enabled
+ * one-shots with a readable due time are returned.
+ */
+export function missedOneShots(
+  routines: readonly Routine[],
+  now = Date.now(),
+  graceMs = MISSED_GRACE_MS,
+): Routine[] {
+  return routines.filter((r) => {
+    if (!isOneShotReminder(r) || !r.enabled) return false;
+    const due = dueOfOneShot(r.name);
+    return due !== null && now - due.getTime() > graceMs;
+  });
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** What the user reads for a reminder delivered late. Says it was late, and why it can be stated. */
+export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
+  const due = dueOfOneShot(r.name);
+  const when = due
+    ? `${pad2(due.getDate())}/${pad2(due.getMonth() + 1)} ${pad2(due.getHours())}:${pad2(due.getMinutes())}`
+    : 'una hora anterior';
+  return `⏰ Recordatorio con retraso (era para el ${when}; Asistenta no estaba en marcha a esa hora): ${reminderText(r)}`;
+}
+
+export interface MissedDeliveryDeps {
+  store: Pick<Store, 'listRoutines' | 'deleteRoutine'>;
+  /** Sends into the chat of the routine's scope; false when it could not be delivered. */
+  send: (scope: string, text: string) => Promise<boolean>;
+  now?: number;
+}
+
+/**
+ * Startup catch-up: tell the user about every one-time reminder that was missed, then
+ * delete it. A reminder that could not be sent stays stored so the next start tries
+ * again (nothing is deleted without having been delivered). Returns the counts.
+ */
+export async function deliverMissedReminders(
+  deps: MissedDeliveryDeps,
+): Promise<{ delivered: number; failed: number }> {
+  let delivered = 0;
+  let failed = 0;
+  for (const r of missedOneShots(deps.store.listRoutines(), deps.now)) {
+    const ok = await deps.send(r.scope, lateReminderText(r)).catch(() => false);
+    if (ok) {
+      deps.store.deleteRoutine(r.scope, r.name);
+      delivered++;
+    } else {
+      failed++;
+    }
+  }
+  return { delivered, failed };
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
 }

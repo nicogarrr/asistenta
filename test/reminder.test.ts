@@ -6,10 +6,13 @@ import { Store } from '../src/db.js';
 import { RoutineRunner } from '../src/routines.js';
 import {
   createReminderTool,
+  deliverMissedReminders,
   dueOfOneShot,
   isOneShotReminder,
   isReminder,
+  lateReminderText,
   MAX_REMINDERS_PER_CHAT,
+  missedOneShots,
   onceCron,
   parseLocalStamp,
   RETRY_MAX_AGE_MS,
@@ -247,5 +250,64 @@ describe('dropped reminders are surfaced', () => {
       droppedReminders: got,
     });
     expect(text).toContain('No pude avisarte de: apagar el horno');
+  });
+});
+
+describe('reminders missed while the app was off', () => {
+  const save = (text: string, stamp: string, scope = 'tg:1:2') =>
+    store.saveRoutine({
+      scope,
+      name: `recordatorio-1: ${text} @${stamp}`,
+      kind: 'schedule',
+      prompt: text,
+      schedule: onceCron(parseLocalStamp(stamp) as Date),
+    });
+
+  it('finds only one-shots past their time by more than the grace', () => {
+    save('apagar el horno', '2026-10-05 08:00');
+    save('llamar al dentista', '2026-10-05 09:59'); // 1 min ago: the scheduler still fires it
+    save('futuro', '2026-10-06 09:00');
+    const names = missedOneShots(store.listRoutines(), NOW).map((r) => r.name);
+    expect(names).toEqual([expect.stringContaining('apagar el horno')]);
+  });
+
+  it('delivers late with the original time, deletes it, and a failed send stays stored', async () => {
+    save('apagar el horno', '2026-10-05 08:00');
+    save('pagar la luz', '2026-10-04 20:30', 'tg:9:9');
+    const sent: Array<[string, string]> = [];
+    const flaky = async (scope: string, text: string) => {
+      sent.push([scope, text]);
+      return scope !== 'tg:9:9';
+    };
+    const r = await deliverMissedReminders({ store, send: flaky, now: NOW });
+    expect(r).toEqual({ delivered: 1, failed: 1 });
+    expect(sent.find(([s]) => s === 'tg:1:2')?.[1]).toContain('05/10 08:00');
+    expect(sent.find(([s]) => s === 'tg:1:2')?.[1]).toContain('apagar el horno');
+    const left = store.listRoutines().map((x) => x.name);
+    expect(left).toEqual([expect.stringContaining('pagar la luz')]);
+    // Next start: delivered once the chat works, then nothing is left to repeat.
+    const again = await deliverMissedReminders({ store, send: async () => true, now: NOW });
+    expect(again).toEqual({ delivered: 1, failed: 0 });
+    expect(store.listRoutines()).toEqual([]);
+    expect(await deliverMissedReminders({ store, send: async () => true, now: NOW })).toEqual({
+      delivered: 0,
+      failed: 0,
+    });
+  });
+
+  it('never touches repeating reminders or non-reminder routines', async () => {
+    store.saveRoutine({
+      scope: 'tg:1:2',
+      name: 'recordatorio: lunes correos @2026-10-05 08:00',
+      kind: 'schedule',
+      prompt: 'correos',
+      schedule: '30 8 * * 1',
+    });
+    const r = await deliverMissedReminders({ store, send: async () => true, now: NOW });
+    expect(r).toEqual({ delivered: 0, failed: 0 });
+    expect(store.listRoutines()).toHaveLength(1);
+    expect(
+      lateReminderText({ name: 'recordatorio-1: x @2026-10-05 08:00', prompt: 'x' }),
+    ).toContain('05/10 08:00');
   });
 });
