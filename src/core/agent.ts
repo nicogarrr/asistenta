@@ -494,6 +494,8 @@ export class PersonalAgent {
     // Assigned before any tool call can run; the hooks below only fire inside a run.
     let personal!: PersonalAgent;
 
+    // Calls the gate let through, by tool-call id, so afterToolCall can settle the same fingerprint.
+    const calls = new Map<string, GateCall>();
     const agent = new Agent({
       initialState: {
         systemPrompt: buildSystemPrompt(opts.desktop ?? desktopEnabled()),
@@ -544,6 +546,7 @@ export class PersonalAgent {
           if (hint) call.args = { ...call.args, _target: hint };
         }
         const decision = await gate.check(personal.sessionId, call);
+        if (decision.verdict === 'allow') calls.set(toolCall.id, call);
         if (decision.verdict === 'deny') {
           log.info('tool blocked', { tool: call.tool, reason: decision.reason });
           personal.markGateBlocked(toolCall.id);
@@ -553,6 +556,11 @@ export class PersonalAgent {
       },
       afterToolCall: async ({ toolCall, isError, result }) => {
         log.debug('tool finished', { tool: toolCall.name, id: toolCall.id, isError });
+        const started = calls.get(toolCall.id);
+        if (started) {
+          calls.delete(toolCall.id);
+          gate.settle(personal.sessionId, started, isError);
+        }
         // Budget pressure rides inside the tool result (`details.budgetPressure`)
         // instead of as an extra conversation message: the model reads it as part
         // of the outcome it just got, and the message format never changes. It has
