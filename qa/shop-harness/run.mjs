@@ -17,6 +17,7 @@ let lastCall = null; const ADDR = process.env.QA_ADDRESS || '';
 const gate = createDaemonGate({ threadKey: 'qa#1', dbPath: (process.env.PA_STATE_DIR || '/tmp') + '/qa-approvals.db', ask: async (k, tool, reason, q) => {
   const text = (q ?? reason);
   let approve = mode === 'human' && !/pagar|pay/i.test(text);
+  if (mode === 'synth') { const a = lastCall?.args ?? {}; approve = lastCall?.tool === 'browser' && a.action !== 'exec_js' && !/destino ilegible|no est[aá] en la lista/i.test(text) && !/pagar|pay|pago|tarjeta|contrase/i.test(text); }
   if (mode === 'narrow') { const a = lastCall?.args ?? {}; approve = lastCall?.tool === 'browser' && ['fill','choose'].includes(a.action) && ADDR !== '' && String(a.text ?? '') === ADDR && (a.action === 'fill' || !a.option || (/Plaza Mayor/i.test(a.option) && /Gij/i.test(a.option))) && /cityFinder/.test(String(a._target ?? '')); }
   if (mode === 'narrow' && !approve && lastCall?.tool === 'browser' && lastCall?.args?.action === 'click') { const t = String(lastCall.args._target ?? ''); approve = /COMPLETAR DIRECCI/i.test(t) && /Plaza Mayor, 1, GIJON/i.test(t) && /dominospizza\.es/.test(t) && !/tel[eé]fono|pagar|confirmar pedido/i.test(t); }
   if (mode === 'narrow' && !approve && lastCall?.tool === 'browser') { const a = lastCall.args ?? {}; const t = String(a._target ?? ''); if (a.action === 'wait') approve = true; else if (a.action === 'click' && t && !/destino ilegible/i.test(t) && /dominospizza\.es/.test(t) && !/pagar|pago|tarjeta|iniciar sesi|registr|tel[eé]fono|e-?mail|correo|confirmar pedido|finalizar|checkout|realizar pedido|tramitar|continuar al pago|contrase/i.test(t)) approve = true; }
@@ -36,6 +37,8 @@ const res = await agent.run(prompt, undefined, { onToolCall: (i) => calls.push(i
 console.log('=== TOOL CALLS\n' + calls.join('\n'));
 console.log('=== ASKS\n' + JSON.stringify(asks, null, 1));
 console.log('=== FINAL\n' + res.text + (res.error ? '\nERROR ' + res.error : ''));
+let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => (document.getElementById('mine')||{}).innerText || '')"); sel = String(r.text); } catch {}
+const goal = process.env.QA_GOAL_CITY || ''; console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ selected: sel, goal, verdict: !goal ? 'n/a' : !sel ? 'no-selection' : sel.toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL' }));
 console.log('=== SHOP STATE\n' + JSON.stringify({ cart: state.cart, payHits: state.payHits, reqs: state.log.length }));
 await svc.closeAll?.();
 process.exit(0);
