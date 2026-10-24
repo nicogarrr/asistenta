@@ -469,3 +469,43 @@ describe('checkout in the gate', () => {
     expect(asked).toBe(1);
   });
 });
+
+describe('Gate: repeat after an unsettled call', () => {
+  const call = { tool: 'shell', args: { command: 'echo hi' }, actor: 'local' } as const;
+  const make = () => {
+    let asked = 0;
+    const gate = new Gate({
+      approver: () => {
+        asked += 1;
+        return true;
+      },
+    });
+    return { gate, asked: () => asked };
+  };
+
+  it('asks again for the identical call after it ended in error', async () => {
+    const { gate, asked } = make();
+    await gate.check('s', call);
+    gate.settle('s', call, true);
+    const again = await gate.check('s', call);
+    expect(again.reason).not.toContain('previously approved');
+    expect(asked()).toBe(2);
+  });
+
+  it('asks again when the first call never reported an end', async () => {
+    const { gate, asked } = make();
+    await gate.check('s', call);
+    await gate.check('s', call);
+    expect(asked()).toBe(2);
+  });
+
+  it('keeps the memo after a clean end and does not touch distinct calls', async () => {
+    const { gate, asked } = make();
+    await gate.check('s', call);
+    gate.settle('s', call, false);
+    expect((await gate.check('s', call)).reason).toContain('previously approved');
+    const other = { ...call, args: { command: 'echo other' } };
+    await gate.check('s', other);
+    expect(asked()).toBe(2);
+  });
+});

@@ -162,11 +162,13 @@ describe('Gate approval scopes', () => {
     });
     gate.setScope('s1', 'computer', 'once');
 
-    await gate.check('s1', {
+    const first = {
       tool: 'computer',
       args: { action: 'click', x: 1, y: 1 },
       actor: 'local',
-    });
+    } as const;
+    await gate.check('s1', first);
+    gate.settle('s1', first, false); // clean end of the first call
     expect(asked).toBe(1);
     // The identical call is still covered by the approval fingerprint.
     const same = await gate.check('s1', {

@@ -813,8 +813,34 @@ export class Gate {
    */
   clearSession(sessionId: string): void {
     this.#approved.delete(sessionId);
+    this.#unsettled.delete(sessionId);
     this.#grants.delete(sessionId);
     this.#scopes.delete(sessionId);
+  }
+
+  /**
+   * Fingerprints of memo-approved calls that started but have not ended cleanly
+   * (still running, errored, timed out, or the process never reported an end).
+   * An error or timeout can still have committed an effect, so the memo must not
+   * re-run the identical call silently: it asks again. Per session and in memory
+   * only: a restart or a new task already clears the memo, so the next run asks
+   * from scratch. Scope limit: the key is the exact (tool, args); an effect the
+   * gate never saw, or the same effect via different args, is not covered.
+   */
+  #unsettled = new Map<string, Set<string>>();
+
+  /**
+   * Report how a call that passed `check()` ended. A clean end settles it (the
+   * memo may allow an identical repeat, as before); an error leaves it unsettled.
+   */
+  settle(sessionId: string, call: ToolCall, isError: boolean): void {
+    if (isError) return;
+    this.#unsettled.get(sessionId)?.delete(this.#fingerprint(call));
+  }
+
+  #markStarted(sessionId: string, fp: string): void {
+    if (!this.#unsettled.has(sessionId)) this.#unsettled.set(sessionId, new Set());
+    this.#unsettled.get(sessionId)?.add(fp);
   }
 
   /** Tool -> epoch ms until which further calls to it are trusted. */
@@ -983,12 +1009,14 @@ export class Gate {
     const fp = this.#fingerprint(call);
     if (
       approved.has(fp) &&
+      !this.#unsettled.get(sessionId)?.has(fp) &&
       !confirmation &&
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
       !forced
     ) {
+      this.#markStarted(sessionId, fp);
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -1129,6 +1157,7 @@ export class Gate {
     }
     if (!ok) return this.#record(call, { verdict: 'deny', reason: `denied by ${call.actor}` });
     approved.add(fp);
+    this.#markStarted(sessionId, fp);
     // One approval covers the rest of this task, so a multi-step job asks once
     // instead of once per click.
     this.#openGrantWindow(sessionId, call.tool);

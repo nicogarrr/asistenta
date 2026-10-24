@@ -213,6 +213,7 @@ describe('/permisos command', () => {
       actor: 'local',
     } as const;
     await gate.check('s', clickA); // approver: memo clickA + window
+    gate.settle('s', clickA, false); // clean end: the memo may allow an identical repeat
     expect((await gate.check('s', clickB)).reason).toContain('window');
     expect(asked).toBe(1);
     runPermisosCommand([gate], dbPath, 'revocar exec');
