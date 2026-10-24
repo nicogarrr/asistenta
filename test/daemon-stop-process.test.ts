@@ -9,6 +9,10 @@ import { stopDaemon } from '../src/daemon-control.js';
 const it = process.platform === 'linux' ? baseIt : baseIt.skip;
 let dir: string;
 const children: ChildProcess[] = [];
+// Mitigation, NOT a proven fix: a fixture daemon whose test runner died (timeout/kill) is
+// re-parented and would run on. It now exits by itself once orphaned. The earlier
+// incident (orphan fixture daemons + multi-GB logs in /tmp/pa-stop-*) was not reproduced.
+const WATCHDOG = ';{const pp=process.ppid;setInterval(()=>{if(process.ppid!==pp)process.exit(3)},1000).unref();}';
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'pa-stop-'));
 });
@@ -26,7 +30,7 @@ async function fixture(mode: 'clean' | 'fail' | 'hung' = 'clean', delay = 100) {
   const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
   const code = `import {installLifecycle} from ${JSON.stringify(lifecycle)};import {controlledDaemon} from ${JSON.stringify(wrapper)};import {writeFileSync} from 'node:fs';
     await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',shutdownBudgetMs:300,onShutdown:async()=>{${mode === 'hung' ? 'await new Promise(()=>{});' : `await new Promise(r=>setTimeout(r,${delay}));${mode === 'fail' ? "throw new Error('fixture failure');" : `writeFileSync(${JSON.stringify(join(dir, 'drained'))},'yes');`}`}}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
     env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -101,7 +105,7 @@ it('keeps the same OS ownership until a failed drainer process exits', async () 
   const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
   const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
   const code = `import {controlledDaemon} from ${JSON.stringify(wrapper)};import {installLifecycle} from ${JSON.stringify(lifecycle)};setInterval(()=>{},1000);await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',onShutdown:async()=>{throw new Error('leaked resource fixture');}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
     env: { ...process.env, PA_STATE_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -130,7 +134,7 @@ it('uses the actual 10-second thread-tail drain timeout and never writes a clean
   const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
   const drain = pathToFileURL(resolve('dist/shutdown-drain.js')).href;
   const code = `import {controlledDaemon} from ${JSON.stringify(wrapper)};import {installLifecycle} from ${JSON.stringify(lifecycle)};import {drainThreadTails} from ${JSON.stringify(drain)};await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',onShutdown:async()=>{await drainThreadTails([new Promise(()=>{})]);}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
     env: { ...process.env, PA_STATE_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
