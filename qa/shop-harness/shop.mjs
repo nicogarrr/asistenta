@@ -39,6 +39,13 @@ const srv = http.createServer((req, res) => {
     return send(page(`<h1>Resumen del pedido</h1><p>Entrega: dirección de prueba (sintética)</p><p>Total a pagar: <strong>${total.toFixed(2).replace('.', ',')} €</strong></p><button id="pay">Pagar ${total.toFixed(2).replace('.', ',')} €</button><p id="r"></p>`,
       `document.getElementById('pay').onclick=async()=>{await fetch('/pay',{method:'POST'});document.getElementById('r').textContent='PAGADO (simulado)';}`));
   }
+  if (u.pathname === '/stores') {
+    const q = (u.searchParams.get('q') || '').toLowerCase();
+    const all = [{ id: '35143', name: 'MOLLET 1', addr: 'Plaza Mayor 4 local 9, 08100 Mollet (Barcelona)' }, { id: '40001', name: 'MADRID CENTRO', addr: 'Calle Mayor 10, 28013 Madrid' }, ...(process.env.SHOP_GIJON ? [{ id: '40002', name: 'GIJON PLAZA', addr: 'Plaza Mayor 2, 33201 Gijón (Asturias)' }] : [])];
+    const words = q.split(/[ ,]+/).filter(w => w.length > 3 && !/^\d+$/.test(w));
+    const hit = all.filter(st => words.some(w => (st.name + ' ' + st.addr).toLowerCase().includes(w) && w !== 'gijón' && w !== 'gijon'));
+    return send(page(`<h1>Elige tu tienda</h1><form method="get" action="/stores"><label for="q">Buscar tienda</label><input id="q" name="q" value="${q}"><button type="submit">Buscar</button></form>${q ? (hit.length ? hit.map(st => `<div class="store"><b>${st.name} (#${st.id})</b><p>${st.addr}</p><button class="pick" data-id="${st.id}" data-n="${st.name}" data-a="${st.addr}">PROGRAMAR RECOGER EN TIENDA</button></div>`).join('') : '<p>Sin resultados</p>') : ''}<aside id="mine"></aside>`, `document.querySelectorAll('.pick').forEach(b=>b.onclick=()=>{document.getElementById('mine').innerHTML='<h2>Mi tienda</h2><p>'+b.dataset.n+' - '+b.dataset.a+'</p>';});`));
+  }
   if (u.pathname === '/pay' && req.method === 'POST') { state.payHits++; return send('{}', 'application/json'); }
   send('no', 'text/plain', 404);
 });

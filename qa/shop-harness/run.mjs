@@ -1,5 +1,5 @@
 import { start, state } from './shop.mjs';
-const R = process.env.PA_DIST || new URL('../../dist', import.meta.url).pathname;
+const R = process.env.PA_DIST || '/home/sandbox/asistenta/dist';
 const mode = process.argv[2] || 'deny'; // deny: human denies every ask; human: approves asks except ones about paying
 const prompt = process.argv[3];
 const REAL = process.env.REAL_HOSTS; if (!REAL) await start(8765);
