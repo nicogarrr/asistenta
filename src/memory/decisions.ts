@@ -42,7 +42,32 @@ export interface Decision {
 
 export type RecordResult = { ok: true; id: string } | { ok: false; reason: string };
 
-const MIN_QUOTE = 4;
+const MIN_QUOTE = 8;
+
+/**
+ * Words that make a sentence NOT an adoption of what it mentions: negation,
+ * hypothesis, question, and attribution to someone else. Fail closed: if the
+ * sentence holding the quote has any of them outside the quote, the decision is
+ * refused and the user is asked instead. This is a guard, not semantic proof.
+ */
+const NOT_ADOPTION =
+  /(^|[\s¿?,;:])(no|nunca|tampoco|ni|nada|quiz[aá]s?|tal vez|igual|si|¿|dice|dijo|dicen|reenvi\w*|ejemplo|supongamos|imagina|podr[ií]a\w*|a lo mejor)(?=$|[\s?,;:.!])/i;
+
+function sentenceOf(text: string, quote: string): string | null {
+  const t = text.replace(/\s+/g, ' ');
+  const at = t.toLowerCase().indexOf(norm(quote));
+  if (at < 0) return null;
+  const start =
+    Math.max(
+      t.lastIndexOf('.', at),
+      t.lastIndexOf('?', at),
+      t.lastIndexOf('!', at),
+      t.lastIndexOf('\n', at),
+    ) + 1;
+  const ends = ['.', '?', '!'].map((c) => t.indexOf(c, at + quote.length)).filter((i) => i >= 0);
+  const end = ends.length ? Math.min(...ends) + 1 : t.length;
+  return t.slice(start, end);
+}
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 
 export class DecisionLedger {
@@ -75,7 +100,25 @@ export class DecisionLedger {
     if (!norm(inbound.text).includes(norm(quote))) {
       return { ok: false, reason: 'la cita no aparece en el mensaje del usuario' };
     }
-    if (supersedes) this.#setStatus(supersedes, ws.scope, 'superseded');
+    const sentence = sentenceOf(inbound.text, quote);
+    if (sentence === null)
+      return { ok: false, reason: 'la cita no aparece en el mensaje del usuario' };
+    const outside = sentence.toLowerCase().replace(norm(quote), ' ');
+    if (/[¿?]/.test(sentence) || NOT_ADOPTION.test(outside) || NOT_ADOPTION.test(norm(quote))) {
+      return {
+        ok: false,
+        reason: 'la frase es negación, duda, pregunta o cita de otro: no es una decisión',
+      };
+    }
+    if (supersedes) {
+      const old = this.#db
+        .prepare('SELECT workstream_id FROM decisions WHERE id = ? AND scope = ?')
+        .get(supersedes, ws.scope) as { workstream_id: string } | undefined;
+      if (!old || old.workstream_id !== workstreamId) {
+        return { ok: false, reason: 'la decisión a sustituir no es de este frente' };
+      }
+      this.#setStatus(supersedes, ws.scope, 'superseded');
+    }
     const id = randomUUID();
     this.#insert(id, ws.scope, workstreamId, summary, quote, inbound, 'confirmed');
     this.sync(workstreamId);

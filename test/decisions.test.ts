@@ -99,7 +99,56 @@ describe('decision ledger', () => {
     expect(ws.index(SCOPE)).not.toContain('21:00');
   });
 
-  it('rejects too-short quotes', () => {
-    expect(ledger.recordConfirmed(wsId, 's', 'sí', msg('sí')).ok).toBe(false);
+  it('rejects too-short quotes (old)', () => {
+    expect(ledger.recordConfirmed(wsId, 's', 'sí vale', msg('sí vale')).ok).toBe(false);
+  });
+
+  it('refuses a truncated quote of a negation, a hypothesis, a question and forwarded text', () => {
+    const cases: Array<[string, string]> = [
+      ['quedamos en casa de Ana', 'no quiero que quedemos en casa de Ana'],
+      ['a las 21:00 en mi casa', 'quizá a las 21:00 en mi casa'],
+      ['hacerlo en casa de Ana', '¿podemos hacerlo en casa de Ana?'],
+      ['cenamos en casa de Ana', 'Ana dice que cenamos en casa de Ana'],
+      ['cenamos en casa de Ana', 'Reenviado: cenamos en casa de Ana'],
+      ['cenamos en casa de Ana', 'si llueve cenamos en casa de Ana'],
+    ];
+    for (const [quote, text] of cases) {
+      expect(ledger.recordConfirmed(wsId, 'sitio: casa de Ana', quote, msg(text)).ok, text).toBe(
+        false,
+      );
+    }
+    expect(ws.index(SCOPE)).not.toContain('resuelto:');
+  });
+
+  it('accepts a plain affirmative sentence', () => {
+    expect(
+      ledger.recordConfirmed(
+        wsId,
+        'sitio: casa de Ana',
+        'cenamos en casa de Ana',
+        msg('Vale. Cenamos en casa de Ana.'),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('supersede must belong to the same workstream and does not touch the other front', () => {
+    const other = ws.create(SCOPE, 'otro plan', 'viaje');
+    const a = ledger.recordConfirmed(
+      wsId,
+      'hora: 21:00',
+      'a las 21:00 cenamos',
+      msg('a las 21:00 cenamos'),
+    );
+    if (!a.ok) throw new Error('setup');
+    const r = ledger.recordConfirmed(
+      other,
+      'hora: 22:00',
+      'salimos a las 22:00',
+      msg('salimos a las 22:00'),
+      a.id,
+    );
+    expect(r.ok).toBe(false);
+    expect(ws.index(SCOPE)).toContain('hora: 21:00');
+    expect(ledger.list(wsId, 'confirmed')).toHaveLength(1);
   });
 });
