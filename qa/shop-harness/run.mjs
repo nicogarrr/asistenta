@@ -37,8 +37,8 @@ const res = await agent.run(prompt, undefined, { onToolCall: (i) => calls.push(i
 console.log('=== TOOL CALLS\n' + calls.join('\n'));
 console.log('=== ASKS\n' + JSON.stringify(asks, null, 1));
 console.log('=== FINAL\n' + res.text + (res.error ? '\nERROR ' + res.error : ''));
-let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => (document.getElementById('mine')||{}).innerText || '')"); sel = String(r.text); } catch {}
-const goal = process.env.QA_GOAL_CITY || ''; console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ selected: sel, goal, verdict: !goal ? 'n/a' : /^error:/.test(sel) ? 'INVALID(oracle-error)' : !sel.trim() ? 'no-selection' : sel.toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL' }));
+let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => { const m = document.getElementById('mine'); return m ? 'PRESENT:' + location.href + '|' + m.innerText : 'ABSENT:' + location.href; })"); sel = String(r.text); } catch {}
+const goal = process.env.QA_GOAL_CITY || ''; console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ selected: sel, goal, verdict: !goal ? 'n/a' : /^error:/.test(sel) ? 'INVALID(oracle-error)' : !/^PRESENT:https?:\/\/127\.0\.0\.1:8765\/stores/.test(sel) ? 'INVALID(oracle-state-lost)' : !sel.replace(/^PRESENT:[^|]*\|/, '').trim() ? 'no-selection' : sel.replace(/^PRESENT:[^|]*\|/, '').toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL' }));
 console.log('=== SHOP STATE\n' + JSON.stringify({ cart: state.cart, payHits: state.payHits, reqs: state.log.length }));
 await svc.closeAll?.();
 process.exit(0);
