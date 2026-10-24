@@ -173,8 +173,12 @@ export class DecisionLedger {
 
   /** Rewrites the workstream's "resuelto" from confirmed entries only. */
   sync(workstreamId: string): void {
-    const confirmed = this.list(workstreamId, 'confirmed').map((d) => d.summary);
-    this.#ws.update(workstreamId, { decisions: confirmed.length ? confirmed.join('; ') : null });
+    const confirmed = this.list(workstreamId, 'confirmed').map((d) => {
+      const day = (d.receivedAt ?? '').slice(0, 10);
+      const src = [d.quote ? `«${d.quote}»` : '', day].filter(Boolean).join(' ');
+      return src ? `${d.summary} [${src}]` : d.summary;
+    });
+    this.#ws.update(workstreamId, { decisions: confirmed.length ? confirmed.join(' | ') : null });
   }
 
   #setStatus(id: string, scope: string, status: DecisionStatus): void {

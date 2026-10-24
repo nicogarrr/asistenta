@@ -104,6 +104,29 @@ function mapWorkstream(r: WorkstreamRow): Workstream {
   };
 }
 
+/**
+ * What the model is told about recorded decisions. They are words the user said,
+ * kept with their quote and date; whether the user meant them as a final
+ * decision is NOT verified, so the label says so and the model must re-check
+ * when it matters (money, bookings, anything irreversible).
+ */
+export const DECISIONS_LABEL =
+  'dicho por el usuario (intención no verificada; confirma antes de actuar si importa)';
+
+/** Whole items only: a cut in the middle could drop a negation or the quote. */
+export function fitItems(text: string, max: number): string {
+  const items = text.split(' | ');
+  const kept: string[] = [];
+  let size = 0;
+  for (const item of items) {
+    if (size + item.length > max && kept.length > 0) break;
+    kept.push(item.length > max ? clip(item, max) : item);
+    size += item.length + 3;
+  }
+  const more = items.length - kept.length;
+  return more > 0 ? `${kept.join(' | ')} | +${more} más (ver decision listar)` : kept.join(' | ');
+}
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
@@ -219,7 +242,8 @@ export class WorkstreamStore {
       const bits = [`objetivo: ${oneLine(work.goal)}`];
       // What is already settled goes in the prompt too: without it the model
       // cannot tell "resolved" from "never discussed" and re-asks both.
-      if (work.decisions) bits.push(`resuelto: ${clip(oneLine(work.decisions), 240)}`);
+      if (work.decisions)
+        bits.push(`${DECISIONS_LABEL}: ${fitItems(oneLine(work.decisions), 420)}`);
       if (work.constraints) bits.push(`límites: ${clip(oneLine(work.constraints), 160)}`);
       if (work.nextSteps) bits.push(`siguiente: ${oneLine(work.nextSteps)}`);
       return `- [${STATUS_LABEL[work.status]}] ${oneLine(work.title)} — ${bits.join('; ')}`;

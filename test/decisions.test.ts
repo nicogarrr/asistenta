@@ -36,7 +36,9 @@ describe('decision ledger', () => {
       msg('vale, lo hacemos en casa de Ana el sábado'),
     );
     expect(r.ok).toBe(true);
-    expect(ws.index(SCOPE)).toContain('resuelto: sitio: casa de Ana');
+    expect(ws.index(SCOPE)).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana',
+    );
     const d = ledger.list(wsId)[0];
     if (!d) throw new Error('setup');
     expect(d.messageId).toBe('m1');
@@ -52,7 +54,7 @@ describe('decision ledger', () => {
       msg('no sé dónde'),
     );
     expect(r.ok).toBe(false);
-    expect(ws.index(SCOPE)).not.toContain('resuelto:');
+    expect(ws.index(SCOPE)).not.toContain('si importa):');
   });
 
   it('rejects a message from another conversation, an unauthorised author and no message', () => {
@@ -65,12 +67,12 @@ describe('decision ledger', () => {
         .ok,
     ).toBe(false);
     expect(ledger.recordConfirmed(wsId, 's', 'casa de Ana', undefined).ok).toBe(false);
-    expect(ws.index(SCOPE)).not.toContain('resuelto:');
+    expect(ws.index(SCOPE)).not.toContain('si importa):');
   });
 
   it('tentative notes never appear as resolved', () => {
     ledger.recordTentative(wsId, 'quizá en casa de Ana');
-    expect(ws.index(SCOPE)).not.toContain('resuelto:');
+    expect(ws.index(SCOPE)).not.toContain('si importa):');
     expect(ws.index(SCOPE)).not.toContain('casa de Ana');
     expect(ledger.list(wsId, 'tentative')).toHaveLength(1);
   });
@@ -117,7 +119,7 @@ describe('decision ledger', () => {
         false,
       );
     }
-    expect(ws.index(SCOPE)).not.toContain('resuelto:');
+    expect(ws.index(SCOPE)).not.toContain('si importa):');
   });
 
   it('accepts a plain affirmative sentence', () => {
@@ -150,5 +152,33 @@ describe('decision ledger', () => {
     expect(r.ok).toBe(false);
     expect(ws.index(SCOPE)).toContain('hora: 21:00');
     expect(ledger.list(wsId, 'confirmed')).toHaveLength(1);
+  });
+
+  it('render keeps quote and date, labels intent as unverified, and drops whole items not cut text', () => {
+    const a = ledger.recordConfirmed(
+      wsId,
+      'hora: 21:00',
+      'cenamos a las 21:00',
+      msg('Vale, cenamos a las 21:00.'),
+    );
+    expect(a.ok).toBe(true);
+    const idx = ws.index(SCOPE);
+    expect(idx).toContain('intención no verificada');
+    expect(idx).toContain('«cenamos a las 21:00»');
+    expect(idx).toContain('2026-10-24');
+    // many decisions: no item is cut in half, the rest is counted
+    for (let i = 0; i < 12; i++) {
+      ledger.recordConfirmed(
+        wsId,
+        `punto ${i} de la lista larga`,
+        `acordamos el punto ${i}`,
+        msg(`Acordamos el punto ${i}.`, { messageId: `x${i}` }),
+      );
+    }
+    const long = ws.index(SCOPE);
+    expect(long).toMatch(/\+\d+ más \(ver decision listar\)/);
+    for (const part of long.split(' | ')) {
+      if (part.includes('«')) expect(part).toContain('»');
+    }
   });
 });

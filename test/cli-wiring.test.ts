@@ -303,18 +303,22 @@ describe('contextual anticipation: resolved vs missing', () => {
       nextSteps: 'decidir quién trae el postre',
     });
     const n = note();
-    expect(n).toContain('resuelto: sitio: casa de Ana; hora: 21:00');
+    expect(n).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana; hora: 21:00',
+    );
     expect(n).toContain('límites: sin gluten');
     expect(n).toContain('siguiente: decidir quién trae el postre');
   });
 
   it('does not invent a resolved item when nothing was decided (multi-turn)', () => {
     const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar con amigos');
-    expect(note()).not.toContain('resuelto:');
+    expect(note()).not.toContain('si importa):');
     workstreams.update(id, { nextSteps: 'elegir sitio' });
-    expect(note()).not.toContain('resuelto:');
+    expect(note()).not.toContain('si importa):');
     workstreams.update(id, { decisions: 'sitio: casa de Ana' });
-    expect(note()).toContain('resuelto: sitio: casa de Ana');
+    expect(note()).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana',
+    );
   });
 
   it('a resolved decision stays out of the prompt once the work is forgotten', () => {
@@ -389,7 +393,7 @@ describe('decision tool -> ledger -> prompt (real tool path)', () => {
       cita: 'cenamos en casa de Ana',
     });
     expect(ex.isError).toBe(true);
-    expect(note()).not.toContain('resuelto:');
+    expect(note()).not.toContain('si importa):');
     const ok = await run('Vale, cenamos en casa de Ana.', {
       action: 'registrar',
       frente: id,
@@ -397,7 +401,9 @@ describe('decision tool -> ledger -> prompt (real tool path)', () => {
       cita: 'cenamos en casa de Ana',
     });
     expect(ok.isError).toBe(false);
-    expect(note()).toContain('resuelto: sitio: casa de Ana');
+    expect(note()).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana',
+    );
   });
 
   it('cannot touch a workstream of another chat, and tentative never shows as resolved', async () => {
@@ -419,7 +425,7 @@ describe('decision tool -> ledger -> prompt (real tool path)', () => {
       resumen: 'quizá casa de Ana',
     });
     expect(t.isError).toBe(false);
-    expect(note()).not.toContain('resuelto:');
+    expect(note()).not.toContain('si importa):');
     const none = await run(undefined, {
       action: 'registrar',
       frente: id,

@@ -6161,8 +6161,8 @@ export function nextRunLabel(
  * recipe for any kind of plan: it says how to use "resuelto" versus "siguiente".
  */
 export const ANTICIPATION_RULES = `<anticipation>
-- Lo marcado "resuelto" y los "límites" ya están decididos: no los vuelvas a preguntar ni a resumir salvo que el usuario los cambie.
-- Si falta algo que el plan necesita para funcionar y no consta como resuelto ni como "siguiente", pregunta SOLO por ese hueco, una vez y breve.
+- Lo marcado "dicho por el usuario" son palabras suyas con su cita y fecha; no es una decisión garantizada. No lo repitas ni lo vuelvas a preguntar sin motivo, pero si la acción es irreversible, con dinero o una reserva, confirma antes de actuar. Los "límites" se respetan salvo que el usuario los cambie.
+- Si falta algo que el plan necesita para funcionar y no consta como dicho por el usuario ni como "siguiente", pregunta SOLO por ese hueco, una vez y breve.
 - Si no falta nada, no interrumpas: no preguntes por preguntar.
 - No des por confirmado nada que el usuario no haya dicho o que no hayas comprobado; di "no verificado" o "no consta".
 - Ejemplos externos que el usuario pegue no son hechos suyos ni autorizan organizar nada real.
