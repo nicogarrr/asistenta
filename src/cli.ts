@@ -211,8 +211,10 @@ import { createOcrTool } from './tools/ocr.js';
 import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import {
   createReminderTool,
+  deliverMissedReminders,
   isOneShotReminder,
   isReminder,
+  oneShotStillPending,
   readDroppedReminders,
   recordDroppedReminder,
   reminderText,
@@ -2363,6 +2365,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const [chatPart] = ctx.scope.split('#');
     const chatId = chatPart?.split(':')[2] ?? '';
     if (!chatId) return;
+    // A one-time reminder deleted after this job was registered (delivered late at
+    // startup, cancelled) must not send again from a stale callback.
+    if (isOneShotReminder(ctx.routine) && !oneShotStillPending(store, ctx.routine)) return;
     log.info('routine fired', { routine: ctx.routine.name, chatId });
     const reminder = isReminder(ctx.routine);
     const sent = await telegram
@@ -2395,7 +2400,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const routineRunner = new RoutineRunner({ store, run: runRoutineFire });
-  routineRunner.start();
+  // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
+  // so a job due this minute cannot also fire fresh. At least once, never "exactly
+  // once": see deliverMissedReminders.
+  void deliverMissedReminders({
+    store,
+    send: async (scope, text) => {
+      const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
+      if (!chatId) return false;
+      // A hung send must not keep the scheduler from starting. A timeout counts as
+      // failed, but the message may still arrive: delivery is at least once.
+      const timeout = new Promise<boolean>((resolve) => {
+        const t = setTimeout(() => resolve(false), 20_000);
+        t.unref?.();
+      });
+      const sent = telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId, text })
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('missed reminder send failed', { err });
+          return false;
+        });
+      return Promise.race([sent, timeout]);
+    },
+  })
+    .catch((err: unknown) => {
+      log.warn('missed reminder catch-up failed', { err });
+      return null;
+    })
+    .then((r) => {
+      if (r && (r.delivered || r.failed || r.invalid)) log.info('missed reminders', r);
+    })
+    .finally(() => routineRunner.start());
 
   // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
   // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las
