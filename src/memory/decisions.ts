@@ -174,9 +174,12 @@ export class DecisionLedger {
   /** Rewrites the workstream's "resuelto" from confirmed entries only. */
   sync(workstreamId: string): void {
     const confirmed = this.list(workstreamId, 'confirmed').map((d) => {
+      // '|' separates items in the prompt index: a literal one inside the text
+      // would fake an extra item, so it is swapped for a look-alike.
+      const safe = (t: string) => t.replace(/\|/g, '¦');
       const day = (d.receivedAt ?? '').slice(0, 10);
-      const src = [d.quote ? `«${d.quote}»` : '', day].filter(Boolean).join(' ');
-      return src ? `${d.summary} [${src}]` : d.summary;
+      const src = [d.quote ? `«${safe(d.quote)}»` : '', day].filter(Boolean).join(' ');
+      return src ? `${safe(d.summary)} [${src}]` : safe(d.summary);
     });
     this.#ws.update(workstreamId, { decisions: confirmed.length ? confirmed.join(' | ') : null });
   }

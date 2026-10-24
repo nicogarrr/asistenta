@@ -435,3 +435,36 @@ describe('decision tool -> ledger -> prompt (real tool path)', () => {
     expect(none.isError).toBe(true);
   });
 });
+
+describe('decision listar returns provenance for overflow items', () => {
+  it('shows quote, date and message id of every confirmed decision', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar');
+    const ledger = new DecisionLedger(workDb, workstreams);
+    const tool = createDecisionTool({
+      ledger,
+      workstreams,
+      scopeOf: () => SCOPE,
+      inbound: () => ({
+        messageId: 'm7',
+        userId: 'u1',
+        text: 'Vale, cenamos en casa de Ana.',
+        receivedAt: '2026-10-24T10:00:00Z',
+        authorised: true,
+        scope: SCOPE,
+      }),
+    });
+    await tool.execute('t', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    } as never);
+    const res = await tool.execute('t', { action: 'listar' } as never);
+    const first = res.content[0];
+    const text = first && 'text' in first ? first.text : '';
+    expect(text).toContain('«cenamos en casa de Ana»');
+    expect(text).toContain('2026-10-24');
+    expect(text).toContain('mensaje m7');
+    expect(text).toContain('intención no verificada');
+  });
+});

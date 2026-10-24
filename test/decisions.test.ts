@@ -181,4 +181,24 @@ describe('decision ledger', () => {
       if (part.includes('«')) expect(part).toContain('»');
     }
   });
+
+  it('a single very long item is marked as cut, never shown as complete', () => {
+    const long = 'x'.repeat(700);
+    ledger.recordConfirmed(
+      wsId,
+      `plan ${long}`,
+      'acordamos el plan largo',
+      msg('Acordamos el plan largo.'),
+    );
+    const idx = ws.index(SCOPE);
+    expect(idx).toContain('[recortado: ver decision listar]');
+    expect(idx).not.toContain(long);
+  });
+
+  it("a literal '|' in summary or quote does not create fake items", () => {
+    ledger.recordConfirmed(wsId, 'a | b', 'acordamos a | b', msg('Acordamos a | b.'));
+    const idx = ws.index(SCOPE);
+    expect(idx).toContain('a ¦ b');
+    expect(idx).not.toMatch(/ \| b/);
+  });
 });

@@ -120,7 +120,7 @@ export function fitItems(text: string, max: number): string {
   let size = 0;
   for (const item of items) {
     if (size + item.length > max && kept.length > 0) break;
-    kept.push(item.length > max ? clip(item, max) : item);
+    kept.push(item.length > max ? `${clip(item, max)} [recortado: ver decision listar]` : item);
     size += item.length + 3;
   }
   const more = items.length - kept.length;

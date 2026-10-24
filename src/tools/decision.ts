@@ -72,10 +72,17 @@ export function createDecisionTool(deps: DecisionToolDeps): AgentTool<typeof Par
                 const ds = deps.ledger
                   .list(w.id)
                   .filter((d) => d.status === 'confirmed' || d.status === 'tentative')
-                  .map(
-                    (d) =>
-                      `  - ${d.id} [${d.status === 'confirmed' ? 'confirmada' : 'tentativa'}] ${d.summary}`,
-                  );
+                  .map((d) => {
+                    const src =
+                      d.status === 'confirmed'
+                        ? ` | cita «${d.quote ?? ''}» | ${d.receivedAt ?? 'sin fecha'} | mensaje ${d.messageId || 'sin id'}`
+                        : '';
+                    const label =
+                      d.status === 'confirmed'
+                        ? 'dicha por el usuario, intención no verificada'
+                        : 'tentativa';
+                    return `  - ${d.id} [${label}] ${d.summary}${src}`;
+                  });
                 return [`${w.id}: ${w.title}`, ...ds].join('\n');
               })
               .join('\n'),
