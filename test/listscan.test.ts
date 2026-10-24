@@ -11,7 +11,7 @@ import {
   parseScanConfig,
   scanOnce,
 } from '../src/watch/listscan.js';
-import { MIN_GAP_MS, PriceStore } from '../src/watch/pricewatch.js';
+import { detect, MIN_GAP_MS, PriceStore, referenceFor } from '../src/watch/pricewatch.js';
 
 const DAY = 86_400_000;
 const ldList = (items: { name: string; price: unknown; url: string; cur?: string }[]) =>
@@ -472,5 +472,30 @@ describe('descubrimiento amplio en Amazon.es', () => {
     const t = coverageText(store, ls, '2026-10-24');
     expect(t).toContain('Amazon.es: 1 de 2 categorías leídas');
     expect(t).toContain('no es un barrido exhaustivo');
+  });
+});
+
+describe('caso sintético tipo Conga (valores inventados, no son datos de Amazon)', () => {
+  const HOUR = 3_600_000;
+  it('sin historial ni otras tiendas NO hay referencia: no se marca candidato (límite conocido)', () => {
+    const store = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const ref = referenceFor(store.history('m:congaq200', 'amazon'), 0, []);
+    expect(ref).toBeNull();
+    expect(detect(2290, ref, 70)).toBeNull();
+  });
+  it('con referencia cruzada de >= 2 tiendas, 22,90 frente a ~499 sí es candidato', () => {
+    const ref = referenceFor([], 0, [
+      { store: 'worten', cents: 49890 },
+      { store: 'fnac', cents: 51900 },
+    ]);
+    expect(ref?.kind).toBe('cruzada');
+    expect(detect(2290, ref, 70)?.dropPct).toBeGreaterThanOrEqual(95);
+  });
+  it('un precio normal tras una bajada moderada no es candidato', () => {
+    const ref = referenceFor([], HOUR, [
+      { store: 'worten', cents: 49890 },
+      { store: 'fnac', cents: 51900 },
+    ]);
+    expect(detect(39900, ref, 70)).toBeNull();
   });
 });

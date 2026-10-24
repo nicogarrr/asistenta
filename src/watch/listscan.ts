@@ -346,7 +346,7 @@ export const AMAZON_QUERIES: string[] = [
   'router wifi',
 ];
 
-export function amazonQueryListing(q: string, pages = 2): Listing {
+export function amazonQueryListing(q: string, pages = 1): Listing {
   return {
     category: q,
     store: 'amazon',
@@ -355,6 +355,7 @@ export function amazonQueryListing(q: string, pages = 2): Listing {
   };
 }
 
+// Una página por término (la 1.ª): no desplazar demasiado las categorías fijas dentro del tope diario.
 DEFAULT_LISTINGS.push(...AMAZON_QUERIES.map((q) => amazonQueryListing(q)));
 
 /** URL de la página n (n >= 1) de un listado. Solo se paginan las tiendas con patrón verificado. */
