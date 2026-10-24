@@ -38,7 +38,10 @@ console.log('=== TOOL CALLS\n' + calls.join('\n'));
 console.log('=== ASKS\n' + JSON.stringify(asks, null, 1));
 console.log('=== FINAL\n' + res.text + (res.error ? '\nERROR ' + res.error : ''));
 let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => { const m = document.getElementById('mine'); return m ? 'PRESENT:' + location.href + '|' + m.innerText : 'ABSENT:' + location.href; })"); sel = String(r.text); } catch {}
-const goal = process.env.QA_GOAL_CITY || ''; console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ selected: sel, goal, verdict: !goal ? 'n/a' : /^error:/.test(sel) ? 'INVALID(oracle-error)' : !/^PRESENT:https?:\/\/127\.0\.0\.1:8765\/stores/.test(sel) ? 'INVALID(oracle-state-lost)' : !sel.replace(/^PRESENT:[^|]*\|/, '').trim() ? 'no-selection' : sel.replace(/^PRESENT:[^|]*\|/, '').toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL' }));
+const goal = process.env.QA_GOAL_CITY || ''; const picks = state.picks; const lastPick = picks[picks.length - 1];
+// Ground truth = the fixture SERVER's record of picks (survives browser/session loss). The DOM read of #mine is display only.
+const verdict = !goal ? 'n/a' : !picks.length ? 'no-selection' : `${lastPick.name} - ${lastPick.addr}`.toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL';
+console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ serverPicks: picks, domRead: sel.slice(0, 200), goal, verdict, note: 'verdict from server-side pick record; last pick counts; multiple picks listed' }));
 console.log('=== SHOP STATE\n' + JSON.stringify({ cart: state.cart, payHits: state.payHits, reqs: state.log.length }));
 await svc.closeAll?.();
 process.exit(0);

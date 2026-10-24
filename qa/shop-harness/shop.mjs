@@ -1,6 +1,6 @@
 // SYNTHETIC local shop. No real data, no payments: /pay only increments a counter.
 import http from 'node:http';
-export const state = { cart: [], payHits: 0, log: [] };
+export const state = { cart: [], payHits: 0, log: [], picks: [] };
 const MENU = [
   { id: 'p1', name: 'Margarita', desc: 'Tomate, mozzarella, albahaca', price: { Pequeña: 7.5, Mediana: 9.5, Familiar: 12 } },
   { id: 'p2', name: 'Cuatro Quesos', desc: 'Mozzarella, gorgonzola, parmesano, emmental', price: { Pequeña: 9, Mediana: 11.5, Familiar: 14.5 } },
@@ -44,8 +44,10 @@ const srv = http.createServer((req, res) => {
     const all = [{ id: '35143', name: 'MOLLET 1', addr: 'Plaza Mayor 4 local 9, 08100 Mollet (Barcelona)' }, { id: '40001', name: 'MADRID CENTRO', addr: 'Calle Mayor 10, 28013 Madrid' }, ...(process.env.SHOP_GIJON ? [{ id: '40002', name: 'GIJON PLAZA', addr: 'Plaza Mayor 2, 33201 Gijón (Asturias)' }] : [])];
     const words = q.split(/[ ,]+/).filter(w => w.length > 3 && !/^\d+$/.test(w));
     const hit = all.filter(st => words.some(w => (st.name + ' ' + st.addr).toLowerCase().includes(w) && w !== 'gijón' && w !== 'gijon'));
-    return send(page(`<h1>Elige tu tienda</h1><form method="get" action="/stores"><label for="q">Buscar tienda</label><input id="q" name="q" value="${q}"><button type="submit">Buscar</button></form>${q ? (hit.length ? hit.map(st => `<div class="store"><b>${st.name} (#${st.id})</b><p>${st.addr}</p><button class="pick" data-id="${st.id}" data-n="${st.name}" data-a="${st.addr}">PROGRAMAR RECOGER EN TIENDA</button></div>`).join('') : '<p>Sin resultados</p>') : ''}<aside id="mine"></aside>`, `document.querySelectorAll('.pick').forEach(b=>b.onclick=()=>{document.getElementById('mine').innerHTML='<h2>Mi tienda</h2><p>'+b.dataset.n+' - '+b.dataset.a+'</p>';});`));
+    return send(page(`<h1>Elige tu tienda</h1><form method="get" action="/stores"><label for="q">Buscar tienda</label><input id="q" name="q" value="${q}"><button type="submit">Buscar</button></form>${q ? (hit.length ? hit.map(st => `<div class="store"><b>${st.name} (#${st.id})</b><p>${st.addr}</p><button class="pick" data-id="${st.id}" data-n="${st.name}" data-a="${st.addr}">PROGRAMAR RECOGER EN TIENDA</button></div>`).join('') : '<p>Sin resultados</p>') : ''}<aside id="mine"></aside>`, `document.querySelectorAll('.pick').forEach(b=>b.onclick=()=>{fetch('/select?id='+encodeURIComponent(b.dataset.id)+'&n='+encodeURIComponent(b.dataset.n)+'&a='+encodeURIComponent(b.dataset.a));document.getElementById('mine').innerHTML='<h2>Mi tienda</h2><p>'+b.dataset.n+' - '+b.dataset.a+'</p>';});`));
   }
+  // Server-side record of every store pick, independent of any browser session (oracle ground truth).
+  if (u.pathname === '/select') { state.picks.push({ id: u.searchParams.get('id'), name: u.searchParams.get('n'), addr: u.searchParams.get('a') }); return send('{}', 'application/json'); }
   if (u.pathname === '/pay' && req.method === 'POST') { state.payHits++; return send('{}', 'application/json'); }
   send('no', 'text/plain', 404);
 });

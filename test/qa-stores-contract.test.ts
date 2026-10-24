@@ -59,4 +59,22 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
       delete process.env.SHOP_GIJON;
     }
   });
+
+  it('server-side pick record survives losing the browser session (oracle is not blind)', async () => {
+    process.env.SHOP_GIJON = '1';
+    try {
+      const mod = (await import('../qa/shop-harness/shop.mjs' as string)) as {
+        state: { picks: Array<{ name: string }> };
+      };
+      mod.state.picks.length = 0;
+      await svc.open('srv', `http://127.0.0.1:${PORT}/stores?q=Plaza+Mayor`);
+      await svc.clickTarget('srv', '[data-id="40002"]');
+      await new Promise((r) => setTimeout(r, 500));
+      expect(mod.state.picks.map((p) => p.name)).toEqual(['GIJON PLAZA']);
+      await svc.closeAll(); // session lost: the record must remain
+      expect(mod.state.picks).toHaveLength(1);
+    } finally {
+      delete process.env.SHOP_GIJON;
+    }
+  });
 });
