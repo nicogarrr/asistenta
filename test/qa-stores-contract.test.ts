@@ -87,7 +87,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         run: string;
         allPicks: unknown;
         sel?: string;
-        offerLoads?: unknown;
+        storeLoads?: unknown;
       }) => {
         verdict: string;
         historyVerdict: string;
@@ -108,7 +108,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         run: 'r1',
         allPicks: [other],
         sel: clean,
-        offerLoads: [{ run: 'r1' }],
+        storeLoads: [{ run: 'r1', offer: true }],
       }).verdict,
     ).toMatch(/^no-selection\(/);
     // clicks happened client-side but no server record: delivery unconfirmed, NOT no-selection
@@ -117,7 +117,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         goal: 'Gijón',
         run: 'r1',
         allPicks: [],
-        offerLoads: [{ run: 'r1' }],
+        storeLoads: [{ run: 'r1', offer: true }],
         sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=1|',
       }).verdict,
     ).toBe('INVALID(oracle-delivery-unconfirmed)');
@@ -127,13 +127,43 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         goal: 'Gijón',
         run: 'r1',
         allPicks: [],
-        offerLoads: [{ run: 'r1' }, { run: 'r1' }],
+        storeLoads: [
+          { run: 'r1', offer: true },
+          { run: 'r1', offer: false },
+        ],
         sel: clean,
       }).verdict,
     ).toBe('INVALID(oracle-reload-ambiguous)');
     expect(judge({ goal: 'Gijón', run: 'r1', allPicks: [], sel: clean }).verdict).toBe(
       'INVALID(oracle-loads-missing)',
     );
+    // failed delivery + reload with NO results / no q (offer:false) after an offer page: still INVALID
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [],
+        storeLoads: [
+          { run: 'r1', offer: false },
+          { run: 'r1', offer: true },
+          { run: 'r1', offer: false },
+        ],
+        sel: clean,
+      }).verdict,
+    ).toBe('INVALID(oracle-reload-ambiguous)');
+    // loads only BEFORE any offer page cannot hide a click
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [],
+        storeLoads: [
+          { run: 'r1', offer: false },
+          { run: 'r1', offer: true },
+        ],
+        sel: clean,
+      }).verdict,
+    ).toMatch(/^no-selection\(/);
     // page left the fixture / session lost: INVALID, not no-selection
     expect(
       judge({ goal: 'Gijón', run: 'r1', allPicks: [], sel: 'ABSENT:about:blank' }).verdict,
@@ -147,7 +177,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         goal: 'Gijón',
         run: 'r1',
         allPicks: [],
-        offerLoads: [{ run: 'r1' }],
+        storeLoads: [{ run: 'r1', offer: true }],
         sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=0|Mi tienda X',
       }).verdict,
     ).toBe('INVALID(oracle-record-mismatch)');

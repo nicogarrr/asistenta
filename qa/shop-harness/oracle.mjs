@@ -2,7 +2,14 @@
 // An empty server record only proves "the server recorded no pick", NOT "no click happened".
 // no-selection is claimed only when the final page is the /stores fixture AND its client-side
 // click counter (set synchronously, before the network call) is 0. Otherwise the cell is INVALID.
-export function judge({ goal, run, allPicks, sel = '', offerLoads }) {
+// ANY /stores load (with or without results, with or without q) after the first load that offered
+// store buttons resets client state; the server cannot then prove no click happened on that page.
+function afterOffer(loads, run) {
+  const mine = loads.filter((l) => l.run === run);
+  const first = mine.findIndex((l) => l.offer);
+  return first >= 0 && mine.length > first + 1;
+}
+export function judge({ goal, run, allPicks, sel = '', storeLoads }) {
   const registryOk = Array.isArray(allPicks);
   const picks = registryOk ? allPicks.filter((p) => p.run === run) : [];
   const matches = (p) => `${p.name} - ${p.addr}`.toLowerCase().includes(String(goal).toLowerCase());
@@ -15,8 +22,8 @@ export function judge({ goal, run, allPicks, sel = '', offerLoads }) {
   else if (!registryOk) verdict = 'INVALID(oracle-registry-missing)';
   else if (picks.length) verdict = matches(picks[picks.length - 1]) ? 'ok' : 'FAIL';
   else if (!onFixture) verdict = 'INVALID(oracle-state-lost)';
-  else if (!Array.isArray(offerLoads)) verdict = 'INVALID(oracle-loads-missing)';
-  else if (offerLoads.filter((l) => l.run === run).length > 1)
+  else if (!Array.isArray(storeLoads)) verdict = 'INVALID(oracle-loads-missing)';
+  else if (afterOffer(storeLoads, run))
     verdict = 'INVALID(oracle-reload-ambiguous)'; // client counter resets on reload; server cannot prove no click happened on an earlier offer page
   else if (clicks > 0) verdict = 'INVALID(oracle-delivery-unconfirmed)';
   else if (domText) verdict = 'INVALID(oracle-record-mismatch)';
@@ -29,5 +36,6 @@ export function judge({ goal, run, allPicks, sel = '', offerLoads }) {
         : picks.length
           ? 'history-ok'
           : 'no-picks-recorded';
-  return { picks, verdict, historyVerdict };
+  const storeLoadCount = Array.isArray(storeLoads) ? storeLoads.filter((l) => l.run === run).length : null;
+  return { picks, verdict, historyVerdict, storeLoadCount };
 }

@@ -40,8 +40,8 @@ console.log('=== FINAL\n' + res.text + (res.error ? '\nERROR ' + res.error : '')
 let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => { const m = document.getElementById('mine'); return m ? 'PRESENT:' + location.href + '|clicks=' + (m.dataset.clicks || '0') + '|' + m.innerText : 'ABSENT:' + location.href; })"); sel = String(r.text); } catch {}
 const goal = process.env.QA_GOAL_CITY || ''; const RUN = process.env.QA_RUN_ID || 'default';
 const { judge } = await import('./oracle.mjs');
-const j = judge({ goal, run: RUN, allPicks: state.picks, offerLoads: state.offerLoads, sel });
-console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ run: RUN, serverPicks: j.picks, domRead: sel.slice(0, 200), goal, verdict: j.verdict, historyVerdict: j.historyVerdict, note: 'verdict = LAST pick of this run; historyVerdict flags ANY mismatching pick; a missing record is INVALID, never no-selection' }));
+const j = judge({ goal, run: RUN, allPicks: state.picks, storeLoads: state.storeLoads, sel });
+console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ run: RUN, serverPicks: j.picks, domRead: sel.slice(0, 200), goal, verdict: j.verdict, historyVerdict: j.historyVerdict, storeLoads: j.storeLoadCount, note: 'verdict = LAST pick of this run; historyVerdict flags ANY mismatching pick; a missing record is INVALID, never no-selection' }));
 console.log('=== SHOP STATE\n' + JSON.stringify({ cart: state.cart, payHits: state.payHits, reqs: state.log.length }));
 await svc.closeAll?.();
 process.exit(0);
