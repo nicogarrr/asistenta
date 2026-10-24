@@ -9,7 +9,13 @@ import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 import { callPageAdClick, callPageMediaState, callPageScan, installPageScan } from './inpage.js';
-import { describeTarget, pageSummary } from './target.js';
+import {
+  describeContext,
+  describeLocator,
+  describeTarget,
+  pageSummary,
+  UNREADABLE_TARGET,
+} from './target.js';
 
 /**
  * Real browser control, one persistent profile per chat.
@@ -1281,7 +1287,21 @@ export class BrowserService {
   /** What the element behind `selector` is and does, for the permission gate. */
   async describeTarget(scope: string, selector: string): Promise<string> {
     const session = await this.#session(scope);
-    return describeTarget(session.page, selector);
+    const literal = await describeTarget(session.page, selector, 1_000, 1_000);
+    if (literal !== UNREADABLE_TARGET) return literal;
+    // The model may name the element by the text it reads on screen. The action resolves
+    // that through the rescue chain (role, text, label, similarity); the gate has to
+    // read the SAME element, not report the name as unreadable.
+    const found = await this.#resolveLocator(session, selector, 4_000).catch(() => null);
+    if (!found) return UNREADABLE_TARGET;
+    return describeLocator(found.locator);
+  }
+
+  /** The card/row text around the element, for the gate question (see describeContext). */
+  async describeContext(scope: string, selector: string): Promise<string> {
+    const session = await this.#session(scope);
+    const found = await this.#resolveLocator(session, selector, 3_000).catch(() => null);
+    return found ? describeContext(found.locator) : '';
   }
 
   /** Amounts and address lines on the current page, for a payment confirmation. */

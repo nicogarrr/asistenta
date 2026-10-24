@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 
 /**
  * What a click or keypress would act on, as text the permission gate can read.
@@ -30,9 +30,24 @@ export async function describeTarget(
   return describeOnce(page, selector, retryTimeoutMs);
 }
 
+/**
+ * Describe an element already located (by the same resolver the action will use), so the
+ * gate judges the element that will be acted on and not a second guess at it.
+ */
+export async function describeLocator(loc: Locator, timeoutMs = 4_000): Promise<string> {
+  return describeLoc(loc.first(), timeoutMs);
+}
+
 async function describeOnce(page: Page, selector: string, timeoutMs: number): Promise<string> {
   try {
-    const loc = page.locator(selector).first();
+    return await describeLoc(page.locator(selector).first(), timeoutMs);
+  } catch {
+    return UNREADABLE_TARGET;
+  }
+}
+
+async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
+  try {
     const text = await loc.evaluate(
       (el) => {
         const e = el as HTMLElement & { value?: string; form?: HTMLFormElement | null };
@@ -132,6 +147,34 @@ export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string
     });
     void timeoutMs;
     return lines.join('\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The text of the card or row the control sits in (the nearest ancestor that says more than the
+ * control itself, bounded), so a human asked about "PROGRAMAR RECOGER EN TIENDA 35143" also sees
+ * WHICH store, product or option that button belongs to. Structural: no wording, no site names.
+ * Returns '' when no such container is found.
+ */
+export async function describeContext(loc: Locator, timeoutMs = 2_000): Promise<string> {
+  try {
+    return await loc.first().evaluate(
+      (el) => {
+        const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
+        const own = norm((el as HTMLElement).innerText || el.textContent || '');
+        let node: HTMLElement | null = el.parentElement;
+        for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+          const t = norm(node.innerText || '');
+          if (t.length > own.length + 20 && t.length <= 400) return t.slice(0, 300);
+          if (t.length > 400) break;
+        }
+        return '';
+      },
+      undefined,
+      { timeout: timeoutMs },
+    );
   } catch {
     return '';
   }

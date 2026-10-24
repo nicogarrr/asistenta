@@ -84,18 +84,21 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
   if (call.tool === 'browser' && target) {
-    const [element = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
+    const [withCtx = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
+    const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
+    const context = ctxParts.join('\n').trim();
     const summary = rest.join('\n').trim();
     const shown = element.split(' | ').filter(Boolean).slice(0, 6).join(' · ').slice(0, 300);
     const raw = [
       `¿Permito esta acción en el navegador?`,
       `Elemento: ${shown}`,
+      context ? `Parte de: ${context.slice(0, 300)}` : '',
       summary ? `Datos de la página:\n${summary.slice(0, 700)}` : '',
       `Motivo: ${reason}`,
     ]
       .filter(Boolean)
       .join('\n');
-    // Bounded by construction (300 + 700 + reason); the reason is prose, not the
+    // Bounded by construction (300 + 300 + 700 + reason); the reason is prose, not the
     // operation, so masking it hides nothing the click would do.
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');

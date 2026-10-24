@@ -427,6 +427,9 @@ export async function challengeNote(
   return { kind: found.kind, text: parts.join(' ') };
 }
 
+/** Separator the approval text knows: element description, then the text of its card. */
+export const CONTEXT_MARK = '\nCONTEXTO DEL ELEMENTO:\n';
+
 export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
@@ -527,6 +530,11 @@ export function createBrowserTool(
       '  await page.fill("#search", "renfe madrid")',
       '  await page.waitForTimeout(500)',
       '  await page.evaluate(() => document.title)',
+      'AFTER A SELECTION, VERIFY IT: when you pick a place, store, product, size or option, read the',
+      'page back (snapshot or the summary panel) and compare what it now shows with what the user',
+      'asked for. A map or a search box showing the right place does not prove the selection that',
+      'was actually saved. If the page shows something different (another city, another item), stop',
+      'and say so; do not continue the order on the wrong selection.',
       'Never type credentials or card numbers into a page.',
     ].join('\n'),
     parameters: BrowserParams,
@@ -539,7 +547,14 @@ export function createBrowserTool(
       const action = String(args.action ?? '');
       const selector = typeof args.selector === 'string' ? args.selector : '';
       if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
-      const target = await service.describeTarget(scopeOf(), selector);
+      const base = await service.describeTarget(scopeOf(), selector);
+      // A selection (store, product, option) is judged by the card it belongs to, not by
+      // the button's own label: show that card's text next to the element.
+      const ctx =
+        action === 'click' || action === 'choose'
+          ? await service.describeContext(scopeOf(), selector).catch(() => '')
+          : '';
+      const target = ctx ? `${base}${CONTEXT_MARK}${ctx}` : base;
       // Only for targets that read like money: the confirmation shows what is being paid.
       if (!isPaymentText(target)) return target;
       const summary = await service.summarisePage(scopeOf()).catch(() => '');
