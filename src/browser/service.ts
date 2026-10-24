@@ -1304,6 +1304,20 @@ export class BrowserService {
     return found ? describeContext(found.locator) : '';
   }
 
+  /** Visible text lines of the page (bounded), to diff before/after an action. */
+  async visibleLines(scope: string): Promise<string[]> {
+    const session = await this.#session(scope);
+    const text = await session.page
+      .locator('body')
+      .innerText({ timeout: 2_000 })
+      .catch(() => '');
+    return text
+      .split('\n')
+      .map((l) => l.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(0, 400);
+  }
+
   /** Amounts and address lines on the current page, for a payment confirmation. */
   async summarisePage(scope: string): Promise<string> {
     const session = await this.#session(scope);
