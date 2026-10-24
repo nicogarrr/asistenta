@@ -7,6 +7,14 @@
  */
 
 import {
+  candidateTerms,
+  MAX_DISCOVERED_TERMS,
+  MAX_NEW_TERMS_PER_RUN,
+  MAX_OBSERVATIONS,
+  MAX_OBSERVATIONS_PER_RUN,
+  TERM_RETENTION_MS,
+} from './discovery.js';
+import {
   detect,
   hostOf,
   isBlockedPage,
@@ -382,6 +390,15 @@ export function pageUrl(l: Listing, n: number): string | null {
   return null;
 }
 
+function discoveredListing(q: string): Listing {
+  return {
+    category: q,
+    store: 'amazon',
+    url: `https://www.amazon.es/s?k=${encodeURIComponent(q).replace(/%20/g, '+')}`,
+    pages: 1,
+  };
+}
+
 export interface Candidate {
   key: string;
   store: StoreId;
@@ -402,6 +419,8 @@ export interface ScanDeps {
   now: () => number;
   random: () => number;
   managesRequestBudget?: boolean;
+  /** Amplía el barrido con términos extraídos de tarjetas de Amazon ya leídas (con tope). */
+  discover?: boolean;
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -416,6 +435,9 @@ export interface ScanSummary {
   blockedStores: string[];
   noCardStores: string[];
   capped: string[];
+  /** Productos vistos sin referencia: observaciones, NO alarmas. */
+  unreferenced: number;
+  newTerms: string[];
 }
 
 export const NO_CARDS_BEFORE_OFF = 3;
@@ -457,11 +479,26 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
     blockedStores: [],
     noCardStores: [],
     capped: [],
+    unreferenced: 0,
+    newTerms: [],
   };
+  d.store.pruneTerms(TERM_RETENTION_MS);
+  // Los términos descubiertos (solo Amazon, 1 página, con tope) entran en la MISMA rotación
+  // por cursor que las categorías fijas: no pueden dejar sin lectura a las anteriores.
+  const discovered =
+    d.discover && d.listings.some((l) => l.store === 'amazon')
+      ? d.store
+          .discoveredTerms(TERM_RETENTION_MS)
+          .slice(0, MAX_DISCOVERED_TERMS)
+          .map((q) => discoveredListing(q))
+      : [];
+  const allListings = [...d.listings, ...discovered];
+  const known = new Set(allListings.map((l) => norm(l.category)));
+  let obsThisRun = 0;
   const gap = Number.isFinite(d.gapMs) ? Math.max(d.gapMs, MIN_GAP_MS) : MIN_GAP_MS;
   const perRun = Math.max(1, Math.floor(d.pagesPerRun));
   const queues: Job[][] = [];
-  for (const [store, jobs] of jobsFor(d.listings)) {
+  for (const [store, jobs] of jobsFor(allListings)) {
     if (d.store.getMeta(`nocards_off:${store}:${dayKey(d.now())}`) > 0) {
       out.noCardStores.push(STORES[store].name);
       continue;
@@ -553,6 +590,22 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
     d.store.setMeta(`nocards:${job.store}`, 0);
     const covKey = `cov:${job.store}:${dayKey(d.now())}:${job.listing.category}`;
     d.store.setMeta(covKey, d.store.getMeta(covKey) + 1);
+    if (d.discover && job.store === 'amazon') {
+      const active = d.store.discoveredTerms(TERM_RETENTION_MS);
+      for (const t of active)
+        if (cards.some((c) => norm(c.title).includes(t))) d.store.touchTerm(t);
+      for (const t of candidateTerms(
+        cards.map((c) => c.title),
+        known,
+        isExcluded,
+      )) {
+        if (out.newTerms.length >= MAX_NEW_TERMS_PER_RUN) break;
+        if (d.store.discoveredTerms(TERM_RETENTION_MS).length >= MAX_DISCOVERED_TERMS) break;
+        d.store.touchTerm(t);
+        known.add(t);
+        out.newTerms.push(t);
+      }
+    }
     for (const c of cards) {
       if (isExcluded(c.title)) continue;
       if (job.listing.category === 'tablets' && !isPremiumTablet(c.title)) continue;
@@ -578,10 +631,17 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
           });
         continue;
       }
+      if (!ref && obsThisRun < MAX_OBSERVATIONS_PER_RUN) {
+        obsThisRun++;
+        out.unreferenced++;
+        d.store.observe(key, job.store, c.title, c.url, c.cents);
+      }
       if (d.now() - d.store.lastTs(key, job.store) >= RECORD_EVERY_MS)
         d.store.record(key, job.store, c.cents);
     }
   }
+  if (obsThisRun > 0 && d.store.observationCount() > MAX_OBSERVATIONS * 1.1)
+    d.store.trimObservations(MAX_OBSERVATIONS);
   out.blockedStores = [...blocked];
   out.candidates = [...cands.values()]
     .filter((c) => d.now() - d.store.getMeta(`cand:${c.key}|${c.store}`) >= CANDIDATE_COOLDOWN_MS)
@@ -618,6 +678,8 @@ export interface ScanConfig {
   pagesPerRun: number;
   dailyRequestsPerStore: number;
   maxCandidates: number;
+  /** Amplía con términos sacados de tarjetas de Amazon ya leídas (por defecto sí, con tope). */
+  discover: boolean;
   listings: Listing[];
 }
 
@@ -635,6 +697,8 @@ export function parseScanConfig(raw: unknown): ScanConfig {
     throw new Error('scan debe ser un objeto');
   if (s.enabled !== undefined && typeof s.enabled !== 'boolean')
     throw new Error('scan.enabled debe ser true o false');
+  if (s.discover !== undefined && typeof s.discover !== 'boolean')
+    throw new Error('scan.discover debe ser true o false');
   if (s.focus !== undefined && typeof s.focus !== 'string')
     throw new Error('scan.focus debe ser el nombre de una categoría');
   let pausedStores: StoreId[] = ['mediamarkt', 'pccomponentes'];
@@ -695,6 +759,7 @@ export function parseScanConfig(raw: unknown): ScanConfig {
     pagesPerRun: intIn(s.pagesPerRun, 'pagesPerRun', 5, 1, 20),
     dailyRequestsPerStore: intIn(s.dailyRequestsPerStore, 'dailyRequestsPerStore', 170, 10, 400),
     maxCandidates: intIn(s.maxCandidates, 'maxCandidates', 10, 1, 30),
+    discover: s.discover !== false,
     listings,
   };
 }

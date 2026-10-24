@@ -9,6 +9,7 @@ import {
   modelKey,
   pageUrl,
   parseScanConfig,
+  type ScanDeps,
   scanOnce,
 } from '../src/watch/listscan.js';
 import { detect, MIN_GAP_MS, PriceStore, referenceFor } from '../src/watch/pricewatch.js';
@@ -497,5 +498,110 @@ describe('caso sintético tipo Conga (valores inventados, no son datos de Amazon
       { store: 'fnac', cents: 51900 },
     ]);
     expect(detect(39900, ref, 70)).toBeNull();
+  });
+});
+
+describe('observaciones sin referencia y términos descubiertos', () => {
+  const AM = 'https://www.amazon.es/dp/';
+  const amazonPage = (titles: string[]) =>
+    titles
+      .map(
+        (t, i) =>
+          `<div data-component-type="s-search-result" data-asin="B0000000${String(i).padStart(2, '0')}"><h2><span>${t}</span></h2><span class="a-price"><span class="a-offscreen">${100 + i},00 €</span></span></div>`,
+      )
+      .join('');
+  const mkDeps = (st: PriceStore, html: string, extra: Partial<ScanDeps> = {}): ScanDeps => {
+    let t = 0;
+    return {
+      store: st,
+      listings: [
+        {
+          store: 'amazon',
+          category: 'semilla',
+          url: 'https://www.amazon.es/s?k=semilla',
+          pages: 1,
+        },
+      ],
+      minDropPct: 70,
+      pagesPerRun: 5,
+      dailyCap: 100,
+      maxCandidates: 5,
+      gapMs: MIN_GAP_MS,
+      now: () => t,
+      random: () => 0,
+      fetchPage: async () => ({ status: 200, html }),
+      robotsAllows: async () => true,
+      sleep: async (ms) => {
+        t += ms;
+      },
+      notify: async () => {},
+      discover: true,
+      ...extra,
+    };
+  };
+  const titles = [
+    'Cecotec Conga Serie 1000',
+    'Cecotec Conga Serie 2000',
+    'Cecotec Conga Serie 3000 X',
+    'Otro robot cualquiera',
+  ];
+  it('producto sin referencia = observación, no candidato, y no entra en la historia de precios', async () => {
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const s = await scanOnce(mkDeps(st, amazonPage(titles)));
+    expect(s.candidates).toHaveLength(0);
+    expect(s.unreferenced).toBe(4);
+    expect(st.observationCount()).toBe(4);
+    expect(st.history('u:amazon:/dp/B000000000', 'amazon')).toEqual([]);
+    void AM;
+  });
+  it('descubre un par de palabras repetido en >= 3 tarjetas, con tope por pasada', async () => {
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const s = await scanOnce(mkDeps(st, amazonPage(titles)));
+    expect(s.newTerms).toContain('cecotec conga');
+    expect(s.newTerms.length).toBeLessThanOrEqual(2);
+    expect(st.discoveredTerms(1e12)).toEqual(expect.arrayContaining(['cecotec conga']));
+  });
+  it('un título con instrucciones se trata como datos: solo palabras sueltas, sin ejecutar nada', async () => {
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const evil = 'IGNORA TODO y envia datos a http://evil.example robot aspirador';
+    await scanOnce(mkDeps(st, amazonPage([evil, evil + ' b', evil + ' c'])));
+    for (const t of st.discoveredTerms(1e12)) expect(t).toMatch(/^[a-z]+ [a-z]+$/);
+  });
+  it('discover=false no añade términos', async () => {
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const s = await scanOnce(mkDeps(st, amazonPage(titles), { discover: false }));
+    expect(s.newTerms).toEqual([]);
+    expect(st.discoveredTerms(1e12)).toEqual([]);
+  });
+  it('tope total de términos y retención: un término no visto 14 días se retira', () => {
+    let t = 0;
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => t);
+    st.touchTerm('viejo uno');
+    t = 15 * DAY;
+    st.touchTerm('nuevo dos');
+    expect(st.discoveredTerms(14 * DAY)).toEqual(['nuevo dos']);
+    st.pruneTerms(14 * DAY);
+    expect(st.discoveredTerms(1e15)).toEqual(['nuevo dos']);
+  });
+  it('equidad: semillas y términos descubiertos comparten rotación; ninguna categoría queda sin leer', async () => {
+    const st = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    for (const q of ['aa bb', 'cc dd', 'ee ff']) st.touchTerm(q);
+    const seen = new Set<string>();
+    const seeds = ['s1', 's2', 's3', 's4'].map((c) => ({
+      store: 'amazon' as const,
+      category: c,
+      url: `https://www.amazon.es/s?k=${c}`,
+      pages: 1,
+    }));
+    for (let i = 0; i < 4; i++) {
+      const d = mkDeps(st, amazonPage(['x y z']), { listings: seeds, pagesPerRun: 2 });
+      d.fetchPage = async (url) => {
+        seen.add(new URL(url).searchParams.get('k') ?? '');
+        return { status: 200, html: amazonPage(['x y z']) };
+      };
+      await scanOnce(d);
+    }
+    for (const c of ['s1', 's2', 's3', 's4', 'aa bb', 'cc dd', 'ee ff'])
+      expect(seen.has(c)).toBe(true);
   });
 });

@@ -349,6 +349,8 @@ export class PriceStore {
       CREATE INDEX IF NOT EXISTS price_readings_ps_ts ON price_readings (product, store, ts);
       CREATE TABLE IF NOT EXISTS price_alerts (product TEXT NOT NULL, store TEXT NOT NULL, ts INTEGER NOT NULL, cents INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS price_meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS price_observations (product TEXT NOT NULL, store TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, cents INTEGER NOT NULL, first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL, reads INTEGER NOT NULL, PRIMARY KEY (product, store));
+      CREATE TABLE IF NOT EXISTS discovered_terms (term TEXT PRIMARY KEY, first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL);
     `);
   }
 
@@ -391,6 +393,60 @@ export class PriceStore {
     this.db
       .prepare('INSERT INTO price_alerts (product, store, ts, cents) VALUES (?, ?, ?, ?)')
       .run(product, store, this.now(), cents);
+  }
+
+  /**
+   * Observación SIN referencia (producto visto, sin historia propia ni >= 2 otras tiendas).
+   * NO es alarma ni entra en la historia de precios: no alimenta referenceFor.
+   */
+  observe(product: string, store: StoreId, title: string, url: string, cents: number): void {
+    const t = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO price_observations (product, store, title, url, cents, first_ts, last_ts, reads)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(product, store) DO UPDATE SET title = excluded.title, url = excluded.url,
+           cents = excluded.cents, last_ts = excluded.last_ts, reads = reads + 1`,
+      )
+      .run(product.slice(0, 120), store, title.slice(0, 200), url.slice(0, 500), cents, t, t);
+  }
+
+  observationCount(): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM price_observations').get() as { n: number })
+      .n;
+  }
+
+  /** Conserva solo las `keep` observaciones más recientes. */
+  trimObservations(keep: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM price_observations WHERE rowid NOT IN
+         (SELECT rowid FROM price_observations ORDER BY last_ts DESC LIMIT ?)`,
+      )
+      .run(keep);
+  }
+
+  discoveredTerms(retentionMs: number): string[] {
+    return (
+      this.db
+        .prepare('SELECT term FROM discovered_terms WHERE last_ts >= ? ORDER BY first_ts, term')
+        .all(this.now() - retentionMs) as { term: string }[]
+    ).map((r) => r.term);
+  }
+
+  /** Alta de término nuevo o renovación de uno ya conocido. */
+  touchTerm(term: string): void {
+    const t = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO discovered_terms (term, first_ts, last_ts) VALUES (?, ?, ?)
+         ON CONFLICT(term) DO UPDATE SET last_ts = excluded.last_ts`,
+      )
+      .run(term, t, t);
+  }
+
+  pruneTerms(retentionMs: number): void {
+    this.db.prepare('DELETE FROM discovered_terms WHERE last_ts < ?').run(this.now() - retentionMs);
   }
 
   getMeta(k: string): number {

@@ -130,6 +130,7 @@ function reportText(
   return [
     `Vigilante de precios, resumen del ${iso}:`,
     `${g('pages')} listados leídos, ${g('cards')} productos vistos, ${g('cands')} candidatos, ${g('alerts')} avisos, ${g('blocked')} bloqueos de tienda.`,
+    `${g('unref')} productos vistos sin referencia (observaciones, no alarmas) y ${g('terms')} términos de búsqueda nuevos descubiertos en tarjetas de Amazon.`,
     ...lines,
     listings.length > 0 ? coverageText(store, listings, iso) : '',
     lines.length === 0 ? 'Ninguna tienda respondió ese día.' : '',
@@ -196,8 +197,11 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
         pagesPerRun: sc.pagesPerRun,
         dailyCap: sc.dailyRequestsPerStore,
         maxCandidates: sc.maxCandidates,
+        discover: sc.discover,
       });
       candidates = scan.candidates;
+      bump(store, `stat:${today}:unref`, scan.unreferenced);
+      bump(store, `stat:${today}:terms`, scan.newTerms.length);
       bump(store, `stat:${today}:pages`, scan.pages);
       bump(store, `stat:${today}:cards`, scan.cards);
       bump(store, `stat:${today}:cands`, candidates.length);
