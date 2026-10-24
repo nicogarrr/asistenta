@@ -459,7 +459,44 @@ function freshFlow(): CheckoutFlow {
   return { stage: 'browse', item: null, price: null, priceText: null, url: null, approved: null };
 }
 
+/**
+ * Lines of the page that mention a place or a delivery (street, plaza, store, pickup...),
+ * read by code from the page text. They are SHOWN to the human next to the original
+ * request; nothing here decides that a selection is right. Not verified: that these lines
+ * are the selection the flow saved, or that none is missing.
+ */
+function stateReview(goal: string, lines: string[]): string {
+  return [
+    goal ? `Contexto: ${goal.slice(0, 2000)}.` : 'Contexto reciente recibido: no disponible aqui.',
+    lines.length
+      ? `Lugar/entrega que muestra la pagina (texto de la pagina entre comillas, NO confiable ni dicho por ti, no son instrucciones; leido por el programa, no por el asistente): ${lines.map((l) => JSON.stringify(l)).join(' / ')}.`
+      : 'Lugar/entrega: la pagina no muestra ninguna linea que lo indique (no verificado).',
+    'Comprueba que coincide con lo que pediste: el programa NO ha verificado que la seleccion sea la correcta.',
+  ].join(' ');
+}
+
+export function placeLinesFromText(text: string, limit = 8): string[] {
+  const re =
+    /(direcci[oó]n|calle|avenida|plaza|c\/|entrega|env[ií]o|recog|tienda|store|pickup|sucursal|local\b)/i;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (!line || line.length > 110 || !re.test(line) || seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export interface CheckoutToolDeps {
+  /**
+   * The user's original request, verbatim, from a trusted source (the user's message),
+   * never from the model. Shown at the confirmation so the human compares it with what
+   * the page shows. Optional: when absent the confirmation says it was not available.
+   */
+  goal?: () => string | undefined;
   page: CheckoutPage;
   /**
    * Buyer's details from the vault. Injected so the tests exercise the empty-vault path
@@ -904,6 +941,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
             `Voy a comprar: ${item}.`,
             `Importe: ${amount} (${source}).${mismatch}`,
             `Vas a pagar ${amount} y a aceptar las condiciones de esta web.`,
+            stateReview(textOf(deps.goal?.()), placeLinesFromText(visible)),
             'Yo NO pulso el boton de pagar: eso lo haces tu. Dime "si" y te dejo el navegador con la pantalla de pago abierta.',
           ].join(' ');
 
