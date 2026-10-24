@@ -9,7 +9,13 @@ import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 import { callPageAdClick, callPageMediaState, callPageScan, installPageScan } from './inpage.js';
-import { describeContext, describeLocator, describeTarget, pageSummary, UNREADABLE_TARGET } from './target.js';
+import {
+  describeContext,
+  describeLocator,
+  describeTarget,
+  pageSummary,
+  UNREADABLE_TARGET,
+} from './target.js';
 
 /**
  * Real browser control, one persistent profile per chat.
