@@ -82,7 +82,13 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
 
   it('oracle: history is kept, runs are isolated, a missing record is never no-selection', async () => {
     const { judge } = (await import('../qa/shop-harness/oracle.mjs' as string)) as {
-      judge: (a: { goal: string; run: string; allPicks: unknown; sel?: string }) => {
+      judge: (a: {
+        goal: string;
+        run: string;
+        allPicks: unknown;
+        sel?: string;
+        offerLoads?: unknown;
+      }) => {
         verdict: string;
         historyVerdict: string;
       };
@@ -96,18 +102,38 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
     expect(a.historyVerdict).toContain('HISTORY-FAIL');
     // another run's pick does not leak in
     const clean = 'PRESENT:http://127.0.0.1:1/stores|clicks=0|';
-    expect(judge({ goal: 'Gijón', run: 'r1', allPicks: [other], sel: clean }).verdict).toMatch(
-      /^no-selection\(/,
-    );
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [other],
+        sel: clean,
+        offerLoads: [{ run: 'r1' }],
+      }).verdict,
+    ).toMatch(/^no-selection\(/);
     // clicks happened client-side but no server record: delivery unconfirmed, NOT no-selection
     expect(
       judge({
         goal: 'Gijón',
         run: 'r1',
         allPicks: [],
+        offerLoads: [{ run: 'r1' }],
         sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=1|',
       }).verdict,
     ).toBe('INVALID(oracle-delivery-unconfirmed)');
+    // failed delivery on page 1 + reload of the SAME url (client counter reset): INVALID, not no-selection
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [],
+        offerLoads: [{ run: 'r1' }, { run: 'r1' }],
+        sel: clean,
+      }).verdict,
+    ).toBe('INVALID(oracle-reload-ambiguous)');
+    expect(judge({ goal: 'Gijón', run: 'r1', allPicks: [], sel: clean }).verdict).toBe(
+      'INVALID(oracle-loads-missing)',
+    );
     // page left the fixture / session lost: INVALID, not no-selection
     expect(
       judge({ goal: 'Gijón', run: 'r1', allPicks: [], sel: 'ABSENT:about:blank' }).verdict,
@@ -121,6 +147,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
         goal: 'Gijón',
         run: 'r1',
         allPicks: [],
+        offerLoads: [{ run: 'r1' }],
         sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=0|Mi tienda X',
       }).verdict,
     ).toBe('INVALID(oracle-record-mismatch)');

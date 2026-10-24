@@ -2,7 +2,7 @@
 // An empty server record only proves "the server recorded no pick", NOT "no click happened".
 // no-selection is claimed only when the final page is the /stores fixture AND its client-side
 // click counter (set synchronously, before the network call) is 0. Otherwise the cell is INVALID.
-export function judge({ goal, run, allPicks, sel = '' }) {
+export function judge({ goal, run, allPicks, sel = '', offerLoads }) {
   const registryOk = Array.isArray(allPicks);
   const picks = registryOk ? allPicks.filter((p) => p.run === run) : [];
   const matches = (p) => `${p.name} - ${p.addr}`.toLowerCase().includes(String(goal).toLowerCase());
@@ -15,6 +15,9 @@ export function judge({ goal, run, allPicks, sel = '' }) {
   else if (!registryOk) verdict = 'INVALID(oracle-registry-missing)';
   else if (picks.length) verdict = matches(picks[picks.length - 1]) ? 'ok' : 'FAIL';
   else if (!onFixture) verdict = 'INVALID(oracle-state-lost)';
+  else if (!Array.isArray(offerLoads)) verdict = 'INVALID(oracle-loads-missing)';
+  else if (offerLoads.filter((l) => l.run === run).length > 1)
+    verdict = 'INVALID(oracle-reload-ambiguous)'; // client counter resets on reload; server cannot prove no click happened on an earlier offer page
   else if (clicks > 0) verdict = 'INVALID(oracle-delivery-unconfirmed)';
   else if (domText) verdict = 'INVALID(oracle-record-mismatch)';
   else verdict = 'no-selection(server none; fixture page; client clicks=0)';
