@@ -314,6 +314,50 @@ export const DEFAULT_LISTINGS: Listing[] = [
   pages: pages as number,
 }));
 
+/**
+ * Amazon.es: términos de búsqueda de tecnología y electrodomésticos más allá de las categorías fijas.
+ * Son consultas de búsqueda públicas (`/s?k=`), no una lista cerrada: se amplían desde la config
+ * con `scan.amazonQueries`. Cada término es una categoría más del barrido rotatorio.
+ */
+export const AMAZON_QUERIES: string[] = [
+  'tarjeta gráfica',
+  'robot aspirador',
+  'monitor gaming',
+  'ordenador sobremesa',
+  'mini pc',
+  'auriculares inalámbricos',
+  'smartwatch',
+  'disco duro ssd',
+  'impresora',
+  'cámara fotos',
+  'aspirador sin cable',
+  'freidora de aire',
+  'lavavajillas',
+  'secadora',
+  'horno',
+  'microondas',
+  'aire acondicionado portátil',
+  'barra de sonido',
+  'proyector',
+  'altavoz bluetooth',
+  'procesador',
+  'placa base',
+  'memoria ram',
+  'router wifi',
+];
+
+export function amazonQueryListing(q: string, pages = 1): Listing {
+  return {
+    category: q,
+    store: 'amazon',
+    url: `https://www.amazon.es/s?k=${encodeURIComponent(q).replace(/%20/g, '+')}`,
+    pages,
+  };
+}
+
+// Una página por término (la 1.ª): no desplazar demasiado las categorías fijas dentro del tope diario.
+DEFAULT_LISTINGS.push(...AMAZON_QUERIES.map((q) => amazonQueryListing(q)));
+
 /** URL de la página n (n >= 1) de un listado. Solo se paginan las tiendas con patrón verificado. */
 export function pageUrl(l: Listing, n: number): string | null {
   if (n <= 1) return l.url;
@@ -507,6 +551,8 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
       continue;
     }
     d.store.setMeta(`nocards:${job.store}`, 0);
+    const covKey = `cov:${job.store}:${dayKey(d.now())}:${job.listing.category}`;
+    d.store.setMeta(covKey, d.store.getMeta(covKey) + 1);
     for (const c of cards) {
       if (isExcluded(c.title)) continue;
       if (job.listing.category === 'tablets' && !isPremiumTablet(c.title)) continue;
@@ -545,6 +591,26 @@ export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {
   return out;
 }
 
+/**
+ * Cobertura real de un día (YYYY-MM-DD): categorías con al menos una página leída con productos,
+ * frente a las configuradas. Lo no leído (pausas, tope diario, bloqueos) se dice, no se oculta.
+ */
+export function coverageText(store: PriceStore, listings: Listing[], iso: string): string {
+  const byStore = new Map<StoreId, Set<string>>();
+  for (const l of listings) {
+    const set = byStore.get(l.store) ?? new Set<string>();
+    set.add(l.category);
+    byStore.set(l.store, set);
+  }
+  const lines: string[] = [];
+  for (const [id, cats] of byStore) {
+    const read = [...cats].filter((c) => store.getMeta(`cov:${id}:${iso}:${c}`) > 0).length;
+    lines.push(`${STORES[id].name}: ${read} de ${cats.size} categorías leídas`);
+  }
+  if (lines.length === 0) return 'Cobertura: sin listados configurados.';
+  return `Cobertura del barrido (solo páginas de listado leídas con productos; no es un barrido exhaustivo de toda la tienda): ${lines.join('; ')}.`;
+}
+
 export interface ScanConfig {
   enabled: boolean;
   /** Tiendas en pausa: no se barren ni se verifican sus fichas (baneo de IP del 11-oct). */
@@ -581,7 +647,22 @@ export function parseScanConfig(raw: unknown): ScanConfig {
       return x;
     });
   }
+  if (s.amazonQueries !== undefined) {
+    if (
+      !Array.isArray(s.amazonQueries) ||
+      s.amazonQueries.length > 60 ||
+      s.amazonQueries.some((q) => typeof q !== 'string' || q.trim() === '' || q.length > 80)
+    )
+      throw new Error('scan.amazonQueries debe ser una lista de hasta 60 textos cortos');
+  }
   let listings = DEFAULT_LISTINGS;
+  if (Array.isArray(s.amazonQueries)) {
+    const extra = (s.amazonQueries as string[])
+      .map((q) => q.trim())
+      .filter((q) => !listings.some((l) => l.store === 'amazon' && l.category === q))
+      .map((q) => amazonQueryListing(q));
+    listings = [...listings, ...extra];
+  }
   if (s.listings !== undefined) {
     if (!Array.isArray(s.listings)) throw new Error('scan.listings debe ser una lista');
     listings = s.listings.map((x, i) => {

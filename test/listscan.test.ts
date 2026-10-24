@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import {
+  coverageText,
   extractCards,
   isExcluded,
   isPremiumTablet,
@@ -10,7 +11,7 @@ import {
   parseScanConfig,
   scanOnce,
 } from '../src/watch/listscan.js';
-import { MIN_GAP_MS, PriceStore } from '../src/watch/pricewatch.js';
+import { detect, MIN_GAP_MS, PriceStore, referenceFor } from '../src/watch/pricewatch.js';
 
 const DAY = 86_400_000;
 const ldList = (items: { name: string; price: unknown; url: string; cur?: string }[]) =>
@@ -438,5 +439,63 @@ describe('foco en tablets de gama alta', () => {
       notify: async (x: string) => void seen.push(x),
     });
     expect(r.cards).toBe(1);
+  });
+});
+
+describe('descubrimiento amplio en Amazon.es', () => {
+  it('por defecto incluye gráficas y robots aspirador, solo con URLs de amazon.es válidas', () => {
+    const cfg = parseScanConfig({ scan: { enabled: true, pausedStores: [] } });
+    const cats = new Set(cfg.listings.filter((l) => l.store === 'amazon').map((l) => l.category));
+    expect(cats.has('tarjeta gráfica')).toBe(true);
+    expect(cats.has('robot aspirador')).toBe(true);
+    for (const l of cfg.listings.filter((x) => x.store === 'amazon'))
+      expect(new URL(l.url).hostname).toBe('www.amazon.es');
+  });
+  it('scan.amazonQueries añade categorías sin duplicar y valida la lista', () => {
+    const cfg = parseScanConfig({
+      scan: { amazonQueries: ['nas', 'robot aspirador', ' cafetera '] },
+    });
+    const am = cfg.listings.filter((l) => l.store === 'amazon');
+    expect(am.filter((l) => l.category === 'robot aspirador')).toHaveLength(1);
+    expect(am.find((l) => l.category === 'nas')?.url).toBe('https://www.amazon.es/s?k=nas');
+    expect(am.find((l) => l.category === 'cafetera')).toBeDefined();
+    expect(() => parseScanConfig({ scan: { amazonQueries: [''] } })).toThrow(/amazonQueries/);
+    expect(() => parseScanConfig({ scan: { amazonQueries: 'nas' } })).toThrow(/amazonQueries/);
+  });
+  it('coverageText cuenta solo categorías realmente leídas y no promete exhaustividad', () => {
+    const store = new PriceStore(new DatabaseSync(':memory:'));
+    const ls: Listing[] = [
+      { store: 'amazon', category: 'a', url: 'https://www.amazon.es/s?k=a', pages: 1 },
+      { store: 'amazon', category: 'b', url: 'https://www.amazon.es/s?k=b', pages: 1 },
+    ];
+    store.setMeta('cov:amazon:2026-10-24:a', 2);
+    const t = coverageText(store, ls, '2026-10-24');
+    expect(t).toContain('Amazon.es: 1 de 2 categorías leídas');
+    expect(t).toContain('no es un barrido exhaustivo');
+  });
+});
+
+describe('caso sintético tipo Conga (valores inventados, no son datos de Amazon)', () => {
+  const HOUR = 3_600_000;
+  it('sin historial ni otras tiendas NO hay referencia: no se marca candidato (límite conocido)', () => {
+    const store = new PriceStore(new DatabaseSync(':memory:'), () => 0);
+    const ref = referenceFor(store.history('m:congaq200', 'amazon'), 0, []);
+    expect(ref).toBeNull();
+    expect(detect(2290, ref, 70)).toBeNull();
+  });
+  it('con referencia cruzada de >= 2 tiendas, 22,90 frente a ~499 sí es candidato', () => {
+    const ref = referenceFor([], 0, [
+      { store: 'worten', cents: 49890 },
+      { store: 'fnac', cents: 51900 },
+    ]);
+    expect(ref?.kind).toBe('cruzada');
+    expect(detect(2290, ref, 70)?.dropPct).toBeGreaterThanOrEqual(95);
+  });
+  it('un precio normal tras una bajada moderada no es candidato', () => {
+    const ref = referenceFor([], HOUR, [
+      { store: 'worten', cents: 49890 },
+      { store: 'fnac', cents: 51900 },
+    ]);
+    expect(detect(39900, ref, 70)).toBeNull();
   });
 });

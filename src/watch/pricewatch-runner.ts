@@ -19,7 +19,13 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { logHost } from '../log.js';
 import { curlImpersonateFetch, findCurlImpersonate } from '../media/download.js';
-import { type Candidate, parseScanConfig, type ScanSummary, scanOnce } from './listscan.js';
+import {
+  type Candidate,
+  coverageText,
+  parseScanConfig,
+  type ScanSummary,
+  scanOnce,
+} from './listscan.js';
 import {
   hostOf,
   isBlockedPage,
@@ -106,7 +112,12 @@ function bump(store: PriceStore, key: string, n: number): void {
   if (n > 0) store.setMeta(key, store.getMeta(key) + n);
 }
 
-function reportText(store: PriceStore, day: number, when: number): string {
+function reportText(
+  store: PriceStore,
+  day: number,
+  when: number,
+  listings: Parameters<typeof coverageText>[1] = [],
+): string {
   const g = (k: string) => store.getMeta(`stat:${day}:${k}`);
   const iso = `${String(day).slice(0, 4)}-${String(day).slice(4, 6)}-${String(day).slice(6, 8)}`;
   const lines: string[] = [];
@@ -120,6 +131,7 @@ function reportText(store: PriceStore, day: number, when: number): string {
     `Vigilante de precios, resumen del ${iso}:`,
     `${g('pages')} listados leídos, ${g('cards')} productos vistos, ${g('cands')} candidatos, ${g('alerts')} avisos, ${g('blocked')} bloqueos de tienda.`,
     ...lines,
+    listings.length > 0 ? coverageText(store, listings, iso) : '',
     lines.length === 0 ? 'Ninguna tienda respondió ese día.' : '',
   ]
     .filter((l) => l !== '')
@@ -160,7 +172,7 @@ export async function runCycle(d: CycleDeps): Promise<CycleResult> {
         `Vigilante de precios activo. Barrido de listados: ${sc.enabled ? 'sí' : 'no'}, cada ${cycleMinutes} min, tope ${sc.dailyRequestsPerStore} peticiones/día por tienda, umbral ${cfg.minDropPct} %. Te aviso aquí de posibles errores de precio y de las tiendas que bloqueen tu IP.${pausedNote}`,
       );
     } else if (last !== today) {
-      await notify(reportText(store, last, d.now()));
+      await notify(reportText(store, last, d.now(), sc.enabled ? sc.listings : []));
       store.setMeta('report_day', today);
     }
     const common = {
