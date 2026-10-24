@@ -15,3 +15,9 @@ counts hits at `/pay`; nothing is charged). Needs `npm run build`, Node >= 24, C
   Reproduces the "opaque approval" gap. Do not use `human` against real sites.
 - `NOCHECKOUT=1` drops the checkout tool; `REAL_HOSTS=host,...` targets a real site (read-only, use `deny`).
 Screenshots go to `QA_SHOTS` (default /tmp/qa-shots).
+
+## narrow mode (real-site test, read the code before using)
+Approves ONLY: fill/choose on the `cityFinder` input with exactly `QA_ADDRESS`, and one click whose gate
+description contains "COMPLETAR DIRECCIÓN" + the public test address. Everything else (exec_js, wait,
+unknown actions, any other click, checkout) is denied and logged as `ASKARGS`. Use `REAL_HOSTS=<host>`.
+The model prompt may contain manual guidance: that is operator intervention, not autonomous success.
