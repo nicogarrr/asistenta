@@ -974,6 +974,9 @@ export class Gate {
     // purchase of the same thing.
     const confirmation = this.#isPaymentConfirmation(call);
     const factoryInstall = this.#isFactoryInstall(call);
+    // Arbitrary page code: a click/browser grant is not a grant for it (fullControl, the
+    // owner's explicit mode, is deliberately NOT narrowed here).
+    const opaqueScript = call.tool === 'browser' && argString(call.args, 'action') === 'exec_js';
     const goalActivate = this.#isGoalActivate(call);
     const gestionEjecutar = this.#isGestionEjecutar(call);
     // The gestor's per-step effect guard: a reason string here forces the ask
@@ -1031,6 +1034,7 @@ export class Gate {
       !this.#isCredentialish(call) &&
       !confirmation &&
       !factoryInstall &&
+      !opaqueScript &&
       !goalActivate &&
       !gestionEjecutar &&
       !forced
@@ -1072,6 +1076,7 @@ export class Gate {
     // A fresh grant from an earlier approval covers the rest of this task.
     if (
       !factoryInstall &&
+      !opaqueScript &&
       !goalActivate &&
       !gestionEjecutar &&
       !forced &&
