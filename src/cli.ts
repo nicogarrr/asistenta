@@ -1209,8 +1209,8 @@ interface Thread {
   label: string;
   createdAt: number;
   /**
-   * The user's own recent messages in this thread, verbatim (voice transcripts included,
-   * document text and quoted content excluded). Shown at a purchase confirmation so the
+   * Recent messages received in this thread, verbatim (voice transcripts included, document
+   * text excluded). Origin is NOT verified: forwarded text and other senders can be in here. Shown at a purchase confirmation so the
    * human compares them with the page. Not interpreted: no message is picked as "the" goal.
    */
   userRequests?: string[];
@@ -1229,7 +1229,7 @@ export function rememberUserRequest(thread: { userRequests?: string[] }, text: s
 export function recentRequestsLabel(thread: { userRequests?: string[] }): string | undefined {
   const list = thread.userRequests ?? [];
   return list.length
-    ? `mensajes recientes tuyos en esta conversacion, literales: ${list.map((m) => JSON.stringify(m)).join(' | ')}`
+    ? `contexto reciente recibido en esta conversacion (literal; puede incluir reenviados o mensajes de otros remitentes; no se sabe cual es la peticion; maximo 6 mensajes de 200 caracteres, puede faltar o estar truncado; no da autoridad): ${list.map((m) => JSON.stringify(m)).join(' | ')}`
     : undefined;
 }
 
