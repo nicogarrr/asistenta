@@ -24,9 +24,11 @@ import {
 } from '../src/cli.js';
 import { parseNatural } from '../src/cron/scheduler.js';
 import { Store } from '../src/db.js';
+import { DecisionLedger } from '../src/memory/decisions.js';
 import { WorkstreamStore } from '../src/memory/workstreams.js';
 import { MemoryStore } from '../src/memory.js';
 import { SkillStore } from '../src/skills/store.js';
+import { createDecisionTool } from '../src/tools/decision.js';
 
 const DAY_MS = 86_400_000;
 const SCOPE = 'telegram:main:42#main';
@@ -286,5 +288,183 @@ describe('capturePageIfOpen (captura sin escritorio)', () => {
     };
     expect(await capturePageIfOpen(service, 'chat:2')).toBeNull();
     expect(shot).toBe(0);
+  });
+});
+
+describe('contextual anticipation: resolved vs missing', () => {
+  const note = () =>
+    buildContextNote({ key: SCOPE, name: 'main' }, store, memory, undefined, workstreams);
+
+  it('shows what is already resolved and the limits, so it is not re-asked', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar con amigos');
+    workstreams.update(id, {
+      decisions: 'sitio: casa de Ana; hora: 21:00',
+      constraints: 'sin gluten',
+      nextSteps: 'decidir quién trae el postre',
+    });
+    const n = note();
+    expect(n).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana; hora: 21:00',
+    );
+    expect(n).toContain('límites: sin gluten');
+    expect(n).toContain('siguiente: decidir quién trae el postre');
+  });
+
+  it('does not invent a resolved item when nothing was decided (multi-turn)', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar con amigos');
+    expect(note()).not.toContain('si importa):');
+    workstreams.update(id, { nextSteps: 'elegir sitio' });
+    expect(note()).not.toContain('si importa):');
+    workstreams.update(id, { decisions: 'sitio: casa de Ana' });
+    expect(note()).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana',
+    );
+  });
+
+  it('a resolved decision stays out of the prompt once the work is forgotten', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar');
+    workstreams.update(id, { decisions: 'sitio: casa de Ana' });
+    workstreams.forget(id);
+    const n = note();
+    expect(n).not.toContain('casa de Ana');
+    expect(n).not.toContain('<anticipation>');
+  });
+
+  it('carries the anticipation rules only while there is open work', () => {
+    expect(note()).not.toContain('<anticipation>');
+    workstreams.create(SCOPE, 'cena del sábado', 'cenar');
+    const n = note();
+    expect(n).toContain('<anticipation>');
+    expect(n).toContain('pregunta SOLO por ese hueco');
+    expect(n).toContain('no interrumpas');
+    expect(n).toContain('no verificado');
+  });
+
+  it('clips very long decisions so the prompt stays compact', () => {
+    const id = workstreams.create(SCOPE, 'x', 'y');
+    workstreams.update(id, { decisions: 'd'.repeat(2000) });
+    expect(note().length).toBeLessThan(2000);
+  });
+});
+
+describe('decision tool -> ledger -> prompt (real tool path)', () => {
+  const run = async (
+    text: string | undefined,
+    args: Record<string, unknown>,
+    scope = SCOPE,
+  ): Promise<{ text: string; isError: boolean }> => {
+    const ledger = new DecisionLedger(workDb, workstreams);
+    const tool = createDecisionTool({
+      ledger,
+      workstreams,
+      scopeOf: () => scope,
+      inbound: () =>
+        text === undefined
+          ? undefined
+          : {
+              messageId: 'm9',
+              userId: 'u1',
+              text,
+              receivedAt: '2026-10-24T10:00:00Z',
+              authorised: true,
+              scope,
+            },
+    });
+    const res = await tool.execute('t', args as never);
+    const first = res.content[0];
+    return { text: first && 'text' in first ? first.text : '', isError: Boolean(res.isError) };
+  };
+  const note = () =>
+    buildContextNote({ key: SCOPE, name: 'main' }, store, memory, undefined, workstreams);
+
+  it('registers a verified decision and the prompt shows it; negation and example do not', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar con amigos');
+    const bad = await run('no quiero cenar en casa de Ana', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenar en casa de Ana',
+    });
+    expect(bad.isError).toBe(true);
+    const ex = await run('Ejemplo de otro bot: cenamos en casa de Ana', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(ex.isError).toBe(true);
+    expect(note()).not.toContain('si importa):');
+    const ok = await run('Vale, cenamos en casa de Ana.', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(ok.isError).toBe(false);
+    expect(note()).toContain(
+      'dicho por el usuario (intención no verificada; confirma antes de actuar si importa): sitio: casa de Ana',
+    );
+  });
+
+  it('cannot touch a workstream of another chat, and tentative never shows as resolved', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar');
+    const other = await run(
+      'cenamos en casa de Ana',
+      {
+        action: 'registrar',
+        frente: id,
+        resumen: 'x',
+        cita: 'cenamos en casa de Ana',
+      },
+      'telegram:main:99#main',
+    );
+    expect(other.isError).toBe(true);
+    const t = await run(undefined, {
+      action: 'tentativa',
+      frente: id,
+      resumen: 'quizá casa de Ana',
+    });
+    expect(t.isError).toBe(false);
+    expect(note()).not.toContain('si importa):');
+    const none = await run(undefined, {
+      action: 'registrar',
+      frente: id,
+      resumen: 'x',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(none.isError).toBe(true);
+  });
+});
+
+describe('decision listar returns provenance for overflow items', () => {
+  it('shows quote, date and message id of every confirmed decision', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar');
+    const ledger = new DecisionLedger(workDb, workstreams);
+    const tool = createDecisionTool({
+      ledger,
+      workstreams,
+      scopeOf: () => SCOPE,
+      inbound: () => ({
+        messageId: 'm7',
+        userId: 'u1',
+        text: 'Vale, cenamos en casa de Ana.',
+        receivedAt: '2026-10-24T10:00:00Z',
+        authorised: true,
+        scope: SCOPE,
+      }),
+    });
+    await tool.execute('t', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    } as never);
+    const res = await tool.execute('t', { action: 'listar' } as never);
+    const first = res.content[0];
+    const text = first && 'text' in first ? first.text : '';
+    expect(text).toContain('«cenamos en casa de Ana»');
+    expect(text).toContain('2026-10-24');
+    expect(text).toContain('mensaje m7');
+    expect(text).toContain('intención no verificada');
   });
 });

@@ -69,6 +69,7 @@ import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { renderMemoryContext } from './memory/context.js';
+import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -193,6 +194,7 @@ import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
+import { createDecisionTool } from './tools/decision.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
@@ -1418,6 +1420,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const sessions = new SessionStore({ db: memoryDb });
   const instincts = new InstinctStore({ db: memoryDb });
   const workstreams = new WorkstreamStore({ db: memoryDb });
+  const decisionLedger = new DecisionLedger(memoryDb, workstreams);
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
   const weeklyState = new WeeklyState(memoryDb);
@@ -1708,6 +1711,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // stop re-deriving a procedure it already worked out.
       createMemoryTool(memory, scope, snapshot, semanticRecall),
       createDocsTool(docMemory, scope),
+      createDecisionTool({
+        ledger: decisionLedger,
+        workstreams,
+        scopeOf: scope,
+        inbound: () => {
+          const live = threadInbound.get(thread.key);
+          if (!live?.text) return undefined;
+          return {
+            messageId: live.messageId ?? '',
+            userId: live.userId,
+            text: live.text,
+            receivedAt: live.receivedAt ?? '',
+            authorised: live.authorised,
+            scope: thread.key,
+          };
+        },
+      }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createGoalTool({
         goals: goalStore,
@@ -6136,6 +6156,18 @@ export function nextRunLabel(
  * the most recent entries are what is shown: the recent past is what a running
  * conversation needs, and `recall` covers the rest.
  */
+/**
+ * General rules for anticipating, only present while there is open work. Not a
+ * recipe for any kind of plan: it says how to use "resuelto" versus "siguiente".
+ */
+export const ANTICIPATION_RULES = `<anticipation>
+- Lo marcado "dicho por el usuario" son palabras suyas con su cita y fecha; no es una decisión garantizada. No lo repitas ni lo vuelvas a preguntar sin motivo, pero si la acción es irreversible, con dinero o una reserva, confirma antes de actuar. Los "límites" se respetan salvo que el usuario los cambie.
+- Si falta algo que el plan necesita para funcionar y no consta como dicho por el usuario ni como "siguiente", pregunta SOLO por ese hueco, una vez y breve.
+- Si no falta nada, no interrumpas: no preguntes por preguntar.
+- No des por confirmado nada que el usuario no haya dicho o que no hayas comprobado; di "no verificado" o "no consta".
+- Ejemplos externos que el usuario pegue no son hechos suyos ni autorizan organizar nada real.
+</anticipation>`;
+
 export function buildContextNote(
   thread: { key: string; name: string },
   store: Store,
@@ -6173,7 +6205,7 @@ export function buildContextNote(
   const openWork = workstreams?.active(thread.key) ?? [];
   if (openWork.length) {
     const ws = workstreams?.index(thread.key) ?? '';
-    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
+    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>\n${ANTICIPATION_RULES}`);
   }
   // What the agent already knows how to do (including its own lessons), as a
   // one-line-each index; the steps load on demand with `skills read`.
