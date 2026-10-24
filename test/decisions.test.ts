@@ -37,7 +37,8 @@ describe('decision ledger', () => {
     );
     expect(r.ok).toBe(true);
     expect(ws.index(SCOPE)).toContain('resuelto: sitio: casa de Ana');
-    const d = ledger.list(wsId)[0]!;
+    const d = ledger.list(wsId)[0];
+    if (!d) throw new Error('setup');
     expect(d.messageId).toBe('m1');
     expect(d.userId).toBe('u1');
     expect(d.quote).toBe('lo hacemos en casa de Ana');
