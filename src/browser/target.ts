@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 
 /**
  * What a click or keypress would act on, as text the permission gate can read.
@@ -30,9 +30,24 @@ export async function describeTarget(
   return describeOnce(page, selector, retryTimeoutMs);
 }
 
+/**
+ * Describe an element already located (by the same resolver the action will use), so the
+ * gate judges the element that will be acted on and not a second guess at it.
+ */
+export async function describeLocator(loc: Locator, timeoutMs = 4_000): Promise<string> {
+  return describeLoc(loc.first(), timeoutMs);
+}
+
 async function describeOnce(page: Page, selector: string, timeoutMs: number): Promise<string> {
   try {
-    const loc = page.locator(selector).first();
+    return await describeLoc(page.locator(selector).first(), timeoutMs);
+  } catch {
+    return UNREADABLE_TARGET;
+  }
+}
+
+async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
+  try {
     const text = await loc.evaluate(
       (el) => {
         const e = el as HTMLElement & { value?: string; form?: HTMLFormElement | null };
