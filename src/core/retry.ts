@@ -110,3 +110,36 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     );
   });
 }
+
+export interface RetryStep {
+  readonly tool: string;
+  readonly action: string;
+  readonly ok: boolean;
+}
+
+/**
+ * Recovery note for a retry after a transient provider failure. A retry re-sends
+ * the same request, and the tools that already ran in the failed attempt are NOT
+ * re-run by the harness, but the model decides again from scratch: without a
+ * statement of what already happened it may repeat an external effect (a message
+ * sent, a form submitted). The note lists what ran, and says to verify state
+ * before any consequential repeat. It is a mechanical control on the input, not
+ * proof the model obeys it. Returns '' when nothing ran (a plain retry is safe).
+ */
+export function retryRecoveryNote(steps: readonly RetryStep[], limit = 12): string {
+  if (steps.length === 0) return '';
+  const shown = steps.slice(-limit);
+  const lines = shown.map(
+    (s) =>
+      `- ${s.tool}${s.action ? ` ${s.action}` : ''}: ${s.ok ? 'termino sin error (no prueba el efecto)' : 'dio error (pudo tener efecto parcial)'}`,
+  );
+  const hidden = steps.length - shown.length;
+  return (
+    '\n\n[Reintento por fallo transitorio del proveedor. Estas acciones YA se ejecutaron en el ' +
+    'intento anterior; no las repitas a ciegas. Antes de repetir cualquier efecto externo ' +
+    '(enviar, reservar, pagar, borrar, enviar formulario) comprueba el estado actual y ' +
+    'continua desde donde quedo.]\n' +
+    (hidden > 0 ? `(+${hidden} anteriores)\n` : '') +
+    lines.join('\n')
+  );
+}

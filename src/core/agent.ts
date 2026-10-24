@@ -25,6 +25,7 @@ import {
   isTransientProviderError,
   type RetryPolicy,
   retryDelay,
+  retryRecoveryNote,
   sleep,
 } from './retry.js';
 import { classifyRequest, iterationBudgetFor } from './router.js';
@@ -883,7 +884,12 @@ export class PersonalAgent {
           error: result.error?.slice(0, 120),
         });
         await sleep(delay);
-        result = await this.#attempt(prompt, images, hooks, shared);
+        result = await this.#attempt(
+          prompt + retryRecoveryNote(shared.steps),
+          images,
+          hooks,
+          shared,
+        );
       }
 
       return { ...result, attempts: attempt + 1 };

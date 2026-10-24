@@ -149,3 +149,30 @@ describe('pickFallbackModel', () => {
     ).toBeUndefined();
   });
 });
+
+import { retryRecoveryNote } from '../src/core/retry.js';
+
+describe('retryRecoveryNote', () => {
+  it('vacío si nada se ejecutó: un reintento simple no cambia el prompt', () => {
+    expect(retryRecoveryNote([])).toBe('');
+  });
+
+  it('lista lo ya ejecutado y exige comprobar antes de repetir un efecto externo', () => {
+    const note = retryRecoveryNote([
+      { tool: 'telegram', action: 'send', ok: true },
+      { tool: 'browser', action: 'click', ok: false },
+    ]);
+    expect(note).toContain('telegram send: termino sin error');
+    expect(note).toContain('browser click: dio error (pudo tener efecto parcial)');
+    expect(note).toMatch(/YA se ejecutaron/);
+    expect(note).toMatch(/comprueba el estado actual/);
+  });
+
+  it('acota la lista y cuenta las omitidas', () => {
+    const steps = Array.from({ length: 20 }, (_, i) => ({ tool: 't', action: `a${i}`, ok: true }));
+    const note = retryRecoveryNote(steps, 5);
+    expect(note).toContain('(+15 anteriores)');
+    expect(note).toContain('t a19');
+    expect(note).not.toContain('t a0:');
+  });
+});
