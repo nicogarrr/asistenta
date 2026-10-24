@@ -31,6 +31,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
   const pickFirst = async (scope: string): Promise<string> => {
     await svc.open(scope, `http://127.0.0.1:${PORT}/stores?q=Plaza+Mayor`);
     await svc.clickTarget(scope, '.pick');
+    await new Promise((r) => setTimeout(r, 500)); // DOM updates after the server ACK
     const r = await svc.execJs(
       scope,
       "return await page.evaluate(() => document.getElementById('mine').innerText)",
@@ -50,6 +51,7 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
     try {
       await svc.open('pos', `http://127.0.0.1:${PORT}/stores?q=Plaza+Mayor`);
       await svc.clickTarget('pos', '[data-id="40002"]');
+      await new Promise((r) => setTimeout(r, 500)); // DOM updates after the server ACK
       const r = await svc.execJs(
         'pos',
         "return await page.evaluate(() => document.getElementById('mine').innerText)",
@@ -76,5 +78,52 @@ describe('/stores fixture contract (SYNTHETIC)', () => {
     } finally {
       delete process.env.SHOP_GIJON;
     }
+  });
+
+  it('oracle: history is kept, runs are isolated, a missing record is never no-selection', async () => {
+    const { judge } = (await import('../qa/shop-harness/oracle.mjs' as string)) as {
+      judge: (a: { goal: string; run: string; allPicks: unknown; sel?: string }) => {
+        verdict: string;
+        historyVerdict: string;
+      };
+    };
+    const mollet = { run: 'r1', name: 'MOLLET 1', addr: 'Plaza Mayor 4, Mollet' };
+    const gijon = { run: 'r1', name: 'GIJON PLAZA', addr: 'Plaza Mayor 2, Gijón' };
+    const other = { run: 'r2', name: 'MOLLET 1', addr: 'Mollet' };
+    // ended on Gijón but picked Mollet first: final ok, history FAIL
+    const a = judge({ goal: 'Gijón', run: 'r1', allPicks: [mollet, gijon] });
+    expect(a.verdict).toBe('ok');
+    expect(a.historyVerdict).toContain('HISTORY-FAIL');
+    // another run's pick does not leak in
+    const clean = 'PRESENT:http://127.0.0.1:1/stores|clicks=0|';
+    expect(judge({ goal: 'Gijón', run: 'r1', allPicks: [other], sel: clean }).verdict).toMatch(
+      /^no-selection\(/,
+    );
+    // clicks happened client-side but no server record: delivery unconfirmed, NOT no-selection
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [],
+        sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=1|',
+      }).verdict,
+    ).toBe('INVALID(oracle-delivery-unconfirmed)');
+    // page left the fixture / session lost: INVALID, not no-selection
+    expect(
+      judge({ goal: 'Gijón', run: 'r1', allPicks: [], sel: 'ABSENT:about:blank' }).verdict,
+    ).toBe('INVALID(oracle-state-lost)');
+    // registry missing, or DOM shows a selection the record lacks: INVALID, not no-selection
+    expect(judge({ goal: 'Gijón', run: 'r1', allPicks: undefined }).verdict).toBe(
+      'INVALID(oracle-registry-missing)',
+    );
+    expect(
+      judge({
+        goal: 'Gijón',
+        run: 'r1',
+        allPicks: [],
+        sel: 'PRESENT:http://127.0.0.1:1/stores|clicks=0|Mi tienda X',
+      }).verdict,
+    ).toBe('INVALID(oracle-record-mismatch)');
+    expect(judge({ goal: 'Gijón', run: 'r1', allPicks: [mollet] }).verdict).toBe('FAIL');
   });
 });

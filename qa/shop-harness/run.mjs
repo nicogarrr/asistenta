@@ -37,11 +37,11 @@ const res = await agent.run(prompt, undefined, { onToolCall: (i) => calls.push(i
 console.log('=== TOOL CALLS\n' + calls.join('\n'));
 console.log('=== ASKS\n' + JSON.stringify(asks, null, 1));
 console.log('=== FINAL\n' + res.text + (res.error ? '\nERROR ' + res.error : ''));
-let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => { const m = document.getElementById('mine'); return m ? 'PRESENT:' + location.href + '|' + m.innerText : 'ABSENT:' + location.href; })"); sel = String(r.text); } catch {}
-const goal = process.env.QA_GOAL_CITY || ''; const picks = state.picks; const lastPick = picks[picks.length - 1];
-// Ground truth = the fixture SERVER's record of picks (survives browser/session loss). The DOM read of #mine is display only.
-const verdict = !goal ? 'n/a' : !picks.length ? 'no-selection' : `${lastPick.name} - ${lastPick.addr}`.toLowerCase().includes(goal.toLowerCase()) ? 'ok' : 'FAIL';
-console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ serverPicks: picks, domRead: sel.slice(0, 200), goal, verdict, note: 'verdict from server-side pick record; last pick counts; multiple picks listed' }));
+let sel = ''; try { const r = await svc.execJs(scope(), "return await page.evaluate(() => { const m = document.getElementById('mine'); return m ? 'PRESENT:' + location.href + '|clicks=' + (m.dataset.clicks || '0') + '|' + m.innerText : 'ABSENT:' + location.href; })"); sel = String(r.text); } catch {}
+const goal = process.env.QA_GOAL_CITY || ''; const RUN = process.env.QA_RUN_ID || 'default';
+const { judge } = await import('./oracle.mjs');
+const j = judge({ goal, run: RUN, allPicks: state.picks, sel });
+console.log('=== ORACLE (external verdict, not product protection)\n' + JSON.stringify({ run: RUN, serverPicks: j.picks, domRead: sel.slice(0, 200), goal, verdict: j.verdict, historyVerdict: j.historyVerdict, note: 'verdict = LAST pick of this run; historyVerdict flags ANY mismatching pick; a missing record is INVALID, never no-selection' }));
 console.log('=== SHOP STATE\n' + JSON.stringify({ cart: state.cart, payHits: state.payHits, reqs: state.log.length }));
 await svc.closeAll?.();
 process.exit(0);
