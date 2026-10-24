@@ -129,7 +129,10 @@ export interface RetryStep {
 export function retryRecoveryNote(steps: readonly RetryStep[], limit = 12): string {
   if (steps.length === 0) return '';
   const shown = steps.slice(-limit);
-  const lines = shown.map((s) => `- ${s.tool}${s.action ? ` ${s.action}` : ''}: ${s.ok ? 'ejecutada' : 'fallo'}`);
+  const lines = shown.map(
+    (s) =>
+      `- ${s.tool}${s.action ? ` ${s.action}` : ''}: ${s.ok ? 'termino sin error (no prueba el efecto)' : 'dio error (pudo tener efecto parcial)'}`,
+  );
   const hidden = steps.length - shown.length;
   return (
     '\n\n[Reintento por fallo transitorio del proveedor. Estas acciones YA se ejecutaron en el ' +

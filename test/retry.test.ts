@@ -162,8 +162,8 @@ describe('retryRecoveryNote', () => {
       { tool: 'telegram', action: 'send', ok: true },
       { tool: 'browser', action: 'click', ok: false },
     ]);
-    expect(note).toContain('telegram send: ejecutada');
-    expect(note).toContain('browser click: fallo');
+    expect(note).toContain('telegram send: termino sin error');
+    expect(note).toContain('browser click: dio error (pudo tener efecto parcial)');
     expect(note).toMatch(/YA se ejecutaron/);
     expect(note).toMatch(/comprueba el estado actual/);
   });
