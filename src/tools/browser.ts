@@ -521,7 +521,7 @@ export function createBrowserTool(
       'says, then act on the candidates it lists. Do not claim you did something you did',
       'not verify, and never say you finished because a tool returned data.',
       '',
-      'In a chat thread the gate DENIES exec_js (its effect cannot be verified), and a click grant never covers it: use click, fill, choose, press, wait, snapshot and screenshot. Where exec_js is allowed:',
+      'exec_js may be DENIED by the permission gate depending on how this chat runs (its effect cannot be verified, and a click grant never covers it); prefer click, fill, choose, press, wait, snapshot and screenshot, and if exec_js is denied do not retry it.',
       'action=exec_js runs your own JavaScript. Available in scope: `page` (a',
       'Playwright Page) and `state` (an object created in the sandbox that persists',
       'between calls in this chat, so use `state.x = ...` to remember something).',
