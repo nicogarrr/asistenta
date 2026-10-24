@@ -6136,6 +6136,18 @@ export function nextRunLabel(
  * the most recent entries are what is shown: the recent past is what a running
  * conversation needs, and `recall` covers the rest.
  */
+/**
+ * General rules for anticipating, only present while there is open work. Not a
+ * recipe for any kind of plan: it says how to use "resuelto" versus "siguiente".
+ */
+export const ANTICIPATION_RULES = `<anticipation>
+- Lo marcado "resuelto" y los "límites" ya están decididos: no los vuelvas a preguntar ni a resumir salvo que el usuario los cambie.
+- Si falta algo que el plan necesita para funcionar y no consta como resuelto ni como "siguiente", pregunta SOLO por ese hueco, una vez y breve.
+- Si no falta nada, no interrumpas: no preguntes por preguntar.
+- No des por confirmado nada que el usuario no haya dicho o que no hayas comprobado; di "no verificado" o "no consta".
+- Ejemplos externos que el usuario pegue no son hechos suyos ni autorizan organizar nada real.
+</anticipation>`;
+
 export function buildContextNote(
   thread: { key: string; name: string },
   store: Store,
@@ -6173,7 +6185,7 @@ export function buildContextNote(
   const openWork = workstreams?.active(thread.key) ?? [];
   if (openWork.length) {
     const ws = workstreams?.index(thread.key) ?? '';
-    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>`);
+    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>\n${ANTICIPATION_RULES}`);
   }
   // What the agent already knows how to do (including its own lessons), as a
   // one-line-each index; the steps load on demand with `skills read`.

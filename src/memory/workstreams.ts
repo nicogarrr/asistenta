@@ -104,6 +104,10 @@ function mapWorkstream(r: WorkstreamRow): Workstream {
   };
 }
 
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
 /** One line per workstream in the prompt index: no embedded newlines. */
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -213,6 +217,10 @@ export class WorkstreamStore {
     const lines = rows.map((row) => {
       const work = mapWorkstream(row);
       const bits = [`objetivo: ${oneLine(work.goal)}`];
+      // What is already settled goes in the prompt too: without it the model
+      // cannot tell "resolved" from "never discussed" and re-asks both.
+      if (work.decisions) bits.push(`resuelto: ${clip(oneLine(work.decisions), 240)}`);
+      if (work.constraints) bits.push(`límites: ${clip(oneLine(work.constraints), 160)}`);
       if (work.nextSteps) bits.push(`siguiente: ${oneLine(work.nextSteps)}`);
       return `- [${STATUS_LABEL[work.status]}] ${oneLine(work.title)} — ${bits.join('; ')}`;
     });

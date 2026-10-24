@@ -288,3 +288,55 @@ describe('capturePageIfOpen (captura sin escritorio)', () => {
     expect(shot).toBe(0);
   });
 });
+
+describe('contextual anticipation: resolved vs missing', () => {
+  const note = () =>
+    buildContextNote({ key: SCOPE, name: 'main' }, store, memory, undefined, workstreams);
+
+  it('shows what is already resolved and the limits, so it is not re-asked', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar con amigos');
+    workstreams.update(id, {
+      decisions: 'sitio: casa de Ana; hora: 21:00',
+      constraints: 'sin gluten',
+      nextSteps: 'decidir quién trae el postre',
+    });
+    const n = note();
+    expect(n).toContain('resuelto: sitio: casa de Ana; hora: 21:00');
+    expect(n).toContain('límites: sin gluten');
+    expect(n).toContain('siguiente: decidir quién trae el postre');
+  });
+
+  it('does not invent a resolved item when nothing was decided (multi-turn)', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar con amigos');
+    expect(note()).not.toContain('resuelto:');
+    workstreams.update(id, { nextSteps: 'elegir sitio' });
+    expect(note()).not.toContain('resuelto:');
+    workstreams.update(id, { decisions: 'sitio: casa de Ana' });
+    expect(note()).toContain('resuelto: sitio: casa de Ana');
+  });
+
+  it('a resolved decision stays out of the prompt once the work is forgotten', () => {
+    const id = workstreams.create(SCOPE, 'cena del sábado', 'cenar');
+    workstreams.update(id, { decisions: 'sitio: casa de Ana' });
+    workstreams.forget(id);
+    const n = note();
+    expect(n).not.toContain('casa de Ana');
+    expect(n).not.toContain('<anticipation>');
+  });
+
+  it('carries the anticipation rules only while there is open work', () => {
+    expect(note()).not.toContain('<anticipation>');
+    workstreams.create(SCOPE, 'cena del sábado', 'cenar');
+    const n = note();
+    expect(n).toContain('<anticipation>');
+    expect(n).toContain('pregunta SOLO por ese hueco');
+    expect(n).toContain('no interrumpas');
+    expect(n).toContain('no verificado');
+  });
+
+  it('clips very long decisions so the prompt stays compact', () => {
+    const id = workstreams.create(SCOPE, 'x', 'y');
+    workstreams.update(id, { decisions: 'd'.repeat(2000) });
+    expect(note().length).toBeLessThan(2000);
+  });
+});
