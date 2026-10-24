@@ -827,20 +827,35 @@ export class Gate {
    * from scratch. Scope limit: the key is the exact (tool, args); an effect the
    * gate never saw, or the same effect via different args, is not covered.
    */
-  #unsettled = new Map<string, Set<string>>();
+  #unsettled = new Map<string, Map<string, { inflight: number; failed: boolean }>>();
 
   /**
-   * Report how a call that passed `check()` ended. A clean end settles it (the
-   * memo may allow an identical repeat, as before); an error leaves it unsettled.
+   * Report how a call that passed `check()` ended. A clean end settles one run
+   * of it; an error marks the fingerprint failed until a fresh approval. The
+   * memo only covers a repeat when no run of it is in flight and none failed,
+   * so a clean end of one concurrent run cannot unlock the memo while another
+   * identical run is still going.
    */
   settle(sessionId: string, call: ToolCall, isError: boolean): void {
-    if (isError) return;
-    this.#unsettled.get(sessionId)?.delete(this.#fingerprint(call));
+    const entry = this.#unsettled.get(sessionId)?.get(this.#fingerprint(call));
+    if (!entry) return;
+    entry.inflight = Math.max(0, entry.inflight - 1);
+    if (isError) entry.failed = true;
   }
 
-  #markStarted(sessionId: string, fp: string): void {
-    if (!this.#unsettled.has(sessionId)) this.#unsettled.set(sessionId, new Set());
-    this.#unsettled.get(sessionId)?.add(fp);
+  #isUnsettled(sessionId: string, fp: string): boolean {
+    const entry = this.#unsettled.get(sessionId)?.get(fp);
+    return entry !== undefined && (entry.inflight > 0 || entry.failed);
+  }
+
+  /** `fresh`: a human approval was just given, which clears an earlier failure. */
+  #markStarted(sessionId: string, fp: string, fresh: boolean): void {
+    if (!this.#unsettled.has(sessionId)) this.#unsettled.set(sessionId, new Map());
+    const m = this.#unsettled.get(sessionId);
+    const entry = m?.get(fp) ?? { inflight: 0, failed: false };
+    entry.inflight += 1;
+    if (fresh) entry.failed = false;
+    m?.set(fp, entry);
   }
 
   /** Tool -> epoch ms until which further calls to it are trusted. */
@@ -1009,14 +1024,14 @@ export class Gate {
     const fp = this.#fingerprint(call);
     if (
       approved.has(fp) &&
-      !this.#unsettled.get(sessionId)?.has(fp) &&
+      !this.#isUnsettled(sessionId, fp) &&
       !confirmation &&
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
       !forced
     ) {
-      this.#markStarted(sessionId, fp);
+      this.#markStarted(sessionId, fp, false);
       return this.#record(call, {
         verdict: 'allow',
         reason: 'previously approved in this session',
@@ -1157,7 +1172,7 @@ export class Gate {
     }
     if (!ok) return this.#record(call, { verdict: 'deny', reason: `denied by ${call.actor}` });
     approved.add(fp);
-    this.#markStarted(sessionId, fp);
+    this.#markStarted(sessionId, fp, true);
     // One approval covers the rest of this task, so a multi-step job asks once
     // instead of once per click.
     this.#openGrantWindow(sessionId, call.tool);

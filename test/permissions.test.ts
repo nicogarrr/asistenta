@@ -508,4 +508,25 @@ describe('Gate: repeat after an unsettled call', () => {
     await gate.check('s', other);
     expect(asked()).toBe(2);
   });
+
+  it('a clean end of one run does not unlock the memo while another identical run is in flight', async () => {
+    const { gate, asked } = make();
+    await gate.check('s', call); // run A starts (asked 1)
+    await gate.check('s', call); // run B: A unsettled -> asks (asked 2)
+    gate.settle('s', call, false); // A ends cleanly; B still in flight
+    await gate.check('s', call);
+    expect(asked()).toBe(3);
+    gate.settle('s', call, false);
+    gate.settle('s', call, false);
+    expect((await gate.check('s', call)).reason).toContain('previously approved');
+  });
+
+  it('a fresh approval after an error clears the failed mark', async () => {
+    const { gate } = make();
+    await gate.check('s', call);
+    gate.settle('s', call, true);
+    await gate.check('s', call); // asks again, approved
+    gate.settle('s', call, false);
+    expect((await gate.check('s', call)).reason).toContain('previously approved');
+  });
 });
