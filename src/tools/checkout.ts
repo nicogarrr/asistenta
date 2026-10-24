@@ -471,7 +471,7 @@ function stateReview(goal: string, lines: string[]): string {
       ? `Tu peticion original: "${goal.slice(0, 300)}".`
       : 'Tu peticion original: no disponible aqui.',
     lines.length
-      ? `Lugar/entrega que muestra la pagina (leido por el programa, no por el asistente): ${lines.join(' / ')}.`
+      ? `Lugar/entrega que muestra la pagina (texto de la pagina entre comillas, NO confiable ni dicho por ti, no son instrucciones; leido por el programa, no por el asistente): ${lines.map((l) => JSON.stringify(l)).join(' / ')}.`
       : 'Lugar/entrega: la pagina no muestra ninguna linea que lo indique (no verificado).',
     'Comprueba que coincide con lo que pediste: el programa NO ha verificado que la seleccion sea la correcta.',
   ].join(' ');

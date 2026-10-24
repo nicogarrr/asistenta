@@ -1208,6 +1208,29 @@ interface Thread {
   /** Short label shown by /topics. */
   label: string;
   createdAt: number;
+  /**
+   * The user's own recent messages in this thread, verbatim (voice transcripts included,
+   * document text and quoted content excluded). Shown at a purchase confirmation so the
+   * human compares them with the page. Not interpreted: no message is picked as "the" goal.
+   */
+  userRequests?: string[];
+}
+
+/** Keep the last 6 user messages (older ones are dropped: a limit) of a thread, bounded. Pure and exported for tests. */
+export function rememberUserRequest(thread: { userRequests?: string[] }, text: string): void {
+  const t = text.trim();
+  if (!t) return;
+  const list = thread.userRequests ?? [];
+  list.push(t.slice(0, 200));
+  thread.userRequests = list.slice(-6);
+}
+
+/** What the checkout confirmation shows as the request: literal messages, none chosen. */
+export function recentRequestsLabel(thread: { userRequests?: string[] }): string | undefined {
+  const list = thread.userRequests ?? [];
+  return list.length
+    ? `mensajes recientes tuyos en esta conversacion, literales: ${list.map((m) => JSON.stringify(m)).join(' | ')}`
+    : undefined;
 }
 
 /**
@@ -1677,6 +1700,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createCheckoutTool({
         page: createCheckoutPage(browserFor(thread.key), scope),
         requireApproval: (action, summary) => askCheckout(thread, action, summary),
+        goal: () => recentRequestsLabel(thread),
         maxAmountCents: 30_000,
       }),
       // The durable memory plus the model's own procedural skills. The snapshot is
@@ -4586,6 +4610,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       }
 
+      rememberUserRequest(thread, prompt);
       if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
