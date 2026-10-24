@@ -10,10 +10,10 @@ import {
   dueOfOneShot,
   isOneShotReminder,
   isReminder,
-  lateReminderText,
   MAX_REMINDERS_PER_CHAT,
   missedOneShots,
   onceCron,
+  oneShotStillPending,
   parseLocalStamp,
   RETRY_MAX_AGE_MS,
   RETRY_MS,
@@ -253,7 +253,7 @@ describe('dropped reminders are surfaced', () => {
   });
 });
 
-describe('reminders missed while the app was off', () => {
+describe('overdue one-time reminders at startup', () => {
   const save = (text: string, stamp: string, scope = 'tg:1:2') =>
     store.saveRoutine({
       scope,
@@ -263,15 +263,20 @@ describe('reminders missed while the app was off', () => {
       schedule: onceCron(parseLocalStamp(stamp) as Date),
     });
 
-  it('finds only one-shots past their time by more than the grace', () => {
+  it('recovers everything already due, with no grace, and leaves the future alone', () => {
     save('apagar el horno', '2026-10-05 08:00');
-    save('llamar al dentista', '2026-10-05 09:59'); // 1 min ago: the scheduler still fires it
+    save('hace un minuto', '2026-10-05 09:59'); // a cron never fires this late
     save('futuro', '2026-10-06 09:00');
-    const names = missedOneShots(store.listRoutines(), NOW).map((r) => r.name);
-    expect(names).toEqual([expect.stringContaining('apagar el horno')]);
+    const { missed, invalid } = missedOneShots(store.listRoutines(), NOW);
+    expect(missed.map((r) => reminderText(r)).sort()).toEqual([
+      'apagar el horno',
+      'hace un minuto',
+    ]);
+    expect(missed).toHaveLength(2);
+    expect(invalid).toHaveLength(0);
   });
 
-  it('delivers late with the original time, deletes it, and a failed send stays stored', async () => {
+  it('delivers neutral text with the original time, deletes it, keeps a failed send', async () => {
     save('apagar el horno', '2026-10-05 08:00');
     save('pagar la luz', '2026-10-04 20:30', 'tg:9:9');
     const sent: Array<[string, string]> = [];
@@ -280,19 +285,62 @@ describe('reminders missed while the app was off', () => {
       return scope !== 'tg:9:9';
     };
     const r = await deliverMissedReminders({ store, send: flaky, now: NOW });
-    expect(r).toEqual({ delivered: 1, failed: 1 });
-    expect(sent.find(([s]) => s === 'tg:1:2')?.[1]).toContain('05/10 08:00');
-    expect(sent.find(([s]) => s === 'tg:1:2')?.[1]).toContain('apagar el horno');
-    const left = store.listRoutines().map((x) => x.name);
-    expect(left).toEqual([expect.stringContaining('pagar la luz')]);
-    // Next start: delivered once the chat works, then nothing is left to repeat.
+    expect(r).toEqual({ delivered: 1, failed: 1, invalid: 0 });
+    const text = sent.find(([s]) => s === 'tg:1:2')?.[1] ?? '';
+    expect(text).toContain('05/10 08:00');
+    expect(text).toContain('apagar el horno');
+    expect(text).not.toMatch(/apagad|no estaba en marcha/);
+    expect(store.listRoutines().map((x) => x.name)).toEqual([
+      expect.stringContaining('pagar la luz'),
+    ]);
     const again = await deliverMissedReminders({ store, send: async () => true, now: NOW });
-    expect(again).toEqual({ delivered: 1, failed: 0 });
+    expect(again).toEqual({ delivered: 1, failed: 0, invalid: 0 });
     expect(store.listRoutines()).toEqual([]);
-    expect(await deliverMissedReminders({ store, send: async () => true, now: NOW })).toEqual({
-      delivered: 0,
-      failed: 0,
-    });
+  });
+
+  it('recovers a retry-registered one (due 14:00, retry cron 14:05) once, before any stale job can fire', async () => {
+    save('cita', '2026-10-05 09:00');
+    // settleOneShot moved its cron five minutes ahead after a failed send: name keeps 09:00.
+    settleOneShot(
+      store,
+      { scope: 'tg:1:2', name: store.listRoutines()[0]?.name ?? '', prompt: 'cita' },
+      false,
+      NOW - 3600_000 + 60_000,
+    );
+    const stored = store.listRoutines()[0];
+    expect(stored).toBeTruthy();
+    let sends = 0;
+    await deliverMissedReminders({ store, send: async () => ++sends > 0, now: NOW });
+    expect(sends).toBe(1);
+    expect(store.listRoutines()).toEqual([]);
+    // The stale callback of a job registered earlier sees it is gone and must not send.
+    expect(oneShotStillPending(store, stored as never)).toBe(false);
+  });
+
+  it('a stored time that is not a real local time is reported, never given an invented hour', async () => {
+    const savedTz = process.env.TZ;
+    process.env.TZ = 'Europe/Madrid';
+    try {
+      // 2026-03-29 02:30 does not exist in Madrid (clocks jump 02:00 -> 03:00).
+      store.saveRoutine({
+        scope: 'tg:1:2',
+        name: 'recordatorio-1: salto @2026-03-29 02:30',
+        kind: 'schedule',
+        prompt: 'salto',
+        schedule: '30 2 29 3 *',
+      });
+      let sends = 0;
+      const r = await deliverMissedReminders({
+        store,
+        send: async () => ++sends > 0,
+        now: new Date(2026, 9, 5, 10, 0).getTime(),
+      });
+      expect(r).toEqual({ delivered: 0, failed: 0, invalid: 1 });
+      expect(sends).toBe(0);
+    } finally {
+      if (savedTz === undefined) delete process.env.TZ;
+      else process.env.TZ = savedTz;
+    }
   });
 
   it('never touches repeating reminders or non-reminder routines', async () => {
@@ -304,10 +352,7 @@ describe('reminders missed while the app was off', () => {
       schedule: '30 8 * * 1',
     });
     const r = await deliverMissedReminders({ store, send: async () => true, now: NOW });
-    expect(r).toEqual({ delivered: 0, failed: 0 });
+    expect(r).toEqual({ delivered: 0, failed: 0, invalid: 0 });
     expect(store.listRoutines()).toHaveLength(1);
-    expect(
-      lateReminderText({ name: 'recordatorio-1: x @2026-10-05 08:00', prompt: 'x' }),
-    ).toContain('05/10 08:00');
   });
 });

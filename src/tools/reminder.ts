@@ -171,38 +171,55 @@ export function settleOneShot(
   return 'retry';
 }
 
-/** A one-time reminder this far past its time at startup counts as missed, not as "about to fire". */
-export const MISSED_GRACE_MS = 3 * 60_000;
-
 /**
- * One-time reminders whose time passed while the app was off. The scheduler never
- * fires them late: they would sit in the store and fire a YEAR later (the pinned cron
- * has no year), so the user simply never hears about them. Only valid, enabled
- * one-shots with a readable due time are returned.
+ * One-time reminders whose time already passed when this runs (startup). The
+ * scheduler never fires a past cron late: it would sit in the store and fire a YEAR
+ * later (the pinned cron has no year), so the user would never hear about it. Every
+ * overdue one is returned, with no grace: a cron does not fire a reminder that is
+ * already behind, so a short grace would lose exactly those. Callers must run this
+ * BEFORE the scheduler starts, so a job due this minute cannot also fire fresh.
+ *
+ * `invalid` are one-shots whose stored time is not a real local time (a date skipped
+ * by a DST change, a corrupt name): they are reported, never given an invented time.
  */
 export function missedOneShots(
   routines: readonly Routine[],
   now = Date.now(),
-  graceMs = MISSED_GRACE_MS,
-): Routine[] {
-  return routines.filter((r) => {
-    if (!isOneShotReminder(r) || !r.enabled) return false;
+): { missed: Routine[]; invalid: Routine[] } {
+  const missed: Routine[] = [];
+  const invalid: Routine[] = [];
+  for (const r of routines) {
+    if (!isOneShotReminder(r) || !r.enabled) continue;
     const due = dueOfOneShot(r.name);
-    return due !== null && now - due.getTime() > graceMs;
-  });
+    if (due === null) invalid.push(r);
+    else if (due.getTime() <= now) missed.push(r);
+  }
+  return { missed, invalid };
 }
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-/** What the user reads for a reminder delivered late. Says it was late, and why it can be stated. */
+/**
+ * What the user reads for a reminder delivered late. It states only what is known:
+ * the time it was set for. It does not say why it was late (the app being off is not
+ * proven by a past time).
+ */
 export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
   const due = dueOfOneShot(r.name);
   const when = due
     ? `${pad2(due.getDate())}/${pad2(due.getMonth() + 1)} ${pad2(due.getHours())}:${pad2(due.getMinutes())}`
     : 'una hora anterior';
-  return `⏰ Recordatorio con retraso (era para el ${when}; Asistenta no estaba en marcha a esa hora): ${reminderText(r)}`;
+  return `⏰ Recordatorio pendiente con retraso (era para el ${when}): ${reminderText(r)}`;
+}
+
+/** Whether a fired one-shot is still stored. A job whose routine was deleted must not send again. */
+export function oneShotStillPending(
+  store: Pick<Store, 'getRoutine'>,
+  routine: Pick<Routine, 'scope' | 'name'>,
+): boolean {
+  return store.getRoutine(routine.scope, routine.name) !== null;
 }
 
 export interface MissedDeliveryDeps {
@@ -213,16 +230,20 @@ export interface MissedDeliveryDeps {
 }
 
 /**
- * Startup catch-up: tell the user about every one-time reminder that was missed, then
- * delete it. A reminder that could not be sent stays stored so the next start tries
- * again (nothing is deleted without having been delivered). Returns the counts.
+ * Startup catch-up: tell the user about every overdue one-time reminder, then delete
+ * it. Delivery is AT LEAST ONCE, not exactly once: a send that errors or times out may
+ * still have arrived, and a crash between the send and the delete repeats it at the
+ * next start. A reminder whose send reported failure stays stored and is tried again
+ * at the next start; a repeat of a reminder text is the accepted cost, and nothing
+ * here promises a single delivery. Returns the counts.
  */
 export async function deliverMissedReminders(
   deps: MissedDeliveryDeps,
-): Promise<{ delivered: number; failed: number }> {
+): Promise<{ delivered: number; failed: number; invalid: number }> {
+  const { missed, invalid } = missedOneShots(deps.store.listRoutines(), deps.now);
   let delivered = 0;
   let failed = 0;
-  for (const r of missedOneShots(deps.store.listRoutines(), deps.now)) {
+  for (const r of missed) {
     const ok = await deps.send(r.scope, lateReminderText(r)).catch(() => false);
     if (ok) {
       deps.store.deleteRoutine(r.scope, r.name);
@@ -231,7 +252,7 @@ export async function deliverMissedReminders(
       failed++;
     }
   }
-  return { delivered, failed };
+  return { delivered, failed, invalid: invalid.length };
 }
 
 function nameFor(prefix: string, text: string, suffix = ''): string {
