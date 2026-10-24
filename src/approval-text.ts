@@ -83,6 +83,7 @@ export function approvalReasonSpanish(reason: string): string {
 export function formatApproval(call: ToolCall, reason: string): ApprovalText {
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
+  if (call.tool === 'browser' && call.args.action === 'exec_js') return deniedOpaqueScript();
   if (call.tool === 'browser' && target) {
     const [withCtx = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
     const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
@@ -172,6 +173,22 @@ function deniedAltered(tool: string): ApprovalText {
       'ejecuta subexpresiones $() dentro de comillas dobles, y los escapes no se ' +
       'parsean), y aprobar una versión alterada es aprobar a ciegas: queda ' +
       'DENEGADA. Ejecútala a mano o reescríbela sin secretos literales.',
+    complete: false,
+  };
+}
+
+/**
+ * exec_js runs arbitrary code in the page. Its effect (requests, form posts, state
+ * changes) cannot be verified from the code or from a summary, so a question would be
+ * an approval nobody can judge: it is denied. Use click/fill/choose/checkout instead.
+ */
+function deniedOpaqueScript(): ApprovalText {
+  return {
+    question:
+      '¿Permito ejecutar JavaScript en la página (exec_js)?\n' +
+      'No se puede verificar qué efecto tendría (peticiones, envíos de formulario, cambios ' +
+      'de estado), así que no se aprueba con una pregunta: queda DENEGADA. Usa click, ' +
+      'fill, choose o checkout, que sí muestran el elemento y su contexto.',
     complete: false,
   };
 }

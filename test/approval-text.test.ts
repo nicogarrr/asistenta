@@ -225,4 +225,26 @@ describe('contrato con el harness QA (toolOfQuestion)', () => {
       ),
     ).toBe('computer');
   });
+
+  it('browser exec_js is denied: its effect cannot be verified from a question', () => {
+    const a = formatApproval(
+      {
+        tool: 'browser',
+        args: { action: 'exec_js', code: "fetch('/x',{method:'POST'})" },
+        actor: 'a',
+      },
+      'not on the allow list',
+    );
+    expect(a.complete).toBe(false);
+    expect(a.question).toContain('DENEGADA');
+    const click = formatApproval(
+      {
+        tool: 'browser',
+        args: { action: 'click', selector: '#b', _target: 'button | OK' },
+        actor: 'a',
+      },
+      'x',
+    );
+    expect(click.question).not.toContain('DENEGADA');
+  });
 });
