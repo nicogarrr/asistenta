@@ -69,6 +69,7 @@ import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { renderMemoryContext } from './memory/context.js';
+import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
@@ -193,6 +194,7 @@ import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import { createComputerTool } from './tools/computer.js';
+import { createDecisionTool } from './tools/decision.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
@@ -1418,6 +1420,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const sessions = new SessionStore({ db: memoryDb });
   const instincts = new InstinctStore({ db: memoryDb });
   const workstreams = new WorkstreamStore({ db: memoryDb });
+  const decisionLedger = new DecisionLedger(memoryDb, workstreams);
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
   const weeklyState = new WeeklyState(memoryDb);
@@ -1708,6 +1711,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // stop re-deriving a procedure it already worked out.
       createMemoryTool(memory, scope, snapshot, semanticRecall),
       createDocsTool(docMemory, scope),
+      createDecisionTool({
+        ledger: decisionLedger,
+        workstreams,
+        scopeOf: scope,
+        inbound: () => {
+          const live = threadInbound.get(thread.key);
+          if (!live?.text) return undefined;
+          return {
+            messageId: live.messageId ?? '',
+            userId: live.userId,
+            text: live.text,
+            receivedAt: live.receivedAt ?? '',
+            authorised: live.authorised,
+            scope: thread.key,
+          };
+        },
+      }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createGoalTool({
         goals: goalStore,

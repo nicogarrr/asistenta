@@ -24,9 +24,11 @@ import {
 } from '../src/cli.js';
 import { parseNatural } from '../src/cron/scheduler.js';
 import { Store } from '../src/db.js';
+import { DecisionLedger } from '../src/memory/decisions.js';
 import { WorkstreamStore } from '../src/memory/workstreams.js';
 import { MemoryStore } from '../src/memory.js';
 import { SkillStore } from '../src/skills/store.js';
+import { createDecisionTool } from '../src/tools/decision.js';
 
 const DAY_MS = 86_400_000;
 const SCOPE = 'telegram:main:42#main';
@@ -338,5 +340,92 @@ describe('contextual anticipation: resolved vs missing', () => {
     const id = workstreams.create(SCOPE, 'x', 'y');
     workstreams.update(id, { decisions: 'd'.repeat(2000) });
     expect(note().length).toBeLessThan(2000);
+  });
+});
+
+describe('decision tool -> ledger -> prompt (real tool path)', () => {
+  const run = async (
+    text: string | undefined,
+    args: Record<string, unknown>,
+    scope = SCOPE,
+  ): Promise<{ text: string; isError: boolean }> => {
+    const ledger = new DecisionLedger(workDb, workstreams);
+    const tool = createDecisionTool({
+      ledger,
+      workstreams,
+      scopeOf: () => scope,
+      inbound: () =>
+        text === undefined
+          ? undefined
+          : {
+              messageId: 'm9',
+              userId: 'u1',
+              text,
+              receivedAt: '2026-10-24T10:00:00Z',
+              authorised: true,
+              scope,
+            },
+    });
+    const res = await tool.execute('t', args as never);
+    const first = res.content[0];
+    return { text: first && 'text' in first ? first.text : '', isError: Boolean(res.isError) };
+  };
+  const note = () =>
+    buildContextNote({ key: SCOPE, name: 'main' }, store, memory, undefined, workstreams);
+
+  it('registers a verified decision and the prompt shows it; negation and example do not', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar con amigos');
+    const bad = await run('no quiero cenar en casa de Ana', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenar en casa de Ana',
+    });
+    expect(bad.isError).toBe(true);
+    const ex = await run('Ejemplo de otro bot: cenamos en casa de Ana', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(ex.isError).toBe(true);
+    expect(note()).not.toContain('resuelto:');
+    const ok = await run('Vale, cenamos en casa de Ana.', {
+      action: 'registrar',
+      frente: id,
+      resumen: 'sitio: casa de Ana',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(ok.isError).toBe(false);
+    expect(note()).toContain('resuelto: sitio: casa de Ana');
+  });
+
+  it('cannot touch a workstream of another chat, and tentative never shows as resolved', async () => {
+    const id = workstreams.create(SCOPE, 'cena', 'cenar');
+    const other = await run(
+      'cenamos en casa de Ana',
+      {
+        action: 'registrar',
+        frente: id,
+        resumen: 'x',
+        cita: 'cenamos en casa de Ana',
+      },
+      'telegram:main:99#main',
+    );
+    expect(other.isError).toBe(true);
+    const t = await run(undefined, {
+      action: 'tentativa',
+      frente: id,
+      resumen: 'quizá casa de Ana',
+    });
+    expect(t.isError).toBe(false);
+    expect(note()).not.toContain('resuelto:');
+    const none = await run(undefined, {
+      action: 'registrar',
+      frente: id,
+      resumen: 'x',
+      cita: 'cenamos en casa de Ana',
+    });
+    expect(none.isError).toBe(true);
   });
 });
