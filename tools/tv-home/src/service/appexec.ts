@@ -27,7 +27,7 @@ export const SAFE_PATH = /^\/[A-Za-z0-9._\/+@-]+$/;
  *  webOS, sin segmentos ".." y con extension de imagen: el icono lo declara el
  *  appinfo de CADA app instalada (dato no confiable), asi que "ruta sencilla" no
  *  basta para no leer ficheros arbitrarios como root. Raices NO verificadas en TV. */
-export const ICON_ROOTS = ['/usr/palm/', '/media/developer/', '/media/cryptofs/', '/usr/share/', '/mnt/'];
+export const ICON_ROOTS = ['/usr/palm/applications/', '/media/developer/apps/usr/palm/applications/', '/media/cryptofs/apps/usr/palm/applications/'];
 export const ICON_MAX_BYTES = 262_144;
 export function isReadableIconPath (p: string): boolean {
 	return SAFE_PATH.test(p)
@@ -73,9 +73,31 @@ export function listLaunchPointsRoot (): Promise<LaunchPointRoot[]> {
 /** Un solo round-trip para N iconos: "<índice> <base64>" por línea. Los índices
  *  —no los appIds— llegan al shell; busybox base64 no tiene -w, se quitan \n. */
 export function buildIconScript (paths: string[]): string {
-	return paths
-		.map((p, i) => `printf '%d ' ${i}; [ -f ${shellQuote(p)} ] && [ "$(wc -c < ${shellQuote(p)})" -le ${ICON_MAX_BYTES} ] && base64 ${shellQuote(p)} 2>/dev/null | tr -d '\\n'; echo`)
-		.join('; ');
+	// Por icono, en subshell: (1) ruta canonica (symlinks resueltos) dentro de una
+	// raiz permitida y con extension de imagen; (2) se ABRE una vez (fd 3) y se
+	// vuelve a comprobar a donde apunta el fd abierto (cierra el TOCTOU entre
+	// comprobar y leer: se lee del fichero ya abierto, no de la ruta); (3) se lee
+	// como mucho TOPE+1 bytes y se descarta si lo excede. Si readlink/proc no
+	// existen, falla cerrado (linea vacia -> monograma).
+	const roots = ICON_ROOTS.map((r) => `${r}*`).join('|');
+	const maxB64 = Math.ceil(ICON_MAX_BYTES / 3) * 4;
+	const one = (p: string, i: number): string =>
+		`( printf '%d ' ${i}; rp=$(readlink -f ${shellQuote(p)}) || exit 0; ` +
+		`case "$rp" in ${roots}) ;; *) exit 0;; esac; ` +
+		`case "$rp" in *.png|*.PNG|*.jpg|*.JPG|*.jpeg|*.JPEG|*.webp|*.WEBP) ;; *) exit 0;; esac; ` +
+		`[ -f "$rp" ] || exit 0; exec 3< "$rp" || exit 0; ` +
+		`op=$(readlink /proc/self/fd/3) || exit 0; [ "$op" = "$rp" ] || exit 0; ` +
+		`b=$(head -c ${ICON_MAX_BYTES + 3} <&3 | base64 | tr -d '\\n'); ` +
+		`[ \${#b} -le ${maxB64} ] && printf '%s' "$b" ); echo`;
+	return paths.map(one).join('; ');
+}
+
+/** Tras leer: el contenido debe ser una imagen (PNG/JPEG/WebP/GIF/BMP por sus
+ *  primeros bytes en base64) o se descarta; cierra el caso "fichero de texto con
+ *  nombre .png" (idea de la v2 alternativa del worker). */
+const MAGIC_B64 = ['iVBORw0KGgo', '/9j/', 'UklGR', 'R0lGOD', 'Qk0'];
+export function looksLikeImage (b64: string): boolean {
+	return MAGIC_B64.some((m) => b64.startsWith(m));
 }
 
 /** Parsea la salida del script de iconos (pura, testeable). Líneas basura o
@@ -84,7 +106,7 @@ export function parseIconOutput (out: string, count: number): Record<number, str
 	const result: Record<number, string> = {};
 	for (const line of out.split('\n')) {
 		const m = /^(\d+) ([A-Za-z0-9+/=]+)$/.exec(line);
-		if (!m || m[2].length > Math.ceil(ICON_MAX_BYTES / 3) * 4) continue;
+		if (!m || m[2].length > Math.ceil(ICON_MAX_BYTES / 3) * 4 || !looksLikeImage(m[2])) continue;
 		const idx = Number(m[1]);
 		if (idx >= 0 && idx < count) result[idx] = `data:image/png;base64,${m[2]}`;
 	}
