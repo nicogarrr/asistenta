@@ -27,13 +27,10 @@ export interface Pick {
 	providerName: string;
 }
 
-export type Period = 'manana' | 'tarde' | 'noche';
+import {periodAt, type Period} from '../lib/greeting';
+export type {Period};
 
-export function periodFor (h: number): Period {
-	if (h >= 6 && h < 12) return 'manana';
-	if (h >= 12 && h < 21) return 'tarde';
-	return 'noche';
-}
+export const periodFor = periodAt;
 
 export const PERIOD_LABEL: Record<Period, string> = {
 	manana: 'PARA ESTA MAÑANA',
