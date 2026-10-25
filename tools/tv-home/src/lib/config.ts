@@ -36,6 +36,9 @@ export interface HomeConfig {
 	/** 'ambient': el reloj de la app veto al salvapantallas de la TV.
 	 *  'system': deja pasar el salvapantallas de webOS (kit de arte). */
 	tvScreensaver: 'ambient' | 'system';
+	/** Iconos reales leídos de la TV vía el servicio ROOT del Homebrew Channel
+	 *  (OPT-IN, off por defecto; patrón Hearth). Sin él: iconos del paquete/monograma. */
+	liveIcons: boolean;
 }
 
 export const APP_VERSION = '0.1.0-nico';
@@ -55,7 +58,8 @@ export const DEFAULT_CONFIG: HomeConfig = {
 	rocketEnabled: true,
 	launchesEnabled: true,
 	ambientPhotos: true,
-	tvScreensaver: 'ambient'
+	tvScreensaver: 'ambient',
+	liveIcons: false
 };
 
 const KEY = 'home-config-v2';

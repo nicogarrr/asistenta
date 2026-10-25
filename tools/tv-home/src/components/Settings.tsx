@@ -65,6 +65,10 @@ const ROWS: Row[] = [
 		kind: 'choice', label: 'Motion speed', values: ['slow', 'normal', 'fast'], labels: ['Slow', 'Normal', 'Fast'],
 		get: (c) => c.bgSpeed, set: (c, v) => ({...c, bgSpeed: v as HomeConfig['bgSpeed']})
 	},
+	{
+		kind: 'choice', label: 'Iconos reales (root)', values: ['off', 'on'], labels: ['Off', 'On'],
+		get: (c) => (c.liveIcons ? 'on' : 'off'), set: (c, v) => ({...c, liveIcons: v === 'on'})
+	},
 	{kind: 'action', label: 'Manage apps', hint: 'OK to open', action: 'apps'},
 	{kind: 'action', label: 'Reset app order', hint: 'OK to reset', action: 'reset'},
 	{kind: 'info', label: 'Version', value: `v${APP_VERSION}`}

@@ -11,6 +11,7 @@ import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
 import {ConfigContext, loadConfig, saveConfig, type HomeConfig} from './lib/config';
 import {fetchPicks, type Pick} from './service/tmdb';
 import {launchApp, listLaunchPoints, blockScreenSaver, assertSoundOutput, guardSoundOutput, isWebOS, noteVisible} from './service/luna';
+import {listLaunchPointsRoot, loadIcons} from './service/appexec';
 
 const IDLE_MS = 60_000;      // sin input este tiempo → reloj ambient
 const JITTER_MS = 150_000;   // guardia OLED: desplaza la UI ±2px con esta cadencia
@@ -67,10 +68,14 @@ export default function App () {
 
 	// Descubrimiento en caliente: las apps instaladas en la TV que falten en el
 	// catálogo aparecen solas en "Apps" (monograma; los iconos van en el paquete).
+	// Con "Iconos reales" (OPT-IN root Homebrew, patrón Hearth) se piden además las
+	// rutas de icono como root y se leen en base64 en UN round-trip; fallo → monograma.
 	useEffect(() => {
 		if (!isWebOS()) return;
+		let alive = true;
 		listLaunchPoints()
 			.then((res) => {
+				if (!alive) return;
 				const known = new Set<string>();
 				for (const cat of ['game', 'stream', 'media', 'misc'] as CatId[]) {
 					for (const a of buildLists()[cat]) known.add(a.id);
@@ -87,9 +92,28 @@ export default function App () {
 					setDiscovered(extra);
 					setLists(buildLists(extra));
 				}
+
+				if (!config.liveIcons) return;
+				// Iconos reales: la lista root da rutas de icono que la llamada sin
+				// root no devuelve; se aplican a catálogo Y descubiertas (el mapa
+				// funcional respeta reordenaciones/ocultos que haya hecho Nico).
+				listLaunchPointsRoot()
+					.then((points) => loadIcons(points, localStorage))
+					.then((iconById) => {
+						if (!alive || !Object.keys(iconById).length) return;
+						const withIcon = (a: AppItem): AppItem => (iconById[a.id] ? {...a, icon: iconById[a.id]} : a);
+						setDiscovered((prev) => prev.map(withIcon));
+						setLists((prev) => {
+							const next = {...prev};
+							for (const cat of ['game', 'stream', 'media', 'misc'] as CatId[]) next[cat] = prev[cat].map(withIcon);
+							return next;
+						});
+					})
+					.catch(() => { /* sin root/servicio: monogramas, como siempre */ });
 			})
 			.catch(() => { /* el catálogo basta */ });
-	}, []);
+		return () => { alive = false; };
+	}, [config.liveIcons]);
 
 	// Salvapantallas: 'ambient' (por defecto) veta el de la TV y pone el reloj;
 	// 'system' lo deja pasar (kit de arte, una vez verificado en la TV).
