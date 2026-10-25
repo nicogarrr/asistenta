@@ -80,7 +80,7 @@ jobs:
           CI: '1'
           TZ: Europe/Madrid
 
-      - name: OCR real de documentos (sintetico, solo prueba)
+      - name: OCR real de documentos (imagen sintetica)
         if: always()
         run: npx vitest run test/ocrdoc-windows.test.ts
         env:
