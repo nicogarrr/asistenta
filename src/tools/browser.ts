@@ -113,7 +113,7 @@ const BrowserParams = Type.Object({
         'For click on a selection (store, address, date, plan, option): the text the ' +
         'page MUST show afterwards if the selection matches the user request (e.g. the ' +
         'requested city). The tool checks it itself; if it is missing, the session is ' +
-        'locked (no click/choose/fill/exec_js) until you open or go back.',
+        'locked (no click/choose/fill/press) until you open or go back.',
     }),
   ),
   url: Type.Optional(Type.String({ description: 'For open. Must be http(s).' })),
@@ -559,7 +559,7 @@ export function createBrowserTool(
       const record = args as unknown as Record<string, unknown>;
       if (
         selectionLocked.has(scope) &&
-        ['click', 'choose', 'fill', 'exec_js', 'press'].includes(String(args.action))
+        ['click', 'choose', 'fill', 'press'].includes(String(args.action))
       ) {
         throw new Error(
           'SELECCION_NO_CORROBORADA: la última selección no mostró el texto esperado. ' +
