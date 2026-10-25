@@ -28,9 +28,22 @@ export const SAFE_PATH = /^\/[A-Za-z0-9._\/+@-]+$/;
  *  appinfo de CADA app instalada (dato no confiable), asi que "ruta sencilla" no
  *  basta para no leer ficheros arbitrarios como root. Raices NO verificadas en TV. */
 export const ICON_ROOTS = ['/usr/palm/applications/', '/media/developer/apps/usr/palm/applications/', '/media/cryptofs/apps/usr/palm/applications/'];
-export const ICON_MAX_BYTES = 262_144;
+export const ICON_MAX_BYTES = 262_144;            // por icono, DECODIFICADO (bytes exactos)
+export const ICON_MAX_COUNT = 16;                  // iconos por comando; el resto sale en la siguiente carga (monograma entretanto)
+export const ICON_TOTAL_MAX_BYTES = 1_048_576;     // presupuesto agregado por comando, decodificado
+export const ICON_PATH_MAX = 256;
+const b64Len = (bytes: number) => Math.ceil(bytes / 3) * 4;
+/** Techo de caracteres base64 de TODO el comando (un icono puede pasarse un poco antes de cortar). */
+export const ICON_OUTPUT_MAX_CHARS = b64Len(ICON_TOTAL_MAX_BYTES) + b64Len(ICON_MAX_BYTES) + ICON_MAX_COUNT * 12;
+
+/** Bytes que decodifica una cadena base64 canonica (longitud multiplo de 4, relleno solo al final); -1 si no es valida. */
+export function decodedLength (b64: string): number {
+	if (b64.length === 0 || b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) return -1;
+	return (b64.length / 4) * 3 - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+}
 export function isReadableIconPath (p: string): boolean {
 	return SAFE_PATH.test(p)
+		&& p.length <= ICON_PATH_MAX
 		&& !p.split('/').includes('..')
 		&& ICON_ROOTS.some((root) => p.startsWith(root))
 		&& /\.(png|jpe?g|webp)$/i.test(p);
@@ -72,24 +85,29 @@ export function listLaunchPointsRoot (): Promise<LaunchPointRoot[]> {
 
 /** Un solo round-trip para N iconos: "<índice> <base64>" por línea. Los índices
  *  —no los appIds— llegan al shell; busybox base64 no tiene -w, se quitan \n. */
-export function buildIconScript (paths: string[]): string {
+export function buildIconScript (paths: string[], roots: readonly string[] = ICON_ROOTS): string {
 	// Por icono, en subshell: (1) ruta canonica (symlinks resueltos) dentro de una
 	// raiz permitida y con extension de imagen; (2) se ABRE una vez (fd 3) y se
 	// vuelve a comprobar a donde apunta el fd abierto (cierra el TOCTOU entre
-	// comprobar y leer: se lee del fichero ya abierto, no de la ruta); (3) se lee
-	// como mucho TOPE+1 bytes y se descarta si lo excede. Si readlink/proc no
-	// existen, falla cerrado (linea vacia -> monograma).
-	const roots = ICON_ROOTS.map((r) => `${r}*`).join('|');
-	const maxB64 = Math.ceil(ICON_MAX_BYTES / 3) * 4;
+	// comprobar y leer: se lee del fichero ya abierto, no de la ruta); (3) se leen
+	// como mucho TOPE+1 bytes y se descarta si los bytes DECODIFICADOS exceden TOPE
+	// (calculo exacto con el relleno '='). Presupuesto agregado: el contador vive en
+	// el shell padre; al agotarse, los iconos restantes ni se abren (monograma).
+	// Si readlink//proc no existen, falla cerrado (linea vacia -> monograma).
+	const list = paths.slice(0, ICON_MAX_COUNT);
+	const rootPat = roots.map((r) => `${r}*`).join('|');
+	const aggChars = b64Len(ICON_TOTAL_MAX_BYTES);
 	const one = (p: string, i: number): string =>
-		`( printf '%d ' ${i}; rp=$(readlink -f ${shellQuote(p)}) || exit 0; ` +
-		`case "$rp" in ${roots}) ;; *) exit 0;; esac; ` +
+		`[ "$tot" -lt ${aggChars} ] && { o=$( printf '%d ' ${i}; rp=$(readlink -f ${shellQuote(p)}) || exit 0; ` +
+		`case "$rp" in ${rootPat}) ;; *) exit 0;; esac; ` +
 		`case "$rp" in *.png|*.PNG|*.jpg|*.JPG|*.jpeg|*.JPEG|*.webp|*.WEBP) ;; *) exit 0;; esac; ` +
 		`[ -f "$rp" ] || exit 0; exec 3< "$rp" || exit 0; ` +
 		`op=$(readlink /proc/self/fd/3) || exit 0; [ "$op" = "$rp" ] || exit 0; ` +
-		`b=$(head -c ${ICON_MAX_BYTES + 3} <&3 | base64 | tr -d '\\n'); ` +
-		`[ \${#b} -le ${maxB64} ] && printf '%s' "$b" ); echo`;
-	return paths.map(one).join('; ');
+		`b=$(head -c ${ICON_MAX_BYTES + 1} <&3 | base64 | tr -d '\\n'); ` +
+		`n=\${#b}; [ "$n" -gt 0 ] && [ $((n % 4)) -eq 0 ] || exit 0; d=$((n / 4 * 3)); ` +
+		`case "$b" in *==) d=$((d - 2));; *=) d=$((d - 1));; esac; ` +
+		`[ "$d" -le ${ICON_MAX_BYTES} ] && printf '%s' "$b" ); tot=$((tot + \${#o})); printf '%s\\n' "$o"; }`;
+	return `tot=0; ${list.map(one).join('; ')}; true`;
 }
 
 /** Tras leer: el contenido debe ser una imagen (PNG/JPEG/WebP/GIF/BMP por sus
@@ -104,11 +122,18 @@ export function looksLikeImage (b64: string): boolean {
  *  índices fuera de rango se ignoran. */
 export function parseIconOutput (out: string, count: number): Record<number, string> {
 	const result: Record<number, string> = {};
-	for (const line of out.split('\n')) {
-		const m = /^(\d+) ([A-Za-z0-9+/=]+)$/.exec(line);
-		if (!m || m[2].length > Math.ceil(ICON_MAX_BYTES / 3) * 4 || !looksLikeImage(m[2])) continue;
+	let budget = ICON_TOTAL_MAX_BYTES;
+	// Salida acotada: lo que exceda el techo se ignora sin procesarse.
+	const lines = out.slice(0, ICON_OUTPUT_MAX_CHARS + 1024).split('\n', ICON_MAX_COUNT + 2);
+	for (const line of lines) {
+		const m = /^(\d{1,3}) ([A-Za-z0-9+/=]+)$/.exec(line);
+		if (!m || !looksLikeImage(m[2])) continue;
 		const idx = Number(m[1]);
-		if (idx >= 0 && idx < count) result[idx] = `data:image/png;base64,${m[2]}`;
+		if (!(idx >= 0 && idx < count && idx < ICON_MAX_COUNT) || idx in result) continue;
+		const bytes = decodedLength(m[2]);
+		if (bytes < 0 || bytes > ICON_MAX_BYTES || bytes > budget) continue;   // tamano exacto y presupuesto agregado
+		budget -= bytes;
+		result[idx] = `data:image/png;base64,${m[2]}`;
 	}
 	return result;
 }
@@ -146,6 +171,7 @@ export function loadIcons (apps: {id: string; iconPath?: string}[], storage: Pic
 		else missing.push({id: a.id, path: a.iconPath});
 	}
 	if (!missing.length) return Promise.resolve(result);
+	missing.length = Math.min(missing.length, ICON_MAX_COUNT);   // el resto, en la proxima carga
 	const paths = missing.map((m) => m.path);
 	return exec(buildIconScript(paths), 15000).then((out) => {
 		const parsed = parseIconOutput(out, missing.length);
