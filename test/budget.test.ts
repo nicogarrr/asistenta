@@ -46,6 +46,7 @@ const CONFIG: Config = {
   baseUrl: 'http://127.0.0.1:1/v1',
   contextWindowTokens: 1_048_576,
   maxOutputTokens: 32_000,
+  dailyBudgetEur: 0,
   toolTimeoutMs: 1_000,
   runTimeoutMs: 1_000,
   idleTimeoutMs: 1_000,

@@ -62,6 +62,12 @@ export interface Config {
   /** Tope de tokens de salida por respuesta (PA_MAX_OUTPUT_TOKENS). */
   maxOutputTokens: number;
   /**
+   * Tope de gasto diario en EUR (PA_DAILY_BUDGET_EUR). 0 o ausente = sin
+   * limite, que es el default: los presets actuales son modelos free. Se
+   * comprueba contra el JSONL de uso del dia (src/core/usage.ts).
+   */
+  dailyBudgetEur: number;
+  /**
    * Which browser the `browser` tool drives. 'chrome' / 'msedge' use the one installed on
    * this PC (a real fingerprint, far fewer anti-bot walls); 'chromium' is the copy bundled
    * with Playwright. If the chosen one is not installed the tool falls back to 'chromium'.
@@ -112,6 +118,17 @@ function num(name: string, fallback: number): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive number, got ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
+/** Numero >= 0: 0 es un valor valido (p. ej. presupuesto diario desactivado). */
+function nonNegativeNum(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a number >= 0, got ${JSON.stringify(raw)}`);
   }
   return parsed;
 }
@@ -206,6 +223,7 @@ export function loadConfig(): Config {
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     contextWindowTokens: num('PA_CONTEXT_WINDOW', 1_048_576),
     maxOutputTokens: num('PA_MAX_OUTPUT_TOKENS', 32_000),
+    dailyBudgetEur: nonNegativeNum('PA_DAILY_BUDGET_EUR', 0),
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),
     runTimeoutMs: num('PA_RUN_TIMEOUT_MS', 900_000),
     idleTimeoutMs: num('PA_IDLE_TIMEOUT_MS', 180_000),

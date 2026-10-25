@@ -35,6 +35,14 @@ export const SEMANTIC_WEIGHT = 4;
 export const EMBED_CACHE_MAX = 500;
 /** Candidatos que se reordenan por consulta; acota la latencia del embed. */
 export const SEMANTIC_CANDIDATES = 200;
+/**
+ * Coseno minimo para que un candidato sin coincidencia lexica sobreviva.
+ * MiniLM da ~0.2-0.3 a frases sin relacion; dejar pasar todo lo positivo
+ * llenaba el recall de ruido solo por activar PA_SEMANTIC_RECALL. Una
+ * coincidencia lexica positiva se conserva siempre: el hibrido nunca debe
+ * perder un acierto exacto por culpa del umbral.
+ */
+export const SEMANTIC_MIN_COSINE = 0.35;
 
 export interface Embedder {
   embed(texts: readonly string[]): Promise<number[][]>;
@@ -116,13 +124,25 @@ export async function hybridRank<T>(opts: HybridRankOptions<T>): Promise<T[]> {
   const texts = capped.map(text);
   const [qv, ...iv] = await embedCached(embedder, [query, ...texts]);
   if (!qv) return [];
-  const scored = capped.map((item, index) => ({
-    item,
-    index,
-    score: lexical(item, query) + SEMANTIC_WEIGHT * Math.max(0, cosine(qv, iv[index] ?? [])),
-  }));
+  const scored = capped.map((item, index) => {
+    const lexicalScore = lexical(item, query);
+    const semanticScore = Math.max(0, cosine(qv, iv[index] ?? []));
+    return {
+      item,
+      index,
+      lexicalScore,
+      semanticScore,
+      score: lexicalScore + SEMANTIC_WEIGHT * semanticScore,
+    };
+  });
   return scored
-    .filter((hit) => hit.score > 0)
+    .filter(
+      (hit) =>
+        hit.score > 0 &&
+        // Un lexico positivo (aunque sea parcial) es una senal fuerte y se
+        // conserva; el umbral solo poda lo que depende por completo del coseno.
+        (hit.lexicalScore > 0 || hit.semanticScore >= SEMANTIC_MIN_COSINE),
+    )
     .sort((a, b) => b.score - a.score || b.index - a.index)
     .slice(0, limit)
     .map((hit) => hit.item);

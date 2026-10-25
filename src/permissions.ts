@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { unapprovableOperation } from './approval-text.js';
+import { hashArgs } from './audit/calls.js';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
@@ -228,6 +229,66 @@ function argString(args: Record<string, unknown>, key: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * Clave de alcance por ACCIÓN, no por herramienta.
+ *
+ * Un permiso "siempre" sobre `computer` entero es un permiso sobre cualquier
+ * `computer`; sobre la clave de una acción concreta solo cubre esa misma acción
+ * con esos mismos argumentos. El hash evita guardar en disco el contenido de los
+ * argumentos (que puede llevar una contraseña), igual que en la auditoría.
+ */
+export function scopeKey(tool: string, action: string, args: Record<string, unknown>): string {
+  return `${tool}:${action}:${hashArgs(args)}`;
+}
+
+/**
+ * Techo de gasto: true cuando `amountCents` es un entero seguro no negativo que
+ * no supera `cap`. Un importe inválido NUNCA se considera dentro del techo; la
+ * regla de dinero solo lo usa para ESCALAR a pregunta, nunca para autoaprobar.
+ */
+export function amountWithinCap(amountCents: number, cap: number): boolean {
+  return (
+    Number.isSafeInteger(amountCents) &&
+    Number.isSafeInteger(cap) &&
+    amountCents >= 0 &&
+    cap >= 0 &&
+    amountCents <= cap
+  );
+}
+
+/** Acciones de `computer` que mueven el ratón o escriben: jamás un permiso reutilizable. */
+const COMPUTER_NEVER_SCOPED = new Set(['type', 'key', 'click', 'drag']);
+
+/** Acciones de `media` que abren cámara o micrófono: jamás un permiso reutilizable. */
+const MEDIA_PRIVATE_ACTIONS = new Set([
+  'camera_photo',
+  'camera_clip',
+  'camera_audio_clip',
+  'mic_record',
+]);
+
+/** Importe explícito en céntimos, si el llamador lo declara con un nombre inequívoco. */
+function explicitAmountCents(args: Record<string, unknown>): number | null {
+  for (const key of ['amountCents', 'amount_cents', 'importeCents', 'importe_cents']) {
+    const value = args[key];
+    if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const parsed = Number(value.trim());
+      if (Number.isSafeInteger(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+/** `tool:action:hash` -> sus dos primeras partes; null para una clave por herramienta. */
+function parseActionScopeKey(key: string): { tool: string; action: string } | null {
+  const first = key.indexOf(':');
+  if (first <= 0) return null;
+  const second = key.indexOf(':', first + 1);
+  if (second <= 0) return null;
+  return { tool: key.slice(0, first), action: key.slice(first + 1, second) };
+}
+
 /** Every argument value flattened into one string, for pattern matching. */
 /**
  * A browser fill that types straight from the vault: the key NAME is all the
@@ -280,7 +341,15 @@ export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boo
   const db = new DatabaseSync(dbPath);
   try {
     db.exec(SCOPE_TABLE);
-    const res = db.prepare(`DELETE FROM approval_scopes WHERE scope_key = ?`).run(`always:${tool}`);
+    // También las claves por acción (`always:tool:action:hash`), o revocar una
+    // herramienta dejaría vivos permisos "siempre" sobre acciones suyas.
+    const prefix = `always:${tool}:`;
+    const res = db
+      .prepare(
+        `DELETE FROM approval_scopes
+          WHERE scope_key = ? OR substr(scope_key, 1, ?) = ?`,
+      )
+      .run(`always:${tool}`, prefix.length, prefix);
     return Number(res.changes) > 0;
   } finally {
     db.close();
@@ -529,6 +598,12 @@ export class Gate {
     // only ever fire for an argument that was nothing but a card number on its own. The
     // money rule was quietly inert on every multi-argument call.
     const digits = blob.replace(/(?<=\d)[ -]+(?=\d)/g, '');
+    // El techo solo puede ENDURECER: un importe declarado por encima de
+    // `maxAmountCents` obliga a preguntar aunque no haya palabras de dinero.
+    // Un importe dentro del techo no autoaprueba nada: las compras siguen
+    // pasando por sus reglas normales.
+    const amount = explicitAmountCents(c.args);
+    if (amount !== null && !amountWithinCap(amount, this.#maxAmountCents)) return true;
     return (
       /\b\d{13,19}\b/.test(digits) ||
       PAYMENT_WORD.test(blob) ||
@@ -548,6 +623,80 @@ export class Gate {
     return (
       CREDENTIAL_PATH.test(blob) || (WEB_TOOLS.has(c.tool) && BROWSER_CREDENTIAL.test(fold(blob)))
     );
+  }
+
+  /** Un lote de `computer` hereda la prohibición de sus pasos peligrosos. */
+  #batchTouchesBlockedAction(args: Record<string, unknown>): boolean {
+    const steps = args.actions;
+    if (!Array.isArray(steps)) return false;
+    return steps.some(
+      (step) =>
+        typeof step === 'object' &&
+        step !== null &&
+        COMPUTER_NEVER_SCOPED.has(argString(step as Record<string, unknown>, 'action')),
+    );
+  }
+
+  /**
+   * Una llamada que NUNCA puede cubrirse con `always` ni `session`: shell
+   * arbitrario, código en la página, ratón/teclado del escritorio, cámara o
+   * micrófono, y escritura en rutas protegidas. Se comprueba ANTES de mirar
+   * `#hasAlways`, porque un permiso viejo en disco no puede resucitar sobre
+   * estas acciones.
+   */
+  #isScopeBlockedForCall(c: ToolCall): boolean {
+    const action = argString(c.args, 'action');
+    if (c.tool === 'shell') return true;
+    if (c.tool === 'browser' && action === 'exec_js') return true;
+    if (
+      c.tool === 'computer' &&
+      (COMPUTER_NEVER_SCOPED.has(action) ||
+        (action === 'batch' && this.#batchTouchesBlockedAction(c.args)))
+    ) {
+      return true;
+    }
+    if (
+      c.tool === 'media' &&
+      (MEDIA_PRIVATE_ACTIONS.has(action) ||
+        (action === 'live_view' && argString(c.args, 'source') === 'camera'))
+    ) {
+      return true;
+    }
+    if ((c.tool === 'write' || c.tool === 'edit') && this.#isProtected(argString(c.args, 'path'))) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * La misma prohibición juzgada solo por la clave, sin argumentos. Se usa al
+   * declarar un scope: una clave de acción peligrosa no se guarda jamás, y una
+   * clave por herramienta sigue permitida (sus llamadas peligrosas se filtran
+   * una a una en `#isScopeBlockedForCall`).
+   */
+  #isBlockedScopeTarget(tool: string, action: string | null): boolean {
+    if (tool === 'shell') return true;
+    if (action === null) return false;
+    if (tool === 'browser' && action === 'exec_js') return true;
+    // Un lote no se puede inspeccionar desde la clave: se trata como peligroso.
+    if (tool === 'computer' && (COMPUTER_NEVER_SCOPED.has(action) || action === 'batch')) {
+      return true;
+    }
+    // `live_view` puede ser cámara o pantalla; sin argumentos, se cierra.
+    return tool === 'media' && (MEDIA_PRIVATE_ACTIONS.has(action) || action === 'live_view');
+  }
+
+  /**
+   * El scope efectivo de una llamada: primero la clave de ACCIÓN exacta
+   * (`tool:action:hash`), luego el scope por herramienta. Si la acción está
+   * prohibida, el resultado es `unset` aunque exista un `always` antiguo.
+   */
+  #scopeLevelForCall(sessionId: string, c: ToolCall): ApprovalScope | 'unset' {
+    if (this.#isScopeBlockedForCall(c)) return 'unset';
+    const action = argString(c.args, 'action');
+    const actionScope = this.scopeFor(sessionId, scopeKey(c.tool, action, c.args));
+    if (actionScope !== 'unset') return actionScope;
+    return this.scopeFor(sessionId, c.tool);
   }
 
   /**
@@ -867,40 +1016,72 @@ export class Gate {
   }
 
   /**
-   * Declare how wide one human approval for `tool` is (see {@link ApprovalScope}).
+   * Declare how wide one human approval is (see {@link ApprovalScope}).
+   *
+   * `key` es una herramienta (`'fetch'`) o una clave de ACCIÓN
+   * (`scopeKey('browser','click',args)`). La clave de acción cubre solo esa
+   * acción exacta, con esos argumentos exactos; el scope por herramienta sigue
+   * cubriendo todas sus acciones que no estén en la lista de prohibidas.
    *
    * The level replaces the previous one: narrowing `always` down to `once` must
    * revoke the standing grant rather than keep it underneath, and a narrower scope
-   * also cancels trust already in flight.
+   * also cancels trust already in flight. Un `always`/`session` sobre una acción
+   * prohibida no se guarda: allí solo cabe `once` (la aprobación exacta).
    */
-  setScope(sessionId: string, tool: string, scope: ApprovalScope): void {
-    this.#alwaysAllow.delete(tool);
-    this.#dropPersistedAlways(tool);
+  setScope(sessionId: string, key: string, scope: ApprovalScope): void {
+    const actionTarget = parseActionScopeKey(key);
+    const tool = actionTarget?.tool ?? key;
+    const withDescendants = actionTarget === null;
+    // Quitar lo anterior de ESTA clave (y, para una herramienta, de sus acciones).
+    this.#alwaysAllow.delete(key);
+    if (withDescendants) {
+      for (const stored of [...this.#alwaysAllow]) {
+        if (stored.startsWith(`${key}:`)) this.#alwaysAllow.delete(stored);
+      }
+    }
+    this.#dropPersistedAlways(key, withDescendants);
     const perSession = this.#scopes.get(sessionId) ?? new Map<string, ScopeEntry>();
     this.#scopes.set(sessionId, perSession);
-    this.#grants.get(sessionId)?.delete(tool);
+    perSession.delete(key);
+    if (withDescendants) {
+      for (const stored of [...perSession.keys()]) {
+        if (stored.startsWith(`${key}:`)) perSession.delete(stored);
+      }
+    }
+    this.#grants.get(sessionId)?.delete(key);
+    // Una acción prohibida no admite permiso reutilizable. Ni se guarda ni se
+    // conserva el que hubiera: la próxima llamada vuelve a preguntar.
+    if (scope !== 'once' && this.#isBlockedScopeTarget(tool, actionTarget?.action ?? null)) {
+      return;
+    }
     if (scope === 'always') {
-      perSession.delete(tool);
-      this.#alwaysAllow.add(tool);
-      this.#persistAlways(tool);
+      this.#alwaysAllow.add(key);
+      this.#persistAlways(key, tool);
       return;
     }
     if (scope === 'session') {
       // "The rest of this task" is exactly the grant window, not wall-clock forever.
-      perSession.set(tool, { level: 'session', until: Date.now() + this.#grantWindowMs });
+      perSession.set(key, { level: 'session', until: Date.now() + this.#grantWindowMs });
       return;
     }
-    perSession.set(tool, { level: 'once', until: null });
+    perSession.set(key, { level: 'once', until: null });
   }
 
-  /** The scope currently in force for `tool`, or 'unset' when none was declared. */
-  scopeFor(sessionId: string, tool: string): ApprovalScope | 'unset' {
-    if (this.#hasAlways(tool)) return 'always';
-    const entry = this.#scopes.get(sessionId)?.get(tool);
+  /** The scope currently in force for a tool or action key, or 'unset'. */
+  scopeFor(sessionId: string, key: string): ApprovalScope | 'unset' {
+    const actionTarget = parseActionScopeKey(key);
+    const tool = actionTarget?.tool ?? key;
+    const entry = this.#scopes.get(sessionId)?.get(key);
+    // Un grant viejo en disco no puede cubrir shell ni una acción prohibida.
+    // La aprobación EXACTA (`once`) sí puede existir: no es reutilizable.
+    if (this.#isBlockedScopeTarget(tool, actionTarget?.action ?? null)) {
+      return entry?.level === 'once' ? 'once' : 'unset';
+    }
+    if (this.#hasAlways(key)) return 'always';
     if (!entry) return 'unset';
     if (entry.level === 'session') {
       if (entry.until === null || Date.now() >= entry.until) {
-        this.#scopes.get(sessionId)?.delete(tool);
+        this.#scopes.get(sessionId)?.delete(key);
         return 'unset';
       }
       return 'session';
@@ -910,10 +1091,12 @@ export class Gate {
 
   /**
    * The standing grants this gate honours: the shared database plus any
-   * memory-only ones (a gate without `dbPath`).
+   * memory-only ones (a gate without `dbPath`). Las claves de acción se
+   * muestran como su herramienta: /permisos revoca la herramienta entera.
    */
   listPersistedAlways(): string[] {
-    return [...new Set([...listAlwaysGrants(this.#dbPath), ...this.#alwaysAllow])].sort();
+    const memory = [...this.#alwaysAllow].map((key) => parseActionScopeKey(key)?.tool ?? key);
+    return [...new Set([...listAlwaysGrants(this.#dbPath), ...memory])].sort();
   }
 
   /**
@@ -925,19 +1108,31 @@ export class Gate {
    * `setScope`'s job.
    */
   revokeAlways(tool: string): boolean {
-    const inMemory = this.#alwaysAllow.delete(tool);
+    let inMemory = this.#alwaysAllow.delete(tool);
+    for (const stored of [...this.#alwaysAllow]) {
+      if (stored.startsWith(`${tool}:`)) {
+        this.#alwaysAllow.delete(stored);
+        inMemory = true;
+      }
+    }
     const inDb = deleteAlwaysGrant(this.#dbPath, tool);
     // Trust DERIVED from the revoked grant dies with it, or "te volvere a
     // pedir permiso" would be a lie until the session ended: exact-call
     // fingerprints (the `previously approved` memo), open trust windows and
-    // declared scopes for THIS tool, in every session of this gate. Other
-    // tools' fingerprints, windows and scopes stay untouched.
+    // declared scopes for THIS tool - including its action keys - in every
+    // session of this gate. Other tools' fingerprints, windows and scopes stay
+    // untouched.
     const prefix = `${tool}:`;
     for (const fps of this.#approved.values()) {
       for (const fp of [...fps]) if (fp.startsWith(prefix)) fps.delete(fp);
     }
     for (const windows of this.#grants.values()) windows.delete(tool);
-    for (const scopes of this.#scopes.values()) scopes.delete(tool);
+    for (const scopes of this.#scopes.values()) {
+      scopes.delete(tool);
+      for (const key of [...scopes.keys()]) {
+        if (key.startsWith(prefix)) scopes.delete(key);
+      }
+    }
     return inMemory || inDb;
   }
 
@@ -992,17 +1187,30 @@ export class Gate {
     });
   }
 
-  #persistAlways(tool: string): void {
+  /**
+   * Persiste una concesión `always`. `key` puede ser una herramienta o una clave
+   * de acción; `tool` es la columna que lee /permisos, para que una acción
+   * aparezca bajo su herramienta y se revoque con ella.
+   */
+  #persistAlways(key: string, tool: string = key): void {
     this.#withScopeDb((db) => {
       db.prepare(
         'INSERT OR REPLACE INTO approval_scopes (scope_key, tool, level, created_at) VALUES (?, ?, ?, ?)',
-      ).run(`always:${tool}`, tool, 'always', Date.now());
+      ).run(`always:${key}`, tool, 'always', Date.now());
     });
   }
 
-  #dropPersistedAlways(tool: string): void {
+  #dropPersistedAlways(key: string, withDescendants = false): void {
     this.#withScopeDb((db) => {
-      db.prepare('DELETE FROM approval_scopes WHERE scope_key = ?').run(`always:${tool}`);
+      if (!withDescendants) {
+        db.prepare('DELETE FROM approval_scopes WHERE scope_key = ?').run(`always:${key}`);
+        return;
+      }
+      const prefix = `always:${key}:`;
+      db.prepare(
+        `DELETE FROM approval_scopes
+          WHERE scope_key = ? OR substr(scope_key, 1, ?) = ?`,
+      ).run(`always:${key}`, prefix.length, prefix);
     });
   }
 
@@ -1090,10 +1298,14 @@ export class Gate {
       !gestionEjecutar &&
       !forced
     ) {
-      if (this.#hasAlways(call.tool)) {
+      // `#scopeLevelForCall` filtra ANTES las acciones que nunca admiten un
+      // permiso reutilizable (shell, clic/teclado, cámara, rutas protegidas),
+      // de modo que un `always` viejo en disco no las cubre.
+      const scope = this.#scopeLevelForCall(sessionId, call);
+      if (scope === 'always') {
         return this.#record(call, { verdict: 'allow', reason: 'always-allow scope' });
       }
-      if (this.scopeFor(sessionId, call.tool) === 'session') {
+      if (scope === 'session') {
         return this.#record(call, {
           verdict: 'allow',
           reason: 'within the session approval scope',

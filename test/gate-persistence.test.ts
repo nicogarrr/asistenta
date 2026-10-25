@@ -26,10 +26,15 @@ const MAIN = 'telegram:main:42#main';
 let dir = '';
 let asked: string[] = [];
 
-/** A click: the one call that has to be approved before a human ever sees a question. */
-const click = (x: number) => ({
-  tool: 'computer',
-  args: { action: 'click', x, y: 1 },
+/**
+ * `browser wait` no está en las allowActions del daemon y SÍ admite un scope
+ * reutilizable. Un clic de `computer` ya no admite "Siempre"/"sesión"
+ * (scopes-v2): la aprobación exacta sigue valiendo, pero no se persiste como
+ * permiso de herramienta.
+ */
+const probe = (n: number) => ({
+  tool: 'browser',
+  args: { action: 'wait', ms: n },
   actor: 'asistenta',
 });
 
@@ -62,10 +67,10 @@ describe('standing approvals across a daemon restart', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('always'),
     });
-    const first = await gate.check(MAIN, click(1));
+    const first = await gate.check(MAIN, probe(1));
     expect(first.verdict).toBe('allow');
     expect(asked).toEqual(['question']);
-    expect(gate.scopeFor(MAIN, 'computer')).toBe('always');
+    expect(gate.scopeFor(MAIN, 'browser')).toBe('always');
     // The file is the whole point: without it there is nothing to read on the next run.
     expect(existsSync(approvalsDbPath(dir))).toBe(true);
   });
@@ -76,7 +81,7 @@ describe('standing approvals across a daemon restart', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('always'),
     });
-    await before.check(MAIN, click(1));
+    await before.check(MAIN, probe(1));
 
     // The restarted daemon: a second process would compute the path again and build
     // every conversation's gate from scratch. A different thread key is included on
@@ -86,9 +91,9 @@ describe('standing approvals across a daemon restart', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('refuse'),
     });
-    expect(after.scopeFor('telegram:main:42#m99', 'computer')).toBe('always');
+    expect(after.scopeFor('telegram:main:42#m99', 'browser')).toBe('always');
 
-    const second = await after.check('telegram:main:42#m99', click(2));
+    const second = await after.check('telegram:main:42#m99', probe(2));
     expect(second.verdict).toBe('allow');
     // The reason is the assertion that matters: it was allowed by the stored grant, not
     // by a second question the fake channel happened to approve.
@@ -105,7 +110,7 @@ describe('standing approvals across a daemon restart', () => {
         dbPath: approvalsDbPath(dir),
         ask: channel(scope),
       });
-      await gate.check(MAIN, click(1));
+      await gate.check(MAIN, probe(1));
 
       // A new turn on a fresh daemon must ask again. A grant that outlived the task it
       // was given would let the agent act under an approval the user has forgotten.
@@ -114,8 +119,8 @@ describe('standing approvals across a daemon restart', () => {
         dbPath: approvalsDbPath(dir),
         ask: channel('refuse'),
       });
-      expect(next.scopeFor(MAIN, 'computer'), scope).toBe('unset');
-      const verdict = await next.check(MAIN, click(9));
+      expect(next.scopeFor(MAIN, 'browser'), scope).toBe('unset');
+      const verdict = await next.check(MAIN, probe(9));
       expect(verdict.verdict, scope).toBe('deny');
       expect(asked, scope).toEqual(['question', 'question']);
     }
@@ -127,26 +132,23 @@ describe('standing approvals across a daemon restart', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('always'),
     });
-    // The grant has to be on `shell` for the exclusion to mean anything: the point is
-    // that the standing grant on a tool does not extend to the calls that tool must
-    // never run unattended.
-    await gate.check(MAIN, { tool: 'shell', args: { command: 'Get-Date' }, actor: 'asistenta' });
-    const benign = await gate.check(MAIN, {
-      tool: 'shell',
-      args: { command: 'Get-ChildItem' },
-      actor: 'asistenta',
-    });
+    // The grant has to be on `browser` for the exclusion to mean anything: the point
+    // is that the standing grant on a tool does not extend to the calls that tool must
+    // never run unattended. `shell` ya no admite "Siempre" (scopes-v2), así que el
+    // escenario se prueba con la herramienta que aún puede tenerlo.
+    await gate.check(MAIN, probe(1));
+    const benign = await gate.check(MAIN, probe(2));
     expect(benign.reason).toBe('always-allow scope');
     expect(asked).toHaveLength(1);
 
     const credential = await gate.check(MAIN, {
-      tool: 'shell',
-      args: { command: `type ${process.env.USERPROFILE}\\.ssh\\id_rsa` },
+      tool: 'browser',
+      args: { action: 'fill', selector: '#password', secret_key: 'clave' },
       actor: 'asistenta',
     });
     const payment = await gate.check(MAIN, {
-      tool: 'shell',
-      args: { command: 'pay card 4111111111111111' },
+      tool: 'browser',
+      args: { action: 'click', selector: 'text=Pagar ahora' },
       actor: 'asistenta',
     });
     // Asked again, every time, even with the grant in force: a grant the model could
@@ -164,7 +166,7 @@ describe('standing approvals across a daemon restart', () => {
     rmSync(dbPath, { force: true });
     mkdirSync(dbPath, { recursive: true });
 
-    const verdict = await gate.check(MAIN, click(1));
+    const verdict = await gate.check(MAIN, probe(1));
     // Forgetting to remember is a nuisance the user can fix with one more tap. Refusing
     // a call the human just approved because the disk was unhappy is not.
     expect(verdict.verdict).toBe('allow');
@@ -189,7 +191,7 @@ describe('createDaemonGate policy', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('always'),
     });
-    await gate.check(MAIN, click(1));
+    await gate.check(MAIN, probe(1));
     // `always` is a standing grant on a tool, never a way past the walls around the
     // machine: the paths the user blacked out stay blacked out.
     const write = await gate.check(MAIN, {

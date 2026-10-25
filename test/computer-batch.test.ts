@@ -45,6 +45,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     baseUrl: 'http://localhost',
     contextWindowTokens: 1_048_576,
     maxOutputTokens: 32_000,
+    dailyBudgetEur: 0,
     toolTimeoutMs: 5_000,
     runTimeoutMs: 5_000,
     idleTimeoutMs: 5_000,

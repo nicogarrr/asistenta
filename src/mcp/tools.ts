@@ -5,6 +5,10 @@
  * construir el conjunto y no se cierran aqui: viven lo que el proceso, porque
  * el daemon no descarga servidores MCP en caliente. Si un servidor falla, se
  * registra el aviso y se omiten sus tools; los demas siguen funcionando.
+ *
+ * `allowedTools` actua de puerta: si esta definido, solo se publican las tools
+ * nombradas. Con `reconnect`, el cliente revive el proceso caido y reintenta la
+ * llamada una vez.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
@@ -45,7 +49,12 @@ export async function createMcpTools(servers: McpServerConfig[]): Promise<AgentT
       await client.start();
       const remoteTools = await client.listTools();
       liveClients.push(client);
-      for (const remote of remoteTools) {
+      const allowed = server.allowedTools;
+      const selected =
+        allowed === undefined
+          ? remoteTools
+          : remoteTools.filter((remote) => allowed.includes(remote.name));
+      for (const remote of selected) {
         tools.push(createAgentTool(server, remote, client));
       }
     } catch (error) {

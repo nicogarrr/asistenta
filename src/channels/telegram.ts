@@ -45,6 +45,21 @@ export interface ApprovalChoice {
   scope: ApprovalScope;
 }
 
+/** Estado de un borrador ya publicado: el mensaje que se edita y lo último aplicado. */
+interface DraftState {
+  chatId: number;
+  messageId: string;
+  text: string;
+  /** null hasta la primera edición, para no frenar la primera versión del borrador. */
+  lastEditAt: number | null;
+}
+
+/** Entrada de la caché de respuestas completas, con su instante de caducidad. */
+interface CachedReply {
+  text: string;
+  expires: number;
+}
+
 /**
  * Minimum spacing between outbound calls, process-wide.
  *
@@ -58,6 +73,23 @@ const MIN_GAP_MS = 1_100;
 /** Un envío no puede reintentarse para siempre: un endpoint muerto congelaría todos los chats. */
 const SEND_MAX_ATTEMPTS = 4;
 const SEND_MAX_TOTAL_MS = 90_000;
+
+/**
+ * Cadencia por defecto del borrador. Editar más a menudo que esto multiplica las
+ * llamadas a la Bot API sin que el ojo humano llegue a leer las versiones intermedias.
+ */
+const DRAFT_MIN_INTERVAL_MS = 1_200;
+
+/** Lo que queda escrito cuando una aprobación caduca sin respuesta. */
+const APPROVAL_EXPIRED_TEXT = 'Caducada';
+
+/**
+ * Una respuesta completa se guarda para "Dime más". Diez minutos cubren la lectura
+ * normal de un mensaje y 24 entradas acotan la memoria por proceso sin expulsar los
+ * hilos recientes.
+ */
+const FULL_REPLY_TTL_MS = 10 * 60_000;
+const FULL_REPLY_MAX_ENTRIES = 24;
 
 /** Single gate key: the limiter is process-wide, not per chat. */
 const GLOBAL_KEY = 'global';
@@ -97,6 +129,18 @@ export function backoffFor(err: unknown, attempt: number): number | null {
   return attempt < 3 ? Math.min(5_000, 2 ** attempt * 500) : null;
 }
 
+/**
+ * Los dos 400 que una edición de borrador debe tolerar.
+ *
+ * "message is not modified" solo significa que el texto ya era ese; "message can't
+ * be edited" aparece cuando el mensaje es demasiado antiguo o ya no admite edición.
+ * Ninguno justifica perder el turno ni reintentar: el borrador es una mejora visual.
+ */
+function isDraftEditRefusal(err: unknown): boolean {
+  if (!(err instanceof GrammyError) || err.error_code !== 400) return false;
+  return /message is not modified|message can(?:not|'t| not) be edited/i.test(err.description);
+}
+
 export class TelegramChannel implements ChannelAdapter {
   readonly name = 'telegram';
   readonly account: string;
@@ -132,6 +176,10 @@ export class TelegramChannel implements ChannelAdapter {
   readonly #sendGate = new Mutex();
   /** chatId -> epoch ms of the last accepted send, to space out bursts. */
   readonly #lastSentAt = new Map<string, number>();
+  /** Borradores vivos por chat y tema: `chatId:threadId`. */
+  readonly #drafts = new Map<string, DraftState>();
+  /** Serializa las comprobaciones y transiciones del borrador (no las llamadas API). */
+  readonly #draftGate = new Mutex();
 
   constructor(options: TelegramOptions) {
     this.account = options.account ?? 'main';
@@ -432,10 +480,12 @@ export class TelegramChannel implements ChannelAdapter {
     id: string,
     chatId: string,
     question: string,
-    opts?: { askScope?: boolean },
+    opts?: { askScope?: boolean; threadId?: string },
   ): Promise<ApprovalChoice> {
     return new Promise<ApprovalChoice>((resolve) => {
       let settled = false;
+      let expired = false;
+      let messageId: string | null = null;
       const settle = (choice: ApprovalChoice): void => {
         if (settled) return;
         settled = true;
@@ -448,8 +498,13 @@ export class TelegramChannel implements ChannelAdapter {
         chatId,
       });
       setTimeout(() => {
+        if (settled) return;
+        // La aprobación se resuelve ya para no retener el turno; el aviso visual
+        // se pinta en segundo plano y puede llegar un instante después.
+        expired = true;
         this.#approvals.delete(id);
         settle({ approved: false, scope: 'once' });
+        if (messageId) void this.#markApprovalExpired(chatId, messageId);
       }, this.#options.approvalTtlMs).unref();
 
       // The question embeds the gate's `reason`, which may quote a credential the
@@ -461,6 +516,7 @@ export class TelegramChannel implements ChannelAdapter {
         channel: this.name,
         account: this.account,
         chatId,
+        threadId: opts?.threadId,
         text: question,
         buttons: opts?.askScope
           ? [
@@ -473,7 +529,14 @@ export class TelegramChannel implements ChannelAdapter {
               { label: 'Permitir', action: `approve:${id}` },
               { label: 'Denegar', action: `deny:${id}` },
             ],
-      }).catch(() => settle({ approved: false, scope: 'once' }));
+      })
+        .then((sentId) => {
+          messageId = sentId;
+          // Si el envío terminó justo después de caducar, el mensaje no debe
+          // quedarse con botones muertos: se pinta el aviso en cuanto existe.
+          if (expired && sentId) void this.#markApprovalExpired(chatId, sentId);
+        })
+        .catch(() => settle({ approved: false, scope: 'once' }));
     });
   }
 
@@ -555,9 +618,23 @@ export class TelegramChannel implements ChannelAdapter {
     }
 
     if (outbound.audio) {
-      await this.#sendAudio(chatId, outbound.audio);
+      await this.#sendAudio(chatId, outbound.audio, outbound.threadId);
     }
 
+    return firstId;
+  }
+
+  /**
+   * Entrega una respuesta con texto y voz en este orden.
+   *
+   * El texto va primero a propósito: si la síntesis o la subida de la voz falla, el
+   * usuario ya tiene la respuesta. `#sendAudio` degrada a un aviso en el log, así que
+   * el id del mensaje de texto sigue siendo el valor de retorno aunque la voz falle.
+   */
+  async sendTextAndVoice(outbound: Outbound, audio: ChannelAudio): Promise<string | null> {
+    const firstId = await this.send({ ...outbound, audio: undefined });
+    const chatId = Number(outbound.chatId);
+    await this.#sendAudio(chatId, audio, outbound.threadId);
     return firstId;
   }
 
@@ -667,6 +744,105 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /**
+   * Muestra una respuesta que va creciendo sobre un único mensaje.
+   *
+   * La primera llamada publica el texto con `sendMessage`; las siguientes lo editan
+   * con `editMessageText`. El estado vive por chat y tema, así que el llamador solo
+   * tiene que ir pasando el texto acumulado. Se escribe como mucho cada
+   * `minIntervalMs` (1,2 s por defecto), nunca se reescribe el mismo texto y los dos
+   * 400 esperables de una edición (sin cambios o mensaje ya no editable) se toleran
+   * para no romper el turno por una diferencia cosmética.
+   *
+   * Devuelve el id del mensaje publicado, o null si Telegram no lo devolvió.
+   */
+  async streamDraft(
+    chatId: number,
+    threadId: string | undefined,
+    text: string,
+    opts?: { minIntervalMs?: number },
+  ): Promise<string | null> {
+    if (!Number.isFinite(chatId)) {
+      throw new Error(`invalid telegram chat id: ${chatId}`);
+    }
+    const minIntervalMs = Math.max(0, opts?.minIntervalMs ?? DRAFT_MIN_INTERVAL_MS);
+
+    return this.#draftGate.run(async () => {
+      const key = this.#draftKey(chatId, threadId);
+      const draft = this.#drafts.get(key);
+
+      if (!draft) {
+        const sent = await this.#throttled(() =>
+          withTimeout(
+            this.#bot.api.sendMessage(chatId, text, {
+              message_thread_id: threadId ? Number(threadId) : undefined,
+            }),
+            20_000,
+            'sendMessage timed out',
+          ),
+        );
+        if (!sent?.message_id) return null;
+        const messageId = String(sent.message_id);
+        this.#drafts.set(key, { chatId, messageId, text, lastEditAt: null });
+        return messageId;
+      }
+
+      if (text === draft.text) return draft.messageId;
+      if (draft.lastEditAt !== null && Date.now() - draft.lastEditAt < minIntervalMs) {
+        // La siguiente llamada con el texto acumulado aplicará esta versión; no se
+        // guarda como aplicada para que el throttle no se coma el último cambio.
+        return draft.messageId;
+      }
+
+      try {
+        await this.#throttled(() =>
+          withTimeout(
+            this.#bot.api.editMessageText(chatId, Number(draft.messageId), text),
+            20_000,
+            'editMessageText timed out',
+          ),
+        );
+      } catch (err) {
+        if (!isDraftEditRefusal(err)) throw err;
+      }
+      draft.text = text;
+      draft.lastEditAt = Date.now();
+      return draft.messageId;
+    });
+  }
+
+  /**
+   * Cierra el borrador con la versión final, sin la cadencia de `streamDraft`.
+   *
+   * Sigue pasando por `#throttled` (el límite global de la Bot API) y olvida el
+   * estado para que el próximo turno empiece con un mensaje nuevo. Un fallo de
+   * edición se registra y no se propaga: la respuesta ya está entregada y la
+   * limpieza no debe tumbar el turno.
+   */
+  async finishDraft(chatId: number, messageId: string, text: string): Promise<void> {
+    const ref = parseMessageRef(String(chatId), messageId);
+    await this.#draftGate.run(async () => {
+      let unchanged = false;
+      for (const [key, draft] of this.#drafts) {
+        if (draft.chatId === chatId && draft.messageId === messageId) {
+          unchanged = draft.text === text;
+          this.#drafts.delete(key);
+          break;
+        }
+      }
+      if (!ref || unchanged) return;
+      await this.#throttled(() =>
+        withTimeout(
+          this.#bot.api.editMessageText(ref.chatId, ref.messageId, text),
+          20_000,
+          'editMessageText timed out',
+        ),
+      ).catch((err: unknown) => {
+        log.warn('draft final edit failed', { error: describeError(err) });
+      });
+    });
+  }
+
+  /**
    * Delete one of our own messages, so a finished task leaves no progress chatter
    * behind. Same swallow-on-failure contract as editMessageText: cleanup runs at
    * the end of a turn and must never be able to fail it.
@@ -735,6 +911,48 @@ export class TelegramChannel implements ChannelAdapter {
     );
   }
 
+  /** Un borrador por chat y tema; el tema vacío y "General" no deben compartir burbuja. */
+  #draftKey(chatId: number, threadId?: string): string {
+    return `${chatId}:${threadId ?? ''}`;
+  }
+
+  /**
+   * Deja constancia visible de que la aprobación caducó y retira los botones.
+   *
+   * Se hace en dos llamadas porque son dos operaciones distintas en la Bot API: el
+   * texto pasa a "Caducada" y `editMessageReplyMarkup` con un teclado vacío borra los
+   * botones. Un fallo aquí es cosmético (la aprobación ya se resolvió como denegada),
+   * así que se registra y no se propaga.
+   */
+  async #markApprovalExpired(chatId: string, messageId: string): Promise<void> {
+    const ref = parseMessageRef(chatId, messageId);
+    if (!ref) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageText(ref.chatId, ref.messageId, APPROVAL_EXPIRED_TEXT),
+        20_000,
+        'editMessageText timed out',
+      ),
+    ).catch((err: unknown) => {
+      log.warn('approval expiry stamp failed', { error: describeError(err) });
+    });
+    // Los dobles de prueba antiguos no implementan este método; en el bot real
+    // siempre existe. Sin la comprobación, un doble incompleto solo generaría
+    // reintentos inútiles de un TypeError.
+    if (typeof this.#bot.api.editMessageReplyMarkup !== 'function') return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageReplyMarkup(ref.chatId, ref.messageId, {
+          reply_markup: { inline_keyboard: [] },
+        }),
+        20_000,
+        'editMessageReplyMarkup timed out',
+      ),
+    ).catch((err: unknown) => {
+      log.warn('approval expiry keyboard clear failed', { error: describeError(err) });
+    });
+  }
+
   /**
    * Serialise, space, and retry one API call.
    *
@@ -780,7 +998,7 @@ export class TelegramChannel implements ChannelAdapter {
    * rather than passed by URL, because the URL path documents an ogg/1MB cap that
    * would demote an mp3 to a plain attachment.
    */
-  async #sendAudio(chatId: number, audio: ChannelAudio): Promise<void> {
+  async #sendAudio(chatId: number, audio: ChannelAudio, threadId?: string): Promise<void> {
     const bytes = Buffer.from(audio.data, 'base64');
     if (bytes.length === 0) {
       log.warn('voice output rejected: empty bytes');
@@ -795,6 +1013,7 @@ export class TelegramChannel implements ChannelAdapter {
           {
             duration: duration && duration > 0 ? Math.ceil(duration) : undefined,
             caption: audio.durationSeconds ? `. ${Math.round(audio.durationSeconds)}s` : undefined,
+            message_thread_id: threadId ? Number(threadId) : undefined,
           },
         ),
         60_000,
@@ -1021,4 +1240,62 @@ export function isAudioDocument(doc: { mime_type?: string; file_name?: string })
   if (mime.startsWith('audio/') || mime === 'application/ogg') return true;
   if (mime && mime !== 'application/octet-stream') return false;
   return AUDIO_FILE_NAME.test(doc.file_name ?? '');
+}
+
+/** Respuestas completas recientes, para servir "Dime más" sin volver a ejecutar. */
+const fullReplies = new Map<string, CachedReply>();
+
+/**
+ * Guarda la respuesta completa de un hilo.
+ *
+ * El mensaje de Telegram puede ir recortado, así que el CLI conserva aquí el texto
+ * entero y lo sirve cuando el usuario pide el detalle. Se purgan las entradas
+ * caducadas y se expulsa la más antigua al superar el tope; 24 respuestas bastan
+ * para los hilos que un humano puede estar leyendo a la vez.
+ */
+export function cacheFullReply(threadKey: string, text: string): void {
+  const now = Date.now();
+  for (const [key, entry] of fullReplies) {
+    if (entry.expires <= now) fullReplies.delete(key);
+  }
+  // Reinsertar refresca el orden de expulsión: la entrada vuelve a ser la más nueva.
+  fullReplies.delete(threadKey);
+  fullReplies.set(threadKey, { text, expires: now + FULL_REPLY_TTL_MS });
+  while (fullReplies.size > FULL_REPLY_MAX_ENTRIES) {
+    const oldest = fullReplies.keys().next();
+    if (oldest.done) break;
+    fullReplies.delete(oldest.value);
+  }
+}
+
+/**
+ * Retira y devuelve la respuesta completa de un hilo, o null si no existe o caducó.
+ *
+ * Es destructivo a propósito: "Dime más" consume la respuesta una vez, igual que el
+ * mensaje recortado que la ofrecía. Una segunda petición no puede repetir un texto
+ * que ya se mostró por error.
+ */
+export function takeFullReply(threadKey: string): string | null {
+  const entry = fullReplies.get(threadKey);
+  if (!entry) return null;
+  fullReplies.delete(threadKey);
+  return entry.expires > Date.now() ? entry.text : null;
+}
+
+/** Peticiones que significan "sigue con el resto", ya sin acentos ni mayúsculas. */
+const MORE_REQUEST = /\b(?:mas|detalles?|sigue|continua|el resto)\b/;
+
+/**
+ * ¿El mensaje pide el resto de una respuesta recortada?
+ *
+ * Se normaliza a minúsculas y sin diacríticos para que "más", "MAS" y "mas" sean la
+ * misma petición. Las fronteras de palabra evitan que "demasiado" o "detallado"
+ * disparen la caché por accidente.
+ */
+export function isMoreRequest(text: string): boolean {
+  const plain = text
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+  return MORE_REQUEST.test(plain);
 }
