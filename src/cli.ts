@@ -155,6 +155,8 @@ function secretStatePaths(): string[] {
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
+import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
+import { dailyBudgetExceeded, recordUsage } from './core/usage.js';
 import { parseMcpServers } from './mcp/client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
@@ -1482,6 +1484,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * from asking a second question that only needs a sentence.
    */
   const machine = new Mutex();
+  /** Dia (YYYY-MM-DD) del ultimo aviso de presupuesto diario agotado. */
+  let budgetWarnedDay = '';
 
   const fullControl = (await vaultGet('agent:fullControl')) === 'true';
   const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
@@ -5187,6 +5191,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         outputTokens: result.outputTokens,
       });
 
+      // Coste y continuidad del turno: tokens reales en el libro diario, la
+      // respuesta completa cacheada para "Dime más", y aviso si el presupuesto
+      // diario (PA_DAILY_BUDGET_EUR) está agotado.
+      recordUsage({
+        sessionId: thread.key,
+        model: config.model,
+        inputTokens: result.inputTokens ?? 0,
+        outputTokens: result.outputTokens ?? 0,
+        kind: 'turn',
+      });
+      if (result.text.trim()) cacheFullReply(thread.key, result.text.trim());
+      if (config.dailyBudgetEur > 0 && dailyBudgetExceeded(config.dailyBudgetEur)) {
+        const budgetDay = new Date().toISOString().slice(0, 10);
+        if (budgetWarnedDay !== budgetDay) {
+          budgetWarnedDay = budgetDay;
+          void say(inbound, 'Aviso: has alcanzado el presupuesto diario configurado.', {
+            quote: true,
+          }).catch(() => {});
+        }
+      }
+
       const text2 =
         result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
       await answer(thread, inbound, text2);
@@ -6179,7 +6204,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
-
+          // "Dime más"/"sigue": sirve la respuesta completa cacheada sin gastar un turno.
+          if (!inbound.images?.length && isMoreRequest(inbound.text)) {
+            const full = takeFullReply(thread.key);
+            if (full) {
+              await say(inbound, full);
+              return;
+            }
+          }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.
           const gen = thread.generation;
