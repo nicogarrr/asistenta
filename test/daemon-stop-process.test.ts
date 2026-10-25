@@ -12,7 +12,10 @@ const children: ChildProcess[] = [];
 // Mitigation, NOT a proven fix: a fixture daemon whose test runner died (timeout/kill) is
 // re-parented and would run on. It now exits by itself once orphaned. The earlier
 // incident (orphan fixture daemons + multi-GB logs in /tmp/pa-stop-*) was not reproduced.
-const WATCHDOG = ';{const pp=process.ppid;setInterval(()=>{if(process.ppid!==pp)process.exit(3)},1000).unref();}';
+// Installed BEFORE the module code: the code ends in a top-level `await life.done`, so a
+// watchdog appended after it would only be installed once the fixture is already closing.
+const WATCHDOG =
+  ';{const pp=process.ppid;setInterval(()=>{if(process.ppid!==pp)process.exit(3)},1000).unref();}';
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'pa-stop-'));
 });
@@ -30,7 +33,7 @@ async function fixture(mode: 'clean' | 'fail' | 'hung' = 'clean', delay = 100) {
   const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
   const code = `import {installLifecycle} from ${JSON.stringify(lifecycle)};import {controlledDaemon} from ${JSON.stringify(wrapper)};import {writeFileSync} from 'node:fs';
     await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',shutdownBudgetMs:300,onShutdown:async()=>{${mode === 'hung' ? 'await new Promise(()=>{});' : `await new Promise(r=>setTimeout(r,${delay}));${mode === 'fail' ? "throw new Error('fixture failure');" : `writeFileSync(${JSON.stringify(join(dir, 'drained'))},'yes');`}`}}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', WATCHDOG + code], {
     env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -105,7 +108,7 @@ it('keeps the same OS ownership until a failed drainer process exits', async () 
   const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
   const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
   const code = `import {controlledDaemon} from ${JSON.stringify(wrapper)};import {installLifecycle} from ${JSON.stringify(lifecycle)};setInterval(()=>{},1000);await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',onShutdown:async()=>{throw new Error('leaked resource fixture');}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', WATCHDOG + code], {
     env: { ...process.env, PA_STATE_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -134,7 +137,7 @@ it('uses the actual 10-second thread-tail drain timeout and never writes a clean
   const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
   const drain = pathToFileURL(resolve('dist/shutdown-drain.js')).href;
   const code = `import {controlledDaemon} from ${JSON.stringify(wrapper)};import {installLifecycle} from ${JSON.stringify(lifecycle)};import {drainThreadTails} from ${JSON.stringify(drain)};await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',onShutdown:async()=>{await drainThreadTails([new Promise(()=>{})]);}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code + WATCHDOG], {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', WATCHDOG + code], {
     env: { ...process.env, PA_STATE_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -167,3 +170,73 @@ it('blocks forced desktop on Linux before vault, channels or microphone startup'
   expect(existsSync(join(dir, 'control'))).toBe(false);
   expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
 });
+
+async function orphanProbe(
+  withWatchdog: boolean,
+): Promise<{ pid: number; deadWithin: (ms: number) => Promise<boolean>; kill: () => void }> {
+  const lifecycle = pathToFileURL(resolve('dist/lifecycle.js')).href;
+  const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
+  const code = `import {installLifecycle} from ${JSON.stringify(lifecycle)};import {controlledDaemon} from ${JSON.stringify(wrapper)};
+    await controlledDaemon(async ctl=>{const life=installLifecycle({name:'agent',shutdownBudgetMs:300,onShutdown:async()=>{}});ctl.attach(life);ctl.ready();console.log('ready');await life.done;return 0;});`;
+  const full = withWatchdog ? WATCHDOG + code : code;
+  const parentSrc = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['--input-type=module','-e',process.env.FIXTURE_CODE],{env:{...process.env,PA_STATE_DIR:process.env.PA_STATE_DIR,PA_DESKTOP:'off'},stdio:['ignore','pipe','ignore']});c.stdout.on('data',()=>{console.log('child '+c.pid);});setInterval(()=>{},1000);`;
+  const parent = spawn(process.execPath, ['-e', parentSrc], {
+    env: { ...process.env, FIXTURE_CODE: full, PA_STATE_DIR: dir },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  children.push(parent);
+  const pid = await new Promise<number>((yes, no) => {
+    const timer = setTimeout(() => no(new Error('orphan probe startup timeout')), 8000);
+    parent.stdout?.on('data', (chunk) => {
+      const m = /child (\d+)/.exec(chunk.toString());
+      if (m) {
+        clearTimeout(timer);
+        yes(Number(m[1]));
+      }
+    });
+  });
+  parent.kill('SIGKILL'); // the "test runner" dies: the fixture is re-parented
+  await new Promise((r) => parent.once('exit', r));
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return {
+    pid,
+    deadWithin: async (ms: number) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        if (!alive()) return true;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return !alive();
+    },
+    kill: () => {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {}
+    },
+  };
+}
+
+it('an orphaned fixture daemon exits by itself with the watchdog (real orphan, parent SIGKILLed)', async () => {
+  const probe = await orphanProbe(true);
+  try {
+    expect(await probe.deadWithin(5000)).toBe(true);
+  } finally {
+    probe.kill();
+  }
+}, 20000);
+
+it('control: without the watchdog the same orphaned fixture keeps running (the test does detect orphans)', async () => {
+  const probe = await orphanProbe(false);
+  try {
+    expect(await probe.deadWithin(3500)).toBe(false);
+  } finally {
+    probe.kill();
+  }
+}, 20000);
