@@ -150,6 +150,37 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     const raw = ['¿Permito computer?', `Acción: ${rawAction}`, `Motivo: ${reason}`].join('\n');
     return withinBudget(raw, question, 'computer');
   }
+  if (call.tool === 'write' || call.tool === 'edit') {
+    // Escribir a ciegas no es aprobar: la pregunta enseña la ruta y lo que se va a
+    // escribir. El contenido se recorta (un fichero grande no cabe en un chat),
+    // pero la ruta y el tamaño total siempre están.
+    const path = typeof call.args.path === 'string' ? call.args.path : '';
+    const body =
+      call.tool === 'write'
+        ? typeof call.args.content === 'string'
+          ? call.args.content
+          : ''
+        : [
+            typeof call.args.oldString === 'string' ? `- ${call.args.oldString}` : '',
+            typeof call.args.newString === 'string' ? `+ ${call.args.newString}` : '',
+            typeof call.args.old === 'string' ? `- ${call.args.old}` : '',
+            typeof call.args.new === 'string' ? `+ ${call.args.new}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n');
+    const PREVIEW = 1200;
+    const preview =
+      body.length > PREVIEW
+        ? `${body.slice(0, PREVIEW)}\n… (${body.length} caracteres en total)`
+        : body;
+    const question = [
+      `¿Permito ${call.tool === 'edit' ? 'editar' : 'escribir'}?`,
+      path ? `Archivo: ${path}` : 'Archivo: (sin ruta)',
+      preview ? `Contenido:\n${preview}` : 'Contenido: (vacío)',
+      `Motivo: ${redactSecrets(reason)}`,
+    ].join('\n');
+    return { question, complete: true };
+  }
   const raw = `¿Permito ${call.tool}?\n${reason}`;
   return withinBudget(raw, `¿Permito ${call.tool}?\n${redactSecrets(reason)}`, call.tool);
 }
@@ -157,6 +188,18 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
 /** Back-compat: same text as before for callers that only need the question. */
 export function formatApprovalQuestion(call: ToolCall, reason: string): string {
   return formatApproval(call, reason).question;
+}
+
+/**
+ * Condiciones que NINGUNA aprobación puede cubrir: escribir un secreto, una
+ * operación que el enmascarado alteraría, o una acción tan larga que no cabe en
+ * una revisión segura. El Gate las consulta ANTES de scopes y fullControl para
+ * que "Siempre" no se convierta en "aprueba a ciegas". Devuelve la explicación,
+ * o null si la acción sí se puede aprobar con una pregunta.
+ */
+export function unapprovableOperation(call: ToolCall): string | null {
+  const text = formatApproval(call, '');
+  return text.complete ? null : text.question;
 }
 
 /**

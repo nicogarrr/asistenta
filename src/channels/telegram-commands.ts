@@ -85,6 +85,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Buscar en conversaciones pasadas',
   },
   {
+    command: 'memoria',
+    description: 'Ver, buscar, olvidar o exportar lo que recuerdo',
+  },
+  {
     command: 'steer',
     description: 'Corregir lo que estoy haciendo sin pararlo',
   },

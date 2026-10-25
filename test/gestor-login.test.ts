@@ -606,6 +606,7 @@ describe('browser fill con secret_key', () => {
     };
     await gate.check('scope', call);
     expect(asked).toBe(1);
+    gate.settle('scope', call, false); // el tool ya terminó: la memo aplica
     // La memo del Gate cubre la repetición EXACTA aprobada (semántica
     // preexistente para cualquier credencial), pero otra clave vuelve a
     // preguntar.

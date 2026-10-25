@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
 import { type Embedder, hybridRank, SEMANTIC_CANDIDATES } from '../memory/semantic.js';
+import type { SessionStore } from '../memory/sessions.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
 import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
 import { looksLikeCredential, type MemoryEntry, type MemoryStore, scoreEntry } from '../memory.js';
@@ -42,6 +43,7 @@ const MemoryParams = Type.Object({
     Type.Literal('profile'),
     Type.Literal('forget_profile'),
     Type.Literal('suggest_nudge'),
+    Type.Literal('history'),
   ]),
   text: Type.Optional(
     Type.String({
@@ -55,7 +57,8 @@ const MemoryParams = Type.Object({
   query: Type.Optional(
     Type.String({
       description:
-        'For recall: what you want to remember. For forget_profile: the text to remove from the profile.',
+        'For recall: what you want to remember. For history: words to look for in ' +
+        'past conversations of this chat. For forget_profile: the text to remove from the profile.',
     }),
   ),
   id: Type.Optional(
@@ -168,6 +171,7 @@ export function createMemoryTool(
   scopeOf: () => string,
   snapshot?: MemorySnapshot,
   semantic?: Embedder,
+  sessions?: SessionStore,
 ): AgentTool<typeof MemoryParams> {
   return {
     name: 'memory',
@@ -191,6 +195,8 @@ export function createMemoryTool(
       'action=forget_profile removes every profile entry containing the query text.',
       'action=suggest_nudge analyses a user message and says whether it revealed',
       'something durable worth saving; ask the user before saving anything.',
+      'action=history searches what was SAID in earlier conversations of this chat',
+      '(user messages included), for "what did we decide last week?" questions.',
       '',
       'Corrected entries are history, never current facts: hidden by default, and',
       'include_superseded=true shows them marked and linked to their replacement.',
@@ -420,6 +426,49 @@ export function createMemoryTool(
               },
             ],
             details: { removed },
+          };
+        }
+
+        case 'history': {
+          if (!sessions) {
+            return {
+              content: [
+                { type: 'text', text: 'El historial no está disponible en este contexto.' },
+              ],
+              details: { available: false },
+              isError: true,
+            };
+          }
+          const query = String(args.query ?? '').trim();
+          if (!query) throw new Error('la acción history necesita query');
+          const hits = sessions.search(query, scope, 5);
+          if (!hits.length) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: 'No encuentro nada sobre eso en conversaciones anteriores de este chat.',
+                },
+              ],
+              details: { count: 0 },
+            };
+          }
+          const lines = hits.map((h) => {
+            const when = new Date(h.at).toLocaleDateString('es-ES', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            });
+            return `- [${when}] ${h.title}: ${(h.snippet || h.summary).replace(/\s+/g, ' ').slice(0, 220)}`;
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `En conversaciones anteriores de este chat:\n${lines.join('\n')}`,
+              },
+            ],
+            details: { count: hits.length },
           };
         }
 

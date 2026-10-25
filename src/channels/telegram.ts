@@ -55,6 +55,9 @@ export interface ApprovalChoice {
  * cooldown, and this adapter now answers several conversations at once.
  */
 const MIN_GAP_MS = 1_100;
+/** Un envío no puede reintentarse para siempre: un endpoint muerto congelaría todos los chats. */
+const SEND_MAX_ATTEMPTS = 4;
+const SEND_MAX_TOTAL_MS = 90_000;
 
 /** Single gate key: the limiter is process-wide, not per chat. */
 const GLOBAL_KEY = 'global';
@@ -511,20 +514,38 @@ export class TelegramChannel implements ChannelAdapter {
     // message would produce duplicate approvals for the same request.
     let first = true;
     for (const chunk of chunkText(outbound.text, 4000)) {
-      const sent = await this.#throttled(() =>
-        withTimeout(
-          this.#bot.api.sendMessage(chatId, chunk, {
-            message_thread_id: outbound.threadId ? Number(outbound.threadId) : undefined,
-            reply_to_message_id: outbound.replyToMessageId
-              ? Number(outbound.replyToMessageId)
-              : undefined,
-            reply_markup:
-              first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
-          }),
-          20_000,
-          'sendMessage timed out',
-        ),
-      );
+      const options = (withThread: boolean, withReply: boolean) => ({
+        message_thread_id: withThread && outbound.threadId ? Number(outbound.threadId) : undefined,
+        reply_to_message_id:
+          withReply && outbound.replyToMessageId ? Number(outbound.replyToMessageId) : undefined,
+        reply_markup:
+          first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
+      });
+      const call = (withThread: boolean, withReply: boolean) =>
+        this.#throttled(() =>
+          withTimeout(
+            this.#bot.api.sendMessage(chatId, chunk, options(withThread, withReply)),
+            20_000,
+            'sendMessage timed out',
+          ),
+        );
+      let sent: Awaited<ReturnType<typeof call>>;
+      try {
+        sent = await call(true, true);
+      } catch (err) {
+        // Un reply a un mensaje borrado o un tema cerrado da un 400 permanente. Antes
+        // eso perdía la respuesta entera: se reintenta UNA vez sin hilo ni reply, que
+        // siempre entrega (en General) en vez de dejar al usuario sin nada.
+        const refProblem =
+          err instanceof GrammyError &&
+          err.error_code === 400 &&
+          /thread|topic|reply/i.test(err.description);
+        if (!refProblem || (!outbound.threadId && !outbound.replyToMessageId)) throw err;
+        log.warn('telegram send rejected the thread/reply target, sending without them', {
+          error: describeError(err),
+        });
+        sent = await call(false, false);
+      }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
       first = false;
     }
@@ -720,8 +741,14 @@ export class TelegramChannel implements ChannelAdapter {
    * `retry_after` is obeyed exactly as Telegram documents it; 5xx and network errors
    * get exponential backoff instead, because they carry no `retry_after` and
    * retrying immediately just hits the same failing endpoint again.
+   *
+   * The retries are FINITE and share a deadline. Before this, a dead endpoint (or a
+   * 429 with a long retry_after) retried forever inside the single global send gate:
+   * one stuck call froze every chat, and the turn waiting on the send could not be
+   * stopped. Failing after a bounded wait is always better than never answering.
    */
   async #throttled<T>(call: () => Promise<T>): Promise<T> {
+    const deadline = Date.now() + SEND_MAX_TOTAL_MS;
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.#sendGate.run(async () => {
@@ -735,7 +762,9 @@ export class TelegramChannel implements ChannelAdapter {
         });
       } catch (err) {
         const wait = backoffFor(err, attempt);
-        if (wait === null) throw err;
+        if (wait === null || attempt + 1 >= SEND_MAX_ATTEMPTS || Date.now() + wait > deadline) {
+          throw err;
+        }
         log.warn('telegram send failed, retrying', { attempt, wait, error: describeError(err) });
         await sleep(wait);
       }

@@ -94,21 +94,50 @@
     return 'other';
   }
 
-  function controlValue(el) {
+  function controlValue(el, sensitive) {
     var tag = el.tagName.toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       var raw = el.value;
-      return typeof raw === 'string' ? raw : null;
+      if (typeof raw !== 'string') return null;
+      // Nunca se entrega al modelo el contenido de un campo sensible: solo el hecho
+      // de que está relleno. Una contraseña, una tarjeta o un código de un solo uso
+      // no deben viajar al proveedor ni quedar en la transcripción.
+      if (sensitive) return raw ? '***' : '';
+      return raw;
     }
     var aria = el.getAttribute('aria-valuetext') || el.getAttribute('aria-valuenow');
     return aria && aria.trim() ? aria : null;
+  }
+
+  // Campos cuyo VALOR jamás se lee: contraseñas, tarjetas, códigos OTP, ocultos y
+  // cualquier campo cuyo autocomplete declare una credencial o un dato de pago.
+  function sensitiveControl(el) {
+    var tag = el.tagName.toLowerCase();
+    if (tag !== 'input' && tag !== 'textarea') return false;
+    var type = (el.getAttribute('type') || '').toLowerCase();
+    if (type === 'password' || type === 'hidden') return true;
+    var auto = (el.getAttribute('autocomplete') || '').trim().toLowerCase();
+    if (!auto) return false;
+    var parts = auto.split(/\s+/);
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (
+        p === 'current-password' ||
+        p === 'new-password' ||
+        p === 'one-time-code' ||
+        p.indexOf('cc-') === 0
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function textOf(el) {
     return (el.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  function nameOf(el, value) {
+  function nameOf(el) {
     var role = roleOf(el);
     var direct =
       el.getAttribute('name') ||
@@ -132,7 +161,6 @@
       el.getAttribute('alt') || '',
       el.getAttribute('title') || '',
       textOf(el).slice(0, 80),
-      value || '',
       role || el.tagName.toLowerCase(),
     ];
     var best = '';
@@ -181,8 +209,9 @@
       if (elements.length >= max) break;
       var el = nodes[i];
       if (!visible(el)) continue;
-      var value = controlValue(el);
-      var name = nameOf(el, value);
+      var sensitive = sensitiveControl(el);
+      var value = controlValue(el, sensitive);
+      var name = nameOf(el);
       if (!name) continue;
       var role = roleOf(el);
       elements.push({
@@ -191,6 +220,7 @@
         role: role || '',
         name: name,
         value: value === null ? '' : value,
+        sensitive: sensitive,
         selector: selectorOf(el),
         // Kept so the panel lookup below can measure distance to the actual node. It
         // never leaves this function.

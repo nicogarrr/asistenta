@@ -47,7 +47,7 @@ describe('declared selection expectation is enforced in code (SYNTHETIC)', () =>
     await expect(tool.execute('3', { action: 'click', selector: '#s2' })).rejects.toThrow(
       /SELECCION_NO_CORROBORADA/,
     );
-    await expect(tool.execute('4', { action: 'exec_js', code: 'return 1' })).rejects.toThrow(
+    await expect(tool.execute('4', { action: 'fill', selector: '#s1', text: 'x' })).rejects.toThrow(
       /SELECCION_NO_CORROBORADA/,
     );
     await tool.execute('5', { action: 'open', url }); // reset allowed

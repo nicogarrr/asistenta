@@ -24,3 +24,4 @@ scale.ps1
 # Probe scripts kept out of the library on purpose.
 script/
 .bench-models/
+test-output/

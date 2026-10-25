@@ -1713,7 +1713,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
-      createMemoryTool(memory, scope, snapshot, semanticRecall),
+      createMemoryTool(memory, scope, snapshot, semanticRecall, sessions),
       createDocsTool(docMemory, scope),
       createDecisionTool({
         ledger: decisionLedger,
@@ -2327,7 +2327,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         let result: AgentRunResult | null = null;
         try {
           thread.agent.attachContext(
-            buildContextNote(thread, store, memory, snapshot, workstreams, skills),
+            buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
           );
           result = await thread.agent.run(prompt);
           safeRemember(() =>
@@ -2355,7 +2355,60 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
   });
 
-  const runRoutineFire = async (prompt: string, ctx: RoutineRunContext) => {
+  /**
+   * Ejecuta la tarea de una rutina programada en el hilo que la creó.
+   *
+   * Antes, el tick solo publicaba la FICHA de la rutina ("⏰ Rutina X: <metadatos>"),
+   * así que "/cron …" o "cada mañana a las 8 resumen del día" no hacían nada: el
+   * usuario veía el horario en vez del trabajo. Ahora corre por el agente del hilo
+   * (mismo contexto, mismo gate y mismo presupuesto) y devuelve su respuesta, que
+   * es lo que se envía. Encadenado a thread.tail como un tick de objetivo: nunca
+   * se solapa con una conversación viva.
+   */
+  const runRoutineTask = async (prompt: string, ctx: RoutineRunContext): Promise<string> => {
+    const [chatPart, threadRaw] = ctx.scope.split('#');
+    if (!chatPart) return '';
+    const threadName = threadRaw || 'main';
+    const thread = await getOrCreateThread(
+      chatPart,
+      threadName,
+      threadName === 'main' ? 'principal' : threadName,
+    );
+    const generation = thread.generation;
+    const task = async (): Promise<string> => {
+      if (thread.generation !== generation) return '';
+      thread.active = true;
+      let sessionId = '';
+      let text = '';
+      safeRemember(() => {
+        sessionId = sessions.begin(
+          thread.key,
+          `[rutina] ${ctx.routine.name}`.slice(0, 80),
+          'goal-tick',
+        );
+      });
+      try {
+        thread.agent.attachContext(
+          buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
+        );
+        const result = await thread.agent.run(prompt);
+        text = result.text ?? '';
+        if (result.error)
+          log.warn('routine run error', { routine: ctx.routine.name, error: result.error });
+        safeRemember(() => sessions.addTurn(sessionId, 'assistant', text.slice(0, 500)));
+      } finally {
+        thread.active = false;
+        thread.gate.clearSession(thread.key);
+        safeRemember(() => sessions.end(sessionId, text.slice(0, 200)));
+      }
+      return text;
+    };
+    const next = thread.tail.then(task);
+    thread.tail = next.catch(() => {});
+    return next;
+  };
+
+  const runRoutineFire = async (_prompt: string, ctx: RoutineRunContext) => {
     // A goal tick EXECUTES; it never delivers its prompt as a message.
     if (isGoalRoutine(ctx.routine)) {
       await goalRunner.tickByRoutineName(ctx.routine.name);
@@ -2372,6 +2425,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (isOneShotReminder(ctx.routine) && !oneShotStillPending(store, ctx.routine)) return;
     log.info('routine fired', { routine: ctx.routine.name, chatId });
     const reminder = isReminder(ctx.routine);
+    // Un recordatorio solo avisa; una rutina TRABAJA. La tarea real se saca del
+    // prompt de la rutina (o de su procedimiento guardado) y se ejecuta aquí,
+    // como haría /routine a mano. `prompt` (los metadatos que pasa el runner) no
+    // se usa para trabajar.
+    const task = reminder
+      ? ''
+      : ctx.routine.kind === 'schedule' && ctx.routine.prompt
+        ? ctx.routine.prompt
+        : procedurePrompt(ctx.routine);
+    let body = '';
+    if (!reminder) {
+      try {
+        body = await runRoutineTask(task, ctx);
+      } catch (err) {
+        log.warn('routine execution failed', { routine: ctx.routine.name, err });
+      }
+      if (!body.trim()) body = 'No devolvió respuesta.';
+    }
     const sent = await telegram
       .send({
         channel: 'telegram',
@@ -2379,7 +2450,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         chatId,
         text: reminder
           ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-          : `⏰ Rutina "${ctx.routine.name}":\n\n${prompt}`,
+          : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`,
       })
       .then(() => true)
       .catch((err: unknown) => {
@@ -3210,21 +3281,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const recorded = ended.name;
       await say(inbound, 'Resumiendo los pasos que acabas de hacer⬦', { quote: true });
       const transcript = summarizeTranscript(ended.segment);
-      const result = await thread.agent.run(
-        [
-          'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
-          transcript,
-          '',
-          'Escribe en español los pasos reutilizables, en tercera persona e imperativo breve,',
-          'uno por línea, sin numeración ni explicaciones. Empieza por el más general.',
-          'Si un dato cambia de una ejecución a otra (destinatario, fichero, dominio, texto),',
-          'escribe un parámetro {nombre} en vez del valor concreto: nombre con letras, números, _ o -;',
-          '{fichero}, {correo} y {dominio} (o {url}) llevan validación de tipo, cualquier otro nombre es texto.',
-          'No uses llaves para nada más. Tras cada paso que se pueda comprobar, añade " verifica: <qué comprobar>".',
-          'Si algún paso requiere una contraseña o un pago, escribe [PIDE CONFIRMACIÓN].',
-          'Si no se puede reutilizar, escribe una sola línea: NO REUTILIZABLE.',
-          'No escribas nada más: ni título, ni comentarios, ni código fences.',
-        ].join('\n'),
+      const result = await enqueue(thread, () =>
+        thread.agent.run(
+          [
+            'Acabas de ayudar al usuario a hacer esta tarea paso a paso:',
+            transcript,
+            '',
+            'Escribe en español los pasos reutilizables, en tercera persona e imperativo breve,',
+            'uno por línea, sin numeración ni explicaciones. Empieza por el más general.',
+            'Si un dato cambia de una ejecución a otra (destinatario, fichero, dominio, texto),',
+            'escribe un parámetro {nombre} en vez del valor concreto: nombre con letras, números, _ o -;',
+            '{fichero}, {correo} y {dominio} (o {url}) llevan validación de tipo, cualquier otro nombre es texto.',
+            'No uses llaves para nada más. Tras cada paso que se pueda comprobar, añade " verifica: <qué comprobar>".',
+            'Si algún paso requiere una contraseña o un pago, escribe [PIDE CONFIRMACIÓN].',
+            'Si no se puede reutilizar, escribe una sola línea: NO REUTILIZABLE.',
+            'No escribas nada más: ni título, ni comentarios, ni código fences.',
+          ].join('\n'),
+        ),
       );
       const steps = result.text.trim();
       if (!steps) {
@@ -3375,7 +3448,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     store.markRoutineRun(routine.scope, routine.name);
     messageThread.set(`${chatKey(inbound)}:${inbound.messageId}`, thread.key);
-    await runTurn(thread, inbound, prompt, {});
+    await enqueue(thread, () => runTurn(thread, inbound, prompt, {}));
   };
 
   const cmdRoutines = async (inbound: Inbound): Promise<void> => {
@@ -4124,6 +4197,99 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, formatSessionHits(hits, query), { quote: true });
   };
 
+  /**
+   * /memoria [listar | buscar <texto> | olvidar <id> | exportar]
+   *
+   * La memoria es lo que más confianza exige: ver qué recuerda, buscar dentro,
+   * borrar una entrada y sacarla fuera (JSON) es lo que la hace auditable. El
+   * scope lo pone el hilo, nunca el texto del comando.
+   */
+  const cmdMemoria = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? '').toLowerCase();
+    const restText = rest.join(' ').trim();
+    const vigentes = () => memory.all(thread.key).filter((e) => e.supersededBy === null);
+    if (!sub || sub === 'listar' || sub === 'lista' || sub === 'list') {
+      const entries = vigentes();
+      if (!entries.length) {
+        await say(inbound, 'Este chat no tiene memoria guardada todavía.', { quote: true });
+        return;
+      }
+      await say(
+        inbound,
+        `Memoria de este chat (${entries.length}):\n${entries
+          .map((e) => `- [${e.id}] (${e.date}) ${e.text}`)
+          .join('\n')}`,
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'buscar' || sub === 'search') {
+      if (!restText) {
+        await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
+        return;
+      }
+      const hits = memory.recall(thread.key, restText).filter((e) => e.supersededBy === null);
+      await say(
+        inbound,
+        hits.length
+          ? hits.map((e) => `- [${e.id}] (${e.date}) ${e.text}`).join('\n')
+          : 'No hay nada guardado que coincida con eso.',
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
+      if (!restText) {
+        await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
+          quote: true,
+        });
+        return;
+      }
+      const removed = memory.forget(thread.key, restText);
+      await say(
+        inbound,
+        removed ? `Olvidado ${restText}.` : `No había nada con id ${restText} en este chat.`,
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'exportar' || sub === 'export') {
+      const entries = memory.all(thread.key);
+      const payload = {
+        exportado: new Date().toISOString(),
+        chat: thread.key,
+        entradas: entries.map((e) => ({
+          id: e.id,
+          fecha: e.date,
+          texto: e.text,
+          tags: e.tags,
+          sustituidaPor: e.supersededBy,
+        })),
+      };
+      const bytes = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+      try {
+        await telegram.sendDocumentBytes(
+          Number(inbound.chatId),
+          bytes,
+          'memoria.json',
+          `Memoria de este chat (${entries.length} entradas)`,
+        );
+      } catch (err) {
+        log.warn('memory export send failed', { err });
+        await say(
+          inbound,
+          `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+          { quote: true },
+        );
+      }
+      return;
+    }
+    await say(inbound, 'Uso: /memoria [listar | buscar <texto> | olvidar <id> | exportar]', {
+      quote: true,
+    });
+  };
+
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -4504,6 +4670,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * transcription has to load the model from disk, which takes seconds. Doing it in
    * the message handler would block every other conversation behind that load.
    */
+  /**
+   * Run any thread work through the thread's tail.
+   *
+   * A `PersonalAgent` cannot run two turns at once (pi rejects "already
+   * processing"), and the fields a run owns (`#externalAbort`,
+   * `#runToolCallCeiling`, the tool-call memo) are shared. Messages already queue
+   * here; routines, wake-word turns and `/learn end` used to call the agent
+   * directly, so a routine firing during a live turn could collide. Everything
+   * that touches the thread's agent goes through this now.
+   */
+  const enqueue = <T>(thread: Thread, task: () => Promise<T>): Promise<T> => {
+    const next = thread.tail.then(task);
+    thread.tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
+
   const runTurn = async (
     thread: Thread,
     inbound: Inbound,
@@ -4522,6 +4707,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     let sessionId = '';
     safeRemember(() => {
       sessionId = sessions.begin(thread.key, inbound.text.slice(0, 80));
+      // Las palabras del usuario también se guardan (acotadas): sin ellas /buscar
+      // y la acción `history` no pueden recordar lo que se PIDIÓ, solo la respuesta.
+      if (sessionId) sessions.addTurn(sessionId, 'user', inbound.text.slice(0, 4000));
     });
     /** Kept for the session summary the finally writes. */
     let result: AgentRunResult | null = null;
@@ -4756,7 +4944,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
       thread.agent.attachContext(
-        buildContextNote(thread, store, memory, snapshot, workstreams, skills),
+        buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
       );
 
       result = await thread.agent.run(prompt, images, {
@@ -5003,7 +5191,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const wasVoice = voiceOn.get(chat.chatId);
     voiceOn.set(chat.chatId, true);
     try {
-      await runTurn(thread, inbound, inbound.text, {});
+      await enqueue(thread, () => runTurn(thread, inbound, inbound.text, {}));
     } finally {
       if (wasVoice === undefined) voiceOn.delete(chat.chatId);
       else voiceOn.set(chat.chatId, wasVoice);
@@ -5178,10 +5366,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.info('voice session utterance', { chars: heard.length, chatId: chat.chatId });
         // The turn goes through runTurn like any message: same gate, same mutex. An
         // approval it needs is still asked with Telegram buttons; nothing spoken is read
-        // as a yes.
-        await runTurn(thread, inbound, inbound.text, {
-          spoken: (answer) => speakAloud(answer, created),
-        });
+        // as a yes. Encolado en el hilo: la voz no puede solaparse con un turno vivo.
+        await enqueue(thread, () =>
+          runTurn(thread, inbound, inbound.text, {
+            spoken: (answer) => speakAloud(answer, created),
+          }),
+        );
       },
       onClose: (reason, detail) => {
         if (session === created) {
@@ -5717,6 +5907,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'search': {
                 const thread = await resolveThread(inbound);
                 return cmdSearch(thread, inbound, command.args);
+              }
+              case 'memoria': {
+                const thread = await resolveThread(inbound);
+                return cmdMemoria(thread, inbound, command.args);
               }
               case 'agenda':
                 return cmdAgenda(inbound);
@@ -6292,6 +6486,7 @@ export function buildContextNote(
   snapshot?: MemorySnapshot,
   workstreams?: WorkstreamStore,
   skills?: SkillStore,
+  sessions?: SessionStore,
 ): string {
   const parts: string[] = [];
 
@@ -6307,6 +6502,31 @@ export function buildContextNote(
   const renderedMemory = renderMemoryContext(memory.all(thread.key));
   if (renderedMemory) {
     parts.push(`<memory>\n${renderedMemory.body}\n</memory>`);
+  }
+  // Continuidad entre reinicios y cambios de tema: lo último que se habló en este
+  // chat, una línea por sesión. Es un resumen, no la transcripción, y va aparte de
+  // la memoria curada: sirve para "¿cómo quedamos ayer?" sin releer nada.
+  if (sessions) {
+    try {
+      const recent = sessions
+        .recent(thread.key, 4)
+        .filter((s) => (s.summary ?? '').trim().length > 0);
+      if (recent.length) {
+        parts.push(
+          `<historial>\n${recent
+            .map((s) => {
+              const when = new Date(s.startedAt).toLocaleDateString('es-ES', {
+                day: 'numeric',
+                month: 'short',
+              });
+              return `- ${when} · ${s.title}: ${(s.summary ?? '').replace(/\s+/g, ' ').slice(0, 200)}`;
+            })
+            .join('\n')}\n</historial>`,
+        );
+      }
+    } catch (err) {
+      log.warn('recent sessions failed', { err: String(err) });
+    }
   }
   const routines = store.listRoutines(thread.key).filter((r) => r.enabled);
   if (routines.length) {

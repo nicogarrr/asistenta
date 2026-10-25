@@ -101,52 +101,58 @@ setTimeout(()=>process.exit(0),5000);`,
         rmSync(tmp, { recursive: true, force: true });
       }
     }, 30000);
-    it('WhatIf on real installer leaves no state/config/tasks; space and apostrophe paths', () => {
-      const tmp = mkdtempSync(join(tmpdir(), "pa installer's space & "));
-      try {
-        const repo = join(tmp, 'repo');
-        const state = join(tmp, 'uncreated state');
-        for (const d of ['dist', 'deploy/windows', 'deploy/browserd', 'browserd/.venv/Scripts'])
-          mkdirSync(join(repo, d), { recursive: true });
-        for (const f of [
-          'dist/cli.js',
-          'deploy/browserd/start-browserd-hidden.vbs',
-          'browserd/.venv/Scripts/python.exe',
-        ])
-          writeFileSync(join(repo, f), 'synthetic prerequisite');
-        for (const f of [
-          'install-all.ps1',
-          'autostart-core.ps1',
-          'run-stack.ps1',
-          'run-hidden.ps1',
-        ])
-          copyFileSync(join(root, f), join(repo, 'deploy/windows', f));
-        const p = spawnSync(
-          ps,
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            join(repo, 'deploy/windows/install-all.ps1'),
-            '-RepoDir',
-            repo,
-            '-NodeExe',
-            process.execPath,
-            '-StateDir',
-            state,
-            '-Start',
-            '-WhatIf',
-          ],
-          { encoding: 'utf8', timeout: 30000, windowsHide: true },
-        );
-        expect(p.status, `${p.stdout}\n${p.stderr}`).toBe(0);
-        expect(p.stdout).toMatch(/What if|WhatIf/i);
-        expect(() => readFileSync(join(state, 'log', 'supervisor-restarts.json'))).toThrow();
-      } finally {
-        rmSync(tmp, { recursive: true, force: true });
-      }
-    });
+    // El instalador exige Node >= 24 (engines del repo): con un runtime anterior
+    // se niega con razón, así que este caso no mide el autoarranque sino el Node
+    // del runner. En CI (Node 24) se ejecuta.
+    it.skipIf(Number(process.versions.node.split('.')[0]) < 24)(
+      'WhatIf on real installer leaves no state/config/tasks; space and apostrophe paths',
+      () => {
+        const tmp = mkdtempSync(join(tmpdir(), "pa installer's space & "));
+        try {
+          const repo = join(tmp, 'repo');
+          const state = join(tmp, 'uncreated state');
+          for (const d of ['dist', 'deploy/windows', 'deploy/browserd', 'browserd/.venv/Scripts'])
+            mkdirSync(join(repo, d), { recursive: true });
+          for (const f of [
+            'dist/cli.js',
+            'deploy/browserd/start-browserd-hidden.vbs',
+            'browserd/.venv/Scripts/python.exe',
+          ])
+            writeFileSync(join(repo, f), 'synthetic prerequisite');
+          for (const f of [
+            'install-all.ps1',
+            'autostart-core.ps1',
+            'run-stack.ps1',
+            'run-hidden.ps1',
+          ])
+            copyFileSync(join(root, f), join(repo, 'deploy/windows', f));
+          const p = spawnSync(
+            ps,
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-File',
+              join(repo, 'deploy/windows/install-all.ps1'),
+              '-RepoDir',
+              repo,
+              '-NodeExe',
+              process.execPath,
+              '-StateDir',
+              state,
+              '-Start',
+              '-WhatIf',
+            ],
+            { encoding: 'utf8', timeout: 30000, windowsHide: true },
+          );
+          expect(p.status, `${p.stdout}\n${p.stderr}`).toBe(0);
+          expect(p.stdout).toMatch(/What if|WhatIf/i);
+          expect(() => readFileSync(join(state, 'log', 'supervisor-restarts.json'))).toThrow();
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    );
   },
 );

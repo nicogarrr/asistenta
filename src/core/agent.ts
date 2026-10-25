@@ -561,26 +561,19 @@ export class PersonalAgent {
           calls.delete(toolCall.id);
           gate.settle(personal.sessionId, started, isError);
         }
-        // Budget pressure rides inside the tool result (`details.budgetPressure`)
-        // instead of as an extra conversation message: the model reads it as part
-        // of the outcome it just got, and the message format never changes. It has
-        // to land here and not in a log - a warning the model cannot read is not a
-        // warning, it is just a counter nobody looks at. The same result is capped on
-        // the way out so one huge tool cannot dominate every later call.
+        // The same result is capped on the way out so one huge tool cannot dominate
+        // every later call.
         const capped = capToolResultText(result.content, MAX_TOOL_RESULT_CHARS);
+        const content = capped ?? result.content;
+        // Budget pressure: the model only ever receives `content`; pi does not send
+        // `details` to the provider, so a warning parked there was a counter nobody
+        // read. It rides as a trailing text block of the result it just got, which
+        // keeps the message shape identical.
         const pressure = personal.budget.pressure();
+        const details = result.details !== undefined ? { details: result.details } : {};
         if (!pressure) return capped ? { content: capped } : undefined;
-        const details: unknown = result.details;
-        const base: Record<string, unknown> =
-          details !== null && typeof details === 'object' && !Array.isArray(details)
-            ? { ...(details as Record<string, unknown>) }
-            : details === undefined
-              ? {}
-              : { value: details };
-        return {
-          ...(capped ? { content: capped } : {}),
-          details: { ...base, budgetPressure: pressure },
-        };
+        const note = { type: 'text' as const, text: `\n[presupuesto] ${pressure}` };
+        return { ...(content ? { content: [...content, note] } : { content: [note] }), ...details };
       },
     });
 
