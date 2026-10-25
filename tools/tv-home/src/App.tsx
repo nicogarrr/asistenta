@@ -11,7 +11,7 @@ import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
 import {ConfigContext, loadConfig, saveConfig, type HomeConfig} from './lib/config';
 import {fetchPicks, type Pick} from './service/tmdb';
 import {launchApp, listLaunchPoints, blockScreenSaver, assertSoundOutput, guardSoundOutput, isWebOS} from './service/luna';
-import {listLaunchPointsRoot, loadIcons} from './service/appexec';
+import {clearIconCache, listLaunchPointsRoot, loadIcons} from './service/appexec';
 
 const IDLE_MS = 60_000;      // sin input este tiempo → reloj ambient
 const JITTER_MS = 150_000;   // guardia OLED: desplaza la UI ±2px con esta cadencia
@@ -93,7 +93,7 @@ export default function App () {
 					setLists(buildLists(extra));
 				}
 
-				if (!config.liveIcons) return;
+				if (!config.liveIcons) { clearIconCache(localStorage); return; }
 				// Iconos reales: la lista root da rutas de icono que la llamada sin
 				// root no devuelve; se aplican a catálogo Y descubiertas (el mapa
 				// funcional respeta reordenaciones/ocultos que haya hecho Nico).

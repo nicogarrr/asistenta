@@ -92,3 +92,35 @@ describe('caché de iconos', () => {
     expect(readIconCache(s)).toEqual({ '/a.png': 'data:1' });
   });
 });
+
+import { isReadableIconPath, clearIconCache, ICON_MAX_BYTES } from '../tools/tv-home/src/service/appexec';
+
+describe('isReadableIconPath (appinfo no es de fiar)', () => {
+  it('acepta iconos de raices de apps', () => {
+    expect(isReadableIconPath('/media/developer/apps/usr/palm/applications/netflix/icon.png')).toBe(true);
+    expect(isReadableIconPath('/usr/palm/applications/com.webos.app.home/largeIcon.PNG')).toBe(true);
+  });
+  it('rechaza traversal, raices ajenas y no imagenes', () => {
+    for (const bad of [
+      '/usr/palm/applications/x/../../../../etc/shadow.png', '/etc/shadow', '/root/.ssh/id_rsa',
+      '/usr/palm/applications/x/secret.txt', '/media/developer/../../etc/passwd.png', '/tmp/a.png',
+    ]) expect(isReadableIconPath(bad)).toBe(false);
+  });
+});
+
+describe('limites', () => {
+  it('parseIconOutput descarta iconos sobre el tope', () => {
+    const big = 'A'.repeat(Math.ceil(ICON_MAX_BYTES / 3) * 4 + 4);
+    expect(parseIconOutput(`0 ${big}\n1 QUJD`, 2)).toEqual({ 1: 'data:image/png;base64,QUJD' });
+  });
+  it('el script comprueba fichero y tamano antes de leer', () => {
+    const s = buildIconScript(['/usr/palm/a/i.png']);
+    expect(s).toContain('[ -f ');
+    expect(s).toContain(`-le ${ICON_MAX_BYTES}`);
+  });
+  it('clearIconCache borra la clave', () => {
+    const st = fakeStorage(); st.setItem(ICON_CACHE_KEY, '{}');
+    clearIconCache({ removeItem: (k: string) => void st.store.delete(k) });
+    expect(st.store.has(ICON_CACHE_KEY)).toBe(false);
+  });
+});
