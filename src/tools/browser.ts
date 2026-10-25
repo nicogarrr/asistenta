@@ -21,9 +21,9 @@ import { vaultGet } from '../vault.js';
  * changes behaviour. Enforcing a strict action order would only produce blocked
  * calls when the model wanted to look again after clicking.
  *
- * `exec_js` is the whole point. Everything else here is a convenience wrapper over
+ * Las acciones tipadas cubren lo común; el JavaScript libre del modelo se retiró
  * Playwright so that the common operations do not require writing JS, while
- * `exec_js` covers everything Playwright can do and anything the wrappers miss.
+ * (equivalía a ejecutar código con la sesión del navegador: cookies, ficheros, red).
  */
 
 /**
@@ -95,7 +95,6 @@ const BrowserParams = Type.Object({
     Type.Literal('wait_for'),
     Type.Literal('pick'),
     Type.Literal('screenshot'),
-    Type.Literal('exec_js'),
     Type.Literal('media'),
     Type.Literal('back'),
     Type.Literal('close'),
@@ -151,14 +150,6 @@ const BrowserParams = Type.Object({
       description: 'For wait, pick, click and fill. Default 3000, maximum 30000.',
     }),
   ),
-  code: Type.Optional(
-    Type.String({
-      description:
-        'For exec_js. JavaScript with `page` (a Playwright Page) and `state` (an object ' +
-        'that persists between calls) in scope. Return a value and it comes back ' +
-        'formatted. Use `state.x = ...` to remember something between calls.',
-    }),
-  ),
   fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
   send: Type.Optional(
     Type.Boolean({
@@ -169,7 +160,7 @@ const BrowserParams = Type.Object({
   visible: Type.Optional(
     Type.Boolean({
       description:
-        'For open and exec_js. Put the window on screen instead of headless. Pass ' +
+        'For open. Put the window on screen instead of headless. Pass ' +
         'visible: true whenever the user might want to WATCH the task happen - it is the ' +
         'default you should use when the user says "you do it" or "let me see". Without ' +
         'it the browser is headless and the user sees NOTHING at all. Every result tells ' +
@@ -521,15 +512,6 @@ export function createBrowserTool(
       'says, then act on the candidates it lists. Do not claim you did something you did',
       'not verify, and never say you finished because a tool returned data.',
       '',
-      'action=exec_js runs your own JavaScript. Available in scope: `page` (a',
-      'Playwright Page) and `state` (an object created in the sandbox that persists',
-      'between calls in this chat, so use `state.x = ...` to remember something).',
-      'Return a value and it comes back formatted. Do NOT touch `.constructor`,',
-      '`__proto__` or `.prototype` on any object. Examples:',
-      '  await page.getByRole("button", { name: "Enviar" }).click()',
-      '  await page.fill("#search", "renfe madrid")',
-      '  await page.waitForTimeout(500)',
-      '  await page.evaluate(() => document.title)',
       'AFTER A SELECTION, VERIFY IT: when you pick a place, store, product, size or option, read the',
       'page back (snapshot or the summary panel) and compare what it now shows with what the user',
       'asked for. A map or a search box showing the right place does not prove the selection that',
@@ -862,33 +844,6 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
               sent: delivery.includes('Enviada'),
               visible,
             },
-          };
-        }
-
-        case 'exec_js': {
-          const code = String(record.code ?? '');
-          if (!code.trim()) throw new Error('la accion exec_js necesita code');
-          const result = await service.execJs(scope, code, {
-            visible: Boolean(record.visible),
-          });
-          const content: Array<
-            { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
-          > = [{ type: 'text', text: result.text || '(sin valor de retorno)' }];
-          if (result.console.length) {
-            content.push({ type: 'text', text: `console:\n${result.console.join('\n')}` });
-          }
-          // The script can hand back a screenshot by returning it: the escape hatch
-          // has to cover "I need to see this" without a second round trip.
-          const shot = extractScreenshot(result.text);
-          if (shot) {
-            content.push({ type: 'image', mimeType: 'image/png', data: shot });
-          }
-          if (result.timedOut)
-            content.push({ type: 'text', text: '(el código excedió el tiempo)' });
-          const visible = windowVisible(service, scope);
-          return {
-            content: [...content, { type: 'text', text: visibleNote(visible) }],
-            details: { timedOut: result.timedOut, consoleLines: result.console.length, visible },
           };
         }
 

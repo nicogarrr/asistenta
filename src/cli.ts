@@ -4119,6 +4119,99 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, formatSessionHits(hits, query), { quote: true });
   };
 
+  /**
+   * /memoria [listar | buscar <texto> | olvidar <id> | exportar]
+   *
+   * La memoria es lo que más confianza exige: ver qué recuerda, buscar dentro,
+   * borrar una entrada y sacarla fuera (JSON) es lo que la hace auditable. El
+   * scope lo pone el hilo, nunca el texto del comando.
+   */
+  const cmdMemoria = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? '').toLowerCase();
+    const restText = rest.join(' ').trim();
+    const vigentes = () => memory.all(thread.key).filter((e) => e.supersededBy === null);
+    if (!sub || sub === 'listar' || sub === 'lista' || sub === 'list') {
+      const entries = vigentes();
+      if (!entries.length) {
+        await say(inbound, 'Este chat no tiene memoria guardada todavía.', { quote: true });
+        return;
+      }
+      await say(
+        inbound,
+        `Memoria de este chat (${entries.length}):\n${entries
+          .map((e) => `- [${e.id}] (${e.date}) ${e.text}`)
+          .join('\n')}`,
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'buscar' || sub === 'search') {
+      if (!restText) {
+        await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
+        return;
+      }
+      const hits = memory.recall(thread.key, restText).filter((e) => e.supersededBy === null);
+      await say(
+        inbound,
+        hits.length
+          ? hits.map((e) => `- [${e.id}] (${e.date}) ${e.text}`).join('\n')
+          : 'No hay nada guardado que coincida con eso.',
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
+      if (!restText) {
+        await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
+          quote: true,
+        });
+        return;
+      }
+      const removed = memory.forget(thread.key, restText);
+      await say(
+        inbound,
+        removed ? `Olvidado ${restText}.` : `No había nada con id ${restText} en este chat.`,
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'exportar' || sub === 'export') {
+      const entries = memory.all(thread.key);
+      const payload = {
+        exportado: new Date().toISOString(),
+        chat: thread.key,
+        entradas: entries.map((e) => ({
+          id: e.id,
+          fecha: e.date,
+          texto: e.text,
+          tags: e.tags,
+          sustituidaPor: e.supersededBy,
+        })),
+      };
+      const bytes = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+      try {
+        await telegram.sendDocumentBytes(
+          Number(inbound.chatId),
+          bytes,
+          'memoria.json',
+          `Memoria de este chat (${entries.length} entradas)`,
+        );
+      } catch (err) {
+        log.warn('memory export send failed', { err });
+        await say(
+          inbound,
+          `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+          { quote: true },
+        );
+      }
+      return;
+    }
+    await say(inbound, 'Uso: /memoria [listar | buscar <texto> | olvidar <id> | exportar]', {
+      quote: true,
+    });
+  };
+
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -5735,6 +5828,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'search': {
                 const thread = await resolveThread(inbound);
                 return cmdSearch(thread, inbound, command.args);
+              }
+              case 'memoria': {
+                const thread = await resolveThread(inbound);
+                return cmdMemoria(thread, inbound, command.args);
               }
               case 'agenda':
                 return cmdAgenda(inbound);

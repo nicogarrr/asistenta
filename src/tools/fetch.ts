@@ -273,9 +273,36 @@ export interface FetchedPage {
 }
 
 /**
+ * Egress allowlist (PA_FETCH_ALLOWED_HOSTS).
+ *
+ * `fetch` es una herramienta gratuita (sin aprobación) y una página inyectada
+ * puede pedirle "manda esto a https://attacker.example/?q=...". Sin lista, la
+ * única barrera es el SSRF. Con PA_FETCH_ALLOWED_HOSTS puesta (p. ej.
+ * "wikipedia.org,open-meteo.com"), solo esos hosts y sus subdominios pueden
+ * recibir peticiones. Vacía = sin restricción (comportamiento anterior).
+ */
+export function parseAllowedHosts(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** True si el host es el permitido o un subdominio suyo (`a.example.com` ↔ `example.com`). */
+export function isHostAllowed(host: string, allowed: readonly string[]): boolean {
+  if (!allowed.length) return true;
+  const h = host
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[(.*)\]$/, '$1');
+  return allowed.some((a) => h === a || h.endsWith(`.${a}`));
+}
+
+/**
  * The fetch core shared by the `fetch` tool and the web router's direct backend:
  * same SSRF gate (lexical + DNS, re-checked on every redirect hop), same text
- * extraction, same 30s ceiling. One implementation, so a fix lands everywhere.
+ * extraction, same 30s ceiling, same egress allowlist. One implementation, so a
+ * fix lands everywhere.
  */
 export async function fetchPage(
   url: string,
@@ -284,6 +311,7 @@ export async function fetchPage(
   const limit = opts.maxChars ?? 20_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
+  const allowedHosts = parseAllowedHosts(process.env.PA_FETCH_ALLOWED_HOSTS);
 
   try {
     // Redirects are followed manually, re-validating every hop: a public URL
@@ -294,6 +322,12 @@ export async function fetchPage(
     for (let hop = 0; hop < 6; hop++) {
       if (!(await isFetchableResolved(current))) {
         throw new Error(`refusing to fetch ${current}: not a public http(s) URL`);
+      }
+      if (!isHostAllowed(new URL(current).hostname, allowedHosts)) {
+        throw new Error(
+          `${current}: host fuera de PA_FETCH_ALLOWED_HOSTS (egress bloqueado). ` +
+            'Pide al usuario que lo añada si de verdad hace falta.',
+        );
       }
       const hopRes = await fetch(current, {
         signal: controller.signal,
