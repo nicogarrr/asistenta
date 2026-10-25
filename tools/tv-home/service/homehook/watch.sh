@@ -2,25 +2,24 @@
 # Watches which app is in front. When the TV brings LG Home to the front (Home button, leaving
 # an app with Back, boot) it opens the launcher instead, then CHECKS that the launcher really
 # showed itself and asks again if it did not. Started by apply.sh; stopped by a reboot or by
-# turning the setting off. Writes to /tmp/customhome-homehook.log.
+# turning the setting off. Writes only inside its private state directory (see lib.sh).
 #
 # It listens to the TV's own "app in front" reports (a subscription). If that subscription keeps
 # ending at once on some TV, it asks once a second instead.
 #
-# How it knows the launcher showed itself: the launcher touches /tmp/customhome-alive each time it
+# How it knows the launcher showed itself: the launcher's service touches the heartbeat file each time it
 # becomes visible (when the setting is on). After opening it, this script waits a few seconds and
 # looks for that file being newer than its own mark.
 
 LAUNCHER_ID="${LAUNCHER_ID:-tld.my.customhome}"
 LAUNCHER="${LAUNCHER:-/media/developer/apps/usr/palm/applications/tld.my.customhome}"
 LUNA="${LUNA_SEND:-luna-send}"
-PIDFILE="${PIDFILE:-/tmp/customhome-homehook-watch.pid}"
-LOG="${LOG:-/tmp/customhome-homehook.log}"
-ALLOW="${ALLOW:-/tmp/customhome-allow-stock-home}"     # exists while the user asked for LG's own Home
-ALIVE="${ALIVE:-/tmp/customhome-alive}"                # touched by the launcher whenever it becomes visible
-MARK="${MARK:-/tmp/customhome-launch-mark}"            # touched when the launcher is asked for
-VLOCK="${VLOCK:-/tmp/customhome-verify-lock}"          # holds the time a check started: only one check runs at a time
-VFIX="${VFIX:-/tmp/customhome-verify-fix}"             # holds the time a check last had to ask for the launcher again
+
+# Private state directory + helpers (see lib.sh). Tests (WATCH_STDIN / WATCH_VERIFY_ONLY) pass their
+# own paths in the environment; a real run refuses to start if the state directory is not safe.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+L="${HOMEHOOK_LIB:-$HERE/lib.sh}"; [ -f "$L" ] || L="/media/developer/customhome-homehook/lib.sh"; . "$L" || exit 5
+if [ -n "$WATCH_STDIN" ] || [ -n "$WATCH_VERIFY_ONLY" ]; then state_paths; else state_init || exit 5; fi
 FRONT_URI="luna://com.webos.applicationManager/getForegroundAppInfo"
 HOME_PATTERN='*"appId":"com.webos.app.home"*'
 LAUNCHER_PATTERN="*\"appId\":\"$LAUNCHER_ID\"*"
@@ -38,7 +37,7 @@ verify () {
     tries=0
     while [ "$tries" -lt 3 ]; do
         sleep "${VERIFY_WAIT:-3}"
-        [ -f "$ALIVE" ] && [ "$ALIVE" -nt "$MARK" ] && return   # the launcher has shown itself
+        [ -f "$ALIVE" ] && [ ! -L "$ALIVE" ] && [ "$ALIVE" -nt "$MARK" ] && return   # the launcher has shown itself
         [ -f "$ALLOW" ] && return                                # LG's own Home was asked for
         front=$("$LUNA" -n 1 "$FRONT_URI" '{}' 2>/dev/null)
         case "$front" in
@@ -146,18 +145,26 @@ if [ -n "$WATCH_VERIFY_ONLY" ]; then
     exit 0
 fi
 
-# Only one watcher at a time.
-if [ -f "$PIDFILE" ]; then
-    other=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$other" ] && [ "$other" != "$$" ] && kill -0 "$other" 2>/dev/null; then
-        log "another watcher is already running (pid $other): exiting"
+# Only one watcher at a time: an atomic mkdir lock, and a pid file that records pid + start time.
+# A lock whose recorded watcher is not really running (dead, or the pid was reused) is stale.
+if ! mkdir "$WLOCK" 2>/dev/null; then
+    if watcher_running; then
+        log "another watcher is already running (pid $wpid): exiting"
         exit 0
     fi
+    # the owner writes its pid file a moment after taking the lock: give it time before calling the lock stale
+    sleep "${LOCK_GRACE:-2}"
+    if watcher_running; then log "another watcher is already running (pid $wpid): exiting"; exit 0; fi
+    # only one contender can move the stale lock away (atomic rename); the rest give up
+    mv "$WLOCK" "$WLOCK.stale.$$" 2>/dev/null || { log "lost the race for the watcher lock: exiting"; exit 0; }
+    rm -rf "$WLOCK.stale.$$"; rm -f "$PIDFILE"
+    mkdir "$WLOCK" 2>/dev/null || { log "lost the race for the watcher lock: exiting"; exit 0; }
 fi
-echo $$ > "$PIDFILE"
+mystart="$(pid_ident "$$")" || mystart=""
+rm -f "$PIDFILE"; ( set -C; echo "$$ $mystart" > "$PIDFILE" ) || { log "cannot create the pid file safely: exiting"; rmdir "$WLOCK" 2>/dev/null; exit 5; }
 rm -f "$VLOCK" "$VFIX"
 # (a stop request is only noticed when the current command ends, so the launcher stops the watcher with kill -9 instead)
-trap 'pkill -P $$ 2>/dev/null; [ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$PIDFILE"; exit 0' TERM INT
+trap 'pkill -P $$ 2>/dev/null; if watcher_running && [ "$wpid" = "$$" ]; then rm -f "$PIDFILE"; rmdir "$WLOCK" 2>/dev/null; fi; exit 0' TERM INT
 log "started (pid $$)"
 
 quick_ends=0

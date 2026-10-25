@@ -2,10 +2,12 @@
 # Tests for src/homehook/*.sh using fake folders, a fake luna-send and a fake clock.   Run: npm test
 S="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; fail=0
+export STATE_DIR="$T/state"
 check () { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1 (got '$2', wanted '$3')"; fail=1; fi; }
 mkdir -p "$T/hook" "$T/launcher"
 echo '{}' > "$T/launcher/appinfo.json"
 echo '#!/bin/sh' > "$T/hook/watch.sh"
+cp "$S/lib.sh" "$T/hook/lib.sh"; cp "$S/apply.sh" "$T/hook/apply.sh"
 
 # ---- apply.sh ----
 runapply () { DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" PIDFILE="$T/pid" LOG="$T/log" sh "$S/apply.sh"; }
@@ -16,14 +18,17 @@ mv "$T/launcher/x" "$T/launcher/appinfo.json"
 mv "$T/hook/watch.sh" "$T/hook/x"
 check "apply refuses when watch.sh is missing" "$(runapply)" "files-missing"
 mv "$T/hook/x" "$T/hook/watch.sh"
-echo "$$" > "$T/pid"
+# a stand-in "watcher": a process whose command line names watch.sh
+sh -c 'sleep 60' watch.sh & FAKEPID=$!
+FAKESTART=$(. "$S/lib.sh"; pid_ident "$FAKEPID")
+echo "$FAKEPID $FAKESTART" > "$T/pid"
 check "apply recognises a watcher that is already running" "$(runapply)" "applied"
 check "and says so in the log" "$(grep -c 'already running' "$T/log")" "1"
 rm -f "$T/pid"
 check "stock.sh reports itself done" "$(DRY_RUN=1 ALLOW="$T/allow" sh "$S/stock.sh")" "stock"
 check "stock.sh asks the watcher to stand down" "$([ -f "$T/allow" ] && echo yes)" "yes"
 rm -f "$T/allow"
-for f in watch.sh apply.sh stock.sh diagnose.sh; do check "$f is valid shell" "$(sh -n "$S/$f" && echo ok)" "ok"; done
+for f in lib.sh watch.sh apply.sh stock.sh diagnose.sh; do check "$f is valid shell" "$(sh -n "$S/$f" && echo ok)" "ok"; done
 
 # ---- watch.sh: when does it open the launcher? ----
 cat > "$T/luna.sh" <<'LUNA'
@@ -127,10 +132,75 @@ cat > "$T/quiet.sh" <<'Q'
 exit 0
 Q
 chmod +x "$T/quiet.sh"
-echo "$$" > "$T/pid"
-timeout 10 env LUNA_SEND="$T/quiet.sh" PIDFILE="$T/pid" LOG="$T/log" LAUNCHER="$T/launcher" ALLOW="$T/allow" sh "$S/watch.sh"
-check "a second watcher exits at once when one is already running" "$(grep -c 'another watcher is already running' "$T/log")" "1"
-check "and leaves the first one's pid file alone" "$(cat "$T/pid")" "$$"
+mkdir -p "$T/st2" && chmod 700 "$T/st2"
+mkdir "$T/st2/watcher.lock"; echo "$FAKEPID $FAKESTART" > "$T/st2/watch.pid"
+timeout 10 env STATE_DIR="$T/st2" LUNA_SEND="$T/quiet.sh" LAUNCHER="$T/launcher" sh "$S/watch.sh"
+check "a second watcher exits at once when one is really running" "$(grep -c 'another watcher is already running' "$T/st2/homehook.log")" "1"
+check "and leaves the first one's pid file alone" "$(cut -d' ' -f1 "$T/st2/watch.pid")" "$FAKEPID"
+
+# ---- adversarial: the state directory ----
+snap () { find "$T" -path "$T/state" -prune -o -path "$T/st2" -prune -o -type f -newer "$T/hook/lib.sh" -print | sort | md5sum; }
+mkdir -p "$T/victim"; echo precious > "$T/victim/file"
+ln -s "$T/victim" "$T/linkstate"
+check "state dir that is a symlink: apply refuses" "$(STATE_DIR="$T/linkstate" DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" sh "$S/apply.sh" 2>/dev/null)" "state-unsafe"
+check "and writes nothing through the link" "$(ls "$T/victim")" "file"
+mkdir -m 755 "$T/open755"
+check "state dir with mode 755: apply refuses" "$(STATE_DIR="$T/open755" DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" sh "$S/apply.sh" 2>/dev/null)" "state-unsafe"
+mkdir -m 700 "$T/foreign"
+check "state dir owned by someone else: apply refuses" "$(EXPECT_UID=99999 STATE_DIR="$T/foreign" DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" sh "$S/apply.sh" 2>/dev/null)" "state-unsafe"
+check "and creates nothing inside it" "$(ls -A "$T/foreign" | wc -l | tr -d ' ')" "0"
+mkdir -m 777 "$T/ww"
+check "parent writable by everyone and not sticky: refuse" "$(STATE_DIR="$T/ww/s" DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" sh "$S/apply.sh" 2>/dev/null)" "state-unsafe"
+check "and the directory is not even created" "$([ -e "$T/ww/s" ] && echo created || echo none)" "none"
+mkdir -m 1777 "$T/sticky"
+check "parent world-writable but sticky: allowed, dir created 0700" "$(STATE_DIR="$T/sticky/s" DRY_RUN=1 APP_QML="$T/qml" HOOK="$T/hook" LAUNCHER="$T/launcher" sh "$S/apply.sh" 2>/dev/null; ls -ld "$T/sticky/s" | cut -c1-10)" "applied
+drwx------"
+check "unsafe state: the stock request is refused too" "$(STATE_DIR="$T/linkstate" sh "$S/stock.sh" 2>/dev/null)" "state-unsafe"
+
+# ---- adversarial: planted links inside the state dir cannot redirect writes ----
+mkdir -m 700 "$T/st3"; ln -s "$T/victim/file" "$T/st3/watch.pid"
+timeout 5 env STATE_DIR="$T/st3" LUNA_SEND="$T/quiet.sh" LAUNCHER="$T/launcher" sh "$S/watch.sh" >/dev/null 2>&1
+check "a pid file pre-planted as a symlink is replaced, never written through" "$(cat "$T/victim/file")" "precious"
+
+# ---- pid identity: a reused pid is not trusted ----
+( . "$S/lib.sh"; PIDFILE="$T/pid"
+  echo "$FAKEPID 1" > "$PIDFILE"; watcher_running && echo yes || echo no ) > "$T/out1"
+check "same pid, different start time (pid reuse): not the watcher" "$(cat "$T/out1")" "no"
+( . "$S/lib.sh"; PIDFILE="$T/pid"
+  echo "$$ $(pid_ident $$)" > "$PIDFILE"; watcher_running && echo yes || echo no ) > "$T/out2"
+check "right pid and start time but the process is not watch.sh: not the watcher" "$(cat "$T/out2")" "no"
+( . "$S/lib.sh"; PIDFILE="$T/pid"
+  echo "$FAKEPID $FAKESTART" > "$PIDFILE"; watcher_running && echo yes || echo no ) > "$T/out3"
+check "right pid, start time and command line: the watcher" "$(cat "$T/out3")" "yes"
+( . "$S/lib.sh"; PIDFILE="$T/pid"; echo "abc; rm -rf /" > "$PIDFILE"; watcher_running && echo yes || echo no ) > "$T/out4"
+check "a garbage pid file is not trusted (and never executed)" "$(cat "$T/out4")" "no"
+kill "$FAKEPID" 2>/dev/null
+
+# ---- concurrency: six watchers started together, one wins ----
+mkdir -p "$T/w"; cp "$S/watch.sh" "$S/lib.sh" "$T/w/"
+printf '#!/bin/sh\nsleep 30\n' > "$T/sleeper.sh"; chmod +x "$T/sleeper.sh"
+mkdir -m 700 "$T/st4"
+for i in 1 2 3 4 5 6; do STATE_DIR="$T/st4" LUNA_SEND="$T/sleeper.sh" LAUNCHER="$T/launcher" sh "$T/w/watch.sh" >/dev/null 2>&1 & done
+sleep 2
+check "six watchers started at once: exactly one starts" "$(grep -c 'started (pid' "$T/st4/homehook.log")" "1"
+WP=$(cut -d' ' -f1 "$T/st4/watch.pid")
+kill -9 "$WP" 2>/dev/null; sleep 1; pkill -f "$T/sleeper.sh" 2>/dev/null
+check "after kill -9 the leftover lock is stale: a new watcher recovers it and starts" "$(STATE_DIR="$T/st4" LUNA_SEND="$T/sleeper.sh" LAUNCHER="$T/launcher" timeout 3 sh "$T/w/watch.sh" >/dev/null 2>&1; grep -c 'started (pid' "$T/st4/homehook.log")" "2"
+pkill -f "$T/sleeper.sh" 2>/dev/null
+
+# ---- scripts that another user could edit are not started ----
+cp "$S/watch.sh" "$T/hook/watch.sh"; chmod 666 "$T/hook/watch.sh"
+check "a group/other-writable watch.sh: apply refuses to start it" "$(runapply)" "files-writable"
+chmod 644 "$T/hook/watch.sh"
+
+# ---- diagnose never writes into /tmp ----
+before=$(ls /tmp/customhome-* 2>/dev/null | wc -l | tr -d ' ')
+STATE_DIR="$T/diag" sh "$S/diagnose.sh" >/dev/null 2>&1
+after=$(ls /tmp/customhome-* 2>/dev/null | wc -l | tr -d ' ')
+check "diagnose leaves nothing in /tmp" "$after" "$before"
+check "diagnose writes its report into the private state dir" "$([ -s "$T/diag/diagnose.txt" ] && echo yes)" "yes"
+check "diagnose on an unsafe state dir writes nothing" "$(STATE_DIR="$T/linkstate" sh "$S/diagnose.sh" 2>&1 | grep -c 'nothing written')" "1"
+check "and the symlink target is untouched" "$(ls "$T/victim")" "file"
 
 rm -rf "$T"
 exit $fail
