@@ -29,6 +29,7 @@ tendrás que mandarlo de nuevo.
 
 - **El OCR se equivoca.** Cifras, nombres propios y tildes sobre todo. Si el dato importa (un importe, un DNI, una fecha), compruébalo en el original. No lo uses como única fuente.
 - No entiende tablas ni columnas: el texto sale línea a línea y el orden de lectura no está garantizado.
+- **Emoji y alfabetos no latinos** (cirílico, griego, árabe…) no caben en la capa de búsqueda del PDF: se cuentan y te aviso de que buscar en el PDF encontrará el texto incompleto. El texto completo reconocido sale en el Markdown (`/ocr md` o `/ocr todo`); sin pedir el Markdown, esos caracteres no se devuelven. Acentos, ñ, ¿ ¡ y € sí funcionan.
 - La capa de texto se coloca por líneas, así que al seleccionar una palabra puede resaltarse un tramo algo mayor.
 - Páginas con rotación en el PDF: todavía no las proceso (quedan sin leer, y se avisa).
 - Tope de 60 megapíxeles por foto y 8 minutos por envío; si se pasa, se para y se avisa.
@@ -37,14 +38,14 @@ tendrás que mandarlo de nuevo.
 
 ## Privacidad y originales
 
-- Se procesa en una carpeta temporal propia que se borra siempre al terminar, también si falla o se corta por tiempo.
+- Se procesa en una carpeta temporal propia que se borra siempre al terminar, también si falla. Si se corta por tiempo, el trabajo se para antes de la página siguiente (una página en curso puede tardar hasta unos 90 s en terminar) y la carpeta se borra al final, sin garantía de que sea instantáneo.
 - No se indexa en la memoria, no se guarda y el contenido del documento no se escribe en los logs.
 - Tu original no se modifica ni se borra: sigue en el chat de Telegram. El resultado es un archivo nuevo.
 - Solo funciona en el chat privado del dueño y de uno en uno.
 
 ## Estado de la verificación
 
-Probado en Linux con PDF reales generados (digital, escaneado, mixto, corrupto, girado, demasiado largo), imágenes-bomba y OCR simulado. Comprobado con poppler que la capa invisible queda alineada con el texto (menos de 3 pt de diferencia en una página de prueba), que el texto se extrae y que la página se ve píxel a píxel igual que el escaneo original.
+Probado en Linux con PDF reales generados (digital, escaneado, mixto, corrupto, girado, demasiado largo, con emoji y cirílico), imágenes-bomba y un OCR **simulado** (no es OCR real). Comprobado con poppler que la capa invisible queda alineada con el texto (menos de 3 pt de diferencia en una página de prueba), que el texto se extrae y que la página se ve píxel a píxel igual que el escaneo original.
 
 **No verificado en Windows real**: el render de PDF con Windows.Data.Pdf y el OCR de Windows se tienen que probar allí con un escaneado de verdad antes de fiarse.
 

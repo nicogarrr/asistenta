@@ -34,6 +34,8 @@ export interface PageReport {
   source: PageSource;
   chars: number;
   reason?: string;
+  /** Caracteres reconocidos que no caben en la capa buscable del PDF (emoji, cirílico…). */
+  droppedChars?: number;
 }
 
 export interface EngineDeps {
@@ -60,6 +62,8 @@ export interface OcrDocResult {
   ocrPages: number;
   digitalPages: number;
   unreadPages: number;
+  /** Total de caracteres reconocidos que NO están en la capa buscable del PDF. */
+  droppedChars: number;
   /** Ninguna página necesitaba OCR: el PDF ya tenía texto en todas. */
   alreadySearchable: boolean;
 }
@@ -71,27 +75,37 @@ function errMsg(err: unknown): string {
 }
 
 /** Letras que WinAnsi (Helvetica estándar) puede codificar; el resto se descarta sin romper. */
-function winAnsiSafe(font: PDFFont, text: string): string {
+function winAnsiSafe(font: PDFFont, text: string): { text: string; dropped: number } {
   let out = '';
+  let dropped = 0;
   for (const ch of text.replace(/\s+/g, ' ')) {
     try {
       font.widthOfTextAtSize(ch, 1);
       out += ch;
     } catch {
-      // carácter fuera de WinAnsi (p. ej. emoji, cirílico): no entra en la capa buscable
+      // carácter fuera de WinAnsi (p. ej. emoji, cirílico): no entra en la capa buscable,
+      // pero se cuenta para avisar de que la búsqueda en el PDF quedará incompleta.
+      dropped++;
     }
   }
-  return out.trim();
+  return { text: out.trim(), dropped };
 }
 
-function overlayLines(page: PDFPage, font: PDFFont, ocr: OcrResult): number {
+function overlayLines(
+  page: PDFPage,
+  font: PDFFont,
+  ocr: OcrResult,
+): { placed: number; dropped: number } {
   const { width: pw, height: ph } = page.getSize();
-  if (ocr.width <= 0 || ocr.height <= 0) return 0;
+  if (ocr.width <= 0 || ocr.height <= 0) return { placed: 0, dropped: 0 };
   const sx = pw / ocr.width;
   const sy = ph / ocr.height;
   let placed = 0;
+  let dropped = 0;
   for (const line of ocr.lines) {
-    const text = winAnsiSafe(font, line.text);
+    const safe = winAnsiSafe(font, line.text);
+    dropped += safe.dropped;
+    const text = safe.text;
     if (!text) continue;
     const base = font.widthOfTextAtSize(text, 1);
     const hPt = line.height * sy;
@@ -109,7 +123,7 @@ function overlayLines(page: PDFPage, font: PDFFont, ocr: OcrResult): number {
     });
     placed++;
   }
-  return placed;
+  return { placed, dropped };
 }
 
 function tidy(text: string): string {
@@ -163,8 +177,9 @@ export function buildMarkdown(opts: {
 
 function summarise(
   pages: PageReport[],
-): Pick<OcrDocResult, 'ocrPages' | 'digitalPages' | 'unreadPages'> {
+): Pick<OcrDocResult, 'ocrPages' | 'digitalPages' | 'unreadPages' | 'droppedChars'> {
   return {
+    droppedChars: pages.reduce((n, p) => n + (p.droppedChars ?? 0), 0),
     ocrPages: pages.filter((p) => p.source === 'ocr').length,
     digitalPages: pages.filter((p) => p.source === 'digital').length,
     unreadPages: pages.filter((p) => p.source === 'sin_leer').length,
@@ -262,9 +277,15 @@ export async function ocrPdf(
         reports.push({ page: i + 1, source: 'vacia', chars: 0 });
         continue;
       }
-      overlaid += overlayLines(page, font, result);
+      const o = overlayLines(page, font, result);
+      overlaid += o.placed;
       texts[i] = text;
-      reports.push({ page: i + 1, source: 'ocr', chars: text.length });
+      reports.push({
+        page: i + 1,
+        source: 'ocr',
+        chars: text.length,
+        droppedChars: o.dropped,
+      });
     } catch (err) {
       reports.push({ page: i + 1, source: 'sin_leer', chars: 0, reason: errMsg(err) });
     }
@@ -366,8 +387,8 @@ export async function ocrPhoto(
     const result = await deps.ocr(file);
     text = tidy(result.text ?? '');
     if (text) {
-      overlayLines(page, font, result);
-      reports.push({ page: 1, source: 'ocr', chars: text.length });
+      const o = overlayLines(page, font, result);
+      reports.push({ page: 1, source: 'ocr', chars: text.length, droppedChars: o.dropped });
     } else {
       reports.push({ page: 1, source: 'vacia', chars: 0 });
     }

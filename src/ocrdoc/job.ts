@@ -135,6 +135,15 @@ export async function runOcrJob(
         'El OCR puede equivocarse (cifras, nombres, tildes) y no entiende tablas: revisa los datos importantes en el original.',
       );
     }
+    if (r.droppedChars > 0) {
+      lines.push(
+        `Aviso: ${r.droppedChars} ${r.droppedChars > 1 ? 'caracteres' : 'carácter'} (emoji o alfabetos no latinos) no se pueden meter en la capa de búsqueda del PDF: buscar en el PDF encontrará el texto incompleto. ${
+          mode === 'pdf'
+            ? 'El texto reconocido completo sale con «/ocr md» o «/ocr todo».'
+            : 'El texto reconocido completo está en el Markdown.'
+        }`,
+      );
+    }
     if (r.unreadPages) lines.push('Las páginas sin leer quedan igual que en el original.');
     lines.push('Tu original sigue en este chat sin cambios.');
     return { ok: true, message: lines.join('\n'), files };

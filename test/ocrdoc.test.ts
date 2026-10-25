@@ -223,6 +223,26 @@ describe('ocrPdf', () => {
     const text = (await digitalPagesPdfjs(r.pdf as Uint8Array))[0] ?? '';
     expect(text).toContain('ñandú');
     expect(text).toContain('Total 12');
+    expect(text).not.toContain('Привет');
+    // 6 cirílicas + 1 emoji (un solo punto de código) = 7 caracteres fuera de WinAnsi
+    expect(r.droppedChars).toBe(7);
+    expect(r.pages[0]?.droppedChars).toBe(7);
+    // el Markdown conserva el texto completo
+    expect(r.markdown).toContain('Привет');
+    expect(r.markdown).toContain('😀');
+  });
+
+  it('acentos y ñ (WinAnsi) no cuentan como perdidos', async () => {
+    const r = await ocrPdf(
+      await scannedPdf(1),
+      'a.pdf',
+      await deps({ ocr: async () => fakeOcr('Código número ñandú sección España ¿qué? € Ü') }),
+    );
+    expect(r.droppedChars).toBe(0);
+    const text = (await digitalPagesPdfjs(r.pdf as Uint8Array))[0] ?? '';
+    for (const w of ['Código', 'número', 'ñandú', 'sección', 'España', '¿qué?']) {
+      expect(text).toContain(w);
+    }
   });
 
   it('shouldStop cancela antes de la siguiente página', async () => {
@@ -306,6 +326,22 @@ describe('runOcrJob', () => {
     expect(b.files.map((f) => f.filename)).toEqual(['Mi escaneo.md']);
     const c = await runOcrJob(input, { name: 'Mi escaneo.pdf' }, 'todo', sync());
     expect(c.files.map((f) => f.filename)).toEqual(['Mi escaneo_OCR.pdf', 'Mi escaneo.md']);
+  });
+
+  it('avisa de que la búsqueda en el PDF queda incompleta, según el modo', async () => {
+    const input = Buffer.from(await scannedPdf(1));
+    const ocr = async () => fakeOcr('Pago 5 € Привет 😀');
+    const pdf = await runOcrJob(input, { name: 's.pdf' }, 'pdf', sync({ ocr }));
+    expect(pdf.ok).toBe(true);
+    expect(pdf.message).toContain('7 caracteres');
+    expect(pdf.message).toContain('incompleto');
+    expect(pdf.message).toContain('/ocr md');
+    expect(pdf.files.map((f) => f.filename)).toEqual(['s_OCR.pdf']);
+    const both = await runOcrJob(input, { name: 's.pdf' }, 'todo', sync({ ocr }));
+    expect(both.message).toContain('está en el Markdown');
+    expect(both.files.map((f) => f.filename)).toEqual(['s_OCR.pdf', 's.md']);
+    const clean = await runOcrJob(input, { name: 's.pdf' }, 'pdf', sync());
+    expect(clean.message).not.toContain('Aviso');
   });
 
   it('PDF ya digital: lo dice y no promete OCR', async () => {
