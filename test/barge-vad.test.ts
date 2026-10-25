@@ -25,7 +25,7 @@ function fakeSession(): { session: VadSession; runs: number[] } {
       inputNames: ['input'],
       outputNames: ['output'],
       run: async (feeds) => {
-        const frame = feeds['input']?.data as Float32Array;
+        const frame = feeds.input?.data as Float32Array;
         runs.push(frame.length);
         let max = 0;
         for (const s of frame) max = Math.max(max, Math.abs(s));
@@ -107,7 +107,7 @@ describe('createBargeVadScorer compartido entre sesiones', () => {
       inputNames: ['input'],
       outputNames: ['output'],
       run: async (feeds) => {
-        const frame = feeds['input']?.data as Float32Array;
+        const frame = feeds.input?.data as Float32Array;
         let max = 0;
         for (const v of frame) max = Math.max(max, Math.abs(v));
         await new Promise((r) => setTimeout(r, 0));
