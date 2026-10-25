@@ -175,3 +175,21 @@ export function forecastRetryDelayMs (fails: number): number {
 	if (fails === 2) return 10 * 60_000;
 	return 30 * 60_000;
 }
+
+/** Como cachedForecastFor, pero devuelve tambien cuando se leyo (para marcarla como no actual). */
+export function cachedReadingFor (
+	storage: Pick<Storage, 'getItem'>,
+	loc: {latitude: number; longitude: number; temperatureUnit: string},
+	now: number
+): {forecast: Forecast; at: number} | null {
+	const c = readForecastCache(storage, now);
+	return c && c.key === forecastCacheKey(loc) ? {forecast: c.forecast, at: c.at} : null;
+}
+
+/** Texto de antiguedad solo cuando la lectura ya no es "de ahora" (>2 ciclos de refresco). */
+export function staleLabel (at: number, now: number): string | null {
+	const age = now - at;
+	if (age <= 2 * FORECAST_FRESH_MS) return null;
+	const h = Math.floor(age / 3_600_000);
+	return h >= 1 ? `hace ${h} h` : `hace ${Math.floor(age / 60_000)} min`;
+}

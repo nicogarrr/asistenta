@@ -95,3 +95,24 @@ describe('TTL durante una sesión abierta', () => {
     expect(cachedForecastFor(s, GIJON, NOW + FORECAST_SHOWN_MS + 1)).toBeNull();
   });
 });
+
+import {staleLabel as _staleLabel, cachedReadingFor, writeForecastCache as _write, forecastCacheKey as _key} from '../tools/tv-home/src/service/weather';
+
+describe('antiguedad visible', () => {
+  it('no marca lecturas recientes y marca las viejas', () => {
+    const now = 10 * 3_600_000;
+    expect(_staleLabel(now - 20 * 60_000, now)).toBeNull();
+    expect(_staleLabel(now - 31 * 60_000, now)).toBe('hace 31 min');
+    expect(_staleLabel(now - 3 * 3_600_000 - 5, now)).toBe('hace 3 h');
+  });
+  it('cachedReadingFor devuelve at, respeta ubicacion y caducidad 6h', () => {
+    const store = new Map<string, string>();
+    const s = {getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v)};
+    const loc = {latitude: 40.4168, longitude: -3.7038, temperatureUnit: 'celsius'};
+    const fc = {now: {temp: 20, glyph: 'x', label: 'l', unit: '°C'}, hours: [], days: []} as never;
+    _write(s, _key(loc), fc, 1000);
+    expect(cachedReadingFor(s, loc, 2000)?.at).toBe(1000);
+    expect(cachedReadingFor(s, {...loc, temperatureUnit: 'fahrenheit'}, 2000)).toBeNull();
+    expect(cachedReadingFor(s, loc, 1000 + 6 * 3_600_000 + 1)).toBeNull();
+  });
+});

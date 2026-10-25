@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
 import Clock from './Clock';
-import {cachedForecastFor, forecastCacheKey, forecastRetryDelayMs, writeForecastCache, FORECAST_FRESH_MS,
+import {cachedReadingFor, forecastCacheKey, forecastRetryDelayMs, writeForecastCache, staleLabel, FORECAST_FRESH_MS, FORECAST_SHOWN_MS,
 	fetchForecast, type Forecast} from '../../service/weather';
 import {useConfig} from '../../lib/config';
 
@@ -34,29 +34,40 @@ function WeatherBlock () {
 	const {tempUnit, clock24, location} = useConfig();
 	const [fc, setFc] = useState<Forecast | null>(null);
 	const [err, setErr] = useState(false);
+	const [at, setAt] = useState(0); // cuando se leyo lo que se ve
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 60_000);
+		return () => window.clearInterval(id);
+	}, []);
 	useEffect(() => {
 		let alive = true;
 		let timer = 0;
+		let readAt = 0;
 		let fails = 0;
 		const loc = {...location, temperatureUnit: tempUnit};
 
 		// show the saved reading for THIS place+unit right away, if still fresh enough
-		const cached = cachedForecastFor(localStorage, loc, Date.now());
-		if (cached) { setFc(cached); setErr(false); }
+		const cached = cachedReadingFor(localStorage, loc, Date.now());
+		if (cached) { readAt = cached.at; setFc(cached.forecast); setAt(cached.at); setErr(false); }
 
 		const load = () => fetchForecast(loc)
 			.then((f) => {
 				if (!alive) return;
 				fails = 0;
+				readAt = Date.now();
 				setFc(f);
+				setAt(readAt);
 				setErr(false);
-				writeForecastCache(localStorage, forecastCacheKey(loc), f, Date.now());
+				writeForecastCache(localStorage, forecastCacheKey(loc), f, readAt);
 				timer = window.setTimeout(load, FORECAST_FRESH_MS);
 			})
 			.catch(() => {
 				if (!alive) return;
 				fails += 1;
 				setErr(true); // only shown when there is no reading at all
+				// una lectura guardada mas vieja que SHOWN ya no se muestra
+				if (readAt && Date.now() - readAt > FORECAST_SHOWN_MS) { readAt = 0; setFc(null); }
 				timer = window.setTimeout(load, forecastRetryDelayMs(fails));
 			});
 		load();
@@ -74,6 +85,7 @@ function WeatherBlock () {
 				<div className="text-right leading-tight">
 					<div className="text-2xl font-medium text-white/92">{fc.now.temp}{fc.now.unit}</div>
 					<div className="text-sm font-normal text-white/55">{fc.now.label}</div>
+					{staleLabel(at, now) && <div className="text-xs font-normal text-white/40">{staleLabel(at, now)}</div>}
 				</div>
 			</div>
 
