@@ -43,6 +43,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     provider: 'test',
     model: 'test',
     baseUrl: 'http://localhost',
+    contextWindowTokens: 1_048_576,
+    maxOutputTokens: 32_000,
     toolTimeoutMs: 5_000,
     runTimeoutMs: 5_000,
     idleTimeoutMs: 5_000,

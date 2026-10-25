@@ -103,8 +103,8 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
         // Image input is not optional here: computer use is the whole point.
         input: ['text', 'image'],
         reasoning: false,
-        contextWindow: 1_048_576,
-        maxTokens: 32_000,
+        contextWindow: config.contextWindowTokens,
+        maxTokens: config.maxOutputTokens,
         // Unknown cost, not zero cost. See docs note: budget code must not treat 0 as free.
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
@@ -122,8 +122,8 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
               ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
               input: ['text', 'image'] as Array<'text' | 'image'>,
               reasoning: false,
-              contextWindow: 1_048_576,
-              maxTokens: 32_000,
+              contextWindow: config.contextWindowTokens,
+              maxTokens: config.maxOutputTokens,
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             },
           ]
@@ -252,8 +252,8 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
         baseUrl: config.baseUrl,
         input: ['text', 'image'],
         reasoning: false,
-        contextWindow: 1_048_576,
-        maxTokens: 32_000,
+        contextWindow: config.contextWindowTokens,
+        maxTokens: config.maxOutputTokens,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
       // Quota fallback (P2-17): the local serve exposes the -free siblings on
@@ -270,8 +270,8 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
               baseUrl: config.baseUrl,
               input: ['text', 'image'] as Array<'text' | 'image'>,
               reasoning: false,
-              contextWindow: 1_048_576,
-              maxTokens: 32_000,
+              contextWindow: config.contextWindowTokens,
+              maxTokens: config.maxOutputTokens,
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             },
           ]

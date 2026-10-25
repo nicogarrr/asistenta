@@ -1,6 +1,7 @@
 import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import { Agent } from '@earendil-works/pi-agent-core';
 import type { Model } from '@earendil-works/pi-ai';
+import { appendCallAudit, hashArgs } from '../audit/calls.js';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
@@ -21,6 +22,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { createProviderHandle } from './provider.js';
 import {
   DEFAULT_RETRY,
+  isContextOverflow,
   isQuotaError,
   isTransientProviderError,
   type RetryPolicy,
@@ -398,6 +400,8 @@ export class PersonalAgent {
   #awaitingApproval = false;
   /** Set when something outside the run (e.g. /stop) aborts it. */
   #externalAbort = false;
+  /** Señal del run en curso: corta esperas (reintentos) en cuanto se aborta. */
+  #runAbort = new AbortController();
   /** Tool call ids refused by the gate, so failures can be told apart. */
   readonly #gateBlockedIds = new Set<string>();
   /** One iteration per tool call; shared with subagents via `budget.child()`. */
@@ -496,6 +500,8 @@ export class PersonalAgent {
 
     // Calls the gate let through, by tool-call id, so afterToolCall can settle the same fingerprint.
     const calls = new Map<string, GateCall>();
+    // Auditoría durable: inicio y hash de argumentos por id de llamada.
+    const callAudit = new Map<string, { at: number; argsHash: string }>();
     const agent = new Agent({
       initialState: {
         systemPrompt: buildSystemPrompt(opts.desktop ?? desktopEnabled()),
@@ -546,8 +552,18 @@ export class PersonalAgent {
           if (hint) call.args = { ...call.args, _target: hint };
         }
         const decision = await gate.check(personal.sessionId, call);
-        if (decision.verdict === 'allow') calls.set(toolCall.id, call);
+        if (decision.verdict === 'allow') {
+          calls.set(toolCall.id, call);
+          callAudit.set(toolCall.id, { at: Date.now(), argsHash: hashArgs(call.args) });
+        }
         if (decision.verdict === 'deny') {
+          appendCallAudit({
+            callId: toolCall.id,
+            tool: call.tool,
+            argsHash: hashArgs(call.args),
+            verdict: 'deny',
+            reason: decision.reason,
+          });
           log.info('tool blocked', { tool: call.tool, reason: decision.reason });
           personal.markGateBlocked(toolCall.id);
           return { block: true, reason: decision.reason };
@@ -560,6 +576,16 @@ export class PersonalAgent {
         if (started) {
           calls.delete(toolCall.id);
           gate.settle(personal.sessionId, started, isError);
+          const audit = callAudit.get(toolCall.id);
+          callAudit.delete(toolCall.id);
+          appendCallAudit({
+            callId: toolCall.id,
+            tool: toolCall.name,
+            argsHash: audit?.argsHash ?? hashArgs({}),
+            verdict: 'allow',
+            isError,
+            ms: audit ? Date.now() - audit.at : undefined,
+          });
         }
         // The same result is capped on the way out so one huge tool cannot dominate
         // every later call.
@@ -814,6 +840,7 @@ export class PersonalAgent {
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
     this.#externalAbort = false;
+    this.#runAbort = new AbortController();
     // Per-request ceiling by default: each task gets the full allowance and cannot
     // spend the leftovers of whatever the user asked earlier.
     this.beginRun();
@@ -884,13 +911,26 @@ export class PersonalAgent {
           delayMs: delay,
           error: result.error?.slice(0, 120),
         });
-        await sleep(delay);
+        await sleep(delay, this.#runAbort.signal);
+        if (this.#externalAbort || this.#runAbort.signal.aborted) break;
         result = await this.#attempt(
           prompt + retryRecoveryNote(shared.steps),
           images,
           hooks,
           shared,
         );
+      }
+
+      // Desbordamiento de contexto: no es un fallo terminal. Se compacta una vez y
+      // se reintenta; antes el error entraba en la lista de permanentes y el turno
+      // moría con la ventana llena. `#compact` ya respeta el "si falla el resumen,
+      // no toques la historia".
+      if (result.error && isContextOverflow(result.error) && !this.#externalAbort) {
+        log.warn('context overflow: compactando y reintentando', {
+          error: result.error.slice(0, 160),
+        });
+        await this.#compact();
+        result = await this.#attempt(prompt, images, hooks, shared);
       }
 
       return { ...result, attempts: attempt + 1 };
@@ -1098,10 +1138,14 @@ export class PersonalAgent {
         // Bounded: if the provider is down (the likely reason we are here), this
         // must fail fast instead of hanging the chat queue forever.
         await Promise.race([
-          agent.prompt(
-            `${reason}\n\nYa no tienes herramientas disponibles. Escribe tu mensaje final para el usuario en español, en dos o tres frases: qué conseguiste, dónde te quedaste y qué necesitas de él.`,
-          ),
-          sleep(60_000),
+          agent
+            .prompt(
+              `${reason}\n\nYa no tienes herramientas disponibles. Escribe tu mensaje final para el usuario en español, en dos o tres frases: qué conseguiste, dónde te quedaste y qué necesitas de él.`,
+            )
+            // Si gana el timeout, el abort hace rechazar este prompt: el catch evita
+            // una promesa rechazada sin manejar.
+            .catch(() => undefined),
+          sleep(60_000).then(() => this.#agent.abort()),
         ]);
       } finally {
         off();
