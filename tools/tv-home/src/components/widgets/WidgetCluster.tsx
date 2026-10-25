@@ -77,6 +77,7 @@ function WeatherBlock () {
 	if (err && !fc) return <div className="text-right text-base font-normal text-white/40">Weather —</div>;
 	if (!fc) return <div className="text-right text-base font-normal text-white/40">Loading…</div>;
 
+	const stale = staleLabel(at, now);
 	return (
 		<div className="flex w-full flex-col items-end gap-3">
 			{/* now */}
@@ -85,12 +86,12 @@ function WeatherBlock () {
 				<div className="text-right leading-tight">
 					<div className="text-2xl font-medium text-white/92">{fc.now.temp}{fc.now.unit}</div>
 					<div className="text-sm font-normal text-white/55">{fc.now.label}</div>
-					{staleLabel(at, now) && <div className="text-xs font-normal text-white/40">{staleLabel(at, now)}</div>}
+					{stale && <div className="text-base font-medium text-amber-200/90">{stale}</div>}
 				</div>
 			</div>
 
-			{/* next 5 hours */}
-			<div className="flex justify-end gap-3">
+			{/* next 5 hours: con una copia vieja serian horas pasadas presentadas como futuras, no se muestran */}
+			{!stale && <div className="flex justify-end gap-3">
 				{fc.hours.map((h) => (
 					<div key={h.hour} className="flex w-11 flex-col items-center gap-0.5">
 						<span className="text-xs font-medium text-white/45">{hourLabel(h.hour, clock24)}</span>
@@ -98,7 +99,7 @@ function WeatherBlock () {
 						<span className="text-sm font-medium text-white/80">{h.temp}°</span>
 					</div>
 				))}
-			</div>
+			</div>}
 
 			<div className="m3-divider" />
 
