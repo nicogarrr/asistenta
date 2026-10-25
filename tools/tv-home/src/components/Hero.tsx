@@ -1,6 +1,7 @@
 import {memo} from 'react';
 import {useConfig} from '../lib/config';
-import {periodFor, PERIOD_LABEL, type Pick} from '../service/tmdb';
+import {useGreeting} from '../lib/useGreeting';
+import {PERIOD_LABEL, type Pick} from '../service/tmdb';
 
 // Sección "Para ti" estilo free-my-tv: un póster grande (backdrop) + dos
 // pequeños al lado. Foco con borde de acento; OK lanza la app del proveedor
@@ -39,9 +40,7 @@ const Card = memo(function Card ({pick, big, focused, launching}: {pick: Pick; b
 
 export default function Hero ({picks, selected, active, launchingKey}: {picks: Pick[]; selected: number; active: boolean; launchingKey: string | null}) {
 	const {userName} = useConfig();
-	const h = new Date().getHours();
-	const who = userName ? `, ${userName}` : '';
-	const greeting = h >= 6 && h < 12 ? `Buenos días${who}` : h >= 12 && h < 21 ? `Buenas tardes${who}` : `Buenas noches${who}`;
+	const {greeting, period} = useGreeting(userName);
 	const shown = picks.slice(0, 3);
 	if (!shown.length) return null;
 
@@ -49,7 +48,7 @@ export default function Hero ({picks, selected, active, launchingKey}: {picks: P
 		<div className="absolute left-[5vw] top-[9vh]">
 			<div className="text-xl font-normal tracking-[0.02em] text-white/45">{greeting}</div>
 			<h1 className="mt-1 text-[40px] font-normal tracking-tight text-white/95">
-				Para ti <span className="ml-3 align-middle text-base font-semibold uppercase tracking-[0.22em] text-white/40">{PERIOD_LABEL[periodFor(h)]}</span>
+				Para ti <span className="ml-3 align-middle text-base font-semibold uppercase tracking-[0.22em] text-white/40">{PERIOD_LABEL[period]}</span>
 			</h1>
 			<div className="mt-5 flex items-start gap-6">
 				<Card pick={shown[0]} big focused={active && selected === 0} launching={launchingKey === `${shown[0].kind}-${shown[0].id}`} />

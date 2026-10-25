@@ -1,4 +1,5 @@
 import WidgetCluster from '../components/widgets/WidgetCluster';
+import {useGreeting} from '../lib/useGreeting';
 import Hero from '../components/Hero';
 import Dock from '../components/Dock';
 import type {AppItem} from '../lib/apps';
@@ -17,9 +18,7 @@ export default function Home ({picks, heroSel, dock, dockSel, zone, launchingKey
 	launchingKey: string | null;
 }) {
 	const {userName, location} = useConfig();
-	const h = new Date().getHours();
-	const who = userName ? `, ${userName}` : '';
-	const greeting = h >= 6 && h < 12 ? `Buenos días${who}` : h >= 12 && h < 21 ? `Buenas tardes${who}` : `Buenas noches${who}`;
+	const {greeting} = useGreeting(userName);
 	return (
 		<div className="relative h-full w-full">
 			<div className="absolute right-[5vw] top-[5vh]">
