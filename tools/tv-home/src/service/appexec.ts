@@ -23,6 +23,19 @@ interface ExecResponse { stdoutString?: string }
  *  (comillas, espacios, controles, sintaxis shell) se salta, no se pasa al shell. */
 export const SAFE_PATH = /^\/[A-Za-z0-9._\/+@-]+$/;
 
+/** Solo se lee como root un icono (imagen) dentro de raices de apps/recursos de
+ *  webOS, sin segmentos ".." y con extension de imagen: el icono lo declara el
+ *  appinfo de CADA app instalada (dato no confiable), asi que "ruta sencilla" no
+ *  basta para no leer ficheros arbitrarios como root. Raices NO verificadas en TV. */
+export const ICON_ROOTS = ['/usr/palm/', '/media/developer/', '/media/cryptofs/', '/usr/share/', '/mnt/'];
+export const ICON_MAX_BYTES = 262_144;
+export function isReadableIconPath (p: string): boolean {
+	return SAFE_PATH.test(p)
+		&& !p.split('/').includes('..')
+		&& ICON_ROOTS.some((root) => p.startsWith(root))
+		&& /\.(png|jpe?g|webp)$/i.test(p);
+}
+
 /** Cita POSIX. Defensa en profundidad: las rutas además están validadas. */
 export function shellQuote (value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -61,7 +74,7 @@ export function listLaunchPointsRoot (): Promise<LaunchPointRoot[]> {
  *  —no los appIds— llegan al shell; busybox base64 no tiene -w, se quitan \n. */
 export function buildIconScript (paths: string[]): string {
 	return paths
-		.map((p, i) => `printf '%d ' ${i}; base64 ${shellQuote(p)} 2>/dev/null | tr -d '\\n'; echo`)
+		.map((p, i) => `printf '%d ' ${i}; [ -f ${shellQuote(p)} ] && [ "$(wc -c < ${shellQuote(p)})" -le ${ICON_MAX_BYTES} ] && base64 ${shellQuote(p)} 2>/dev/null | tr -d '\\n'; echo`)
 		.join('; ');
 }
 
@@ -71,7 +84,7 @@ export function parseIconOutput (out: string, count: number): Record<number, str
 	const result: Record<number, string> = {};
 	for (const line of out.split('\n')) {
 		const m = /^(\d+) ([A-Za-z0-9+/=]+)$/.exec(line);
-		if (!m) continue;
+		if (!m || m[2].length > Math.ceil(ICON_MAX_BYTES / 3) * 4) continue;
 		const idx = Number(m[1]);
 		if (idx >= 0 && idx < count) result[idx] = `data:image/png;base64,${m[2]}`;
 	}
@@ -106,7 +119,7 @@ export function loadIcons (apps: {id: string; iconPath?: string}[], storage: Pic
 	const result: Record<string, string> = {};
 	const missing: {id: string; path: string}[] = [];
 	for (const a of apps) {
-		if (!a.iconPath || !SAFE_PATH.test(a.iconPath)) continue;
+		if (!a.iconPath || !isReadableIconPath(a.iconPath)) continue;
 		if (cache[a.iconPath]) result[a.id] = cache[a.iconPath];
 		else missing.push({id: a.id, path: a.iconPath});
 	}
@@ -122,4 +135,9 @@ export function loadIcons (apps: {id: string; iconPath?: string}[], storage: Pic
 		writeIconCache(storage, cache, apps.map((a) => a.iconPath).filter((p): p is string => !!p));
 		return result;
 	}).catch(() => result);
+}
+
+/** Revocar el opt-in: borra los iconos guardados. */
+export function clearIconCache (storage: Pick<Storage, 'removeItem'>): void {
+	try { storage.removeItem(ICON_CACHE_KEY); } catch { /* sin storage */ }
 }
