@@ -72,9 +72,11 @@ si se quiere, es un añadido aparte que lance `com.webos.app.home` tras ejecutar
   crea sin seguir enlaces y los scripts se niegan (`state-unsafe`) si es un enlace, si su padre
   es escribible por todos sin sticky, si no es de root o no es 0700. No se escribe en rutas
   predecibles de `/tmp`.
-- Instancia unica con cerrojo atomico (`mkdir`); el PID se valida con `/proc` (pid + hora de
-  arranque + linea de comandos), no con `kill -0`. Cerrojo huerfano (kill -9): se recupera tras 2 s.
-- Los scripts no se arrancan si son escribibles por grupo/otros (`files-writable`).
+- Instancia unica: todo cambio del cerrojo/pid ocurre bajo un segundo cerrojo atomico (`mkdir`), asi que
+  nadie puede quitar un cerrojo recien tomado. El PID se valida con `/proc` (pid + hora de arranque + linea
+  de comandos), no con `kill -0`. FALLA CERRADO: sin identidad `/proc` propia no arranca, y si el dueño del
+  cerrojo no se puede comprobar no se le quita. Cerrojo huerfano (kill -9): lo recupera el siguiente arranque.
+- Los scripts no se arrancan si son escribibles por grupo/otros ni si no son del mismo usuario (`files-writable`).
 - El heartbeat app→root es un solo fichero con una marca de tiempo en `/tmp/customhome-hb/`
   (el servicio lo escribe con O_NOFOLLOW y comprueba el dueno del directorio); root solo lo lee,
   ignora enlaces, y lo unico que decide es si reintenta abrir el Home.

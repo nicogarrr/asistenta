@@ -145,23 +145,64 @@ if [ -n "$WATCH_VERIFY_ONLY" ]; then
     exit 0
 fi
 
-# Only one watcher at a time: an atomic mkdir lock, and a pid file that records pid + start time.
-# A lock whose recorded watcher is not really running (dead, or the pid was reused) is stale.
-if ! mkdir "$WLOCK" 2>/dev/null; then
-    if watcher_running; then
-        log "another watcher is already running (pid $wpid): exiting"
-        exit 0
+# Only one watcher at a time. Rules, in order of importance:
+#  1. FAIL CLOSED: without a readable /proc identity for ourselves we cannot tell a live owner from a
+#     dead one, so we never start (and never take over a lock).
+#  2. A lock owner is "live" (pid + start time + command line match), "dead" (its /proc entry is gone
+#     or it is another process) or "unknown" (/proc unreadable). Only "dead"/"none" may be recovered.
+#  3. Recovery is SERIALISED by a second lock (WLOCK.rec): one recoverer at a time; it re-checks the
+#     owner under that lock, so a contender that waited can never remove a lock someone else just took.
+#  4. After writing our pid file we read it back: if it is not ours we leave without touching anything.
+mystart="$(pid_ident "$$")" || { echo "homehook: no /proc identity for this process: refusing to start" >&2; exit 5; }
+REC="$WLOCK.rec"
+
+owner_verdict () { # live | dead | none | unknown
+    [ -e "$PIDFILE" ] || [ -L "$PIDFILE" ] || { echo none; return; }
+    if [ -L "$PIDFILE" ] || [ ! -f "$PIDFILE" ]; then echo dead; return; fi
+    read -r vpid vstart < "$PIDFILE" 2>/dev/null || { echo dead; return; }
+    case "$vpid" in ''|*[!0-9]*) echo dead; return ;; esac
+    [ -n "$vstart" ] || { echo dead; return; }
+    if now_start="$(pid_ident "$vpid")"; then
+        if [ "$now_start" = "$vstart" ] && case "$(tr '\0' ' ' < "$PROC/$vpid/cmdline" 2>/dev/null)" in *watch.sh*) true ;; *) false ;; esac; then
+            wpid="$vpid"; echo live
+        else
+            echo dead
+        fi
+    else
+        # no readable stat: gone (dead) or /proc not usable (unknown, fail closed)
+        if [ -d "$PROC" ] && [ -r "$PROC/$$/stat" ] && [ ! -e "$PROC/$vpid" ]; then echo dead; else echo unknown; fi
     fi
-    # the owner writes its pid file a moment after taking the lock: give it time before calling the lock stale
-    sleep "${LOCK_GRACE:-2}"
-    if watcher_running; then log "another watcher is already running (pid $wpid): exiting"; exit 0; fi
-    # only one contender can move the stale lock away (atomic rename); the rest give up
-    mv "$WLOCK" "$WLOCK.stale.$$" 2>/dev/null || { log "lost the race for the watcher lock: exiting"; exit 0; }
-    rm -rf "$WLOCK.stale.$$"; rm -f "$PIDFILE"
-    mkdir "$WLOCK" 2>/dev/null || { log "lost the race for the watcher lock: exiting"; exit 0; }
+}
+
+own_pidfile () { # write "<pid> <start>" without following links or replacing an existing file
+    rm -f "$PIDFILE"
+    ( set -C; echo "$$ $mystart" > "$PIDFILE" ) 2>/dev/null || return 1
+    read -r cpid cstart < "$PIDFILE" 2>/dev/null || return 1
+    [ "$cpid" = "$$" ] && [ "$cstart" = "$mystart" ]
+}
+
+# Every change of the lock/pid file happens while holding REC, so a contender can never remove a lock
+# that another one has just taken (and there is no timing window to wait out).
+if ! mkdir "$REC" 2>/dev/null; then
+    # someone else is starting or recovering. If that process is gone (died mid-way), clear its guard.
+    read -r gpid gstart < "$REC/owner" 2>/dev/null
+    case "$gpid" in
+        ''|*[!0-9]*) ;;
+        *) [ ! -e "$PROC/$gpid" ] && [ -r "$PROC/$$/stat" ] && rm -rf "$REC" ;;
+    esac
+    log "another watcher is starting or recovering the lock: exiting"; exit 0
 fi
-mystart="$(pid_ident "$$")" || mystart=""
-rm -f "$PIDFILE"; ( set -C; echo "$$ $mystart" > "$PIDFILE" ) || { log "cannot create the pid file safely: exiting"; rmdir "$WLOCK" 2>/dev/null; exit 5; }
+echo "$$ $mystart" > "$REC/owner" 2>/dev/null
+case "$(owner_verdict)" in
+    live) rm -rf "$REC"; log "another watcher is already running (pid $wpid): exiting"; exit 0 ;;
+    unknown) rm -rf "$REC"; log "cannot tell whether the lock owner is alive (/proc unusable): exiting"; exit 0 ;;
+esac
+rm -rf "$WLOCK"; rm -f "$PIDFILE"
+if mkdir "$WLOCK" 2>/dev/null && own_pidfile; then
+    rm -rf "$REC"
+else
+    rm -rf "$WLOCK" "$REC"; log "cannot take the watcher lock safely: exiting"; exit 5
+fi
 rm -f "$VLOCK" "$VFIX"
 # (a stop request is only noticed when the current command ends, so the launcher stops the watcher with kill -9 instead)
 trap 'pkill -P $$ 2>/dev/null; if watcher_running && [ "$wpid" = "$$" ]; then rm -f "$PIDFILE"; rmdir "$WLOCK" 2>/dev/null; fi; exit 0' TERM INT

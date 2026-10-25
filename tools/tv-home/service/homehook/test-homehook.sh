@@ -3,6 +3,8 @@
 S="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; fail=0
 export STATE_DIR="$T/state"
+# busybox ash's builtin sleep returns early when a background child exits: use the real one
+sleep () { /bin/sleep "$@"; }
 check () { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1 (got '$2', wanted '$3')"; fail=1; fi; }
 mkdir -p "$T/hook" "$T/launcher"
 echo '{}' > "$T/launcher/appinfo.json"
@@ -187,6 +189,43 @@ WP=$(cut -d' ' -f1 "$T/st4/watch.pid")
 kill -9 "$WP" 2>/dev/null; sleep 1; pkill -f "$T/sleeper.sh" 2>/dev/null
 check "after kill -9 the leftover lock is stale: a new watcher recovers it and starts" "$(STATE_DIR="$T/st4" LUNA_SEND="$T/sleeper.sh" LAUNCHER="$T/launcher" timeout 3 sh "$T/w/watch.sh" >/dev/null 2>&1; grep -c 'started (pid' "$T/st4/homehook.log")" "2"
 pkill -f "$T/sleeper.sh" 2>/dev/null
+
+# ---- stress: stale lock + many contenders, repeated; never two watchers ----
+bad=0
+for round in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    d="$T/stress$round"; mkdir -m 700 "$d"; mkdir "$d/watcher.lock"          # leftover lock, no live owner
+    [ $((round % 2)) -eq 0 ] && echo "999999 1" > "$d/watch.pid"              # even rounds: pid file of a dead process
+    for i in 1 2 3 4 5 6; do STATE_DIR="$d" LUNA_SEND="$T/sleeper.sh" LAUNCHER="$T/launcher" sh "$T/w/watch.sh" >/dev/null 2>&1 & done
+    i=0; while [ $i -lt 40 ]; do [ -s "$d/watch.pid" ] && [ ! -e "$d/watcher.lock.rec" ] && break; sleep 0.1; i=$((i+1)); done; sleep 0.5
+    n=$(grep -c 'started (pid' "$d/homehook.log" 2>/dev/null); [ "$n" = "1" ] || bad=$((bad+1))
+    live=$(for p in $(pgrep -f "$T/w/watch.sh"); do echo "$p"; done | wc -l | tr -d ' ')
+    pkill -9 -f "$T/w/watch.sh" 2>/dev/null; pkill -f "$T/sleeper.sh" 2>/dev/null; sleep 0.2
+done
+check "stress: 12 rounds x 6 contenders on a stale lock: exactly one watcher every round (stale lock, dead pid file)" "$bad" "0"
+
+# ---- fail closed when /proc identity is unavailable ----
+mkdir -m 700 "$T/np"
+sleep 0.2
+check "no /proc identity for ourselves: refuse to start (exit 5), nothing written" "$(PROC_DIR=/nonexistent STATE_DIR="$T/np" LUNA_SEND="$T/quiet.sh" LAUNCHER="$T/launcher" sh "$S/watch.sh" >/dev/null 2>&1; echo "$? $(ls -A "$T/np" | tr '\n' ' ')")" "5 "
+# a live owner whose /proc entry cannot be read is NOT stolen from
+mkdir -m 700 "$T/unk" "$T/fakeproc" "$T/fakeproc/4242"
+mkdir "$T/unk/watcher.lock"; echo "4242 777" > "$T/unk/watch.pid"
+SELF=$$
+mkdir -p "$T/fakeproc/$SELF"
+# every process we spawn needs a stat in the fake tree: use a wrapper that copies the real one for its own pid
+cat > "$T/unk.sh" <<U
+#!/bin/sh
+mkdir -p "$T/fakeproc/\$\$"; cp /proc/\$\$/stat "$T/fakeproc/\$\$/stat"
+exec env PROC_DIR="$T/fakeproc" STATE_DIR="$T/unk" LUNA_SEND="$T/quiet.sh" LAUNCHER="$T/launcher" sh "$S/watch.sh"
+U
+timeout 10 sh "$T/unk.sh" >/dev/null 2>&1
+check "owner entry exists but its stat is unreadable: lock is not taken over" "$(grep -c 'cannot tell whether the lock owner is alive' "$T/unk/homehook.log")" "1"
+check "and the owner's pid file is untouched" "$(cat "$T/unk/watch.pid")" "4242 777"
+
+# ---- script owner is checked, not only the mode ----
+cp "$S/watch.sh" "$T/hook/watch.sh"; chmod 755 "$T/hook/watch.sh"
+check "scripts owned by another uid: apply refuses" "$(FILES_UID=99999 runapply)" "files-writable"
+check "scripts owned by the running uid and mode 755: apply proceeds" "$(runapply)" "applied"
 
 # ---- scripts that another user could edit are not started ----
 cp "$S/watch.sh" "$T/hook/watch.sh"; chmod 666 "$T/hook/watch.sh"

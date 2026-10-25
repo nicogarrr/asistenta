@@ -12,6 +12,7 @@
 #  * The only file the launcher side writes is the heartbeat (HB_FILE), in its own directory; the
 #    root side only READS its modification time and ignores it if it is a symlink.
 
+PROC="${PROC_DIR:-/proc}"   # tests point this at a fake tree
 STATE_DIR="${STATE_DIR:-/var/run/customhome-homehook}"
 HB_FILE="${HB_FILE:-/tmp/customhome-hb/alive}"
 
@@ -56,8 +57,8 @@ state_paths () {
 
 # "<pid> <starttime>" of a live process, from /proc (field 22 of stat; the command name may hold spaces).
 pid_ident () {
-    [ -r "/proc/$1/stat" ] || return 1
-    read -r _ rest < "/proc/$1/stat" || return 1
+    [ -r "$PROC/$1/stat" ] || return 1
+    read -r _ rest < "$PROC/$1/stat" || return 1
     rest="${rest##*) }"
     set -- "$1" $rest
     [ "$#" -ge 21 ] || return 1
@@ -73,7 +74,7 @@ watcher_running () {
     [ -n "$wstart" ] || return 1
     now_start="$(pid_ident "$wpid")" || return 1
     [ "$now_start" = "$wstart" ] || return 1
-    case "$(tr '\0' ' ' < "/proc/$wpid/cmdline" 2>/dev/null)" in *watch.sh*) return 0 ;; esac
+    case "$(tr '\0' ' ' < "$PROC/$wpid/cmdline" 2>/dev/null)" in *watch.sh*) return 0 ;; esac
     return 1
 }
 
@@ -83,6 +84,8 @@ files_trusted () { # dir file...
     for f in "$@"; do
         set -- $(_perm_uid "$dir/$f") || return 1
         [ "$(echo "$1" | cut -c6)" = "-" ] && [ "$(echo "$1" | cut -c9)" = "-" ] || return 1
+        # and owned by the user running us (root on the TV): another owner could rewrite it
+        [ "$2" = "${FILES_UID:-${EXPECT_UID:-$(id -u)}}" ] || return 1
     done
     return 0
 }
