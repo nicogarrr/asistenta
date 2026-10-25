@@ -28,6 +28,15 @@ log('start pid=' + process.pid + ' args=[' + ARGS.join(' ') + ']');
 
 service.register('status', function (m) { m.respond({ returnValue: true, running: true, pid: process.pid }); });
 
+// El watcher homehook (service/homehook/watch.sh) comprueba que la app se mostro
+// de verdad mirando la fecha de este fichero; la app lo toca al hacerse visible
+// (ver src/service/luna.ts noteVisible). Mismo mecanismo que el ALIVE de Hearth.
+var ALIVE_FILE = '/tmp/customhome-alive';
+service.register('alive', function (m) {
+	try { fs.writeFileSync(ALIVE_FILE, String(Date.now())); } catch (e) { /* ignore */ }
+	m.respond({ returnValue: true });
+});
+
 function launchId(id, reason) {
 	service.call('luna://com.webos.applicationManager/launch', { id: id }, function (m) {
 		log('launch ' + id + ' (' + reason + '): ' + JSON.stringify(m && m.payload));
