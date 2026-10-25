@@ -31,10 +31,10 @@ jobs:
       - run: npm test
         env:
           CI: '1'
-      # Bateria de evaluacion (25 tareas): valida la propia bateria y sus checks.
-      - run: node scripts/run-evals.mjs --dry
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
+      # Bateria de evaluacion (25 tareas): valida la propia bateria y sus checks.
+      - run: node scripts/run-evals.mjs --dry
 
   # Mocks del driver telnet y del canal del boton TV: sin red externa ni tele.
   tv-mocks:
