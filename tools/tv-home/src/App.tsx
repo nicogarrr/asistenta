@@ -4,7 +4,6 @@ import Settings from './components/Settings';
 import Ambient from './components/Ambient';
 import ExitPrompt, {LG_HOME_APP_ID} from './components/ExitPrompt';
 import Home from './screens/Home';
-import Rocket from './components/Rocket';
 import {useRemoteNav, type Zone} from './hooks/useRemoteNav';
 import type {AppItem} from './lib/apps';
 import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
@@ -152,13 +151,14 @@ export default function App () {
 		};
 	}, [settingsOpen]);
 
-	// Guardia OLED: jitter lento de toda la UI.
+	// Guardia OLED: jitter lento de toda la UI (se puede apagar en Ajustes).
 	useEffect(() => {
+		if (!config.oledGuard) { setJitter({x: 0, y: 0}); return; }
 		const id = window.setInterval(() => {
 			setJitter({x: Math.round(Math.random() * 4 - 2), y: Math.round(Math.random() * 4 - 2)});
 		}, JITTER_MS);
 		return () => window.clearInterval(id);
-	}, []);
+	}, [config.oledGuard]);
 
 	const onLaunch = useCallback(() => {
 		// Clave de pulso para el feedback visual del lanzamiento.
@@ -226,7 +226,6 @@ export default function App () {
 						opacity: ambient ? 0 : 1
 					}}
 				>
-					<Rocket />
 					<Home
 						picks={heroPicks}
 						heroSel={heroSel}

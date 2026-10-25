@@ -1,6 +1,6 @@
 {
   "id": "tld.my.customhome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "vendor": "me",
   "type": "web",
   "main": "index.html",
@@ -13,3 +13,7 @@
   "resolution": "1920x1080",
   "disableBackHistoryAPI": true
 }
+
+
+
+

@@ -21,15 +21,17 @@ export interface HomeConfig {
 	location: GeoLocation;
 	/** Nico — saludo personalizado. */
 	userName: string;
+	/** Tarjeta del tiempo en el Home (minimalismo: se puede quitar). */
+	showWeather: boolean;
+	/** Reloj analógico en el salvapantallas (el digital se queda). */
+	analogClock: boolean;
+	/** Desplazamiento anti-quemado OLED (±2 px de vez en cuando). */
+	oledGuard: boolean;
 	/** Recomendaciones TMDB ("Para esta mañana/tarde/noche"). La clave se mete
 	 *  en Ajustes en la propia TV y vive solo en localStorage: nunca en git. */
 	picksEnabled: boolean;
 	tmdbKey: string;
 	tmdbRegion: string;
-	/** Cohete CSS sutil (ASTS/SpaceX). Solo compositor; Off si pesa o molesta. */
-	rocketEnabled: boolean;
-	/** Línea "próximo lanzamiento" en el reloj ambient (Launch Library 2). */
-	launchesEnabled: boolean;
 	/** Salvapantallas con fotos de los picks (estilo free-my-tv): fundido entre
 	 *  backdrops TMDB detrás del reloj. Sin picks, constelaciones como siempre. */
 	ambientPhotos: boolean;
@@ -41,7 +43,7 @@ export interface HomeConfig {
 	liveIcons: boolean;
 }
 
-export const APP_VERSION = '0.1.0-nico';
+export const APP_VERSION = '0.2.0-nico';
 
 export const DEFAULT_CONFIG: HomeConfig = {
 	clock24: true,
@@ -52,11 +54,12 @@ export const DEFAULT_CONFIG: HomeConfig = {
 	bgTheme: 'classic',
 	location: {name: 'Gijón', latitude: 43.5322, longitude: -5.6611},
 	userName: 'Nico y Nai',
+	showWeather: true,
+	analogClock: true,
+	oledGuard: true,
 	picksEnabled: true,
 	tmdbKey: '',
 	tmdbRegion: 'ES',
-	rocketEnabled: true,
-	launchesEnabled: true,
 	ambientPhotos: true,
 	tvScreensaver: 'ambient',
 	liveIcons: false

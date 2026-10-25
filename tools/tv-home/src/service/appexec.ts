@@ -7,7 +7,7 @@
 // (catálogo + monogramas). Los appIds NUNCA llegan al shell: los iconos se piden
 // por índice y las rutas pasan SAFE_PATH + shellQuote.
 
-import {lunaCall} from './luna';
+import {lunaCall} from './luna.js';
 
 export interface LaunchPointRoot {
 	id: string;
@@ -127,13 +127,15 @@ export function parseIconOutput (out: string, count: number): Record<number, str
 	const lines = out.slice(0, ICON_OUTPUT_MAX_CHARS + 1024).split('\n', ICON_MAX_COUNT + 2);
 	for (const line of lines) {
 		const m = /^(\d{1,3}) ([A-Za-z0-9+/=]+)$/.exec(line);
-		if (!m || !looksLikeImage(m[2])) continue;
-		const idx = Number(m[1]);
+		const idxRaw = m?.[1];
+		const b64 = m?.[2];
+		if (idxRaw === undefined || b64 === undefined || !looksLikeImage(b64)) continue;
+		const idx = Number(idxRaw);
 		if (!(idx >= 0 && idx < count && idx < ICON_MAX_COUNT) || idx in result) continue;
-		const bytes = decodedLength(m[2]);
+		const bytes = decodedLength(b64);
 		if (bytes < 0 || bytes > ICON_MAX_BYTES || bytes > budget) continue;   // tamano exacto y presupuesto agregado
 		budget -= bytes;
-		result[idx] = `data:image/png;base64,${m[2]}`;
+		result[idx] = `data:image/png;base64,${b64}`;
 	}
 	return result;
 }
@@ -167,7 +169,8 @@ export function loadIcons (apps: {id: string; iconPath?: string}[], storage: Pic
 	const missing: {id: string; path: string}[] = [];
 	for (const a of apps) {
 		if (!a.iconPath || !isReadableIconPath(a.iconPath)) continue;
-		if (cache[a.iconPath]) result[a.id] = cache[a.iconPath];
+		const hit = cache[a.iconPath];
+		if (hit) result[a.id] = hit;
 		else missing.push({id: a.id, path: a.iconPath});
 	}
 	if (!missing.length) return Promise.resolve(result);
@@ -177,8 +180,10 @@ export function loadIcons (apps: {id: string; iconPath?: string}[], storage: Pic
 		const parsed = parseIconOutput(out, missing.length);
 		for (const k of Object.keys(parsed)) {
 			const entry = missing[Number(k)];
-			result[entry.id] = parsed[Number(k)];
-			cache[entry.path] = parsed[Number(k)];
+			const data = parsed[Number(k)];
+			if (!entry || data === undefined) continue;
+			result[entry.id] = data;
+			cache[entry.path] = data;
 		}
 		writeIconCache(storage, cache, apps.map((a) => a.iconPath).filter((p): p is string => !!p));
 		return result;

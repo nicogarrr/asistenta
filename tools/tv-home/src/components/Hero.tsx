@@ -46,9 +46,9 @@ export default function Hero ({picks, selected, active, launchingKey}: {picks: P
 
 	return (
 		<div className="absolute left-[5vw] top-[9vh]">
-			<div className="text-xl font-normal tracking-[0.02em] text-white/45">{greeting}</div>
-			<h1 className="mt-1 text-[40px] font-normal tracking-tight text-white/95">
-				Para ti <span className="ml-3 align-middle text-base font-semibold uppercase tracking-[0.22em] text-white/40">{PERIOD_LABEL[period]}</span>
+			<div className="text-[13px] font-normal uppercase tracking-[0.32em] text-white/30">{greeting}</div>
+			<h1 className="mt-3 font-extralight leading-none text-white/90" style={{fontSize: 46, letterSpacing: '-0.02em'}}>
+				Para ti <span className="ml-3 align-middle text-xs font-medium uppercase tracking-[0.28em] text-white/35">{PERIOD_LABEL[period]}</span>
 			</h1>
 			<div className="mt-5 flex items-start gap-6">
 				<Card pick={shown[0]} big focused={active && selected === 0} launching={launchingKey === `${shown[0].kind}-${shown[0].id}`} />
