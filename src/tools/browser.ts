@@ -107,6 +107,15 @@ const BrowserParams = Type.Object({
     }),
   ),
   to: Type.Optional(Type.Number({ description: 'For media with what=seek: seconds.' })),
+  expect: Type.Optional(
+    Type.String({
+      description:
+        'For click on a selection (store, address, date, plan, option): the text the ' +
+        'page MUST show afterwards if the selection matches the user request (e.g. the ' +
+        'requested city). The tool checks it itself; if it is missing, the session is ' +
+        'locked (no click/choose/fill/exec_js) until you open or go back.',
+    }),
+  ),
   url: Type.Optional(Type.String({ description: 'For open. Must be http(s).' })),
   selector: Type.Optional(
     Type.String({
@@ -181,6 +190,9 @@ const BrowserParams = Type.Object({
  * once, and the result states the final value so the agent can see a mismatch
  * instead of assuming it worked.
  */
+/** Scopes whose last declared selection expectation failed. Enforced in code. */
+const selectionLocked = new Set<string>();
+
 export function buildFillScript(selector: string, value: string): string {
   return fillScriptFor(`page.locator(${JSON.stringify(selector)}).first()`, selector, value);
 }
@@ -545,6 +557,16 @@ export function createBrowserTool(
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;
+      if (
+        selectionLocked.has(scope) &&
+        ['click', 'choose', 'fill', 'exec_js', 'press'].includes(String(args.action))
+      ) {
+        throw new Error(
+          'SELECCION_NO_CORROBORADA: la última selección no mostró el texto esperado. ' +
+            'Acciones bloqueadas; informa de la discrepancia al usuario, o usa open/back para reiniciar.',
+        );
+      }
+      if (args.action === 'open' || args.action === 'back') selectionLocked.delete(scope);
 
       switch (args.action) {
         case 'open': {
@@ -593,7 +615,17 @@ export function createBrowserTool(
             timeoutMs: readTimeout(record),
           });
           const note = await challengeNote(service, scope, sendImage);
-          const said = describeTarget(result, { done: 'clicked', missing: 'hacer clic en' });
+          let said = describeTarget(result, { done: 'clicked', missing: 'hacer clic en' });
+          const expected = record.expect === undefined ? '' : String(record.expect);
+          if (expected) {
+            await new Promise((r) => setTimeout(r, 800));
+            if (await service.pageShows(scope, expected).catch(() => false)) {
+              said += `\nSELECCION_CORROBORADA: la página muestra "${expected}".`;
+            } else {
+              selectionLocked.add(scope);
+              said += `\nSELECCION_NO_CORROBORADA: la página NO muestra "${expected}" tras el clic. Acciones bloqueadas.`;
+            }
+          }
           return {
             content: [
               {

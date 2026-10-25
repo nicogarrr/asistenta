@@ -80,6 +80,12 @@ jobs:
           CI: '1'
           TZ: Europe/Madrid
 
+      - name: OCR real de documentos (imagen sintetica)
+        if: always()
+        run: npx vitest run test/ocrdoc-windows.test.ts
+        env:
+          CI: '1'
+
       - name: Synthetic DPI corner frames (no desktop/user capture)
         if: always()
         uses: actions/upload-artifact@v4

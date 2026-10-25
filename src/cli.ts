@@ -81,6 +81,8 @@ import { MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore } from './memory.js';
+import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
+import { windowsDeps } from './ocrdoc/windows.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import {
   createDownloadsController,
@@ -2800,6 +2802,82 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** `/ojo [on|off]`: interruptor general del ojo de águila y su estado. */
+  let ocrBusy = false;
+  const cmdOcr = async (inbound: Inbound, args: string): Promise<void> => {
+    const mode = parseOcrMode(args);
+    if (!mode) {
+      await say(
+        inbound,
+        'Uso: manda un PDF o una foto con el pie «/ocr» (PDF con texto), «/ocr md» (Markdown) o «/ocr todo» (los dos).',
+        { quote: true },
+      );
+      return;
+    }
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const fileId = inbound.documentFileId ?? inbound.photoFileId;
+    if (!fileId) {
+      await say(
+        inbound,
+        'Mándame un PDF o una foto y escribe «/ocr» en el pie del archivo (también «/ocr md» o «/ocr todo»). Te devuelvo el PDF con el texto seleccionable y buscable.',
+        { quote: true },
+      );
+      return;
+    }
+    if (ocrBusy) {
+      await say(
+        inbound,
+        'Estoy con otro documento. Este no lo he procesado: mándalo de nuevo cuando termine.',
+        { quote: true },
+      );
+      return;
+    }
+    ocrBusy = true;
+    try {
+      const bytes = await telegram.downloadFile(fileId).catch(() => null);
+      if (!bytes) {
+        await say(
+          inbound,
+          'No he podido bajar el archivo (Telegram solo me deja hasta 20 MB). Si es más grande, pártelo.',
+          { quote: true },
+        );
+        return;
+      }
+      await say(
+        inbound,
+        'Recibido, lo estoy procesando. Si tiene muchas páginas tarda unos minutos.',
+        { quote: true },
+      );
+      const result = await runOcrJob(
+        Buffer.from(bytes),
+        { name: inbound.documentName },
+        mode,
+        windowsDeps,
+      );
+      for (const f of result.files) {
+        await telegram.sendDocumentBytes(
+          Number(inbound.chatId),
+          f.bytes,
+          f.filename,
+          '',
+          inbound.threadId,
+        );
+      }
+      await say(inbound, result.message, { quote: true });
+    } catch (err) {
+      log.warn('ocr command failed', { err: String(err).slice(0, 200) });
+      await say(inbound, 'No he podido terminar el OCR. Tu original no se ha tocado.', {
+        quote: true,
+      }).catch(() => {});
+    } finally {
+      ocrBusy = false;
+    }
+  };
+
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
@@ -4553,6 +4631,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/agenda - rutinas programadas y su proxima ejecucion',
         '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
         '/disparador <mensaje|archivo|precio> <coincidencia> | <rutina> - dispara una rutina cuando pasa algo (sin gastar tokens); /disparadores lista, /disparador del <n> borra',
+        '/ocr [md|todo] - manda un PDF o foto con este pie: te lo devuelvo con texto seleccionable (md = Markdown, todo = ambos)',
         '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
         '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
         '/avisos [menos|minimo|normal] - ritmo de avisos del filtro',
@@ -5837,6 +5916,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdAgenda(inbound);
               case 'correo':
                 return cmdCorreo(inbound, command.args);
+              case 'ocr':
+                return cmdOcr(inbound, command.args);
               case 'ojo':
                 return cmdOjo(inbound, command.args);
               case 'permisos':

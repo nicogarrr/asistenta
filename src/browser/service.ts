@@ -1308,6 +1308,21 @@ export class BrowserService {
     return found ? describeContext(found.locator) : '';
   }
 
+  /**
+   * Deterministic check of a declared expectation: does the visible text of the page
+   * (after a selection) contain `expected`? Case and accent insensitive substring.
+   * It checks only that the declared text is present, not that it means what the task
+   * needs.
+   */
+  async pageShows(scope: string, expected: string): Promise<boolean> {
+    const session = await this.#session(scope);
+    const text = await session.page
+      .locator('body')
+      .innerText({ timeout: 2_000 })
+      .catch(() => '');
+    return textIncludes(text, expected);
+  }
+
   /** Amounts and address lines on the current page, for a payment confirmation. */
   async summarisePage(scope: string): Promise<string> {
     const session = await this.#session(scope);
@@ -2026,4 +2041,17 @@ export function formatValue(value: unknown, depth = 0): string {
     return `{${body}}`;
   }
   return String(value);
+}
+
+const fold = (v: string): string =>
+  v
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+/** Case/accent/whitespace insensitive "contains". Empty `needle` is never a match. */
+export function textIncludes(haystack: string, needle: string): boolean {
+  const n = fold(needle).trim();
+  return n.length > 0 && fold(haystack).includes(n);
 }
