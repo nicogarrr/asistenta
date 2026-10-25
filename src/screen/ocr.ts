@@ -86,7 +86,7 @@ const PREFERRED_LANGUAGES = ['es-ES', 'es-419', 'es-MX', 'es-AR', 'es-CL', 'es-C
  * the script carries on with a null, and the failure surfaces much later as "OCR
  * returned no text", which reads like a modelling problem rather than an engine one.
  */
-const WINRT_BRIDGE = `
+export const WINRT_BRIDGE = `
 $ErrorActionPreference='Stop'
 # Every WinRT type literal needs the assembly named explicitly. Plain
 # [Windows.Storage.StorageFile] throws TypeNotFound here even with
@@ -260,7 +260,10 @@ const PS_ARGS = ['-NoProfile', '-NonInteractive', '-Command'];
  * the rest of the repo does it: the path to 5.1 differs per install and it is on PATH
  * everywhere. The distinguishing detail is that it must be 5.1 — see the file header.
  */
-async function ps(script: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+export async function ps(
+  script: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
   const run = execFileAsync('powershell.exe', [...PS_ARGS, script], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -279,7 +282,7 @@ async function ps(script: string, timeoutMs: number): Promise<{ stdout: string; 
 }
 
 /** The single most useful line of a broken script, with newlines collapsed. */
-function firstStderrLine(stderr: string): string {
+export function firstStderrLine(stderr: string): string {
   const line = stderr
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -287,11 +290,11 @@ function firstStderrLine(stderr: string): string {
   return line ? line.slice(0, 240) : '';
 }
 
-function b64(value: string): string {
+export function b64(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64');
 }
 
-function unb64(value: string): string {
+export function unb64(value: string): string {
   return Buffer.from(value, 'base64').toString('utf8');
 }
 

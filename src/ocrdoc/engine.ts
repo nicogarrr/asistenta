@@ -1,0 +1,386 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { PDFDocument, type PDFFont, type PDFPage, StandardFonts } from 'pdf-lib';
+import type { OcrResult } from '../screen/ocr.js';
+
+/**
+ * PDF o foto -> PDF con texto reconocible (buscable y copiable) + Markdown.
+ *
+ * Todo local y sin coste: el texto de las páginas escaneadas sale del OCR que ya trae
+ * Windows (el mismo de `src/screen/ocr.ts`), y la capa de texto se añade con `pdf-lib`
+ * (MIT, JS puro) SOBRE la página original, que no se toca ni se rasteriza de nuevo.
+ *
+ * Qué hace con cada página de un PDF:
+ * - Tiene texto propio (PDF digital): se deja tal cual y su texto va al Markdown.
+ * - No tiene texto (escaneada): se renderiza a PNG, se reconoce y se superpone el texto
+ *   reconocido con opacidad 0 (invisible, pero seleccionable y buscable).
+ * - Falla el render o el OCR: la página queda como estaba y el informe dice cuál y por qué.
+ *
+ * Límites honestos que el resultado repite al usuario: el OCR se equivoca (cifras, tildes,
+ * nombres), no entiende tablas ni columnas, y la capa invisible se coloca por LÍNEA, así
+ * que seleccionar una palabra concreta puede resaltar un tramo algo distinto.
+ */
+export const MAX_PAGES = 40;
+export const MIN_DIGITAL_CHARS = 20;
+/** Tope de píxeles de una foto antes de decodificarla (evita imágenes-bomba). */
+export const MAX_IMAGE_PIXELS = 60_000_000;
+/** Tope de superficie de una página PDF en puntos por lado. */
+const MAX_PAGE_POINTS = 14_400;
+
+export type PageSource = 'digital' | 'ocr' | 'vacia' | 'sin_leer';
+
+export interface PageReport {
+  page: number;
+  source: PageSource;
+  chars: number;
+  reason?: string;
+}
+
+export interface EngineDeps {
+  /** Texto propio de cada página (vacío si es una imagen). */
+  digitalPages(bytes: Uint8Array): Promise<string[]>;
+  /** Renderiza la página (0-based) del PDF a un PNG. Undefined si no hay renderizador. */
+  renderPage?: (pdfPath: string, pageIndex: number, outPng: string) => Promise<void>;
+  /** OCR de una imagen (PNG/JPEG). Undefined si no hay motor de OCR. */
+  ocr?: (imagePath: string) => Promise<OcrResult>;
+  /** Carpeta de trabajo creada y borrada por quien llama. */
+  workDir: string;
+  /** Por qué no hay OCR (para decirlo), si no lo hay. */
+  noOcrReason?: string;
+  /** Cancelación cooperativa: se mira antes de cada página. */
+  shouldStop?: () => boolean;
+}
+
+export interface OcrDocResult {
+  /** PDF final. Null si no se pudo leer ninguna página. */
+  pdf: Uint8Array | null;
+  markdown: string;
+  pages: PageReport[];
+  /** Páginas sin texto propio que se reconocieron con OCR. */
+  ocrPages: number;
+  digitalPages: number;
+  unreadPages: number;
+  /** Ninguna página necesitaba OCR: el PDF ya tenía texto en todas. */
+  alreadySearchable: boolean;
+}
+
+export class OcrDocError extends Error {}
+
+function errMsg(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/** Letras que WinAnsi (Helvetica estándar) puede codificar; el resto se descarta sin romper. */
+function winAnsiSafe(font: PDFFont, text: string): string {
+  let out = '';
+  for (const ch of text.replace(/\s+/g, ' ')) {
+    try {
+      font.widthOfTextAtSize(ch, 1);
+      out += ch;
+    } catch {
+      // carácter fuera de WinAnsi (p. ej. emoji, cirílico): no entra en la capa buscable
+    }
+  }
+  return out.trim();
+}
+
+function overlayLines(page: PDFPage, font: PDFFont, ocr: OcrResult): number {
+  const { width: pw, height: ph } = page.getSize();
+  if (ocr.width <= 0 || ocr.height <= 0) return 0;
+  const sx = pw / ocr.width;
+  const sy = ph / ocr.height;
+  let placed = 0;
+  for (const line of ocr.lines) {
+    const text = winAnsiSafe(font, line.text);
+    if (!text) continue;
+    const base = font.widthOfTextAtSize(text, 1);
+    const hPt = line.height * sy;
+    const wPt = line.width * sx;
+    if (base <= 0 || hPt <= 0 || wPt <= 0) continue;
+    // Tamaño para que el ancho de la línea coincida con el reconocido; acotado para que un
+    // renglón con un solo carácter no salga gigante.
+    const size = Math.min(Math.max(wPt / base, hPt * 0.5), hPt * 1.6);
+    page.drawText(text, {
+      x: line.x * sx,
+      y: ph - (line.y + line.height) * sy + hPt * 0.2,
+      size,
+      font,
+      opacity: 0,
+    });
+    placed++;
+  }
+  return placed;
+}
+
+function tidy(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Una línea de título segura: el nombre del archivo viene de fuera y no manda en el formato. */
+function safeTitle(name: string): string {
+  return (
+    name
+      .replace(/\.[A-Za-z0-9]{1,5}$/, '')
+      .replace(/[\r\n#*_`<>[\]|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 100) || 'Documento'
+  );
+}
+
+export function buildMarkdown(opts: {
+  name: string;
+  at: Date;
+  texts: string[];
+  pages: PageReport[];
+}): string {
+  const out: string[] = [
+    `# ${safeTitle(opts.name)}`,
+    '',
+    `> Convertido: ${opts.at.toISOString().slice(0, 16).replace('T', ' ')} UTC · Páginas: ${opts.pages.length}`,
+    '> Aviso: parte del texto se ha reconocido automáticamente (OCR) y puede tener errores en cifras, nombres y tildes. No entiende tablas ni columnas, y el orden de lectura no está garantizado. Compruébalo con el original antes de fiarte de un dato.',
+    '',
+  ];
+  for (const p of opts.pages) {
+    const label =
+      p.source === 'digital'
+        ? 'texto del propio PDF'
+        : p.source === 'ocr'
+          ? 'reconocido por OCR'
+          : p.source === 'vacia'
+            ? 'sin texto reconocido'
+            : `no se pudo leer${p.reason ? `: ${p.reason}` : ''}`;
+    out.push('---', '', `## Página ${p.page} (${label})`, '');
+    const text = opts.texts[p.page - 1] ?? '';
+    if (text) out.push(text, '');
+  }
+  return `${out.join('\n').trimEnd()}\n`;
+}
+
+function summarise(
+  pages: PageReport[],
+): Pick<OcrDocResult, 'ocrPages' | 'digitalPages' | 'unreadPages'> {
+  return {
+    ocrPages: pages.filter((p) => p.source === 'ocr').length,
+    digitalPages: pages.filter((p) => p.source === 'digital').length,
+    unreadPages: pages.filter((p) => p.source === 'sin_leer').length,
+  };
+}
+
+export async function ocrPdf(
+  bytes: Uint8Array,
+  name: string,
+  deps: EngineDeps,
+  now: () => Date = () => new Date(),
+): Promise<OcrDocResult> {
+  let doc: PDFDocument;
+  let total: number;
+  try {
+    doc = await PDFDocument.load(bytes);
+    total = doc.getPageCount();
+  } catch (err) {
+    throw new OcrDocError(
+      /encrypt/i.test(errMsg(err))
+        ? 'El PDF está protegido con contraseña; no lo abro.'
+        : `No he podido abrir el PDF (¿está dañado?): ${errMsg(err)}`,
+    );
+  }
+  if (total === 0) throw new OcrDocError('El PDF no tiene páginas.');
+  if (total > MAX_PAGES) {
+    throw new OcrDocError(
+      `El PDF tiene ${total} páginas y el máximo por envío es ${MAX_PAGES}. Pártelo y mándalo por trozos.`,
+    );
+  }
+  let digital: string[];
+  try {
+    digital = await deps.digitalPages(bytes);
+  } catch (err) {
+    throw new OcrDocError(`No he podido leer el texto del PDF: ${errMsg(err)}`);
+  }
+
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const reports: PageReport[] = [];
+  const texts: string[] = [];
+  const pdfPath = join(deps.workDir, 'entrada.pdf');
+  let pdfWritten = false;
+  let overlaid = 0;
+
+  for (let i = 0; i < total; i++) {
+    if (deps.shouldStop?.()) throw new OcrDocError('Cancelado.');
+    const own = tidy(digital[i] ?? '');
+    if (own.replace(/\s/g, '').length >= MIN_DIGITAL_CHARS) {
+      reports.push({ page: i + 1, source: 'digital', chars: own.length });
+      texts.push(own);
+      continue;
+    }
+    // Escaneada (o casi vacía): necesita render + OCR.
+    texts.push('');
+    if (!deps.renderPage || !deps.ocr) {
+      reports.push({
+        page: i + 1,
+        source: 'sin_leer',
+        chars: 0,
+        reason: deps.noOcrReason ?? 'no hay OCR disponible',
+      });
+      continue;
+    }
+    const page = doc.getPage(i);
+    const { width: pw, height: ph } = page.getSize();
+    if (page.getRotation().angle % 360 !== 0) {
+      // Windows renderiza ya girada y la capa se colocaría torcida: mejor no inventarla.
+      reports.push({
+        page: i + 1,
+        source: 'sin_leer',
+        chars: 0,
+        reason: 'página girada (no soportada todavía)',
+      });
+      continue;
+    }
+    if (!(pw > 0 && ph > 0) || pw > MAX_PAGE_POINTS || ph > MAX_PAGE_POINTS) {
+      reports.push({
+        page: i + 1,
+        source: 'sin_leer',
+        chars: 0,
+        reason: 'tamaño de página fuera de rango',
+      });
+      continue;
+    }
+    try {
+      if (!pdfWritten) {
+        await writeFile(pdfPath, bytes);
+        pdfWritten = true;
+      }
+      const png = join(deps.workDir, `p${i + 1}.png`);
+      await deps.renderPage(pdfPath, i, png);
+      const result = await deps.ocr(png);
+      const text = tidy(result.text ?? '');
+      if (!text) {
+        reports.push({ page: i + 1, source: 'vacia', chars: 0 });
+        continue;
+      }
+      overlaid += overlayLines(page, font, result);
+      texts[i] = text;
+      reports.push({ page: i + 1, source: 'ocr', chars: text.length });
+    } catch (err) {
+      reports.push({ page: i + 1, source: 'sin_leer', chars: 0, reason: errMsg(err) });
+    }
+  }
+
+  const counts = summarise(reports);
+  const readable = counts.ocrPages + counts.digitalPages;
+  const md = buildMarkdown({ name, at: now(), texts, pages: reports });
+  if (readable === 0 && !reports.some((r) => r.source === 'vacia')) {
+    return { pdf: null, markdown: md, pages: reports, ...counts, alreadySearchable: false };
+  }
+  const pdf = counts.ocrPages > 0 && overlaid > 0 ? await doc.save() : bytes;
+  return {
+    pdf,
+    markdown: md,
+    pages: reports,
+    ...counts,
+    alreadySearchable:
+      counts.ocrPages === 0 && counts.unreadPages === 0 && counts.digitalPages === total,
+  };
+}
+
+/** Ancho y alto de un PNG o JPEG leyendo solo la cabecera (sin decodificar nada). */
+export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
+  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (b.length >= 24 && b.subarray(1, 4).toString('latin1') === 'PNG') {
+    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+  }
+  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = b[i + 1] as number;
+      if (marker === 0xff) {
+        i++;
+        continue;
+      }
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+        i += 2;
+        continue;
+      }
+      const len = b.readUInt16BE(i + 2);
+      if (
+        marker >= 0xc0 &&
+        marker <= 0xcf &&
+        marker !== 0xc4 &&
+        marker !== 0xc8 &&
+        marker !== 0xcc
+      ) {
+        return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };
+      }
+      i += 2 + len;
+    }
+  }
+  return null;
+}
+
+/** PNG o JPEG a un PDF de una página con el texto reconocido por encima. */
+export async function ocrPhoto(
+  bytes: Uint8Array,
+  mime: 'image/png' | 'image/jpeg',
+  name: string,
+  deps: EngineDeps,
+  now: () => Date = () => new Date(),
+): Promise<OcrDocResult> {
+  if (!deps.ocr) {
+    throw new OcrDocError(
+      deps.noOcrReason ? `No hay OCR disponible: ${deps.noOcrReason}` : 'No hay OCR disponible.',
+    );
+  }
+  const size = imageSize(bytes);
+  if (!size || size.width <= 0 || size.height <= 0) {
+    throw new OcrDocError('No he podido abrir la imagen (cabecera no válida).');
+  }
+  if (size.width * size.height > MAX_IMAGE_PIXELS) {
+    throw new OcrDocError(
+      `La imagen es demasiado grande (${size.width}x${size.height}). Reduce su tamaño y vuelve a mandarla.`,
+    );
+  }
+  const doc = await PDFDocument.create();
+  let image: Awaited<ReturnType<PDFDocument['embedPng']>>;
+  try {
+    image = mime === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+  } catch (err) {
+    throw new OcrDocError(`No he podido abrir la imagen: ${errMsg(err)}`);
+  }
+  // 0,75 pt por píxel (96 dpi): una foto de móvil sale como página grande pero proporcionada.
+  const page = doc.addPage([image.width * 0.75, image.height * 0.75]);
+  page.drawImage(image, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const file = join(deps.workDir, mime === 'image/png' ? 'foto.png' : 'foto.jpg');
+  await writeFile(file, bytes);
+  const reports: PageReport[] = [];
+  let text = '';
+  try {
+    const result = await deps.ocr(file);
+    text = tidy(result.text ?? '');
+    if (text) {
+      overlayLines(page, font, result);
+      reports.push({ page: 1, source: 'ocr', chars: text.length });
+    } else {
+      reports.push({ page: 1, source: 'vacia', chars: 0 });
+    }
+  } catch (err) {
+    reports.push({ page: 1, source: 'sin_leer', chars: 0, reason: errMsg(err) });
+  }
+  const counts = summarise(reports);
+  const md = buildMarkdown({ name, at: now(), texts: [text], pages: reports });
+  return {
+    pdf: counts.ocrPages > 0 ? await doc.save() : null,
+    markdown: md,
+    pages: reports,
+    ...counts,
+    alreadySearchable: false,
+  };
+}
