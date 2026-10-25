@@ -1092,22 +1092,28 @@ export class BrowserService {
 
   #installPolicy(scope: string, session: Session): void {
     const denied = [...(this.#options.policy.deniedHosts ?? []), ...DEFAULT_DENIED];
+    /** host -> true si es público; se reutiliza para todos sus subrecursos. */
+    const privateHosts = new Map<string, boolean>();
     void session.context.route('**/*', async (route) => {
       const request = route.request();
       const host = hostOf(request.url());
       if (!host) return route.abort();
 
       const isDocument = request.isNavigationRequest() && request.resourceType() === 'document';
-      // Local and private destinations are refused before anything else, redirects
-      // and frames included. Subresources (images, scripts, xhr) are not covered:
-      // see the trade-off above.
-      if (
-        isDocument &&
-        !this.#options.policy.allowPrivateHosts &&
-        !(await isFetchableResolved(request.url()))
-      ) {
-        log.warn('browser navigation to a local or private address refused', { scope, host });
-        return route.abort();
+      // Local y privado se rechaza para TODO (documentos, xhr, fetch, iframes,
+      // imágenes): una página pública podía pedir http://127.0.0.1:... y golpear
+      // paneles locales (confused deputy). Se cachea por host: resolver DNS en
+      // cada subrecurso haría la navegación mucho más lenta.
+      if (!this.#options.policy.allowPrivateHosts) {
+        let ok = privateHosts.get(host);
+        if (ok === undefined) {
+          ok = await isFetchableResolved(request.url());
+          privateHosts.set(host, ok);
+        }
+        if (!ok) {
+          log.warn('browser request to a local or private address refused', { scope, host });
+          return route.abort();
+        }
       }
       const blocked = denied.some((d) => domainCovers(d.trim(), host));
       if (blocked && isDocument) {

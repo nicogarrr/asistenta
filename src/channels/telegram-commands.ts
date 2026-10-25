@@ -89,6 +89,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Ver, buscar, olvidar o exportar lo que recuerdo',
   },
   {
+    command: 'exportar',
+    description: 'Exportar esta conversación como JSON',
+  },
+  {
     command: 'steer',
     description: 'Corregir lo que estoy haciendo sin pararlo',
   },
