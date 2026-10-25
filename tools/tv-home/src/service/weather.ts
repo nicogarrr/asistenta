@@ -85,8 +85,10 @@ export function fetchForecast (loc = LOCATION): Promise<Forecast> {
 			if (start < 0) start = 0;
 			const hours: ForecastHour[] = [];
 			for (let i = start; i < Math.min(start + 5, hTimes.length); i++) {
+				const t = hTimes[i];
+				if (t === undefined) continue;
 				hours.push({
-					hour: parseInt(hTimes[i].slice(11, 13), 10),
+					hour: parseInt(t.slice(11, 13), 10),
 					temp: Math.round(data.hourly.temperature_2m[i]),
 					glyph: wmo(data.hourly.weather_code[i])[1]
 				});
@@ -106,4 +108,90 @@ export function fetchForecast (loc = LOCATION): Promise<Forecast> {
 			const sunset = ((data.daily?.sunset || [])[0] as string) || '';
 			return {now, hours, days, isDay, sunrise, sunset};
 		});
+}
+
+// ---- Caché de la última previsión buena (portado de Hearth, MIT: ver ../THIRD_PARTY_NOTICES.md) ----
+// La home pinta el tiempo al instante desde la copia guardada y lo refresca en
+// segundo plano: nunca espera a la red. Una lectura más vieja que SHOWN no se
+// muestra (la TV lleva mucho apagada y el dato engaña).
+
+export interface CachedForecast {
+	/** cuándo se leyó (ms desde 1970) */
+	at: number;
+	/** ubicación+unidad a la que pertenece; no mostrar el tiempo de otra ciudad */
+	key: string;
+	forecast: Forecast;
+}
+
+export const FORECAST_CACHE_KEY = 'home-forecast-v1';
+/** Una lectura más reciente que esto no se vuelve a pedir. Igual al poll del widget. */
+export const FORECAST_FRESH_MS = 15 * 60 * 1000;
+/** Una lectura más vieja que esto ya no se muestra. */
+export const FORECAST_SHOWN_MS = 6 * 60 * 60 * 1000;
+
+/** Identidad de la lectura: coordenadas redondeadas + unidad. Cambiar de ciudad
+ *  o de °C/°F invalida la copia guardada (los grados ya van redondeados en esa unidad). */
+export function forecastCacheKey (loc: {latitude: number; longitude: number; temperatureUnit: string}): string {
+	const r = (n: number) => (Math.round(n * 1000) / 1000).toFixed(3);
+	return `${r(loc.latitude)},${r(loc.longitude)}:${loc.temperatureUnit}`;
+}
+
+function isForecastShape (f: unknown): f is Forecast {
+	const fc = f as Forecast;
+	return !!fc && typeof fc === 'object'
+		&& !!fc.now && typeof fc.now.temp === 'number' && typeof fc.now.glyph === 'string'
+		&& Array.isArray(fc.hours) && Array.isArray(fc.days);
+}
+
+/** Lee la copia guardada. null si no hay, está corrupta o es más vieja que SHOWN. */
+export function readForecastCache (storage: Pick<Storage, 'getItem'>, now: number): CachedForecast | null {
+	try {
+		const raw = storage.getItem(FORECAST_CACHE_KEY);
+		if (!raw) return null;
+		const c = JSON.parse(raw) as CachedForecast;
+		if (!c || typeof c.at !== 'number' || typeof c.key !== 'string' || !isForecastShape(c.forecast)) return null;
+		if (now - c.at > FORECAST_SHOWN_MS) return null;
+		return c;
+	} catch { return null; }
+}
+
+export function writeForecastCache (storage: Pick<Storage, 'setItem'>, key: string, forecast: Forecast, now: number): void {
+	try { storage.setItem(FORECAST_CACHE_KEY, JSON.stringify({at: now, key, forecast} satisfies CachedForecast)); }
+	catch { /* localStorage lleno o bloqueado: el tiempo simplemente no se cachea */ }
+}
+
+/** La copia guardada SOLO si es de esta ubicación+unidad y no está caducada. */
+export function cachedForecastFor (
+	storage: Pick<Storage, 'getItem'>,
+	loc: {latitude: number; longitude: number; temperatureUnit: string},
+	now: number
+): Forecast | null {
+	const c = readForecastCache(storage, now);
+	return c && c.key === forecastCacheKey(loc) ? c.forecast : null;
+}
+
+/** Reintento tras un fallo de red: 2 → 10 → 30 min (patrón Hearth). `fails` es
+ *  el número de fallos consecutivos (1 = primer fallo). */
+export function forecastRetryDelayMs (fails: number): number {
+	if (fails <= 1) return 2 * 60_000;
+	if (fails === 2) return 10 * 60_000;
+	return 30 * 60_000;
+}
+
+/** Como cachedForecastFor, pero devuelve tambien cuando se leyo (para marcarla como no actual). */
+export function cachedReadingFor (
+	storage: Pick<Storage, 'getItem'>,
+	loc: {latitude: number; longitude: number; temperatureUnit: string},
+	now: number
+): {forecast: Forecast; at: number} | null {
+	const c = readForecastCache(storage, now);
+	return c && c.key === forecastCacheKey(loc) ? {forecast: c.forecast, at: c.at} : null;
+}
+
+/** Texto de antiguedad solo cuando la lectura ya no es "de ahora" (>2 ciclos de refresco). */
+export function staleLabel (at: number, now: number): string | null {
+	const age = now - at;
+	if (age <= 2 * FORECAST_FRESH_MS) return null;
+	const h = Math.floor(age / 3_600_000);
+	return h >= 1 ? `hace ${h} h` : `hace ${Math.floor(age / 60_000)} min`;
 }

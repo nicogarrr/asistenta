@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react';
 import Clock from './Clock';
-import {fetchForecast, type Forecast} from '../../service/weather';
+import {cachedReadingFor, forecastCacheKey, forecastRetryDelayMs, writeForecastCache, staleLabel, FORECAST_FRESH_MS, FORECAST_SHOWN_MS,
+	fetchForecast, type Forecast} from '../../service/weather';
 import {useConfig} from '../../lib/config';
 
 function DateLine () {
@@ -26,23 +27,57 @@ function hourLabel (h: number, clock24: boolean): string {
 }
 
 // Current conditions + next-5-hours strip + 3-day outlook, one Open-Meteo call.
+// First paint comes from the saved copy (never waits for the network); the
+// fetch refreshes it in the background. On failure the saved reading stays on
+// screen and the retry backs off 2 → 10 → 30 min (pattern from Hearth, MIT).
 function WeatherBlock () {
 	const {tempUnit, clock24, location} = useConfig();
 	const [fc, setFc] = useState<Forecast | null>(null);
 	const [err, setErr] = useState(false);
+	const [at, setAt] = useState(0); // cuando se leyo lo que se ve
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 60_000);
+		return () => window.clearInterval(id);
+	}, []);
 	useEffect(() => {
 		let alive = true;
-		const load = () => fetchForecast({...location, temperatureUnit: tempUnit})
-			.then((f) => { if (alive) { setFc(f); setErr(false); } })
-			.catch(() => { if (alive) setErr(true); });
+		let timer = 0;
+		let readAt = 0;
+		let fails = 0;
+		const loc = {...location, temperatureUnit: tempUnit};
+
+		// show the saved reading for THIS place+unit right away, if still fresh enough
+		const cached = cachedReadingFor(localStorage, loc, Date.now());
+		if (cached) { readAt = cached.at; setFc(cached.forecast); setAt(cached.at); setErr(false); }
+
+		const load = () => fetchForecast(loc)
+			.then((f) => {
+				if (!alive) return;
+				fails = 0;
+				readAt = Date.now();
+				setFc(f);
+				setAt(readAt);
+				setErr(false);
+				writeForecastCache(localStorage, forecastCacheKey(loc), f, readAt);
+				timer = window.setTimeout(load, FORECAST_FRESH_MS);
+			})
+			.catch(() => {
+				if (!alive) return;
+				fails += 1;
+				setErr(true); // only shown when there is no reading at all
+				// una lectura guardada mas vieja que SHOWN ya no se muestra
+				if (readAt && Date.now() - readAt > FORECAST_SHOWN_MS) { readAt = 0; setFc(null); }
+				timer = window.setTimeout(load, forecastRetryDelayMs(fails));
+			});
 		load();
-		const id = setInterval(load, 15 * 60_000);
-		return () => { alive = false; clearInterval(id); };
+		return () => { alive = false; window.clearTimeout(timer); };
 	}, [tempUnit, location]);
 
-	if (err) return <div className="text-right text-base font-normal text-white/40">Weather —</div>;
+	if (err && !fc) return <div className="text-right text-base font-normal text-white/40">Weather —</div>;
 	if (!fc) return <div className="text-right text-base font-normal text-white/40">Loading…</div>;
 
+	const stale = staleLabel(at, now);
 	return (
 		<div className="flex w-full flex-col items-end gap-3">
 			{/* now */}
@@ -51,11 +86,12 @@ function WeatherBlock () {
 				<div className="text-right leading-tight">
 					<div className="text-2xl font-medium text-white/92">{fc.now.temp}{fc.now.unit}</div>
 					<div className="text-sm font-normal text-white/55">{fc.now.label}</div>
+					{stale && <div className="text-base font-medium text-amber-200/90">{stale}</div>}
 				</div>
 			</div>
 
-			{/* next 5 hours */}
-			<div className="flex justify-end gap-3">
+			{/* next 5 hours: con una copia vieja serian horas pasadas presentadas como futuras, no se muestran */}
+			{!stale && <div className="flex justify-end gap-3">
 				{fc.hours.map((h) => (
 					<div key={h.hour} className="flex w-11 flex-col items-center gap-0.5">
 						<span className="text-xs font-medium text-white/45">{hourLabel(h.hour, clock24)}</span>
@@ -63,7 +99,7 @@ function WeatherBlock () {
 						<span className="text-sm font-medium text-white/80">{h.temp}°</span>
 					</div>
 				))}
-			</div>
+			</div>}
 
 			<div className="m3-divider" />
 
