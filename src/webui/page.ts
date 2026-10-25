@@ -26,7 +26,7 @@ export function renderPage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="Panel local de solo lectura de Asistenta." />
+  <meta name="description" content="Panel local de Asistenta: chat, aprobaciones y estado." />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Asistenta" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -201,6 +201,26 @@ export function renderPage(): string {
     }
     .buscador input::placeholder { color: #667486; }
     .buscador input:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .buscador textarea {
+      width: 100%;
+      min-height: 82px;
+      resize: vertical;
+      padding: 7px 9px;
+      border: 1px solid #2a3a4d;
+      border-radius: 9px;
+      background: #0b121a;
+      color: var(--texto);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: normal;
+      text-transform: none;
+    }
+    .buscador textarea::placeholder { color: #667486; }
+    .buscador textarea:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .chat-form { display: flex; flex-direction: column; gap: 9px; }
+    .chat-acciones { display: flex; justify-content: flex-end; }
+    .chat-respuesta { margin-top: 12px; }
+    .chat-respuesta:empty { margin-top: 0; }
     .datos {
       display: grid;
       grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
@@ -242,6 +262,16 @@ export function renderPage(): string {
     }
     .sesion:last-child { margin-bottom: 0; }
     .sesion h3 { margin: 0; font-size: 14px; word-break: break-word; }
+    .aprobacion {
+      margin-bottom: 9px;
+      padding: 10px 12px;
+      border: 1px solid var(--borde);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .aprobacion:last-child { margin-bottom: 0; }
+    .aprobacion h3 { margin: 0; font-size: 14px; word-break: break-word; }
+    .aprobacion .botones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
     details { margin-top: 8px; }
     summary { cursor: pointer; color: var(--suave); font-size: 12px; }
     summary:hover { color: var(--texto); }
@@ -266,7 +296,7 @@ export function renderPage(): string {
       <span class="marca-icono" aria-hidden="true">A</span>
       <div>
         <h1>Asistenta</h1>
-        <p class="subtitulo">Panel local · solo lectura</p>
+        <p class="subtitulo">Panel local · chat y control</p>
       </div>
     </div>
     <div class="acciones">
@@ -281,6 +311,41 @@ export function renderPage(): string {
       <p class="aviso">Este panel necesita JavaScript para consultar el estado local.</p>
     </noscript>
     <div class="rejilla">
+      <article class="tarjeta" aria-labelledby="titulo-chat">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-chat">Chat</h2>
+        </header>
+        <div class="tarjeta-cuerpo">
+          <form id="form-chat" class="chat-form">
+            <label class="buscador" for="texto-chat">
+              Mensaje
+              <textarea
+                id="texto-chat"
+                name="text"
+                rows="3"
+                placeholder="Escribe un mensaje… (Enter envía; Mayús+Enter salta de línea)"
+                autocomplete="off"
+                required
+              ></textarea>
+            </label>
+            <div class="chat-acciones">
+              <button id="enviar-chat" type="submit">Enviar</button>
+            </div>
+          </form>
+          <div id="panel-chat" class="chat-respuesta" aria-live="polite"></div>
+        </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-aprobaciones">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-aprobaciones">Aprobaciones</h2>
+          <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
+        </header>
+        <div id="panel-aprobaciones" class="tarjeta-cuerpo" aria-live="polite">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-estado">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-estado">Estado</h2>
@@ -489,6 +554,47 @@ export function renderPage(): string {
         }
       }
 
+      async function enviar(ruta, cuerpo) {
+        if (!token) {
+          throw new Error(
+            'Falta el token de acceso. Abre /?token=TU_TOKEN una vez para guardarlo en este navegador.'
+          );
+        }
+        var respuesta;
+        try {
+          respuesta = await fetch(ruta, {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(cuerpo),
+            cache: 'no-store',
+            credentials: 'omit'
+          });
+        } catch (error) {
+          throw new Error('No se pudo conectar con el panel local.');
+        }
+        if (respuesta.status === 401) {
+          throw new Error(
+            'Token rechazado. Vuelve a abrir /?token=TU_TOKEN con el token correcto.'
+          );
+        }
+        if (!respuesta.ok) {
+          var detalle = '';
+          try {
+            var datos = await respuesta.json();
+            if (datos && datos.error) detalle = ': ' + datos.error;
+          } catch (error) {}
+          throw new Error('El panel respondió con el código ' + respuesta.status + detalle + '.');
+        }
+        try {
+          return await respuesta.json();
+        } catch (error) {
+          throw new Error('La respuesta del panel no es JSON válido.');
+        }
+      }
+
       function listaDeSesiones(datos) {
         if (Array.isArray(datos)) return datos;
         if (datos && typeof datos === 'object') {
@@ -580,6 +686,154 @@ export function renderPage(): string {
         contenedor.appendChild(detalles);
       }
 
+      var DECISIONES = [
+        { id: 'once', texto: 'Permitir una vez' },
+        { id: 'session', texto: 'Permitir en la sesión' },
+        { id: 'always', texto: 'Permitir siempre' },
+        { id: 'deny', texto: 'Denegar' }
+      ];
+
+      function listaDeAprobaciones(datos) {
+        if (Array.isArray(datos)) return datos;
+        if (datos && typeof datos === 'object') {
+          var claves = ['approvals', 'pending', 'requests', 'items'];
+          for (var i = 0; i < claves.length; i += 1) {
+            if (Array.isArray(datos[claves[i]])) return datos[claves[i]];
+          }
+        }
+        return null;
+      }
+
+      function idAprobacion(item) {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          var claves = ['id', 'approvalId', 'requestId', 'toolCallId', 'callId'];
+          for (var i = 0; i < claves.length; i += 1) {
+            var valor = item[claves[i]];
+            if (valor !== undefined && valor !== null && String(valor) !== '') {
+              return String(valor);
+            }
+          }
+        }
+        return '';
+      }
+
+      function tituloAprobacion(item, indice) {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          var claves = ['title', 'label', 'summary', 'tool', 'toolName', 'action', 'description', 'reason'];
+          for (var i = 0; i < claves.length; i += 1) {
+            var valor = item[claves[i]];
+            if (valor !== undefined && valor !== null && String(valor) !== '') {
+              return String(valor);
+            }
+          }
+        }
+        return 'Aprobación ' + (indice + 1);
+      }
+
+      async function aprobar(id, decision, boton) {
+        boton.disabled = true;
+        try {
+          await enviar('/api/approvals/' + encodeURIComponent(id), { decision: decision });
+          mostrarAviso('');
+          await cargarAprobaciones();
+        } catch (error) {
+          pintarError(document.getElementById('panel-aprobaciones'), error);
+        } finally {
+          boton.disabled = false;
+        }
+      }
+
+      function pintarAprobaciones(contenedor, datos) {
+        contenedor.replaceChildren();
+        var lista = listaDeAprobaciones(datos);
+        if (!lista) {
+          contenedor.appendChild(renderValor(datos, 0));
+          return;
+        }
+        if (lista.length === 0) {
+          contenedor.appendChild(nodo('p', 'muted', 'No hay aprobaciones pendientes.'));
+          return;
+        }
+        contenedor.appendChild(
+          nodo(
+            'p',
+            'muted',
+            lista.length + (lista.length === 1 ? ' aprobación pendiente' : ' aprobaciones pendientes')
+          )
+        );
+        for (var i = 0; i < lista.length; i += 1) {
+          var item = lista[i];
+          var id = idAprobacion(item);
+          var tarjeta = document.createElement('article');
+          tarjeta.className = 'aprobacion';
+          tarjeta.appendChild(nodo('h3', null, tituloAprobacion(item, i)));
+          if (item && typeof item === 'object') {
+            var detalles = document.createElement('details');
+            detalles.appendChild(nodo('summary', null, 'Detalles'));
+            detalles.appendChild(renderValor(item, 1));
+            tarjeta.appendChild(detalles);
+          }
+          var botones = document.createElement('div');
+          botones.className = 'botones';
+          if (id) {
+            for (var j = 0; j < DECISIONES.length; j += 1) {
+              (function (identificador, decision, etiqueta) {
+                var boton = nodo('button', 'mini', etiqueta);
+                boton.type = 'button';
+                boton.addEventListener('click', function () {
+                  aprobar(identificador, decision, boton);
+                });
+                botones.appendChild(boton);
+              })(id, DECISIONES[j].id, DECISIONES[j].texto);
+            }
+          } else {
+            botones.appendChild(nodo('span', 'muted', 'Sin identificador'));
+          }
+          tarjeta.appendChild(botones);
+          contenedor.appendChild(tarjeta);
+        }
+      }
+
+      async function cargarAprobaciones() {
+        var contenedor = document.getElementById('panel-aprobaciones');
+        pintarCarga(contenedor);
+        try {
+          pintarAprobaciones(contenedor, await pedir('/api/approvals'));
+        } catch (error) {
+          pintarError(contenedor, error);
+        }
+      }
+
+      async function enviarChat(evento) {
+        evento.preventDefault();
+        var campo = document.getElementById('texto-chat');
+        var boton = document.getElementById('enviar-chat');
+        var panel = document.getElementById('panel-chat');
+        var texto = campo.value;
+        if (!texto.trim()) {
+          campo.focus();
+          return;
+        }
+        boton.disabled = true;
+        panel.replaceChildren(nodo('p', 'muted', 'Esperando respuesta…'));
+        try {
+          var datos = await enviar('/api/chat', { text: texto });
+          var respuesta =
+            datos && typeof datos === 'object' && typeof datos.text === 'string'
+              ? datos.text
+              : JSON.stringify(datos);
+          panel.replaceChildren(nodo('p', 'texto', respuesta));
+          campo.value = '';
+        } catch (error) {
+          pintarError(panel, error);
+        } finally {
+          boton.disabled = false;
+          campo.focus();
+        }
+      }
+
       async function cargarEstado() {
         var contenedor = document.getElementById('panel-estado');
         pintarCarga(contenedor);
@@ -628,7 +882,8 @@ export function renderPage(): string {
         estado: cargarEstado,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
-        auditoria: cargarAuditoria
+        auditoria: cargarAuditoria,
+        aprobaciones: cargarAprobaciones
       };
 
       function refrescarTodo() {
@@ -636,7 +891,13 @@ export function renderPage(): string {
         var marca = document.getElementById('actualizado');
         boton.disabled = true;
         document.body.setAttribute('aria-busy', 'true');
-        Promise.all([cargarEstado(), cargarSesiones(), cargarMemoria(), cargarAuditoria()])
+        Promise.all([
+          cargarEstado(),
+          cargarSesiones(),
+          cargarMemoria(),
+          cargarAuditoria(),
+          cargarAprobaciones()
+        ])
           .catch(function (error) {})
           .finally(function () {
             boton.disabled = false;
@@ -655,6 +916,15 @@ export function renderPage(): string {
       document.getElementById('ambito-memoria').addEventListener('input', function () {
         window.clearTimeout(temporizadorMemoria);
         temporizadorMemoria = window.setTimeout(cargarMemoria, 300);
+      });
+
+      var formularioChat = document.getElementById('form-chat');
+      formularioChat.addEventListener('submit', enviarChat);
+      document.getElementById('texto-chat').addEventListener('keydown', function (evento) {
+        if (evento.key === 'Enter' && !evento.shiftKey && !evento.isComposing) {
+          evento.preventDefault();
+          formularioChat.requestSubmit();
+        }
       });
 
       document.getElementById('refrescar').addEventListener('click', refrescarTodo);
@@ -691,7 +961,7 @@ export function renderManifest(): string {
   return JSON.stringify({
     name: 'Asistenta',
     short_name: 'Asistenta',
-    description: 'Panel local de solo lectura de Asistenta.',
+    description: 'Panel local de Asistenta: chat, aprobaciones y estado.',
     lang: 'es',
     id: '/',
     start_url: '/',

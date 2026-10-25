@@ -30,7 +30,12 @@ export interface Followup {
   dueAt: number;
   status: 'pending' | 'done';
   createdAt: number;
+  /** Último empuje proactivo; 0/ausente = todavía no se ha avisado. */
+  pushedAt?: number;
 }
+
+/** Ventana por defecto de `dueForPush`: un día de antelación. */
+export const DEFAULT_PUSH_WINDOW_MS = 24 * 3_600_000;
 
 export interface FollowupTrackerOptions {
   db: DatabaseSync;
@@ -57,6 +62,7 @@ function rowToFollowup(row: Record<string, unknown>): Followup {
     dueAt: Number(row.due_at ?? 0),
     status: row.status === 'done' ? 'done' : 'pending',
     createdAt: Number(row.created_at ?? 0),
+    pushedAt: Number(row.pushed_at ?? 0),
   };
 }
 
@@ -78,11 +84,23 @@ export class FollowupTracker {
         last_contact INTEGER NOT NULL,
         due_at INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        pushed_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS idx_followups_status ON followups(status, due_at);
       CREATE INDEX IF NOT EXISTS idx_followups_scope ON followups(scope);
     `);
+    // Bases creadas antes de los empujes: la columna se añade sin perder filas.
+    // Va después del CREATE para que una base nueva no necesite el ALTER.
+    const columns = this.#db.prepare('PRAGMA table_info(followups)').all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === 'pushed_at')) {
+      this.#db.exec('ALTER TABLE followups ADD COLUMN pushed_at INTEGER NOT NULL DEFAULT 0');
+    }
+    this.#db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_followups_push ON followups(status, pushed_at, due_at)',
+    );
   }
 
   /**
@@ -103,7 +121,11 @@ export class FollowupTracker {
            subject = excluded.subject,
            due_at = excluded.due_at,
            last_contact = excluded.last_contact,
-           status = 'pending'`,
+           status = 'pending',
+           pushed_at = CASE
+             WHEN status = 'done' OR due_at <> excluded.due_at THEN 0
+             ELSE pushed_at
+           END`,
       )
       .run(id, scope, kind, subject, now, dueAt, now);
     return id;
@@ -127,6 +149,42 @@ export class FollowupTracker {
       )
       .all(now)
       .map((row) => rowToFollowup(row as Record<string, unknown>));
+  }
+
+  /**
+   * Lo que toca empujar al usuario: notas con fecha ya vencida o que vencen dentro
+   * de `windowMs`, y que todavía no se han empujado. Las notas sin fecha (`dueAt = 0`)
+   * no entran: no tienen un momento objetivo y su aviso por silencio es `overdue()`.
+   *
+   * `windowMs` se acota a cero en vez de aceptar negativos: una ventana negativa
+   * convertiría el empuje en "solo lo que venció antes de ayer", que no es lo pedido.
+   */
+  dueForPush(nowMs: number, opts: { windowMs?: number } = {}): Followup[] {
+    if (!Number.isFinite(nowMs)) return [];
+    const requested = opts.windowMs;
+    const windowMs =
+      requested === undefined || !Number.isFinite(requested)
+        ? DEFAULT_PUSH_WINDOW_MS
+        : Math.max(0, requested);
+    return this.#db
+      .prepare(
+        `SELECT * FROM followups
+         WHERE status = 'pending' AND COALESCE(pushed_at, 0) = 0
+           AND due_at > 0 AND due_at <= ?
+         ORDER BY due_at ASC, created_at ASC`,
+      )
+      .all(nowMs + windowMs)
+      .map((row) => rowToFollowup(row as Record<string, unknown>));
+  }
+
+  /**
+   * Marca una nota como empujada para que `dueForPush` no la repita. Con la base en
+   * fichero (`paths.db`) la marca sobrevive al reinicio; con `':memory:'`, como en
+   * los tests, vive solo mientras dure esa conexión.
+   */
+  markPushed(id: string, ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) throw new Error('markPushed necesita un instante válido');
+    this.#db.prepare('UPDATE followups SET pushed_at = ? WHERE id = ?').run(ms, id);
   }
 
   /** Notes nobody has touched in `days` days. Defaults to the tracker's own window. */

@@ -25,7 +25,9 @@ describe('Gate approval scopes', () => {
   });
 
   it('allows through an `always` scope without asking, and keeps it across gates', async () => {
-    // Without a scope this gate would ask: shell is not allow-listed here.
+    // Without a scope this gate would ask: fetch is not allow-listed here.
+    // `fetch` GET es una herramienta segura para un permiso reutilizable; `shell`
+    // ya no lo es (ver scopes-v2: un comando aprobado no autoriza otro).
     const dbPath = join(dir, 'scopes.db');
     let asked = 0;
     const approver = () => {
@@ -33,12 +35,12 @@ describe('Gate approval scopes', () => {
       return true;
     };
     const gate = new Gate({ dbPath, grantWindowMs: 0, approver });
-    gate.setScope('s1', 'shell', 'always');
-    expect(gate.scopeFor('s1', 'shell')).toBe('always');
+    gate.setScope('s1', 'fetch', 'always');
+    expect(gate.scopeFor('s1', 'fetch')).toBe('always');
 
     const first = await gate.check('s1', {
-      tool: 'shell',
-      args: { command: 'Get-ChildItem' },
+      tool: 'fetch',
+      args: { url: 'https://example.com/a' },
       actor: 'local',
     });
     expect(first.verdict).toBe('allow');
@@ -47,10 +49,10 @@ describe('Gate approval scopes', () => {
     // The point of `always`: a second Gate over the same file must load the grant
     // instead of asking again after a restart.
     const reborn = new Gate({ dbPath, grantWindowMs: 0, approver });
-    expect(reborn.scopeFor('s1', 'shell')).toBe('always');
+    expect(reborn.scopeFor('s1', 'fetch')).toBe('always');
     const second = await reborn.check('other-session', {
-      tool: 'shell',
-      args: { command: 'Get-Date' },
+      tool: 'fetch',
+      args: { url: 'https://example.com/b' },
       actor: 'local',
     });
     expect(second.verdict).toBe('allow');
@@ -68,17 +70,21 @@ describe('Gate approval scopes', () => {
     };
     const threadA = new Gate({ dbPath, grantWindowMs: 0, approver });
     const threadB = new Gate({ dbPath, grantWindowMs: 0, approver });
-    threadA.setScope('a', 'shell', 'always');
+    threadA.setScope('a', 'fetch', 'always');
 
-    expect(threadB.scopeFor('b', 'shell')).toBe('always');
-    const call = { tool: 'shell', args: { command: 'Get-Date' }, actor: 'local' } as const;
+    expect(threadB.scopeFor('b', 'fetch')).toBe('always');
+    const call = {
+      tool: 'fetch',
+      args: { url: 'https://example.com/a' },
+      actor: 'local',
+    } as const;
     const decision = await threadB.check('b', call);
     expect(decision.verdict).toBe('allow');
     expect(asked).toBe(0);
 
     // And the revocation reaches the live gate too, not only gates built later.
-    expect(threadA.revokeAlways('shell')).toBe(true);
-    expect(threadB.scopeFor('b', 'shell')).toBe('unset');
+    expect(threadA.revokeAlways('fetch')).toBe(true);
+    expect(threadB.scopeFor('b', 'fetch')).toBe('unset');
     await threadB.check('b', call);
     expect(asked).toBe(1);
   });
@@ -86,6 +92,8 @@ describe('Gate approval scopes', () => {
   it('never lets an `always` scope cover payments or credentials', async () => {
     // Money and credentials always ask. An `always` grant the model could spend on
     // a card number or `id_rsa` is a standing grant on everything those unlock.
+    // `browser` puede llevar `always` para acciones normales, así que es la
+    // herramienta que demuestra la exclusión dentro del MISMO tool.
     let asked = 0;
     const gate = new Gate({
       dbPath: join(dir, 'scopes.db'),
@@ -95,16 +103,16 @@ describe('Gate approval scopes', () => {
         return true;
       },
     });
-    gate.setScope('s1', 'shell', 'always');
+    gate.setScope('s1', 'browser', 'always');
 
     const payment = await gate.check('s1', {
-      tool: 'shell',
-      args: { command: 'pay card 4111111111111111' },
+      tool: 'browser',
+      args: { action: 'click', selector: 'text=Pagar ahora' },
       actor: 'local',
     });
     const credential = await gate.check('s1', {
-      tool: 'shell',
-      args: { command: 'type C:\\Users\\nicoi\\.ssh\\id_rsa' },
+      tool: 'browser',
+      args: { action: 'fill', selector: '#password', secret_key: 'clave' },
       actor: 'local',
     });
     expect(asked).toBe(2);
@@ -126,9 +134,11 @@ describe('Gate approval scopes', () => {
     });
     gate.setScope('s1', 'computer', 'session');
 
+    // `screenshot` es una acción de `computer` que sí admite scope; un clic o
+    // una tecla nunca (ver scopes-v2).
     const covered = await gate.check('s1', {
       tool: 'computer',
-      args: { action: 'click', x: 1, y: 1 },
+      args: { action: 'screenshot' },
       actor: 'local',
     });
     expect(covered.verdict).toBe('allow');
@@ -141,7 +151,7 @@ describe('Gate approval scopes', () => {
     clock.mockReturnValue(start + 25);
     const expired = await gate.check('s1', {
       tool: 'computer',
-      args: { action: 'click', x: 9, y: 9 },
+      args: { action: 'screenshot' },
       actor: 'local',
     });
     expect(asked).toBe(1);
@@ -198,11 +208,15 @@ describe('Gate approval scopes', () => {
         return true;
       },
     });
-    gate.setScope('s1', 'shell', 'always');
-    gate.setScope('s1', 'shell', 'once');
-    expect(gate.scopeFor('s1', 'shell')).toBe('once');
+    gate.setScope('s1', 'fetch', 'always');
+    gate.setScope('s1', 'fetch', 'once');
+    expect(gate.scopeFor('s1', 'fetch')).toBe('once');
 
-    await gate.check('s1', { tool: 'shell', args: { command: 'Get-Date' }, actor: 'local' });
+    await gate.check('s1', {
+      tool: 'fetch',
+      args: { url: 'https://example.com/a' },
+      actor: 'local',
+    });
     expect(asked).toBe(1);
 
     // And the revocation is durable: a fresh Gate must not resurrect the grant.
@@ -214,7 +228,7 @@ describe('Gate approval scopes', () => {
         return true;
       },
     });
-    expect(reborn.scopeFor('s1', 'shell')).toBe('unset');
+    expect(reborn.scopeFor('s1', 'fetch')).toBe('unset');
   });
 
   it('keeps the deny list a wall that no scope can talk past', async () => {
@@ -227,11 +241,11 @@ describe('Gate approval scopes', () => {
   it('drops session scopes when the session ends but keeps `always`', async () => {
     const gate = new Gate({ grantWindowMs: 60_000, approver: () => true });
     gate.setScope('s1', 'computer', 'session');
-    gate.setScope('s1', 'shell', 'always');
+    gate.setScope('s1', 'fetch', 'always');
     gate.clearSession('s1');
     expect(gate.scopeFor('s1', 'computer')).toBe('unset');
     // `always` is a standing decision, not part of any one task.
-    expect(gate.scopeFor('s1', 'shell')).toBe('always');
+    expect(gate.scopeFor('s1', 'fetch')).toBe('always');
   });
 });
 

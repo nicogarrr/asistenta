@@ -49,9 +49,44 @@ export const COSINE_THRESHOLD = 0.92;
 const CONTAIN_MIN = 12;
 /** Cada dia a partir de las 03:00 locales, una vez cada 20 h (como el backup). */
 const DAY_MS = 24 * 3_600_000;
+/** Hora local en la que se abre la ventana diaria de consolidacion. */
+export const CONSOLIDATION_DAILY_HOUR = 4;
+/** Solape minimo del predicado para considerar que dos balas hablan de lo mismo. */
+const POLARITY_OVERLAP = 0.6;
+/** Marcadores de negacion reconocidos (siempre sobre texto plegado). */
+const NEGATION_WORDS = new Set(['no', 'nunca', 'jamas']);
 
 export function isConsolidationDue(now: Date, lastRunMs: number): boolean {
   return now.getHours() >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
+}
+
+/** Inicio de la ventana diaria en hora local, no en UTC. */
+function dailyWindowStart(now: Date): number {
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    CONSOLIDATION_DAILY_HOUR,
+  ).getTime();
+}
+
+/**
+ * La ventana diaria ya esta abierta (por defecto, desde las 04:00 locales).
+ * Por si sola no sabe si hoy ya se ejecuto: eso lo decide consolidationDue.
+ */
+export function shouldConsolidateDaily(now: Date): boolean {
+  return now.getTime() >= dailyWindowStart(now);
+}
+
+/**
+ * Toca consolidar hoy. Sin ejecucion previa, en cuanto se abre la ventana;
+ * con ella, solo si la ultima pasada fue antes de la ventana de hoy. Asi una
+ * caida a las 04:05 se recupera esa misma manana y no se repite en el dia.
+ */
+export function consolidationDue(lastRunMs: number | undefined, now: Date): boolean {
+  if (!shouldConsolidateDaily(now)) return false;
+  if (lastRunMs === undefined || !Number.isFinite(lastRunMs)) return true;
+  return lastRunMs < dailyWindowStart(now);
 }
 
 /** Misma normalizacion en todo el modulo: acentos, mayusculas y espacios fuera. */
@@ -81,11 +116,55 @@ export function tokenJaccard(a: string, b: string): number {
   return shared / (ta.size + tb.size - shared);
 }
 
+interface NegationSplit {
+  negated: boolean;
+  /** Texto plegado sin los marcadores de negacion. */
+  core: string;
+}
+
+/** Separa una bala en "niega / no niega" y el predicado que queda. */
+function splitNegation(text: string): NegationSplit {
+  const folded = foldText(text);
+  const parts = folded.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 0);
+  const negated = parts.some((token) => NEGATION_WORDS.has(token));
+  if (!negated) return { negated: false, core: folded };
+  return {
+    negated: true,
+    core: parts.filter((token) => !NEGATION_WORDS.has(token)).join(' '),
+  };
+}
+
+/** Mismo predicado: igual, contenido o con solape de tokens suficiente. */
+function sharesPredicate(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= CONTAIN_MIN && b.length >= CONTAIN_MIN && (a.includes(b) || b.includes(a))) {
+    return true;
+  }
+  return tokenJaccard(a, b) >= POLARITY_OVERLAP;
+}
+
+/**
+ * Una bala afirma y la otra niega el mismo predicado ("vive en Madrid" /
+ * "no vive en Madrid", "nunca come carne" / "come carne"). Son informacion
+ * distinta, no un duplicado: fusionarlas borraria una de las dos versiones.
+ */
+export function isPolarityConflict(a: string, b: string): boolean {
+  const left = splitNegation(a);
+  const right = splitNegation(b);
+  if (left.negated === right.negated) return false;
+  const negated = left.negated ? left : right;
+  const affirmative = left.negated ? right : left;
+  return sharesPredicate(negated.core, affirmative.core);
+}
+
 /** Duplicado lexico: identicas plegadas, contenidas o con solape de tokens alto. */
 export function lexicalDuplicate(a: string, b: string): boolean {
   const fa = foldText(a);
   const fb = foldText(b);
   if (!fa || !fb) return false;
+  // Una contradiccion no es un duplicado: se conservan las dos versiones.
+  if (isPolarityConflict(fa, fb)) return false;
   if (fa === fb) return true;
   if (
     fa.length >= CONTAIN_MIN &&
@@ -177,6 +256,10 @@ export async function groupDuplicates<T extends Groupable>(
       const ib = live[b] ?? 0;
       const ta = items[ia]?.text ?? '';
       const tb = items[ib]?.text ?? '';
+      // La guarda de polaridad manda sobre lexico y coseno: dos versiones
+      // contradictorias del mismo hecho se quedan ambas, aunque el modelo las
+      // vea casi identicas.
+      if (isPolarityConflict(ta, tb)) continue;
       let dup = lexicalDuplicate(ta, tb);
       if (!dup) {
         const va = vectors.get(ia);

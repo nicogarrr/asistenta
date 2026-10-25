@@ -3,15 +3,39 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { log } from '../log.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 
+/** Decisiones que acepta una aprobacion del panel. */
+export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny';
+
 export interface WebUiDeps {
   token: string;
   status(): unknown | Promise<unknown>;
   sessions(query?: string): unknown | Promise<unknown>;
   memory(scope?: string): unknown | Promise<unknown>;
   auditVerify(): unknown | Promise<unknown>;
+  /** Chat libre desde el panel. Si falta, la ruta responde 503. */
+  chat?(text: string): Promise<{ text: string }>;
+  /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
+  approvals?(): unknown;
+  /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
+  approve?(id: string, decision: ApprovalDecision): Promise<void>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
+const MAX_BODY_BYTES = 64 * 1024;
+const DECISIONS = new Set<ApprovalDecision>(['once', 'session', 'always', 'deny']);
+
+class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 const PAGE_CSP = [
   "default-src 'none'",
@@ -26,7 +50,14 @@ const PAGE_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-type ApiHandler = () => unknown | Promise<unknown>;
+type ApiRoute =
+  | { method: 'GET'; kind: 'status' }
+  | { method: 'GET'; kind: 'sessions' }
+  | { method: 'GET'; kind: 'memory' }
+  | { method: 'GET'; kind: 'audit' }
+  | { method: 'GET'; kind: 'approvals' }
+  | { method: 'POST'; kind: 'chat' }
+  | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -88,49 +119,116 @@ function queryParam(url: URL, name: string): string | undefined {
   return value === null ? undefined : value;
 }
 
-function apiHandler(deps: WebUiDeps, pathname: string, url: URL): ApiHandler | null {
+function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+function matchApiRoute(pathname: string): ApiRoute | null {
   switch (pathname) {
     case '/api/status':
-      return () => deps.status();
-    case '/api/sessions': {
-      const query = queryParam(url, 'q');
-      return () => deps.sessions(query);
-    }
-    case '/api/memory': {
-      const scope = queryParam(url, 'scope');
-      return () => deps.memory(scope);
-    }
+      return { method: 'GET', kind: 'status' };
+    case '/api/sessions':
+      return { method: 'GET', kind: 'sessions' };
+    case '/api/memory':
+      return { method: 'GET', kind: 'memory' };
     case '/api/audit/verify':
-      return () => deps.auditVerify();
+      return { method: 'GET', kind: 'audit' };
+    case '/api/approvals':
+      return { method: 'GET', kind: 'approvals' };
+    case '/api/chat':
+      return { method: 'POST', kind: 'chat' };
     default:
-      return null;
+      break;
   }
+  const match = /^\/api\/approvals\/([^/]+)$/.exec(pathname);
+  if (!match?.[1]) return null;
+  const id = safeDecode(match[1]);
+  if (!id) return null;
+  return { method: 'POST', kind: 'approval', id };
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'Cuerpo demasiado grande');
+    chunks.push(chunk);
+  }
+  if (size === 0) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new HttpError(400, 'JSON inválido');
+  }
+  if (!isRecord(parsed)) throw new HttpError(400, 'Se esperaba un objeto JSON');
+  return parsed;
 }
 
 async function respondApi(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WebUiDeps,
-  pathname: string,
+  route: ApiRoute,
   url: URL,
 ): Promise<void> {
-  const handler = apiHandler(deps, pathname, url);
-  if (!handler) {
-    sendJson(res, 404, { error: 'No encontrado' });
-    return;
-  }
-  if (!authorized(req, deps.token)) {
-    res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
-    sendJson(res, 401, { error: 'No autorizado' });
-    return;
-  }
   let payload: unknown;
   try {
-    payload = await handler();
+    const body = route.method === 'POST' ? await readJsonBody(req) : {};
+    switch (route.kind) {
+      case 'status':
+        payload = await deps.status();
+        break;
+      case 'sessions':
+        payload = await deps.sessions(queryParam(url, 'q'));
+        break;
+      case 'memory':
+        payload = await deps.memory(queryParam(url, 'scope'));
+        break;
+      case 'audit':
+        payload = await deps.auditVerify();
+        break;
+      case 'approvals':
+        if (!deps.approvals) throw new HttpError(503, 'Aprobaciones no disponibles');
+        payload = await deps.approvals();
+        break;
+      case 'chat': {
+        const text = body.text;
+        if (typeof text !== 'string' || text.trim().length === 0) {
+          throw new HttpError(400, 'Falta el texto del mensaje');
+        }
+        if (!deps.chat) throw new HttpError(503, 'Chat no disponible');
+        const answer = await deps.chat(text);
+        if (!isRecord(answer) || typeof answer.text !== 'string') {
+          throw new Error('deps.chat devolvio una respuesta invalida');
+        }
+        payload = { text: answer.text };
+        break;
+      }
+      case 'approval': {
+        const decision = body.decision;
+        if (typeof decision !== 'string' || !DECISIONS.has(decision as ApprovalDecision)) {
+          throw new HttpError(400, 'Decisión inválida');
+        }
+        if (!deps.approve) throw new HttpError(503, 'Aprobaciones no disponibles');
+        await deps.approve(route.id, decision as ApprovalDecision);
+        payload = { ok: true };
+        break;
+      }
+    }
   } catch (error) {
+    if (error instanceof HttpError) {
+      sendJson(res, error.status, { error: error.message });
+      return;
+    }
     // El cliente recibe un 500 opaco; el detalle solo va al registro local.
     log.warn('webui: fallo una dependencia', {
-      ruta: pathname,
+      ruta: route.kind,
       error: describeError(error),
     });
     sendJson(res, 500, { error: 'Error interno' });
@@ -152,12 +250,22 @@ async function handleRequest(
 
   if (apiPath) {
     res.setHeader('Cache-Control', 'no-store');
-    if (method !== 'GET') {
-      res.setHeader('Allow', 'GET');
+    const route = matchApiRoute(pathname);
+    if (!route) {
+      sendJson(res, 404, { error: 'No encontrado' });
+      return;
+    }
+    if (method !== route.method) {
+      res.setHeader('Allow', route.method);
       sendJson(res, 405, { error: 'Método no permitido' });
       return;
     }
-    await respondApi(req, res, deps, pathname, url);
+    if (!authorized(req, deps.token)) {
+      res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
+      sendJson(res, 401, { error: 'No autorizado' });
+      return;
+    }
+    await respondApi(req, res, deps, route, url);
     return;
   }
 

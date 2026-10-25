@@ -6,6 +6,9 @@
  *  - echo: devuelve los argumentos recibidos como JSON.
  *  - boom: devuelve un resultado con isError.
  *
+ * Resources: echo://saludo y echo://nota.
+ * Prompts: saludo (argumento nombre).
+ *
  * Flags:
  *  - --hang-tools: ignora tools/list y tools/call (para probar timeouts).
  *  - --exit-after-tools-list: termina justo despues de responder tools/list.
@@ -34,6 +37,29 @@ const tools = [
   },
 ];
 
+const resources = [
+  {
+    uri: 'echo://saludo',
+    name: 'Saludo',
+    description: 'Texto fijo del fixture.',
+    mimeType: 'text/plain',
+  },
+  {
+    uri: 'echo://nota',
+    name: 'Nota',
+    description: 'Otra nota de prueba.',
+    mimeType: 'text/markdown',
+  },
+];
+
+const prompts = [
+  {
+    name: 'saludo',
+    description: 'Genera un saludo para una persona.',
+    arguments: [{ name: 'nombre', description: 'Nombre a saludar', required: true }],
+  },
+];
+
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -53,7 +79,7 @@ function handle(message) {
   if (method === 'initialize' && isRequest) {
     reply(id, {
       protocolVersion: '2024-11-05',
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, resources: {}, prompts: {} },
       serverInfo: { name: 'mcp-echo-fixture', version: '1.0.0' },
     });
     return;
@@ -94,6 +120,52 @@ function handle(message) {
         isError: true,
       });
     }
+    return;
+  }
+
+  if (method === 'resources/list' && isRequest) {
+    reply(id, { resources });
+    return;
+  }
+
+  if (method === 'resources/read' && isRequest) {
+    const uri = params?.uri;
+    const recurso = resources.find((item) => item.uri === uri);
+    if (!recurso) {
+      fail(id, -32002, `recurso desconocido: ${uri}`);
+      return;
+    }
+    const texto =
+      recurso.uri === 'echo://saludo'
+        ? 'hola desde el fixture'
+        : 'nota del fixture con **markdown**';
+    reply(id, {
+      contents: [{ uri: recurso.uri, mimeType: recurso.mimeType, text: texto }],
+    });
+    return;
+  }
+
+  if (method === 'prompts/list' && isRequest) {
+    reply(id, { prompts });
+    return;
+  }
+
+  if (method === 'prompts/get' && isRequest) {
+    const nombre = params?.name;
+    if (nombre !== 'saludo') {
+      fail(id, -32003, `prompt desconocido: ${nombre}`);
+      return;
+    }
+    const args = params?.arguments ?? {};
+    reply(id, {
+      description: 'Saludo generado por el fixture.',
+      messages: [
+        {
+          role: 'user',
+          content: { type: 'text', text: `Hola, ${args.nombre ?? 'mundo'}.` },
+        },
+      ],
+    });
     return;
   }
 

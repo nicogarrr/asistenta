@@ -6,6 +6,7 @@ import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import { createGeminiSignatureFetch } from './gemini-signature.js';
+import { resolveModelCaps } from './models.js';
 import { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } from './opencode-local.js';
 
 /**
@@ -73,6 +74,12 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   if (config.provider === 'opencode-local') {
     return createLocalHandle(config);
   }
+  // Capacidades del catalogo (env > preset > defaults). El modelo de fallback
+  // puede tener otra ventana/precio y se resuelve por separado.
+  const caps = resolveModelCaps(config);
+  const fallbackCaps = config.fallbackModel
+    ? resolveModelCaps({ ...config, model: config.fallbackModel })
+    : caps;
   const key = await resolveApiKey(config.baseUrl);
 
   const models = createModels({
@@ -101,10 +108,10 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
         // (400 con store, 200 sin el).
         ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
         // Image input is not optional here: computer use is the whole point.
-        input: ['text', 'image'],
-        reasoning: false,
-        contextWindow: config.contextWindowTokens,
-        maxTokens: config.maxOutputTokens,
+        input: (caps.supportsImages ? ['text', 'image'] : ['text']) as Array<'text' | 'image'>,
+        reasoning: caps.reasoning,
+        contextWindow: caps.contextWindow,
+        maxTokens: caps.maxOutput,
         // Unknown cost, not zero cost. See docs note: budget code must not treat 0 as free.
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
@@ -120,10 +127,12 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
               provider: config.provider,
               baseUrl: config.baseUrl,
               ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
-              input: ['text', 'image'] as Array<'text' | 'image'>,
-              reasoning: false,
-              contextWindow: config.contextWindowTokens,
-              maxTokens: config.maxOutputTokens,
+              input: (fallbackCaps.supportsImages ? ['text', 'image'] : ['text']) as Array<
+                'text' | 'image'
+              >,
+              reasoning: fallbackCaps.reasoning,
+              contextWindow: fallbackCaps.contextWindow,
+              maxTokens: fallbackCaps.maxOutput,
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             },
           ]
@@ -229,6 +238,10 @@ export function isOpenCodeLocalProvider(provider: string): boolean {
  * chat-completions (medido: su API es de sesiones).
  */
 async function createLocalHandle(config: Config): Promise<ProviderHandle> {
+  const caps = resolveModelCaps(config);
+  const fallbackCaps = config.fallbackModel
+    ? resolveModelCaps({ ...config, model: config.fallbackModel })
+    : caps;
   const stream = createOpenCodeLocalStream({
     url: config.baseUrl,
     model: config.model,
@@ -250,10 +263,10 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
         api: 'openai-completions',
         provider: config.provider,
         baseUrl: config.baseUrl,
-        input: ['text', 'image'],
-        reasoning: false,
-        contextWindow: config.contextWindowTokens,
-        maxTokens: config.maxOutputTokens,
+        input: (caps.supportsImages ? ['text', 'image'] : ['text']) as Array<'text' | 'image'>,
+        reasoning: caps.reasoning,
+        contextWindow: caps.contextWindow,
+        maxTokens: caps.maxOutput,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
       // Quota fallback (P2-17): the local serve exposes the -free siblings on
@@ -268,10 +281,12 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
               api: 'openai-completions' as const,
               provider: config.provider,
               baseUrl: config.baseUrl,
-              input: ['text', 'image'] as Array<'text' | 'image'>,
-              reasoning: false,
-              contextWindow: config.contextWindowTokens,
-              maxTokens: config.maxOutputTokens,
+              input: (fallbackCaps.supportsImages ? ['text', 'image'] : ['text']) as Array<
+                'text' | 'image'
+              >,
+              reasoning: fallbackCaps.reasoning,
+              contextWindow: fallbackCaps.contextWindow,
+              maxTokens: fallbackCaps.maxOutput,
               cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             },
           ]
