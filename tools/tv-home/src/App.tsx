@@ -10,7 +10,7 @@ import type {AppItem} from './lib/apps';
 import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
 import {ConfigContext, loadConfig, saveConfig, type HomeConfig} from './lib/config';
 import {fetchPicks, type Pick} from './service/tmdb';
-import {launchApp, listLaunchPoints, blockScreenSaver, assertSoundOutput, guardSoundOutput, isWebOS} from './service/luna';
+import {launchApp, listLaunchPoints, blockScreenSaver, assertSoundOutput, guardSoundOutput, isWebOS, noteVisible} from './service/luna';
 
 const IDLE_MS = 60_000;      // sin input este tiempo → reloj ambient
 const JITTER_MS = 150_000;   // guardia OLED: desplaza la UI ±2px con esta cadencia
@@ -103,7 +103,8 @@ export default function App () {
 	useEffect(() => {
 		if (!isWebOS()) return;
 		const cancelGuard = guardSoundOutput();
-		const onVis = () => { if (!document.hidden) assertSoundOutput().catch(() => { /* best-effort */ }); };
+		const onVis = () => { if (!document.hidden) { assertSoundOutput().catch(() => { /* best-effort */ }); noteVisible(); } };
+		noteVisible();
 		document.addEventListener('visibilitychange', onVis);
 		return () => { cancelGuard(); document.removeEventListener('visibilitychange', onVis); };
 	}, []);

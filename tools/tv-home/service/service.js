@@ -28,6 +28,31 @@ log('start pid=' + process.pid + ' args=[' + ARGS.join(' ') + ']');
 
 service.register('status', function (m) { m.respond({ returnValue: true, running: true, pid: process.pid }); });
 
+// El watcher homehook (service/homehook/watch.sh) comprueba que la app se mostro
+// de verdad mirando la fecha de este fichero; la app lo toca al hacerse visible
+// (ver src/service/luna.ts noteVisible). Mismo mecanismo que el ALIVE de Hearth.
+// El heartbeat se escribe en un directorio propio (no directamente en /tmp) y NUNCA siguiendo
+// enlaces: este servicio puede ejecutarse como root, y un symlink plantado en la ruta haria que
+// escribiera sobre cualquier fichero. Alcance minimo: solo una marca de tiempo.
+var HB_DIR = '/tmp/customhome-hb';
+var HB_FILE = HB_DIR + '/alive';
+function writeHeartbeat() {
+	var me = typeof process.getuid === 'function' ? process.getuid() : -1;
+	try { fs.mkdirSync(HB_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') return false; }
+	var st = fs.lstatSync(HB_DIR);
+	// debe ser un directorio de verdad (no enlace), nuestro, sin escritura para otros
+	if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== me || (st.mode & 0o022) !== 0) return false;
+	var C = fs.constants;
+	var fd = fs.openSync(HB_FILE, C.O_WRONLY | C.O_CREAT | C.O_TRUNC | C.O_NOFOLLOW, 0o644);
+	try { fs.writeSync(fd, String(Date.now())); } finally { fs.closeSync(fd); }
+	return true;
+}
+service.register('alive', function (m) {
+	var ok = false;
+	try { ok = writeHeartbeat(); } catch (e) { /* enlace plantado o sin permisos: no se escribe */ }
+	m.respond({ returnValue: true, written: ok });
+});
+
 function launchId(id, reason) {
 	service.call('luna://com.webos.applicationManager/launch', { id: id }, function (m) {
 		log('launch ' + id + ' (' + reason + '): ' + JSON.stringify(m && m.payload));

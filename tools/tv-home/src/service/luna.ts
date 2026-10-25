@@ -60,6 +60,14 @@ export function launchApp (id: string, params: Params = {}): Promise<unknown> {
 	return lunaCall('com.webos.applicationManager', 'launch', {id, params});
 }
 
+/** Toca /tmp/customhome-alive a traves de nuestro servicio registrado: el watcher
+ *  homehook (service/homehook/watch.sh) la usa para comprobar que la app se
+ *  mostro de verdad tras lanzarla. Best-effort: sin servicio no pasa nada. */
+export function noteVisible (): void {
+	if (!isWebOS()) return;
+	lunaCall('tld.my.customhome.service', 'alive', {}).catch(() => { /* best-effort */ });
+}
+
 /** Parsed shape of a getSoundOutput response / subscription push. */
 interface SoundOutputMsg {
 	soundOutput?: string;

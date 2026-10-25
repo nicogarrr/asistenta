@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "node scripts/deploy.mjs",
+    "test": "sh service/homehook/test-homehook.sh",
     "test:greeting": "node --test test/greeting.test.mjs"
   },
   "dependencies": {
