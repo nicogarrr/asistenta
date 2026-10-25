@@ -41,17 +41,18 @@ describe('buildIconScript', () => {
     const script = buildIconScript(['/a/one.png', '/b/two.png']);
     expect(script).toContain("printf '%d ' 0");
     expect(script).toContain("printf '%d ' 1");
-    expect(script).toContain("base64 '/a/one.png'");
+    expect(script).toContain("readlink -f '/a/one.png'");
+    expect(script).toContain('base64');
     expect(script).not.toContain('netflix');
   });
 });
 
 describe('parseIconOutput', () => {
   it('mapea por índice e ignora basura, fuera de rango y no-base64', () => {
-    const out = '0 aGVsbG8=\nbasura sin sentido\n1 Y2hhdQ==\n7 ZnVl\n2 no-es-b64!!';
+    const out = '0 iVBORw0KGgoA\nbasura sin sentido\n1 /9j/4AAQ\n7 ZnVl\n2 no-es-b64!!';
     const r = parseIconOutput(out, 2);
-    expect(r[0]).toBe('data:image/png;base64,aGVsbG8=');
-    expect(r[1]).toBe('data:image/png;base64,Y2hhdQ==');
+    expect(r[0]).toBe('data:image/png;base64,iVBORw0KGgoA');
+    expect(r[1]).toBe('data:image/png;base64,/9j/4AAQ');
     expect(r[7]).toBeUndefined();
     expect(r[2]).toBeUndefined();
   });
@@ -93,12 +94,14 @@ describe('caché de iconos', () => {
   });
 });
 
-import { isReadableIconPath, clearIconCache, ICON_MAX_BYTES } from '../tools/tv-home/src/service/appexec';
+import { looksLikeImage, isReadableIconPath, clearIconCache, ICON_MAX_BYTES } from '../tools/tv-home/src/service/appexec';
 
 describe('isReadableIconPath (appinfo no es de fiar)', () => {
   it('acepta iconos de raices de apps', () => {
     expect(isReadableIconPath('/media/developer/apps/usr/palm/applications/netflix/icon.png')).toBe(true);
     expect(isReadableIconPath('/usr/palm/applications/com.webos.app.home/largeIcon.PNG')).toBe(true);
+    expect(isReadableIconPath('/mnt/lg/x.png')).toBe(false);
+    expect(isReadableIconPath('/media/developer/x.png')).toBe(false);
   });
   it('rechaza traversal, raices ajenas y no imagenes', () => {
     for (const bad of [
@@ -111,16 +114,28 @@ describe('isReadableIconPath (appinfo no es de fiar)', () => {
 describe('limites', () => {
   it('parseIconOutput descarta iconos sobre el tope', () => {
     const big = 'A'.repeat(Math.ceil(ICON_MAX_BYTES / 3) * 4 + 4);
-    expect(parseIconOutput(`0 ${big}\n1 QUJD`, 2)).toEqual({ 1: 'data:image/png;base64,QUJD' });
+    expect(parseIconOutput(`0 ${big}\n1 iVBORw0KGgoA`, 2)).toEqual({ 1: 'data:image/png;base64,iVBORw0KGgoA' });
   });
   it('el script comprueba fichero y tamano antes de leer', () => {
     const s = buildIconScript(['/usr/palm/a/i.png']);
-    expect(s).toContain('[ -f ');
-    expect(s).toContain(`-le ${ICON_MAX_BYTES}`);
+    expect(s).toContain('readlink -f');          // ruta canonica (symlinks resueltos)
+    expect(s).toContain('exec 3<');              // se abre una vez
+    expect(s).toContain('/proc/self/fd/3');      // y se recomprueba el fichero abierto (TOCTOU)
+    expect(s).toContain(`head -c ${ICON_MAX_BYTES + 3}`); // tope de lectura
+    expect(s).toContain('/usr/palm/applications/*'); // raices canonicas permitidas
   });
   it('clearIconCache borra la clave', () => {
     const st = fakeStorage(); st.setItem(ICON_CACHE_KEY, '{}');
     clearIconCache({ removeItem: (k: string) => void st.store.delete(k) });
     expect(st.store.has(ICON_CACHE_KEY)).toBe(false);
+  });
+});
+
+describe('magic bytes', () => {
+  it('descarta lo que no es imagen aunque se llame .png', () => {
+    expect(looksLikeImage('iVBORw0KGgoAAAANS')).toBe(true);
+    expect(looksLikeImage('/9j/4AAQ')).toBe(true);
+    expect(looksLikeImage('c2VjcmV0Cg==')).toBe(false); // "secret\n"
+    expect(parseIconOutput('0 c2VjcmV0Cg==\n1 iVBORw0KGgoAAAANS', 2)).toEqual({ 1: 'data:image/png;base64,iVBORw0KGgoAAAANS' });
   });
 });
