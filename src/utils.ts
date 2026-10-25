@@ -44,6 +44,22 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, message: string)
  * Strictly FIFO on purpose: a later caller that arrived later should not jump the
  * queue, or a long browser task would starve a quick click forever.
  */
+function abortError(): Error {
+  const err = new Error('operación cancelada');
+  err.name = 'AbortError';
+  return err;
+}
+
+function abortRejection(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    signal.addEventListener('abort', () => reject(abortError()), { once: true });
+  });
+}
+
 export class Mutex {
   #tail: Promise<void> = Promise.resolve();
   #pending = 0;
@@ -53,7 +69,13 @@ export class Mutex {
     return this.#pending;
   }
 
-  async run<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * signal cancela la ESPERA (no solo la acción): si el usuario pulsa /stop
+   * mientras este tool espera el turno de la máquina, no debe ejecutarse cuando
+   * por fin le toque. La acción en curso no se interrumpe aquí: para eso está el
+   * signal que ya recibe el propio tool.
+   */
+  async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     this.#pending++;
     const previous = this.#tail;
     let release!: () => void;
@@ -61,7 +83,13 @@ export class Mutex {
       release = resolve;
     });
     try {
-      await previous;
+      if (signal) {
+        if (signal.aborted) throw abortError();
+        await Promise.race([previous, abortRejection(signal)]);
+        if (signal.aborted) throw abortError();
+      } else {
+        await previous;
+      }
       return await fn();
     } finally {
       this.#pending--;

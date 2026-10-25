@@ -153,7 +153,11 @@ function secretStatePaths(): string[] {
 }
 
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
+import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
+import { parseMcpServers } from './mcp/client.js';
+import { createMcpTools } from './mcp/tools.js';
+import { OwnerProfile } from './memory/profile.js';
 import {
   currentLimits,
   getPace,
@@ -187,6 +191,7 @@ import {
 import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
+import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
@@ -275,6 +280,7 @@ import {
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
+import { startWebUi } from './webui/server.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
@@ -1581,6 +1587,42 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threads = new Map<string, Thread>();
   /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
+  // --- Integraciones opcionales del daemon -----------------------------------
+  // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
+  // entran en todos los hilos. Un servidor caído se salta y no impide arrancar.
+  const mcpServers = parseMcpServers(process.env.PA_MCP_SERVERS);
+  const mcpTools = mcpServers.length
+    ? await createMcpTools(mcpServers).catch((err: unknown) => {
+        log.warn('mcp: no se pudieron arrancar los servidores', { err });
+        return [] as AgentTool[];
+      })
+    : [];
+  if (mcpTools.length)
+    log.info('mcp: tools listas', { servers: mcpServers.length, tools: mcpTools.length });
+  // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
+  if (process.env.PA_WEB_PORT) {
+    const webToken = process.env.PA_WEB_TOKEN;
+    if (!webToken) log.warn('PA_WEB_PORT sin PA_WEB_TOKEN: panel web no arrancado');
+    else {
+      void startWebUi(
+        {
+          token: webToken,
+          status: () => ({
+            model: config.model,
+            provider: config.provider,
+            threads: threads.size,
+            uptimeSeconds: Math.round(process.uptime()),
+          }),
+          sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
+          memory: (scope?: string) => memory.all(scope ?? 'local'),
+          auditVerify: () => verifyCallAudit(),
+        },
+        { port: Number(process.env.PA_WEB_PORT) },
+      )
+        .then((ui) => log.info('panel web listo', { url: ui.url }))
+        .catch((err: unknown) => log.warn('panel web no arrancó', { err }));
+    }
+  }
   const messageThread = new Map<string, string>();
 
   /**
@@ -1900,6 +1942,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     all.push(createTvTool(tvToolDeps(store)));
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(createIphoneTool(iphoneToolDeps()));
+    if (mcpTools.length) all.push(...mcpTools);
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
@@ -1911,7 +1954,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return {
         ...tool,
         execute: (id, params, signal, onUpdate) =>
-          machine.run(() => inner(id, params, signal, onUpdate)),
+          // El signal de pi viaja al mutex: /stop cancela también la cola.
+          machine.run(() => inner(id, params, signal, onUpdate), signal),
       };
     });
   };
@@ -4332,6 +4376,127 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
     }
   };
+  /** Perfil v2: hechos estructurados y por propietario, con export y borrado. */
+  const cmdPerfil = async (inbound: Inbound, args: string): Promise<void> => {
+    const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? '').toLowerCase();
+    const restText = rest.join(' ').trim();
+    const owner = (await vaultGet('telegram:ownerId').catch(() => null)) ?? 'local';
+    const profile = new OwnerProfile(join(paths.state, 'profile', `${owner}.json`));
+    if (!sub || sub === 'listar' || sub === 'lista') {
+      const facts = profile.load().filter((f) => !f.supersededBy);
+      await say(
+        inbound,
+        facts.length
+          ? `Perfil (${facts.length}):\n${facts
+              .map((f) => `- [${f.id}] (${f.updatedAt.slice(0, 10)}) ${f.text}`)
+              .join('\n')}`
+          : 'El perfil está vacío. Guarda algo con /perfil guardar <texto>.',
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'guardar' || sub === 'add') {
+      if (!restText) {
+        await say(inbound, 'Uso: /perfil guardar <texto>', { quote: true });
+        return;
+      }
+      try {
+        const fact = profile.add(restText, { source: 'user' });
+        await say(inbound, `Guardado en tu perfil (${fact.id}).`, { quote: true });
+      } catch (err) {
+        await say(
+          inbound,
+          `No lo he guardado: ${err instanceof Error ? err.message : String(err)}`,
+          { quote: true },
+        );
+      }
+      return;
+    }
+    if (sub === 'buscar' || sub === 'search') {
+      const hits = profile.search(restText);
+      await say(
+        inbound,
+        hits.length
+          ? hits.map((f) => `- [${f.id}] ${f.text}`).join('\n')
+          : 'No hay nada en tu perfil que coincida.',
+        { quote: true },
+      );
+      return;
+    }
+    if (sub === 'olvidar' || sub === 'forget') {
+      if (!restText) {
+        await say(inbound, 'Uso: /perfil olvidar <id|texto>', { quote: true });
+        return;
+      }
+      const removed = profile.forget(restText);
+      await say(inbound, `Borrado del perfil: ${removed}.`, { quote: true });
+      return;
+    }
+    if (sub === 'migrar') {
+      const legacy = snapshot ? snapshot.load() : '';
+      const migrated = profile.migrateFromLegacy(legacy);
+      await say(inbound, `Migrados ${migrated} hechos del perfil antiguo.`, { quote: true });
+      return;
+    }
+    if (sub === 'exportar' || sub === 'export') {
+      const bytes = Buffer.from(profile.export(), 'utf8');
+      try {
+        await telegram.sendDocumentBytes(
+          Number(inbound.chatId),
+          bytes,
+          'perfil.json',
+          'Perfil estructurado (v2)',
+        );
+      } catch {
+        await say(
+          inbound,
+          `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+          { quote: true },
+        );
+      }
+      return;
+    }
+    await say(
+      inbound,
+      'Uso: /perfil [listar | guardar <texto> | buscar <texto> | olvidar <id|texto> | migrar | exportar]',
+      { quote: true },
+    );
+  };
+
+  /** Importar una skill desde una URL (SKILL.md) con validación y saneado. */
+  const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
+    const url = args.trim();
+    if (!url) {
+      await say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+      return;
+    }
+    try {
+      const md = await fetchSkillMarkdown(url);
+      const meta = await installSkill(md, async (text, m) => {
+        const steps = text
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith('---') && !/^(name|description):/.test(l))
+          .slice(0, 40);
+        skills.save({
+          name: m.name,
+          description: m.description,
+          category: 'importadas',
+          whenToUse: 'Cuando la tarea encaje con la descripción de la skill.',
+          steps,
+          notes: [`Importada de ${url}`],
+        });
+      });
+      await say(inbound, `Skill instalada: ${meta.name} (${meta.id}).`, { quote: true });
+    } catch (err) {
+      await say(
+        inbound,
+        `No he podido instalarla: ${err instanceof Error ? err.message : String(err)}`,
+        { quote: true },
+      );
+    }
+  };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -5957,6 +6122,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'exportar': {
                 const thread = await resolveThread(inbound);
                 return cmdExportar(thread, inbound, command.args);
+              }
+              case 'perfil': {
+                return cmdPerfil(inbound, command.args);
+              }
+              case 'skills': {
+                const sub = command.args.trim().split(/\s+/)[0]?.toLowerCase();
+                if (sub === 'instalar' || sub === 'importar' || sub === 'install') {
+                  return cmdSkillsImport(
+                    inbound,
+                    command.args.trim().split(/\s+/).slice(1).join(' '),
+                  );
+                }
+                return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
               }
               case 'agenda':
                 return cmdAgenda(inbound);

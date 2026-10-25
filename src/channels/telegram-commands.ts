@@ -93,6 +93,14 @@ export const TELEGRAM_COMMANDS = [
     description: 'Exportar esta conversación como JSON',
   },
   {
+    command: 'perfil',
+    description: 'Ver y editar tu perfil estructurado',
+  },
+  {
+    command: 'skills',
+    description: 'Instalar una skill desde una URL',
+  },
+  {
     command: 'steer',
     description: 'Corregir lo que estoy haciendo sin pararlo',
   },
