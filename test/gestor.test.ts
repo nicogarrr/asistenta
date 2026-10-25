@@ -952,11 +952,14 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     };
     await gate.check(SCOPE, writeCall); // forced: escribe-local over lee
     expect(asked).toBe(1);
+    gate.settle(SCOPE, writeCall, false); // el tool terminó (cierra el "en vuelo")
     gestor.recordStep(g.id, 0, 'ok'); // now step 2: escribe-local
     // Covered now, and this exact call was explicitly approved a moment ago
     // (the forced ask recorded its fingerprint), so the memo applies.
     await gate.check(SCOPE, writeCall);
+    gate.settle(SCOPE, writeCall, false);
     await gate.check(SCOPE, writeCall);
+    gate.settle(SCOPE, writeCall, false);
     expect(asked).toBe(1);
     // ...but a payment call in a writing step still forces the ask.
     const payCall = {
@@ -1026,6 +1029,7 @@ describe('Gate: gestor effect guard (forced ask)', () => {
       return true;
     });
     await gate.check(SCOPE, shellCall); // normal path: asks once (unlisted)
+    gate.settle(SCOPE, shellCall, false);
     await gate.check(SCOPE, shellCall); // memo
     expect(asked).toBe(1);
     rmSync(dir, { recursive: true, force: true });
@@ -1089,6 +1093,7 @@ describe('Gate: gestor effect guard (forced ask)', () => {
     });
     gate.setForcedAsk(SCOPE, () => 'forzado');
     await gate.check(SCOPE, shellCall);
+    gate.settle(SCOPE, shellCall, false);
     gate.setForcedAsk(SCOPE, null);
     await gate.check(SCOPE, shellCall); // memo from the first approval
     expect(asked).toBe(1);
@@ -1104,6 +1109,7 @@ describe('Gate: gestor effect guard (forced ask)', () => {
       return true;
     });
     await gate.check(SCOPE, shellCall); // unlisted: asks once
+    gate.settle(SCOPE, shellCall, false);
     await gate.check(SCOPE, shellCall); // memo
     expect(asked).toBe(1);
     rmSync(dir, { recursive: true, force: true });
