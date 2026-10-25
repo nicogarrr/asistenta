@@ -45,6 +45,11 @@ export interface Session {
  * A search hit. `snippet` is the matching window of text: the turn that matched when
  * the hit came from the body, the summary or title otherwise.
  */
+export interface SessionExport {
+  session: Session;
+  turns: Array<{ role: string; text: string; at: number }>;
+}
+
 export interface SessionHit {
   sessionId: string;
   title: string;
@@ -332,6 +337,22 @@ export class SessionStore {
       )
       .all(...params) as SessionRow[];
     return rows.map(mapSession);
+  }
+
+  /** Sesión completa (turnos incluidos) para exportar o auditar. No redacta: el
+   *  llamador decide qué hacer con el texto (aquí va al propietario). */
+  exportSession(sessionId: string): SessionExport | null {
+    const row = this.#db
+      .prepare('SELECT id, scope, title, started_at, ended_at, summary FROM sessions WHERE id = ?')
+      .get(sessionId) as SessionRow | undefined;
+    if (!row) return null;
+    const turns = this.#db
+      .prepare('SELECT role, text, at FROM session_turns WHERE session_id = ? ORDER BY id')
+      .all(sessionId) as Array<{ role: string; text: string; at: number }>;
+    return {
+      session: mapSession(row),
+      turns: turns.map((t) => ({ role: t.role, text: t.text, at: Number(t.at) })),
+    };
   }
 
   /**

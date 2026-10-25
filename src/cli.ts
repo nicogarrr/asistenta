@@ -4290,6 +4290,48 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   };
 
+  /**
+   * /exportar [id]: manda la conversación (turnos incluidos) como JSON.
+   * Sin id exporta la última. Solo conversaciones de ESTE chat.
+   */
+  const cmdExportar = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
+    const id = args.trim();
+    const session = id
+      ? (sessions.recent(thread.key, 200).find((s) => s.id === id) ?? null)
+      : (sessions.recent(thread.key, 1)[0] ?? null);
+    if (!session) {
+      await say(
+        inbound,
+        id
+          ? 'No encuentro esa conversación en este chat.'
+          : 'Todavía no hay ninguna conversación que exportar.',
+        { quote: true },
+      );
+      return;
+    }
+    const exported = sessions.exportSession(session.id);
+    if (!exported) {
+      await say(inbound, 'No he podido leer esa conversación.', { quote: true });
+      return;
+    }
+    const payload = { exportado: new Date().toISOString(), chat: thread.key, ...exported };
+    const bytes = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+    try {
+      await telegram.sendDocumentBytes(
+        Number(inbound.chatId),
+        bytes,
+        `conversacion-${session.id.slice(0, 8)}.json`,
+        `Conversación "${session.title}" (${exported.turns.length} turnos)`,
+      );
+    } catch (err) {
+      log.warn('session export send failed', { err });
+      await say(
+        inbound,
+        `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+        { quote: true },
+      );
+    }
+  };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -5911,6 +5953,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'memoria': {
                 const thread = await resolveThread(inbound);
                 return cmdMemoria(thread, inbound, command.args);
+              }
+              case 'exportar': {
+                const thread = await resolveThread(inbound);
+                return cmdExportar(thread, inbound, command.args);
               }
               case 'agenda':
                 return cmdAgenda(inbound);

@@ -4,7 +4,7 @@ import { TELEGRAM_COMMANDS } from '../src/channels/telegram-commands.js';
 
 describe('Telegram command discovery', () => {
   it('offers every canonical command without duplicates and within Telegram limits', () => {
-    expect(TELEGRAM_COMMANDS.length).toBe(45);
+    expect(TELEGRAM_COMMANDS.length).toBe(46);
     expect(new Set(TELEGRAM_COMMANDS.map((x) => x.command)).size).toBe(TELEGRAM_COMMANDS.length);
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     for (const { command, description } of TELEGRAM_COMMANDS) {
