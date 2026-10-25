@@ -57,6 +57,14 @@ export function isTransientProviderError(message: string | null | undefined): bo
  */
 const QUOTA_MARKERS = [/\b429\b/, /rate limit/i, /quota/i, /freed?tiererror/i];
 
+/** Desbordamiento de contexto: se compacta y se reintenta, no es terminal. */
+export function isContextOverflow(error: string | undefined | null): boolean {
+  return (
+    !!error &&
+    /context length|too many tokens|maximum context|context window|prompt is too long/i.test(error)
+  );
+}
+
 export function isQuotaError(message: string | null | undefined): boolean {
   if (!message) return false;
   if (PERMANENT_MARKERS.some((p) => p.test(message))) return false;

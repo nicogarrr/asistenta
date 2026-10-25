@@ -56,6 +56,11 @@ export interface Config {
    * making progress, it is exploring; stop it and report instead of billing more.
    */
   maxToolCalls: number;
+  /** Ventana de contexto real del modelo (PA_CONTEXT_WINDOW). Se usa para
+   *  estimar el prompt y para el fallback de compactación por desbordamiento. */
+  contextWindowTokens: number;
+  /** Tope de tokens de salida por respuesta (PA_MAX_OUTPUT_TOKENS). */
+  maxOutputTokens: number;
   /**
    * Which browser the `browser` tool drives. 'chrome' / 'msedge' use the one installed on
    * this PC (a real fingerprint, far fewer anti-bot walls); 'chromium' is the copy bundled
@@ -199,6 +204,8 @@ export function loadConfig(): Config {
     ),
     baseUrl: process.env.PA_BASE_URL ?? presetDefaults.baseUrl,
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
+    contextWindowTokens: num('PA_CONTEXT_WINDOW', 1_048_576),
+    maxOutputTokens: num('PA_MAX_OUTPUT_TOKENS', 32_000),
     toolTimeoutMs: num('PA_TOOL_TIMEOUT_MS', 120_000),
     runTimeoutMs: num('PA_RUN_TIMEOUT_MS', 900_000),
     idleTimeoutMs: num('PA_IDLE_TIMEOUT_MS', 180_000),
