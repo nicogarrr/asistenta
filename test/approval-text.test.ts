@@ -203,8 +203,11 @@ describe('aprobaciones: lo que se muestra es lo que se aprueba', () => {
     const b = formatApproval(call('browser', { _target: 'button | Comprar' }), 'r');
     expect(b.question).toContain('¿Permito esta acción en el navegador?');
     expect(b.question).toContain('button · Comprar');
-    const g = formatApproval(call('write', { path: '/tmp/x' }), 'escribe fichero');
-    expect(g.question).toContain('¿Permito write?');
+    // Escribir ya no es una pregunta a ciegas: ruta y contenido van en el texto.
+    const g = formatApproval(call('write', { path: '/tmp/x', content: 'hola' }), 'escribe fichero');
+    expect(g.question).toContain('¿Permito escribir?');
+    expect(g.question).toContain('Archivo: /tmp/x');
+    expect(g.question).toContain('hola');
   });
 
   it('ninguna pregunta aprobable supera el presupuesto', () => {

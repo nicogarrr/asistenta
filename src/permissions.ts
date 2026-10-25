@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { unapprovableOperation } from './approval-text.js';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
@@ -1050,6 +1051,17 @@ export class Gate {
       }
     }
 
+    // Hay acciones que no se pueden aprobar con una pregunta (escribir un secreto,
+    // una operación que el enmascarado alteraría, o algo demasiado largo para
+    // revisarlo entero). Esas condiciones viven en el formateador, así que antes
+    // solo frenaban al humano; con `always`/`session`/fullControl se saltaban.
+    // Se comprueban aquí, antes de cualquier permiso permanente, para que un
+    // "Siempre" no se convierta en "aprueba a ciegas".
+    const unapprovable = unapprovableOperation(call);
+    if (unapprovable) {
+      return this.#record(call, { verdict: 'deny', reason: unapprovable });
+    }
+
     // Rule `allow-preflight-stage`: a purchase gets to its own payment screen without
     // asking. Checked here rather than in the loop that honours allow rules, because
     // that loop only runs when no ask rule matched and a purchase flow trips the ask
@@ -1455,11 +1467,14 @@ export function lexicalNormalize(path: string): string {
 
 /**
  * The repo paths the agent must never write, wherever it is installed: the
- * guardrails. The self-improve loop edits this repo with the same gated tools,
- * so the SSRF guard, the channels, the audit trail and this very gate are as
+ * guardrails and the code it is actually running. The self-improve loop edits
+ * this repo with the same gated tools, so the SSRF guard, the channels, the
+ * audit trail, this gate, the agent loop and the built runtime are as
  * untouchable as ~/.ssh - an agent that can rewrite its own guardrails owns
- * them. `root` is the repo root (usually process.cwd()). Directories match by
- * prefix, files exactly; the Gate normalizes both sides lexically.
+ * them. The factory (src/factory) is the sanctioned way to add NEW tools: it
+ * builds and runs them sandboxed instead of overwriting the live ones.
+ * `root` is the repo root (usually process.cwd()). Directories match by prefix,
+ * files exactly; the Gate normalizes both sides lexically.
  */
 /** Repo root derived from this module's own location (src/ or dist/ both sit
  * directly under it), so the guardrails are found no matter the process cwd. */
@@ -1468,18 +1483,32 @@ const MODULE_REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
   const r = root.replace(/[\\/]+$/, '');
   const src = [
+    `${r}\\src\\cli.ts`,
+    `${r}\\src\\core`,
     `${r}\\src\\tools\\fetch.ts`,
+    `${r}\\src\\tools\\shell.ts`,
+    `${r}\\src\\tools\\computer.ts`,
     `${r}\\src\\channels`,
     `${r}\\src\\log.ts`,
     `${r}\\src\\audit`,
     `${r}\\src\\permissions.ts`,
     `${r}\\src\\approval-text.ts`,
+    `${r}\\src\\vault.ts`,
+    `${r}\\src\\browser\\service.ts`,
+    `${r}\\src\\factory\\runner.ts`,
+    // Build, CI and git hooks: a write here executes on the next start/hook.
+    `${r}\\.git`,
+    `${r}\\.github`,
+    `${r}\\package.json`,
+    `${r}\\package-lock.json`,
+    `${r}\\tsconfig.json`,
+    `${r}\\tsconfig.build.json`,
+    `${r}\\biome.json`,
   ];
   // The runtime the daemon actually executes (`pa` runs dist/cli.js): dist is
-  // built from src, and a write to dist/*.js persists an altered guard across
+  // built from src, and a write to dist/*.js persists an altered runtime across
   // restarts exactly like a write to the source. Same vector, same wall.
-  const dist = src.map((p) => p.replace(`${r}\\src\\`, `${r}\\dist\\`).replace(/\.ts$/, '.js'));
-  return [...src, ...dist];
+  return [...src, `${r}\\dist`];
 }
 
 /**

@@ -212,8 +212,11 @@ export interface PageElement {
   role: string | null;
   /** Accessible name: aria-label, label, placeholder, title, or the visible text. */
   name: string;
-  /** Current value of a form control, or null when the element has none. */
+  /** Current value of a form control, or null when the element has none. Sensitive
+   *  fields (contraseña, tarjeta, OTP) llegan enmascarados como "***". */
   value: string | null;
+  /** Campo sensible: su valor real nunca sale de la página (solo "relleno / vacío"). */
+  sensitive?: boolean;
   /** Best-effort selector that addresses exactly this element. */
   selector: string;
   /**
@@ -676,12 +679,13 @@ export function formatSnapshot(scan: PageScan): string {
   const lines = scan.elements.map((el) => {
     const role = el.role && el.role !== el.kind ? `[${el.role}]` : `[${el.kind}]`;
     const value = el.value?.trim() ? ` value="${el.value.replace(/\s+/g, ' ')}"` : '';
+    const safe = el.sensitive ? ' [sensible]' : '';
     const name = (el.name || el.selector).replace(/\s+/g, ' ').trim();
     // The panel count sits on the field's own line, because that is where the next
     // action goes. A count in the header would have to be matched back to a field by
     // reading, and the model would guess wrong as often as right.
     const open = el.openSuggestions > 0 ? ` ABIERTO:${el.openSuggestions} opciones` : '';
-    return `${el.selector}${role}${value} "${name}" [${el.index}]${open}`;
+    return `${el.selector}${role}${value} "${name}" [${el.index}]${safe}${open}`;
   });
   const head = [
     `${scan.title}\n${scan.url}`,
