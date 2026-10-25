@@ -1,19 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cachedForecastFor,
   FORECAST_CACHE_KEY,
   FORECAST_FRESH_MS,
   FORECAST_SHOWN_MS,
-  cachedForecastFor,
+  type Forecast,
   forecastCacheKey,
   forecastRetryDelayMs,
   readForecastCache,
   writeForecastCache,
-  type Forecast,
-} from '../tools/tv-home/src/service/weather';
+} from '../tools/tv-home/src/service/weather.js';
 
-function fakeStorage (): { store: Map<string, string>; getItem: (k: string) => string | null; setItem: (k: string, v: string) => void } {
+function fakeStorage(): {
+  store: Map<string, string>;
+  getItem: (k: string) => string | null;
+  setItem: (k: string, v: string) => void;
+} {
   const store = new Map<string, string>();
-  return { store, getItem: (k) => (store.has(k) ? store.get(k)! : null), setItem: (k, v) => { store.set(k, v); } };
+  return {
+    store,
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => {
+      store.set(k, v);
+    },
+  };
 }
 
 const GIJON = { latitude: 43.5322, longitude: -5.6611, temperatureUnit: 'celsius' as const };
@@ -52,7 +62,10 @@ describe('tv-home weather cache (patrón Hearth)', () => {
     const s = fakeStorage();
     s.setItem(FORECAST_CACHE_KEY, '{not json');
     expect(readForecastCache(s, NOW)).toBeNull();
-    s.setItem(FORECAST_CACHE_KEY, JSON.stringify({ at: NOW, key: 'k', forecast: { now: { temp: 1 } } }));
+    s.setItem(
+      FORECAST_CACHE_KEY,
+      JSON.stringify({ at: NOW, key: 'k', forecast: { now: { temp: 1 } } }),
+    );
     expect(readForecastCache(s, NOW)).toBeNull();
     s.setItem(FORECAST_CACHE_KEY, JSON.stringify({ key: 'k', forecast: FC })); // sin at
     expect(readForecastCache(s, NOW)).toBeNull();
@@ -62,7 +75,9 @@ describe('tv-home weather cache (patrón Hearth)', () => {
     const s = fakeStorage();
     writeForecastCache(s, forecastCacheKey(GIJON), FC, NOW);
     expect(cachedForecastFor(s, { ...GIJON, temperatureUnit: 'fahrenheit' }, NOW)).toBeNull();
-    expect(cachedForecastFor(s, { ...GIJON, latitude: 40.4168, longitude: -3.7038 }, NOW)).toBeNull();
+    expect(
+      cachedForecastFor(s, { ...GIJON, latitude: 40.4168, longitude: -3.7038 }, NOW),
+    ).toBeNull();
   });
 
   it('la clave redondea coordenadas a ~100 m (ruido GPS irrelevante)', () => {
@@ -71,7 +86,12 @@ describe('tv-home weather cache (patrón Hearth)', () => {
   });
 
   it('storage que falla al escribir no rompe el fetch (cacheo best-effort)', () => {
-    const boom = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+    const boom = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('quota');
+      },
+    };
     expect(() => writeForecastCache(boom, 'k', FC, NOW)).not.toThrow();
   });
 });
@@ -89,14 +109,26 @@ describe('TTL durante una sesión abierta', () => {
   it('la misma lectura sirve toda la sesión hasta 6 h, en varios puntos', () => {
     const s = fakeStorage();
     writeForecastCache(s, forecastCacheKey(GIJON), FC, NOW);
-    for (const t of [0, 60_000, FORECAST_FRESH_MS, 60 * 60_000, 5 * 60 * 60_000, FORECAST_SHOWN_MS - 1]) {
+    for (const t of [
+      0,
+      60_000,
+      FORECAST_FRESH_MS,
+      60 * 60_000,
+      5 * 60 * 60_000,
+      FORECAST_SHOWN_MS - 1,
+    ]) {
       expect(cachedForecastFor(s, GIJON, NOW + t)).toEqual(FC);
     }
     expect(cachedForecastFor(s, GIJON, NOW + FORECAST_SHOWN_MS + 1)).toBeNull();
   });
 });
 
-import {staleLabel as _staleLabel, cachedReadingFor, writeForecastCache as _write, forecastCacheKey as _key} from '../tools/tv-home/src/service/weather';
+import {
+  forecastCacheKey as _key,
+  staleLabel as _staleLabel,
+  writeForecastCache as _write,
+  cachedReadingFor,
+} from '../tools/tv-home/src/service/weather.js';
 
 describe('antiguedad visible', () => {
   it('no marca lecturas recientes y marca las viejas', () => {
@@ -107,12 +139,19 @@ describe('antiguedad visible', () => {
   });
   it('cachedReadingFor devuelve at, respeta ubicacion y caducidad 6h', () => {
     const store = new Map<string, string>();
-    const s = {getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v)};
-    const loc = {latitude: 40.4168, longitude: -3.7038, temperatureUnit: 'celsius'};
-    const fc = {now: {temp: 20, glyph: 'x', label: 'l', unit: '°C'}, hours: [], days: []} as never;
+    const s = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    const loc = { latitude: 40.4168, longitude: -3.7038, temperatureUnit: 'celsius' };
+    const fc = {
+      now: { temp: 20, glyph: 'x', label: 'l', unit: '°C' },
+      hours: [],
+      days: [],
+    } as never;
     _write(s, _key(loc), fc, 1000);
     expect(cachedReadingFor(s, loc, 2000)?.at).toBe(1000);
-    expect(cachedReadingFor(s, {...loc, temperatureUnit: 'fahrenheit'}, 2000)).toBeNull();
+    expect(cachedReadingFor(s, { ...loc, temperatureUnit: 'fahrenheit' }, 2000)).toBeNull();
     expect(cachedReadingFor(s, loc, 1000 + 6 * 3_600_000 + 1)).toBeNull();
   });
 });

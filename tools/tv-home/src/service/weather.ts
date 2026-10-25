@@ -85,8 +85,10 @@ export function fetchForecast (loc = LOCATION): Promise<Forecast> {
 			if (start < 0) start = 0;
 			const hours: ForecastHour[] = [];
 			for (let i = start; i < Math.min(start + 5, hTimes.length); i++) {
+				const t = hTimes[i];
+				if (t === undefined) continue;
 				hours.push({
-					hour: parseInt(hTimes[i].slice(11, 13), 10),
+					hour: parseInt(t.slice(11, 13), 10),
 					temp: Math.round(data.hourly.temperature_2m[i]),
 					glyph: wmo(data.hourly.weather_code[i])[1]
 				});
