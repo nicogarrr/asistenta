@@ -1,6 +1,7 @@
 import {useEffect, useState} from 'react';
 import Clock from './Clock';
-import {fetchForecast, type Forecast} from '../../service/weather';
+import {cachedForecastFor, forecastCacheKey, forecastRetryDelayMs, writeForecastCache, FORECAST_FRESH_MS,
+	fetchForecast, type Forecast} from '../../service/weather';
 import {useConfig} from '../../lib/config';
 
 function DateLine () {
@@ -26,21 +27,43 @@ function hourLabel (h: number, clock24: boolean): string {
 }
 
 // Current conditions + next-5-hours strip + 3-day outlook, one Open-Meteo call.
+// First paint comes from the saved copy (never waits for the network); the
+// fetch refreshes it in the background. On failure the saved reading stays on
+// screen and the retry backs off 2 → 10 → 30 min (pattern from Hearth, MIT).
 function WeatherBlock () {
 	const {tempUnit, clock24, location} = useConfig();
 	const [fc, setFc] = useState<Forecast | null>(null);
 	const [err, setErr] = useState(false);
 	useEffect(() => {
 		let alive = true;
-		const load = () => fetchForecast({...location, temperatureUnit: tempUnit})
-			.then((f) => { if (alive) { setFc(f); setErr(false); } })
-			.catch(() => { if (alive) setErr(true); });
+		let timer = 0;
+		let fails = 0;
+		const loc = {...location, temperatureUnit: tempUnit};
+
+		// show the saved reading for THIS place+unit right away, if still fresh enough
+		const cached = cachedForecastFor(localStorage, loc, Date.now());
+		if (cached) { setFc(cached); setErr(false); }
+
+		const load = () => fetchForecast(loc)
+			.then((f) => {
+				if (!alive) return;
+				fails = 0;
+				setFc(f);
+				setErr(false);
+				writeForecastCache(localStorage, forecastCacheKey(loc), f, Date.now());
+				timer = window.setTimeout(load, FORECAST_FRESH_MS);
+			})
+			.catch(() => {
+				if (!alive) return;
+				fails += 1;
+				setErr(true); // only shown when there is no reading at all
+				timer = window.setTimeout(load, forecastRetryDelayMs(fails));
+			});
 		load();
-		const id = setInterval(load, 15 * 60_000);
-		return () => { alive = false; clearInterval(id); };
+		return () => { alive = false; window.clearTimeout(timer); };
 	}, [tempUnit, location]);
 
-	if (err) return <div className="text-right text-base font-normal text-white/40">Weather —</div>;
+	if (err && !fc) return <div className="text-right text-base font-normal text-white/40">Weather —</div>;
 	if (!fc) return <div className="text-right text-base font-normal text-white/40">Loading…</div>;
 
 	return (
