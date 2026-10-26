@@ -1,0 +1,77 @@
+/**
+ * Herramienta de delegacion.
+ *
+ * Un subagente sirve para trabajo acotado que ensuciaria el hilo principal:
+ * buscar y comparar fuentes, leer varios documentos o explorar un problema en
+ * paralelo. No sirve para esquivar permisos ni para "recordar" el contexto: el
+ * hijo empieza con historial nuevo y sin aprobaciones heredadas.
+ *
+ * El caller sigue siendo responsable del aislamiento. Debe pasar un toolset
+ * construido solo con herramientas sin efectos secundarios; `tools` aqui es la
+ * lista blanca de nombres que el ejecutor del hijo debe respetar.
+ */
+import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { Type } from 'typebox';
+import type { SubagentPool } from '../core/subagent.js';
+
+export const DELEGATE_TOOL_NAME = 'delegate';
+
+const DelegateParams = Type.Object({
+  task: Type.String({
+    minLength: 1,
+    maxLength: 4000,
+    description: 'Tarea concreta y autocontenida para el subagente, con el resultado esperado.',
+  }),
+  tools: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), {
+      maxItems: 32,
+      description:
+        'Nombres de herramientas que el hijo puede usar. Deben ser herramientas sin efectos secundarios.',
+    }),
+  ),
+});
+
+export interface DelegateDetails {
+  depth: number;
+  error?: string;
+}
+
+/**
+ * Crea la tool `delegate` sobre un pool ya configurado. `depthOf` devuelve la
+ * profundidad del agente actual (el padre); el pool calcula la del hijo.
+ */
+export function createDelegateTool(
+  pool: SubagentPool,
+  depthOf: () => number,
+): AgentTool<typeof DelegateParams, DelegateDetails> {
+  return {
+    name: DELEGATE_TOOL_NAME,
+    label: 'Delegar',
+    description: [
+      'Delega una tarea acotada a un subagente con historial y contexto nuevos.',
+      'Usalo para trabajo paralelizable o de lectura larga (buscar, resumir, comparar fuentes) que ensuciaria este hilo.',
+      'No lo uses para pagos, compras, mensajes a terceros, borrados, escrituras ni decisiones irreversibles: el hijo no hereda aprobaciones previas y esas acciones seguirian necesitando permiso.',
+      'Pasa en tools solo herramientas sin efectos secundarios; el hijo no recibe el transcript del padre ni sus permisos, y devuelve un resumen en texto.',
+    ].join(' '),
+    parameters: DelegateParams,
+    executionMode: 'parallel',
+    execute: async (_toolCallId, args) => {
+      const result = await pool.run({
+        task: args.task,
+        parentDepth: depthOf(),
+        ...(args.tools ? { tools: args.tools } : {}),
+      });
+
+      // El modelo debe ver el fallo como texto util, no un contenido vacio; el
+      // detalle estructurado queda para quien consuma el resultado.
+      const text = result.error ?? result.text;
+      const details: DelegateDetails = { depth: result.depth };
+      if (result.error) details.error = result.error;
+
+      return {
+        content: [{ type: 'text', text }],
+        details,
+      };
+    },
+  };
+}

@@ -5566,7 +5566,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   let sessionPlayback: Playback | null = null;
   let activeSpeech: { abort(): void } | null = null;
   /** How easily talking over the agent cuts it off. Not persisted. */
-  let bargeLevel: BargeInLevel = 'off';
+  let bargeLevel: BargeInLevel = 'altavoces';
   let conversationCount = 0;
   let lastConversationEnd = '';
   const speaker = createMciSpeaker();
