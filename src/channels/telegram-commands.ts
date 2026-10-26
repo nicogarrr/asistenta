@@ -101,6 +101,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Instalar una skill desde una URL',
   },
   {
+    command: 'calendario',
+    description: 'Añadir un evento al calendario local',
+  },
+  {
     command: 'steer',
     description: 'Corregir lo que estoy haciendo sin pararlo',
   },
