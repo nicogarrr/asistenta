@@ -25,6 +25,88 @@ export interface Stt {
   transcribe(input: Buffer, opts?: { mimeType?: string }): Promise<SttResult>;
 }
 
+export interface UtteranceGapOptions {
+  /** Silencio que separa dos frases. Por defecto 300 ms. */
+  minSilenceMs?: number;
+  /** Frecuencia del PCM de entrada. Por defecto 16 kHz. */
+  sampleRate?: number;
+}
+
+/** RMS por debajo del cual un frame es silencio (-40 dBFS, igual que audio.ts). */
+const UTTERANCE_SILENCE_RMS = 0.01;
+
+/** Resolución del detector: 20 ms por frame. */
+const UTTERANCE_FRAME_MS = 20;
+
+/**
+ * Parte un PCM en tramos de voz separados por silencios.
+ *
+ * Entrada: PCM mono con signo, 16 bits little-endian (el mismo que produce
+ * `wavToPcm`/`decodeForWhisper`), sin cabecera. La salida son índices de muestra
+ * con `start` inclusivo y `end` exclusivo: el tramo se corta con
+ * `pcm.subarray(start * 2, end * 2)`. Los silencios cortos (menos de
+ * `minSilenceMs`) se conservan dentro del tramo; los de los extremos se recortan.
+ * La resolución es de un frame (20 ms), no de una muestra.
+ *
+ * El STT puede transcribir cada tramo por separado y unir los textos: así un
+ * audio largo no pierde la cola contra el tope de whisper y una pausa larga no
+ * mezcla dos peticiones en una sola transcripción. Es una función pura: no toca
+ * el modelo ni el sistema de ficheros.
+ */
+export function splitUtteranceGaps(
+  pcm: Buffer,
+  opts: UtteranceGapOptions = {},
+): Array<{ start: number; end: number }> {
+  const sampleRate = Math.floor(opts.sampleRate ?? 16_000);
+  if (sampleRate <= 0) return [];
+  const totalSamples = Math.floor(pcm.length / 2);
+  if (totalSamples === 0) return [];
+  const minSilenceMs = Math.max(0, opts.minSilenceMs ?? 300);
+  const frameSamples = Math.max(1, Math.round((sampleRate * UTTERANCE_FRAME_MS) / 1000));
+  const minSilentFrames = Math.max(1, Math.ceil(minSilenceMs / UTTERANCE_FRAME_MS));
+  const frames = Math.ceil(totalSamples / frameSamples);
+  const ranges: Array<{ start: number; end: number }> = [];
+  let startFrame = -1;
+  let lastVoicedFrame = -1;
+  let silentFrames = 0;
+
+  for (let frame = 0; frame < frames; frame++) {
+    const from = frame * frameSamples;
+    const to = Math.min(totalSamples, from + frameSamples);
+    let sum = 0;
+    for (let i = from; i < to; i++) {
+      const value = pcm.readInt16LE(i * 2) / 32_768;
+      sum += value * value;
+    }
+    const voiced = to > from && Math.sqrt(sum / (to - from)) >= UTTERANCE_SILENCE_RMS;
+    if (voiced) {
+      if (startFrame < 0) startFrame = frame;
+      lastVoicedFrame = frame;
+      silentFrames = 0;
+      continue;
+    }
+    if (startFrame < 0) continue;
+    silentFrames++;
+    if (silentFrames >= minSilentFrames) {
+      ranges.push({
+        start: startFrame * frameSamples,
+        end: Math.min(totalSamples, (lastVoicedFrame + 1) * frameSamples),
+      });
+      startFrame = -1;
+      lastVoicedFrame = -1;
+      silentFrames = 0;
+    }
+  }
+
+  if (startFrame >= 0 && lastVoicedFrame >= 0) {
+    ranges.push({
+      start: startFrame * frameSamples,
+      end: Math.min(totalSamples, (lastVoicedFrame + 1) * frameSamples),
+    });
+  }
+  return ranges;
+}
+
 /**
  * `onnx-community/whisper-base`, quantised.
  *

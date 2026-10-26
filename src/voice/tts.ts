@@ -28,9 +28,15 @@ export interface TtsAudio {
   truncated: boolean;
 }
 
+export interface TtsSpeakOptions {
+  voice?: string;
+  /** Cancelación cooperativa: al abortar se corta la síntesis en curso. */
+  signal?: AbortSignal;
+}
+
 export interface Tts {
   name: string;
-  speak(text: string, opts?: { voice?: string }): Promise<TtsAudio>;
+  speak(text: string, opts?: TtsSpeakOptions): Promise<TtsAudio>;
 }
 
 /**
@@ -120,9 +126,10 @@ function scriptSource(): string {
 export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tts {
   return {
     name: 'sapi',
-    async speak(text: string, speakOpts: { voice?: string } = {}): Promise<TtsAudio> {
+    async speak(text: string, speakOpts: TtsSpeakOptions = {}): Promise<TtsAudio> {
       const trimmed = text.trim();
       if (!trimmed) throw new Error('no hay texto que decir');
+      if (speakOpts.signal?.aborted) throw cancelled();
 
       const spoken = truncate(trimmed);
       const dir = mkdtempSync(join(tmpdir(), 'pa-tts-'));
@@ -143,6 +150,7 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
             encoding: 'utf8',
             timeout: SYNTHESIS_TIMEOUT_MS,
             windowsHide: true,
+            signal: speakOpts.signal,
             env: {
               ...process.env,
               PA_TTS_TEXT: textFile,
@@ -170,6 +178,7 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
           truncated: spoken.length < trimmed.length,
         };
       } catch (err) {
+        if (speakOpts.signal?.aborted) throw cancelled();
         const stderr =
           err && typeof err === 'object' && 'stderr' in err ? String(err.stderr).trim() : '';
         const message = stderr || (err instanceof Error ? err.message : String(err));
@@ -179,6 +188,120 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
       }
     },
   };
+}
+
+/** Error de cancelación, con nombre estable aunque el runtime no sea un navegador. */
+function cancelled(): Error {
+  const err = new Error('la sintesis de voz se cancelo');
+  err.name = 'AbortError';
+  return err;
+}
+
+/** Tope de caracteres por trozo: más largo retrasa el primer sonido y el corte. */
+const CHUNK_CHARS = 240;
+
+/**
+ * Parte el texto en frases de como mucho `chunkChars` caracteres (240 por defecto,
+ * que también es el tope). Frases largas se cortan por coma, punto y coma, dos
+ * puntos o espacio, nunca a mitad de palabra si hay una salida razonable. El
+ * texto se conserva entero salvo los espacios normalizados.
+ */
+export function splitSpeechChunks(text: string, chunkChars = CHUNK_CHARS): string[] {
+  const max = Math.min(CHUNK_CHARS, Math.max(1, Math.floor(chunkChars)));
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (!flat) return [];
+  const sentences = flat
+    .match(/[^.!?…]+(?:[.!?…]+|$)\s*/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [flat];
+  const chunks: string[] = [];
+  for (const sentence of sentences) {
+    let rest = sentence;
+    while (rest.length > max) {
+      const window = rest.slice(0, max);
+      const punctuation = Math.max(
+        window.lastIndexOf(', '),
+        window.lastIndexOf('; '),
+        window.lastIndexOf(': '),
+      );
+      const space = window.lastIndexOf(' ');
+      // Si la puntuación está razonablemente avanzada, corta tras ella; si no,
+      // en el último espacio; si no hay espacio, corta duro en el tope.
+      const at = punctuation > max / 3 ? punctuation + 1 : space > 0 ? space : max;
+      const piece = rest.slice(0, at).trim();
+      if (piece) chunks.push(piece);
+      rest = rest.slice(at).trim();
+    }
+    if (rest) chunks.push(rest);
+  }
+  return chunks;
+}
+
+export interface SpeakChunkedOptions {
+  signal?: AbortSignal;
+  /** Máximo de caracteres por trozo. Por defecto 240; nunca supera 240. */
+  chunkChars?: number;
+  /** El trozo `i` (1-based) de `total` ya se sintetizó y forma parte de lo dicho. */
+  onChunk?: (i: number, total: number) => void;
+  /** Sintetizador a usar; por defecto, SAPI local. Inyectable en pruebas. */
+  tts?: Pick<Tts, 'speak'>;
+}
+
+/** Espera una promesa, pero la abandona en cuanto la señal se cancela. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(cancelled());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort);
+      reject(cancelled());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Sintetiza un texto por frases, una detrás de otra, respetando `signal`.
+ *
+ * Devuelve cuántos trozos se llegaron a sintetizar (`spoken`) y si la señal cortó
+ * el resto (`aborted`). Lo ya sintetizado no se deshace: el corte afecta solo a
+ * los trozos pendientes, nunca al texto que ya se había enviado. El sintetizador
+ * por defecto es SAPI; `opts.tts` permite inyectar uno falso en pruebas.
+ */
+export async function speakChunked(
+  text: string,
+  opts: SpeakChunkedOptions = {},
+): Promise<{ spoken: number; aborted: boolean }> {
+  const chunks = splitSpeechChunks(text, opts.chunkChars ?? CHUNK_CHARS);
+  if (chunks.length === 0) return { spoken: 0, aborted: false };
+  const signal = opts.signal;
+  if (signal?.aborted) return { spoken: 0, aborted: true };
+  const synth = opts.tts ?? createSapiTts();
+  let spoken = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
+    if (signal?.aborted) return { spoken, aborted: true };
+    try {
+      await abortable(synth.speak(chunk, signal ? { signal } : {}), signal);
+    } catch (err) {
+      if (signal?.aborted) return { spoken, aborted: true };
+      throw err;
+    }
+    spoken++;
+    opts.onChunk?.(i + 1, chunks.length);
+  }
+  return { spoken, aborted: false };
 }
 
 /**

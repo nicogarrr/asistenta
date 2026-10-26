@@ -10,10 +10,12 @@
  * time is the AUDIO clock (samples received), so the state machine is deterministic and
  * testable without a microphone, a model or a wall clock.
  *
- * Declared limits (V1): while the agent thinks or speaks the microphone stream is
- * dropped (no barge-in; that is V2); the VAD is energy based, so a noisy room can hold
- * an utterance open until the 30 s ceiling; whisper can invent text on noise, so empty,
- * filler-only and known-hallucination transcripts are discarded.
+ * Barge-in is on by default (echo-safe 'altavoces' mode): talking over the agent
+ * aborts the current synthesis and the microphone stream becomes the next utterance.
+ * Declared limits: while the agent thinks the microphone stream is dropped; the VAD is
+ * energy based, so a noisy room can hold an utterance open until the 30 s ceiling;
+ * whisper can invent text on noise, so empty, filler-only and known-hallucination
+ * transcripts are discarded.
  *
  * Nothing here persists audio. Only the transcribed text leaves this module.
  */
@@ -47,8 +49,12 @@ export interface ConversationOptions {
   /** Runs the agent turn for what was said and speaks the answer. Resolves when done. */
   onUtterance: (text: string) => Promise<void>;
   onClose: (reason: CloseReason, detail?: string) => void;
-  /** Interrupt the agent while it talks. Default 'off': enabling it is explicit. */
-  bargeIn?: BargeInLevel;
+  /**
+   * Interrupt the agent while it talks. Default `true`: the echo-safe
+   * 'altavoces' mode, which measures the room echo before accepting a voice.
+   * `false` disables it. Passing a level keeps the old explicit API.
+   */
+  bargeIn?: BargeInOption;
   /**
    * Speech confirmation for the barge trigger (a Silero VAD scorer, barge-vad.ts).
    * With it, a loud-sustained candidate no longer cuts the sound at once: the
@@ -99,6 +105,22 @@ export type ConversationState =
  */
 export type BargeInLevel = 'off' | 'altavoces' | 'auriculares';
 
+/** `true` activa el modo por defecto ('altavoces'); `false` lo apaga. */
+export type BargeInOption = boolean | BargeInLevel;
+
+/** Por defecto se protege del eco de los altavoces antes de aceptar una voz. */
+const DEFAULT_BARGE_IN: Exclude<BargeInLevel, 'off'> = 'altavoces';
+
+/**
+ * Normaliza la opción pública. `undefined` significa activado: el corte ya no
+ * es opt-in, pero `false` y 'off' siguen apagándolo.
+ */
+function resolveBargeIn(value: BargeInOption | undefined): BargeInLevel {
+  if (value === undefined || value === true) return DEFAULT_BARGE_IN;
+  if (value === false) return 'off';
+  return value;
+}
+
 const BARGE_IN: Record<
   Exclude<BargeInLevel, 'off'>,
   { factor: number; sustainMs: number; calibrate: boolean }
@@ -115,6 +137,12 @@ export interface SpeakControl {
   phraseStart(): void;
   /** True once the user interrupted; the runner must stop producing sound. */
   interrupted(): boolean;
+  /**
+   * Señal de cancelación de ESTA reproducción. Se aborta al interrumpir o al
+   * cerrar la sesión: pásala a `speakChunked` (tts.ts) para cortar la síntesis
+   * en curso sin tocar el texto que ya se había enviado.
+   */
+  readonly signal: AbortSignal;
 }
 
 export type SpeakOutcome = 'fin' | 'interrumpido';
@@ -247,6 +275,8 @@ export class ConversationSession {
   #turnSeq = 0;
   #speakStop: (() => void) | null = null;
   #speakInterrupted = false;
+  /** Cancela la síntesis de la reproducción en curso al interrumpir o cerrar. */
+  #speakAbort: AbortController | null = null;
   #echoSum = 0;
   /** True once the first sound of this phrase was heard; silence never calibrates. */
   #echoStarted = false;
@@ -301,7 +331,7 @@ export class ConversationSession {
       transcribeTimeoutMs: opts.transcribeTimeoutMs ?? 30_000,
       maxFailures: opts.maxFailures ?? 3,
     };
-    this.#bargeIn = opts.bargeIn ?? 'off';
+    this.#bargeIn = resolveBargeIn(opts.bargeIn);
     this.#bargeVad = opts.bargeVad;
     this.#bargeVadProb = opts.bargeVadProb ?? 0.5;
     this.#bargeVadRecheckMs = Math.max(0, opts.bargeVadRecheckMs ?? 1000);
@@ -372,6 +402,10 @@ export class ConversationSession {
     this.#generation++;
     this.#speakSeq++;
     this.#vadCheckSeq = null;
+    // Cerrar también cancela la síntesis en curso; el audio lo para el llamador.
+    const abort = this.#speakAbort;
+    this.#speakAbort = null;
+    abort?.abort();
     this.#speech = [];
     this.#preRoll = [];
     try {
@@ -610,10 +644,10 @@ export class ConversationSession {
   /**
    * Speak out loud (the greeting or a turn's answer). While it plays the session is
    * 'hablando': the agent's own voice is never taken for a request, and, with barge-in
-   * on, the user talking over it stops the sound (`stop`) and what they say becomes the
-   * next utterance. Called while listening (greeting) it resumes listening with the echo
-   * tail dropped; called from inside a turn the turn itself resumes afterwards.
-   * Resolves once `run` has settled.
+   * on, the user talking over it aborts `ctl.signal` (and `stop`) and what they say
+   * becomes the next utterance. Called while listening (greeting) it resumes listening
+   * with the echo tail dropped; called from inside a turn the turn itself resumes
+   * afterwards. Resolves once `run` has settled.
    */
   async speak(
     run: (ctl: SpeakControl) => Promise<void>,
@@ -625,6 +659,8 @@ export class ConversationSession {
     if (fromListening) this.#resetUtterance();
     const returnTo: ConversationState = fromListening ? 'escuchando' : 'respondiendo';
     const turn = this.#turnSeq;
+    const abort = new AbortController();
+    this.#speakAbort = abort;
     this.#speakSeq++;
     this.#state = 'hablando';
     this.#speakStop = opts.stop ?? null;
@@ -640,15 +676,20 @@ export class ConversationSession {
     const ctl: SpeakControl = {
       phraseStart: () => this.#restartCalibration(),
       interrupted: () => this.#speakInterrupted,
+      signal: abort.signal,
     };
     try {
       await run(ctl);
     } catch (err) {
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      // Una síntesis cancelada por corte/cierre no es un fallo que reportar.
+      if (!this.#speakInterrupted && !abort.signal.aborted) {
+        this.#lastError = err instanceof Error ? err.message : String(err);
+      }
     }
     const interrupted = this.#speakInterrupted;
     this.#speakStop = null;
     this.#speakInterrupted = false;
+    if (this.#speakAbort === abort) this.#speakAbort = null;
     // The playback is over: its VAD check, if any is still in flight, is dead
     // and must not touch the next playback's state, counters or interruptions.
     this.#speakSeq++;
@@ -678,7 +719,8 @@ export class ConversationSession {
   }
 
   #feedWhileSpeaking(pcm: Float32Array): void {
-    if (this.#bargeIn === 'off' || !this.#speakStop || pcm.length === 0) return;
+    // Sin `stop` el corte sigue funcionando: `ctl.signal` aborta la síntesis.
+    if (this.#bargeIn === 'off' || pcm.length === 0) return;
     const level = BARGE_IN[this.#bargeIn];
     this.#speakClockSamples += pcm.length;
     const level_rms = rms(pcm);
@@ -820,7 +862,10 @@ export class ConversationSession {
     this.#vadCheckSeq = null;
     this.#turnSeq++;
     const stop = this.#speakStop;
+    const abort = this.#speakAbort;
     this.#speakStop = null;
+    // Primero se cancela la síntesis en curso; después se corta el reproductor.
+    abort?.abort();
     this.#resetUtterance();
     this.#speech = [...this.#speakBuf];
     this.#speechSamples = this.#speakBufSamples;
