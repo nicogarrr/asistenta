@@ -160,6 +160,7 @@ import { dailyBudgetExceeded, recordUsage } from './core/usage.js';
 import { parseMcpServers } from './mcp/client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
+import { buildMemoryPromptSection } from './memory/prompt.js';
 import {
   currentLimits,
   getPace,
@@ -2375,7 +2376,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         let result: AgentRunResult | null = null;
         try {
           thread.agent.attachContext(
-            buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
+            buildContextNote(
+              thread,
+              store,
+              memory,
+              snapshot,
+              workstreams,
+              skills,
+              sessions,
+              ownerProfile,
+            ),
           );
           result = await thread.agent.run(prompt);
           safeRemember(() =>
@@ -2437,7 +2447,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       try {
         thread.agent.attachContext(
-          buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
+          buildContextNote(
+            thread,
+            store,
+            memory,
+            snapshot,
+            workstreams,
+            skills,
+            sessions,
+            ownerProfile,
+          ),
         );
         const result = await thread.agent.run(prompt);
         text = result.text ?? '';
@@ -2578,6 +2597,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  // Perfil v2 por propietario: fuente del bloque <perfil> del prompt. Si está
+  // vacío, buildContextNote cae al PERFIL.md legado (compatibilidad).
+  const ownerProfile = new OwnerProfile(
+    join(paths.state, 'profile', `${vigilanteOwnerId ?? 'local'}.json`),
+  );
+
   const attention = new AttentionQueue({
     db: memoryDb,
     now: Date.now,
@@ -5155,7 +5180,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
       thread.agent.attachContext(
-        buildContextNote(thread, store, memory, snapshot, workstreams, skills, sessions),
+        buildContextNote(
+          thread,
+          store,
+          memory,
+          snapshot,
+          workstreams,
+          skills,
+          sessions,
+          ownerProfile,
+        ),
       );
 
       result = await thread.agent.run(prompt, images, {
@@ -6743,21 +6777,33 @@ export function buildContextNote(
   workstreams?: WorkstreamStore,
   skills?: SkillStore,
   sessions?: SessionStore,
+  profile?: OwnerProfile,
 ): string {
   const parts: string[] = [];
 
   // The frozen memory first: who the user is and what the agent has learned about
   // them, read from disk rather than rebuilt per turn. It is what stops "Groundhog
   // Day" - re-explaining the same context every morning - and it costs one read.
-  const frozen = snapshot?.contextNote() ?? '';
-  if (frozen) parts.push(frozen);
-
   // 9b: memory as an index - the last 5 active entries in full, the rest as
   // one-line rows; superseded facts are never rendered and the section is
   // capped (see src/memory/context.ts, measured in scripts/memory-bench.ts).
   const renderedMemory = renderMemoryContext(memory.all(thread.key));
-  if (renderedMemory) {
-    parts.push(`<memory>\n${renderedMemory.body}\n</memory>`);
+  // Perfil v2 por propietario: una sola sección (perfil + memoria) sin duplicar
+  // el PERFIL.md. Si v2 está vacío se usa el perfil legado tal cual.
+  let profileSection = '';
+  if (profile) {
+    try {
+      profileSection = buildMemoryPromptSection({ profile, memoryBody: renderedMemory?.body });
+    } catch {
+      profileSection = '';
+    }
+  }
+  if (profileSection) {
+    parts.push(profileSection);
+  } else {
+    const frozen = snapshot?.contextNote() ?? '';
+    if (frozen) parts.push(frozen);
+    if (renderedMemory) parts.push(`<memory>\n${renderedMemory.body}\n</memory>`);
   }
   // Continuidad entre reinicios y cambios de tema: lo último que se habló en este
   // chat, una línea por sesión. Es un resumen, no la transcripción, y va aparte de
