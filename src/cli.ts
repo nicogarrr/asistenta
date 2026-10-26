@@ -154,9 +154,9 @@ function secretStatePaths(): string[] {
 
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
+import { approvals } from './approvals/broker.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
-import { approvals } from './approvals/broker.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
 import { dailyBudgetExceeded, recordUsage } from './core/usage.js';
 import { parseMcpServers } from './mcp/client.js';
