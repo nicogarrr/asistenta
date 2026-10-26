@@ -152,6 +152,7 @@ function secretStatePaths(): string[] {
   return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
 }
 
+import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
@@ -4494,6 +4495,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** Importar una skill desde una URL (SKILL.md) con validación y saneado. */
+  /** /calendario add <fecha> | <titulo>: escribe un evento en el ICS local. */
+  const cmdCalendario = async (inbound: Inbound, args: string): Promise<void> => {
+    const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
+    if (!m) {
+      await say(inbound, 'Uso: /calendario add 2026-11-02 18:00 | Dentista', { quote: true });
+      return;
+    }
+    const start = new Date((m[1] ?? '').trim());
+    const title = (m[2] ?? '').trim();
+    if (Number.isNaN(start.getTime()) || !title) {
+      await say(inbound, 'Fecha no válida. Usa 2026-11-02 18:00 | Título.', { quote: true });
+      return;
+    }
+    const file = join(paths.state, 'calendar', 'local.ics');
+    await appendEvent(file, { title, start });
+    await say(
+      inbound,
+      'Añadido al calendario: ' + title + ' — ' + start.toLocaleString('es-ES') + '.',
+      { quote: true },
+    );
+  };
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();
     if (!url) {
@@ -6182,6 +6204,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 const thread = await resolveThread(inbound);
                 return cmdExportar(thread, inbound, command.args);
               }
+              case 'calendario':
+                return cmdCalendario(inbound, command.args);
               case 'perfil': {
                 return cmdPerfil(inbound, command.args);
               }
