@@ -71,6 +71,19 @@ export interface AgentRunResult {
  */
 export interface RunHooks {
   onToolCall?: (info: { tool: string; summary: string; count: number }) => void;
+  /**
+   * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
+   * el mismo orden en que llega y sin acumular ni trocear. Un delta vacio o
+   * ausente se ignora. Si el callback lanza, se registra y el turno continua.
+   */
+  onTextDelta?: (delta: string) => void;
+  /**
+   * Texto completo al cerrar el flujo normal del intento: la concatenacion de
+   * los deltas emitidos, incluido el texto previo a las llamadas de herramienta.
+   * No se avisa en errores, abortos ni cuando el guard va a pedir su informe
+   * aparte. Si el callback lanza, se registra y el turno continua.
+   */
+  onTextEnd?: (full: string) => void;
 }
 
 /**
@@ -966,8 +979,20 @@ export class PersonalAgent {
     const off = this.#agent.subscribe((event) => {
       touch();
       if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
-        text += event.assistantMessageEvent.delta;
-        if (this.#stream) process.stdout.write(event.assistantMessageEvent.delta);
+        const delta = event.assistantMessageEvent.delta;
+        // Algun proveedor manda el evento sin texto: no hay nada que acumular ni
+        // que anunciar. El delta se emite tal cual, sin agrupar ni esperar.
+        if (typeof delta === 'string' && delta.length > 0) {
+          text += delta;
+          if (this.#stream) process.stdout.write(delta);
+          if (hooks?.onTextDelta) {
+            try {
+              hooks.onTextDelta(delta);
+            } catch (err) {
+              log.warn('text delta hook failed', { err: String(err) });
+            }
+          }
+        }
       }
       if (event.type === 'tool_execution_start') {
         shared.fileWrites.start(event.toolCallId, event.toolName, event.args);
@@ -1089,6 +1114,25 @@ export class PersonalAgent {
       clearTimeout(timer);
       clearInterval(watchdog);
       off();
+    }
+
+    // Cierre del flujo normal. Solo se anuncia un intento que termino bien: en
+    // un error o aborto ya puede haber deltas sueltos, pero darlo por completo
+    // seria mentir al canal. El informe del guard corre por su propia
+    // suscripcion y no pasa por estos hooks.
+    if (
+      hooks?.onTextEnd &&
+      text.length > 0 &&
+      !error &&
+      !guardReason &&
+      stopReason !== 'aborted' &&
+      stopReason !== 'error'
+    ) {
+      try {
+        hooks.onTextEnd(text);
+      } catch (err) {
+        log.warn('text end hook failed', { err: String(err) });
+      }
     }
 
     // A terminated `done` run has no final assistant text, so the explicit summary is
