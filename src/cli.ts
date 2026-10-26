@@ -156,6 +156,7 @@ import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
+import { approvals } from './approvals/broker.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
 import { dailyBudgetExceeded, recordUsage } from './core/usage.js';
 import { parseMcpServers } from './mcp/client.js';
@@ -1622,6 +1623,50 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
           memory: (scope?: string) => memory.all(scope ?? 'local'),
           auditVerify: () => verifyCallAudit(),
+          // Chat del panel: corre en el hilo principal del propietario, con el
+          // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).
+          chat: async (text: string) => {
+            const thread = await getOrCreateThread(
+              'telegram:dm:' + String(vigilanteOwnerId ?? 'local'),
+              'main',
+              'principal',
+            );
+            const generation = thread.generation;
+            const task = async () => {
+              if (thread.generation !== generation) return { text: '' };
+              thread.active = true;
+              try {
+                thread.agent.attachContext(
+                  buildContextNote(
+                    thread,
+                    store,
+                    memory,
+                    snapshot,
+                    workstreams,
+                    skills,
+                    sessions,
+                    ownerProfile,
+                  ),
+                );
+                const r = await thread.agent.run(text);
+                return { text: r.text };
+              } finally {
+                thread.active = false;
+                thread.gate.clearSession(thread.key);
+              }
+            };
+            const next = thread.tail.then(task);
+            thread.tail = next.then(
+              () => undefined,
+              () => undefined,
+            );
+            return next;
+          },
+          // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
+          approvals: () => approvals.list(),
+          approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') => {
+            approvals.resolve(id, decision);
+          },
         },
         { port: Number(process.env.PA_WEB_PORT) },
       )
