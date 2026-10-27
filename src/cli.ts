@@ -1797,7 +1797,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createAskTool(),
       createShellTool(config),
       delegateTool(config),
-      delegateTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
       // silently blocks every batch. `sendPhoto` is what lets the model put a

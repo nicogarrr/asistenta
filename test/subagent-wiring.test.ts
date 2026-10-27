@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
@@ -291,5 +291,21 @@ describe('e2e delegate con modelo simulado', () => {
     const r = await pool.run({ task: 'nieto', parentDepth: pool.limits.maxDepth });
     expect(r.error).toBeTruthy();
     expect(ran).toEqual([]);
+  });
+});
+
+describe('Telegram thread tool registration', () => {
+  it('registers each tool factory once in the actual threadTools array', () => {
+    const source = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('const threadTools = (thread: Thread): AgentTool[] => {');
+    const end = source.indexOf('const raw = toolsForMode(all, desktop);', start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    // Source-registration guard for this CLI-local factory. Runtime child tool
+    // isolation and tool names are exercised separately above with real agents.
+    const factories = [...block.matchAll(/^ {6}([A-Za-z][A-Za-z0-9_]*)\(/gm)].map((m) => m[1]);
+    expect(factories.filter((name) => name === 'delegateTool')).toHaveLength(1);
+    expect(new Set(factories).size).toBe(factories.length);
   });
 });
