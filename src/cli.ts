@@ -6816,6 +6816,53 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje.`;
   }
 
+  if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
+    const resuming = sub === 'reanuda' || sub === 'reanudar';
+    const name = rest.trim();
+    if (!name) return `Uso: /cron ${resuming ? 'reanudar' : 'pausa'} <nombre>.`;
+    const routine =
+      deps.store.getRoutine(deps.threadKey, name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, name);
+    if (!routine || routine.kind !== 'schedule') {
+      return `No tengo ninguna rutina programada llamada "${name}".`;
+    }
+    if (routine.enabled === resuming) {
+      return resuming
+        ? `La rutina "${name}" ya estaba activa.`
+        : `La rutina "${name}" ya estaba en pausa.`;
+    }
+    deps.store.setRoutineEnabled(routine.scope, routine.name, resuming);
+    deps.routineRunner.sync();
+    if (!resuming) {
+      return `Rutina "${name}" en pausa: no se ejecutará hasta que hagas /cron reanudar ${name}. Si hay una en marcha ahora mismo, puede terminar.`;
+    }
+    const live = deps.routineRunner
+      .status()
+      .find((st) => st.scope === routine.scope && st.name === routine.name);
+    return `Rutina "${name}" reanudada. Próxima ejecución: ${nextRunLabel(routine.schedule, live?.next)}.`;
+  }
+
+  if (sub === 'probar' || sub === 'test' || sub === 'ahora') {
+    const name = rest.trim();
+    if (!name) return 'Uso: /cron probar <nombre>.';
+    const routine =
+      deps.store.getRoutine(deps.threadKey, name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, name);
+    if (!routine || routine.kind !== 'schedule') {
+      return `No tengo ninguna rutina programada llamada "${name}".`;
+    }
+    if (!routine.enabled) {
+      return `La rutina "${name}" está en pausa. Reanúdala con /cron reanudar ${name} o dime si quieres probarla igualmente.`;
+    }
+    if (deps.routineRunner.isRunning(routine.scope, routine.name)) {
+      return `La rutina "${name}" ya se está ejecutando ahora mismo.`;
+    }
+    // A test is a real run: same approvals, same tools, same purchase cap. Say so,
+    // so nobody expects a dry run.
+    void deps.routineRunner.fire(routine.scope, routine.name);
+    return `Lanzo "${name}" ahora como prueba. Es una ejecución real (mismos permisos y aprobaciones que a su hora); el resultado llegará a este chat. Su horario no cambia.`;
+  }
+
   if (sub === 'add') {
     if (!rest.trim()) {
       return 'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.';
@@ -6858,10 +6905,14 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     `Rutinas programadas: ${list.length}`,
     ...list.map(
       (r) =>
-        `- ${r.name} [${r.schedule}] — próxima: ${nextRunLabel(
-          r.schedule ?? null,
-          live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
-        )}`,
+        `- ${r.name} [${r.schedule}] — ${
+          r.enabled
+            ? `próxima: ${nextRunLabel(
+                r.schedule ?? null,
+                live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
+              )}`
+            : 'EN PAUSA'
+        }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
     ),
   ].join('\n');
 }

@@ -497,6 +497,14 @@ export class Store {
     this.#db.prepare('UPDATE routine_triggers SET last_fired_at = ? WHERE id = ?').run(iso, id);
   }
 
+  /** Pause or resume a routine without losing its schedule or prompt. False if it does not exist. */
+  setRoutineEnabled(scope: string, name: string, enabled: boolean): boolean {
+    const res = this.#db
+      .prepare('UPDATE routines SET enabled = ?, updated_at = ? WHERE scope = ? AND name = ?')
+      .run(enabled ? 1 : 0, new Date().toISOString(), scope, name);
+    return Number(res.changes) > 0;
+  }
+
   markRoutineRun(scope: string, name: string): void {
     this.#db
       .prepare('UPDATE routines SET last_run_at = ? WHERE scope = ? AND name = ?')
