@@ -2400,6 +2400,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   void goalNotifier.flushAll().catch(() => {}); // a reboot delivers at once
   const goalRunner = new GoalRunner({
     goals: goalStore,
+    workstreams,
     notifier: goalNotifier,
     store,
     sync: () => routineRunner.sync(),
@@ -6969,12 +6970,11 @@ export function buildContextNote(
     );
   }
   // Open fronts of work, as the compact index the store writes for prompts.
-  // Gated on active ones: `index()` always answers with text, and a standing
+  // Include paused fronts too: a pending decision must not disappear. A standing
   // "nothing open" line would pay tokens on every turn to say nothing.
-  const openWork = workstreams?.active(thread.key) ?? [];
-  if (openWork.length) {
-    const ws = workstreams?.index(thread.key) ?? '';
-    if (ws) parts.push(`<workstreams>\n${ws}\n</workstreams>\n${ANTICIPATION_RULES}`);
+  const ws = workstreams?.index(thread.key) ?? '';
+  if (ws && ws !== 'Sin frentes de trabajo abiertos.') {
+    parts.push(`<workstreams>\n${ws}\n</workstreams>\n${ANTICIPATION_RULES}`);
   }
   // What the agent already knows how to do (including its own lessons), as a
   // one-line-each index; the steps load on demand with `skills read`.
