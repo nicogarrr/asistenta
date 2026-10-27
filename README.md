@@ -66,7 +66,7 @@ En los comandos siguientes se usa `node dist/cli.js` para no depender de un `pa`
 npx playwright install chromium
 ```
 
-Instala también las dependencias de sistema que Playwright indique para tu plataforma. No hace falta instalar browserd, Docker ni funciones de TV para el chat básico.
+Con `PA_DESKTOP=off`, `doctor` omite los chequeos de escritorio Windows (pantalla, cámara, micrófono, ventanas). Instala también las dependencias de sistema que Playwright indique para tu plataforma. No hace falta instalar browserd, Docker ni funciones de TV para el chat básico.
 
 ## Configuración sin secretos
 
