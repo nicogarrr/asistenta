@@ -60,6 +60,7 @@ describe('createSubagentDeps via pool y delegate', () => {
     const prompts: string[] = [];
     let created = 0;
     const deps = createSubagentDeps({
+      parentTools: () => [],
       makeChild: async (spec) => {
         specs.push(spec);
         created++;
@@ -100,6 +101,7 @@ describe('createSubagentDeps via pool y delegate', () => {
   it('el aborto por timeout llega al hijo', async () => {
     let aborted = false;
     const deps = createSubagentDeps({
+      parentTools: () => [],
       makeChild: async () => ({
         run: () => new Promise(() => {}),
         abort: () => {
@@ -120,5 +122,118 @@ describe('createSubagentDeps via pool y delegate', () => {
     expect(res.details.error).toBeUndefined();
     expect(specs[0]?.role).toBe('implementer');
     expect(specs[0]?.tools).toEqual(['read', 'list']);
+  });
+});
+
+describe('auditoria #288', () => {
+  it('lista vacia explicita significa ninguna herramienta (no se amplia al rol)', async () => {
+    expect(resolveChildToolNames('explorer', []).allowed).toEqual([]);
+    expect(resolveChildToolNames('explorer', undefined).allowed).toEqual([
+      'read',
+      'list',
+      'fetch',
+      'web',
+    ]);
+    const specs: ChildSpec[] = [];
+    const deps = createSubagentDeps({
+      parentTools: () => ['read', 'list', 'fetch', 'web'].map((n) => fakeTool(n)),
+      makeChild: async (spec) => {
+        specs.push(spec);
+        return { run: async () => ({ text: 'ok' }), abort: () => {} };
+      },
+    });
+    const pool = new SubagentPool(deps);
+    await pool.run({ task: 'a', role: 'explorer', tools: [] });
+    await pool.run({ task: 'b', role: 'explorer' });
+    expect(specs[0]?.tools).toEqual([]);
+    expect(specs[0]?.toolset).toEqual([]);
+    expect(specs[1]?.toolset.map((t) => t.name)).toEqual(['read', 'list', 'fetch', 'web']);
+  });
+
+  it('senal ya abortada: el hijo no llega a ejecutar (ran=0)', async () => {
+    let ran = 0;
+    let made = 0;
+    const deps = createSubagentDeps({
+      parentTools: () => [],
+      makeChild: async () => {
+        made++;
+        return {
+          run: async () => {
+            ran++;
+            return { text: 'no' };
+          },
+          abort: () => {},
+        };
+      },
+    });
+    const ac = new AbortController();
+    ac.abort();
+    const r = await deps.run({
+      task: 'x',
+      role: 'explorer',
+      depth: 1,
+      budget: { maxToolCalls: 3, tools: [], signal: ac.signal },
+    });
+    expect(ran).toBe(0);
+    expect(made).toBe(0);
+    expect(r.error).toMatch(/abortado/);
+  });
+
+  it('fabrica lenta que acaba tras el timeout: se aborta y no se ejecuta', async () => {
+    let ran = 0;
+    let aborted = 0;
+    const deps = createSubagentDeps({
+      parentTools: () => [],
+      makeChild: async () => {
+        await new Promise((r) => setTimeout(r, 80));
+        return {
+          run: async () => {
+            ran++;
+            return { text: 'no' };
+          },
+          abort: () => {
+            aborted++;
+          },
+        };
+      },
+    });
+    const pool = new SubagentPool(deps, { timeoutMs: 20 });
+    const r = await pool.run({ task: 'lenta', role: 'explorer' });
+    expect(r.error).toMatch(/timeout/i);
+    await new Promise((res) => setTimeout(res, 150));
+    expect(ran).toBe(0);
+    expect(aborted).toBe(1);
+  });
+
+  it('el toolset del hijo se aisla por construccion y respeta maxToolCalls', async () => {
+    const log: string[] = [];
+    let names: string[] = [];
+    let third = '';
+    const deps = createSubagentDeps({
+      parentTools: () => ['read', 'write', 'shell', 'list'].map((n) => fakeTool(n, log)),
+      makeChild: async (sp) => ({
+        run: async () => {
+          names = sp.toolset.map((t) => t.name);
+          const read = sp.toolset[0];
+          await read?.execute('1', {} as never, undefined, undefined);
+          await read?.execute('2', {} as never, undefined, undefined);
+          try {
+            await read?.execute('3', {} as never, undefined, undefined);
+          } catch (e) {
+            third = String(e);
+          }
+          return { text: 'ok' };
+        },
+        abort: () => {},
+      }),
+    });
+    await new SubagentPool(deps, { maxToolCalls: 2 }).run({
+      task: 't',
+      role: 'explorer',
+      tools: ['read', 'write', 'shell'],
+    });
+    expect(names).toEqual(['read']);
+    expect(third).toMatch(/agotado/);
+    expect(log).toEqual(['read', 'read']);
   });
 });

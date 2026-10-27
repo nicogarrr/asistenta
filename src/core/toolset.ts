@@ -26,6 +26,10 @@ export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = {
       /https?:\/\/|www\.|\b[\w-]+\.(com|es|org|net|io|eu|gob|cat)\b|web|p[áa]gina|navega|internet|google|youtube|amazon|booking|airbnb|wikipedia|busca en|mira en|reserva|compra|login|inicia(r)? sesi[óo]n|formulario|captcha|renfe|tren|vuelo|hotel|billete|cita|rellena|descarga/i,
     purpose: 'navegar por webs, rellenar formularios, elegir fechas y autocompletados',
   },
+  delegate: {
+    pattern: /delega|subagente|sub-agente|en paralelo|multi-?agente|varios agentes/i,
+    purpose: 'delegar lectura/busqueda/planes a un subagente aislado (solo lectura)',
+  },
   media: {
     pattern:
       /audio|voz|foto|imagen|v[íi]deo|c[áa]mara|micr[óo]fono|graba|sonido|m[úu]sica|nota de voz|en vivo|live|sube el volumen|reproduce/i,
@@ -62,6 +66,8 @@ export const THREAD_ALLOW_TOOLS = [
   // Universal errands: preparar/paso/completar/cancelar/listar/estado are
   // freely callable; `ejecutar` is hardcoded as always-ask in the Gate itself.
   'gestion',
+  // Subagentes de solo lectura: el hijo tiene su propia Gate sin approver.
+  'delegate',
   LOADER_TOOL_NAME,
 ];
 

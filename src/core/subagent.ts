@@ -62,6 +62,8 @@ export interface SubagentRequest {
 export interface SubagentRunRequest {
   task: string;
   role?: string;
+  /** undefined = el caller no pidio lista (usa las del rol); [] = ninguna herramienta. */
+  tools?: readonly string[];
   depth: number;
   budget: unknown;
 }
@@ -195,9 +197,10 @@ export class SubagentPool {
     // lista de tools mientras la peticion esta en la cola.
     const task = request.task;
     const role = request.role;
-    const tools = (request.tools ?? []).filter(
-      (name) => typeof name === 'string' && name.trim().length > 0,
-    );
+    const tools =
+      request.tools === undefined
+        ? undefined
+        : request.tools.filter((name) => typeof name === 'string' && name.trim().length > 0);
 
     await this.#acquire();
     try {
@@ -232,13 +235,13 @@ export class SubagentPool {
   async #execute(
     task: string,
     depth: number,
-    toolNames: string[],
+    toolNames: string[] | undefined,
     role?: string,
   ): Promise<SubagentResult> {
     const controller = new AbortController();
     const budget: SubagentBudget = Object.freeze({
       maxToolCalls: this.#limits.maxToolCalls,
-      tools: Object.freeze([...toolNames]),
+      tools: Object.freeze([...(toolNames ?? [])]),
       signal: controller.signal,
     });
     const expired = new Error(timeoutMessage(this.#timeoutMs));
@@ -252,7 +255,13 @@ export class SubagentPool {
 
     try {
       const result = await Promise.race([
-        this.#deps.run({ task, depth, budget, ...(role ? { role } : {}) }),
+        this.#deps.run({
+          task,
+          depth,
+          budget,
+          ...(role ? { role } : {}),
+          ...(toolNames ? { tools: Object.freeze([...toolNames]) } : {}),
+        }),
         timeout,
       ]);
       const childError =

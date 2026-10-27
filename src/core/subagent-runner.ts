@@ -7,8 +7,10 @@
  * heredadas) lo tiene que cumplir quien construye el hijo. Este modulo lo
  * cumple por construccion y fail-closed:
  *
- * - Cada ejecucion crea un hijo NUEVO (`makeChild`): jamas se reutiliza un
- *   historial entre tareas ni se pasa el del padre.
+ * - Cada ejecucion crea un hijo NUEVO (`makeChild`) y solo recibe el prompt de la
+ *   tarea (sin transcript del padre). Que la fabrica no reutilice historial es
+ *   contrato de la fabrica y lo prueba su test; el toolset y el tope de llamadas
+ *   si se imponen aqui por construccion (`isolateTools`).
  * - El toolset del hijo es la interseccion de lo pedido, lo que permite el rol y
  *   una lista cerrada de herramientas de solo lectura. Una herramienta con
  *   efectos (write, shell, browser...) se descarta aunque el modelo la pida.
@@ -74,7 +76,8 @@ export function resolveChildToolNames(
   requested?: readonly string[],
 ): ResolvedChildTools {
   const roleTools = SUBAGENT_ROLE_SPECS[role].tools;
-  const wanted = requested && requested.length > 0 ? requested : roleTools;
+  // undefined = las del rol; lista vacia explicita = ninguna herramienta.
+  const wanted = requested === undefined ? roleTools : requested;
   const allowed: string[] = [];
   const dropped: string[] = [];
   for (const name of wanted) {
@@ -90,7 +93,9 @@ export function isolateTools(
   tools: readonly AgentTool[],
   allowed: readonly string[],
   signal?: AbortSignal,
+  maxCalls?: number,
 ): AgentTool[] {
+  let used = 0;
   const safe = new Set(allowed.filter((n) => SUBAGENT_SAFE_TOOLS.includes(n)));
   return tools
     .filter((tool) => safe.has(tool.name))
@@ -100,6 +105,9 @@ export function isolateTools(
         if (!safe.has(tool.name))
           throw new Error(`Herramienta no permitida al subagente: ${tool.name}`);
         if (signal?.aborted) throw new Error('Subagente abortado: no se ejecuta la herramienta.');
+        if (maxCalls !== undefined && used >= maxCalls)
+          throw new Error('Presupuesto de herramientas del subagente agotado.');
+        used++;
         return tool.execute(...args);
       },
     })) as AgentTool[];
@@ -110,6 +118,12 @@ export interface ChildSpec {
   prompt: string;
   role: SubagentRole;
   tools: string[];
+  /**
+   * Herramientas YA aisladas por construccion (isolateTools sobre las del padre):
+   * solo las permitidas, con tope de llamadas y corte al abortar. La fabrica
+   * debe usar exactamente estas y ninguna otra.
+   */
+  toolset: AgentTool[];
   maxToolCalls: number;
   signal: AbortSignal;
 }
@@ -122,6 +136,8 @@ export interface ChildHandle {
 export interface SubagentRunnerOptions {
   /** Crea un hijo NUEVO por llamada (historial vacio, toolset ya aislado). */
   makeChild(spec: ChildSpec): Promise<ChildHandle>;
+  /** Herramientas del padre de las que se deriva el toolset del hijo (se filtran aqui). */
+  parentTools: () => readonly AgentTool[];
 }
 
 function readBudget(budget: unknown): SubagentBudget | undefined {
@@ -154,19 +170,33 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
           error: 'Falta el presupuesto del subagente; no se ejecuta sin limites.',
         };
       }
-      const { allowed } = resolveChildToolNames(role, budget.tools);
+      // Pedido del caller: request.tools (undefined = las del rol, [] = ninguna).
+      const { allowed } = resolveChildToolNames(role, request.tools);
+      if (budget.signal.aborted) return { text: '', error: 'Subagente abortado antes de empezar.' };
+      const prompt = buildChildPrompt(role, request.task);
+      const toolset = isolateTools(
+        options.parentTools(),
+        allowed,
+        budget.signal,
+        budget.maxToolCalls,
+      );
       const child = await options.makeChild({
-        prompt: buildChildPrompt(role, request.task),
+        prompt,
         role,
         tools: allowed,
+        toolset,
         maxToolCalls: budget.maxToolCalls,
         signal: budget.signal,
       });
+      // La fabrica pudo tardar mas que el timeout: si ya se aborto, no se ejecuta.
+      if (budget.signal.aborted) {
+        child.abort();
+        return { text: '', error: 'Subagente abortado antes de empezar.' };
+      }
       const onAbort = () => child.abort();
-      if (budget.signal.aborted) onAbort();
       budget.signal.addEventListener('abort', onAbort, { once: true });
       try {
-        const out = await child.run(buildChildPrompt(role, request.task));
+        const out = await child.run(prompt);
         return { text: out.text, toolCalls: out.toolCalls, error: out.error ?? null };
       } finally {
         budget.signal.removeEventListener('abort', onAbort);
