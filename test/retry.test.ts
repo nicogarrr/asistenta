@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
 import {
   DEFAULT_RETRY,
@@ -6,6 +6,7 @@ import {
   isTransientProviderError,
   pickFallbackModel,
   retryDelay,
+  sleep,
 } from '../src/core/retry.js';
 
 describe('isTransientProviderError', () => {
@@ -174,5 +175,48 @@ describe('retryRecoveryNote', () => {
     expect(note).toContain('(+15 anteriores)');
     expect(note).toContain('t a19');
     expect(note).not.toContain('t a0:');
+  });
+});
+
+describe('cancellable retry sleep', () => {
+  it('does not wait or install a listener when already aborted', async () => {
+    vi.useFakeTimers();
+    try {
+      const signal = AbortSignal.abort();
+      const add = vi.spyOn(signal, 'addEventListener');
+      await sleep(20_000, signal);
+      expect(add).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('removes its abort listener after a normal wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, 'removeEventListener');
+      const wait = sleep(10, controller.signal);
+      await vi.advanceTimersByTimeAsync(10);
+      await wait;
+      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resolves and clears its timer when aborted mid-wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const wait = sleep(20_000, controller.signal);
+      controller.abort();
+      await wait;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
