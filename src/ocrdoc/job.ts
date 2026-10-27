@@ -144,6 +144,11 @@ export async function runOcrJob(
         }`,
       );
     }
+    if (r.pages.some((p) => p.source === 'digital' && p.reason)) {
+      lines.push(
+        'Hay páginas con texto propio parcial: lo conservo, pero el OCR no pudo completar su lectura. Revisa el original.',
+      );
+    }
     if (r.unreadPages) lines.push('Las páginas sin leer quedan igual que en el original.');
     lines.push('Tu original sigue en este chat sin cambios.');
     return { ok: true, message: lines.join('\n'), files };

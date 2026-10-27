@@ -162,7 +162,7 @@ export function buildMarkdown(opts: {
   for (const p of opts.pages) {
     const label =
       p.source === 'digital'
-        ? 'texto del propio PDF'
+        ? `texto del propio PDF${p.reason ? `: ${p.reason}` : ''}`
         : p.source === 'ocr'
           ? 'reconocido por OCR'
           : p.source === 'vacia'
@@ -234,7 +234,21 @@ export async function ocrPdf(
     }
     // Escaneada (o casi vacía): necesita render + OCR.
     texts.push('');
+    // A short digital fragment is real evidence, even when it is not enough
+    // to skip OCR for the rest of the page. Never discard it on fallback.
+    const retainDigital = (reason: string): boolean => {
+      if (!own) return false;
+      texts[i] = own;
+      reports.push({
+        page: i + 1,
+        source: 'digital',
+        chars: own.length,
+        reason: `texto parcial; ${reason}`,
+      });
+      return true;
+    };
     if (!deps.renderPage || !deps.ocr) {
+      if (retainDigital(deps.noOcrReason ?? 'no hay OCR disponible')) continue;
       reports.push({
         page: i + 1,
         source: 'sin_leer',
@@ -246,6 +260,7 @@ export async function ocrPdf(
     const page = doc.getPage(i);
     const { width: pw, height: ph } = page.getSize();
     if (page.getRotation().angle % 360 !== 0) {
+      if (retainDigital('página girada (OCR no soportado)')) continue;
       // Windows renderiza ya girada y la capa se colocaría torcida: mejor no inventarla.
       reports.push({
         page: i + 1,
@@ -256,6 +271,7 @@ export async function ocrPdf(
       continue;
     }
     if (!(pw > 0 && ph > 0) || pw > MAX_PAGE_POINTS || ph > MAX_PAGE_POINTS) {
+      if (retainDigital('tamaño de página fuera de rango para OCR')) continue;
       reports.push({
         page: i + 1,
         source: 'sin_leer',
@@ -274,6 +290,7 @@ export async function ocrPdf(
       const result = await deps.ocr(png);
       const text = tidy(result.text ?? '');
       if (!text) {
+        if (retainDigital('OCR sin texto adicional reconocido')) continue;
         reports.push({ page: i + 1, source: 'vacia', chars: 0 });
         continue;
       }
@@ -287,6 +304,7 @@ export async function ocrPdf(
         droppedChars: o.dropped,
       });
     } catch (err) {
+      if (retainDigital(`OCR no disponible: ${errMsg(err)}`)) continue;
       reports.push({ page: i + 1, source: 'sin_leer', chars: 0, reason: errMsg(err) });
     }
   }
@@ -304,7 +322,10 @@ export async function ocrPdf(
     pages: reports,
     ...counts,
     alreadySearchable:
-      counts.ocrPages === 0 && counts.unreadPages === 0 && counts.digitalPages === total,
+      counts.ocrPages === 0 &&
+      counts.unreadPages === 0 &&
+      counts.digitalPages === total &&
+      !reports.some((r) => r.source === 'digital' && r.reason),
   };
 }
 
