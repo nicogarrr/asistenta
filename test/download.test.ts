@@ -46,6 +46,15 @@ describe('downloadPdf', () => {
     expect(r.ok && r.bytes.equals(pdfBytes)).toBe(true);
   });
 
+  it('returns a valid PDF even when the URL filename has malformed percent escapes', async () => {
+    const r = await downloadPdf('https://example.org/informe%ZZ.pdf', async () => resp(pdfBytes));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.filename).toBe('informe%ZZ.pdf');
+      expect(r.bytes.equals(pdfBytes)).toBe(true);
+    }
+  });
+
   it('refuses an HTML page served under a pdf name', async () => {
     const r = await downloadPdf('https://example.org/a.pdf', async () =>
       resp('<html>login</html>'),

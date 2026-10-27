@@ -447,7 +447,7 @@ export async function downloadAudio(
 
 function filenameFrom(disposition: string | null, url: URL): string {
   const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '');
-  let name = m?.[1] ? safeDecode(m[1]) : decodeURIComponent(url.pathname.split('/').pop() || '');
+  let name = m?.[1] ? safeDecode(m[1]) : safeDecode(url.pathname.split('/').pop() || '');
   name = Array.from(name, (c) => (c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c) ? '_' : c))
     .join('')
     .trim();
