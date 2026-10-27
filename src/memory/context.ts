@@ -23,6 +23,7 @@
  * maximum, never a promise: the cap wins.
  */
 import type { MemoryEntry } from '../memory.js';
+import { plainInline } from '../utils.js';
 
 /** Hard ceiling for the rendered memory section, header and tail included. */
 export const MEMORY_CONTEXT_CAP = 4000;
@@ -47,9 +48,12 @@ export interface MemoryContextRender {
 const snip = (text: string) =>
   text.length > MEMORY_CONTEXT_SNIPPET ? `${text.slice(0, MEMORY_CONTEXT_SNIPPET)}…` : text;
 
+// Entry text is rendered inside the <memory> fence of the context note: a stored
+// fact must not be able to close that fence (see plainInline). Storage is untouched.
+
 function indexLine(entry: MemoryEntry): string {
   const tags = entry.tags.map((t) => `#${t}`).join(' ');
-  return `- [${entry.id}] (${entry.date})${tags ? ` ${tags}` : ''} ${snip(entry.text)}`;
+  return `- [${entry.id}] (${entry.date})${tags ? ` ${tags}` : ''} ${snip(plainInline(entry.text))}`;
 }
 
 interface Row {
@@ -57,7 +61,7 @@ interface Row {
   full: boolean;
 }
 
-const rowLine = (r: Row) => (r.full ? `- ${r.entry.text}` : indexLine(r.entry));
+const rowLine = (r: Row) => (r.full ? `- ${plainInline(r.entry.text)}` : indexLine(r.entry));
 
 /**
  * Render the memory section of a chat's context note, or null when the chat

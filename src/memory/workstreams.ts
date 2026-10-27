@@ -19,6 +19,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { plainInline } from '../utils.js';
 
 export type WorkstreamStatus = 'active' | 'paused' | 'done' | 'forgotten';
 
@@ -133,7 +134,8 @@ function clip(text: string, max: number): string {
 
 /** One line per workstream in the prompt index: no embedded newlines. */
 function oneLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  // Rendered inside the <workstreams> fence: stored fields must not close it.
+  return plainInline(value).replace(/\s+/g, ' ').trim();
 }
 
 export class WorkstreamStore {
