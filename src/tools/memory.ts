@@ -2,7 +2,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
-import { type Embedder, hybridRank, SEMANTIC_CANDIDATES } from '../memory/semantic.js';
+import { type Embedder, hybridRank } from '../memory/semantic.js';
 import type { SessionStore } from '../memory/sessions.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
 import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
@@ -244,7 +244,7 @@ export function createMemoryTool(
             try {
               hits = await hybridRank({
                 query,
-                items: activeOnly(store.all(scope)).slice(-SEMANTIC_CANDIDATES),
+                items: activeOnly(store.all(scope)),
                 text: (e) => `${e.text} ${e.tags.join(' ')}`,
                 lexical: scoreEntry,
                 embedder: semantic,

@@ -120,7 +120,13 @@ export interface HybridRankOptions<T> {
 export async function hybridRank<T>(opts: HybridRankOptions<T>): Promise<T[]> {
   const { query, items, text, lexical, embedder, limit } = opts;
   if (items.length === 0) return [];
-  const capped = items.length > SEMANTIC_CANDIDATES ? items.slice(-SEMANTIC_CANDIDATES) : items;
+  // Score the whole caller-scoped shelf before applying the embedding budget.
+  // Exact old facts must not disappear merely because semantic recall is on.
+  const ranked = items
+    .map((item, index) => ({ item, index, score: lexical(item, query) }))
+    .sort((a, b) => b.score - a.score || b.index - a.index);
+  const chosen = new Set(ranked.slice(0, SEMANTIC_CANDIDATES).map((hit) => hit.index));
+  const capped = items.filter((_item, index) => chosen.has(index));
   const texts = capped.map(text);
   const [qv, ...iv] = await embedCached(embedder, [query, ...texts]);
   if (!qv) return [];
