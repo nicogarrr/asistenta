@@ -565,46 +565,52 @@ async function doctorCommand(): Promise<number> {
   const key = await vaultGet('provider:apiKey').catch(() => undefined);
   const envKey = process.env.OPENCODE_GO_API_KEY ? 'set' : 'unset';
   lines.push(`provider key    ${key ? 'vault' : envKey}`);
-  lines.push(
-    `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
-  );
+  if (desktopEnabled()) {
+    lines.push(
+      `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
+    );
 
-  const screen = new WindowsScreen();
-  try {
-    const size = await screen.screenSize();
-    lines.push(`screen          ${size.width}x${size.height}`);
-    const shot = await screen.screenshot();
-    lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
-  } catch (err) {
-    lines.push(`screenshot      FAILED: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    await screen.dispose();
+    const screen = new WindowsScreen();
+    try {
+      const size = await screen.screenSize();
+      lines.push(`screen          ${size.width}x${size.height}`);
+      const shot = await screen.screenshot();
+      lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
+    } catch (err) {
+      lines.push(`screenshot      FAILED: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await screen.dispose();
+    }
+
+    // Screen recording is what makes /watch work, and its absence is invisible until
+    // someone asks for a video of their screen.
+    lines.push(
+      `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'MISSING ffmpeg-static (/watch will not work)'}`,
+    );
+
+    // Voice is opt-in at the point of use, so the only useful question is whether the
+    // model is already cached. A cold cache means the first voice note pays a download.
+    const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
+    lines.push(
+      `voice stt       ${modelCached ? 'model cached' : 'model not downloaded yet (first voice note downloads it)'}`,
+    );
+    lines.push(`voice tts       windows SAPI (offline, free)`);
+
+    // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
+    // user asks to be filmed is a much worse answer than this line.
+    const devices = await listCaptureDevices().catch(() => ({ video: null, audio: null }));
+    lines.push(`camera          ${devices.video ?? 'MISSING (/camera will not work)'}`);
+    lines.push(`microphone      ${devices.audio ?? 'MISSING (/mic, wake word will not work)'}`);
+    lines.push(
+      `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
+        (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
+      })`,
+    );
+  } else {
+    lines.push(
+      'desktop         off (modo servidor, PA_DESKTOP=off): sin chequeos de escritorio Windows',
+    );
   }
-
-  // Screen recording is what makes /watch work, and its absence is invisible until
-  // someone asks for a video of their screen.
-  lines.push(
-    `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'MISSING ffmpeg-static (/watch will not work)'}`,
-  );
-
-  // Voice is opt-in at the point of use, so the only useful question is whether the
-  // model is already cached. A cold cache means the first voice note pays a download.
-  const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
-  lines.push(
-    `voice stt       ${modelCached ? 'model cached' : 'model not downloaded yet (first voice note downloads it)'}`,
-  );
-  lines.push(`voice tts       windows SAPI (offline, free)`);
-
-  // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
-  // user asks to be filmed is a much worse answer than this line.
-  const devices = await listCaptureDevices().catch(() => ({ video: null, audio: null }));
-  lines.push(`camera          ${devices.video ?? 'MISSING (/camera will not work)'}`);
-  lines.push(`microphone      ${devices.audio ?? 'MISSING (/mic, wake word will not work)'}`);
-  lines.push(
-    `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
-      (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
-    })`,
-  );
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
@@ -615,10 +621,12 @@ async function doctorCommand(): Promise<number> {
     `verify actions  ${loadConfig().verifyActions ? 'on (2 extra screenshots per input action)' : 'off'}`,
   );
 
-  const windows = await listWindows().catch(() => []);
-  lines.push(
-    `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'none detected'}`,
-  );
+  if (desktopEnabled()) {
+    const windows = await listWindows().catch(() => []);
+    lines.push(
+      `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'none detected'}`,
+    );
+  }
 
   process.stdout.write(`${lines.join('\n')}\n`);
   return 0;
