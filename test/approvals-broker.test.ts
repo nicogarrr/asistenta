@@ -146,3 +146,24 @@ describe('singleton del daemon', () => {
     expect(approvals).toBeInstanceOf(ApprovalBroker);
   });
 });
+
+describe('caducidad al resolver', () => {
+  it('una aprobación caducada y aún sin barrer no se concede: deny y false', () => {
+    vi.useFakeTimers();
+    const broker = new ApprovalBroker();
+    const seen: string[] = [];
+    const a = broker.register(registration({ ttlMs: 1000, resolve: (d) => seen.push(d) }));
+    vi.advanceTimersByTime(1001);
+    expect(broker.resolve(a.id, 'always')).toBe(false);
+    expect(seen).toEqual(['deny']);
+    expect(broker.get(a.id)).toBeUndefined();
+  });
+
+  it('dentro del plazo se concede igual que antes', () => {
+    const broker = new ApprovalBroker();
+    const seen: string[] = [];
+    const a = broker.register(registration({ resolve: (d) => seen.push(d) }));
+    expect(broker.resolve(a.id, 'once')).toBe(true);
+    expect(seen).toEqual(['once']);
+  });
+});

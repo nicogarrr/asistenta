@@ -156,14 +156,14 @@ async function makeChannel(approvalTtlMs = 60_000): Promise<TelegramChannel> {
 }
 
 /** Feed one callback_query through the registered gramY handler; returns its message id. */
-function press(data: string, userId = 7): number {
+function press(data: string, userId = 7, chatId = 42): number {
   const handler = harness.handlers.get('callback_query:data');
   if (!handler) throw new Error('the adapter did not register a callback handler');
   const messageId = nextMessageId++;
   handler({
     callbackQuery: {
       data,
-      message: { chat: { id: 42 }, message_id: messageId },
+      message: { chat: { id: chatId }, message_id: messageId },
     },
     from: { id: userId },
     answerCallbackQuery: async (args?: { text?: string }) => {
@@ -351,5 +351,18 @@ describe('caducidad y cancelación', () => {
     expect(harness.answers).toContain('Este asistente es privado.');
     channel.cancelApprovals();
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
+  });
+});
+
+describe('aprobación ligada a su chat', () => {
+  it('un botón pulsado desde otro chat no la resuelve ni la consume', async () => {
+    const channel = await makeChannel();
+    const pending = channel.offerApproval('req-x', '42', '¿Permito x?', { askScope: true });
+    press('approve:always:req-x', 7, 999);
+    expect(await stateOf(pending)).toBe('pending');
+    expect(harness.answers).toContain('That request is no longer pending.');
+    // El botón legítimo en su chat sigue funcionando.
+    press('approve:once:req-x', 7, 42);
+    await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
   });
 });

@@ -419,6 +419,15 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // La aprobación pertenece a UN chat: un botón pulsado desde otro chat (aunque
+    // sea de un usuario permitido) no la resuelve ni la consume.
+    const pressedIn = ctx.callbackQuery?.message?.chat?.id;
+    if (pressedIn !== undefined && entry.chatId !== String(pressedIn)) {
+      handlers.log('warn', 'approval pressed from another chat', { id: parsed.id });
+      await ctx.answerCallbackQuery({ text: 'That request is no longer pending.' }).catch(() => {});
+      return;
+    }
+
     this.#approvals.delete(parsed.id);
     // `deny:<id>` carries no scope of its own; parseApprovalCallback reports it as
     // 'once', which is exactly the shape a refusal must have for the gate.
