@@ -1,10 +1,35 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { GoalStore } from '../src/goals/store.js';
-import { ownerGoals } from '../src/webui/goals.js';
+import { createOwnerGoalsReader, ownerGoals } from '../src/webui/goals.js';
 import { startWebUi, type WebUiDeps } from '../src/webui/server.js';
 
 describe('panel goals read-only', () => {
+  it('returns explicit unavailable during startup, then serves the initialized store', async () => {
+    const reader = createOwnerGoalsReader();
+    const deps: WebUiDeps = {
+      token: 'test-only',
+      status: () => ({}),
+      sessions: () => [],
+      memory: () => [],
+      auditVerify: () => ({}),
+      goals: () => reader.read(),
+    };
+    const ui = await startWebUi(deps);
+    try {
+      const headers = { Authorization: 'Bearer test-only' };
+      expect(reader.read()).toBeNull();
+      const early = await fetch(`${ui.url}/api/goals`, { headers });
+      expect(early.status).toBe(503);
+      expect(await early.json()).toEqual({ error: 'Objetivos aún no disponibles' });
+      reader.initialize({ list: () => [] }, 12);
+      const ready = await fetch(`${ui.url}/api/goals`, { headers });
+      expect(ready.status).toBe(200);
+      expect(await ready.json()).toEqual([]);
+    } finally {
+      await ui.close();
+    }
+  });
   it('filters exact owner chats, preserves threads and omits verbatim', () => {
     const db = new DatabaseSync(':memory:');
     try {

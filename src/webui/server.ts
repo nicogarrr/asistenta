@@ -189,6 +189,7 @@ async function respondApi(
       case 'goals':
         if (!deps.goals) throw new HttpError(503, 'Objetivos no disponibles');
         payload = await deps.goals();
+        if (payload === null) throw new HttpError(503, 'Objetivos aún no disponibles');
         break;
       case 'status':
         payload = await deps.status();

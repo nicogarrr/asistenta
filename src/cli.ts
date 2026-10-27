@@ -285,7 +285,7 @@ import {
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
-import { ownerGoals } from './webui/goals.js';
+import { createOwnerGoalsReader } from './webui/goals.js';
 import { startWebUi } from './webui/server.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -1607,6 +1607,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     : [];
   if (mcpTools.length)
     log.info('mcp: tools listas', { servers: mcpServers.length, tools: mcpTools.length });
+  const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
   if (process.env.PA_WEB_PORT) {
     const webToken = process.env.PA_WEB_TOKEN;
@@ -1615,7 +1616,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       void startWebUi(
         {
           token: webToken,
-          goals: () => ownerGoals(goalStore, vigilanteOwnerId),
+          goals: () => panelGoals.read(),
           status: () => ({
             model: config.model,
             provider: config.provider,
@@ -2645,6 +2646,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  panelGoals.initialize(goalStore, vigilanteOwnerId);
   // Perfil v2 por propietario: fuente del bloque <perfil> del prompt. Si está
   // vacío, buildContextNote cae al PERFIL.md legado (compatibilidad).
   const ownerProfile = new OwnerProfile(

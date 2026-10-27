@@ -28,3 +28,17 @@ export function ownerGoals(
       };
     });
 }
+
+/** No closure over CLI bindings that may still be in their temporal dead zone. */
+export function createOwnerGoalsReader() {
+  let ready: { store: Pick<GoalStore, 'list'>; ownerId: number | null } | null = null;
+  return {
+    initialize(store: Pick<GoalStore, 'list'>, ownerId: number | null) {
+      ready = { store, ownerId };
+    },
+    read() {
+      if (!ready) return null;
+      return ownerGoals(ready.store, ready.ownerId);
+    },
+  };
+}
