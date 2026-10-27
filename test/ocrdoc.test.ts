@@ -130,6 +130,49 @@ describe('ocrPdf', () => {
     expect(r.markdown).toContain('Contrato de alquiler');
   });
 
+  it('conserva texto digital corto sin OCR disponible', async () => {
+    const input = await digitalPdf('Total 45,60 EUR');
+    const r = await ocrPdf(
+      input,
+      'corto.pdf',
+      await deps({ renderPage: undefined, ocr: undefined }),
+    );
+    expect(r.pdf).toBe(input);
+    expect(r.markdown).toContain('Total 45,60 EUR');
+    expect(r.digitalPages).toBe(1);
+    expect(r.pages[0]?.reason).toContain('parcial');
+    expect(r.alreadySearchable).toBe(false);
+  });
+
+  it('conserva texto propio corto si el OCR falla o no añade texto', async () => {
+    for (const ocr of [
+      async () => {
+        throw new Error('motor roto');
+      },
+      async () => fakeOcr(''),
+    ]) {
+      const input = await digitalPdf('Total 45,60 EUR');
+      const r = await ocrPdf(input, 'corto.pdf', await deps({ ocr }));
+      expect(r.pdf).toBe(input);
+      expect(r.markdown).toContain('Total 45,60 EUR');
+      expect(r.digitalPages).toBe(1);
+      expect(r.alreadySearchable).toBe(false);
+    }
+  });
+
+  it('runOcrJob md no dice ilegible si contiene texto digital corto', async () => {
+    const input = Buffer.from(await digitalPdf('Total 45,60 EUR'));
+    const r = await runOcrJob(
+      input,
+      { name: 'corto.pdf' },
+      'md',
+      sync({ renderPage: undefined, ocr: undefined }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.files[0]?.bytes.toString()).toContain('Total 45,60 EUR');
+    expect(r.message).toContain('parcial');
+  });
+
   it('mezcla: la página digital se queda y solo la escaneada pasa por OCR', async () => {
     const doc = await PDFDocument.create();
     const font = await doc.embedFont(StandardFonts.Helvetica);
