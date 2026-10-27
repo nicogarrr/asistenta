@@ -380,3 +380,24 @@ describe('startVigilanteLoop', () => {
     expect(sends).toBe(1);
   });
 });
+
+it('incluye degradación de fuentes en el digest ya existente sin generar otro aviso', async () => {
+  const send = vi.fn(async (_text: string) => true);
+  const d = deps([item({ title: 'Dentista local', where: 'calendario', kind: 'meeting' })], send);
+  d.agenda = async () => ({
+    ...agenda([item({ title: 'Dentista local', where: 'calendario', kind: 'meeting' })]),
+    notes: ['No se ha podido leer el calendario remoto.'],
+  });
+  await runVigilanteOnce(d, TZ);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0]?.[0]).toContain('No se ha podido leer el calendario remoto.');
+  d.db.close();
+});
+it('no manda un digest vacío sólo por degradación de fuentes', async () => {
+  const send = vi.fn(async (_text: string) => true);
+  const d = deps([], send);
+  d.agenda = async () => ({ ...agenda([]), notes: ['Calendario no disponible.'] });
+  await runVigilanteOnce(d, TZ);
+  expect(send).not.toHaveBeenCalled();
+  d.db.close();
+});
