@@ -628,6 +628,11 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
 
     if (screenItems.length > 0) parts.push(formatScreen(screenItems));
 
+    // A partial agenda must not read as complete. Attach source health to an
+    // existing digest only; notes alone never create a notification.
+    if (agenda.notes.length)
+      parts.push(agenda.notes.map((note) => note.replace(/\s+/g, ' ').slice(0, 600)).join('\n'));
+
     let sent = false;
     try {
       sent = await deps.send(parts.join('\n\n'));

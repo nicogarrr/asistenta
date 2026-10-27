@@ -37,13 +37,9 @@
 import { localTimeZone } from '../datecontext.js';
 import { log } from '../log.js';
 import { DEFAULT_AGENDA_DAYS, MAX_AGENDA_DAYS, parseIcs } from '../tools/calendar.js';
-import { isFetchable } from '../tools/fetch.js';
-import { withTimeout } from '../utils.js';
+import { type CalendarSources, loadCalendarSources, mergeCalendarEvents } from './sources.js';
 
 const DAY_MS = 86_400_000;
-
-/** Same ceiling the calendar tool uses; a hung feed must not hang the agenda. */
-const FETCH_TIMEOUT_MS = 20_000;
 
 /** An event, as the agenda needs it: numbers it can sort, not `Date` it cannot. */
 export interface AgendaEvent {
@@ -58,7 +54,7 @@ export interface AgendaEvent {
   source: 'calendar';
 }
 
-export interface UpcomingOptions {
+export interface UpcomingOptions extends CalendarSources {
   fetchText: (url: string) => Promise<string>;
   getUrl: () => Promise<string | undefined>;
   now?: () => number;
@@ -244,49 +240,22 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
   const days = clampDays(opts.days);
   const timeZone = opts.timeZone ?? localTimeZone();
 
-  let url: string | undefined;
-  try {
-    url = (await opts.getUrl())?.trim();
-  } catch (err) {
-    return {
-      events: [],
-      configured: false,
-      reason: `No se ha podido leer la dirección del calendario: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  const source = await loadCalendarSources(opts);
+  const reasons: string[] = [];
+  if (source.localError) reasons.push(source.localError);
+  if (source.invalidUrl)
+    reasons.push('La dirección del calendario no es una URL http(s) válida; revisa la bóveda.');
+  if (source.remoteError) reasons.push(failureMessage(source.remoteError, source.url ?? ''));
+  if (!source.local && !source.remote && !reasons.length) {
+    reasons.push('No hay calendario configurado todavía (falta la dirección iCal en la bóveda).');
   }
-  if (!url) {
-    return {
-      events: [],
-      configured: false,
-      reason: 'No hay calendario configurado todavía (falta la dirección iCal en la bóveda).',
-    };
+  if (reasons.length && (source.remoteError || source.invalidUrl || source.localError)) {
+    log.warn('agenda: calendar unavailable', { reason: reasons.join(' ') });
   }
-  // The injected fetcher is not this file's, so the SSRF gate is applied here too:
-  // a hand-edited vault entry must not be able to point the agent at localhost.
-  if (!isFetchable(url)) {
-    return {
-      events: [],
-      configured: true,
-      reason: 'La dirección del calendario no es una URL http(s) válida; revisa la bóveda.',
-    };
-  }
-
-  let text: string;
-  try {
-    text = await withTimeout(
-      opts.fetchText(url),
-      FETCH_TIMEOUT_MS,
-      `el calendario no ha respondido en ${FETCH_TIMEOUT_MS / 1000}s`,
-    );
-  } catch (err) {
-    const reason = failureMessage(err, url);
-    log.warn('agenda: calendar unavailable', { reason });
-    return { events: [], configured: true, reason };
-  }
-
-  // parseIcs always expands its own 60-day ceiling, so the window is a slice rather
-  // than a second parse: widening `days` later costs nothing.
-  const parsed = parseIcs(text, new Date(now));
+  const parsed = mergeCalendarEvents(
+    source.local ? parseIcs(source.local, new Date(now)) : [],
+    source.remote ? parseIcs(source.remote, new Date(now)) : [],
+  );
   const from = zonedDayStart(now, timeZone);
   // Local midnight `days` from now, computed by walking to that calendar day and back
   // to its midnight, so a DST change inside the window cannot shift the last day.
@@ -296,12 +265,20 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
     .map(toAgendaEvent)
     // An event still running at midnight stays in "today"; one that started before
     // the window and ran into it belongs to the day it started on.
-    .filter((event) => event.start < horizon && event.end > Math.max(now, from));
+    .filter(
+      (event) =>
+        event.start < horizon &&
+        (event.end > Math.max(now, from) || (event.start === event.end && event.start >= now)),
+    );
 
   events.sort((a, b) => a.start - b.start || a.end - b.end);
-  log.info('agenda: calendar', { days, events: events.length, bytes: text.length });
+  log.info('agenda: calendar', { days, events: events.length });
 
-  return { events, configured: true };
+  return {
+    events,
+    configured: Boolean(source.local || source.url),
+    ...(reasons.length ? { reason: reasons.join(' ') } : {}),
+  };
 }
 
 /**
