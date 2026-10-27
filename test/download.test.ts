@@ -111,7 +111,7 @@ describe('explainYtdlpError', () => {
     expect(explainYtdlpError('ERROR: HTTP Error 404: Not Found')).toMatch(/no está disponible/);
   });
 
-  it('an HTTP 403 is an anti-bot wall or a session demand, with the next step', () => {
+  it('an HTTP 403 reports denial without claiming its cause, with the next step', () => {
     expect(
       explainYtdlpError('ERROR: unable to download video data: HTTP Error 403: Forbidden'),
     ).toMatch(/anti-bot/);
@@ -120,6 +120,8 @@ describe('explainYtdlpError', () => {
       cookies: 'firefox',
     });
     expect(withCookies).toMatch(/firefox/);
+    expect(withCookies).toContain('puede ser una protección anti-bot o un problema de sesión/permisos');
+    expect(withCookies).not.toContain('; es una protección anti-bot');
     expect(withCookies).not.toMatch(/activa las cookies/);
   });
 });
