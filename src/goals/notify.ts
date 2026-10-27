@@ -14,7 +14,8 @@
  *    the row. Pending rows are re-attempted on every tick AND by an independent
  *    delivery engine on its own clock (flushAll), and dropped after a day, so
  *    a blocked chat cannot be spammed forever and a paused or daily goal cannot
- *    strand a question.
+ *    strand a question. Exception: a decision/blocker of a goal that is still
+ *    blocked is kept past a day (nothing else would ever re-raise it).
  * 3. The message never promises more than the source: the reason is what the
  *    tick reported, verbatim.
  *
@@ -107,6 +108,7 @@ type Row = {
   delivered: number;
   attempts: number;
   created_at: string;
+  kind: string | null;
 };
 
 export class GoalNotifier {
@@ -137,6 +139,12 @@ export class GoalNotifier {
     } catch {
       /* already there */
     }
+    try {
+      // Same for kind: rows from before it existed (NULL) keep the plain 24h rule.
+      this.#db.exec('ALTER TABLE goal_notifications ADD COLUMN kind TEXT');
+    } catch {
+      /* already there */
+    }
   }
 
   /**
@@ -154,9 +162,9 @@ export class GoalNotifier {
     if (!existing) {
       this.#db
         .prepare(
-          'INSERT INTO goal_notifications (goal_id, nkey, text, delivered, attempts, created_at) VALUES (?, ?, ?, 0, 0, ?)',
+          'INSERT INTO goal_notifications (goal_id, nkey, text, delivered, attempts, created_at, kind) VALUES (?, ?, ?, 0, 0, ?, ?)',
         )
-        .run(goal.id, key, text, new Date(this.#now()).toISOString());
+        .run(goal.id, key, text, new Date(this.#now()).toISOString(), kind);
     }
     const r = await this.#attempt(goal, key, text);
     if (r === 'sent') return 'sent';
@@ -234,8 +242,7 @@ export class GoalNotifier {
       )
       .all(goal.id) as Row[];
     for (const row of rows) {
-      const age = this.#now() - Date.parse(row.created_at);
-      if (age > NOTIFY_RETRY_MAX_AGE_MS) {
+      if (this.#expired(goal, row.kind, row.created_at)) {
         this.#db
           .prepare('DELETE FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
           .run(row.goal_id, row.nkey);
@@ -243,6 +250,18 @@ export class GoalNotifier {
       }
       await this.#attempt(goal, row.nkey, row.text);
     }
+  }
+
+  /**
+   * The 24h rule, except for a question the goal is still waiting on: a
+   * 'decision' or 'bloqueo' row of a goal that is still blocked is the only
+   * way Nico learns why it stopped (the runner skips blocked goals, so nothing
+   * would ever re-raise it). A failed send tells nobody anything, so keeping
+   * it costs no spam: it is delivered once, as soon as the chat is reachable.
+   */
+  #expired(goal: Goal, kind: string | null, createdAt: string): boolean {
+    if (this.#now() - Date.parse(createdAt) <= NOTIFY_RETRY_MAX_AGE_MS) return false;
+    return !((kind === 'decision' || kind === 'bloqueo') && goal.status === 'blocked');
   }
 
   /**
@@ -265,11 +284,13 @@ export class GoalNotifier {
       // the same batch was on the wire. Never send from a stale snapshot.
       const row = this.#db
         .prepare(
-          'SELECT delivered, created_at FROM goal_notifications WHERE goal_id = ? AND nkey = ?',
+          'SELECT delivered, created_at, kind FROM goal_notifications WHERE goal_id = ? AND nkey = ?',
         )
-        .get(goal.id, key) as { delivered: number; created_at: string } | undefined;
+        .get(goal.id, key) as
+        | { delivered: number; created_at: string; kind: string | null }
+        | undefined;
       if (!row || row.delivered === 1) return 'skipped';
-      if (this.#now() - Date.parse(row.created_at) > NOTIFY_RETRY_MAX_AGE_MS) {
+      if (this.#expired(goal, row.kind, row.created_at)) {
         this.#db
           .prepare('DELETE FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
           .run(goal.id, key);
