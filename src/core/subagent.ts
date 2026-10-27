@@ -50,6 +50,8 @@ export const SUBAGENT_DEFAULT_TIMEOUT_MS = 5 * 60_000;
 /** Lo que pide el padre al pool. */
 export interface SubagentRequest {
   task: string;
+  /** Rol opcional (explorer, planner, implementer); lo interpreta el ejecutor. */
+  role?: string;
   /** Profundidad del agente que delega; el hijo empieza en `parentDepth + 1`. */
   parentDepth?: number;
   /** Lista blanca de nombres de herramientas sin efectos. */
@@ -59,6 +61,7 @@ export interface SubagentRequest {
 /** Lo que recibe el ejecutor inyectado. No incluye el transcript del padre. */
 export interface SubagentRunRequest {
   task: string;
+  role?: string;
   depth: number;
   budget: unknown;
 }
@@ -191,13 +194,14 @@ export class SubagentPool {
     // Copia antes de esperar turno: el caller no puede cambiar la tarea ni la
     // lista de tools mientras la peticion esta en la cola.
     const task = request.task;
+    const role = request.role;
     const tools = (request.tools ?? []).filter(
       (name) => typeof name === 'string' && name.trim().length > 0,
     );
 
     await this.#acquire();
     try {
-      return await this.#execute(task, depth, tools);
+      return await this.#execute(task, depth, tools, role);
     } finally {
       this.#release();
     }
@@ -225,7 +229,12 @@ export class SubagentPool {
     }
   }
 
-  async #execute(task: string, depth: number, toolNames: string[]): Promise<SubagentResult> {
+  async #execute(
+    task: string,
+    depth: number,
+    toolNames: string[],
+    role?: string,
+  ): Promise<SubagentResult> {
     const controller = new AbortController();
     const budget: SubagentBudget = Object.freeze({
       maxToolCalls: this.#limits.maxToolCalls,
@@ -242,7 +251,10 @@ export class SubagentPool {
     });
 
     try {
-      const result = await Promise.race([this.#deps.run({ task, depth, budget }), timeout]);
+      const result = await Promise.race([
+        this.#deps.run({ task, depth, budget, ...(role ? { role } : {}) }),
+        timeout,
+      ]);
       const childError =
         result.error === undefined || result.error === null ? '' : String(result.error).trim();
       if (childError) return { text: '', depth, error: childError };

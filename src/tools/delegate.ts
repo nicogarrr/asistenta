@@ -22,6 +22,12 @@ const DelegateParams = Type.Object({
     maxLength: 4000,
     description: 'Tarea concreta y autocontenida para el subagente, con el resultado esperado.',
   }),
+  role: Type.Optional(
+    Type.Union([Type.Literal('explorer'), Type.Literal('planner'), Type.Literal('implementer')], {
+      description:
+        'explorer: lee y resume. planner: plan por pasos. implementer: propone el cambio como texto/diff; no escribe.',
+    }),
+  ),
   tools: Type.Optional(
     Type.Array(Type.String({ minLength: 1 }), {
       maxItems: 32,
@@ -59,6 +65,7 @@ export function createDelegateTool(
       const result = await pool.run({
         task: args.task,
         parentDepth: depthOf(),
+        ...(args.role ? { role: args.role } : {}),
         ...(args.tools ? { tools: args.tools } : {}),
       });
 
