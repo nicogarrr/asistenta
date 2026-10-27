@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { loadCalendar } from './agenda/ics.js';
+import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
@@ -202,6 +203,7 @@ import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
+import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
@@ -1837,6 +1839,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,
@@ -3746,19 +3749,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * exists, so a routine that failed to register is still listed instead of
    * silently missing from the agenda.
    */
-  const cmdAgenda = async (inbound: Inbound): Promise<void> => {
+  const scheduledAgenda = (inbound: Inbound): string => {
     const chatKey_ = chatKey(inbound);
     const scheduled = store
       .listRoutines()
       .filter((r) => inChatScope(r.scope, chatKey_) && r.kind === 'schedule');
     if (!scheduled.length) {
-      await say(
-        inbound,
-        'No hay ninguna rutina programada. Crea una con /routine, por ejemplo: ' +
-          '/routine cada mañana a las 8 resumen del día.',
-        { quote: true },
-      );
-      return;
+      return 'No hay rutinas programadas. Puedes crearlas con /routine.';
     }
     const live = new Map(routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));
     const lines = scheduled.map((r) => {
@@ -3770,9 +3767,40 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         held?.next ?? null,
       )}${running}`;
     });
-    await say(inbound, [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n'), {
-      quote: true,
-    });
+    return [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n');
+  };
+
+  const personalAgenda = (inbound: Inbound, days = 7): Promise<string> =>
+    readAgendaOverview(
+      {
+        authorised: () => inbound.authorised && isOwnerDm(inbound, vigilanteOwnerId),
+        calendar: (window) =>
+          loadCalendar({
+            readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
+            getUrl: () => vaultGet('calendar:icsUrl'),
+            fetchText: async (url) => {
+              const response = await fetch(url, {
+                redirect: 'follow',
+                signal: AbortSignal.timeout(15_000),
+              });
+              if (!response.ok) throw new Error(`el calendario ha respondido ${response.status}`);
+              return response.text();
+            },
+            days: window,
+          }),
+        followups: () => followups.list(undefined, 200),
+        routines: () => scheduledAgenda(inbound),
+        goals: () => goalStore.list().filter((goal) => inChatScope(goal.scope, chatKey(inbound))),
+      },
+      days,
+    );
+  const cmdAgenda = async (inbound: Inbound, args = ''): Promise<void> => {
+    // Keep the established routine listing available without revealing private sources.
+    const text =
+      args.trim() === 'rutinas' || !isOwnerDm(inbound, vigilanteOwnerId)
+        ? scheduledAgenda(inbound)
+        : await personalAgenda(inbound);
+    await say(inbound, text, { quote: true });
   };
 
   const cmdMemory = async (inbound: Inbound): Promise<void> => {
@@ -4964,7 +4992,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos (con {parametros} es una macro)',
         '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
         '/routines - lista de rutinas',
-        '/agenda - rutinas programadas y su proxima ejecucion',
+        '/agenda - calendario, pendientes, rutinas y objetivos; /agenda rutinas para horarios',
         '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
         '/disparador <mensaje|archivo|precio> <coincidencia> | <rutina> - dispara una rutina cuando pasa algo (sin gastar tokens); /disparadores lista, /disparador del <n> borra',
         '/ocr [md|todo] - manda un PDF o foto con este pie: te lo devuelvo con texto seleccionable (md = Markdown, todo = ambos)',
@@ -6298,7 +6326,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
               }
               case 'agenda':
-                return cmdAgenda(inbound);
+                return cmdAgenda(inbound, command.args);
               case 'correo':
                 return cmdCorreo(inbound, command.args);
               case 'ocr':

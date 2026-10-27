@@ -53,6 +53,7 @@ export const THREAD_ALLOW_TOOLS = [
   'preguntar',
   'memory',
   'reminder',
+  'agenda',
   'opengym',
   'book',
   // Long-haul goals: propose/list/pause/resume/cancel/avance are freely
