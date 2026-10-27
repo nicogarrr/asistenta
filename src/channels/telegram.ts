@@ -576,7 +576,7 @@ export class TelegramChannel implements ChannelAdapter {
     // Buttons ride on the first chunk only: repeating them on every chunk of a long
     // message would produce duplicate approvals for the same request.
     let first = true;
-    for (const chunk of chunkText(outbound.text, 4000)) {
+    for (const chunk of outbound.text.trim() ? chunkText(outbound.text, 4000) : []) {
       const options = (withThread: boolean, withReply: boolean) => ({
         message_thread_id: withThread && outbound.threadId ? Number(outbound.threadId) : undefined,
         reply_to_message_id:
@@ -614,11 +614,17 @@ export class TelegramChannel implements ChannelAdapter {
     }
 
     for (const image of outbound.images ?? []) {
-      await this.sendPhotoBytes(chatId, Buffer.from(image.data, 'base64'), outbound.threadId);
+      const sentId = await this.sendPhotoBytes(
+        chatId,
+        Buffer.from(image.data, 'base64'),
+        outbound.threadId,
+      );
+      firstId ??= sentId;
     }
 
     if (outbound.audio) {
-      await this.#sendAudio(chatId, outbound.audio, outbound.threadId);
+      const sentId = await this.#sendAudio(chatId, outbound.audio, outbound.threadId);
+      firstId ??= sentId;
     }
 
     return firstId;
@@ -632,10 +638,7 @@ export class TelegramChannel implements ChannelAdapter {
    * el id del mensaje de texto sigue siendo el valor de retorno aunque la voz falle.
    */
   async sendTextAndVoice(outbound: Outbound, audio: ChannelAudio): Promise<string | null> {
-    const firstId = await this.send({ ...outbound, audio: undefined });
-    const chatId = Number(outbound.chatId);
-    await this.#sendAudio(chatId, audio, outbound.threadId);
-    return firstId;
+    return this.send({ ...outbound, audio });
   }
 
   /**
@@ -659,7 +662,12 @@ export class TelegramChannel implements ChannelAdapter {
   ): Promise<string | null> {
     const input = new InputFile(bytes);
     const t = { message_thread_id: threadId ? Number(threadId) : undefined };
-    if (size && (size.width + size.height > 10_000 || size.width / size.height > 20)) {
+    if (
+      size &&
+      (size.width + size.height > 10_000 ||
+        size.width / size.height > 20 ||
+        size.height / size.width > 20)
+    ) {
       log.warn('image geometry violates the photo limit, sending as a document instead', {
         ...size,
       });
@@ -998,14 +1006,14 @@ export class TelegramChannel implements ChannelAdapter {
    * rather than passed by URL, because the URL path documents an ogg/1MB cap that
    * would demote an mp3 to a plain attachment.
    */
-  async #sendAudio(chatId: number, audio: ChannelAudio, threadId?: string): Promise<void> {
+  async #sendAudio(chatId: number, audio: ChannelAudio, threadId?: string): Promise<string | null> {
     const bytes = Buffer.from(audio.data, 'base64');
     if (bytes.length === 0) {
       log.warn('voice output rejected: empty bytes');
-      return;
+      return null;
     }
     const duration = audio.durationSeconds;
-    await this.#throttled(() =>
+    const sent = await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendVoice(
           chatId,
@@ -1023,7 +1031,9 @@ export class TelegramChannel implements ChannelAdapter {
       // The text already went out, so a failed attachment is a degraded reply rather
       // than a failed one. Log and move on.
       log.warn('voice send failed', { error: describeError(err) });
+      return null;
     });
+    return sent?.message_id ? String(sent.message_id) : null;
   }
 
   /**
