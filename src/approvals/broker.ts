@@ -100,11 +100,16 @@ export class ApprovalBroker {
     const entry = this.#pending.get(id);
     if (!entry) return false;
 
+    // Una aprobación caducada que aún no barrió `expire()` NO puede concederse:
+    // se cierra como `deny` y quien intentó aprobar recibe `false`.
+    const lapsed = entry.approval.expiresAt <= Date.now();
+    const effective: ApprovalDecision = lapsed ? 'deny' : decision;
+
     this.#pending.delete(id);
-    this.#remember(id, decision);
+    this.#remember(id, effective);
 
     try {
-      entry.resolve(decision);
+      entry.resolve(effective);
     } catch (error) {
       warn('approval callback failed', {
         id,
@@ -115,7 +120,7 @@ export class ApprovalBroker {
 
     for (const waiter of [...entry.waiters]) {
       try {
-        waiter(decision);
+        waiter(effective);
       } catch (error) {
         warn('approval waiter failed', {
           id,
@@ -125,7 +130,7 @@ export class ApprovalBroker {
       }
     }
     entry.waiters.clear();
-    return true;
+    return !lapsed;
   }
 
   /**

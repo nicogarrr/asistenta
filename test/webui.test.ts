@@ -20,6 +20,7 @@ const deps: WebUiDeps = {
     return { scope: scope ?? 'global', items: [] };
   },
   auditVerify: async () => ({ ok: true, comprobados: 3 }),
+  approve: async (id) => id === 'vivo',
 };
 
 let ui: Awaited<ReturnType<typeof startWebUi>>;
@@ -125,5 +126,25 @@ describe('panel web local', () => {
     expect(antes.status).toBe(200);
     await local.close();
     await expect(fetch(`${local.url}/`)).rejects.toThrow();
+  });
+
+  it('POST /api/approvals/:id responde 404 si la aprobación ya no está pendiente', async () => {
+    const post = (id: string, body: unknown, token?: string) =>
+      fetch(urlFor(`/api/approvals/${id}`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    expect((await post('vivo', { decision: 'once' })).status).toBe(401);
+    const gone = await post('caducada', { decision: 'always' }, TOKEN);
+    expect(gone.status).toBe(404);
+    expect(await gone.json()).toEqual({ error: 'La aprobación ya no está pendiente' });
+    const ok = await post('vivo', { decision: 'deny' }, TOKEN);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true });
+    expect((await post('vivo', { decision: 'siempre-por-favor' }, TOKEN)).status).toBe(400);
   });
 });

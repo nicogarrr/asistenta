@@ -1664,9 +1664,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
           approvals: () => approvals.list(),
-          approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') => {
-            approvals.resolve(id, decision);
-          },
+          approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') =>
+            approvals.resolve(id, decision),
         },
         { port: Number(process.env.PA_WEB_PORT) },
       )

@@ -17,7 +17,8 @@ export interface WebUiDeps {
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
-  approve?(id: string, decision: ApprovalDecision): Promise<void>;
+  /** `false` = ya no estaba pendiente (caducada, resuelta o desconocida). */
+  approve?(id: string, decision: ApprovalDecision): Promise<unknown>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -216,7 +217,10 @@ async function respondApi(
           throw new HttpError(400, 'Decisión inválida');
         }
         if (!deps.approve) throw new HttpError(503, 'Aprobaciones no disponibles');
-        await deps.approve(route.id, decision as ApprovalDecision);
+        const applied = await deps.approve(route.id, decision as ApprovalDecision);
+        // Antes respondía { ok: true } aunque la aprobación no existiera o ya
+        // hubiera caducado: el usuario creía haber decidido algo que no pasó.
+        if (applied === false) throw new HttpError(404, 'La aprobación ya no está pendiente');
         payload = { ok: true };
         break;
       }
