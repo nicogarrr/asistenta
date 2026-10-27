@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { upcomingEvents } from './agenda/ics.js';
+import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda } from './agenda/unified.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
@@ -1874,6 +1875,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
       // What is in the calendar. Free, read-only and stale by design; see the tool.
       createCalendarTool({
+        readLocal: () =>
+          isOwnerDm(inboundFor(thread), vigilanteOwnerId)
+            ? readLocalCalendar(join(paths.state, 'calendar', 'local.ics'))
+            : Promise.resolve(undefined),
         getUrl: () => vaultGet('calendar:icsUrl'),
         fetchText: async (url) => {
           const res = await fetch(url, { redirect: 'follow' });
@@ -2777,6 +2782,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         buildAgenda({
           calendar: async () => {
             const events = await upcomingEvents({
+              readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
               fetchText: async (url) => {
                 // Timeout duro: un servidor de calendario colgado no puede eternizar
@@ -4553,6 +4559,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** Importar una skill desde una URL (SKILL.md) con validación y saneado. */
   /** /calendario add <fecha> | <titulo>: escribe un evento en el ICS local. */
   const cmdCalendario = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', { quote: true });
+      return;
+    }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
     if (!m) {
       await say(inbound, 'Uso: /calendario add 2026-11-02 18:00 | Dentista', { quote: true });
@@ -4568,7 +4578,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await appendEvent(file, { title, start });
     await say(
       inbound,
-      'Añadido al calendario: ' + title + ' — ' + start.toLocaleString('es-ES') + '.',
+      'Añadido al calendario local (no a Google): ' + title + ' — ' + start.toLocaleString('es-ES') + '.',
       { quote: true },
     );
   };
