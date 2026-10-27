@@ -91,6 +91,37 @@ describe('explainYtdlpError', () => {
   it('does not read "rate" inside other words as rate limiting', () => {
     expect(explainYtdlpError('ERROR: moderate quality generated')).not.toMatch(/limitado/);
   });
+
+  it('a country block is not misread as a removed video', () => {
+    // The loose "not available" phrase must not win over the geo reason.
+    expect(
+      explainYtdlpError('ERROR: [youtube] abc123: This video is not available in your country'),
+    ).toMatch(/bloqueado en tu país/);
+    expect(
+      explainYtdlpError(
+        'ERROR: Video unavailable. The uploader has not made this video available in your country.',
+      ),
+    ).toMatch(/bloqueado en tu país/);
+  });
+
+  it('a plain removal still says not available', () => {
+    expect(explainYtdlpError('ERROR: [youtube] abc123: Video unavailable')).toMatch(
+      /no está disponible/,
+    );
+    expect(explainYtdlpError('ERROR: HTTP Error 404: Not Found')).toMatch(/no está disponible/);
+  });
+
+  it('an HTTP 403 is an anti-bot wall or a session demand, with the next step', () => {
+    expect(
+      explainYtdlpError('ERROR: unable to download video data: HTTP Error 403: Forbidden'),
+    ).toMatch(/anti-bot/);
+    // With cookies already configured, asking for them again would be useless advice.
+    const withCookies = explainYtdlpError('ERROR: HTTP Error 403: Forbidden', {
+      cookies: 'firefox',
+    });
+    expect(withCookies).toMatch(/firefox/);
+    expect(withCookies).not.toMatch(/activa las cookies/);
+  });
 });
 
 describe('mensajes de login, captcha y errores HTTP', () => {
