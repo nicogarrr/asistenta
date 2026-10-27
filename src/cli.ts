@@ -39,13 +39,14 @@ import { ChannelRegistry } from './channels/registry.js';
 import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
 import type { ChannelAudio, Inbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
-import { loadConfig } from './config.js';
+import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
+import { createDelegateWiring } from './core/subagent-wiring.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
@@ -130,6 +131,22 @@ import {
  * commands that write files are a separate, unsolved surface - partial
  * protection, not a full cage.
  */
+/**
+ * Tool `delegate` (multi-agente). El hijo solo recibe herramientas de lectura del
+ * padre, con Gate propia sin approver: ver core/subagent-wiring.ts. Un pool por
+ * proceso para que los limites de concurrencia valgan para todos los hilos.
+ */
+let delegateWiring: ReturnType<typeof createDelegateWiring> | undefined;
+function delegateTool(config: Config): AgentTool {
+  delegateWiring ??= createDelegateWiring({
+    config,
+    protectedPaths: protectedPaths(),
+    secretPaths: secretStatePaths(),
+    parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
+  });
+  return delegateWiring.tool;
+}
+
 function protectedPaths(): string[] {
   const home = process.env.USERPROFILE;
   return [
@@ -1029,7 +1046,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   store.sweepExpired();
 
   const gate = new Gate({
-    allow: ['read', 'list', 'fetch', 'done'],
+    allow: ['read', 'list', 'fetch', 'done', 'delegate'],
     // Reading the screen and reading a public web page are not changes to the world, so
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
@@ -1063,6 +1080,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
     createAskTool(),
     createFactoryTool({ onChange: () => void factorySyncLocal() }),
     createShellTool(config),
+    delegateTool(config),
     createComputerTool(config, screen, (call) =>
       gate.check(sessionId, { ...call, actor: 'asistenta' }),
     ),
@@ -1147,7 +1165,7 @@ async function runCommand(prompt: string): Promise<number> {
 
   const store = new Store();
   const gate = new Gate({
-    allow: ['read', 'list', 'fetch', 'done'],
+    allow: ['read', 'list', 'fetch', 'done', 'delegate'],
     // Reading the screen and reading a public web page are not changes to the world, so
     // approval. Acting on it does.
     allowActions: ['computer:screenshot', 'computer:move'],
@@ -1178,6 +1196,7 @@ async function runCommand(prompt: string): Promise<number> {
     createAskTool(),
     createFactoryTool({ onChange: () => void factorySyncRun() }),
     createShellTool(config),
+    delegateTool(config),
     createComputerTool(config, screen, (call) =>
       gate.check(sessionId, { ...call, actor: 'asistenta' }),
     ),
@@ -1777,6 +1796,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createDoneTool(),
       createAskTool(),
       createShellTool(config),
+      delegateTool(config),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
       // silently blocks every batch. `sendPhoto` is what lets the model put a
