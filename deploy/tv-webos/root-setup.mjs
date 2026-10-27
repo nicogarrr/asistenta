@@ -16,7 +16,7 @@ const commands = [
   'id; echo SSHKEYS:; ls -l /home/root/.ssh/ 2>&1',
 ].join(' && ');
 
-const sock = net.connect({ host: '192.168.1.237', port: 23 }, () => {});
+const sock = net.connect({ host: process.env.TV_IP ?? '192.168.1.237', port: 23 }, () => {});
 let buf = Buffer.alloc(0);
 let stage = 0;
 

@@ -1,6 +1,6 @@
 import net from 'node:net';
 
-const host = process.argv[2] ?? '192.168.1.237';
+const host = process.argv[2] ?? process.env.TV_IP ?? '192.168.1.237';
 const port = Number(process.argv[3] ?? 23);
 const password = process.argv[4];
 if (!password) {
