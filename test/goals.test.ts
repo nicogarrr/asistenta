@@ -491,6 +491,112 @@ describe('goal notifier', () => {
     expect(notifier.hasPending(g.id)).toBe(false);
   });
 
+  describe('24h expiry vs a goal still waiting on Nico', () => {
+    const setup = (kind: 'decision' | 'bloqueo' | 'hito', block: boolean) => {
+      const goals = new GoalStore({ db: newDb() });
+      const g = proposeIn(goals, 'espera');
+      goals.activate(g.id, null);
+      let now = 1_000_000_000_000;
+      let up = false;
+      const sends: string[] = [];
+      const notifier = new GoalNotifier({
+        db: newDb(),
+        now: () => now,
+        send: (_goal, text) => {
+          if (!up) return Promise.resolve(null);
+          sends.push(text);
+          return Promise.resolve('m-1');
+        },
+        resolveGoal: (id) => goals.read(id),
+      });
+      return {
+        goals,
+        g,
+        sends,
+        notifier,
+        advance: (ms: number) => {
+          now += ms;
+        },
+        up: () => {
+          up = true;
+        },
+        run: async () => {
+          if (block) goals.block(g.id, 'Decisión pendiente: x');
+          const current = goals.read(g.id);
+          if (!current) throw new Error('goal vanished');
+          return notifier.report(current, kind, 'pregunta');
+        },
+      };
+    };
+    const DAY = 24 * 60 * 60_000;
+
+    it.each(['decision', 'bloqueo'] as const)(
+      'keeps an undelivered %s of a still-blocked goal past 24h and delivers it once the chat is back',
+      async (kind) => {
+        const t = setup(kind, true);
+        expect(await t.run()).toBe('pending');
+        t.advance(2 * DAY);
+        await t.notifier.flushAll();
+        expect(t.notifier.hasPending(t.g.id)).toBe(true);
+        t.up();
+        await t.notifier.flushAll();
+        expect(t.sends).toHaveLength(1);
+        expect(t.notifier.hasPending(t.g.id)).toBe(false);
+        await t.notifier.flushAll();
+        expect(t.sends).toHaveLength(1); // delivered once, not repeated
+      },
+    );
+
+    it('still drops the same decision after 24h once the goal is no longer blocked', async () => {
+      const t = setup('decision', true);
+      expect(await t.run()).toBe('pending');
+      t.goals.resume(t.g.id); // Nico answered through another path
+      t.advance(2 * DAY);
+      t.up();
+      await t.notifier.flushAll();
+      expect(t.sends).toHaveLength(0);
+      expect(t.notifier.hasPending(t.g.id)).toBe(false);
+    });
+
+    it('keeps the plain 24h rule for a hito even when the goal is blocked', async () => {
+      const t = setup('hito', true);
+      expect(await t.run()).toBe('pending');
+      t.advance(2 * DAY);
+      t.up();
+      await t.notifier.flushAll();
+      expect(t.sends).toHaveLength(0);
+      expect(t.notifier.hasPending(t.g.id)).toBe(false);
+    });
+
+    it('rows written before the kind column existed keep the 24h rule', async () => {
+      const db = newDb();
+      db.exec(
+        'CREATE TABLE goal_notifications (goal_id TEXT NOT NULL, nkey TEXT NOT NULL, text TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, delivered_at TEXT, PRIMARY KEY (goal_id, nkey))',
+      );
+      const goals = new GoalStore({ db: newDb() });
+      const g = proposeIn(goals, 'vieja');
+      goals.activate(g.id, null);
+      goals.block(g.id, 'Decisión pendiente: x');
+      const now = 1_000_000_000_000;
+      db.prepare(
+        'INSERT INTO goal_notifications (goal_id, nkey, text, created_at) VALUES (?, ?, ?, ?)',
+      ).run(g.id, 'k', 'vieja', new Date(now - 2 * DAY).toISOString());
+      const sends: string[] = [];
+      const notifier = new GoalNotifier({
+        db,
+        now: () => now,
+        send: (_goal, text) => {
+          sends.push(text);
+          return Promise.resolve('m');
+        },
+        resolveGoal: (id) => goals.read(id),
+      });
+      await notifier.flushAll();
+      expect(sends).toHaveLength(0);
+      expect(notifier.hasPending(g.id)).toBe(false);
+    });
+  });
+
   it('skips rows deleted while another send of the batch was on the wire', async () => {
     const goals = new GoalStore({ db: newDb() });
     const g = proposeIn(goals, 'borrada');
