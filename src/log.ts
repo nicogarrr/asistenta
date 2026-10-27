@@ -10,16 +10,22 @@ const threshold = LEVEL_ORDER[(process.env.PA_LOG_LEVEL as LogLevel) ?? 'info'] 
 /**
  * JSONL to stdout plus a daily file. A daemon that only logs to stderr and
  * loses it is worse than one that has no logs; `npm`/NSSM capture both, so we
- * write both. Redaction happens at the call site (`redact`), never here.
+ * write both. Scrub at this final boundary too: callers may pass raw errors.
  */
 function write(level: LogLevel, msg: string, fields: Record<string, unknown>): void {
   if (LEVEL_ORDER[level] < threshold) return;
-  const rec = { ts: new Date().toISOString(), level, msg, ...fields };
+  const ts = new Date().toISOString();
   let line: string;
   try {
+    const rec = { ...redact(fields), ts, level, msg: scrubLogText(msg) };
     line = scrubUrls(JSON.stringify(rec));
   } catch {
-    line = JSON.stringify({ ts: rec.ts, level, msg, note: 'fields were not serializable' });
+    line = JSON.stringify({
+      ts,
+      level,
+      msg: scrubLogText(msg),
+      note: 'fields were not serializable',
+    });
   }
   process.stdout.write(`${line}\n`);
   try {
@@ -52,25 +58,46 @@ export const log = {
 };
 
 const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
-const SECRET_VALUE = /^(sk-|ghp_|xox[baprs]-|Bearer\s)/i;
+/** Recognizable credential formats only; arbitrary unlabelled secrets cannot be inferred. */
+export function scrubLogText(text: string): string {
+  return scrubUrls(text)
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g,
+      '[redacted]',
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.:-]+/gi, '$1 [redacted]')
+    .replace(
+      /\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+      '$1=[redacted]',
+    );
+}
 
 /**
- * Best-effort scrub before anything reaches a log file. This is a safety net for
- * accidents, not a guarantee: secrets must not be passed as log fields in the
- * first place. `redact()` in vault.ts is the real boundary.
+ * Best-effort recursive scrub of structured fields, including nested errors.
+ * Applied by write() as well as exposed for callers. Does not mutate inputs.
+ * This is a safety net, not permission to log credentials or arbitrary tool output.
  */
 export function redact(fields: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (typeof v === 'string' && (SECRET_KEY.test(k) || SECRET_VALUE.test(v))) {
-      out[k] = '[redacted]';
-    } else if (v instanceof Error) {
-      out[k] = { name: v.name, message: v.message };
-    } else {
-      out[k] = v;
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown, key = '', depth = 0): unknown => {
+    if (SECRET_KEY.test(key)) return '[redacted]';
+    if (typeof value === 'string') return scrubLogText(value);
+    if (typeof value !== 'object' || value === null) return value;
+    if (seen.has(value)) return '[circular]';
+    if (depth >= 20) return '[depth limit]';
+    if (value instanceof Date) return value.toJSON();
+    seen.add(value);
+    try {
+      if (value instanceof Error) {
+        return { name: scrubLogText(value.name), message: scrubLogText(value.message) };
+      }
+      if (Array.isArray(value)) return value.map((v) => visit(v, '', depth + 1));
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, k, depth + 1)]));
+    } finally {
+      seen.delete(value);
     }
-  }
-  return out;
+  };
+  return visit(fields) as Record<string, unknown>;
 }
 
 /** Solo el host de un enlace, para el registro: la URL completa puede llevar tokens. */
