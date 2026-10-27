@@ -1,6 +1,7 @@
 # PowerShell telnet client with byte-level read
+$TvIp = if ($env:TV_IP) { $env:TV_IP } else { '192.168.1.237' }
 $client = New-Object System.Net.Sockets.TcpClient
-$client.Connect('192.168.1.237', 23)
+$client.Connect($TvIp, 23)
 $client.ReceiveTimeout = 5000
 $stream = $client.GetStream()
 
