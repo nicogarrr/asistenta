@@ -150,7 +150,7 @@ export class GoalRunner {
   async #tick(name: string): Promise<void> {
     const id = goalIdOf(name);
     if (!id) return;
-    const goal = this.#deps.goals.read(id);
+    let goal = this.#deps.goals.read(id);
     if (!goal) {
       // Self-cleaning: a routine that outlived its goal goes away instead of
       // firing forever (the goal was deleted while the runner was down).
@@ -169,6 +169,11 @@ export class GoalRunner {
     // SQLite, so retries survive restarts; the notifier drops them after 24h;
     // and flushing never runs work, so a finished goal stays finished.
     await this.#deps.notifier.flush(goal).catch(() => {});
+
+    // Delivery can await network I/O. A pause/cancellation during that await
+    // wins over the snapshot taken before it; never launch work from stale state.
+    goal = this.#deps.goals.read(id);
+    if (!goal) return;
 
     if (goal.status === 'cancelled') {
       this.#deleteRoutine(goal.scope, name);
@@ -198,6 +203,16 @@ export class GoalRunner {
       result = { text: '', error: err instanceof Error ? err.message : String(err) };
     }
     this.#deps.store.markRoutineRun(goal.scope, name);
+
+    // Execution also yields. A late result must not mark a cancelled/paused
+    // goal done (or emit a false closing note). Count the work that did run,
+    // but leave the newer lifecycle decision and its projection untouched.
+    const current = this.#deps.goals.read(goal.id);
+    if (!current) return;
+    if (current.status !== 'active') {
+      this.#deps.goals.noteTick(goal.id, 'interrupted', day);
+      return;
+    }
 
     if (result.error) {
       this.#deps.goals.noteTick(goal.id, 'error', day);
