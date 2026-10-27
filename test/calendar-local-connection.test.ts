@@ -126,7 +126,7 @@ it('wires the same state file into the tool and vigilante, and guards the writer
   );
   expect(tool).toContain('isOwnerDm(inboundFor(thread), vigilanteOwnerId)');
   expect(tool).toContain("readLocalCalendar(join(paths.state, 'calendar', 'local.ics'))");
-  const watcher = cli.slice(cli.indexOf('const events = await upcomingEvents({'));
+  const watcher = cli.slice(cli.indexOf('const calendarSnapshot = await loadCalendar({'));
   expect(watcher.split('getUrl:')[0]).toContain(
     "readLocalCalendar(join(paths.state, 'calendar', 'local.ics'))",
   );
@@ -138,4 +138,34 @@ it('wires the same state file into the tool and vigilante, and guards the writer
     writer.indexOf('await appendEvent'),
   );
   expect(writer).toContain('calendario local (no a Google)');
+});
+it('keeps calendar degradation observable in the proactive reader', async () => {
+  const { upcomingEvents } = await import('../src/agenda/ics.js');
+  const { log } = await import('../src/log.js');
+  vi.mocked(log.warn).mockClear();
+  const local = await localCalendar();
+  const secret = 'https://example.com/SECRET/basic.ics';
+  const events = await upcomingEvents({
+    ...local,
+    getUrl: async () => secret,
+    fetchText: async () => {
+      throw new Error(`socket ${secret}`);
+    },
+  });
+  expect(events).toHaveLength(1);
+  expect(log.warn).toHaveBeenCalledWith(
+    'agenda: calendar unavailable',
+    expect.objectContaining({ reason: expect.stringContaining('socket') }),
+  );
+  expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain(secret);
+});
+it('wires the vigilante snapshot reason into unified agenda notes', async () => {
+  const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+  const watcher = cli.slice(
+    cli.indexOf('      agenda: async () =>'),
+    cli.indexOf('      // Cargos raros:'),
+  );
+  expect(watcher).toContain('loadCalendar(');
+  expect(watcher).toContain('calendarSnapshot.reason');
+  expect(watcher).toContain('agenda.notes.push');
 });

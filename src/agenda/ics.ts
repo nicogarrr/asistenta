@@ -249,6 +249,9 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
   if (!source.local && !source.remote && !reasons.length) {
     reasons.push('No hay calendario configurado todavía (falta la dirección iCal en la bóveda).');
   }
+  if (reasons.length && (source.remoteError || source.invalidUrl || source.localError)) {
+    log.warn('agenda: calendar unavailable', { reason: reasons.join(' ') });
+  }
   const parsed = mergeCalendarEvents(
     source.local ? parseIcs(source.local, new Date(now)) : [],
     source.remote ? parseIcs(source.remote, new Date(now)) : [],
