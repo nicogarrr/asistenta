@@ -4560,7 +4560,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** /calendario add <fecha> | <titulo>: escribe un evento en el ICS local. */
   const cmdCalendario = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
-      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', { quote: true });
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
       return;
     }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
@@ -4578,7 +4580,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await appendEvent(file, { title, start });
     await say(
       inbound,
-      'Añadido al calendario local (no a Google): ' + title + ' — ' + start.toLocaleString('es-ES') + '.',
+      'Añadido al calendario local (no a Google): ' +
+        title +
+        ' — ' +
+        start.toLocaleString('es-ES') +
+        '.',
       { quote: true },
     );
   };
