@@ -1178,6 +1178,7 @@ export class PersonalAgent {
           summary += event.assistantMessageEvent.delta;
         }
       });
+      let reportTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         // Bounded: if the provider is down (the likely reason we are here), this
         // must fail fast instead of hanging the chat queue forever.
@@ -1189,9 +1190,16 @@ export class PersonalAgent {
             // Si gana el timeout, el abort hace rechazar este prompt: el catch evita
             // una promesa rechazada sin manejar.
             .catch(() => undefined),
-          sleep(60_000).then(() => this.#agent.abort()),
+          new Promise<void>((resolve) => {
+            reportTimer = setTimeout(() => {
+              agent.abort();
+              resolve();
+            }, 60_000);
+            reportTimer.unref();
+          }),
         ]);
       } finally {
+        clearTimeout(reportTimer);
         off();
       }
     } catch (err) {
@@ -1218,6 +1226,7 @@ export class PersonalAgent {
    */
   abort(scope: 'internal' | 'external' = 'internal'): void {
     if (scope === 'external') this.#externalAbort = true;
+    this.#runAbort.abort();
     this.#summaryAbort.abort();
     this.#agent.abort();
   }
