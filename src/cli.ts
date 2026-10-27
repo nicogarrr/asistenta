@@ -84,6 +84,7 @@ import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore } from './memory.js';
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
+import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import {
@@ -4248,6 +4249,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       log: pwLog,
       deps: pwDeps,
     });
+  }
+
+  // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
+  // Ver docs/ocr-telegram.md.
+  if (process.env.PA_OCR_WATCH_DIR?.trim()) {
+    const ocrWatcher = new OcrFolderWatcher({
+      dir: resolve(process.env.PA_OCR_WATCH_DIR.trim()),
+      mode: watchModeFromEnv(process.env.PA_OCR_WATCH_MODE),
+      makeDeps: windowsDeps,
+      log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
+    });
+    ocrWatcher.start();
   }
 
   const startedAt = Date.now();

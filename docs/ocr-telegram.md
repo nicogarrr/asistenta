@@ -51,4 +51,13 @@ Probado en Linux con PDF reales generados (digital, escaneado, mixto, corrupto, 
 
 ## Pendiente (otra entrega)
 
-Carpeta compartida de entrada/salida (como la del post original), con originales archivados y errores aparte.
+Probar la carpeta automática con un escaneado real en Windows.
+
+## Carpeta automática (opt-in)
+
+Apagada por defecto. Para activarla, en `.env`: `PA_OCR_WATCH_DIR=C:\ruta\OCR` y, si quieres, `PA_OCR_WATCH_MODE=md` (por defecto), `pdf` o `todo`.
+
+- Deja un PDF suelto en la carpeta (sin subcarpetas). Cada 15 s se revisa; un archivo se toca solo cuando lleva 5 s sin cambiar.
+- Resultado en `salida/` (Markdown y/o PDF con texto). Después el original pasa a `originales/`. Si falla, original y un `.txt` con el motivo van a `errores/`.
+- No pisa nada: publica con enlace exclusivo (si el nombre existe, aunque lo cree otro proceso a la vez, usa `-2`, `-3`…) y nunca borra contenido. Cada archivo se reclama con un rename atómico (dos arranques no se pisan) y se revalida tamaño+fecha+inodo antes y después del OCR: si cambió, vuelve a la entrada sin archivarse. Si el proceso muere a mitad, queda un `.claim-*` oculto con el original intacto. Solo PDF reales (por la firma del archivo). El contenido no va a los logs.
+- Mismas limitaciones que `/ocr`: el OCR de páginas escaneadas solo funciona en Windows y no está verificado en Windows real.
