@@ -176,6 +176,9 @@ export class TelegramChannel implements ChannelAdapter {
   readonly #sendGate = new Mutex();
   /** chatId -> epoch ms of the last accepted send, to space out bursts. */
   readonly #lastSentAt = new Map<string, number>();
+  /** A 429 blocks every caller, including requests already queued at the gate. */
+  #cooldownUntil = 0;
+  #cooldownError: GrammyError | null = null;
   /** Borradores vivos por chat y tema: `chatId:threadId`. */
   readonly #drafts = new Map<string, DraftState>();
   /** Serializa las comprobaciones y transiciones del borrador (no las llamadas API). */
@@ -970,9 +973,31 @@ export class TelegramChannel implements ChannelAdapter {
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.#sendGate.run(async () => {
-          const wait = (this.#lastSentAt.get(GLOBAL_KEY) ?? 0) + MIN_GAP_MS - Date.now();
+          const now = Date.now();
+          if (this.#cooldownUntil > deadline && this.#cooldownError) {
+            // Preserve the server's cooldown without freezing the queue for longer
+            // than this send can afford. Later callers fail fast until it expires.
+            throw this.#cooldownError;
+          }
+          const wait =
+            Math.max((this.#lastSentAt.get(GLOBAL_KEY) ?? 0) + MIN_GAP_MS, this.#cooldownUntil) -
+            now;
           if (wait > 0) await sleep(wait);
-          const value = await call();
+          let value: T;
+          try {
+            value = await call();
+          } catch (err) {
+            if (err instanceof GrammyError && err.error_code === 429) {
+              // Record this BEFORE releasing the gate, so an already queued call
+              // cannot slip through while the failed caller schedules its retry.
+              this.#cooldownUntil = Math.max(
+                this.#cooldownUntil,
+                Date.now() + (backoffFor(err, attempt) ?? 1_000),
+              );
+              this.#cooldownError = err;
+            }
+            throw err;
+          }
           // Stamped only on success: a call that never happened must not consume the
           // spacing budget of the next one.
           this.#lastSentAt.set(GLOBAL_KEY, Date.now());
