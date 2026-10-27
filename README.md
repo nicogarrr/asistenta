@@ -24,7 +24,7 @@ El daemon corre en tu máquina. El panel web local ofrece chat, aprobaciones, se
 3. Ejecuta los pasos en su cadencia, guarda el avance y comunica novedades o bloqueos.
 4. Si falta una decisión, se detiene para pedirla. Un paso marcado como completado no certifica por sí solo la calidad del resultado.
 
-Los objetivos se guardan en SQLite con su ámbito de conversación. El panel actual **no tiene todavía una vista de objetivos o dependencias**. Un tablero visual y un estado separado de revisión serían trabajo futuro, no capacidades disponibles por esta guía.
+Los objetivos se guardan en SQLite con su ámbito de conversación. El panel incluye una **vista de solo lectura de los objetivos del propietario**, con sus estados, bloqueos, dependencias y pasos. No permite activar, pausar ni cancelar objetivos desde esa vista. Un tablero editable y un estado separado de revisión serían trabajo futuro, no capacidades disponibles por esta guía.
 
 ## Contenido
 
