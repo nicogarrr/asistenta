@@ -35,7 +35,7 @@ describe('logger final secret boundary', () => {
   });
   it('recurses through arrays and errors without modifying caller data', () => {
     const fields = {
-      response: [{ authorization: 'synthetic auth', err: new Error(`bad ${canary}`) }],
+      response: [{ authorization: 'synthetic auth', err: new Error(`bad ${canary}`) }] as const,
       exit: 42,
     };
     expect(redact(fields)).toEqual({
