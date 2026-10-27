@@ -44,7 +44,7 @@ describe('logger final secret boundary', () => {
       ],
       exit: 42,
     });
-    expect(fields.response[0].authorization).toBe('synthetic auth');
+    expect(fields.response[0]?.authorization).toBe('synthetic auth');
   });
   it('protects BOTH stdout and actual JSONL when callers omit redact()', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
