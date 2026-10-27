@@ -70,7 +70,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'agenda',
-    description: 'Ver rutinas programadas y próxima ejecución',
+    description: 'Calendario, pendientes, rutinas y objetivos',
   },
   {
     command: 'cron',
