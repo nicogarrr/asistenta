@@ -74,7 +74,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'cron',
-    description: 'Programar, listar o borrar rutinas',
+    description: 'Programar, pausar, probar o borrar rutinas',
   },
   {
     command: 'memory',

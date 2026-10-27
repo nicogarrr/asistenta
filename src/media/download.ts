@@ -144,6 +144,15 @@ export function explainYtdlpError(stderr: string, ctx: ExplainContext = {}): str
   if (/private|login|sign in|log in|authentication|cookies/.test(s))
     return 'el vídeo es privado o exige iniciar sesión, y no puedo descargarlo sin tu cuenta';
   if (/age[- ]restricted|confirm your age/.test(s)) return 'el vídeo tiene restricción de edad';
+  // A 403 proves access was denied, not the cause.
+  if (/http error 403|403: forbidden/.test(s)) {
+    return ctx.cookies
+      ? `el sitio me niega el acceso (error 403) aun con las cookies de ${ctx.cookies}; puede ser una protección anti-bot o un problema de sesión/permisos, prueba más tarde o descárgalo tú y mándamelo`
+      : `el sitio me niega el acceso (error 403), probablemente una protección anti-bot; ${COOKIES_STEP}, o prueba más tarde`;
+  }
+  // Geo before "not available": "This video is not available in your country" is a
+  // country block, not a removed video; the loose "not available" match must not win.
+  if (/geo|country|your location/.test(s)) return 'el vídeo está bloqueado en tu país';
   if (
     /video unavailable|this video is not available|has been removed|was deleted|does not exist|http error 404/.test(
       s,
@@ -155,7 +164,6 @@ export function explainYtdlpError(stderr: string, ctx: ExplainContext = {}): str
       ? `YouTube no me da ningún formato descargable; casi seguro falta deno: ${DENO_STEP}`
       : 'ese vídeo no ofrece un formato que yo pueda descargar (si el sitio es YouTube, comprueba deno y actualiza yt-dlp)';
   }
-  if (/geo|country|your location/.test(s)) return 'el vídeo está bloqueado en tu país';
   if (/drm/.test(s)) return 'el vídeo tiene protección DRM';
   if (/http error 429|too many requests|rate[- ]limit/.test(s))
     return 'el sitio me ha limitado por demasiadas peticiones; prueba en unos minutos';

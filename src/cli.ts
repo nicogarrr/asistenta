@@ -85,6 +85,7 @@ import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore } from './memory.js';
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
+import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import {
@@ -266,7 +267,7 @@ import { startTvButtonListener, type TvButtonListener } from './tv/button-listen
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
-import { Mutex } from './utils.js';
+import { Mutex, plainInline } from './utils.js';
 import {
   initVault,
   unlock,
@@ -284,10 +285,11 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { createAloudSpeaker } from './voice/aloud.js';
 import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
-import { speakPhrases, splitPhrases } from './voice/phrases.js';
+import { splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { transcribeVoiceNote } from './voice/stt.js';
@@ -4271,6 +4273,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   }
 
+  // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
+  // Ver docs/ocr-telegram.md.
+  if (process.env.PA_OCR_WATCH_DIR?.trim()) {
+    const ocrWatcher = new OcrFolderWatcher({
+      dir: resolve(process.env.PA_OCR_WATCH_DIR.trim()),
+      mode: watchModeFromEnv(process.env.PA_OCR_WATCH_MODE),
+      makeDeps: windowsDeps,
+      log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
+    });
+    ocrWatcher.start();
+  }
+
   const startedAt = Date.now();
 
   /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
@@ -5680,45 +5694,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const speakAloud = async (text: string, owner: ConversationSession): Promise<void> => {
     const phrases = splitPhrases(trimForSpeech(text));
     if (phrases.length === 0 || session !== owner) return;
-    mkdirSync(paths.voice, { recursive: true });
-    let handle: ReturnType<typeof speakPhrases> | null = null;
-    let n = 0;
-    await owner.speak(
-      async (ctl) => {
-        if (session !== owner) return;
-        handle = speakPhrases(phrases, {
-          synth: async (phrase) => {
-            const spoken = await tts.speak(phrase);
-            // Closed, switched off or replaced while synthesising: nothing more is said.
-            if (session !== owner) throw new Error('sesión cerrada');
-            const file = join(paths.voice, `say-${Date.now()}-${n++}.mp3`);
-            writeFileSync(file, spoken.data);
-            return file;
-          },
-          play: (file) => {
-            const playback = speaker.play(file);
-            sessionPlayback = playback;
-            return playback;
-          },
-          remove: (file) => rmSync(file, { force: true }),
-          onPhraseStart: () => ctl.phraseStart(),
-        });
-        activeSpeech = handle;
-        try {
-          const result = await handle.done;
-          if (!result.aborted && result.spoken < phrases.length) {
-            throw new Error('no he podido leer toda la respuesta en voz alta');
-          }
-        } catch (err) {
-          // Aborted on purpose (barge-in / close): not a failure worth reporting.
-          if (!ctl.interrupted() && session === owner) throw err;
-        } finally {
-          sessionPlayback = null;
-          activeSpeech = null;
-        }
+    const aloud = createAloudSpeaker(phrases, {
+      tts,
+      speaker,
+      directory: paths.voice,
+      isOwnerCurrent: () => session === owner,
+      setPlayback: (playback) => {
+        sessionPlayback = playback;
       },
-      { stop: () => handle?.abort(), text: phrases.join(' ') },
-    );
+    });
+    activeSpeech = aloud;
+    try {
+      await owner.speak((ctl) => aloud.run(ctl), {
+        stop: () => aloud.abort(),
+        text: phrases.join(' '),
+      });
+    } finally {
+      activeSpeech = null;
+    }
   };
 
   const closeSessionText = (reason: string, detail?: string): string =>
@@ -6837,6 +6830,53 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje.`;
   }
 
+  if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
+    const resuming = sub === 'reanuda' || sub === 'reanudar';
+    const name = rest.trim();
+    if (!name) return `Uso: /cron ${resuming ? 'reanudar' : 'pausa'} <nombre>.`;
+    const routine =
+      deps.store.getRoutine(deps.threadKey, name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, name);
+    if (!routine || routine.kind !== 'schedule') {
+      return `No tengo ninguna rutina programada llamada "${name}".`;
+    }
+    if (routine.enabled === resuming) {
+      return resuming
+        ? `La rutina "${name}" ya estaba activa.`
+        : `La rutina "${name}" ya estaba en pausa.`;
+    }
+    deps.store.setRoutineEnabled(routine.scope, routine.name, resuming);
+    deps.routineRunner.sync();
+    if (!resuming) {
+      return `Rutina "${name}" en pausa: no se ejecutará hasta que hagas /cron reanudar ${name}. Si hay una en marcha ahora mismo, puede terminar.`;
+    }
+    const live = deps.routineRunner
+      .status()
+      .find((st) => st.scope === routine.scope && st.name === routine.name);
+    return `Rutina "${name}" reanudada. Próxima ejecución: ${nextRunLabel(routine.schedule, live?.next)}.`;
+  }
+
+  if (sub === 'probar' || sub === 'test' || sub === 'ahora') {
+    const name = rest.trim();
+    if (!name) return 'Uso: /cron probar <nombre>.';
+    const routine =
+      deps.store.getRoutine(deps.threadKey, name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, name);
+    if (!routine || routine.kind !== 'schedule') {
+      return `No tengo ninguna rutina programada llamada "${name}".`;
+    }
+    if (!routine.enabled) {
+      return `La rutina "${name}" está en pausa. Reanúdala con /cron reanudar ${name} o dime si quieres probarla igualmente.`;
+    }
+    if (deps.routineRunner.isRunning(routine.scope, routine.name)) {
+      return `La rutina "${name}" ya se está ejecutando ahora mismo.`;
+    }
+    // A test is a real run: same approvals, same tools, same purchase cap. Say so,
+    // so nobody expects a dry run.
+    void deps.routineRunner.fire(routine.scope, routine.name);
+    return `Lanzo "${name}" ahora como prueba. Es una ejecución real (mismos permisos y aprobaciones que a su hora); el resultado llegará a este chat. Su horario no cambia.`;
+  }
+
   if (sub === 'add') {
     if (!rest.trim()) {
       return 'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.';
@@ -6879,10 +6919,14 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     `Rutinas programadas: ${list.length}`,
     ...list.map(
       (r) =>
-        `- ${r.name} [${r.schedule}] — próxima: ${nextRunLabel(
-          r.schedule ?? null,
-          live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
-        )}`,
+        `- ${r.name} [${r.schedule}] — ${
+          r.enabled
+            ? `próxima: ${nextRunLabel(
+                r.schedule ?? null,
+                live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
+              )}`
+            : 'EN PAUSA'
+        }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
     ),
   ].join('\n');
 }
@@ -6973,7 +7017,13 @@ export function buildContextNote(
                 day: 'numeric',
                 month: 'short',
               });
-              return `- ${when} · ${s.title}: ${(s.summary ?? '').replace(/\s+/g, ' ').slice(0, 200)}`;
+              // Title and summary are stored text (the summary is a past agent
+              // reply): they render inside <historial>, so markup characters go.
+              const title = plainInline(s.title).replace(/\s+/g, ' ').trim();
+              const summary = plainInline(s.summary ?? '')
+                .replace(/\s+/g, ' ')
+                .slice(0, 200);
+              return `- ${when} · ${title}: ${summary}`;
             })
             .join('\n')}\n</historial>`,
         );
@@ -6986,7 +7036,10 @@ export function buildContextNote(
   if (routines.length) {
     parts.push(
       `<routines>\n${routines
-        .map((r) => `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`)
+        .map(
+          (r) =>
+            `- ${plainInline(r.name).replace(/\s+/g, ' ').trim()} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`,
+        )
         .join('\n')}\n</routines>`,
     );
   }

@@ -163,4 +163,73 @@ describe('/cron command (store + runner reales)', () => {
     expect(reply).toContain('No tengo ninguna rutina programada');
     expect(store.getRoutine(THREAD, 'macro-x')).not.toBeNull();
   });
+  it('pausa keeps the routine but drops the live job; reanudar brings it back', () => {
+    runCronCommand(deps(), 'add 0 8 * * * | resumen del día');
+    const r = store.listRoutines()[0];
+    if (!r) throw new Error('expected the routine to exist');
+    const paused = runCronCommand(deps(), `pausa ${r.name}`);
+    expect(paused).toContain('en pausa');
+    expect(store.getRoutine(THREAD, r.name)?.enabled).toBe(false);
+    expect(store.getRoutine(THREAD, r.name)?.schedule).toBe('0 8 * * *');
+    expect(runner.status()).toHaveLength(0);
+    expect(runCronCommand(deps(), '')).toContain('EN PAUSA');
+    expect(runCronCommand(deps(), `pausa ${r.name}`)).toContain('ya estaba en pausa');
+    const resumed = runCronCommand(deps(), `reanudar ${r.name}`);
+    expect(resumed).toContain('reanudada');
+    expect(store.getRoutine(THREAD, r.name)?.enabled).toBe(true);
+    expect(runner.status().some((s) => s.name === r.name)).toBe(true);
+    expect(runCronCommand(deps(), `reanudar ${r.name}`)).toContain('ya estaba activa');
+  });
+
+  it('pausa and reanudar refuse unknown names and procedures', () => {
+    store.saveRoutine({ scope: THREAD, name: 'macro-x', kind: 'procedure', steps: '["a"]' });
+    expect(runCronCommand(deps(), 'pausa nada')).toContain('No tengo ninguna rutina programada');
+    expect(runCronCommand(deps(), 'pausa macro-x')).toContain('No tengo ninguna rutina programada');
+    expect(store.getRoutine(THREAD, 'macro-x')?.enabled).toBe(true);
+    expect(runCronCommand(deps(), 'pausa')).toContain('Uso:');
+  });
+
+  it('probar runs the routine once now without touching its schedule', async () => {
+    const calls: string[] = [];
+    runner.stop();
+    runner = new RoutineRunner({
+      store,
+      run: async (prompt) => {
+        calls.push(prompt);
+      },
+      timeoutMs: 5_000,
+    });
+    runner.start();
+    runCronCommand(deps(), 'add 0 8 * * * | resumen del día');
+    const r = store.listRoutines()[0];
+    if (!r) throw new Error('expected the routine to exist');
+    const reply = runCronCommand(deps(), `probar ${r.name}`);
+    expect(reply).toContain('ejecución real');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('resumen del día');
+    expect(store.getRoutine(THREAD, r.name)?.schedule).toBe('0 8 * * *');
+    expect(store.getRoutine(THREAD, r.name)?.lastRunAt).not.toBeNull();
+  });
+
+  it('probar refuses a paused routine instead of running it silently', async () => {
+    const calls: string[] = [];
+    runner.stop();
+    runner = new RoutineRunner({
+      store,
+      run: async (prompt) => {
+        calls.push(prompt);
+      },
+      timeoutMs: 5_000,
+    });
+    runner.start();
+    runCronCommand(deps(), 'add 0 8 * * * | resumen del día');
+    const r = store.listRoutines()[0];
+    if (!r) throw new Error('expected the routine to exist');
+    runCronCommand(deps(), `pausa ${r.name}`);
+    expect(runCronCommand(deps(), `probar ${r.name}`)).toContain('en pausa');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls).toHaveLength(0);
+    expect(runCronCommand(deps(), 'probar nada')).toContain('No tengo ninguna rutina programada');
+  });
 });

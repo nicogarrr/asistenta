@@ -11,6 +11,7 @@
  * agent as autonomous as possible) into the `lecciones` category, where they can be
  * read, edited or deleted like any skill; `lintSkill` flags the ones that look off.
  */
+import { plainInline } from '../utils.js';
 import { type SkillStore, slugify } from './store.js';
 import type { SkillDraft } from './types.js';
 
@@ -145,8 +146,7 @@ export function skillsIndex(
     .map((s) => {
       // Plain one-line text: no <tags> or backticks, so a skill cannot close the <skills> block
       // or pose as markup in the context note.
-      const hint = (s.whenToUse || s.description)
-        .replace(/[<>`]/g, ' ')
+      const hint = plainInline(s.whenToUse || s.description)
         .replace(/\s+/g, ' ')
         .trim();
       const clipped =

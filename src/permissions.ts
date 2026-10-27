@@ -1180,9 +1180,15 @@ export class Gate {
 
   #loadPersistedAlways(): void {
     this.#withScopeDb((db) => {
-      const rows = db.prepare(`SELECT tool FROM approval_scopes WHERE level = 'always'`).all();
+      const rows = db.prepare(`SELECT scope_key FROM approval_scopes WHERE level = 'always'`).all();
       for (const row of rows) {
-        if (typeof row.tool === 'string') this.#alwaysAllow.add(row.tool);
+        // The tool column is only a display/revocation group. An action grant
+        // must stay exact in the fallback cache, even before its first DB read.
+        // Otherwise a disk failure after restart turns one action into all of them.
+        if (typeof row.scope_key === 'string' && row.scope_key.startsWith('always:')) {
+          const key = row.scope_key.slice('always:'.length);
+          if (key) this.#alwaysAllow.add(key);
+        }
       }
     });
   }

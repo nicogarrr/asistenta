@@ -12,7 +12,7 @@ const harness = vi.hoisted(() => {
   type Sent = { chatId: number; text: string; threadId?: number };
   type Edit = { chatId: number; messageId: number; text: string };
   type MarkupEdit = { chatId: number; messageId: number; keyboard: unknown[] };
-  type Voice = { chatId: number; threadId?: number; caption?: string };
+  type Voice = { chatId: number; threadId?: number; caption?: string; duration?: number };
 
   const state = {
     sent: [] as Sent[],
@@ -88,12 +88,13 @@ const harness = vi.hoisted(() => {
       sendVoice: async (
         chatId: number,
         _file: FakeInputFile,
-        options?: { caption?: string; message_thread_id?: number },
+        options?: { caption?: string; duration?: number; message_thread_id?: number },
       ) => {
         state.voices.push({
           chatId,
           threadId: options?.message_thread_id,
           caption: options?.caption,
+          duration: options?.duration,
         });
         return { message_id: state.nextMessageId++ };
       },
@@ -304,6 +305,56 @@ describe('sendTextAndVoice', () => {
     expect(state.sent[0]).toMatchObject({ text: 'Aquí tienes la respuesta.', threadId: 7 });
     expect(state.voices).toHaveLength(1);
     expect(state.voices[0]).toMatchObject({ chatId: 42, threadId: 7 });
+  });
+
+  it('pasa a sendVoice la duración real redondeada al alza (la burbuja nunca sale a 0:00)', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+    const audio = {
+      mimeType: 'audio/mpeg',
+      data: Buffer.from('voz').toString('base64'),
+      durationSeconds: 2.2,
+    };
+    const pending = channel.sendTextAndVoice(
+      { channel: 'telegram', account: 'main', chatId: '42', text: 't' },
+      audio,
+    );
+    await vi.advanceTimersByTimeAsync(2_400);
+    await expect(pending).resolves.toBe('100');
+    expect(state.voices).toHaveLength(1);
+    expect(state.voices[0]?.duration).toBe(3);
+  });
+
+  it('sin duración conocida (0) no declara ninguna: nunca un 0:00 falso', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+    const audio = {
+      mimeType: 'audio/mpeg',
+      data: Buffer.from('voz').toString('base64'),
+      durationSeconds: 0,
+    };
+    const pending = channel.sendTextAndVoice(
+      { channel: 'telegram', account: 'main', chatId: '42', text: 't' },
+      audio,
+    );
+    await vi.advanceTimersByTimeAsync(2_400);
+    await expect(pending).resolves.toBe('100');
+    expect(state.voices).toHaveLength(1);
+    expect(state.voices[0]?.duration).toBeUndefined();
+  });
+
+  it('una nota de voz vacía no se envía: el texto sale y la voz se descarta', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+    const audio = { mimeType: 'audio/mpeg', data: '', durationSeconds: 2 };
+    const pending = channel.sendTextAndVoice(
+      { channel: 'telegram', account: 'main', chatId: '42', text: 't' },
+      audio,
+    );
+    await vi.advanceTimersByTimeAsync(2_400);
+    await expect(pending).resolves.toBe('100');
+    expect(state.sent).toHaveLength(1);
+    expect(state.voices).toHaveLength(0);
   });
 });
 

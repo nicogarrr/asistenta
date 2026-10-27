@@ -97,3 +97,19 @@ export class Mutex {
     }
   }
 }
+
+/**
+ * Text the agent stored earlier (a memory fact, a session summary, a
+ * workstream field, a routine name) is rendered back inside the fenced blocks
+ * of the per-turn context note (<memory>, <historial>, <workstreams>,
+ * <routines>). That text can ultimately come from a web page or a tool result
+ * the model relayed, and a value containing the closing tag would break out of
+ * its fence and pose as prompt markup - the same threat skillsIndex already
+ * neutralises for <skills>. This strips exactly the markup-significant
+ * characters and nothing else, at render time only: storage is never
+ * rewritten, and ordinary punctuation (which can be the point of a fact) is
+ * preserved.
+ */
+export function plainInline(text: string): string {
+  return text.replace(/[<>`]/g, ' ');
+}
