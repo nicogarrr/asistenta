@@ -250,7 +250,7 @@ import { startTvButtonListener, type TvButtonListener } from './tv/button-listen
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { setUndoDir, undoLast } from './undo.js';
-import { Mutex } from './utils.js';
+import { Mutex, plainInline } from './utils.js';
 import {
   initVault,
   unlock,
@@ -7016,7 +7016,13 @@ export function buildContextNote(
                 day: 'numeric',
                 month: 'short',
               });
-              return `- ${when} · ${s.title}: ${(s.summary ?? '').replace(/\s+/g, ' ').slice(0, 200)}`;
+              // Title and summary are stored text (the summary is a past agent
+              // reply): they render inside <historial>, so markup characters go.
+              const title = plainInline(s.title).replace(/\s+/g, ' ').trim();
+              const summary = plainInline(s.summary ?? '')
+                .replace(/\s+/g, ' ')
+                .slice(0, 200);
+              return `- ${when} · ${title}: ${summary}`;
             })
             .join('\n')}\n</historial>`,
         );
@@ -7029,7 +7035,10 @@ export function buildContextNote(
   if (routines.length) {
     parts.push(
       `<routines>\n${routines
-        .map((r) => `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`)
+        .map(
+          (r) =>
+            `- ${plainInline(r.name).replace(/\s+/g, ' ').trim()} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`,
+        )
         .join('\n')}\n</routines>`,
     );
   }
