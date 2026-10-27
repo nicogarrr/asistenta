@@ -12,6 +12,8 @@ export interface WebUiDeps {
   sessions(query?: string): unknown | Promise<unknown>;
   memory(scope?: string): unknown | Promise<unknown>;
   auditVerify(): unknown | Promise<unknown>;
+  /** Read-only goals, filtered to the configured owner by the caller. */
+  goals?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(text: string): Promise<{ text: string }>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
@@ -52,6 +54,7 @@ const PAGE_CSP = [
 ].join('; ');
 
 type ApiRoute =
+  | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -130,6 +133,8 @@ function safeDecode(value: string): string | null {
 
 function matchApiRoute(pathname: string): ApiRoute | null {
   switch (pathname) {
+    case '/api/goals':
+      return { method: 'GET', kind: 'goals' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -182,6 +187,11 @@ async function respondApi(
   try {
     const body = route.method === 'POST' ? await readJsonBody(req) : {};
     switch (route.kind) {
+      case 'goals':
+        if (!deps.goals) throw new HttpError(503, 'Objetivos no disponibles');
+        payload = await deps.goals();
+        if (payload === null) throw new HttpError(503, 'Objetivos aún no disponibles');
+        break;
       case 'status':
         payload = await deps.status();
         break;

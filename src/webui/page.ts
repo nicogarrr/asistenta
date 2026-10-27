@@ -336,6 +336,16 @@ export function renderPage(): string {
         </div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-objetivos">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-objetivos">Objetivos</h2>
+          <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
+        </header>
+        <div id="panel-objetivos" class="tarjeta-cuerpo" aria-live="polite">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-aprobaciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-aprobaciones">Aprobaciones</h2>
@@ -834,6 +844,41 @@ export function renderPage(): string {
         }
       }
 
+      async function cargarObjetivos() {
+        var contenedor = document.getElementById('panel-objetivos');
+        pintarCarga(contenedor);
+        try {
+          var objetivos = await pedir('/api/goals');
+          if (!Array.isArray(objetivos)) throw new Error('Respuesta de objetivos inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura. Estados reales del objetivo; no conceden permisos.'));
+          if (!objetivos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay objetivos del propietario.'));
+          var estados = { proposed: 'Propuesto', active: 'Activo', paused: 'Pausado', blocked: 'Bloqueado', done: 'Terminado', cancelled: 'Cancelado' };
+          objetivos.forEach(function (objetivo) {
+            var tarjeta = nodo('section', 'sesion');
+            tarjeta.appendChild(nodo('h3', null, objetivo.title));
+            tarjeta.appendChild(nodo('p', 'muted', (estados[objetivo.status] || objetivo.status) + ' · Hilo: ' + objetivo.thread));
+            tarjeta.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id));
+            var detalles = document.createElement('details');
+            detalles.appendChild(nodo('summary', null, 'Plan y contexto'));
+            detalles.appendChild(nodo('p', 'muted', 'Ámbito: ' + objetivo.scope));
+            var lista = document.createElement('ul');
+            objetivo.plan.forEach(function (paso) { lista.appendChild(nodo('li', null, (paso.done ? 'Hecho: ' : 'Pendiente: ') + paso.text)); });
+            detalles.appendChild(lista);
+            if (objetivo.blockedReason) detalles.appendChild(nodo('p', 'texto', 'Bloqueo: ' + objetivo.blockedReason));
+            if (objetivo.lastOutcome) detalles.appendChild(nodo('p', 'texto', 'Último resultado: ' + objetivo.lastOutcome));
+            detalles.appendChild(nodo('p', 'muted', 'Actualizado: ' + objetivo.updatedAt));
+            tarjeta.appendChild(detalles);
+            if (objetivo.panelChatAvailable) {
+              var enlace = nodo('a', null, 'Ir al chat principal del panel');
+              enlace.href = '#titulo-chat';
+              tarjeta.appendChild(enlace);
+              tarjeta.appendChild(nodo('p', 'muted', 'El chat no modifica este objetivo automáticamente.'));
+            } else tarjeta.appendChild(nodo('p', 'muted', 'Continúa en el hilo original de Telegram: ' + objetivo.thread + '. El chat del panel solo abre el principal.'));
+            contenedor.appendChild(tarjeta);
+          });
+        } catch (error) { pintarError(contenedor, error); }
+      }
+
       async function cargarEstado() {
         var contenedor = document.getElementById('panel-estado');
         pintarCarga(contenedor);
@@ -879,6 +924,7 @@ export function renderPage(): string {
       }
 
       var refrescos = {
+        objetivos: cargarObjetivos,
         estado: cargarEstado,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
@@ -892,6 +938,7 @@ export function renderPage(): string {
         boton.disabled = true;
         document.body.setAttribute('aria-busy', 'true');
         Promise.all([
+          cargarObjetivos(),
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),
