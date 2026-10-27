@@ -24,7 +24,19 @@ it('does not link onboarding readers to missing local documentation', () => {
   for (const hit of text.matchAll(/\]\(([^)]+)\)/g)) {
     const link = hit[1] ?? '';
     if (link.startsWith('http')) continue;
-    expect(existsSync(resolve(link)), link).toBe(true);
+    if (link.startsWith('#')) {
+      // In-page anchor: it must match a heading slug in this README.
+      const slugs = [...text.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) =>
+        (m[1] ?? '')
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s-]/gu, '')
+          .trim()
+          .replace(/\s+/g, '-'),
+      );
+      expect(slugs, link).toContain(link.slice(1));
+      continue;
+    }
+    expect(existsSync(resolve(link.split('#')[0] ?? link)), link).toBe(true);
   }
   expect(text).toContain('En Windows todavía no hay controlador');
   expect(text).toContain('`restart` se rechaza');
