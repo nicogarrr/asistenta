@@ -1,13 +1,16 @@
 # Brecha 3: barge-in fiable y verificación de hablante
 
-Dos piezas de la voz en tiempo real, ambas **opt-in y desactivadas por defecto**:
+Dos piezas de la voz en tiempo real. Estado actual: el **barge-in va activado
+por defecto** en el nivel `altavoces` (se apaga con `/conversacion` o
+`bargeIn: 'off'`); la **verificación de hablante sigue siendo opt-in**
+(`PA_SPEAKER_VERIFY=1` + al menos una voz enrolada):
 
 - **3a — Corte (barge-in) confirmado por forma.** El disparo por energía corta
   al agente con cualquier ruido sostenido por encima del gate (aspiradora,
   platos, tele). Con `bargeVad` (ya cableado en `src/cli.ts`) un candidato
   ruidoso se puntúa primero con Silero VAD y **solo el habla corta**. El nivel
-  sigue siendo `off` salvo que el usuario suba a `altavoces`/`auriculares` con
-  `/conversacion`. Novedad de esta PR: `scripts/barge-bench.ts` mide los falsos
+  por defecto es `altavoces` (el usuario puede bajar a `off` o subir a
+  `auriculares` con `/conversacion`). Novedad de esta PR: `scripts/barge-bench.ts` mide los falsos
   disparos **antes y después** con el modelo real v4.0 (sha256 verificado).
 - **3b — Verificación de hablante (nuevo).** Solo las voces enroladas del hogar
   pueden mandar en la conversación por voz; una tercera voz no enrolada no
@@ -42,10 +45,11 @@ capturan música con voz (límite ya declarado en A5: pasajes orquestales
 sostenidos le parecen voz al VAD, p95 0.92-0.98).
 
 **Pendiente de medir en su PC:** FAR/FRR del corte sobre audio doméstico real
-grabado (mismo protocolo de eventos que `wakeword-farfrr-bench.py`), y decidir
-con la tabla de `barge_sessions` si el nivel puede dejar de ser `off` por
-defecto. La métrica de falsos disparos por sesión (D1) ya existe y sigue
-contando.
+grabado (mismo protocolo de eventos que `wakeword-farfrr-bench.py`). El nivel
+ya dejó de ser `off` por defecto (hoy `altavoces`); con la tabla de
+`barge_sessions` toca vigilar la tasa de falsos disparos estimada y bajar el
+nivel si en su casa se dispara en falso. La métrica de falsos disparos por
+sesión (D1) ya existe y sigue contando.
 
 ## 3b — Verificación de hablante
 

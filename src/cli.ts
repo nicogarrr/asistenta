@@ -268,10 +268,11 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { createAloudSpeaker } from './voice/aloud.js';
 import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
-import { speakPhrases, splitPhrases } from './voice/phrases.js';
+import { splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { transcribeVoiceNote } from './voice/stt.js';
@@ -5672,45 +5673,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const speakAloud = async (text: string, owner: ConversationSession): Promise<void> => {
     const phrases = splitPhrases(trimForSpeech(text));
     if (phrases.length === 0 || session !== owner) return;
-    mkdirSync(paths.voice, { recursive: true });
-    let handle: ReturnType<typeof speakPhrases> | null = null;
-    let n = 0;
-    await owner.speak(
-      async (ctl) => {
-        if (session !== owner) return;
-        handle = speakPhrases(phrases, {
-          synth: async (phrase) => {
-            const spoken = await tts.speak(phrase);
-            // Closed, switched off or replaced while synthesising: nothing more is said.
-            if (session !== owner) throw new Error('sesión cerrada');
-            const file = join(paths.voice, `say-${Date.now()}-${n++}.mp3`);
-            writeFileSync(file, spoken.data);
-            return file;
-          },
-          play: (file) => {
-            const playback = speaker.play(file);
-            sessionPlayback = playback;
-            return playback;
-          },
-          remove: (file) => rmSync(file, { force: true }),
-          onPhraseStart: () => ctl.phraseStart(),
-        });
-        activeSpeech = handle;
-        try {
-          const result = await handle.done;
-          if (!result.aborted && result.spoken < phrases.length) {
-            throw new Error('no he podido leer toda la respuesta en voz alta');
-          }
-        } catch (err) {
-          // Aborted on purpose (barge-in / close): not a failure worth reporting.
-          if (!ctl.interrupted() && session === owner) throw err;
-        } finally {
-          sessionPlayback = null;
-          activeSpeech = null;
-        }
+    const aloud = createAloudSpeaker(phrases, {
+      tts,
+      speaker,
+      directory: paths.voice,
+      isOwnerCurrent: () => session === owner,
+      setPlayback: (playback) => {
+        sessionPlayback = playback;
       },
-      { stop: () => handle?.abort(), text: phrases.join(' ') },
-    );
+    });
+    activeSpeech = aloud;
+    try {
+      await owner.speak((ctl) => aloud.run(ctl), {
+        stop: () => aloud.abort(),
+        text: phrases.join(' '),
+      });
+    } finally {
+      activeSpeech = null;
+    }
   };
 
   const closeSessionText = (reason: string, detail?: string): string =>
