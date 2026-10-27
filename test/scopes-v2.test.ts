@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -54,6 +54,37 @@ describe('scopes v2: claves por acción', () => {
     });
     expect(other.verdict).toBe('deny');
     expect(asked).toBe(1);
+  });
+
+  it('recarga la clave exacta, sin ampliar a toda la herramienta si la BD falla', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-action-cache-'));
+    const dbPath = join(dir, 'scopes.db');
+    try {
+      const args = { action: 'click', selector: 'text=Ver menú' };
+      const key = scopeKey('browser', 'click', args);
+      const before = new Gate({ dbPath, grantWindowMs: 0 });
+      before.setScope('before', key, 'always');
+      const ask = vi.fn(() => false);
+      const after = new Gate({ dbPath, grantWindowMs: 0, approver: ask });
+
+      // Fail the first read after restart, before scopeFor can repair the cache.
+      rmSync(dbPath);
+      mkdirSync(dbPath);
+      expect(after.scopeFor('after', 'browser')).toBe('unset');
+      expect(after.scopeFor('after', key)).toBe('always');
+      expect((await after.check('after', { tool: 'browser', args, actor: 'local' })).reason).toBe(
+        'always-allow scope',
+      );
+      const other = await after.check('after', {
+        tool: 'browser',
+        args: { action: 'click', selector: 'text=Siguiente' },
+        actor: 'local',
+      });
+      expect(other.verdict).toBe('deny');
+      expect(ask).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('un scope por herramienta sigue funcionando para acciones seguras', async () => {
