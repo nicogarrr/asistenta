@@ -120,7 +120,9 @@ describe('explainYtdlpError', () => {
       cookies: 'firefox',
     });
     expect(withCookies).toMatch(/firefox/);
-    expect(withCookies).toContain('puede ser una protección anti-bot o un problema de sesión/permisos');
+    expect(withCookies).toContain(
+      'puede ser una protección anti-bot o un problema de sesión/permisos',
+    );
     expect(withCookies).not.toContain('; es una protección anti-bot');
     expect(withCookies).not.toMatch(/activa las cookies/);
   });
