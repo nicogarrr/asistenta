@@ -20,6 +20,7 @@
 import type { Routine, Store } from '../db.js';
 import { log } from '../log.js';
 import type { GoalNotifier } from './notify.js';
+import { type GoalWorkstreamProjection, projectGoal } from './projection.js';
 import type { Goal, GoalStore } from './store.js';
 
 export const GOAL_ROUTINE_PREFIX = 'objetivo:';
@@ -114,6 +115,8 @@ export interface GoalRunnerDeps {
   dayKey?: () => string;
   /** Hook for the workstream projection when a goal completes. */
   onDone?: (goal: Goal) => void;
+  /** Optional memory view; updates only after the durable goal transition. */
+  workstreams?: GoalWorkstreamProjection;
 }
 
 const localDay = (): string => {
@@ -231,10 +234,14 @@ export class GoalRunner {
         return;
       case 'bloqueo':
         this.#deps.goals.block(goal.id, outcome.reason);
+        if (this.#deps.workstreams)
+          projectGoal(this.#deps.goals.read(goal.id) ?? goal, this.#deps.workstreams);
         await this.#deps.notifier.report(goal, 'bloqueo', outcome.reason);
         return;
       case 'decision':
         this.#deps.goals.block(goal.id, `Decisión pendiente: ${outcome.reason}`);
+        if (this.#deps.workstreams)
+          projectGoal(this.#deps.goals.read(goal.id) ?? goal, this.#deps.workstreams);
         await this.#deps.notifier.report(goal, 'decision', outcome.reason);
         return;
       case 'hecho': {

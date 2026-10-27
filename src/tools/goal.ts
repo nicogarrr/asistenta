@@ -16,6 +16,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
 import type { Store } from '../db.js';
+import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
 import { goalRoutineName } from '../goals/runner.js';
 import { type Goal, type GoalStore, MAX_ACTIVE_GOALS, MAX_PROPOSED_GOALS } from '../goals/store.js';
 
@@ -134,9 +135,8 @@ export interface GoalToolDeps {
   /** RoutineRunner.sync: a created/paused/resumed/cancelled goal goes live without a daemon restart. */
   sync: () => void;
   /** The prompt projection every other conversation sees. */
-  workstreams: {
+  workstreams: GoalWorkstreamProjection & {
     create(scope: string, title: string, goal: string): string;
-    update(id: string, fields: { status?: 'done'; nextSteps?: string | null }): void;
     forget(id: string): void;
   };
   /**
@@ -301,6 +301,7 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           } catch {
             // The projection can be rebuilt later; the goal is already active.
           }
+          projectGoal(deps.goals.read(goal.id) ?? goal, deps.workstreams);
           setRoutineEnabled(goal, true);
           return reply(
             `Objetivo "${goal.title}" activado. Trabajaré en ticks (${goal.cadence}, hora local) y te aviso solo con novedades o decisiones.`,
@@ -308,6 +309,7 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
         }
         case 'pausar': {
           deps.goals.pause(goal.id);
+          projectGoal(deps.goals.read(goal.id) ?? goal, deps.workstreams);
           setRoutineEnabled(goal, false);
           return reply(`Objetivo "${goal.title}" pausado. No habrá ticks hasta que lo reanudes.`);
         }
@@ -325,6 +327,7 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
             );
           }
           deps.goals.resume(goal.id);
+          projectGoal(deps.goals.read(goal.id) ?? goal, deps.workstreams);
           setRoutineEnabled(goal, true);
           return reply(
             `Objetivo "${goal.title}" reanudado. En el próximo tick sigo con el contexto de este chat.`,
@@ -352,16 +355,7 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
             i === idx ? { ...s, done: true, note: args.nota?.slice(0, 200) || s.note } : s,
           );
           deps.goals.updatePlan(goal.id, plan);
-          if (goal.workstreamId) {
-            const next = plan.find((s) => !s.done);
-            try {
-              deps.workstreams.update(goal.workstreamId, {
-                nextSteps: next ? next.text : 'plan completado',
-              });
-            } catch {
-              /* projection lag is not worth failing the tick */
-            }
-          }
+          projectGoal(deps.goals.read(goal.id) ?? goal, deps.workstreams);
           return reply(`Paso ${idx + 1} de "${goal.title}" marcado como hecho.`);
         }
         default:
