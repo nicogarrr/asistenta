@@ -368,12 +368,13 @@ export class SessionStore {
     if (scope !== undefined) params.push(scope);
     params.push(q);
     if (scope !== undefined) params.push(scope);
-    // Both sources can return the same session, so over-fetch a little: grouping
-    // must not starve the result set.
-    params.push(limit * 3);
+    // Limit distinct sessions, not matching turns from a chatty session.
+    params.push(limit);
     const rows = this.#db
       .prepare(
-        `SELECT id, title, summary, started_at, snippet, src FROM (
+        `SELECT id, title, summary, started_at,
+                COALESCE(MAX(CASE WHEN src = 1 THEN snippet END), MAX(snippet)) AS snippet,
+                MAX(src) AS src FROM (
            SELECT s.id AS id, s.title AS title, s.summary AS summary, s.started_at AS started_at,
                   snippet(sessions_fts, -1, '', '', '…', 10) AS snippet,
                   0 AS src, rank AS r
@@ -388,8 +389,8 @@ export class SessionStore {
              JOIN session_turns t ON t.id = session_turns_fts.rowid
              JOIN sessions s ON s.id = t.session_id
             WHERE session_turns_fts MATCH ?${filter}
-            ORDER BY r
-         ) LIMIT ?`,
+         ) GROUP BY id, title, summary, started_at
+           ORDER BY MIN(r), started_at DESC, id LIMIT ?`,
       )
       .all(...params) as FtsRow[];
     return mergeFtsRows(rows, limit);
