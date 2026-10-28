@@ -216,6 +216,7 @@ import {
 import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
+import { formatServicesList, ServiceStore } from './services/store.js';
 import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
@@ -253,6 +254,7 @@ import {
   reminderText,
   settleOneShot,
 } from './tools/reminder.js';
+import { createServiceTool } from './tools/service.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
 // remove. The generic browser does the same job against any site.
@@ -1492,6 +1494,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
   const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
+  const adoptedServices = new ServiceStore({ dir: join(paths.state, 'services') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
   // Canal de QA solo en la sandbox (PA_QA_CHANNEL=1): mismo pipeline, entrada y salida por ficheros.
@@ -1872,6 +1875,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           sessions.hasHumanTurnSince(scopeKey, Date.parse(sinceIso)),
       }),
       createGestionTool({ gestor: gestorStore, scopeOf: scope, playbooks, routines: store }),
+      // Adopt a third-party service and serve it back privately (tailnet only):
+      // proponer is free, instalar is always-ask in the Gate.
+      createServiceTool({ services: adoptedServices, servicesDir: join(paths.state, 'services') }),
       createSkillsTool({ store: skills, semantic: semanticRecall }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
@@ -5043,6 +5049,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
         '/evolucion - estado de la auto-mejora semanal; /evolucion idea <texto> ⬦ /evolucion ahora',
         '/estado - cómo estoy: herramientas, errores de hoy',
+        '/servicios - herramientas externas adoptadas (p. ej. "adopta Kanvas") y su estado',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
         '/buscar <texto> - busca en conversaciones pasadas',
@@ -6296,6 +6303,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdEvolucion(inbound, command.args);
               case 'estado':
                 return cmdEstado(inbound);
+              case 'servicios':
+                return say(inbound, formatServicesList(adoptedServices.list()), { quote: true });
               case 'vigila':
                 return cmdVigila(inbound, command.args);
               case 'vigilando':

@@ -477,6 +477,12 @@ export class Gate {
         match: (c) => c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar',
       },
       {
+        id: 'ask-servicio-instalar',
+        verdict: 'ask',
+        reason: 'installs an adopted third-party service on this machine',
+        match: (c) => c.tool === 'servicio' && argString(c.args, 'action') === 'instalar',
+      },
+      {
         // Documented here so the effective policy reads top to bottom, but decided in
         // `check()`: the list is ordered deny-ask-allow, and an allow entry in it can
         // never outrank an ask. A purchase flow is nothing but clicks and typing, so
