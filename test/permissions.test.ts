@@ -530,3 +530,31 @@ describe('Gate: repeat after an unsettled call', () => {
     expect((await gate.check('s', call)).reason).toContain('previously approved');
   });
 });
+
+describe('servicio instalar exige aprobación nueva', () => {
+  it.each(['memo', 'always', 'session', 'fullControl', 'preflight'])(
+    '%s no permite reutilizar la aprobación',
+    async (mode) => {
+      let asked = 0;
+      const gate = new Gate({
+        allow: ['servicio'],
+        fullControl: mode === 'fullControl',
+        allowUntilPayment: mode === 'preflight',
+        stageOf: () => 'browse',
+        approver: () => {
+          asked += 1;
+          return true;
+        },
+      });
+      if (mode === 'always' || mode === 'session') gate.setScope('s', 'servicio', mode);
+      const call = {
+        tool: 'servicio',
+        args: { action: 'instalar', nombre: 'kanvas' },
+        actor: 'local',
+      };
+      expect((await gate.check('s', call)).verdict).toBe('allow');
+      expect((await gate.check('s', call)).verdict).toBe('allow');
+      expect(asked).toBe(2);
+    },
+  );
+});
