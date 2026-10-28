@@ -1235,7 +1235,9 @@ export class Gate {
     // it. Read it early so the memo cannot resurrect an approval given for an earlier
     // purchase of the same thing.
     const confirmation = this.#isPaymentConfirmation(call);
-    const factoryInstall = this.#isFactoryInstall(call);
+    const factoryInstall =
+      this.#isFactoryInstall(call) ||
+      (call.tool === 'servicio' && argString(call.args, 'action') === 'instalar');
     const goalActivate = this.#isGoalActivate(call);
     const gestionEjecutar = this.#isGestionEjecutar(call);
     // The gestor's per-step effect guard: a reason string here forces the ask
@@ -1286,7 +1288,7 @@ export class Gate {
     // asking. Checked here rather than in the loop that honours allow rules, because
     // that loop only runs when no ask rule matched and a purchase flow trips the ask
     // rules on every single click.
-    if (!forced && this.#isPreflight(call)) {
+    if (!forced && !factoryInstall && this.#isPreflight(call)) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'pre-payment stage of a purchase flow',
