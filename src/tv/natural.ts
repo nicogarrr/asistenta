@@ -190,6 +190,16 @@ function normalizeOrder(text: string): string {
     .replace(EN_LA_TELE, '');
 }
 
+/** Pregunta o queja sobre la tele, no una orden. */
+const PREGUNTA =
+  /^(?:como|por que|porque|para que|sabes|se puede|es posible)\b|\bse (?:apaga|apago|enciende|encendio|prende|prendio)\b/;
+
+/**
+ * Delante del verbo de encender/apagar solo vale una muletilla: «la luz, apágala»
+ * habla de otra cosa y no puede apagar la tele.
+ */
+const ANTES_DEL_VERBO = '^(?:(?:ya|venga|vale|bueno|pues|ahora|no|si|puedes|podrias) )*';
+
 /** La orden lleva hora, plazo o condicion: no es para ejecutarla ya. */
 export function tvOrderHasTime(text: string): boolean {
   return DEFERRED.test(normalizeOrder(text));
@@ -228,6 +238,9 @@ export function parseTvCommand(text: string): TvIntent | null {
   const t = normalizeOrder(text);
   if (!t) return null;
   if (DEFERRED.test(t)) return null;
+  // Preguntas («¿cómo se apaga la tele?», «¿por qué se apaga?», «¿se puede apagar?»)
+  // y quejas («la tele no se enciende»): no son órdenes, van al modelo.
+  if (PREGUNTA.test(t)) return null;
   let m: RegExpExecArray | null;
 
   // «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla BACK del mando.
@@ -338,14 +351,14 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   if (
-    new RegExp(`\\b(?:apaga|apagar|apagame|apagala|apagalo)\\b(?: ${TV})?$`).test(t) ||
+    new RegExp(`${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?: ${TV})?$`).test(t) ||
     new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
   ) {
     return { action: 'power', on: false };
   }
   if (
     new RegExp(
-      `\\b(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)\\b(?: ${TV})?$`,
+      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?: ${TV})?$`,
     ).test(t) ||
     new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
   ) {
