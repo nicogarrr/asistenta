@@ -9,6 +9,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite';
 import { ATTENTION_LIMITS } from './ojo-events.js';
+import { foldAccents } from './text.js';
 
 export type Pace = 'normal' | 'menos' | 'minimo';
 const ORDER: Pace[] = ['normal', 'menos', 'minimo'];
@@ -51,11 +52,7 @@ export function currentLimits(db: DatabaseSync) {
 
 /** Parse the argument of /avisos. Accepts accents and a few plain-Spanish synonyms. */
 export function parsePace(arg: string): Pace | 'estado' | null {
-  const a = arg
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+  const a = foldAccents(arg.trim());
   if (!a || a === 'estado') return 'estado';
   if (['normal', 'mas', 'como antes'].includes(a)) return 'normal';
   if (['menos', 'bajar', 'menos avisos'].includes(a)) return 'menos';
