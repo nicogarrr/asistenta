@@ -19,8 +19,6 @@ const KNOWN_UNWIRED: Record<string, string> = {
   'src/memory/review.ts':
     'cola de contradicciones; falta quien la llene (consolidación) y un comando para resolverla',
   'src/skills/catalog.ts': 'catálogo de skills; falta comando /skills catalogo (descarga remota)',
-  'src/watch/registry.ts':
-    'registro único de vigilancias; pendiente de unificar los 5 tipos (plan P3 de ARCHITECTURE)',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
   'src/selfimprove/battery.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
   'src/selfimprove/cycle.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',

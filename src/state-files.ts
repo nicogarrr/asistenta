@@ -46,6 +46,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },
   { name: 'alerts-seen.json', what: 'alertas ya entregadas (evita repetidas)', backup: 'file' },
+  {
+    name: 'altavoz.json',
+    what: 'modo /altavoz por chat (notas de voz suenan al llegar)',
+    backup: 'file',
+  },
   { name: 'actions.jsonl', what: 'registro de acciones hechas por el agente', backup: 'file' },
   {
     name: 'dropped-reminders.jsonl',
@@ -131,12 +136,6 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     why: 'ya es una copia de seguridad',
   },
   { name: 'qa', what: 'canal de pruebas QA', backup: false, why: 'solo pruebas' },
-  {
-    name: 'watch',
-    what: 'registro de vigilancias (watch/registry.ts)',
-    backup: false,
-    why: 'sin cablear',
-  },
   {
     name: 'backups',
     what: 'las propias copias de seguridad',
