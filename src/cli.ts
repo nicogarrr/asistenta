@@ -178,7 +178,8 @@ import { approvals } from './approvals/broker.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
-import { dailyBudgetExceeded, recordUsage } from './core/usage.js';
+import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
+import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { parseMcpServers } from './mcp/client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
@@ -4298,6 +4299,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const startedAt = Date.now();
 
+  /** /consumo [hoy|semana|mes|N]: tokens y coste estimado por día y modelo (solo lectura). */
+  const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
+    const days = parseUsageDays(args);
+    if (days === null) {
+      await say(inbound, 'Uso: /consumo [hoy|semana|mes|1-31]', { quote: true });
+      return;
+    }
+    const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
+    await say(inbound, text, { quote: true });
+  };
+
   /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
   const cmdEstado = async (inbound: Inbound): Promise<void> => {
     const { localLlmHealthy } = await import('./autostart.js');
@@ -5055,6 +5067,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
         '/evolucion - estado de la auto-mejora semanal; /evolucion idea <texto> ⬦ /evolucion ahora',
         '/estado - cómo estoy: herramientas, errores de hoy',
+        '/consumo [hoy|semana|mes] - tokens y coste estimado por día y modelo, y el presupuesto diario',
         '/servicios - herramientas externas adoptadas (p. ej. "adopta Kanvas") y su estado',
         '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
         '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
@@ -6310,6 +6323,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdEvolucion(inbound, command.args);
               case 'estado':
                 return cmdEstado(inbound);
+              case 'consumo':
+              case 'uso':
+                return cmdConsumo(inbound, command.args);
               case 'servicios':
                 return say(inbound, formatServicesList(adoptedServices.list()), { quote: true });
               case 'vigila':
