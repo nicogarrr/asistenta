@@ -131,6 +131,7 @@ import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
+import { correctionHint, learnCorrectionsEnabled, learnFromTurn } from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import type { SessionHit } from './memory/sessions.js';
@@ -6153,21 +6154,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(
-        buildContextNote(
-          thread,
-          store,
-          memory,
-          snapshot,
-          workstreams,
-          skills,
-          sessions,
-          ownerProfile,
-          prompt,
-          isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-          projectContexts,
-        ),
+      // Aprender de correcciones (PA_LEARN_CORRECTIONS): solo el texto del dueño, en
+      // su chat privado, activa la instrucción; nunca una web, un correo o una herramienta.
+      const learnHint = correctionHint({
+        enabled: learnCorrectionsEnabled(),
+        ownerDm: isOwnerDm(inbound, vigilanteOwnerId),
+        ownerText: text,
+      });
+      const contextNote = buildContextNote(
+        thread,
+        store,
+        memory,
+        snapshot,
+        workstreams,
+        skills,
+        sessions,
+        ownerProfile,
+        prompt,
+        isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        projectContexts,
       );
+      thread.agent.attachContext(learnHint ? `${contextNote}\n\n${learnHint}` : contextNote);
 
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
@@ -6180,6 +6187,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
 
       if (thread.generation !== generation) return;
+
+      // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la
+      // memoria del chat y la respuesta lleva una línea «📝 Aprendido: …» (sin aprobación).
+      const learnt = learnFromTurn({
+        memory,
+        scope: memoryScopesFor(thread.key).write,
+        reply: result.text,
+        hinted: learnHint !== null,
+        tainted: thread.gate.taintOf(thread.key) !== null,
+      });
+      if (learnt.outcome)
+        log.info('correction learned', { thread: thread.name, status: learnt.outcome.status });
+      if (learnt.text !== result.text || learnt.line) {
+        result = {
+          ...result,
+          text: learnt.line ? `${learnt.text}\n\n${learnt.line}`.trim() : learnt.text,
+        };
+      }
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.
