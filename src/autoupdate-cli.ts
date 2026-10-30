@@ -23,6 +23,7 @@ import {
 import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
 import { readBusy } from './ocupada.js';
+import { sameProcessAsRecorded } from './process-identity.js';
 import { unlock as unlockVault, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
 
@@ -51,10 +52,31 @@ export function windowsExe(...parts: string[]): string {
   return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', ...parts);
 }
 
-export function daemonRunState(stateDir: string): DaemonRunState {
-  const r = daemonStatus({ stateDir }) as { pidState?: string; processState?: string };
+export function daemonRunState(
+  stateDir: string,
+  deps: {
+    probe?: (pid: number) => 'alive' | 'dead' | 'unknown';
+    identityOf?: (pid: number) => string | null;
+  } = {},
+): DaemonRunState {
+  const r = daemonStatus({ stateDir, probe: deps.probe }) as {
+    pid?: number | null;
+    pidState?: string;
+    processState?: string;
+  };
   if (r.pidState === 'missing' || r.processState === 'dead') return 'stopped';
-  if (r.pidState === 'valid' && r.processState === 'alive') return 'running';
+  if (r.pidState === 'valid' && r.processState === 'alive') {
+    // Tras un cuelgue el pid queda en agent.pid y Windows lo reutiliza pronto: si el
+    // proceso vivo no es el que arrancó Asistenta (agent.pid.start), no está en marcha.
+    if (
+      typeof r.pid === 'number' &&
+      sameProcessAsRecorded(join(stateDir, 'agent.pid.start'), r.pid, deps.identityOf) ===
+        'different'
+    ) {
+      return 'stopped';
+    }
+    return 'running';
+  }
   return 'unknown';
 }
 
