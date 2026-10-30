@@ -32,6 +32,12 @@ Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el c
 activo. Las notas suenan en orden, una detrás de otra; si se acumulan más de 5, las nuevas no se
 sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se duplica.
 
+### La respuesta en voz alta (`PA_ALTAVOZ_VOZ=1`, apagado por defecto)
+Con el altavoz en `pc` o `tele`, la respuesta del asistente a tu nota de voz también se
+dice en el mismo sitio, detrás de la nota. El texto llega primero a Telegram y nunca
+espera a la voz; si la voz falla, no hay aviso (ya tienes el texto). Solo tus notas, en
+tu chat privado.
+
 ## ¿Y «llamar al bot»?
 Telegram no deja que los bots reciban llamadas. `/altavoz` es lo más cercano: grabas, sueltas y
 suena en 1–3 segundos. Las alternativas (chat de voz con una cuenta de usuario, o «hablar» en
