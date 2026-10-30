@@ -318,6 +318,18 @@ export function marksWithTitles(text: string, isTitle: (line: string) => boolean
     .join('\n');
 }
 
+/**
+ * Cabeceras de /estado (formatStatus): la primera línea «Asistenta <versión> …
+ * encendida desde hace …» y «Esta conversación:». Las líneas de herramientas, log y
+ * errores recientes no son títulos (un error puede empezar por cualquier cosa).
+ */
+export function isStatusTitle(line: string): boolean {
+  return (
+    /^Asistenta \S+ \(Node [^)]*\), encendida desde hace /.test(line) ||
+    line === 'Esta conversación:'
+  );
+}
+
 /** Cabeceras de /recordatorios (formatReminderRows). */
 export function isReminderTitle(line: string): boolean {
   return /^Recordatorios: \d+$/.test(line);
