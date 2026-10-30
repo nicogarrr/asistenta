@@ -154,6 +154,28 @@ describe('runCommand (proceso real, sin shell)', () => {
     expect(formatCommandResult(r, 500).body).toContain('Se cortó');
   });
 
+  it('en Windows el tope mata el árbol entero con taskkill /T', async () => {
+    const { EventEmitter } = await import('node:events');
+    let child: InstanceType<typeof EventEmitter> & { pid: number; kill: () => void };
+    const spawnImpl = vi.fn((file: string) => {
+      if (file === 'taskkill.exe') {
+        setImmediate(() => child.emit('close', 1));
+        return new EventEmitter();
+      }
+      child = Object.assign(new EventEmitter(), { pid: 777, kill: vi.fn() });
+      return child;
+    });
+    const r = await runCommand(
+      { argv: ['script.bat'], cwd: dir, timeoutMs: 50 },
+      spawnImpl as never,
+      'win32',
+    );
+    expect(r.timedOut).toBe(true);
+    expect(spawnImpl).toHaveBeenCalledWith('taskkill.exe', ['/F', '/T', '/PID', '777'], {
+      windowsHide: true,
+    });
+  });
+
   it('un programa que no existe se dice claro', async () => {
     const r = await runCommand({ argv: ['no-existe-pa-xyz'], cwd: dir, timeoutMs: 5_000 });
     expect(formatCommandResult(r, 5_000)).toMatchObject({ failed: true });
