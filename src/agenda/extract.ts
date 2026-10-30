@@ -271,7 +271,10 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 95, 'dd/mm/yyyy'),
   },
   {
-    re: /\b(\d{1,2})(?:er|º|o)? de ([a-z]+?)(?: de (\d{2,4}))?\b/,
+    // The year is four digits, or two that are not the start of a clock or a span:
+    // "el 4 de noviembre de 10:00 a 12:00" is 10 o'clock, not the year 2010 (which
+    // put the meeting in the past and dropped it).
+    re: /\b(\d{1,2})(?:er|º|o)? de ([a-z]+?)(?: de (\d{4}|\d{2}(?![:.,h\d]| ?(?:a|al|hasta|y)\b)))?\b/,
     specificity: 95,
     rule: 'dia de mes',
     build: (m, ctx) =>
@@ -520,6 +523,11 @@ const TIME_RULES: ReadonlyArray<{
     },
   },
   {
+    // "17.30 h": a dot clock only counts with its hour mark, so "12.50 €" never does.
+    re: /\b(\d{1,2})\.(\d{2}) ?(?:h|hs|hrs|horas)\b/,
+    build: (m) => clock24(Number(m[1]), Number(m[2])),
+  },
+  {
     re: /\b(\d{1,2})\s*(am|pm)\b/,
     build: (m) => clock24((Number(m[1]) % 12) + (m[2] === 'pm' ? 12 : 0), 0),
   },
@@ -717,7 +725,13 @@ const SPOKEN_TIME_RE =
  * are touched, so "12.50 €" is never a time.
  */
 function spokenTimes(folded: string): string {
-  const out = folded.replace(
+  // "esta tarde a las 5" is today at 17:00. Without this the sentence had no date at
+  // all ("esta tarde" is not a day word) and the meeting never reached the agenda.
+  const today = folded.replace(
+    /\besta (manana|tarde|noche),? (a las|a la) (\d{1,2}(?:[:.]\d{2})?)\b/g,
+    (_w, part: string, lead: string, clock: string) => `hoy ${lead} ${clock} de la ${part}`,
+  );
+  const out = today.replace(
     SPOKEN_TIME_RE,
     (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
       let hour = Number(h);
@@ -759,7 +773,10 @@ function spokenTimes(folded: string): string {
  */
 function withoutTimeOfDay(folded: string): string {
   return folded.replace(
-    /\b(?:por|en|a|de|esta) la (?:manana|tarde|noche|morning|afternoon|evening)\b/g,
+    // "esta mañana" is this morning, and read as "mañana" it became TOMORROW: "esta
+    // mañana te mandé la factura" put a commitment on the next day. With a clock after
+    // it, spokenTimes() has already turned it into "hoy a las ...".
+    /\b(?:(?:por|en|a|de|esta) la (?:manana|tarde|noche|morning|afternoon|evening)|esta (?:manana|tarde|noche))\b/g,
     ' ',
   );
 }
