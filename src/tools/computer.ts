@@ -665,6 +665,11 @@ export function createComputerTool(
         const roi = parseRegionField(record.roi, 'roi');
         if (roi) {
           const cropped = await captureRoi(backend, roi);
+          if (cropped.image.length === 0) {
+            // The capture itself failed: an empty image would reach the model (which
+            // refuses an empty image and fails the turn) and the chat. Say why instead.
+            throw new Error(cropped.detail ?? 'no pude capturar la pantalla para la roi');
+          }
           // The picture has to reach the chat, not just this context: the user asked
           // for it, and an image they cannot see is an image nobody sent.
           const sent =
