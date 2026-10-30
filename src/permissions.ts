@@ -2492,3 +2492,39 @@ export function externalReadSource(call: ToolCall): string | null {
       return tool.startsWith('mcp') ? `herramienta MCP ${tool}` : null;
   }
 }
+
+/** Un «Siempre» con la fecha en que se dio (para /permisos lista). */
+export interface AlwaysGrantDated {
+  tool: string;
+  chat: string;
+  /** Milisegundos epoch de la primera concesión; null si la fila no la tiene. */
+  since: number | null;
+}
+
+/**
+ * Solo lectura, para `/permisos lista`: herramienta, chat y fecha de alta de cada
+ * «Siempre». Nunca devuelve la clave guardada (que puede llevar argumentos):
+ * solo el nombre de la herramienta.
+ */
+export function listAlwaysGrantsDated(dbPath: string | undefined): AlwaysGrantDated[] {
+  if (!dbPath) return [];
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    ensureScopeTable(db);
+    return db
+      .prepare(
+        `SELECT tool, chat_key, MIN(created_at) AS since FROM approval_scopes
+          WHERE level = 'always' AND chat_key IS NOT NULL
+          GROUP BY tool, chat_key ORDER BY tool, chat_key`,
+      )
+      .all()
+      .map((row) => ({
+        tool: String(row.tool),
+        chat: String(row.chat_key),
+        since: typeof row.since === 'number' && row.since > 0 ? row.since : null,
+      }));
+  } finally {
+    db.close();
+  }
+}

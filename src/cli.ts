@@ -276,7 +276,7 @@ import {
   stopBriefingVoice,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
-
+import { permisosListaReply } from './channels/permisos-lista.js';
 import {
   cacheFullReply,
   commandButton,
@@ -6895,6 +6895,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const gates = [...threads.values()].map((thread) => thread.gate);
+    if ((args.trim().split(/\s+/)[0] ?? '').toLowerCase() === 'lista') {
+      // Solo lectura: herramienta, dónde vale y desde cuándo; sin botones.
+      await say(inbound, permisosListaReply(gates, approvalsDb, chatKey(inbound)), { quote: true });
+      return;
+    }
     await say(inbound, runPermisosCommand(gates, approvalsDb, args, chatKey(inbound)), {
       quote: true,
     });
