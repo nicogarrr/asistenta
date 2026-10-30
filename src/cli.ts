@@ -432,9 +432,11 @@ import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import {
   COMPARE_WATCH_STALE,
+  type CompareReport,
   CompareWatchLinks,
   compareProduct,
   describeCompare,
+  suggestedTargetCents,
 } from './watch/compare.js';
 import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
@@ -3964,9 +3966,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     let args = rawArgs;
     const fromButton = /^enlace ([0-9a-f]{8})$/.exec(rawArgs.trim());
     if (fromButton?.[1]) {
-      const url = compareWatchLinks.take(fromButton[1], inbound.chatId);
-      if (!url) return void (await say(inbound, COMPARE_WATCH_STALE, { quote: true }));
-      args = url;
+      const hit = compareWatchLinks.takeEntry(fromButton[1], inbound.chatId);
+      if (!hit) return void (await say(inbound, COMPARE_WATCH_STALE, { quote: true }));
+      args = vigilaArgsFromCompare(hit);
     }
     let parsed: ReturnType<typeof parseVigilaArgs>;
     try {
@@ -4075,7 +4077,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, marksCardTitle(describeCompare(report)), {
         quote: true,
         format: 'marks',
-        buttons: compareWatchButtons(compareWatchLinks.remember(inbound.chatId, url)),
+        buttons: compareWatchButtons(
+          compareWatchLinks.remember(inbound.chatId, url),
+          ...compareTargetButton(report, (t) => compareWatchLinks.remember(inbound.chatId, url, t)),
+        ),
       });
     } catch (err) {
       await say(inbound, friendlyError(err), { quote: true });
@@ -7615,9 +7620,35 @@ export function reminderButtons(id: string): Array<{ label: string; action: stri
  */
 export function compareWatchButtons(
   id: string,
+  target?: { id: string; cents: number },
 ): Array<{ label: string; action: string }> | undefined {
-  const b = commandButton('👀 Vigilar', 'vigila', id, 'enlace');
-  return b ? [b] : undefined;
+  const b = [
+    commandButton('👀 Vigilar', 'vigila', id, 'enlace'),
+    target
+      ? commandButton(`🎯 Avisar si baja a ${eur(target.cents)}`, 'vigila', target.id, 'enlace')
+      : undefined,
+  ].filter((x): x is { label: string; action: string } => x !== undefined);
+  return b.length ? b : undefined;
+}
+
+/**
+ * Segundo botón de /compara: vigilar la ficha con objetivo = el mejor precio hallado en
+ * otra tienda (suggestedTargetCents). Devuelve [] si no hay objetivo que proponer.
+ */
+export function compareTargetButton(
+  report: CompareReport,
+  remember: (targetCents: number) => string,
+): [] | [{ id: string; cents: number }] {
+  const cents = suggestedTargetCents(report);
+  return cents === undefined ? [] : [{ id: remember(cents), cents }];
+}
+
+/** Lo que equivale a escribir: «/vigila <enlace>» o «/vigila <enlace> objetivo=12,34€». */
+export function vigilaArgsFromCompare(hit: { url: string; targetCents?: number }): string {
+  if (hit.targetCents === undefined) return hit.url;
+  const euros = Math.floor(hit.targetCents / 100);
+  const cents = String(hit.targetCents % 100).padStart(2, '0');
+  return `${hit.url} objetivo=${euros},${cents}€`;
 }
 
 export function cronListButtons(
