@@ -47,6 +47,12 @@ const NAMED_KEYS: Record<string, string> = {
   end: '{END}',
   pageup: '{PGUP}',
   pagedown: '{PGDN}',
+  pgup: '{PGUP}',
+  pgdn: '{PGDN}',
+  arrowup: '{UP}',
+  arrowdown: '{DOWN}',
+  arrowleft: '{LEFT}',
+  arrowright: '{RIGHT}',
   up: '{UP}',
   down: '{DOWN}',
   left: '{LEFT}',
@@ -116,6 +122,15 @@ export function escapeForSendKeys(text: string): string {
 }
 
 /**
+ * One key character in SendKeys syntax. Braces themselves must be written `{{}` and
+ * `{}}`; a bare `{` used to reach SendKeys as is and it threw instead of pressing it.
+ */
+function braceKey(ch: string): string {
+  if (ch === '{' || ch === '}') return `{${ch}}`;
+  return escapeForSendKeys(ch);
+}
+
+/**
  * Parse a chord like `ctrl+s`, `ctrl+shift+p`, `alt+F4` or `enter` into SendKeys
  * syntax. Throws on anything unrecognised rather than typing it literally.
  */
@@ -131,6 +146,10 @@ export function parseKeyChord(chord: string): string {
     .split('+')
     .map((p) => p.trim())
     .filter(Boolean);
+  // «ctrl++» (zoom in) splits into ['ctrl'] once the empty pieces are dropped,
+  // which used to be refused as «unrecognised key "ctrl"». A chord that ends in
+  // two '+' means the '+' key itself after the modifiers.
+  if (/\+\s*\+$/.test(raw)) parts.push('+');
   const last = parts[parts.length - 1];
   if (last === undefined) {
     throw new Error(`unrecognised key chord: ${JSON.stringify(chord)}`);
@@ -154,7 +173,11 @@ export function parseKeyChord(chord: string): string {
   }
 
   const named = NAMED_KEYS[last.toLowerCase()];
-  const target = named ?? (last.length === 1 ? escapeForSendKeys(last) : undefined);
+  // SendKeys types an uppercase letter WITH Shift, so «ctrl+A» became Ctrl+Shift+A
+  // (and «ctrl+C» Ctrl+Shift+C: devtools in Chrome instead of copy). In a chord the
+  // letter names a key, not a character: Shift is only pressed when asked for.
+  const key = modifiers.length > 0 && /^[A-Z]$/.test(last) ? last.toLowerCase() : last;
+  const target = named ?? (key.length === 1 ? braceKey(key) : undefined);
 
   if (!target) {
     // The bug this replaces: returning the raw string made SendKeys type it.
@@ -241,6 +264,12 @@ const VK_NAMED: Record<string, number> = {
   end: 0x23,
   pageup: 0x21,
   pagedown: 0x22,
+  pgup: 0x21,
+  pgdn: 0x22,
+  arrowup: 0x26,
+  arrowdown: 0x28,
+  arrowleft: 0x25,
+  arrowright: 0x27,
   up: 0x26,
   down: 0x28,
   left: 0x25,
