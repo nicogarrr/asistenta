@@ -76,6 +76,8 @@ const LOG_TAIL_BYTES = 4000;
  * pipe cap above stays as the outer limit.
  */
 export const MAX_GUEST_LOG_CHARS = 256 * 1024;
+/** Old-space heap ceiling (MB) for the guest process that runs tool code. */
+export const GUEST_HEAP_MB = 256;
 /** How often the guest trampoline streams buffered console lines out. */
 const GUEST_LOG_PUMP_MS = 200;
 
@@ -105,7 +107,9 @@ try { code = fs.readFileSync(toolPath, 'utf8'); } catch (e) {
 const dir = path.dirname(toolPath);
 const guest = spawn(
   process.execPath,
-  ['--experimental-vm-modules', '--no-warnings', '--permission', '--allow-fs-read=' + dir, guestPath],
+  // Heap ceiling for guest code: a tool that allocates without bound dies on
+  // its own (no report -> 'supervisor') instead of taking the PC's memory.
+  ['--experimental-vm-modules', '--no-warnings', '--max-old-space-size=${GUEST_HEAP_MB}', '--permission', '--allow-fs-read=' + dir, guestPath],
   // NO fd 3 here: the guest process physically lacks the verdict channel.
   { stdio: ['pipe', 'pipe', 'pipe'], env: {} },
 );
