@@ -29,6 +29,61 @@ export interface TurnOutput {
   note(text: string): void;
   /** Una imagen que el turno manda a la conversación (captura del PC o del navegador). */
   photo?(bytes: Buffer): void;
+  /**
+   * Un archivo que el turno manda a la conversación (documento, libro, vídeo, nota de
+   * voz). Devuelve `false` si no cabe: entonces el turno lo manda por el canal, como antes.
+   */
+  file?(f: TurnFile): boolean;
+}
+
+/** Un archivo enviado por un turno: los bytes y el nombre con que se descarga. */
+export interface TurnFile {
+  bytes: Buffer;
+  name: string;
+}
+
+/** Un archivo del turno del panel tal y como lo recibe /api/chat: nombre + `data:` URL. */
+export interface PanelFileLink {
+  name: string;
+  url: string;
+}
+
+/** Lo que devuelve un turno del panel. */
+export interface PanelChatReply {
+  text: string;
+  images?: string[];
+  files?: PanelFileLink[];
+}
+
+/** Cuántos archivos y de qué tamaño (cada uno) devuelve como mucho un turno del panel. */
+export const PANEL_MAX_FILES = 4;
+export const PANEL_MAX_FILE_BYTES = 8 * 1024 * 1024;
+
+/** Tipos que el panel ofrece tal cual; cualquier otro se descarga como binario. */
+const PANEL_FILE_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  epub: 'application/epub+zip',
+  mp4: 'video/mp4',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  mp3: 'audio/mpeg',
+};
+
+/** Nombre seguro para descargar: sin rutas ni caracteres de control, máx. 120. */
+export function panelFileName(name: string): string {
+  const base = (name.split(/[\\/]/).pop() ?? '')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: se quitan a propósito los caracteres de control del nombre de archivo
+    .replace(/[\u0000-\u001f\u007f"<>]/g, '')
+    .trim()
+    .slice(0, 120);
+  return base && base !== '.' && base !== '..' ? base : 'archivo';
+}
+
+/** `data:` URL de un archivo: tipo por extensión de una lista corta; si no, binario. */
+export function panelFileDataUrl(f: TurnFile): string {
+  const ext = /\.([a-z0-9]+)$/i.exec(f.name)?.[1]?.toLowerCase() ?? '';
+  const mime = PANEL_FILE_TYPES[ext] ?? 'application/octet-stream';
+  return `data:${mime};base64,${f.bytes.toString('base64')}`;
 }
 
 /** Cuántas imágenes devuelve como mucho un turno del panel (el resto se cuenta). */
@@ -56,11 +111,12 @@ export async function runPanelChat<T extends PanelChatThread>(
   thread: T,
   text: string,
   deps: PanelChatDeps<T>,
-): Promise<{ text: string; images?: string[] }> {
+): Promise<PanelChatReply> {
   const out = await queueThreadTurn(thread, async () => {
     let answer = '';
     const notes: string[] = [];
     const images: string[] = [];
+    const files: PanelFileLink[] = [];
     let dropped = 0;
     deps.remember(thread, text);
     await deps.runTurn(thread, text, {
@@ -75,10 +131,18 @@ export async function runPanelChat<T extends PanelChatThread>(
         if (url && images.length < PANEL_MAX_IMAGES) images.push(url);
         else dropped++;
       },
+      file: (f) => {
+        if (files.length >= PANEL_MAX_FILES || f.bytes.length > PANEL_MAX_FILE_BYTES) return false;
+        files.push({ name: panelFileName(f.name), url: panelFileDataUrl(f) });
+        return true;
+      },
     });
     if (dropped > 0) notes.push(`(${dropped} imagen(es) más no se muestran en el panel)`);
     const reply = [answer.trim(), ...notes].filter(Boolean).join('\n\n');
-    return images.length > 0 ? { text: reply, images } : { text: reply };
+    const result: PanelChatReply = { text: reply };
+    if (images.length > 0) result.images = images;
+    if (files.length > 0) result.files = files;
+    return result;
   });
   return out ?? { text: '' };
 }
