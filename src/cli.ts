@@ -2,7 +2,7 @@
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
-import { formatModelos, parseModelo } from './model-choice.js';
+import { formatModelos, ModelChoiceStore, parseModelo } from './model-choice.js';
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
@@ -1485,6 +1485,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Modo altavoz (/altavoz pc|tele|off): las notas de voz del dueño suenan solas al
   // llegar, en serie y sin tocar el volumen del sistema (docs/audio-altavoz.md).
   const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
+  // F7: /modelo por conversación, guardado para que sobreviva a un reinicio.
+  const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
   const altavozPlayer = createAltavozPlayer({
     toPlayable: (bytes, mimeType) => toPlayableAudio(bytes, mimeType),
     playOnPc: async (file, signal) => {
@@ -2196,6 +2198,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       },
     });
+    // /modelo guardado: solo si sigue configurado (chooseModel lo comprueba).
+    const savedModel = modelChoices.get(key);
+    if (savedModel) thread.agent.chooseModel(savedModel);
     const syncFactory = createFactorySync(
       (t) => thread.agent.registerFactoryTool(t),
       (n) => thread.agent.unregisterFactoryTool(n),
@@ -4535,6 +4540,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // En cola: no cambia el modelo a mitad de un turno de esta conversación.
     const next = queueThreadTurn(thread, async () => {
       const r = thread.agent.chooseModel(action.id);
+      if (r.ok)
+        modelChoices.set(
+          thread.key,
+          r.model === thread.agent.availableModels[0] ? undefined : r.model,
+        );
       await say(
         inbound,
         r.ok

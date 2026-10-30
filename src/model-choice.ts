@@ -4,6 +4,10 @@
  * real lo hace PersonalAgent.chooseModel.
  */
 
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { uniqueTmpPath } from './fs-tmp.js';
+
 export type ModeloAction =
   | { kind: 'show' }
   | { kind: 'set'; id: string | undefined }
@@ -44,6 +48,51 @@ export function formatModelos(available: readonly string[], current: string): st
   } else {
     lines.push('Cambia con /modelo <número|nombre>; /modelo normal vuelve al principal.');
   }
-  lines.push('Solo afecta a esta conversación y dura hasta que reinicie.');
+  lines.push('Solo afecta a esta conversación y se mantiene aunque el asistente reinicie.');
   return lines.join('\n');
+}
+
+/**
+ * La elección de /modelo por conversación (`<estado>/modelos.json`), para que
+ * sobreviva a un reinicio. Solo guarda ids; al restaurar, PersonalAgent.chooseModel
+ * vuelve a comprobar que siguen configurados (si ya no lo están, se ignoran y la
+ * conversación usa PA_MODEL). Un fichero roto se trata como vacío.
+ */
+export class ModelChoiceStore {
+  readonly #file: string;
+  constructor(file: string) {
+    this.#file = file;
+  }
+
+  #read(): Record<string, string> {
+    if (!existsSync(this.#file)) return {};
+    try {
+      const raw: unknown = JSON.parse(readFileSync(this.#file, 'utf8'));
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(raw)) if (typeof v === 'string' && v !== '') out[k] = v;
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
+  get(threadKey: string): string | undefined {
+    return this.#read()[threadKey];
+  }
+
+  /** `undefined` borra la elección (vuelve a PA_MODEL). Escritura atómica. */
+  set(threadKey: string, modelId: string | undefined): void {
+    const all = this.#read();
+    if (modelId === undefined) {
+      if (!(threadKey in all)) return;
+      delete all[threadKey];
+    } else {
+      all[threadKey] = modelId;
+    }
+    mkdirSync(dirname(this.#file), { recursive: true });
+    const tmp = uniqueTmpPath(this.#file);
+    writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, this.#file);
+  }
 }

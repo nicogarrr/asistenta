@@ -9,4 +9,4 @@
 que es el principal, y `PA_FALLBACK_MODEL` si lo hay). `/modelo 2` o
 `/modelo <nombre>` cambia el modelo solo para esta conversación; `/modelo normal`
 vuelve al principal. Solo el dueño y desde su chat privado. Nunca acepta un
-modelo que no esté configurado, y el cambio dura hasta que el asistente reinicie.
+modelo que no esté configurado, y el cambio se guarda (`modelos.json` en el estado) y se mantiene aunque el asistente reinicie; si ese modelo deja de estar configurado, la conversación vuelve al principal.
