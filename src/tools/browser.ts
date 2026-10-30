@@ -162,6 +162,12 @@ const BrowserParams = Type.Object({
     }),
   ),
   fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
+  mobile: Type.Optional(
+    Type.Boolean({
+      description:
+        'For screenshot: capture at phone width (390×844) to check how the page looks on a phone. The page size is put back afterwards.',
+    }),
+  ),
   send: Type.Optional(
     Type.Boolean({
       description:
@@ -898,7 +904,9 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
         }
 
         case 'screenshot': {
-          const shot = await service.screenshot(scope, Boolean(record.fullPage));
+          const shot = await service.screenshot(scope, Boolean(record.fullPage), {
+            mobile: record.mobile === true,
+          });
           // The user asked to SEE it: the image only reaches the model unless it is
           // sent to the chat. The result says plainly whether it got there.
           let delivery = '';
@@ -913,16 +921,23 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
             }
           }
           const visible = windowVisible(service, scope);
+          const mobileNote =
+            record.mobile !== true
+              ? ''
+              : shot.mobile
+                ? ' at phone width (390×844)'
+                : ' (phone width not available with a visible window: this is the normal size)';
           return {
             content: [
               {
                 type: 'text',
-                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}.${delivery}${visibleNote(visible)}`,
+                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}${mobileNote}.${delivery}${visibleNote(visible)}`,
               },
               { type: 'image', mimeType: shot.mimeType, data: shot.data },
             ],
             details: {
               fullPage: Boolean(record.fullPage),
+              mobile: shot.mobile === true,
               sent: delivery.includes('Enviada'),
               visible,
             },

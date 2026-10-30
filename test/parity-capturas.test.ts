@@ -181,14 +181,30 @@ describe('paridad con las capturas: lo que Asistenta ya puede hacer', () => {
     ingestCharges(db, [correo('p1', 1), correo('p2', 2)], base + 3 * H);
     expect(pendingChargeAlerts(db, base + 3 * H).map((a) => a.reason)).toContain('repetido');
   });
+
+  it('mira cómo se ve una página en el móvil (captura a ancho de teléfono)', async () => {
+    const { screenshotPage } = await import('../src/browser/service.js');
+    let size: { width: number; height: number } | null = { width: 1440, height: 900 };
+    const vistas: string[] = [];
+    const page = {
+      viewportSize: () => size,
+      setViewportSize: async (s: { width: number; height: number }) => {
+        size = s;
+      },
+      screenshot: async () => {
+        vistas.push(`${size?.width}x${size?.height}`);
+        return Buffer.from('png');
+      },
+    };
+    expect((await screenshotPage(page, false, true)).mobile).toBe(true);
+    expect(vistas).toEqual(['390x844']);
+    expect(size).toEqual({ width: 1440, height: 900 });
+  });
 });
 
 describe('paridad con las capturas: lo que todavía no puede', () => {
   it.todo(
     'tablero de tareas de la semana (Gertru instala Kanvas): Kanvas se descartó como interfaz y el panel no tiene tablero — decide Nico',
-  );
-  it.todo(
-    'ver una página en vista móvil: el navegador usa siempre 1440×900; falta una opción de tamaño de móvil (toca navegador/Computer Use)',
   );
   it.todo(
     'seguir un pedido a domicilio y avisar cuando llega: no hay seguimiento de entregas (las vigilancias son de precio y páginas)',
