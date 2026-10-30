@@ -87,7 +87,6 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GOAL_ROUTINE_PREFIX, GoalRunner, goalIdOf, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
-import { IphoneClient } from './iphone/client.js';
 import { LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
@@ -264,6 +263,7 @@ import {
   setPace,
 } from './notice-pace.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
+import { iphonePlugin } from './plugins/iphone.js';
 import { tvPlugin, tvToolDeps } from './plugins/tv.js';
 import { describeDelivery, parseDeliveryArgs, RoutineDeliveryStore } from './routine-delivery.js';
 import {
@@ -312,8 +312,6 @@ import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.j
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
-import type { IphoneToolDeps } from './tools/iphone.js';
-import { createIphoneTool } from './tools/iphone.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
@@ -944,31 +942,6 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
  * The vertical slice: one agent, console input, gate armed, tools registered.
  * Everything else (channels, scheduler) plugs in behind this same shape.
  */
-/**
- * Cableado de la tool `iphone` al servidor hidagent (esp32-iphone-agent).
- * La URL vive en el vault (iphone:url) o en PA_IPHONE_URL. Sin ella, cada
- * accion falla con un mensaje legible: el telefono es opcional y su ausencia
- * no puede tumbar el arranque.
- */
-function iphoneToolDeps(): IphoneToolDeps {
-  const client = async (): Promise<IphoneClient> => {
-    const url = (await vaultGet('iphone:url')) || process.env.PA_IPHONE_URL?.trim();
-    if (!url) {
-      throw new Error(
-        'El puente del iPhone no esta configurado: guarda su URL en el vault (iphone:url) o PA_IPHONE_URL. Ver deploy/iphone/README.md.',
-      );
-    }
-    return new IphoneClient({ baseUrl: url });
-  };
-  return {
-    status: async () => (await client()).status(),
-    frame: async () => (await client()).frame(),
-    start: async (goal) => (await client()).start(goal),
-    stop: async () => (await client()).stop(),
-    home: async () => (await client()).home(),
-  };
-}
-
 async function chatCommand(control?: ControlStartup): Promise<number> {
   ensureDirs();
   const config = loadConfig();
@@ -2036,7 +2009,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // pantalla sin volver a despertar la tele.
     all.push(...tvPlugin.tools({ store }));
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
-    all.push(createIphoneTool(iphoneToolDeps()));
+    all.push(...iphonePlugin.tools({}));
     if (mcpTools.length) all.push(...mcpTools);
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
