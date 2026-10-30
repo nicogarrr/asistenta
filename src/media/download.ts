@@ -337,11 +337,7 @@ export async function downloadVideo(
 
 /** Safe `<title>.mp3` for Telegram, same character rules as filenameFrom. */
 export function audioFilename(title: string): string {
-  let name = Array.from(title, (c) => (c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c) ? '_' : c))
-    .join('')
-    .trim();
-  if (!name) name = 'audio';
-  if (name.length > 120) name = name.slice(0, 120).trim();
+  const name = safeFilename(title, 116) || 'audio';
   return /\.mp3$/i.test(name) ? name : `${name}.mp3`;
 }
 
@@ -453,13 +449,43 @@ export async function downloadAudio(
   }
 }
 
-function filenameFrom(disposition: string | null, url: URL): string {
-  const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '');
-  let name = m?.[1] ? safeDecode(m[1]) : safeDecode(url.pathname.split('/').pop() || '');
-  name = Array.from(name, (c) => (c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c) ? '_' : c))
+/**
+ * Nombre de fichero seguro para mandar a Telegram: sin controles, separadores ni
+ * caracteres de Windows, sin marcas de dirección (U+202E y familia hacen que
+ * «factura\u202Efdp.exe» se vea como otra extensión), sin puntos al principio y con
+ * un tope de longitud. Vacío si no queda nada legible.
+ */
+export function safeFilename(raw: string, max = 120): string {
+  let name = Array.from(raw, (c) => {
+    const code = c.codePointAt(0) ?? 0;
+    if (code < 32 || code === 127 || '\\/:*?"<>|'.includes(c)) return '_';
+    if (/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/u.test(c)) return '';
+    return c;
+  })
     .join('')
-    .trim();
-  if (!name) name = 'documento.pdf';
+    .trim()
+    .replace(/^[.\s]+/, '');
+  if (!/[\p{L}\p{N}]/u.test(name)) return '';
+  if (name.length > max) name = Array.from(name).slice(0, max).join('').trim();
+  return name;
+}
+
+/**
+ * Nombre del PDF según Content-Disposition (RFC 6266: `filename*` manda sobre
+ * `filename`, y su valor es `charset'idioma'texto-codificado`) o, si no hay, el final
+ * de la ruta del enlace.
+ */
+export function filenameFrom(disposition: string | null, url: URL): string {
+  const header = disposition ?? '';
+  const star = /filename\*\s*=\s*"?([^";]*)'[^']*'([^";]+)"?/i.exec(header);
+  const plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]+))/i.exec(header);
+  const raw = star?.[2]
+    ? safeDecode(star[2])
+    : plain
+      ? (plain[1] ?? plain[2] ?? '').trim()
+      : safeDecode(url.pathname.split('/').pop() || '');
+  // Hueco para «.pdf» dentro del tope.
+  const name = safeFilename(raw, 116) || 'documento';
   return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
 }
 
