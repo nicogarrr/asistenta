@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 
@@ -58,6 +59,7 @@ export async function listCaptureDevices(): Promise<CaptureDevices> {
       FFMPEG as string,
       ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
       {
+        env: childEnv(),
         windowsHide: true,
       },
     );
@@ -376,7 +378,10 @@ export async function toPlayableAudio(bytes: Buffer, hint = 'input'): Promise<st
  */
 async function probeSize(ffmpeg: string, file: string): Promise<{ width: number; height: number }> {
   const stderr = await new Promise<string>((resolve) => {
-    const child = spawn(ffmpeg, ['-hide_banner', '-i', file], { windowsHide: true });
+    const child = spawn(ffmpeg, ['-hide_banner', '-i', file], {
+      env: childEnv(),
+      windowsHide: true,
+    });
     let text = '';
     child.stderr.on('data', (c: Buffer) => {
       text = (text + c.toString('utf8')).slice(-4000);
@@ -396,7 +401,7 @@ function run(
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { windowsHide: true });
+    const child = spawn(exe, args, { env: childEnv(), windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c: Buffer) => {

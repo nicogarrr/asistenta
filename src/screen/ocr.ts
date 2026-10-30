@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { withTimeout } from '../utils.js';
 
@@ -266,6 +267,7 @@ export async function ps(
 ): Promise<{ stdout: string; stderr: string }> {
   const run = execFileAsync('powershell.exe', [...PS_ARGS, script], {
     encoding: 'utf8',
+    env: childEnv(),
     maxBuffer: 16 * 1024 * 1024,
     timeout: timeoutMs,
   }).then(
