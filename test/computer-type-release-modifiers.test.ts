@@ -31,7 +31,11 @@ describe('computer · type() suelta modificadoras si falla', () => {
 
   it('falla el primer trozo: suelta modificadoras y devuelve el error original', async () => {
     const { s, scripts } = screen(1);
-    await expect(s.type('Hola')).rejects.toThrow(/^PowerShell no respondió en 30 s y se cortó$/);
+    // El error original va primero; debajo, el aviso de que el corte pudo dejar
+    // parte del texto escrita (test/computer-type-long.test.ts).
+    await expect(s.type('Hola')).rejects.toThrow(
+      /^PowerShell no respondió en 30 s y se cortó\nParcial: puede que se hayan escrito hasta 4 de 4 /,
+    );
     expect(scripts).toHaveLength(2);
     expect(isRelease(scripts[1] ?? '')).toBe(true);
   });

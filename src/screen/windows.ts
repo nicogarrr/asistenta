@@ -225,10 +225,23 @@ Add-Type -AssemblyName System.Windows.Forms
           try {
             await this.#ps(releaseModifiersScript());
           } catch {}
-          if (done === 0) throw err;
+          // The piece that failed may be partly typed (a SendKeys cut by the timeout
+          // has already sent some keys) or wholly typed (a paste cut after its
+          // Ctrl+V). Counting it as 0 told the model fewer characters were in than
+          // really were, and a first piece cut half-way said nothing at all, so the
+          // model typed the WHOLE text again on top of what was already there.
+          const upTo = done + Array.from(piece).length;
+          if (done === 0 && !powerShellWasCut(err)) throw err;
           const reason = err instanceof Error ? err.message : String(err);
+          if (done === 0) {
+            throw new Error(
+              `${reason}\nParcial: puede que se hayan escrito hasta ${upTo} de ${total} caracteres antes del corte; ` +
+                'no vuelvas a escribir el texto entero sin mirar: haz una captura y sigue desde donde se paró.',
+            );
+          }
           throw new Error(
-            `${reason}\nParcial: ya se habían escrito ${done} de ${total} caracteres antes del fallo; ` +
+            `${reason}\nParcial: ya se habían escrito al menos ${done} de ${total} caracteres antes del fallo ` +
+              `(y quizá hasta ${upTo}: el trozo que se estaba escribiendo pudo quedarse a medias); ` +
               'no vuelvas a escribir el texto entero: haz una captura y sigue desde donde se paró.',
           );
         }
@@ -594,6 +607,17 @@ export function powerShellError(err: unknown, timeoutMs = POWERSHELL_TIMEOUT_MS)
   return new Error(
     short ? `PowerShell falló${code}: ${short}` : `PowerShell falló${code} sin mensaje de error.`,
   );
+}
+
+/**
+ * Whether a failed PowerShell call was cut by the timeout (or killed) rather than
+ * failing on its own: only a cut call can have typed part of its text. Matches the
+ * raw execFile error and the message `powerShellError` turns it into.
+ */
+export function powerShellWasCut(err: unknown): boolean {
+  const e = (err ?? {}) as { killed?: boolean; signal?: string | null; message?: unknown };
+  if (e.killed || e.signal === 'SIGTERM' || e.signal === 'SIGKILL') return true;
+  return typeof e.message === 'string' && /no respondió en \d+ s y se cortó/.test(e.message);
 }
 
 /** Max characters per SendKeys call (each call is one PowerShell process, 30 s timeout). */
