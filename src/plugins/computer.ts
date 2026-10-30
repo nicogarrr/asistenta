@@ -19,15 +19,20 @@ export interface ComputerPluginDeps {
   screen: ScreenBackend;
   /** Contexto del hilo: su Gate y a dónde van las capturas. */
   ctx: ThreadContext<ActionGate>;
-  /** Cómo manda una captura el canal del hilo (Telegram) cuando el turno no es del panel. */
-  channelPhoto: (bytes: Buffer, opts: { width: number; height: number }) => Promise<boolean>;
+  /**
+   * Cómo manda una captura el canal del hilo (Telegram) cuando el turno no es del panel.
+   * Sin él (consola `pa chat`, `pa run`) la tool no tiene a dónde mandar capturas, como antes.
+   */
+  channelPhoto?: (bytes: Buffer, opts: { width: number; height: number }) => Promise<boolean>;
 }
 
 export const computerPlugin: CapabilityPlugin<ComputerPluginDeps> = {
   id: 'computer',
   tools: ({ config, screen, ctx, channelPhoto }) => [
-    createComputerTool(config, screen, ctx.gate, (bytes, opts) =>
-      ctx.sendPhoto(bytes, () => channelPhoto(bytes, opts)),
-    ),
+    channelPhoto
+      ? createComputerTool(config, screen, ctx.gate, (bytes, opts) =>
+          ctx.sendPhoto(bytes, () => channelPhoto(bytes, opts)),
+        )
+      : createComputerTool(config, screen, ctx.gate),
   ],
 };
