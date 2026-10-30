@@ -301,7 +301,13 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
             unverified.push('No pude confirmar el contenedor en marcha con `docker compose ps`.');
           }
         } else {
-          const argv = s.installRef.split(/\s+/).filter(Boolean);
+          const argv = splitCommandLine(s.installRef);
+          if (argv === null) {
+            return reply(
+              `"${s.name}": el comando declarado tiene comillas sin cerrar; corrígelo antes de instalar.`,
+              true,
+            );
+          }
           if (argv.length === 0) {
             return reply(`"${s.name}" no tiene comando declarado.`, true);
           }
@@ -476,4 +482,37 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
       return reply(`Acción desconocida.`, true);
     },
   };
+}
+
+/**
+ * Split a declared command into argv WITHOUT a shell: whitespace separates,
+ * "double" and 'single' quotes group (so `--title "Mi tablero"` stays one
+ * argument), and a backslash only escapes `"` or `\\` inside double quotes -
+ * Windows paths keep their backslashes. Unbalanced quotes -> null (refuse).
+ */
+export function splitCommandLine(line: string): string[] | null {
+  const out: string[] = [];
+  let cur = '';
+  let has = false;
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i] as string;
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (quote === '"' && ch === '\\' && (line[i + 1] === '"' || line[i + 1] === '\\')) {
+        cur += line[i + 1];
+        i++;
+      } else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      has = true;
+    } else if (/\s/.test(ch)) {
+      if (has || cur) out.push(cur);
+      cur = '';
+      has = false;
+    } else cur += ch;
+  }
+  if (quote) return null;
+  if (has || cur) out.push(cur);
+  return out;
 }
