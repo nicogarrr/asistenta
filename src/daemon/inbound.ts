@@ -222,3 +222,19 @@ export function cachedFullReply(
   if (inbound.images?.length || !more.isMoreRequest(inbound.text)) return undefined;
   return more.takeFullReply(threadKey);
 }
+
+/**
+ * Cada mensaje de una respuesta (todos sus trozos) apunta al hilo que la produjo, así
+ * que responder a cualquiera de ellos sigue esa conversación. Antes solo se apuntaba el
+ * primer trozo de una respuesta normal y ninguno del texto completo pedido con «más»
+ * escrito, y responder ahí caía en la conversación principal del chat.
+ */
+export function threadForSentIds(
+  messageThread: { set(key: string, threadKey: string): unknown },
+  chatKey: string,
+  threadKey: string,
+): (messageId: string) => void {
+  return (messageId) => {
+    messageThread.set(`${chatKey}:${messageId}`, threadKey);
+  };
+}
