@@ -329,7 +329,12 @@ export async function buildAgenda(deps: BuildAgendaDeps): Promise<UnifiedAgenda>
         seen.at !== null &&
         item.at !== null &&
         zonedDayKey(seen.at, timeZone) === zonedDayKey(item.at, timeZone) &&
-        sameThing(seen.title, item.title),
+        sameThing(seen.title, item.title) &&
+        // Two CALENDAR entries are two things unless they start at the same
+        // instant (the same event in two feeds). "Dentista" at 09:00 and
+        // "Dentista" at 17:00 used to fold into one and the 17:00 vanished.
+        // Calendar-vs-mail and mail-vs-mail keep the fuzzy same-day merge.
+        !(seen.where === 'calendario' && item.where === 'calendario' && seen.at !== item.at),
     );
     if (twin) Object.assign(twin, mergeItems(twin, item));
     else deduped.push({ ...item, sources: item.sources ?? [item.where] });
