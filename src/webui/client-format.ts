@@ -227,3 +227,11 @@ export function progresoPlan(plan: unknown): string {
   ).length;
   return `${hechos} de ${plan.length} ${plan.length === 1 ? 'paso hecho' : 'pasos hechos'}`;
 }
+
+/** «Pensando… 12 s» / «Pensando… 1 min 05 s» mientras el agente responde. */
+export function textoEspera(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `Pensando… ${s} s`;
+  const resto = s % 60;
+  return `Pensando… ${Math.floor(s / 60)} min ${resto < 10 ? '0' : ''}${resto} s`;
+}
