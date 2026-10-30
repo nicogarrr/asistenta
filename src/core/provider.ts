@@ -34,6 +34,12 @@ export interface ProviderHandle {
    * configured: agent code must not invent one.
    */
   fallbackFor?: (sessionId?: string) => Model<string>;
+  /**
+   * /modelo: un modelo ya registrado en este proveedor (PA_MODEL o
+   * PA_FALLBACK_MODEL) por id, con las mismas cabeceras por sesión. Undefined
+   * si el id no está registrado: nunca se inventa un modelo.
+   */
+  modelById?: (id: string, sessionId?: string) => Model<string> | undefined;
 }
 
 /** Identifies this client to OpenCode Go (own user agent, never a generic SDK name). */
@@ -175,7 +181,11 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     model: config.model,
     baseUrl: config.baseUrl,
   });
-  return { models, model, streamFn, modelFor, fallbackFor };
+  const modelById = (id: string, sessionId?: string): Model<string> | undefined => {
+    const m = models.getModel(config.provider, id);
+    return m ? withGoHeaders(m, sessionId) : undefined;
+  };
+  return { models, model, streamFn, modelFor, fallbackFor, modelById };
 }
 
 async function resolveApiKey(baseUrl: string): Promise<string> {
@@ -323,6 +333,7 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
     streamFn: (m, context, options) =>
       stream(m as Model<'openai-completions'>, context as never, options),
     modelFor: () => model,
+    modelById: (id: string) => models.getModel(config.provider, id) ?? undefined,
     // No Go headers here: the local endpoint is never an OpenCode endpoint.
     fallbackFor: localFallback ? () => localFallback : undefined,
   };

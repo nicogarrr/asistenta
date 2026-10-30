@@ -2,6 +2,7 @@
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
+import { formatModelos, parseModelo } from './model-choice.js';
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
@@ -4675,6 +4676,40 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await next;
   };
 
+  // F7: /modelo ve o elige el modelo de esta conversación (solo el dueño, en privado).
+  const cmdModelo = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'El modelo solo se cambia desde tu chat privado conmigo.', {
+        quote: true,
+      });
+      return;
+    }
+    const thread = await resolveThread(inbound);
+    const action = parseModelo(args, thread.agent.availableModels);
+    if (action.kind === 'show') {
+      await say(inbound, formatModelos(thread.agent.availableModels, thread.agent.modelId), {
+        quote: true,
+      });
+      return;
+    }
+    if (action.kind === 'error') {
+      await say(inbound, action.text, { quote: true });
+      return;
+    }
+    // En cola: no cambia el modelo a mitad de un turno de esta conversación.
+    const next = queueThreadTurn(thread, async () => {
+      const r = thread.agent.chooseModel(action.id);
+      await say(
+        inbound,
+        r.ok
+          ? `Listo: esta conversación usa ${r.model}${r.model === thread.agent.availableModels[0] ? ' (el principal)' : ''}.`
+          : `No cambio el modelo: ${r.reason}.`,
+        { quote: true },
+      );
+    });
+    await next;
+  };
+
   /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
   const cmdAltavoz = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -6855,6 +6890,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdReintentar(inbound);
               case 'compactar':
                 return cmdCompactar(inbound);
+              case 'modelo':
+                return cmdModelo(inbound, command.args);
               case 'proyecto':
                 return cmdProyecto(inbound, command.args);
               case 'altavoz':

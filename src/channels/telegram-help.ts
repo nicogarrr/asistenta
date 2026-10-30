@@ -44,6 +44,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'reintentar', description: 'repite tu último mensaje sin la respuesta anterior' },
       { command: 'compactar', description: 'resume ya el historial de esta conversación' },
       {
+        command: 'modelo',
+        args: '[número|nombre|normal]',
+        description: 've o cambia el modelo de esta conversación',
+      },
+      {
         command: 'borrar_chat',
         description: 'borra memoria, historial y perfil de este chat (pide escribir BORRAR)',
       },
