@@ -149,6 +149,28 @@ El panel y Telegram ven las mismas aprobaciones pendientes. La vista web no impl
 
 Consulta [`deploy/windows/README.md`](deploy/windows/README.md). No lo actives hasta comprobar el arranque manual. El script usa la raíz del repositorio como directorio de trabajo; el CLI carga desde allí el `.env` opcional. Las variables ya presentes en el entorno del usuario de la tarea tienen prioridad sobre el archivo. No coloques secretos en el comando de la tarea. No se ha validado una instalación nativa Windows en esta ronda de QA.
 
+## OCR local (opcional)
+
+Asistenta puede sacar el texto de una imagen o un PDF escaneado con un motor OCR que corre en tu PC: sin red (salvo la primera descarga de los pesos), sin APIs de pago y sin usar tus claves del modelo. Está **apagado por defecto**; al activarlo aparece la herramienta `ocr_local`, que solo lee ficheros dentro de la carpeta de trabajo (y de `PA_OCR_WATCH_DIR` si la tienes). La herramienta `ocr` de siempre (texto de la pantalla con el OCR de Windows) no cambia.
+
+Instalar (PowerShell, en la carpeta de Asistenta; necesita Python 3.10+ con el lanzador `py`):
+
+```powershell
+scripts\ocr-sidecar\setup.ps1              # PP-OCRv5 (por defecto)
+scripts\ocr-sidecar\setup.ps1 -Model glm   # GLM-OCR (máxima calidad)
+```
+
+En Linux/WSL: `scripts/ocr-sidecar/setup.sh [ppocr|glm]`. Después, en `.env`: `PA_OCR_LOCAL=1` y, si quieres GLM-OCR, `PA_OCR_MODEL=glm`. Reinicia Asistenta.
+
+Medido el 30-oct-2026 con 8 páginas en español (ticket, captura web, escaneo, tabla, foto inclinada, letra pequeña, ES/EN, letra manuscrita), solo CPU:
+
+| Motor | Acierto | s/página | RAM | Licencia |
+| --- | --- | --- | --- | --- |
+| PP-OCRv5 (RapidOCR, ONNX) — por defecto | 94,5 % | 1,3 | 0,8 GB | Apache-2.0 |
+| GLM-OCR (`zai-org/GLM-OCR`) — `PA_OCR_MODEL=glm` | 98,5 % | 8,9 | 3,1 GB | MIT |
+
+GLM-OCR descarga unos 2 GB de pesos la primera vez y necesita PyTorch (CPU). PP-OCRv5 es más flojo en capturas de webs con menús; GLM-OCR, en letra muy pequeña. Los PDF se leen hasta 20 páginas. Si el motor no está instalado, Asistenta te lo dice con el comando para instalarlo.
+
 ## Desarrollo y QA
 
 ```sh
