@@ -295,7 +295,11 @@ import {
   summarizeRoutine,
   validateSchedule,
 } from './routines.js';
-import { computerSwitchCommand } from './screen/computer-switch.js';
+import {
+  computerOffSaved,
+  computerSwitchCommand,
+  saveComputerSwitch,
+} from './screen/computer-switch.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -1501,6 +1505,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
   // F7: /modelo por conversación, guardado para que sobreviva a un reinicio.
   const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
+  // /ordenador off guardado: el PC sigue sin control tras reiniciar (solo más estricto;
+  // PA_COMPUTER_USE=0 en el .env manda siempre).
+  if (config.computerUse !== false && computerOffSaved(paths.state)) {
+    config.computerUse = false;
+    log.warn(
+      'Computer Use arranca desactivado: /ordenador off guardado (usa /ordenador on para activarlo)',
+    );
+  }
   const altavozPlayer = createAltavozPlayer({
     toPlayable: (bytes, mimeType) => toPlayableAudio(bytes, mimeType),
     playOnPc: async (file, signal) => {
@@ -4700,6 +4712,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         config.computerUse = on;
         log.warn(`Computer Use ${on ? 'activado' : 'desactivado'} desde el chat (/ordenador)`);
       },
+      save: (on) => saveComputerSwitch(paths.state, on),
     });
     await say(inbound, reply, { quote: true });
   };
