@@ -15,6 +15,7 @@ import {
   isReminder,
   oneShotStillPending,
   recordDroppedReminder,
+  reminderEnded,
   reminderText,
   settleOneShot,
 } from '../tools/reminder.js';
@@ -86,6 +87,12 @@ export function createRoutineFire(
     // A one-time reminder deleted after this job was registered (delivered late at
     // startup, cancelled) must not send again from a stale callback.
     if (isOneShotReminder(ctx.routine) && !oneShotStillPending(store, ctx.routine)) return;
+    // A repeating reminder whose last day («hasta …») has passed stops for good.
+    if (isReminder(ctx.routine) && reminderEnded(ctx.routine)) {
+      store.deleteRoutine(ctx.scope, ctx.routine.name);
+      deps.sync();
+      return;
+    }
     log.info('routine fired', { routine: ctx.routine.name, chatId });
     const reminder = isReminder(ctx.routine);
     // Un recordatorio solo avisa; una rutina TRABAJA. La tarea real se saca del
@@ -169,6 +176,10 @@ export function createRoutineFire(
         });
         recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name);
       }
+      deps.sync();
+    } else if (sent && reminder && reminderEnded(ctx.routine, new Date(), true)) {
+      // That was its last firing: remove it now so lists and the briefing stop showing it.
+      store.deleteRoutine(ctx.scope, ctx.routine.name);
       deps.sync();
     }
   };

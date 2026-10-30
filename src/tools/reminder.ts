@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
-import { localTimeZone, wallClock, zonedTime } from '../datecontext.js';
+import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
@@ -76,6 +76,12 @@ const Params = Type.Object({
     Type.String({
       description:
         'create, repeating: 5-field cron in local time (min hour day-of-month month day-of-week), e.g. "30 8 * * 1" for Mondays at 8:30.',
+    }),
+  ),
+  until: Type.Optional(
+    Type.String({
+      description:
+        'create, repeating only: last local day it may fire, YYYY-MM-DD ("cada día durante una semana", "hasta el viernes"). Omit when it has no end.',
     }),
   ),
 });
@@ -277,6 +283,37 @@ export async function deliverMissedReminders(
   return { delivered, failed, invalid: invalid.length };
 }
 
+/** Last local day of a repeating reminder, kept at the end of its name (`... [cron] hasta YYYY-MM-DD`). */
+export function untilOfReminder(name: string): string | null {
+  const m = / hasta (\d{4}-\d{2}-\d{2})$/.exec(name);
+  return m?.[1] ?? null;
+}
+
+/**
+ * A repeating reminder with an end day is over when that day has passed, or when its
+ * next firing after `now` falls after it (so it is removed right after its last one).
+ */
+export function reminderEnded(
+  r: Pick<Routine, 'name' | 'schedule'>,
+  now: Date = new Date(),
+  afterFiring = false,
+): boolean {
+  const end = untilOfReminder(r.name);
+  if (!end || isOneShotReminder(r)) return false;
+  if (localDay(now) > end) return true;
+  if (!afterFiring || !r.schedule) return false;
+  const next = nextRunOf(r.schedule, now);
+  return !next || localDay(next) > end;
+}
+
+function nextRunOf(schedule: string, from: Date): Date | null {
+  try {
+    return new Cron(schedule, { paused: true, timezone: localTimeZone() }).nextRun(from);
+  } catch {
+    return null;
+  }
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
 }
@@ -372,7 +409,8 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
     description: [
       'Reminders the user asked for: a message in this chat at the time they said.',
       'action=create with text plus ONE of: at (YYYY-MM-DDTHH:MM local), in_minutes (>= 2),',
-      'or schedule (5-field cron, for repeating ones like every Monday 8:30).',
+      'or schedule (5-field cron, for repeating ones like every Monday 8:30; add until',
+      '(YYYY-MM-DD, last day) when it should stop).',
       "action=list shows this chat's reminders with their next time; action=cancel with a",
       'word from the text removes it. Say back the exact time you set, in local time.',
       'Never claim a reminder exists unless this tool said it was created.',
@@ -389,7 +427,10 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         const lines = rows.map((r) => {
           const check = r.schedule ? validateSchedule(r.schedule) : null;
           const next = check?.ok ? check.next : 'sin próxima ejecución';
-          const kind = isOneShotReminder(r) ? 'una vez' : `repite (${r.schedule})`;
+          const end = untilOfReminder(r.name);
+          const kind = isOneShotReminder(r)
+            ? 'una vez'
+            : `repite (${r.schedule})${end ? ` hasta ${end}` : ''}`;
           return `- ${reminderText(r)} | ${kind} | próximo: ${next}`;
         });
         return reply(lines.join('\n'));
@@ -423,6 +464,19 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
 
+      const until = args.until === undefined ? undefined : String(args.until).trim();
+      if (until !== undefined) {
+        if (args.schedule === undefined) {
+          return reply('until solo vale con schedule (recordatorios que se repiten).', true);
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || !parseLocalStamp(`${until}T12:00`)) {
+          return reply('until debe ser YYYY-MM-DD (último día, fecha real).', true);
+        }
+        if (until < localDay(new Date(now()))) {
+          return reply(`El último día (${until}) ya pasó; dime otra fecha.`, true);
+        }
+      }
+
       if (mine().length >= MAX_REMINDERS_PER_CHAT) {
         return reply(
           `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`,
@@ -435,16 +489,23 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         if (!check.ok) return reply(`Horario no válido: ${check.error}`, true);
         const tooOften = checkRepeating(args.schedule);
         if (tooOften) return reply(tooOften, true);
+        if (until !== undefined) {
+          const first = nextRunOf(args.schedule.trim(), new Date(now()));
+          if (!first || localDay(first) > until) {
+            return reply(`No sonaría ninguna vez antes de que acabe el ${until}.`, true);
+          }
+        }
+        const end = until ? ` hasta ${until}` : '';
         deps.store.saveRoutine({
           scope,
-          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]`),
+          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]${end}`),
           kind: 'schedule',
           prompt: text,
           schedule: args.schedule.trim(),
         });
         deps.sync();
         return reply(
-          `Recordatorio programado (repite ${args.schedule.trim()}): ${text}. Próximo: ${check.next}.`,
+          `Recordatorio programado (repite ${args.schedule.trim()}${end}): ${text}. Próximo: ${check.next}.`,
         );
       }
 
