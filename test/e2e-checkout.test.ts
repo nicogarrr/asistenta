@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
@@ -36,16 +37,19 @@ interface ShopState {
   payHits: number;
 }
 const shop = (await import('../qa/shop-harness/shop.mjs' as string)) as {
-  start: (p: number) => Promise<{ close: () => void }>;
+  start: (p: number) => Promise<{ close: () => void; address: () => AddressInfo | string | null }>;
   state: ShopState;
 };
-const PORT = 18_000 + Math.floor(Math.random() * 2_000);
-const BASE = `http://127.0.0.1:${PORT}`;
+// Puerto libre que da el sistema (start(0)): un puerto fijo o al azar choca con otra suite
+// que corre a la vez en la misma máquina y el beforeAll se colgaba hasta los 60 s.
+let BASE = '';
 
 let srv: { close: () => void };
 let svc: InstanceType<typeof BrowserService>;
 beforeAll(async () => {
-  srv = await shop.start(PORT);
+  const listening = await shop.start(0);
+  srv = listening;
+  BASE = `http://127.0.0.1:${(listening.address() as AddressInfo).port}`;
   svc = new BrowserService({
     policy: { allowPrivateHosts: true, autoApprove: true, approve: async () => true },
     channel: 'chromium',
@@ -79,7 +83,7 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
-const toPayment = [
+const toPayment = () => [
   call('browser', { action: 'open', url: `${BASE}/p/p1` }),
   call('browser', { action: 'click', selector: '#add' }),
   call('browser', { action: 'open', url: `${BASE}/checkout` }),
@@ -96,7 +100,7 @@ describeBrowser('compra en la tienda sintética de punta a punta', () => {
     // de lo que promete allowUntilPayment). Nico dice «sí» a todo menos al pago.
     core.telegram.answers.push(true, true, false);
     const model = new ScriptedModel();
-    model.script(...toPayment, say('Te dejo la cesta lista; el pago lo confirmas tú.'));
+    model.script(...toPayment(), say('Te dejo la cesta lista; el pago lo confirmas tú.'));
     const t = await core.thread();
     const r = await t.user('pídeme una margarita');
     expect(r.error).toBeNull();
@@ -111,7 +115,7 @@ describeBrowser('compra en la tienda sintética de punta a punta', () => {
   it('sin ningún «sí» no llega ni a la cesta ni al pago', async () => {
     const core = boot();
     const model = new ScriptedModel();
-    model.script(...toPayment, say('Necesito tu permiso.'));
+    model.script(...toPayment(), say('Necesito tu permiso.'));
     const t = await core.thread();
     await t.user('pídeme una margarita');
     expect(shop.state.cart).toHaveLength(0);
@@ -124,7 +128,7 @@ describeBrowser('compra en la tienda sintética de punta a punta', () => {
     core.telegram.answers.push(true, true, { approved: true, scope: 'always' });
     const model = new ScriptedModel();
     model.script(
-      ...toPayment,
+      ...toPayment(),
       say('Pagado.'),
       call('browser', { action: 'open', url: `${BASE}/checkout` }),
       call('browser', { action: 'click', selector: '#pay' }),

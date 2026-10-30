@@ -14,6 +14,11 @@ const children: ChildProcess[] = [];
 // incident (orphan fixture daemons + multi-GB logs in /tmp/pa-stop-*) was not reproduced.
 // Installed BEFORE the module code: the code ends in a top-level `await life.done`, so a
 // watchdog appended after it would only be installed once the fixture is already closing.
+// Paciencia del arnés, no del producto: con la máquina cargada (muchas suites a la vez) un
+// `node dist/cli.js` tarda más de 10 s en arrancar y spawnSync lo mataba (status null →
+// «expected null to be 0»). Ningún assert sobre el daemon cambia; solo cuánto espera el test.
+const SPAWN_MS = 60_000;
+const STARTUP_MS = 30_000;
 const WATCHDOG =
   ';{const pp=process.ppid;setInterval(()=>{if(process.ppid!==pp)process.exit(3)},1000).unref();}';
 beforeEach(() => {
@@ -39,7 +44,7 @@ async function fixture(mode: 'clean' | 'fail' | 'hung' = 'clean', delay = 100) {
   });
   children.push(child);
   await new Promise<void>((yes, no) => {
-    const timer = setTimeout(() => no(new Error('fixture startup timeout')), 5000);
+    const timer = setTimeout(() => no(new Error('fixture startup timeout')), STARTUP_MS);
     child.stdout?.on('data', (chunk) => {
       if (chunk.toString().includes('ready')) {
         clearTimeout(timer);
@@ -63,21 +68,25 @@ it('stops a real lifecycle child only after draining, removing PID and releasing
   if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
   expect(child.exitCode).toBe(0);
 });
-it('runs the actual compiled CLI stop against an owned synthetic lifecycle fixture', async () => {
-  const child = await fixture();
-  const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'stop'], {
-    encoding: 'utf8',
-    timeout: 10000,
-    env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain('cierre limpio confirmado');
-  if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
-  expect(child.exitCode).toBe(0);
-});
+it(
+  'runs the actual compiled CLI stop against an owned synthetic lifecycle fixture',
+  async () => {
+    const child = await fixture();
+    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'stop'], {
+      encoding: 'utf8',
+      timeout: SPAWN_MS,
+      env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('cierre limpio confirmado');
+    if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
+    expect(child.exitCode).toBe(0);
+  },
+  2 * SPAWN_MS,
+);
 it('reports failed shutdown as non-clean and leaves the stale marker', async () => {
   const child = await fixture('fail');
-  await expect(stopDaemon(dir, 1000)).rejects.toThrow('no fue limpio');
+  await expect(stopDaemon(dir, 15_000)).rejects.toThrow('no fue limpio');
   if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
   expect(child.exitCode).toBe(1);
   expect(existsSync(join(dir, 'agent.pid.stale'))).toBe(true);
@@ -89,20 +98,24 @@ it('does not report a hard-exit budget expiry as clean or start a replacement', 
   expect(child.exitCode).toBe(1);
   expect(existsSync(join(dir, 'drained'))).toBe(false);
 });
-it('rejects restart without touching the running instance', async () => {
-  const child = await fixture();
-  const before = readFileSync(join(dir, 'control', 'ready.json'));
-  const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'restart'], {
-    encoding: 'utf8',
-    timeout: 10000,
-    env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
-  });
-  expect(result.status).toBe(2);
-  expect(result.stderr).toContain('supervisor');
-  expect(readFileSync(join(dir, 'control', 'ready.json'))).toEqual(before);
-  expect(child.exitCode).toBe(null);
-  await stopDaemon(dir);
-});
+it(
+  'rejects restart without touching the running instance',
+  async () => {
+    const child = await fixture();
+    const before = readFileSync(join(dir, 'control', 'ready.json'));
+    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'restart'], {
+      encoding: 'utf8',
+      timeout: SPAWN_MS,
+      env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('supervisor');
+    expect(readFileSync(join(dir, 'control', 'ready.json'))).toEqual(before);
+    expect(child.exitCode).toBe(null);
+    await stopDaemon(dir);
+  },
+  2 * SPAWN_MS,
+);
 
 it('keeps the same OS ownership until a failed drainer process exits', async () => {
   const wrapper = pathToFileURL(resolve('dist/controlled-daemon.js')).href;
@@ -114,13 +127,13 @@ it('keeps the same OS ownership until a failed drainer process exits', async () 
   });
   children.push(child);
   await new Promise<void>((yes, no) => {
-    const t = setTimeout(() => no(new Error('startup timeout')), 5000);
+    const t = setTimeout(() => no(new Error('startup timeout')), STARTUP_MS);
     child.stdout?.once('data', () => {
       clearTimeout(t);
       yes();
     });
   });
-  await expect(stopDaemon(dir, 1000)).rejects.toThrow('no fue limpio');
+  await expect(stopDaemon(dir, 15_000)).rejects.toThrow('no fue limpio');
   const lock = spawnSync('flock', ['-n', join(dir, 'control', 'owner.lock'), 'true']);
   expect(lock.status).toBe(1);
   expect(child.exitCode).toBe(null);
@@ -143,33 +156,37 @@ it('uses the actual 10-second thread-tail drain timeout and never writes a clean
   });
   children.push(child);
   await new Promise<void>((yes, no) => {
-    const t = setTimeout(() => no(new Error('startup timeout')), 5000);
+    const t = setTimeout(() => no(new Error('startup timeout')), STARTUP_MS);
     child.stdout?.once('data', () => {
       clearTimeout(t);
       yes();
     });
   });
   const start = Date.now();
-  await expect(stopDaemon(dir, 12000)).rejects.toThrow('no fue limpio');
+  await expect(stopDaemon(dir, 30_000)).rejects.toThrow('no fue limpio');
   expect(Date.now() - start).toBeGreaterThanOrEqual(9900);
   if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
   expect(child.exitCode).toBe(1);
   expect(existsSync(join(dir, 'agent.pid.stale'))).toBe(true);
-}, 15000);
+}, 45_000);
 
-it('blocks forced desktop on Linux before vault, channels or microphone startup', async () => {
-  const { readdirSync } = await import('node:fs');
-  const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'serve'], {
-    encoding: 'utf8',
-    timeout: 10000,
-    env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'on' },
-  });
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain('requiere modo servidor');
-  expect(readdirSync(dir).filter((name) => name !== 'log')).toEqual([]);
-  expect(existsSync(join(dir, 'control'))).toBe(false);
-  expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
-});
+it(
+  'blocks forced desktop on Linux before vault, channels or microphone startup',
+  async () => {
+    const { readdirSync } = await import('node:fs');
+    const result = spawnSync(process.execPath, [resolve('dist/cli.js'), 'serve'], {
+      encoding: 'utf8',
+      timeout: SPAWN_MS,
+      env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'on' },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('requiere modo servidor');
+    expect(readdirSync(dir).filter((name) => name !== 'log')).toEqual([]);
+    expect(existsSync(join(dir, 'control'))).toBe(false);
+    expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
+  },
+  2 * SPAWN_MS,
+);
 
 async function orphanProbe(
   withWatchdog: boolean,
@@ -186,7 +203,7 @@ async function orphanProbe(
   });
   children.push(parent);
   const pid = await new Promise<number>((yes, no) => {
-    const timer = setTimeout(() => no(new Error('orphan probe startup timeout')), 8000);
+    const timer = setTimeout(() => no(new Error('orphan probe startup timeout')), STARTUP_MS);
     parent.stdout?.on('data', (chunk) => {
       const m = /child (\d+)/.exec(chunk.toString());
       if (m) {
@@ -226,11 +243,11 @@ async function orphanProbe(
 it('an orphaned fixture daemon exits by itself with the watchdog (real orphan, parent SIGKILLed)', async () => {
   const probe = await orphanProbe(true);
   try {
-    expect(await probe.deadWithin(5000)).toBe(true);
+    expect(await probe.deadWithin(15_000)).toBe(true);
   } finally {
     probe.kill();
   }
-}, 20000);
+}, 40_000);
 
 it('control: without the watchdog the same orphaned fixture keeps running (the test does detect orphans)', async () => {
   const probe = await orphanProbe(false);
@@ -239,4 +256,4 @@ it('control: without the watchdog the same orphaned fixture keeps running (the t
   } finally {
     probe.kill();
   }
-}, 20000);
+}, 40_000);

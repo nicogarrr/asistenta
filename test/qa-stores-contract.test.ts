@@ -1,3 +1,4 @@
+import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { BrowserService } from '../src/browser/service.js';
 import { describeBrowser } from './helpers/real-browser.js';
@@ -6,7 +7,8 @@ import { describeBrowser } from './helpers/real-browser.js';
 // Goal city comes from the trusted caller (this test); the selected state is read from
 // the fixture's own #mine element; a different city is a FAILURE. This proves the
 // fixture can tell a mismatch from a match. It does NOT cover any real website.
-const PORT = 18765;
+// Puerto libre del sistema (start(0)): uno fijo chocaba con otra suite que corre a la vez.
+let PORT = 0;
 const verdict = (goalCity: string, selected: string): 'ok' | 'fail' =>
   selected.toLowerCase().includes(goalCity.toLowerCase()) ? 'ok' : 'fail';
 
@@ -15,9 +17,13 @@ describeBrowser('/stores fixture contract (SYNTHETIC)', () => {
   let srv: { close: () => void };
   beforeAll(async () => {
     const mod = (await import('../qa/shop-harness/shop.mjs' as string)) as {
-      start: (p: number) => Promise<{ close: () => void }>;
+      start: (
+        p: number,
+      ) => Promise<{ close: () => void; address: () => AddressInfo | string | null }>;
     };
-    srv = await mod.start(PORT);
+    const listening = await mod.start(0);
+    srv = listening;
+    PORT = (listening.address() as AddressInfo).port;
     svc = new BrowserService({
       policy: { allowPrivateHosts: true, autoApprove: true, approve: async () => true },
       channel: 'chromium',
