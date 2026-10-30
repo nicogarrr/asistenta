@@ -153,5 +153,14 @@ const srv = http.createServer((req, res) => {
   }
   send('no', 'text/plain', 404);
 });
+// Puerto ocupado → rechaza (EADDRINUSE) en vez de dejar la promesa colgada para siempre.
+// `start(0)` escucha en un puerto libre: léelo con `srv.address().port`.
 export const start = (port = 8765) =>
-  new Promise((r) => srv.listen(port, '127.0.0.1', () => r(srv)));
+  new Promise((resolve, reject) => {
+    const fail = (e) => reject(e);
+    srv.once('error', fail);
+    srv.listen(port, '127.0.0.1', () => {
+      srv.off('error', fail);
+      resolve(srv);
+    });
+  });
