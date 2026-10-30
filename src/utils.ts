@@ -82,6 +82,7 @@ export class Mutex {
     this.#tail = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let acquired = false;
     try {
       if (signal) {
         if (signal.aborted) throw abortError();
@@ -90,10 +91,15 @@ export class Mutex {
       } else {
         await previous;
       }
+      acquired = true;
       return await fn();
     } finally {
       this.#pending--;
-      release();
+      // A waiter cancelled before its turn must not hand its slot on early: the
+      // caller queued behind it would start while the current holder is still
+      // using the mouse. Pass the slot on only once everything ahead has finished.
+      if (acquired) release();
+      else void previous.then(release);
     }
   }
 }
