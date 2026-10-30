@@ -128,6 +128,9 @@ export function scrubLogText(text: string): string {
  * Applied by write() as well as exposed for callers. Does not mutate inputs.
  * This is a safety net, not permission to log credentials or arbitrary tool output.
  */
+/** Campos que suelen llevar una línea de órdenes entera. */
+const COMMAND_KEYS = ['cmd', 'command', 'commandLine', 'cmdline'];
+
 export function redact(fields: Record<string, unknown>): Record<string, unknown> {
   const seen = new WeakSet<object>();
   const visit = (value: unknown, key = '', depth = 0): unknown => {
@@ -156,7 +159,20 @@ export function redact(fields: Record<string, unknown>): Record<string, unknown>
         return { name: scrubLogText(value.name), message: scrubLogValue(value.message) };
       }
       if (Array.isArray(value)) return value.map((v) => visit(v, '', depth + 1));
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, k, depth + 1)]));
+      // Objeto plano con la orden (p. ej. `{ ...err }` de execFile, o `{ cmd }`): la
+      // orden se omite y la salida del proceso tampoco va entera (puede repetir el script).
+      const plain = value as Record<string, unknown>;
+      const hasCmd = COMMAND_KEYS.some((k) => typeof plain[k] === 'string' && plain[k] !== '');
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => {
+          if (typeof v === 'string' && COMMAND_KEYS.includes(k)) return [k, '[orden omitida]'];
+          if (hasCmd && typeof v === 'string' && k === 'stdout') return [k, '[omitido]'];
+          if (hasCmd && typeof v === 'string' && k === 'stderr') {
+            return [k, scrubLogText(psErrorSummary(plain).stderr ?? '')];
+          }
+          return [k, visit(v, k, depth + 1)];
+        }),
+      );
     } finally {
       seen.delete(value);
     }
