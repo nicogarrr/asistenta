@@ -130,7 +130,12 @@ describe('e2e troceo de respuestas largas en Telegram', () => {
       expect(balanced(m.text), m.text.slice(-200)).toBe(true);
       expect(m.text).not.toContain('**');
     }
-    const whole = words(visible(state.sent.map((m) => m.text).join('\n')));
+    // Un enlace <a> se vuelve a escribir como [texto](url) para comparar también la URL.
+    const joined = state.sent
+      .map((m) => m.text)
+      .join('\n')
+      .replace(/<a href="([^"]+)">(.*?)<\/a>/g, '[$2]($1)');
+    const whole = words(visible(joined));
     const expected = words(answer.replace(/\*\*/g, ''));
     expect(whole).toEqual(expected);
   });
@@ -138,7 +143,9 @@ describe('e2e troceo de respuestas largas en Telegram', () => {
   it('ninguna URL se parte entre dos mensajes', async () => {
     await send(longAnswer(40));
     const urls = state.sent.flatMap((m) => [
-      ...m.text.matchAll(/https:\/\/tienda\.example\/p\/(\d+)\?a=1&amp;b=2\)/g),
+      ...m.text.matchAll(
+        /<a href="https:\/\/tienda\.example\/p\/(\d+)\?a=1&amp;b=2">la tienda<\/a>/g,
+      ),
     ]);
     expect(urls.map((u) => Number(u[1]))).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
   });
