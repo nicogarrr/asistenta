@@ -90,26 +90,35 @@ export function toUrl(store: StoreId, ref: string): string | null {
   }
 }
 
-/** "1.299,50 €" / "12,34€" -> céntimos. Formato español estricto; otro formato da null. */
+/** "1.299,50 €" / "12,34€" / "1299.99 €" / "1,299.99 €" -> céntimos; un formato ambiguo da null. */
 export function parseEuroCents(raw: string): number | null {
   // Miles con punto o con espacio (normal, duro U+00A0, estrecho U+202F o fino
   // U+2009, como `Intl.NumberFormat('fr-FR')` y algunas tiendas): «1 299,00 €»
   // son 1299 €, no 299 €. Igual que PRICE_RE de checkout (#389).
+  // Punto decimal sin coma («1299.99 €», «12.5 €») o miles con coma y punto decimal
+  // («1,299.99 €»): el punto con 1-2 cifras detrás solo puede ser decimal. «1.299 €»
+  // sigue siendo 1299 € y «1,299 €» (ambiguo) sigue dando null. Un número pegado con
+  // espacio normal delante («1 299.99 €») no se lee como 299,99 €.
   const m = raw.match(
-    /(?<![\d.,\u00a0\u202f\u2009])(\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,(\d{1,2}))?\s?€/,
+    /(?<![\d.,\u00a0\u202f\u2009])(?:(\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,(\d{1,2}))?|(?<!\d )(\d{1,3}(?:,\d{3})+|\d+)\.(\d{1,2}))\s?€/,
   );
-  if (!m?.[1]) return null;
-  const euros = Number(m[1].replace(/[.\u00a0\u202f\u2009 ]/g, ''));
-  const cents = m[2] ? Number(m[2].padEnd(2, '0')) : 0;
+  if (!m) return null;
+  const intPart = m[1] ?? m[3];
+  const decPart = m[1] ? m[2] : m[4];
+  if (!intPart) return null;
+  const euros = Number(intPart.replace(/[.,\u00a0\u202f\u2009 ]/g, ''));
+  const cents = decPart ? Number(decPart.padEnd(2, '0')) : 0;
   return euros * 100 + cents;
 }
 
-/** Número de schema.org/metaetiquetas ("1299.99", 1299.99 o "1.299,00") -> céntimos. */
+/** Número de schema.org/metaetiquetas ("1299.99", 1299.99, "1,299.99" o "1.299,00") -> céntimos. */
 export function parseMachinePrice(v: unknown): number | null {
   if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? Math.round(v * 100) : null;
   if (typeof v !== 'string') return null;
   const s = v.trim();
   if (/^\d+(\.\d{1,2})?$/.test(s)) return Math.round(Number(s) * 100) || null;
+  if (/^\d{1,3}(,\d{3})+\.\d{1,2}$/.test(s))
+    return Math.round(Number(s.replace(/,/g, '')) * 100) || null;
   if (/^\d{1,3}(\.\d{3})*,\d{1,2}$|^\d+,\d{1,2}$/.test(s)) return parseEuroCents(`${s} €`);
   return null;
 }

@@ -27,11 +27,13 @@ const ld = (offer: string) =>
   `<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"X","offers":${offer}}</script>`;
 
 describe('parseo de precio', () => {
-  it('lee euros españoles y rechaza otros formatos', () => {
+  it('lee euros españoles y el punto decimal sin ambigüedad', () => {
     expect(parseEuroCents('1.299,50 €')).toBe(129950);
     expect(parseEuroCents('12,3€')).toBe(1230);
-    expect(parseEuroCents('12.50 €')).toBeNull();
-    expect(parseEuroCents('1,299.50 €')).toBeNull();
+    // El punto con 1-2 cifras detrás solo puede ser decimal (antes daba null).
+    expect(parseEuroCents('12.50 €')).toBe(1250);
+    expect(parseEuroCents('1,299.50 €')).toBe(129950);
+    expect(parseEuroCents('1,299 €')).toBeNull();
     expect(parseEuroCents('sin precio')).toBeNull();
   });
   it('miles separados por espacio (normal, duro, estrecho o fino) no pierden los miles', () => {
