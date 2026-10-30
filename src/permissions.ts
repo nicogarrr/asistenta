@@ -516,6 +516,15 @@ function decodedBlobs(text: string): string[] {
   return out.slice(0, 32);
 }
 
+/** Acciones del navegador que escriben texto en la página (salida al enviar). */
+const BROWSER_TYPING_ACTIONS: ReadonlySet<string> = new Set([
+  'fill',
+  'type',
+  'choose',
+  'pick',
+  'press',
+]);
+
 function browserFillEchoReason(source: string): string {
   return `Vas a escribir en un formulario web un trozo literal de ${source} leído en este turno; al enviarlo saldría de tu PC.`;
 }
@@ -1302,10 +1311,11 @@ export class Gate {
     // Un formulario del navegador es otra salida: lo que se escribe en un campo
     // viaja al enviar. Si el texto lleva un trozo literal del contenido privado
     // leído en el turno, pregunta (la página puede ser la que lo ha pedido).
-    if (call.tool === 'browser' && (call.args.action === 'fill' || call.args.action === 'type')) {
-      const typed = [call.args.value, call.args.text]
-        .filter((v) => typeof v === 'string')
-        .join(' ');
+    // Lo mismo con choose/pick (texto y sugerencia que se escriben) y press (la tecla).
+    if (call.tool === 'browser' && BROWSER_TYPING_ACTIONS.has(String(call.args.action))) {
+      const fields = [call.args.value, call.args.text, call.args.option, call.args.key];
+      if (call.args.action === 'pick') fields.push(call.args.with);
+      const typed = fields.filter((v) => typeof v === 'string').join(' ');
       if (typed && this.#textEchoesPrivate(sessionId, typed)) return browserFillEchoReason(source);
       return null;
     }
