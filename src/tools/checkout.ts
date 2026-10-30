@@ -198,6 +198,10 @@ export function parsePriceToCents(raw: string): number | null {
 const TOTAL_LABEL =
   /(?:\btotal(?:\s+a\s+pagar)?\b|\bimporte\s+a\s+pagar\b|\bamount\s+due\b|\bgrand\s+total\b)\s*[:=-]?\s*/iu;
 
+/** Words right before a "total" label that make it the total of something else. */
+const NOT_THE_PURCHASE_TOTAL =
+  /(?<![\p{L}\p{N}])(descuentos?|ahorros?|ahorras|ahorrado|ahorro|rebaja|cupon|iva|impuestos?|envio|gastos de envio|discounts?|savings|saved|tax|taxes|vat|shipping)\s*$/u;
+
 function matchPriceAt(text: string, at: number): PriceText | null {
   const re = new RegExp(PRICE_RE.source, 'yi');
   re.lastIndex = at;
@@ -216,6 +220,12 @@ function matchPriceAt(text: string, at: number): PriceText | null {
 export function findTotalPrice(text: string): PriceText | null {
   let found: PriceText | null = null;
   for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
+    // "Descuento total: 5,00 €", "Ahorro total", "IVA total", "Envío total": a total of
+    // something that is not the purchase. If that is the only label on the page, the
+    // discount was quoted as the amount and passed the cap. Any such label denies.
+    if (NOT_THE_PURCHASE_TOTAL.test(fold(text.slice(Math.max(0, m.index - 30), m.index)))) {
+      return null;
+    }
     const price = matchPriceAt(text, m.index + m[0].length);
     if (!price) return null;
     if (found && (found.raw !== price.raw || found.symbol !== price.symbol)) return null;
