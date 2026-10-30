@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type ModelCaps, resolveModelCaps } from '../src/core/models.js';
+import { resolveModelCaps } from '../src/core/models.js';
 
 /**
  * Catalogo de contexto/coste y estimador de tokens.
