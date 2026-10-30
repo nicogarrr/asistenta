@@ -250,6 +250,7 @@ import {
   isMoreRequest,
   moreButton,
   takeFullReply,
+  tooBigForBotDownload,
 } from './channels/telegram.js';
 import { helpText, startText } from './channels/telegram-help.js';
 import {
@@ -5909,11 +5910,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 inbound.documentName ?? inbound.text,
                 `Imagen reenviada "${label}"`,
               )
-            : `[Imagen reenviada: ${label}. Telegram no devolvió el archivo.]`;
+            : `[Imagen reenviada: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
         } else if (docMime.startsWith('audio/')) {
           const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
           if (!bytes) {
-            documentNote = `[Audio reenviado: ${label}. Telegram no devolvió el archivo.]`;
+            documentNote = `[Audio reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
           } else {
             try {
               const heard = await transcribeVoiceNote(bytes, { mimeType: docMime });
@@ -5937,7 +5938,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           try {
             const bytes = await telegram.downloadFile(inbound.documentFileId);
             if (!bytes) {
-              documentNote = `[Documento reenviado: ${label}. Telegram no devolvió el archivo.]`;
+              documentNote = `[Documento reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
             } else {
               // The thread key is the memory scope everywhere: the documents
               // tool reads with () => thread.key, so indexing MUST use the
@@ -5971,7 +5972,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
         if (!bytes) {
           if (receipt.id) progressIds.push(receipt.id);
-          await tell(inbound, 'No he podido descargar el audio.', { quote: true });
+          const tooBig = tooBigForBotDownload(inbound.audioSizeBytes);
+          await tell(
+            inbound,
+            tooBig
+              ? `No he podido descargar el audio. ${tooBig}`
+              : 'No he podido descargar el audio.',
+            { quote: true },
+          );
           return;
         }
         recall.retain(chatKey(inbound), inbound.messageId, bytes);
