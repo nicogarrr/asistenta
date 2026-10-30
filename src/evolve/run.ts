@@ -108,17 +108,61 @@ export function proposerFromEnv(
   };
 }
 
-/** Lee la traza que imprime el evaluador: la última línea JSON de su salida. Estricto. */
+const isStrList = (v: unknown): boolean =>
+  v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+const isOptBool = (v: unknown): boolean => v === undefined || typeof v === 'boolean';
+const isOptStr = (v: unknown): boolean => v === undefined || typeof v === 'string';
+
+/** Una llamada de la traza: nombre de texto; args/result de texto y ok booleano si vienen. */
+function validCall(c: unknown): boolean {
+  if (!c || typeof c !== 'object') return false;
+  const x = c as Record<string, unknown>;
+  return typeof x.name === 'string' && isOptStr(x.args) && isOptStr(x.result) && isOptBool(x.ok);
+}
+
+/**
+ * Lee la traza que imprime el evaluador: la última línea JSON de su salida. Estricto: un JSON
+ * roto o un campo con otro tipo (p. ej. `envError: "false"`, `ok: "false"` o `media: "image"`,
+ * que el juez leería como verdadero o como texto) es «traza inválida», y el caso cuenta como fallo.
+ */
 export function parseTrace(stdout: string): Trace {
   const line = stdout.trim().split('\n').pop() ?? '';
-  const t = JSON.parse(line) as Trace;
+  let t: Record<string, unknown>;
+  try {
+    t = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    throw new Error('traza inválida');
+  }
   if (
-    typeof t?.reply !== 'string' ||
+    !t ||
+    typeof t !== 'object' ||
+    Array.isArray(t) ||
+    typeof t.reply !== 'string' ||
     !Array.isArray(t.toolCalls) ||
-    typeof t.approvalsAsked !== 'number'
+    !t.toolCalls.every(validCall) ||
+    typeof t.approvalsAsked !== 'number' ||
+    !Number.isFinite(t.approvalsAsked) ||
+    !isStrList(t.writes) ||
+    !isStrList(t.media) ||
+    !isStrList(t.protectedTexts) ||
+    !(t.scheduled === undefined || (Array.isArray(t.scheduled) && t.scheduled.every(validSched))) ||
+    !isOptBool(t.envError) ||
+    !isOptBool(t.paymentDataEntered) ||
+    !isOptBool(t.timedOut)
   )
     throw new Error('traza inválida');
-  return t;
+  return t as unknown as Trace;
+}
+
+function validSched(s: unknown): boolean {
+  if (!s || typeof s !== 'object') return false;
+  const x = s as Record<string, unknown>;
+  return (
+    (x.kind === 'once' || x.kind === 'cron') &&
+    isOptStr(x.fireAtIso) &&
+    isOptStr(x.expr) &&
+    isOptStr(x.tz)
+  );
 }
 
 /**
