@@ -4,6 +4,7 @@ import { tmpdir, uptime } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  clearStoppedOnPurpose,
   type DaemonRunState,
   describeDecision,
   readStoppedOnPurpose,
@@ -170,6 +171,11 @@ export async function autostartCommand(
     return 1;
   }
   const whatIf = args.includes('--what-if');
+  // --start la deja encendida a propósito: igual que `pa iniciar`, quita la marca de
+  // `pa stop` para que el vigilante vuelva a levantarla si se cae antes de reiniciar.
+  if (action === 'install' && !whatIf && args.includes('--start')) {
+    clearStoppedOnPurpose(stateDir);
+  }
   if (action === 'install' && !whatIf && watchdogEnabled()) {
     await installWatchdog(stateDir, opts.cliJs ?? join(repo, 'dist', 'cli.js'));
   }
