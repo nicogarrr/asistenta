@@ -912,12 +912,22 @@ ${renderFormatScript()}
           mostrarAviso('');
           ultimaDecision = decision.hecho + ': «' + tarjeta.getAttribute('data-titulo') + '».';
           await cargarAprobaciones();
+          // La tarjeta decidida desaparece y el foco del teclado con ella: pasa al aviso
+          // «Aprobado: …», nunca al botón de otra aprobación (no se decide dos veces).
+          var contenedor = document.getElementById('panel-aprobaciones');
+          devolverFoco(contenedor.querySelector('.resultado.chip') || contenedor);
         } catch (error) {
-          for (var j = 0; j < botones.length; j += 1) botones[j].disabled = false;
+          var pulsado = null;
+          for (var j = 0; j < botones.length; j += 1) {
+            botones[j].disabled = false;
+            if (botones[j].textContent === decision.texto) pulsado = botones[j];
+          }
           var resultado = tarjeta.querySelector('.resultado');
           resultado.className = 'resultado error';
           resultado.textContent =
             error && error.message ? error.message : 'No se pudo aplicar la decisión.';
+          // El botón pulsado se desactivó y perdió el foco: vuelve a él para reintentar.
+          devolverFoco(pulsado);
         }
       }
 
@@ -1546,6 +1556,8 @@ ${renderFormatScript()}
         campo.value = '';
         evento.currentTarget.hidden = true;
         mostrarAviso('');
+        // El formulario se oculta con el foco dentro: pasa al contenido principal.
+        document.getElementById('contenido').focus();
         refrescarTodo();
       });
 
