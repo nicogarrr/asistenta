@@ -12,7 +12,9 @@ import {
   BATTERY_FILE,
   type BatteryRun,
   type BatteryRunner,
+  cycleOfWeek,
   gateFromFile,
+  heavyRotation,
   unscored,
 } from './battery-gate.js';
 import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history.js';
@@ -227,6 +229,25 @@ export function notCounting(stateDir: string, file = join(repoRoot(), BATTERY_FI
   }
 }
 
+/** Qué casos pesados rotan en la semana `week` (un tercio cada semana), en una línea. */
+export function heavyThisWeek(
+  stateDir: string,
+  file = join(repoRoot(), BATTERY_FILE),
+  week = isoWeek(),
+): string {
+  try {
+    const b = loadBattery(file);
+    const r = heavyRotation(
+      b,
+      cycleOfWeek(week),
+      quarantinedCases(join(stateDir, HISTORY_DIR), b.cases),
+    );
+    return `Casos pesados que rotan esta semana (turno ${r.turn} de 3): ${r.ids.length ? r.ids.join(', ') : 'ninguno'}.`;
+  } catch {
+    return 'Casos pesados de esta semana: no se pudo leer la batería.';
+  }
+}
+
 /** What /evolucion says without running anything: the last week, in plain Spanish. */
 export function describeLast(stateDir: string): string {
   const archive = new Archive(join(stateDir, 'evolve', 'attempts.jsonl'));
@@ -248,6 +269,7 @@ export function describeLast(stateDir: string): string {
     `Ideas en cola: ${ideas.length}.`,
     lastBattery(rows),
     notCounting(stateDir),
+    heavyThisWeek(stateDir),
     ...lines,
     'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
   ].join('\n');
@@ -275,7 +297,7 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
   }
   try {
     // Los casos heavy rotan por semana ISO: base y candidato corren la misma selección.
-    const cycle = Number(isoWeek().split('W')[1]) || 0;
+    const cycle = cycleOfWeek(isoWeek());
     const gate = gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run);
     const historyDir = join(i.stateDir, HISTORY_DIR);
     const battery = {

@@ -70,6 +70,26 @@ export function selectCases(
   });
 }
 
+/** Ciclo de rotación de una semana ISO («2026-W44» → 44); base y candidato usan el mismo. */
+export function cycleOfWeek(week: string): number {
+  return Number(week.split('W')[1]) || 0;
+}
+
+/**
+ * Los heavy que rotan y entran en el ciclo `cycleIndex` (sin los 'always', que corren siempre):
+ * el turno (1 a 3) y sus ids, la misma selección que hace selectCases.
+ */
+export function heavyRotation(
+  b: Pick<Battery, 'cases'>,
+  cycleIndex: number,
+  quarantined: Set<string> = new Set(),
+): { turn: number; ids: string[] } {
+  const ids = selectCases(b, cycleIndex, quarantined)
+    .filter((c) => c.cost === 'heavy' && c.rotation !== 'always')
+    .map((c) => c.id);
+  return { turn: (((cycleIndex % 3) + 3) % 3) + 1, ids };
+}
+
 /** Casos que no puntúan y por qué, para el informe a Nico. */
 export function unscored(
   b: Pick<Battery, 'cases'>,
