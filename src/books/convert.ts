@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { childEnv } from '../child-env.js';
 
 /**
  * PDF -> EPUB with calibre's `ebook-convert`, the one converter that handles PDFs well
@@ -24,10 +25,15 @@ export type Runner = (
 
 const defaultRunner: Runner = (cmd, args, timeoutMs) =>
   new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, _out, stderr) => {
-      const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-      resolve({ code, stderr: String(stderr ?? '').slice(-400) });
-    });
+    execFile(
+      cmd,
+      args,
+      { timeout: timeoutMs, windowsHide: true, env: childEnv() },
+      (err, _out, stderr) => {
+        const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+        resolve({ code, stderr: String(stderr ?? '').slice(-400) });
+      },
+    );
   });
 
 /** First converter that answers `--version`, or null. */

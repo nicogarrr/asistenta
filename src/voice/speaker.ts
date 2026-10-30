@@ -9,6 +9,7 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { childEnv } from '../child-env.js';
 
 export interface Playback {
   /** Resolves when the file finished playing or was stopped; rejects on a playback error. */
@@ -44,7 +45,7 @@ export function createMciSpeaker(): Speaker {
         {
           windowsHide: true,
           stdio: ['ignore', 'ignore', 'pipe'],
-          env: { ...process.env, PA_SPK_FILE: file },
+          env: childEnv({ PA_SPK_FILE: file }),
         },
       );
       let stopped = false;

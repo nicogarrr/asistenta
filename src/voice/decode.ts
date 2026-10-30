@@ -27,6 +27,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { childEnv } from '../child-env.js';
 import type { DecodedPcm } from './audio.js';
 import { decodeOggOpusToPcm } from './audio.js';
 
@@ -131,7 +132,7 @@ export async function decodeAudioWithFfmpeg(
     ];
 
     return await new Promise<FfmpegDecoded>((resolve, reject) => {
-      const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(FFMPEG, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() });
       const chunks: Buffer[] = [];
       let outBytes = 0;
       let stderrTail = '';

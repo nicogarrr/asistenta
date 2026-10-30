@@ -13,6 +13,7 @@ const FFMPEG: string | null =
     ? ffmpegStatic
     : ((ffmpegStatic as { default?: string }).default ?? null);
 
+import { childEnv } from '../child-env.js';
 import { COOKIE_BROWSERS } from './cookie-browsers.js';
 
 /**
@@ -82,7 +83,7 @@ function run(
     execFile(
       file,
       args,
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true, env: childEnv() },
       (err, stdout, stderr) => {
         if (!err) return resolve({ stdout, stderr, code: 0 });
         const e = err as NodeJS.ErrnoException & { code?: string | number };

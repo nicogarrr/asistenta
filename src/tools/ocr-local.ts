@@ -6,6 +6,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
+import { childEnv } from '../child-env.js';
 
 export type OcrModel = 'ppocr' | 'glm';
 
@@ -82,7 +83,12 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
   const spawnFn =
     o.spawnFn ??
     ((cmd: string, a: string[]) =>
-      spawn(cmd, a, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false }));
+      spawn(cmd, a, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        shell: false,
+        env: childEnv(),
+      }));
   return new Promise((done, fail) => {
     let child: ChildProcess;
     try {
