@@ -1,3 +1,4 @@
+import { localDay, wallClock, zonedTime } from './datecontext.js';
 /**
  * El resumen proactivo del día, en texto plano y en español.
  *
@@ -46,7 +47,8 @@ function pad(value: number): string {
 /** `domingo 25/10`, para el único caso en que el briefing habla del día sin agenda. */
 function dayLabel(today: Date): string {
   if (Number.isNaN(today.getTime())) return 'hoy';
-  return `${WEEKDAYS_ES[today.getDay()] ?? 'día'} ${pad(today.getDate())}/${pad(today.getMonth() + 1)}`;
+  const w = wallClock(today);
+  return `${WEEKDAYS_ES[w.weekday] ?? 'día'} ${pad(w.day)}/${pad(w.month)}`;
 }
 
 function agendaLine(item: { title: string; when: string }): string | null {
@@ -227,19 +229,16 @@ export function briefingDue(lastMs: number | undefined, now: Date, hour = 8): bo
   if (!Number.isFinite(nowMs)) return false;
 
   const safeHour = Number.isFinite(hour) ? Math.min(23, Math.max(0, Math.trunc(hour))) : 8;
-  const scheduled = new Date(nowMs);
-  scheduled.setHours(safeHour, 0, 0, 0);
-  if (nowMs < scheduled.getTime()) return false;
+  // La hora del briefing es la de Nico (PA_TIMEZONE), no la del proceso.
+  const today = wallClock(now);
+  if (nowMs < zonedTime(today.year, today.month, today.day, safeHour)) return false;
 
   if (lastMs === undefined || !Number.isFinite(lastMs) || lastMs <= 0) return true;
   const last = new Date(lastMs);
   if (!Number.isFinite(last.getTime())) return false;
 
   // Comparar el día local, no el instante: un envío a las 07:00 de hoy ya es el de hoy.
-  const sameDay =
-    last.getFullYear() === now.getFullYear() &&
-    last.getMonth() === now.getMonth() &&
-    last.getDate() === now.getDate();
+  const sameDay = localDay(last) === localDay(now);
   if (sameDay) return false;
   // Un último envío fechado en un día FUTURO es imposible: el reloj iba adelantado
   // y luego se corrigió. Antes bloqueaba el briefing hasta que pasara esa fecha

@@ -129,6 +129,29 @@ export function buildNowNote(at: Date = new Date(), timeZone: string = localTime
 const WALL_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
+ * Instante (ms) de una fecha y hora de pared en la zona configurada (PA_TIMEZONE).
+ * Inversa de `wallClock`; lo que `new Date(y, m, d, h)` hace en la zona del proceso.
+ */
+export function zonedTime(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  timeZone: string = localTimeZone(),
+): number {
+  // Date.UTC normaliza desbordes (día 32 → día 1 del mes siguiente); dos pasadas
+  // asientan el desfase de la zona, cambios de hora incluidos.
+  const naive = Date.UTC(year, month - 1, day, hour, minute);
+  let at = naive;
+  for (let i = 0; i < 2; i++) {
+    const w = wallClock(new Date(at), timeZone);
+    at -= Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute) - naive;
+  }
+  return at;
+}
+
+/**
  * Fecha y hora de pared de `d` en la zona configurada (PA_TIMEZONE), no en la del
  * proceso. Para todo lo que se enseña o se programa por hora local fuera de
  * `applyConfiguredTimeZone` (tests, e2e, librería). weekday: 0 = domingo.
