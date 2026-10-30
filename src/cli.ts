@@ -58,6 +58,7 @@ import {
   isReminderTitle,
   isStatusTitle,
   isWatchListTitle,
+  marksCardTitle,
   marksWithTitles,
   progressNote,
   shorten,
@@ -3898,7 +3899,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, marksWithTitles(text, isWatchListTitle), {
       quote: true,
       format: 'marks',
-      buttons: watchStopButtons(list),
+      buttons: watchListButtons(list),
     });
   };
 
@@ -3911,7 +3912,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!w) {
       return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
     }
-    await say(inbound, describeWatch(w, pageWatches.summary(w.id)), { quote: true });
+    await say(inbound, marksCardTitle(describeWatch(w, pageWatches.summary(w.id))), {
+      quote: true,
+      format: 'marks',
+    });
   };
 
   /**
@@ -3940,7 +3944,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         fetchHtml: fetchPageHtml,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
-      await say(inbound, describeCompare(report), { quote: true });
+      await say(inbound, marksCardTitle(describeCompare(report)), { quote: true, format: 'marks' });
     } catch (err) {
       await say(inbound, friendlyError(err), { quote: true });
     }
@@ -7456,6 +7460,22 @@ export function watchStopButtons(
     .slice(0, 8)
     .map((w) => commandButton(`🗑 Dejar de vigilar ${w.label || w.url}`, 'dejar_de_vigilar', w.id))
     .filter((b): b is { label: string; action: string } => b !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
+/**
+ * /vigilando: por página, «📈 Precio …» (enseña su ficha, como /precio <id>) y al lado
+ * «🗑 Dejar de vigilar …»; cada pareja va en su propia fila del teclado.
+ */
+export function watchListButtons(
+  list: ReadonlyArray<{ id: string; label: string; url: string }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = (watchStopButtons(list) ?? []).flatMap((stop) => {
+    const id = stop.action.slice(stop.action.lastIndexOf(' ') + 1);
+    const w = list.find((x) => x.id === id);
+    const price = w ? commandButton(`📈 Precio ${w.label || w.url}`, 'precio', w.id) : undefined;
+    return price ? [price, stop] : [stop];
+  });
   return buttons.length ? buttons : undefined;
 }
 
