@@ -18,3 +18,7 @@ Apagado por defecto. Con `PA_MCP_HTTP=1`, las entradas de `PA_MCP_SERVERS` que l
 - Sus tools se publican igual que las de stdio (`mcp_<servidor>_<tool>`).
 
 Sin `PA_MCP_HTTP=1` nada cambia: las entradas con `url` se ignoran como hasta ahora.
+
+## Comprobarlo con `pa doctor`
+
+`pa doctor` muestra una línea `mcp http` con el estado del transporte (apagado o activado) y, por cada entrada con `url` de `PA_MCP_SERVERS`, si está configurada (solo el origen de la URL y si el token `mcp:<nombre>:token` está guardado, nunca su valor) u omitida y por qué (transporte apagado, URL no permitida, nombre no válido o repetido). No conecta con ningún servidor.

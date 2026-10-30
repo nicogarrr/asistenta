@@ -64,31 +64,62 @@ export function checkMcpUrl(raw: string): URL | null {
   return null;
 }
 
+/** Entrada HTTP de PA_MCP_SERVERS que no se usa, con el motivo (para `pa doctor`). */
+export interface McpHttpSkipped {
+  name: string;
+  reason: string;
+}
+
+/** Resultado de leer las entradas HTTP de PA_MCP_SERVERS. */
+export interface McpHttpServersReport {
+  servers: McpHttpServerConfig[];
+  skipped: McpHttpSkipped[];
+  /** true si PA_MCP_SERVERS tiene texto pero no es una lista JSON. */
+  invalid: boolean;
+}
+
+const URL_NOT_ALLOWED =
+  'URL no permitida (https, o http solo a localhost; sin usuario ni contraseña)';
+
 /**
- * Lee las entradas HTTP de PA_MCP_SERVERS (las que tienen `url` y no `command`).
- * Se descartan nombres invalidos o repetidos y URLs no permitidas (con aviso).
+ * Clasifica las entradas HTTP de PA_MCP_SERVERS (las que tienen `url` y no
+ * `command`): las validas y las omitidas con su motivo. Nunca guarda la URL de
+ * una entrada omitida (podria llevar credenciales).
  */
-export function parseMcpHttpServers(raw: string | undefined): McpHttpServerConfig[] {
-  if (!raw || !raw.trim()) return [];
+export function readMcpHttpServers(raw: string | undefined): McpHttpServersReport {
+  const report: McpHttpServersReport = { servers: [], skipped: [], invalid: false };
+  if (!raw || !raw.trim()) return report;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    report.invalid = true;
+    return report;
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) {
+    report.invalid = true;
+    return report;
+  }
   const seen = new Set<string>();
-  const servers: McpHttpServerConfig[] = [];
   for (const item of parsed) {
-    if (!isRecord(item) || typeof item.name !== 'string' || typeof item.url !== 'string') continue;
+    if (!isRecord(item) || typeof item.url !== 'string') continue;
     if (typeof item.command === 'string') continue;
-    const name = item.name.trim();
-    if (!name || !NAME_PATTERN.test(name) || seen.has(name)) continue;
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    const shown = name ? name.slice(0, 40) : '(sin nombre)';
+    if (!name || !NAME_PATTERN.test(name)) {
+      report.skipped.push({
+        name: shown,
+        reason: 'nombre no válido (solo letras, números, _ y -)',
+      });
+      continue;
+    }
+    if (seen.has(name)) {
+      report.skipped.push({ name: shown, reason: 'nombre repetido' });
+      continue;
+    }
     const url = checkMcpUrl(item.url.trim());
     if (!url) {
-      log.warn('Servidor MCP HTTP omitido: URL no permitida (https, o http solo a localhost)', {
-        server: name,
-      });
+      report.skipped.push({ name: shown, reason: URL_NOT_ALLOWED });
       continue;
     }
     const server: McpHttpServerConfig = { name, url: url.toString() };
@@ -105,9 +136,61 @@ export function parseMcpHttpServers(raw: string | undefined): McpHttpServerConfi
         .map((tool) => tool.trim());
     }
     seen.add(name);
-    servers.push(server);
+    report.servers.push(server);
   }
-  return servers;
+  return report;
+}
+
+/**
+ * Lee las entradas HTTP de PA_MCP_SERVERS (las que tienen `url` y no `command`).
+ * Se descartan nombres invalidos o repetidos y URLs no permitidas (con aviso).
+ */
+export function parseMcpHttpServers(raw: string | undefined): McpHttpServerConfig[] {
+  const report = readMcpHttpServers(raw);
+  for (const skipped of report.skipped) {
+    if (skipped.reason !== URL_NOT_ALLOWED) continue;
+    log.warn('Servidor MCP HTTP omitido: URL no permitida (https, o http solo a localhost)', {
+      server: skipped.name,
+    });
+  }
+  return report.servers;
+}
+
+/**
+ * Lineas de `pa doctor` sobre los servidores MCP por HTTP: cuales estan
+ * configurados y cuales se omiten y por que. No conecta con nadie. Del token
+ * solo dice si esta guardado; su valor nunca sale. De la URL solo se muestra el
+ * origen (sin ruta ni parametros, que podrian llevar secretos).
+ */
+export async function mcpHttpDoctorLines(
+  env: NodeJS.ProcessEnv = process.env,
+  getSecret: SecretGetter = vaultGet,
+): Promise<string[]> {
+  const label = 'mcp http        ';
+  const report = readMcpHttpServers(env.PA_MCP_SERVERS);
+  const enabled = mcpHttpEnabled(env);
+  if (report.invalid) return [`${label}PA_MCP_SERVERS no es una lista JSON válida`];
+  if (!report.servers.length && !report.skipped.length) {
+    return [
+      `${label}${enabled ? 'activado, pero' : 'apagado (PA_MCP_HTTP=1),'} sin servidores con "url" en PA_MCP_SERVERS`,
+    ];
+  }
+  const lines = [
+    `${label}${enabled ? 'activado (PA_MCP_HTTP=1)' : 'apagado (PA_MCP_HTTP=1 para activarlo)'}`,
+  ];
+  for (const server of report.servers) {
+    if (!enabled) {
+      lines.push(`  ${server.name}: omitido: PA_MCP_HTTP no es 1 (apagado por defecto)`);
+      continue;
+    }
+    const token = await getSecret(`mcp:${server.name}:token`).catch(() => undefined);
+    const hasToken = typeof token === 'string' && token.trim().length > 0;
+    lines.push(
+      `  ${server.name}: configurado (${new URL(server.url).origin}; token ${hasToken ? 'guardado' : `sin guardar (mcp:${server.name}:token)`})`,
+    );
+  }
+  for (const skipped of report.skipped) lines.push(`  ${skipped.name}: omitido: ${skipped.reason}`);
+  return lines;
 }
 
 /** Busca en un cuerpo SSE el mensaje JSON-RPC con el id pedido. */
