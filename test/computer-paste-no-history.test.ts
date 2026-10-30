@@ -13,15 +13,17 @@ describe('paste: optional exclusion from Win+V history', () => {
   });
 
   it('the flag is off unless PA_COMPUTER_PASTE_NO_HISTORY=1', () => {
-    expect(pasteNoHistory({})).toBe(false);
+    expect(pasteNoHistory({})).toBe(true);
     expect(pasteNoHistory({ PA_COMPUTER_PASTE_NO_HISTORY: '0' })).toBe(false);
-    expect(pasteNoHistory({ PA_COMPUTER_PASTE_NO_HISTORY: 'true' })).toBe(false);
+    expect(pasteNoHistory({ PA_COMPUTER_PASTE_NO_HISTORY: 'true' })).toBe(true);
     expect(pasteNoHistory({ PA_COMPUTER_PASTE_NO_HISTORY: '1' })).toBe(true);
   });
 
   it('with the flag our text goes in a DataObject marked out of history, cloud and monitors', () => {
     const s = pasteScript(P, 400, true);
-    expect(s).not.toContain(PLAIN);
+    // the plain set only survives as the fallback when the private one throws
+    expect(s.split(PLAIN).length - 1).toBe(1);
+    expect(s).toContain(`if (-not $privateSet) { ${PLAIN}`);
     for (const f of [
       'CanIncludeInClipboardHistory',
       'CanUploadToCloudClipboard',
@@ -47,9 +49,13 @@ describe('paste: optional exclusion from Win+V history', () => {
       await new WindowsScreen(run).type('😀');
       expect(calls.some((c) => c.includes('CanIncludeInClipboardHistory'))).toBe(true);
       calls.length = 0;
-      delete process.env.PA_COMPUTER_PASTE_NO_HISTORY;
+      process.env.PA_COMPUTER_PASTE_NO_HISTORY = '0';
       await new WindowsScreen(run).type('😀');
       expect(calls.some((c) => c.includes('CanIncludeInClipboardHistory'))).toBe(false);
+      calls.length = 0;
+      delete process.env.PA_COMPUTER_PASTE_NO_HISTORY;
+      await new WindowsScreen(run).type('😀');
+      expect(calls.some((c) => c.includes('CanIncludeInClipboardHistory'))).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.PA_COMPUTER_PASTE_NO_HISTORY;
       else process.env.PA_COMPUTER_PASTE_NO_HISTORY = prev;
