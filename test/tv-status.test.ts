@@ -116,8 +116,8 @@ describe('estado en vivo de la tele', () => {
     const st = await readTvStatus({ ssap: ssapFor(tv) });
     expect(st).toMatchObject({ reachable: false, power: 'apagada o fuera de red', appId: null });
     expect(describeTvStatus(st)).toMatch(/apagada del todo o fuera de la red/);
-    // Solo la lectura de energia (con su reintento de conexion): no sigue abriendo sockets.
-    expect(tv.urls).toHaveLength(2);
+    // Solo la lectura de energia (con sus 2 reintentos de conexion): no sigue abriendo sockets.
+    expect(tv.urls).toHaveLength(3);
   });
 
   it('una lectura que falla deja ese dato en null y el resto sigue', async () => {
