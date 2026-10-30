@@ -1,0 +1,5 @@
+# GLM-OCR (zai-org/GLM-OCR, MIT) con transformers en CPU. torch se instala aparte desde el índice CPU (ver setup).
+transformers>=5.17
+accelerate>=1.0
+pypdfium2>=4.30
+pillow>=10
