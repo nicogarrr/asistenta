@@ -32,7 +32,11 @@ import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
-import { routeInboundToAltavoz } from './audio/altavoz-inbound.js';
+import {
+  altavozVoiceReplyEnabled,
+  routeInboundToAltavoz,
+  routeReplyToAltavoz,
+} from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
@@ -2323,6 +2327,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         : undefined;
     const id = await say(inbound, short.text, { audio, format: 'marks', buttons });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
+    // PA_ALTAVOZ_VOZ=1: la respuesta también suena donde sonó la nota (PC/tele), tras
+    // el texto y sin esperarla. Reutiliza la voz ya hecha para Telegram si la hay.
+    routeReplyToAltavoz(inbound, text, {
+      enabled: altavozVoiceReplyEnabled(),
+      mode: altavoz.get(chatKey(inbound)),
+      desktop,
+      ownerUserId: vigilanteOwnerId,
+      player: altavozPlayer,
+      speak: async () => {
+        if (audio) return { data: Buffer.from(audio.data, 'base64'), mimeType: audio.mimeType };
+        const spoken = await speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+          log.warn('altavoz: sin voz para la respuesta', { reason }),
+        );
+        return spoken ? { data: spoken.data, mimeType: spoken.mimeType } : null;
+      },
+      reply: (notice) => {
+        void say(inbound, notice, { quote: true });
+      },
+      key: chatKey(inbound),
+      onError: (err) => log.warn('altavoz: no pude decir la respuesta', { err: String(err) }),
+    });
     if (short.truncated) {
       log.info('reply shortened', { chars: cleaned.length, thread: thread.name });
     }
