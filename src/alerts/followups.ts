@@ -253,6 +253,22 @@ export class FollowupTracker {
     return extra > 0 ? `${lines.join('\n')}\n…y ${extra} más.` : lines.join('\n');
   }
 
+  /**
+   * Las notas de UN chat (todos sus hilos: `chatKey#…`), las más nuevas primero.
+   * La agenda y el resumen semanal de un chat no deben enseñar lo que se apuntó
+   * en otro (un grupo veía los pendientes del privado de Nico). Rango por
+   * prefijo en SQL: `#` + 1 = `$`, así `telegram:b:12` no arrastra `telegram:b:123#…`.
+   */
+  forChat(chatKey: string, limit = 200): Followup[] {
+    return (
+      this.#db
+        .prepare(
+          `SELECT * FROM followups WHERE scope >= ? AND scope < ? ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(`${chatKey}#`, `${chatKey}$`, limit) as Record<string, unknown>[]
+    ).map(rowToFollowup);
+  }
+
   list(scope?: string, limit = 20): Followup[] {
     const rows = scope
       ? (this.#db

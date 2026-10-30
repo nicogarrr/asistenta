@@ -3790,7 +3790,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             },
             days: window,
           }),
-        followups: () => followups.list(undefined, 200),
+        followups: () => followups.forChat(chatKey(inbound), 200),
         routines: () => scheduledAgenda(inbound),
         goals: () => goalStore.list().filter((goal) => inChatScope(goal.scope, chatKey(inbound))),
       },
@@ -4065,7 +4065,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       extra,
       entries: actions.recent(5000),
       now: Date.now(),
-      pending: followups.safe(() => followups.summarize(), ''),
+      // Solo los pendientes de ESTE chat: con varios usuarios permitidos, cada uno
+      // recibía en su privado los de todos.
+      pending: followups.safe(
+        () =>
+          followups.summarize(Date.now(), {
+            chatKey: chatKey({ channel: 'telegram', account: telegram.account, chatId }),
+          }),
+        '',
+      ),
       playbooks: gestorStore.playbookOutcomes(),
       barge: bargeStats.totals(Date.now() - 7 * 24 * 3_600_000),
       watching: pageWatches.list(chatId).length,
