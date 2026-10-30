@@ -18,6 +18,7 @@
  * every day would be reported as overdue forever.
  */
 
+import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
 
@@ -109,7 +110,7 @@ export class FollowupTracker {
    * `due_at > 0`, so 0 is the only value that never reads as "vencio").
    */
   track(scope: string, kind: string, subject: string, dueAt: number): string {
-    const id = `${kind}:${subject}`.slice(0, 200);
+    const id = this.#idFor(scope, kind, subject);
     const now = this.#now();
     this.#db
       .prepare(
@@ -129,6 +130,26 @@ export class FollowupTracker {
       )
       .run(id, scope, kind, subject, now, dueAt, now);
     return id;
+  }
+
+  /**
+   * La misma nota en dos chats son dos notas. El id legible (`kind:asunto`) se
+   * conserva para la primera; si ya lo usa OTRO chat, la nueva lleva un sufijo
+   * estable derivado de su scope. Antes el id no tenía scope: la segunda nota
+   * reescribía el scope de la primera y el chat original la perdía.
+   */
+  #idFor(scope: string, kind: string, subject: string): string {
+    const existing = this.#db
+      .prepare('SELECT id FROM followups WHERE scope = ? AND kind = ? AND subject = ? LIMIT 1')
+      .get(scope, kind, subject) as { id?: unknown } | undefined;
+    if (existing && typeof existing.id === 'string') return existing.id;
+    const base = `${kind}:${subject}`.slice(0, 200);
+    const owner = this.#db.prepare('SELECT scope FROM followups WHERE id = ?').get(base) as
+      | { scope?: unknown }
+      | undefined;
+    if (!owner || owner.scope === scope) return base;
+    const tag = createHash('sha1').update(scope).digest('hex').slice(0, 6);
+    return `${base.slice(0, 192)}@${tag}`;
   }
 
   /** Record that the user touched this subject again, so the silence clock restarts. */
@@ -211,9 +232,13 @@ export class FollowupTracker {
    * agent the user mutes. The three most pressing things are enough to act on, and the
    * count makes it clear the list is not exhaustive.
    */
-  summarize(now = Date.now()): string {
-    const due = this.due(now);
-    const late = this.overdue(3, now).filter((f) => !due.some((d) => d.id === f.id));
+  summarize(now = Date.now(), opts: { chatKey?: string } = {}): string {
+    const mine = (f: Followup): boolean =>
+      opts.chatKey === undefined || f.scope.startsWith(`${opts.chatKey}#`);
+    const due = this.due(now).filter(mine);
+    const late = this.overdue(3, now)
+      .filter(mine)
+      .filter((f) => !due.some((d) => d.id === f.id));
     const lines: string[] = [];
 
     for (const item of due.slice(0, 3)) {

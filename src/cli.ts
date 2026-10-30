@@ -4520,7 +4520,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** What the user said they would do, in the tracker's own Spanish summary. */
   const cmdFollowups = async (inbound: Inbound): Promise<void> => {
-    const text = followups.safe(() => followups.summarize(), 'No he podido leer los pendientes.');
+    // Solo los de este chat: un grupo no debe ver lo que Nico se apuntó en privado.
+    const text = followups.safe(
+      () => followups.summarize(Date.now(), { chatKey: chatKey(inbound) }),
+      'No he podido leer los pendientes.',
+    );
     await say(inbound, text, { quote: true });
   };
 
@@ -4543,7 +4547,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const needle = want.toLowerCase();
     const matches = followups.safe(() => {
-      const pending = followups.list(undefined, 200).filter((f) => f.status === 'pending');
+      // Solo los de este chat: el mismo asunto en otro chat es otra nota.
+      const here = chatKey(inbound);
+      const pending = followups
+        .list(undefined, 500)
+        .filter((f) => f.status === 'pending' && inChatScope(f.scope, here));
       const byId = pending.filter((f) => f.id === want);
       const found = byId.length
         ? byId
