@@ -4,6 +4,10 @@ import { log } from '../log.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 
+/** Archivos que /api/chat deja pasar al panel (ver panel-chat.ts PANEL_FILE_TYPES). */
+const PANEL_FILE_URL =
+  /^data:(application\/pdf|application\/epub\+zip|video\/mp4|audio\/ogg|audio\/mpeg|application\/octet-stream);base64,[A-Za-z0-9+/=]*$/;
+
 /** Decisiones que acepta una aprobacion del panel. */
 export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny';
 
@@ -25,7 +29,9 @@ export interface WebUiDeps {
   /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
   routines?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
-  chat?(text: string): Promise<{ text: string; images?: string[] }>;
+  chat?(
+    text: string,
+  ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -260,7 +266,28 @@ async function respondApi(
                 typeof u === 'string' && /^data:image\/(png|jpeg);base64,/.test(u),
             )
           : [];
-        payload = images.length > 0 ? { text: answer.text, images } : { text: answer.text };
+        // Archivos del turno del panel (documentos, vídeo, voz): nombre sin rutas y
+        // `data:` de una lista corta de tipos; nada más, máx. 4.
+        const files = Array.isArray(answer.files)
+          ? answer.files
+              .filter(
+                (f): f is { name: string; url: string } =>
+                  isRecord(f) &&
+                  typeof f.name === 'string' &&
+                  f.name.length > 0 &&
+                  f.name.length <= 120 &&
+                  // biome-ignore lint/suspicious/noControlCharactersInRegex: se rechazan a propósito nombres con caracteres de control
+                  !/[\\/\u0000-\u001f"<>]/.test(f.name) &&
+                  typeof f.url === 'string' &&
+                  PANEL_FILE_URL.test(f.url),
+              )
+              .slice(0, 4)
+              .map((f) => ({ name: f.name, url: f.url }))
+          : [];
+        const out: Record<string, unknown> = { text: answer.text };
+        if (images.length > 0) out.images = images;
+        if (files.length > 0) out.files = files;
+        payload = out;
         break;
       }
       case 'approval': {
