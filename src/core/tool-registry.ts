@@ -1,6 +1,8 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Config } from '../config.js';
-import { type ActionGate, createComputerTool, type ScreenBackend } from '../tools/computer.js';
+import { ThreadOutputs, threadContext } from '../daemon/thread-context.js';
+import { computerPlugin } from '../plugins/computer.js';
+import type { ActionGate, ScreenBackend } from '../tools/computer.js';
 import { createAskTool, createDoneTool } from '../tools/done.js';
 import { createFactoryTool } from '../tools/factory.js';
 import { createFetchTool } from '../tools/fetch.js';
@@ -56,6 +58,12 @@ export function baseTools(deps: BaseToolDeps): AgentTool[] {
     createFactoryTool({ onChange: deps.onFactoryChange }),
     createShellTool(deps.config),
     deps.delegate,
-    createComputerTool(deps.config, deps.screen, deps.computerGate),
+    // El mismo plugin que usa cada hilo del daemon, con un contexto sin hilo: sin
+    // turno del panel ni canal, así que la tool es la de siempre (sin envío de capturas).
+    ...computerPlugin.tools({
+      config: deps.config,
+      screen: deps.screen,
+      ctx: threadContext({ key: 'local', outputs: new ThreadOutputs(), gate: deps.computerGate }),
+    }),
   ] as AgentTool[];
 }
