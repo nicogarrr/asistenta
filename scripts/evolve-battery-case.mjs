@@ -27,7 +27,9 @@ process.env.USERPROFILE = dir;
 
 let code = 1;
 try {
-  const mod = await import(pathToFileURL(join(process.cwd(), 'src', 'evolve', 'battery-case.ts')).href);
+  const mod = await import(
+    pathToFileURL(join(process.cwd(), 'src', 'evolve', 'battery-case.ts')).href
+  );
   let c;
   try {
     c = mod.caseFromEnv(process.env);
@@ -36,13 +38,20 @@ try {
     code = 2;
   }
   if (c) {
-    const { loadConfig } = await import(pathToFileURL(join(process.cwd(), 'src', 'config.ts')).href);
-    const trace = await mod.runBatteryCase(c, { config: loadConfig(), stateDir: join(dir, 'caso') });
+    const { loadConfig } = await import(
+      pathToFileURL(join(process.cwd(), 'src', 'config.ts')).href
+    );
+    const trace = await mod.runBatteryCase(c, {
+      config: loadConfig(),
+      stateDir: join(dir, 'caso'),
+    });
     process.stdout.write(`${JSON.stringify(trace)}\n`);
     code = 0;
   }
 } catch (e) {
-  process.stderr.write(`El evaluador de la batería falló: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.stderr.write(
+    `El evaluador de la batería falló: ${e instanceof Error ? e.message : String(e)}\n`,
+  );
   code = 1;
 } finally {
   try {
