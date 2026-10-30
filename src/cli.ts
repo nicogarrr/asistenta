@@ -404,7 +404,7 @@ import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
-import { panelNextUp } from './webui/next-up.js';
+import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -1619,6 +1619,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         {
           token: webToken,
           goals: () => panelGoals.read(),
+          // Tarjeta Rutinas: solo lectura, mismo ámbito que Estado. Antes de que
+          // arranquen las rutinas (o si algo falla) la ruta responde 503.
+          routines: () => {
+            try {
+              return panelRoutines(
+                store.listRoutines(),
+                routineRunner.status(),
+                (r) => commandRoutineTag(r, commandRoutines, commandRoutinesEnabled()),
+                vigilanteOwnerId ?? undefined,
+              );
+            } catch {
+              return null;
+            }
+          },
           status: () => ({
             model: config.model,
             provider: config.provider,

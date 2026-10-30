@@ -118,6 +118,9 @@ export function formatearCampo(clave: string, valor: unknown, zona?: string): st
     if (m > 0) return `${m} min ${s % 60} s`;
     return `${s} s`;
   };
+  // Sin recordatorio/rutina por delante no es «sin datos»: no hay ninguno.
+  if ((clave === 'proximoRecordatorio' || clave === 'proximaRutina') && valor === null)
+    return 'Ninguno';
   if (typeof valor === 'number' && Number.isFinite(valor)) {
     if (/(Seconds|Secs)$/.test(clave)) return duracion(valor);
     if (/(Duration|Elapsed)Ms$|^(durationMs|elapsedMs)$/.test(clave)) return duracion(valor / 1000);

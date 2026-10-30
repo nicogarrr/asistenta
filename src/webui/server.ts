@@ -16,6 +16,8 @@ export interface WebUiDeps {
   auditVerify(): unknown | Promise<unknown>;
   /** Read-only goals, filtered to the configured owner by the caller. */
   goals?(): unknown | Promise<unknown>;
+  /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
+  routines?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(text: string): Promise<{ text: string }>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
@@ -57,6 +59,7 @@ const PAGE_CSP = [
 
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
+  | { method: 'GET'; kind: 'routines' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -138,6 +141,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
   switch (pathname) {
     case '/api/goals':
       return { method: 'GET', kind: 'goals' };
+    case '/api/routines':
+      return { method: 'GET', kind: 'routines' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -196,6 +201,11 @@ async function respondApi(
         if (!deps.goals) throw new HttpError(503, 'Objetivos no disponibles');
         payload = await deps.goals();
         if (payload === null) throw new HttpError(503, 'Objetivos aún no disponibles');
+        break;
+      case 'routines':
+        payload = deps.routines ? await deps.routines() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Rutinas aún no disponibles');
         break;
       case 'status':
         payload = await deps.status();

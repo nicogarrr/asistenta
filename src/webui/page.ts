@@ -497,6 +497,16 @@ export function renderPage(): string {
         </div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-rutinas">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-rutinas">Rutinas</h2>
+          <button class="mini" type="button" data-refrescar="rutinas">Refrescar</button>
+        </header>
+        <div id="panel-rutinas" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-estado">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-estado">Estado</h2>
@@ -1229,8 +1239,34 @@ ${renderFormatScript()}
         return true;
       }
 
+      async function cargarRutinas() {
+        var contenedor = document.getElementById('panel-rutinas');
+        pintarCarga(contenedor);
+        try {
+          var rutinas = await pedir('/api/routines');
+          if (!Array.isArray(rutinas)) throw new Error('Respuesta de rutinas inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
+          if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
+          rutinas.forEach(function (rutina) {
+            var tarjeta = nodo('section', 'sesion rutina');
+            tarjeta.setAttribute('data-rutina', rutina.nombre);
+            var titulo = nodo('h3', null, rutina.nombre + ' ');
+            if (rutina.comando) titulo.appendChild(insignia('', 'comando'));
+            if (!rutina.activa) titulo.appendChild(insignia('mal', 'Pausada'));
+            tarjeta.appendChild(titulo);
+            if (rutina.activa) tarjeta.appendChild(nodo('p', 'texto', 'Próxima: ' + rutina.proxima));
+            tarjeta.appendChild(nodo('p', 'muted', 'Horario: ' + rutina.horario));
+            if (rutina.comando) tarjeta.appendChild(nodo('p', 'muted', rutina.comando));
+            contenedor.appendChild(tarjeta);
+          });
+          finCarga(contenedor, true);
+        } catch (error) { pintarError(contenedor, error, cargarRutinas); return false; }
+        return true;
+      }
+
       var refrescos = {
         objetivos: cargarObjetivos,
+        rutinas: cargarRutinas,
         estado: cargarEstado,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
@@ -1246,6 +1282,7 @@ ${renderFormatScript()}
         document.body.setAttribute('aria-busy', 'true');
         Promise.all([
           cargarObjetivos(),
+          cargarRutinas(),
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),

@@ -66,3 +66,70 @@ export function panelNextUp(
     proximaRutina: rutina?.texto ?? null,
   };
 }
+
+/** Lo que el panel lee de cada rutina guardada (store.listRoutines()). */
+export interface PanelRoutineSource {
+  scope: string;
+  name: string;
+  kind: string;
+  schedule: string | null;
+  enabled: boolean;
+  prompt: string | null;
+}
+
+/** Una fila de la tarjeta Rutinas (solo lectura). */
+export interface PanelRoutine {
+  nombre: string;
+  horario: string;
+  activa: boolean;
+  /** «30 oct, 18:00 (en 2 h)», «Sin próxima ejecución» o «Pausada». */
+  proxima: string;
+  /** Texto de commandRoutineTag sin el icono, o null si habla con el modelo. */
+  comando: string | null;
+}
+
+const MAX_RUTINAS = 50;
+
+/**
+ * Rutinas programadas del dueño para la tarjeta Rutinas: mismo ámbito que Estado
+ * (privado del dueño y local), sin recordatorios (ya salen en Estado) ni rutinas
+ * de objetivos. Ordenadas por la próxima ejecución; las pausadas al final.
+ */
+export function panelRoutines(
+  routines: readonly PanelRoutineSource[],
+  scheduled: readonly NextUpScheduled[],
+  tag: (r: PanelRoutineSource) => string,
+  ownerId?: string | number,
+  now: Date = new Date(),
+): PanelRoutine[] {
+  const vivas = new Map(scheduled.map((s) => [`${s.scope}\u0000${s.name}`, s.next]));
+  const filas: { orden: number; fila: PanelRoutine }[] = [];
+  for (const r of routines) {
+    if (r.kind !== 'schedule' || !r.schedule || !panelScopeVisible(r.scope, ownerId)) continue;
+    if (isGoalRoutine(r) || isReminder(r)) continue;
+    const next = vivas.get(`${r.scope}\u0000${r.name}`);
+    const at = next ? new Date(next) : null;
+    const valida = !!at && !Number.isNaN(at.getTime()) && at.getTime() >= now.getTime();
+    const marca = isCommandRoutine(r)
+      ? tag(r)
+          .replace(/^\s*⚙️\s*/u, '')
+          .trim()
+      : '';
+    filas.push({
+      orden: !r.enabled
+        ? Number.MAX_SAFE_INTEGER
+        : valida && at
+          ? at.getTime()
+          : Number.MAX_SAFE_INTEGER - 1,
+      fila: {
+        nombre: r.name,
+        horario: r.schedule,
+        activa: r.enabled,
+        proxima: !r.enabled ? 'Pausada' : valida && at ? cuando(at, now) : 'Sin próxima ejecución',
+        comando: isCommandRoutine(r) ? marca || 'comando' : null,
+      },
+    });
+  }
+  filas.sort((a, b) => a.orden - b.orden || a.fila.nombre.localeCompare(b.fila.nombre, 'es'));
+  return filas.slice(0, MAX_RUTINAS).map((f) => f.fila);
+}
