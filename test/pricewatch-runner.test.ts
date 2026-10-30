@@ -109,6 +109,21 @@ describe('runCycle', () => {
     expect(s.sent[1]).toContain('MediaMarkt: 1 peticiones');
   });
 
+  it('el día del resumen y del tope es el de Madrid, no el UTC (00:30 en Madrid = 23:30Z)', async () => {
+    const s = setup(cfg(), { [MM]: { status: 200, html: ld(500) } });
+    let t = Date.parse('2026-10-30T22:30:00Z'); // 23:30 del 30 en Madrid
+    s.deps.now = () => t;
+    await runCycle(s.deps);
+    t = Date.parse('2026-10-30T23:30:00Z'); // 00:30 del 31 en Madrid, aún 30 en UTC
+    await runCycle(s.deps);
+    expect(s.sent).toHaveLength(2);
+    expect(s.sent[1]).toContain('resumen del 2026-10-30');
+    expect(s.sent[1]).toContain('MediaMarkt: 1 peticiones');
+    // El tope diario de peticiones ya cuenta en el día 31 de Madrid.
+    const store = new PriceStore(s.db, () => t);
+    expect(store.getMeta('reqs:www.mediamarkt.es:2026-10-31')).toBe(1);
+  });
+
   it('tienda bloqueada: avisa una vez al día con el host', async () => {
     const s = setup(cfg(), { [MM]: { status: 403, html: '' } });
     await runCycle(s.deps);
