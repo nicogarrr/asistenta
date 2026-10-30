@@ -64,6 +64,7 @@ import {
   GOAL_ROUTINE_PREFIX,
   GoalRunner,
   type GoalTickResult,
+  goalIdOf,
   isGoalRoutine,
 } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
@@ -3795,6 +3796,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           threadKey: thread.key,
           chatKey: chatKey(inbound),
           delivery: routineDelivery,
+          goals: goalStore,
         },
         args,
       ),
@@ -6894,6 +6896,8 @@ export interface CronCommandDeps {
   chatKey: string;
   /** Where each routine's output goes (F6); absent = `/cron entrega` unavailable. */
   delivery?: RoutineDeliveryStore;
+  /** Para que `/cron probar objetivo:<id>` sepa si el objetivo puede avanzar. */
+  goals?: Pick<GoalStore, 'read'>;
 }
 
 /**
@@ -7074,6 +7078,34 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     }
     if (!routine.enabled) {
       return `La rutina "${name}" está en pausa. Reanúdala con /cron reanudar ${name} o dime si quieres probarla igualmente.`;
+    }
+    if (isGoalRoutine(routine) && deps.goals) {
+      // El tick de un objetivo que no está activo no hace nada (runner.ts: «silent
+      // skips»): decir «Lanzo… el resultado llegará» y luego callar era mentir.
+      const id = goalIdOf(routine.name) ?? '';
+      const goal = id ? deps.goals.read(id) : null;
+      if (!goal) return `El objetivo ${id} ya no existe; su programación no tiene nada que probar.`;
+      if (goal.status !== 'active') {
+        const estado =
+          goal.status === 'paused'
+            ? 'en pausa'
+            : goal.status === 'blocked'
+              ? 'bloqueado esperando tu respuesta'
+              : goal.status === 'proposed'
+                ? 'pendiente de tu aprobación'
+                : goal.status === 'done'
+                  ? 'terminado'
+                  : 'cancelado';
+        const hint =
+          goal.status === 'paused'
+            ? ` Dime «reanuda el objetivo ${id}» y vuelve a probar.`
+            : goal.status === 'proposed'
+              ? ` Apruébalo primero.`
+              : goal.status === 'blocked'
+                ? ' Respóndele primero.'
+                : '';
+        return `El objetivo ${id} está ${estado}: una prueba ahora no haría nada.${hint}`;
+      }
     }
     if (deps.routineRunner.isRunning(routine.scope, routine.name)) {
       return `La rutina "${name}" ya se está ejecutando ahora mismo.`;
