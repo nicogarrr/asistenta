@@ -998,6 +998,10 @@ export class Gate {
       case 'fabrica':
       case 'reminder':
         return 'escribe-local';
+      // Vigilancias de precio: el registro local de /vigila. Crear una es además una
+      // salida a la red, y la puerta de exfiltración la trata como un fetch (egressUrlOf).
+      case 'vigilar_precio':
+        return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
       default:
         return null;
     }
@@ -1643,6 +1647,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'media',
   'fabrica',
   'reminder',
+  'vigilar_precio',
 ]);
 
 /**
