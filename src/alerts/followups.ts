@@ -325,3 +325,25 @@ export class FollowupTracker {
     }
   }
 }
+
+/** La clave del DM de Telegram `chatId` entre las conocidas (`telegram:<bot>:<chatId>…`). */
+export function ownerDmKeyFor(chatKeys: Iterable<string>, chatId: string): string | undefined {
+  for (const key of chatKeys) {
+    const [channel, , id] = key.split(':');
+    if (channel === 'telegram' && id === chatId) return key;
+  }
+  return undefined;
+}
+
+/**
+ * Seguimientos del chat privado del dueño, para lo que se le manda por privado
+ * (vigilante y resumen diario). Antes se leían los de todos los chats y lo anotado
+ * en un grupo salía en el privado. Sin chat del dueño resuelto, ninguno.
+ */
+export function ownerDmFollowups(
+  tracker: Pick<FollowupTracker, 'forChat'>,
+  ownerChatKey: string | undefined,
+  limit = 200,
+): Followup[] {
+  return ownerChatKey ? tracker.forChat(ownerChatKey, limit) : [];
+}

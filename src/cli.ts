@@ -30,7 +30,7 @@ import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
-import { FollowupTracker } from './alerts/followups.js';
+import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
@@ -2498,6 +2498,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  // Chat privado del dueño (DM de Telegram verificado). Vigilante y resumen diario se
+  // mandan ahí, así que solo leen los seguimientos de ese chat, no los de los grupos.
+  const ownerDmFollowupKey = (): string | undefined => {
+    const keys = [...threads.values()].map((t) => t.chatKey);
+    const chatId = resolveOwnerDmChatId(keys, vigilanteOwnerId);
+    return chatId ? ownerDmKeyFor(keys, chatId) : undefined;
+  };
   panelGoals.initialize(goalStore, vigilanteOwnerId);
   // Perfil v2 por propietario: fuente del bloque <perfil> del prompt. Si está
   // vacío, buildContextNote cae al PERFIL.md legado (compatibilidad).
@@ -2669,7 +2676,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             );
             return messages;
           },
-          followups: () => followups.list(undefined, 200),
+          followups: () => ownerDmFollowups(followups, ownerDmFollowupKey()),
           // 35 días: las caducidades avisan a 30 días; lo demás sigue en 7 (collectFindings).
           days: VIGILANTE_AGENDA_DAYS,
         });
@@ -4005,9 +4012,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * seguimientos. Solo al DM del dueño verificado; ritmo en src/briefing-daily.ts.
    */
   const ownerChatKey = (chatId: string): string | undefined =>
-    [...threads.values()]
-      .map((t) => t.chatKey)
-      .find((k) => k.split(':')[0] === 'telegram' && k.split(':')[2] === chatId);
+    ownerDmKeyFor(
+      [...threads.values()].map((t) => t.chatKey),
+      chatId,
+    );
   const briefingOwner = (): string | null =>
     resolveOwnerDmChatId(
       [...threads.values()].map((t) => t.chatKey),
@@ -4134,7 +4142,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         reminders: () => today().reminders,
       };
     })(),
-    followups: () => followupsDue(followups.list(undefined, 200), new Date()),
+    followups: () => followupsDue(ownerDmFollowups(followups, ownerDmFollowupKey()), new Date()),
     warn: (msg, meta) => log.warn(msg, meta ?? {}),
   };
 
