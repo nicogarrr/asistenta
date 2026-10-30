@@ -15,6 +15,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { wallHourMinute } from '../datecontext.js';
 import { log, redact, scrubLogText } from '../log.js';
 
 export type ActionResult = 'ok' | 'error' | 'blocked';
@@ -69,15 +70,9 @@ function parseEntry(line: string): ActionEntry | null {
   return entry;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-/** Local HH:MM: the summary is read by a person on this machine, not parsed. */
+/** HH:MM on Nico's wall clock (PA_TIMEZONE): the summary is read by a person, not parsed. */
 function hhmm(ts: string): string {
-  const at = new Date(ts);
-  if (Number.isNaN(at.getTime())) return '??:??';
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  return wallHourMinute(new Date(ts));
 }
 
 function clip(text: string, max = 60): string {

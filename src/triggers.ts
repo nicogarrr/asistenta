@@ -20,6 +20,7 @@
  * confirmación en lo destructivo) viajan con él. Un trigger nunca ejecuta
  * nada que la rutina no dijera ya.
  */
+import { wallDateMinute } from './datecontext.js';
 import type { Routine, RoutineTrigger, Store } from './db.js';
 import { log } from './log.js';
 import { buildMacroPrompt, isMacroName, procedurePrompt } from './routines.js';
@@ -206,11 +207,9 @@ export function parseTriggerAdd(
  * clock, so it is shown in the process zone (PA_TIMEZONE, applied at start-up):
  * slicing the ISO string printed 22:30 for a fire at 23:30 in Madrid.
  */
+/** Wall-clock minute in PA_TIMEZONE, not the process zone. */
 function localMinute(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return wallDateMinute(new Date(iso));
 }
 
 /** One list line per trigger, numbered the way /disparador del expects. */
