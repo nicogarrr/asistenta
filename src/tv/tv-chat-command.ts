@@ -73,6 +73,15 @@ export const TV_BUTTONS: ReadonlyArray<{
   { id: 'pause', label: '⏸ Pausa', order: 'pausa' },
   { id: 'play', label: '▶️ Play', order: 'play' },
   { id: 'status', label: 'ℹ️ Estado', order: 'que esta viendo' },
+  // Atrás se pulsa seguido a propósito (volver dos pantallas): no se filtra.
+  { id: 'back', label: '⬅️ Atrás', order: 'vuelve atras', repeatable: true },
+  // Fila de modos de imagen (SSAP picture), siempre al final y en filas de dos.
+  { id: 'pic_std', label: '🖼 Estándar', order: 'pon la imagen en estandar' },
+  { id: 'pic_cine', label: '🎞 Cine', order: 'pon la imagen en cine' },
+  { id: 'pic_juego', label: '🎮 Juego', order: 'pon la imagen en juego' },
+  { id: 'pic_dep', label: '⚽ Deportes', order: 'pon la imagen en deportes' },
+  { id: 'pic_viva', label: '🌈 Viva', order: 'pon la imagen en viva' },
+  { id: 'pic_eco', label: '🌙 Oscura', order: 'pon la imagen en oscura' },
 ];
 
 export const TV_BUTTONS_TITLE = 'Mando de la tele (o escribe /tv <orden>):';
