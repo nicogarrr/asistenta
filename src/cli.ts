@@ -90,6 +90,7 @@ import {
 import { runPanelChat } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
+import { voiceInbound } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
@@ -6199,18 +6200,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
       transcriber: (samples) => defaultTranscriber(samples),
       onUtterance: async (heard) => {
-        const inbound: Inbound = {
-          channel: 'telegram',
-          account: telegram.account,
-          chatId: chat.chatId,
-          threadId: chat.threadId,
-          userId: String(chat.chatId),
-          displayName: 'conversación por voz',
-          text: `[dicho en voz alta ante el microfono] ${heard}`,
-          authorised: true,
-          messageId: `voz-${++wakeCount}`,
-          receivedAt: new Date().toISOString(),
-        };
+        const inbound = voiceInbound(telegram.account, chat, heard, ++wakeCount);
         const thread = await getOrCreateThread(chat.key, 'main', 'principal');
         messageThread.set(`${chat.key}:${inbound.messageId}`, thread.key);
         log.info('voice session utterance', { chars: heard.length, chatId: chat.chatId });
