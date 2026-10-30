@@ -19,6 +19,9 @@ import { TV_MANIFEST } from './manifest.js';
 /** Primer pairing: hay que aceptar el aviso en la tele con el mando. */
 const PAIR_TIMEOUT_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 5_000;
+/** Reintentos de apertura ante rechazo inmediato y espera base (se dobla). */
+const CONNECT_RETRIES = 2;
+const CONNECT_RETRY_DELAY_MS = 500;
 const CMD_TIMEOUT_MS = 10_000;
 /** Espera para aceptar con el mando el aviso de re-emparejamiento (tele que olvido la clave). */
 const PROMPT_WAIT_MS = 60_000;
@@ -111,13 +114,16 @@ export interface TvClientDeps {
   allowNonLanHost?: boolean;
   /**
    * Reintentos de CONEXION cuando la tele rechaza o corta el socket al momento
-   * (p.ej. recien despertada, el servidor SSAP aun arranca). Por defecto 1.
-   * Solo se reintenta la apertura: antes del open no se ha enviado nada, asi
-   * que no hay orden duplicada posible. Un timeout de apertura NO se reintenta
-   * (tele apagada: ya se esperaron 5s).
+   * (p.ej. recien despertada, el servidor SSAP aun arranca). Por defecto 2
+   * (3 intentos). Solo se reintenta la apertura: antes del open no se ha
+   * enviado nada, asi que no hay orden duplicada posible. Un timeout de
+   * apertura NO se reintenta (tele apagada: ya se esperaron 5s).
    */
   connectRetries?: number;
-  /** Espera entre reintentos de conexion (por defecto 600 ms). */
+  /**
+   * Espera antes del primer reintento de conexion (por defecto 500 ms); cada
+   * reintento siguiente espera el doble (500 ms, 1 s).
+   */
   connectRetryDelayMs?: number;
   /** Timeout de apertura del socket por intento (por defecto 5 s). */
   connectTimeoutMs?: number;
@@ -279,8 +285,9 @@ const TIMEOUT_OPEN_MSG = 'timeout abriendo el canal seguro';
 
 /**
  * openSocket con reintento SOLO ante rechazos inmediatos (error o cierre antes
- * del open): una tele recien despertada rechaza el primer intento mientras
- * arranca su servidor SSAP. Un timeout de apertura no se repite.
+ * del open): una tele recien despertada rechaza los primeros intentos mientras
+ * arranca su servidor SSAP (hasta 2 reintentos con espera creciente). Un
+ * timeout de apertura no se repite.
  */
 async function openSocketRetrying(
   host: string,
@@ -288,8 +295,8 @@ async function openSocketRetrying(
   opts: { allowPlaintext: boolean },
   deps: TvClientDeps,
 ): Promise<OpenedSocket> {
-  const retries = Math.max(0, deps.connectRetries ?? 1);
-  const delay = Math.max(0, deps.connectRetryDelayMs ?? 600);
+  const retries = Math.max(0, deps.connectRetries ?? CONNECT_RETRIES);
+  const baseDelay = Math.max(0, deps.connectRetryDelayMs ?? CONNECT_RETRY_DELAY_MS);
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await openSocket(host, factory, {
@@ -299,7 +306,8 @@ async function openSocketRetrying(
     } catch (err) {
       const timedOut = err instanceof Error && err.message.includes(TIMEOUT_OPEN_MSG);
       if (!(err instanceof TvUnreachableError) || timedOut || attempt >= retries) throw err;
-      await new Promise((r) => setTimeout(r, delay));
+      // Backoff corto: una tele recien encendida puede rechazar mas de un intento.
+      await new Promise((r) => setTimeout(r, baseDelay * 2 ** attempt));
     }
   }
 }
