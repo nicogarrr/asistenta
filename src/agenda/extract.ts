@@ -492,6 +492,8 @@ interface TimeHit {
   hour: number;
   minute: number;
   index: number;
+  /** "Medianoche", "a las 12 de la noche": the clock belongs to the night after the date. */
+  nextDay?: boolean;
 }
 
 /**
@@ -504,8 +506,18 @@ const TIME_RULES: ReadonlyArray<{
   build: (m: RegExpExecArray) => TimeHit | undefined;
 }> = [
   {
-    re: /\b(?:a las |a la |at |desde las |@)?(\d{1,2}):(\d{2})\b/,
-    build: (m) => clock24(Number(m[1]), Number(m[2])),
+    // "9:30h" and "18:00 hrs" are how Spanish mail writes a clock; the trailing letters
+    // are part of it. 24:00-29:59 only come from spokenTimes() (or a mail that literally
+    // says 24:00) and mean that hour of the night after the date.
+    re: /\b(?:a las |a la |at |desde las |@)?(\d{1,2}):(\d{2})(?:h|hs|hrs)?\b/,
+    build: (m) => {
+      const hour = Number(m[1]);
+      if (hour >= 24 && hour <= 29) {
+        const hit = clock24(hour - 24, Number(m[2]));
+        return hit && { ...hit, nextDay: true };
+      }
+      return clock24(hour, Number(m[2]));
+    },
   },
   {
     re: /\b(\d{1,2})\s*(am|pm)\b/,
@@ -691,6 +703,55 @@ function fold(value: string): string {
     .trim();
 }
 
+const SPOKEN_TIME_RE =
+  /\b(a las|a la|sobre las|hacia las|desde las) (\d{1,2})(?:[:.](\d{2})(?!\d)| y (media|cuarto)| menos (cuarto))?(?: ?(?:h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?/g;
+
+/**
+ * Spoken Spanish clocks, rewritten as "a las HH:MM" before anything else reads the text.
+ *
+ * withoutTimeOfDay() removes "de la tarde/noche/mañana" so a liked morning coffee is not a
+ * date, and that used to happen BEFORE the hour was read: "a las 10 de la noche" became
+ * 10:00, "a las 7 de la mañana" became 19:00 (low hours are read as afternoon) and
+ * "a las 9 y media" lost its half hour. "06.15" was read as "a las 6" = 18:00, and
+ * "medianoche" was no time at all. Only clocks introduced by "a las" (or a qualifier)
+ * are touched, so "12.50 €" is never a time.
+ */
+function spokenTimes(folded: string): string {
+  const out = folded.replace(
+    SPOKEN_TIME_RE,
+    (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
+      let hour = Number(h);
+      let minute = mm !== undefined ? Number(mm) : 0;
+      if (half === 'media') minute = 30;
+      else if (half === 'cuarto') minute = 15;
+      else if (less) {
+        hour -= 1;
+        minute = 45;
+      }
+      if (hour < 0 || hour > 23 || minute > 59) return whole;
+      const explicit = mm !== undefined || /h|hs|hrs|horas/.test(whole.slice(lead.length));
+      if (part === 'de la manana' || part === 'de la madrugada') {
+        if (hour === 12) hour = 0;
+      } else if (part === 'de la tarde' || part === 'del mediodia') {
+        if (hour >= 1 && hour < 12) hour += 12;
+      } else if (part === 'de la noche') {
+        if (hour === 12 || hour === 0) hour = 24;
+        else if (hour <= 4) hour += 24;
+        else if (hour < 12) hour += 12;
+      } else if (explicit) {
+        // "a las 06.15", "a las 7h": a written clock is taken as written.
+      } else if (half || less) {
+        // Same reading as a bare "a las 3": low hours are afternoon.
+        if (hour >= 1 && hour <= 7) hour += 12;
+      } else {
+        return whole;
+      }
+      return `a las ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    },
+  );
+  return out.replace(/\b(?:a (?:la )?)?medianoche\b/g, 'a las 24:00');
+}
+
 /**
  * "Por la mañana" is when someone likes something, never when it is due. Cut before
  * the date patterns run, or every sentence about a morning coffee becomes a
@@ -723,7 +784,7 @@ export function extractCommitments(
 
   for (const message of messages) {
     const raw = `${message.subject ?? ''} ${message.text ?? ''}`;
-    const folded = withoutTimeOfDay(fold(raw));
+    const folded = withoutTimeOfDay(spokenTimes(fold(raw)));
     if (!folded) continue;
 
     // Filter 1: no date, no commitment. This one rule is what keeps "tu pedido ha sido
@@ -736,7 +797,14 @@ export function extractCommitments(
     const time = timeNear(date, folded);
     const timed = time !== undefined;
     const at = timed
-      ? zonedTime({ ...ymd(date.at, timeZone), hour: time.hour, minute: time.minute }, timeZone)
+      ? zonedTime(
+          {
+            ...ymd(time.nextDay ? date.at + DAY_MS : date.at, timeZone),
+            hour: time.hour,
+            minute: time.minute,
+          },
+          timeZone,
+        )
       : date.at;
 
     // Filter 2: the past is not pending. An untimed date is compared as a DAY, because
