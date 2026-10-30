@@ -27,6 +27,27 @@ export const DEFAULT_COMPACTION: CompactionOptions = {
   keepRecentTokens: 20_000,
 };
 
+/**
+ * /modelo: el umbral de resumen nunca pasa del 60 % de la ventana del modelo
+ * que usa la conversación ahora. Con un modelo de ventana pequeña elegido con
+ * /modelo, el historial se resume antes de desbordarla (antes valía el umbral
+ * fijo pensado para PA_MODEL). La cola que se conserva escala igual.
+ */
+export function compactionFor(
+  triggerTokens: number,
+  contextWindow: number | undefined,
+): CompactionOptions {
+  if (!contextWindow || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return { ...DEFAULT_COMPACTION, triggerTokens };
+  }
+  const trigger = Math.min(triggerTokens, Math.floor(contextWindow * 0.6));
+  return {
+    ...DEFAULT_COMPACTION,
+    triggerTokens: trigger,
+    keepRecentTokens: Math.min(DEFAULT_COMPACTION.keepRecentTokens, Math.floor(trigger / 3)),
+  };
+}
+
 export const SUMMARY_MARKER = '[RESUMEN DE LA CONVERSACIÓN ANTERIOR]';
 /**
  * The note enters the transcript as a user-role message, so it must say it carries no

@@ -142,7 +142,18 @@ function findModelEntry(model: string): ModelCaps | undefined {
  * overrides de entorno se leen en cada llamada, no al importar el modulo: un
  * test o un reinicio del daemon no arrastran valores viejos.
  */
-export function resolveModelCaps(config: ModelConfigLike = {}): ModelCaps {
+export function resolveModelCaps(
+  config: ModelConfigLike = {},
+  opts: {
+    /**
+     * false: ignora PA_CONTEXT_WINDOW/PA_MAX_OUTPUT_TOKENS/PA_PRICE_*. Esas
+     * variables describen PA_MODEL; otro modelo (el de /modelo o el de
+     * respaldo) toma sus datos del catálogo.
+     */
+    envOverrides?: boolean;
+  } = {},
+): ModelCaps {
+  const env = opts.envOverrides !== false;
   const preset = resolvePreset(config);
   const requested = config.model?.trim() ?? '';
   const table = MODEL_CATALOG[preset];
@@ -152,10 +163,13 @@ export function resolveModelCaps(config: ModelConfigLike = {}): ModelCaps {
     table['*'] ??
     DEFAULT_MODEL_CAPS;
 
-  const contextWindow = envNumber('PA_CONTEXT_WINDOW', 1) ?? entry.contextWindow;
-  const maxOutput = envNumber('PA_MAX_OUTPUT_TOKENS', 1) ?? entry.maxOutput;
-  const inputPerMTok = envNumber('PA_PRICE_INPUT_PER_MTOK', 0) ?? entry.inputPerMTok;
-  const outputPerMTok = envNumber('PA_PRICE_OUTPUT_PER_MTOK', 0) ?? entry.outputPerMTok;
+  const contextWindow =
+    (env ? envNumber('PA_CONTEXT_WINDOW', 1) : undefined) ?? entry.contextWindow;
+  const maxOutput = (env ? envNumber('PA_MAX_OUTPUT_TOKENS', 1) : undefined) ?? entry.maxOutput;
+  const inputPerMTok =
+    (env ? envNumber('PA_PRICE_INPUT_PER_MTOK', 0) : undefined) ?? entry.inputPerMTok;
+  const outputPerMTok =
+    (env ? envNumber('PA_PRICE_OUTPUT_PER_MTOK', 0) : undefined) ?? entry.outputPerMTok;
 
   return {
     ...entry,
