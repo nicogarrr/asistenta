@@ -187,6 +187,16 @@ export function renderPage(): string {
       background: #2a1215;
       color: var(--aviso);
     }
+    .aviso-conexion {
+      margin: 0 16px 10px;
+      padding: 7px 11px;
+      border: 1px solid #7f1d1d;
+      border-radius: 10px;
+      background: #2a1215;
+      color: var(--aviso);
+      font-size: 14px;
+    }
+    .aviso-conexion[hidden] { display: none; }
     .token { display: grid; gap: 8px; border-color: #264357; background: var(--panel); color: var(--texto); }
     .token .token-fila { display: flex; gap: 8px; flex-wrap: wrap; }
     .token input { flex: 1 1 200px; min-width: 0; font: inherit; color: var(--texto); background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; }
@@ -434,6 +444,7 @@ export function renderPage(): string {
           <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
           <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
         </header>
+        <p id="conexion-aprobaciones" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente. Reintento cada 15 s; lo que ves puede estar desactualizado.</p>
         <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
         </div>
@@ -985,8 +996,10 @@ ${renderFormatScript()}
           pintarAprobaciones(contenedor, await pedir('/api/approvals'));
           finCarga(contenedor, true);
         } catch (error) {
+          avisoConexion(false);
           pintarError(contenedor, error, cargarAprobaciones); return false;
         }
+        avisoConexion(false);
         return true;
       }
 
@@ -997,7 +1010,19 @@ ${renderFormatScript()}
         try {
           pintarAprobaciones(contenedor, await pedir('/api/approvals'));
           finCarga(contenedor, true);
-        } catch (error) {}
+        } catch (error) {
+          if (!(error && error.sinToken)) avisoConexion(true);
+          return;
+        }
+        avisoConexion(false);
+      }
+
+      // Si el asistente deja de responder, la recarga automática lo dice y lo quita al volver.
+      function avisoConexion(caido) {
+        var aviso = document.getElementById('conexion-aprobaciones');
+        if (!aviso || aviso.hidden === !caido) return;
+        aviso.hidden = !caido;
+        if (!caido) anunciar('Conexión con el asistente recuperada.');
       }
 
       // Conversación de esta pestaña: el panel no guarda historial en el servidor.
