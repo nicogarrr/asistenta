@@ -32,6 +32,12 @@ export interface WebUiDeps {
   chat?(
     text: string,
   ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
+  /**
+   * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
+   * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409).
+   * Si falta, la ruta responde 503.
+   */
+  retry?(): Promise<{ text: string } | null>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -80,6 +86,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'audit' }
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
+  | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -172,6 +179,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'approvals' };
     case '/api/chat':
       return { method: 'POST', kind: 'chat' };
+    case '/api/chat/retry':
+      return { method: 'POST', kind: 'chatRetry' };
     default:
       break;
   }
@@ -288,6 +297,15 @@ async function respondApi(
         if (images.length > 0) out.images = images;
         if (files.length > 0) out.files = files;
         payload = out;
+        break;
+      }
+      case 'chatRetry': {
+        if (!deps.retry) throw new HttpError(503, 'Reintentar no disponible');
+        const answer = await deps.retry();
+        if (answer === null) throw new HttpError(409, 'No hay un mensaje reciente que repetir');
+        if (!isRecord(answer) || typeof answer.text !== 'string')
+          throw new Error('deps.retry devolvio una respuesta invalida');
+        payload = { text: answer.text };
         break;
       }
       case 'approval': {
