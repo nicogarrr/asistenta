@@ -335,6 +335,8 @@ export function renderPage(): string {
     .lista { margin: 0; padding-left: 18px; }
     .lista li { margin: 3px 0; }
     .texto { white-space: pre-wrap; word-break: break-word; }
+    .archivos { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; max-width: 100%; }
+    .archivo { display: inline-block; max-width: 100%; padding: 10px 0; overflow-wrap: anywhere; word-break: break-word; }
     .capturas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde, #ccc); }
     .nulo { color: var(--suave); font-style: italic; }
