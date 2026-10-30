@@ -41,6 +41,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'status', args: 'on|off', description: 'avisos de cómo voy mientras trabajo' },
       { command: 'topic', args: '<nombre>', description: 'abre o cambia de conversación' },
       { command: 'topics', description: 'conversaciones abiertas' },
+      { command: 'reintentar', description: 'repite tu último mensaje sin la respuesta anterior' },
+      { command: 'compactar', description: 'resume ya el historial de esta conversación' },
       {
         command: 'proyecto',
         args: '<carpeta>|quitar',

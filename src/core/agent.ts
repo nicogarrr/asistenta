@@ -14,6 +14,7 @@ import { FileWriteTracker } from './filewrites.js';
 import {
   compactHistory,
   DEFAULT_COMPACTION,
+  estimateAll,
   extractionPrompt,
   parseExtractedFacts,
   type Summarize,
@@ -890,6 +891,41 @@ export class PersonalAgent {
       log.warn('history summary failed; keeping the full transcript', { err: String(err) });
     }
   }
+  /**
+   * /compactar: resume ya el historial, sin esperar al umbral. Usa el mismo
+   * resumen y la misma extracción de hechos que el automático.
+   */
+  async compactNow(): Promise<{
+    compacted: boolean;
+    before: number;
+    after: number;
+    reason?: string;
+  }> {
+    const before = estimateAll(this.#agent.state.messages);
+    if (!this.#summarize)
+      return { compacted: false, before, after: before, reason: 'sin modelo para resumir' };
+    this.#summaryAbort = new AbortController();
+    const r = await compactHistory(
+      this.#agent.state.messages,
+      this.#summarize,
+      { ...DEFAULT_COMPACTION, triggerTokens: 1 },
+      this.#extractFacts,
+    );
+    if (!r.compacted)
+      return {
+        compacted: false,
+        before: r.before,
+        after: r.before,
+        reason: 'no hay bastante historial que resumir',
+      };
+    this.#agent.state.messages = r.messages;
+    this.#compactions++;
+    this.#summaryCooldown = 0;
+    if (r.facts.length > 0 && this.#factMemory) this.#factMemory.write(r.facts);
+    log.info('history summarised on demand', { before: r.before, after: r.after });
+    return { compacted: true, before: r.before, after: r.after };
+  }
+
   #loadout?: ToolLoadout;
   /** Base array captured at create(); the non-deferred path mutates it in place. */
   #baseTools: AgentTool[] = [];
