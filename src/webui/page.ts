@@ -1122,7 +1122,10 @@ ${renderFormatScript()}
           reintentar.type = 'button';
           reintentar.addEventListener('click', function () {
             reintentar.disabled = true;
-            enviarChat(null, texto);
+            // Sin conexión el mensaje no llegó: se manda otra vez. Si llegó y falló el
+            // turno, se repite sin la respuesta anterior (como /reintentar).
+            if (error && error.sinConexion) enviarChat(null, texto);
+            else repetirUltimo();
           });
           espera.appendChild(reintentar);
           if (!campo.value) campo.value = texto;
@@ -1130,6 +1133,23 @@ ${renderFormatScript()}
           window.clearInterval(reloj);
           boton.disabled = false;
           campo.focus();
+        }
+      }
+
+      async function repetirUltimo() {
+        var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
+        espera.setAttribute('data-reintento', 'true');
+        var cuerpo = espera.querySelector('.texto');
+        try {
+          var datos = await enviar('/api/chat/retry', {});
+          var respuesta = datos && typeof datos.text === 'string' ? datos.text : '';
+          espera.className = 'turno asistente';
+          cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+        } catch (error) {
+          espera.className = 'turno asistente fallo';
+          cuerpo.className = 'texto error';
+          cuerpo.textContent = error && error.message ? error.message : 'No se pudo repetir el mensaje.';
+          if (error && error.sinConexion) avisoConexion(true, true);
         }
       }
 

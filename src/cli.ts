@@ -1779,6 +1779,47 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
             });
           },
+          // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
+          // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram.
+          retry: async () => {
+            const thread = await getOrCreateThread(
+              `telegram:dm:${String(vigilanteOwnerId ?? 'local')}`,
+              'main',
+              'principal',
+            );
+            const last = lastTurns.get(thread.key);
+            if (!last || last.images?.length) return null;
+            const base = inboundFor(thread);
+            const panelInbound: Inbound = {
+              channel: base.channel,
+              account: base.account,
+              chatId: base.chatId,
+              threadId: base.threadId,
+              userId: base.userId,
+              displayName: base.displayName,
+              isGroup: base.isGroup,
+              text: last.text,
+              authorised: true,
+              messageId: `${thread.key}#panel`,
+              receivedAt: new Date().toISOString(),
+            };
+            return runPanelChat(thread, last.text, {
+              remember: (t) => {
+                rewindLastTurn(last, {
+                  agent: t.agent,
+                  messages: t.agent.messages,
+                  compactions: t.agent.compactions,
+                });
+                lastTurns.remember(t.key, {
+                  ...last,
+                  agent: t.agent,
+                  mark: t.agent.messages.length,
+                  compactions: t.agent.compactions,
+                });
+              },
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
+            });
+          },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
           approvals: () => approvals.list(),
           approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') =>
