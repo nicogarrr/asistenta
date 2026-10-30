@@ -118,12 +118,26 @@ export async function recordScreen(options: RecordingOptions): Promise<Recording
   );
 
   log.info('screen recording started', { seconds, fps, maxEdge });
-  await run(FFMPEG, args, seconds * 1_000 + 25_000);
-
-  if (!existsSync(file)) throw new Error('ffmpeg no produjo ningun archivo');
-  const bytes = statSync(file).size;
-  if (bytes === 0) throw new Error('ffmpeg produjo un archivo vacio');
-  const { width, height } = await probeSize(FFMPEG, file);
+  let bytes: number;
+  let width: number;
+  let height: number;
+  try {
+    await run(FFMPEG, args, seconds * 1_000 + 25_000);
+    if (!existsSync(file)) throw new Error('ffmpeg no produjo ningun archivo');
+    bytes = statSync(file).size;
+    if (bytes === 0) throw new Error('ffmpeg produjo un archivo vacio');
+    ({ width, height } = await probeSize(FFMPEG, file));
+  } catch (err) {
+    // A failed or timed-out capture can leave a partial video of the desktop behind;
+    // nobody will consume it, so it is deleted here (best effort: Windows may still
+    // hold the file for a moment after the kill).
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
   log.info('screen recording ready', { bytes, width, height, seconds });
   return { file, bytes, seconds, width, height };
 }
