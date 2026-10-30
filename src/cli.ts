@@ -2625,7 +2625,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
   // so a job due this minute cannot also fire fresh (see deliverMissedThenStart).
-  void deliverMissedThenStart({ store, send: sendToChat, start: () => routineRunner.start() });
+  void deliverMissedThenStart({
+    store,
+    send: sendToChat,
+    reminderButtons: (scope, text) => reminderButtons(firedReminders.remember(scope, text)),
+    start: () => routineRunner.start(),
+  });
 
   // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
   // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las
