@@ -3,6 +3,7 @@ import { createReadStream, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { log } from '../log.js';
 
 /**
  * Un servidor HTTP de UN solo fichero para que la tele pueda descargar un audio.
@@ -90,6 +91,20 @@ export interface ServeOptions {
 
 const DEFAULT_TTL_MS = 10 * 60_000;
 
+/**
+ * Borra el audio temporal sin lanzar: en Windows puede fallar (EBUSY/EPERM si algo
+ * lo tiene abierto) y close() corre dentro de un temporizador del daemon.
+ */
+function removeQuietly(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch (err) {
+    log.warn('altavoz: no he podido borrar el audio temporal', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 function parseRange(header: string | undefined, size: number): [number, number] | null | 'bad' {
   if (!header) return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
@@ -162,7 +177,14 @@ export function serveFileToHost(opts: ServeOptions): Promise<ServedFile> {
       res.end();
       return;
     }
-    createReadStream(opts.file, { start, end }).pipe(res);
+    // Un fallo leyendo (fichero borrado o bloqueado tras el stat) corta solo esta
+    // descarga: sin este listener sería una excepción no capturada en el daemon.
+    const stream = createReadStream(opts.file, { start, end });
+    stream.on('error', (err) => {
+      log.warn('altavoz: no he podido leer el audio servido a la tele', { error: err.message });
+      res.destroy();
+    });
+    stream.pipe(res);
   };
 
   const server = createServer(handler);
@@ -173,13 +195,13 @@ export function serveFileToHost(opts: ServeOptions): Promise<ServedFile> {
       clearTimeout(timer);
       server.close(() => resolveClosed());
       server.closeAllConnections?.();
-      if (opts.deleteOnClose !== false) rmSync(opts.file, { force: true });
+      if (opts.deleteOnClose !== false) removeQuietly(opts.file);
     };
     const timer = setTimeout(close, opts.ttlMs ?? DEFAULT_TTL_MS);
     timer.unref?.();
     server.once('error', (err) => {
       clearTimeout(timer);
-      if (opts.deleteOnClose !== false) rmSync(opts.file, { force: true });
+      if (opts.deleteOnClose !== false) removeQuietly(opts.file);
       reject(err);
     });
     server.listen(opts.port ?? 0, opts.bindIp, () => {
