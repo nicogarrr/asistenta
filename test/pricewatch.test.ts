@@ -40,8 +40,10 @@ describe('parseo de precio', () => {
     expect(parseEuroCents('1\u202f299,00\u00a0€')).toBe(129900);
     expect(parseEuroCents('1\u2009299,00 €')).toBe(129900);
     expect(parseEuroCents('1\u00a0299,99 €')).toBe(129999);
-    expect(parseEuroCents('Portátil 1 299,00 €')).toBe(129900);
-    expect(parseEuroCents('12 345 678 €')).toBe(1234567800);
+    // Espacio normal: solo en fuentes con un único precio (opción explícita).
+    expect(parseEuroCents('Portátil 1 299,00 €', { plainSpaceThousands: true })).toBe(129900);
+    expect(parseEuroCents('12 345 678 €', { plainSpaceThousands: true })).toBe(1234567800);
+    expect(parseEuroCents('Portátil 1 299,00 €')).toBeNull();
     expect(parseEuroCents('Precio 299,00 €')).toBe(29900);
     expect(
       parseEuroCents(

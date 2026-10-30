@@ -182,7 +182,10 @@ function amazonCards(html: string): Card[] {
       chunk,
     );
     const title = /<h2[^>]*>[\s\S]*?<span[^>]*>([^<]+)<\/span>/i.exec(chunk)?.[1]?.trim();
-    const cents = price?.[1] ? parseEuroCents(price[1].replace(/\u00a0/g, ' ').trim()) : null;
+    // `a-offscreen` holds only the price, so a plain space there separates thousands.
+    const cents = price?.[1]
+      ? parseEuroCents(price[1].trim(), { plainSpaceThousands: true })
+      : null;
     if (title && cents !== null && cents > 0)
       out.push({ title, url: `https://www.amazon.es/dp/${asin}`, cents });
   });

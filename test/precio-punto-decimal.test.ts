@@ -31,7 +31,10 @@ describe('precio con punto decimal: el mismo importe en todos los lectores', () 
     expect(parseEuroCents('1,299 €')).toBeNull();
     expect(parseEuroCents('1.299.99 €')).toBeNull();
     expect(parseEuroCents('1 299.99 €')).toBeNull();
-    expect(parseEuroCents('1 299,99 €')).toBe(129999);
+    // Espacio normal: solo es separador de miles con plainSpaceThousands.
+    expect(parseEuroCents('1 299,99 €')).toBeNull();
+    expect(parseEuroCents('1 299,99 €', { plainSpaceThousands: true })).toBe(129999);
+    expect(parseEuroCents('1,299.99 €', { plainSpaceThousands: true })).toBe(129999);
     expect(parsePriceToCents('1,299')).toBeNull();
     expect(parsePriceToCents('1,29.99')).toBeNull();
     expect(parseMachinePrice('1,299')).toBeNull();
