@@ -161,11 +161,27 @@ export function parseDemoEvents(raw: readonly unknown[]): DemoEvent[] {
 const failed = (text: string) => text.startsWith('error:');
 
 /** Grabaciones web en curso, una por conversación. */
+/** Tiempo máximo de una grabación web antes de caducar. */
+export const DEMO_TTL_MS = 30 * 60_000;
+
 export class WebDemoRecorder {
-  readonly #active = new Map<string, { host: string }>();
+  readonly #active = new Map<string, { host: string; startedMs: number }>();
+  readonly #ttlMs: number;
+  readonly #now: () => number;
+
+  /** Una grabación olvidada caduca (30 min por defecto): no se queda abierta para siempre. */
+  constructor(opts: { ttlMs?: number; now?: () => number } = {}) {
+    this.#ttlMs = opts.ttlMs ?? DEMO_TTL_MS;
+    this.#now = opts.now ?? Date.now;
+  }
+
+  #expired(entry: { startedMs: number }): boolean {
+    return this.#now() - entry.startedMs > this.#ttlMs;
+  }
 
   isRecording(key: string): boolean {
-    return this.#active.has(key);
+    const entry = this.#active.get(key);
+    return entry !== undefined && !this.#expired(entry);
   }
 
   /**
@@ -195,11 +211,10 @@ export class WebDemoRecorder {
       if (r.timedOut || failed(r.text) || r.text !== 'paDemo:ok') {
         return 'No pude empezar a grabar en el navegador. Prueba otra vez con /learn web.';
       }
-    } catch (err) {
-      const why = err instanceof Error ? err.message : String(err);
-      return `No pude abrir el navegador: ${why.slice(0, 200)}`;
+    } catch {
+      return 'No pude abrir el navegador para grabar. Prueba otra vez con /learn web.';
     }
-    this.#active.set(key, { host: url.hostname });
+    this.#active.set(key, { host: url.hostname, startedMs: this.#now() });
     return `Grabando la demostración en ${url.hostname}. Hazla en la ventana del navegador; cuando acabes, /learn end. Las contraseñas no se graban.`;
   }
 
@@ -218,9 +233,20 @@ export class WebDemoRecorder {
       now?: Date;
     },
   ): Promise<string | null> {
-    if (!this.#active.has(key)) return null;
+    const entry = this.#active.get(key);
+    if (!entry) return null;
     this.#active.delete(key);
     if (!teachDemoEnabled(deps.env)) return null;
+    if (this.#expired(entry)) {
+      // Se apaga la escucha de la página y se descarta lo grabado: no se guarda nada.
+      try {
+        await deps.browser.execJs(key, STOP_JS);
+      } catch {
+        // El navegador puede estar cerrado ya: no hay nada más que apagar.
+      }
+      const min = Math.round(this.#ttlMs / 60_000);
+      return `La grabación en ${entry.host} caducó (más de ${min} min) y no se ha guardado nada. Empieza otra con /learn web.`;
+    }
     const raw: unknown[] = [];
     try {
       const stop = await deps.browser.execJs(key, STOP_JS);
