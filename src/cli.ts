@@ -69,6 +69,7 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
+import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
 import { isDuplicateUpdate, queueThreadTurn } from './daemon/inbound.js';
@@ -6722,6 +6723,129 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
   };
 
+  // Comandos de Telegram: cada uno es una entrada (nombre y alias → handler).
+  // Un comando nuevo se añade aquí con una línea; un nombre repetido hace fallar
+  // test/daemon-commands.test.ts (y el arranque), en vez de quedar tapado.
+  const commandTable = buildCommandTable<Inbound>([
+    { names: ['stop'], run: (inbound) => cmdStop(inbound) },
+    { names: ['screen'], run: (inbound, args) => cmdScreen(inbound, args) },
+    {
+      names: ['camera', 'play', 'suena', 'toca', 'escucha', 'mic', 'micro', 'watch'],
+      run: async (inbound, args, name) => {
+        if (!desktop) return say(inbound, DESKTOP_OFF_MESSAGE, { quote: true }).then(() => {});
+        if (name === 'camera') return cmdCamera(inbound, args);
+        if (name === 'mic' || name === 'micro') return cmdMic(inbound, args);
+        if (name === 'watch') return cmdWatch(inbound, args);
+        return cmdPlay(inbound, args);
+      },
+    },
+    { names: ['topic'], run: (inbound, args) => cmdTopic(inbound, args) },
+    { names: ['topics'], run: (inbound) => cmdTopics(inbound) },
+    { names: ['routines'], run: (inbound) => cmdRoutines(inbound) },
+    {
+      names: ['routine'],
+      run: async (inbound, args) => cmdRoutine(await resolveThread(inbound), inbound, args),
+    },
+    {
+      names: ['cron'],
+      run: async (inbound, args) => cmdCron(await resolveThread(inbound), inbound, args),
+    },
+    {
+      names: ['disparador', 'trigger'],
+      run: async (inbound, args) => cmdTrigger(await resolveThread(inbound), inbound, args),
+    },
+    {
+      names: ['disparadores', 'triggers'],
+      run: (inbound) => {
+        const chatKey_ = chatKey(inbound);
+        return say(
+          inbound,
+          formatTriggerList(store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_))),
+          { quote: true },
+        );
+      },
+    },
+    {
+      names: ['learn'],
+      run: async (inbound, args) => cmdLearn(await resolveThread(inbound), inbound, args),
+    },
+    { names: ['memory'], run: (inbound) => cmdMemory(inbound) },
+    {
+      names: ['deshacer', 'undo'],
+      run: (inbound) => say(inbound, undoLast(), { quote: true }).then(() => {}),
+    },
+    { names: ['steer', 'corrige'], run: (inbound, args) => cmdSteer(inbound, args) },
+    { names: ['pendientes', 'followups'], run: (inbound) => cmdFollowups(inbound) },
+    { names: ['entreno_hoy'], run: (inbound) => cmdGym(inbound, 'hoy') },
+    { names: ['ultimo'], run: (inbound) => cmdGym(inbound, 'ultimo') },
+    { names: ['peso'], run: (inbound) => cmdGym(inbound, 'peso') },
+    { names: ['resumen'], run: (inbound, args) => cmdResumen(inbound, args) },
+    { names: ['evolucion'], run: (inbound, args) => cmdEvolucion(inbound, args) },
+    { names: ['estado'], run: (inbound) => cmdEstado(inbound) },
+    { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
+    { names: ['compactar'], run: (inbound) => cmdCompactar(inbound) },
+    { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },
+    { names: ['proyecto'], run: (inbound, args) => cmdProyecto(inbound, args) },
+    { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
+    { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
+    {
+      names: ['recordatorios', 'reminders'],
+      run: (inbound, args) => cmdRecordatorios(inbound, args),
+    },
+    { names: ['tv'], run: (inbound, args) => cmdTv(inbound, args) },
+    { names: ['ordenador'], run: (inbound, args) => cmdOrdenador(inbound, args) },
+    { names: ['consumo', 'uso'], run: (inbound, args) => cmdConsumo(inbound, args) },
+    {
+      names: ['servicios'],
+      run: (inbound) => say(inbound, formatServicesList(adoptedServices.list()), { quote: true }),
+    },
+    { names: ['vigila'], run: (inbound, args) => cmdVigila(inbound, args) },
+    { names: ['vigilando'], run: (inbound) => cmdVigilando(inbound) },
+    { names: ['dejar_de_vigilar'], run: (inbound, args) => cmdDejarDeVigilar(inbound, args) },
+    { names: ['precio'], run: (inbound, args) => cmdPrecio(inbound, args) },
+    { names: ['compara'], run: (inbound, args) => cmdCompara(inbound, args) },
+    { names: ['investiga'], run: (inbound, args) => cmdInvestiga(inbound, args) },
+    { names: ['resolver', 'resolve'], run: (inbound, args) => cmdResolve(inbound, args) },
+    {
+      names: ['buscar', 'search'],
+      run: async (inbound, args) => cmdSearch(await resolveThread(inbound), inbound, args),
+    },
+    {
+      names: ['memoria'],
+      run: async (inbound, args) => cmdMemoria(await resolveThread(inbound), inbound, args),
+    },
+    {
+      names: ['exportar'],
+      run: async (inbound, args) => cmdExportar(await resolveThread(inbound), inbound, args),
+    },
+    { names: ['calendario'], run: (inbound, args) => cmdCalendario(inbound, args) },
+    { names: ['perfil'], run: (inbound, args) => cmdPerfil(inbound, args) },
+    {
+      names: ['skills'],
+      run: (inbound, args) => {
+        const sub = args.trim().split(/\s+/)[0]?.toLowerCase();
+        if (sub === 'instalar' || sub === 'importar' || sub === 'install') {
+          return cmdSkillsImport(inbound, args.trim().split(/\s+/).slice(1).join(' '));
+        }
+        return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+      },
+    },
+    { names: ['agenda'], run: (inbound, args) => cmdAgenda(inbound, args) },
+    { names: ['correo'], run: (inbound, args) => cmdCorreo(inbound, args) },
+    { names: ['ocr'], run: (inbound, args) => cmdOcr(inbound, args) },
+    { names: ['ojo'], run: (inbound, args) => cmdOjo(inbound, args) },
+    { names: ['permisos'], run: (inbound, args) => cmdPermisos(inbound, args) },
+    { names: ['ignora'], run: (inbound, args) => cmdIgnora(inbound, args) },
+    { names: ['ignorados'], run: (inbound, args) => cmdIgnorados(inbound, args) },
+    { names: ['avisos'], run: (inbound, args) => cmdAvisos(inbound, args) },
+    { names: ['voice'], run: (inbound, args) => cmdVoice(inbound, args) },
+    { names: ['conversacion'], run: (inbound, args) => cmdConversacion(inbound, args) },
+    { names: ['wake', 'asistenta'], run: (inbound, args) => cmdWake(inbound, args) },
+    { names: ['status'], run: (inbound, args) => cmdStatus(inbound, args) },
+    { names: ['start'], run: (inbound) => cmdStart(inbound) },
+    { names: ['help'], run: (inbound) => cmdHelp(inbound) },
+  ]);
+
   await registry.startAll({
     // Un canal caido avisa una vez por caida y reintenta solo (antes: una linea
     // de log y canal muerto hasta reinicio, sin aviso — auditoria, linea 120).
@@ -6825,190 +6949,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             // Commands bypass the agent entirely: they are the user's hands on the
             // machine, not a task to delegate, and they must work even when every thread
             // is busy or the provider is down.
-            switch (command.name) {
-              case 'stop':
-                return cmdStop(inbound);
-              case 'screen':
-                return cmdScreen(inbound, command.args);
-              case 'camera':
-              case 'play':
-              case 'suena':
-              case 'toca':
-              case 'escucha':
-              case 'mic':
-              case 'micro':
-              case 'watch':
-                if (!desktop)
-                  return say(inbound, DESKTOP_OFF_MESSAGE, { quote: true }).then(() => {});
-                if (command.name === 'camera') return cmdCamera(inbound, command.args);
-                if (command.name === 'mic' || command.name === 'micro')
-                  return cmdMic(inbound, command.args);
-                if (command.name === 'watch') return cmdWatch(inbound, command.args);
-                return cmdPlay(inbound, command.args);
-              case 'topic':
-                return cmdTopic(inbound, command.args);
-              case 'topics':
-                return cmdTopics(inbound);
-              case 'routines':
-                return cmdRoutines(inbound);
-              case 'routine': {
-                const thread = await resolveThread(inbound);
-                return cmdRoutine(thread, inbound, command.args);
-              }
-              case 'cron': {
-                const thread = await resolveThread(inbound);
-                return cmdCron(thread, inbound, command.args);
-              }
-              case 'disparador':
-              case 'trigger': {
-                const thread = await resolveThread(inbound);
-                return cmdTrigger(thread, inbound, command.args);
-              }
-              case 'disparadores':
-              case 'triggers': {
-                const chatKey_ = chatKey(inbound);
-                return say(
-                  inbound,
-                  formatTriggerList(
-                    store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_)),
-                  ),
-                  { quote: true },
-                );
-              }
-              case 'learn': {
-                const thread = await resolveThread(inbound);
-                return cmdLearn(thread, inbound, command.args);
-              }
-              case 'memory':
-                return cmdMemory(inbound);
-              case 'deshacer':
-              case 'undo':
-                return say(inbound, undoLast(), { quote: true }).then(() => {});
-              case 'steer':
-              case 'corrige':
-                return cmdSteer(inbound, command.args);
-              case 'pendientes':
-              case 'followups':
-                return cmdFollowups(inbound);
-              case 'entreno_hoy':
-                return cmdGym(inbound, 'hoy');
-              case 'ultimo':
-                return cmdGym(inbound, 'ultimo');
-              case 'peso':
-                return cmdGym(inbound, 'peso');
-              case 'resumen':
-                return cmdResumen(inbound, command.args);
-              case 'evolucion':
-                return cmdEvolucion(inbound, command.args);
-              case 'estado':
-                return cmdEstado(inbound);
-              case 'reintentar':
-                return cmdReintentar(inbound);
-              case 'compactar':
-                return cmdCompactar(inbound);
-              case 'modelo':
-                return cmdModelo(inbound, command.args);
-              case 'proyecto':
-                return cmdProyecto(inbound, command.args);
-              case 'altavoz':
-                return cmdAltavoz(inbound, command.args);
-              case 'borrar_chat':
-                return cmdBorrarChat(inbound);
-              case 'recordatorios':
-              case 'reminders':
-                return cmdRecordatorios(inbound, command.args);
-              case 'tv':
-                return cmdTv(inbound, command.args);
-              case 'ordenador':
-                return cmdOrdenador(inbound, command.args);
-              case 'consumo':
-              case 'uso':
-                return cmdConsumo(inbound, command.args);
-              case 'servicios':
-                return say(inbound, formatServicesList(adoptedServices.list()), { quote: true });
-              case 'vigila':
-                return cmdVigila(inbound, command.args);
-              case 'vigilando':
-                return cmdVigilando(inbound);
-              case 'dejar_de_vigilar':
-                return cmdDejarDeVigilar(inbound, command.args);
-              case 'precio':
-                return cmdPrecio(inbound, command.args);
-              case 'compara':
-                return cmdCompara(inbound, command.args);
-              case 'investiga':
-                return cmdInvestiga(inbound, command.args);
-              case 'resolver':
-              case 'resolve':
-                return cmdResolve(inbound, command.args);
-              case 'buscar':
-              case 'search': {
-                const thread = await resolveThread(inbound);
-                return cmdSearch(thread, inbound, command.args);
-              }
-              case 'memoria': {
-                const thread = await resolveThread(inbound);
-                return cmdMemoria(thread, inbound, command.args);
-              }
-              case 'exportar': {
-                const thread = await resolveThread(inbound);
-                return cmdExportar(thread, inbound, command.args);
-              }
-              case 'calendario':
-                return cmdCalendario(inbound, command.args);
-              case 'perfil': {
-                return cmdPerfil(inbound, command.args);
-              }
-              case 'skills': {
-                const sub = command.args.trim().split(/\s+/)[0]?.toLowerCase();
-                if (sub === 'instalar' || sub === 'importar' || sub === 'install') {
-                  return cmdSkillsImport(
-                    inbound,
-                    command.args.trim().split(/\s+/).slice(1).join(' '),
-                  );
-                }
-                return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
-              }
-              case 'agenda':
-                return cmdAgenda(inbound, command.args);
-              case 'correo':
-                return cmdCorreo(inbound, command.args);
-              case 'ocr':
-                return cmdOcr(inbound, command.args);
-              case 'ojo':
-                return cmdOjo(inbound, command.args);
-              case 'permisos':
-                return cmdPermisos(inbound, command.args);
-              case 'ignora':
-                return cmdIgnora(inbound, command.args);
-              case 'ignorados':
-                return cmdIgnorados(inbound, command.args);
-              case 'avisos':
-                return cmdAvisos(inbound, command.args);
-              case 'voice':
-                return cmdVoice(inbound, command.args);
-              case 'conversacion':
-                return cmdConversacion(inbound, command.args);
-              case 'wake':
-              case 'asistenta':
-                return cmdWake(inbound, command.args);
-              case 'status':
-                return cmdStatus(inbound, command.args);
-              case 'start':
-                return cmdStart(inbound);
-              case 'help':
-                return cmdHelp(inbound);
-              default:
-                // Unknown slash command: say so instead of silently running it as a task.
-                await say(
-                  inbound,
-                  `No conozco el comando /${command.name}. /help para ver la lista.`,
-                  {
-                    quote: true,
-                  },
-                );
-                return;
-            }
+            return dispatchCommand(commandTable, inbound, command, async (name) => {
+              // Unknown slash command: say so instead of silently running it as a task.
+              await say(inbound, `No conozco el comando /${name}. /help para ver la lista.`, {
+                quote: true,
+              });
+            });
           }
 
           const thread = await resolveThread(inbound);
