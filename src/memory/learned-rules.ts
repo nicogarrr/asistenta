@@ -34,7 +34,7 @@ function norm(text: string): string {
 }
 
 const CORRECTION =
-  /(^|[\s,.!¡¿])(no,? asi no|asi no\b|eso no\b|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|prefiero|preferiria|la proxima vez|a partir de ahora|de ahora en adelante|desde ahora|no vuelvas a|deja de|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|esta mal|no me gusta que|quiero que siempre|siempre que te)/;
+  /(^|[\s,.!¡¿])(no,? asi no|asi no\b|eso no\b|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|prefiero|preferiria|la proxima vez|a partir de ahora|de ahora en adelante|desde ahora|no vuelvas a|deja de|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|esta mal|no me gusta que|quiero que siempre|siempre que te|te has (equivocado|confundido|colado)|te confundes|no es eso\b|no hace falta que|no necesito que|no quiero que (me )?(respondas|contestes|hables|escribas|pongas|digas|mandes|uses|llames|trates)|mejor no (me )?(pongas|uses|digas|mandes|hagas|escribas|respondas|contestes)|(recuerda|acuerdate de) que (siempre|nunca|prefiero)|cada vez que te (pida|diga|pregunte|escriba)|hablame de tu\b|tuteame|no me (hables|trates) de usted)/;
 
 /** ¿Parece el mensaje del dueño una corrección o una preferencia duradera? */
 export function looksLikeCorrection(text: string): boolean {
