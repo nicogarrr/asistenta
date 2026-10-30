@@ -203,6 +203,11 @@ export function tvToolDeps(store: Store): TvToolDeps {
           allowPlaintext: p.allowPlaintext,
           onNewClientKey: saveNewKey,
           commandTimeoutMs: 4_000,
+          // Los reintentos los hace readTvStatus (3 intentos, tope ~6 s, tambien
+          // si la apertura se queda colgada con la tele en reposo): aqui uno
+          // solo y 1,5 s por apertura, que en la red de casa sobra.
+          connectRetries: 0,
+          connectTimeoutMs: 1_500,
         });
       return readTvStatus({
         ssap,

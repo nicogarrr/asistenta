@@ -113,10 +113,12 @@ describe('estado en vivo de la tele', () => {
 
   it('tele inalcanzable: "apagada o fuera de red", un solo intento de lectura y sin inventar', async () => {
     const tv = new FakeWebOsTv({ reachable: false });
-    const st = await readTvStatus({ ssap: ssapFor(tv) });
+    const ssap = (uri: string, payload: Record<string, unknown>) =>
+      tvRequest(HOST, 'KEY123', uri, payload, { factory: tv.factory, connectRetries: 0 });
+    const st = await readTvStatus({ ssap, sleep: async () => {} });
     expect(st).toMatchObject({ reachable: false, power: 'apagada o fuera de red', appId: null });
     expect(describeTvStatus(st)).toMatch(/apagada del todo o fuera de la red/);
-    // Solo la lectura de energia (con sus 2 reintentos de conexion): no sigue abriendo sockets.
+    // Solo la lectura de energia (3 intentos, por si estaba en reposo): no sigue abriendo sockets.
     expect(tv.urls).toHaveLength(3);
   });
 
