@@ -9,12 +9,24 @@
  * (Unlike `JSON.stringify` with a replacer array, nested keys are never dropped.)
  */
 export function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? '';
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  const record = value as Record<string, unknown>;
+  // Same rules as JSON.stringify (toJSON, undefined keys omitted, undefined in
+  // arrays -> null) with sorted keys. For anything that came from JSON (tool
+  // args) the output is byte-identical to the previous version, so stored
+  // approval fingerprints keep matching.
+  const v =
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { toJSON?: unknown }).toJSON === 'function'
+      ? (value as { toJSON: () => unknown }).toJSON()
+      : value;
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? '';
+  if (Array.isArray(v)) return `[${v.map((x) => stableStringify(x) || 'null').join(',')}]`;
+  const record = v as Record<string, unknown>;
   return `{${Object.keys(record)
     .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .map((key) => [key, stableStringify(record[key])] as const)
+    .filter(([, s]) => s !== '')
+    .map(([key, s]) => `${JSON.stringify(key)}:${s}`)
     .join(',')}}`;
 }
 
