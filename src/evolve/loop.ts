@@ -1,6 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Archive, isoWeek } from './archive.js';
+import {
+  type BatteryGate,
+  type BatteryRun,
+  batteryVerdict,
+  measureBattery,
+} from './battery-gate.js';
 import { checkPatch } from './guard.js';
 import { measure as realMeasure } from './measure.js';
 import { checklistPasses, renderReceipt, verificationChecklist } from './receipt.js';
@@ -55,12 +61,19 @@ export interface EvolveOptions {
   log?: (msg: string) => void;
   /** Injected so the loop can run in tests without a real suite. */
   measure?: typeof realMeasure;
+  /**
+   * La batería de comportamiento (selfimprove/battery.json). Un candidato solo se promueve
+   * si la aprueba sin regresiones; sin batería no se promueve nada (falla cerrado).
+   */
+  battery?: BatteryGate;
 }
 
 export interface WeekReport {
   week: string;
   kernel: string;
   baseline: Awaited<ReturnType<typeof realMeasure>>;
+  /** Nota de la batería en el kernel, si se midió. */
+  batteryBaseline?: BatteryRun['score'];
   attempts: Array<{
     hypothesis: string;
     try: number;
@@ -99,6 +112,11 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
     throw new Error(`la medición base no es válida: ${baseline.error ?? 'sin resultados'}`);
   }
   say(`Base: ${baseline.passed} tests, ${baseline.checks} checks.`);
+  let batteryBase: BatteryRun | undefined;
+  if (opts.battery) {
+    batteryBase = await measureBattery(opts.battery, root);
+    say(`Batería base: ${batteryBase.score.passed}/${batteryBase.score.total} casos.`);
+  }
 
   // Never retry what already failed, and prefer what has not been tried at all.
   const dead = new Set(archive.deadEnds());
@@ -108,6 +126,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
     week,
     kernel,
     baseline,
+    batteryBaseline: batteryBase?.score,
     attempts: [],
     promoted: false,
   };
@@ -200,6 +219,23 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
             reason: `checklist de verificación incompleta (${missing})`,
           };
         }
+        // Los tests dicen si el código mejora; la batería, si el asistente sigue portándose
+        // bien. Solo se corre cuando tests y checklist ya aprobarían (cuesta llamadas al modelo).
+        if (verdict.kind === 'promote') {
+          if (!opts.battery || !batteryBase) {
+            verdict = {
+              kind: 'discard',
+              delta: verdict.delta,
+              reason: 'sin batería de evaluación: ningún cambio se promueve sin aprobarla',
+            };
+          } else {
+            const bv = batteryVerdict(batteryBase, await measureBattery(opts.battery, sandbox.dir));
+            verdict = bv.ok
+              ? { ...verdict, reason: `${verdict.reason}; ${bv.reason}` }
+              : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
+          }
+        }
+        receiptInput.verdictReason = verdict.reason;
         archive.add({
           week,
           kind: 'verdict',
@@ -259,7 +295,10 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
 
 /** A one-line summary for the chat, written so it cannot overstate what happened. */
 export function summarize(report: WeekReport): string {
-  const head = `Evolución ${report.week}: base ${report.baseline.passed} tests / ${report.baseline.checks} checks.`;
+  const bat = report.batteryBaseline
+    ? ` Batería ${report.batteryBaseline.passed}/${report.batteryBaseline.total}.`
+    : '';
+  const head = `Evolución ${report.week}: base ${report.baseline.passed} tests / ${report.baseline.checks} checks.${bat}`;
   if (!report.attempts.length) return `${head} No había hipótesis nuevas que probar.`;
   const lines = report.attempts.map(
     (a) =>

@@ -1,8 +1,8 @@
 // Orquestador de UN ciclo. Todo lo que toca el mundo (contenedor, bateria, modelo)
 // entra inyectado: aqui solo vive la logica y se prueba sin red.
 import { createHash } from 'node:crypto';
+import { type CaseResult, scoreRun } from '../evolve/battery.js';
 import { checkPatch } from '../evolve/guard.js';
-import { type CaseResult, scoreRun } from './battery.js';
 import { DEFAULT_POLICY, decide, type Policy } from './decide.js';
 import type { Attempt, CycleEntry } from './ledger.js';
 

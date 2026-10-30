@@ -101,6 +101,11 @@ describe('runWeek escribe el receipt y no promueve sin checklist completa', () =
       hypotheses: async () => ['subir a de 1 a 2 para cubrir el caso'],
       propose: async (dir) => writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 2;\n'),
       measure: async (o) => (o.cwd === root ? m() : m({ passed: 200 })),
+      battery: {
+        cases: [{ id: 'ok', prompt: 'p', machine: { mustMention: ['hola'] } }],
+        run: async () => ({ reply: 'hola', toolCalls: [], approvalsAsked: 0 }),
+        repeats: 1,
+      },
     });
     expect(report.promoted).toBe(true);
     expect(report.receiptFile && existsSync(report.receiptFile)).toBe(true);

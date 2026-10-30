@@ -1,5 +1,5 @@
 // Decision de un ciclo: promover, iterar o descartar. Pura y estricta (falla cerrada).
-import type { Score } from './battery.js';
+import type { Score } from '../evolve/battery.js';
 
 export type Policy = {
   /** Mejora minima en puntos de la tasa de aprobados (0.05 = 5 puntos). */

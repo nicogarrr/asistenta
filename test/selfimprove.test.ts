@@ -2,8 +2,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { type CaseResult, casePasses, scoreRun } from '../src/evolve/battery.js';
 import { changedFiles, checkPatch } from '../src/evolve/guard.js';
-import { type CaseResult, casePasses, scoreRun } from '../src/selfimprove/battery.js';
 import { type Deps, runCycle } from '../src/selfimprove/cycle.js';
 import { decide } from '../src/selfimprove/decide.js';
 import { appendCycle, readCycles, renderCycle } from '../src/selfimprove/ledger.js';
@@ -172,7 +172,7 @@ import {
   type Machine,
   type Trace,
   toCaseResult,
-} from '../src/selfimprove/judge.js';
+} from '../src/evolve/battery-judge.js';
 
 describe('judge', () => {
   const t = (o: Partial<Trace> = {}): Trace => ({
