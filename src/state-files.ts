@@ -184,6 +184,15 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     cap: [{ file: 'web-metrics.jsonl', maxBytes: WEB_METRICS_MAX_BYTES }],
   },
   {
+    name: 'botones',
+    what: 'ids de los botones de un toque (avisos «✅ Hecho»/«⏰ +1h», /compara «👀 Vigilar»)',
+    backup: false,
+    why: 'cada botón caduca en 24 h; perderlos solo hace que contesten «ya no sirve»',
+    retention:
+      'cada id caduca a las 24 h al cargar/escribir; PA_FILE_RETENTION_DAYS (maintenance.ts)',
+    prune: {},
+  },
+  {
     name: 'screenshots',
     what: 'capturas de pantalla',
     backup: false,

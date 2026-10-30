@@ -88,7 +88,7 @@ describe('poda de ficheros que crecen (PA_FILE_RETENTION_DAYS)', () => {
       prunable()
         .map((p) => p.dir.split('/')[0])
         .sort(),
-    ).toEqual(['evolve-historial', 'log', 'media', 'screenshots', 'voice']);
+    ).toEqual(['botones', 'evolve-historial', 'log', 'media', 'screenshots', 'voice']);
     for (const e of STATE_ENTRIES.filter((x) => x.prune)) {
       expect(e.backup, e.name).toBe(false);
       expect(e.retention, e.name).toMatch(/PA_FILE_RETENTION_DAYS/);

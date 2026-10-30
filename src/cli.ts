@@ -2661,7 +2661,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     text: string,
     buttons?: Array<{ label: string; action: string }>,
   ) => telegram.send({ channel: 'telegram', account: telegram.account, chatId, text, buttons });
-  const firedReminders = new FiredReminders();
+  // Botones de los avisos: en disco para que sigan sirviendo tras reiniciar (auto-update).
+  const firedReminders = new FiredReminders(
+    Date.now,
+    200,
+    join(paths.state, 'botones', 'recordatorios.json'),
+  );
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
   const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
   const runRoutineFire = createRoutineFire({
@@ -3946,7 +3951,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * palabra aparezca/desaparezca.
    */
   // «👀 Vigilar» de /compara: id corto → enlace (una vez, 24 h, mismo chat).
-  const compareWatchLinks = new CompareWatchLinks();
+  const compareWatchLinks = new CompareWatchLinks(
+    Date.now,
+    200,
+    join(paths.state, 'botones', 'compara.json'),
+  );
   const cmdVigila = async (inbound: Inbound, rawArgs: string): Promise<void> => {
     let args = rawArgs;
     const fromButton = /^enlace ([0-9a-f]{8})$/.exec(rawArgs.trim());

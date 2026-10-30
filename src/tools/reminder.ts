@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
@@ -6,6 +5,7 @@ import { Cron } from 'croner';
 import { Type } from 'typebox';
 import { localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
+import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
 /**
@@ -288,30 +288,21 @@ export const FIRED_BUTTON_STALE =
   'Este botón ya no sirve (vale una vez y 24 horas). Mira /recordatorios.';
 
 /**
- * Recordatorios que acaban de avisar, para sus botones «✅ Hecho» y «⏰ +1h». Solo en
- * memoria: un recordatorio puntual se borra al avisar, así que el botón lleva un id
- * corto que apunta aquí. Tras reiniciar, el botón contesta FIRED_BUTTON_STALE.
+ * Recordatorios que acaban de avisar, para sus botones «✅ Hecho», «⏰ +1h» y «🌅 Mañana
+ * 9:00». Un recordatorio puntual se borra al avisar, así que el botón lleva un id corto
+ * que apunta aquí (OneTapIds). Con `file` sobrevive a un reinicio; sin él, tras
+ * reiniciar el botón contesta FIRED_BUTTON_STALE.
  */
 export class FiredReminders {
-  readonly #items = new Map<string, { scope: string; text: string; at: number }>();
-  readonly #now: () => number;
-  readonly #max: number;
+  readonly #ids: OneTapIds<{ scope: string; text: string }>;
 
-  constructor(now: () => number = Date.now, max = 200) {
-    this.#now = now;
-    this.#max = max;
+  constructor(now: () => number = Date.now, max = 200, file?: string) {
+    this.#ids = new OneTapIds({ ttlMs: FIRED_BUTTON_MS, now, max, file });
   }
 
   /** Apunta un aviso y devuelve su id (8 hex). Tira los caducados y, si sobran, los más viejos. */
   remember(scope: string, text: string): string {
-    const t = this.#now();
-    for (const [k, v] of this.#items) {
-      if (t - v.at <= FIRED_BUTTON_MS && this.#items.size < this.#max) break;
-      this.#items.delete(k);
-    }
-    const id = randomBytes(4).toString('hex');
-    this.#items.set(id, { scope, text, at: t });
-    return id;
+    return this.#ids.remember({ scope, text });
   }
 
   /** Lo saca (un botón vale una vez). Solo desde el chat del aviso; caducado → undefined. */
@@ -319,10 +310,8 @@ export class FiredReminders {
     id: string,
     sameChat: (scope: string) => boolean,
   ): { scope: string; text: string } | undefined {
-    const v = this.#items.get(id);
-    if (!v || this.#now() - v.at > FIRED_BUTTON_MS || !sameChat(v.scope)) return undefined;
-    this.#items.delete(id);
-    return { scope: v.scope, text: v.text };
+    const v = this.#ids.take(id, (e) => typeof e?.scope === 'string' && sameChat(e.scope));
+    return v && typeof v.text === 'string' ? { scope: v.scope, text: v.text } : undefined;
   }
 }
 
