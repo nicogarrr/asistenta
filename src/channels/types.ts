@@ -42,6 +42,8 @@ export interface Inbound {
   audioFileId?: string;
   audioMimeType?: string;
   audioDurationSeconds?: number;
+  /** Tamaño del audio que declara Telegram, en bytes (si lo da). */
+  audioSizeBytes?: number;
   /**
    * A forwarded document (PDF, text file, ...), also fetched lazily: the bytes
    * feed the document memory, and downloading on arrival would reorder
@@ -50,6 +52,8 @@ export interface Inbound {
   documentFileId?: string;
   documentMimeType?: string;
   documentName?: string;
+  /** Tamaño del documento que declara Telegram, en bytes (si lo da). */
+  documentSizeBytes?: number;
   /** Set by the adapter after its own auth check. */
   authorised: boolean;
   replyToMessageId?: string;
