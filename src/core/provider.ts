@@ -78,9 +78,12 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   // Capacidades del catalogo (env > preset > defaults). El modelo de fallback
   // puede tener otra ventana/precio y se resuelve por separado.
   const caps = resolveModelCaps(config);
-  const fallbackCaps = config.fallbackModel
-    ? resolveModelCaps({ ...config, model: config.fallbackModel })
-    : caps;
+  // PA_CONTEXT_WINDOW y compañía describen PA_MODEL: el respaldo usa su
+  // propia ficha del catálogo, no la ventana del principal.
+  const fallbackCaps =
+    config.fallbackModel && config.fallbackModel !== config.model
+      ? resolveModelCaps({ ...config, model: config.fallbackModel }, { envOverrides: false })
+      : caps;
   const key = await resolveApiKey(config.baseUrl);
 
   const models = createModels({
@@ -239,9 +242,12 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
  */
 async function createLocalHandle(config: Config): Promise<ProviderHandle> {
   const caps = resolveModelCaps(config);
-  const fallbackCaps = config.fallbackModel
-    ? resolveModelCaps({ ...config, model: config.fallbackModel })
-    : caps;
+  // PA_CONTEXT_WINDOW y compañía describen PA_MODEL: el respaldo usa su
+  // propia ficha del catálogo, no la ventana del principal.
+  const fallbackCaps =
+    config.fallbackModel && config.fallbackModel !== config.model
+      ? resolveModelCaps({ ...config, model: config.fallbackModel }, { envOverrides: false })
+      : caps;
   const stream = createOpenCodeLocalStream({
     url: config.baseUrl,
     model: config.model,

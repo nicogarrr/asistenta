@@ -13,6 +13,7 @@ import { IterationBudget } from './budget.js';
 import { FileWriteTracker } from './filewrites.js';
 import {
   compactHistory,
+  compactionFor,
   DEFAULT_COMPACTION,
   estimateAll,
   extractionPrompt,
@@ -907,9 +908,16 @@ export class PersonalAgent {
    * sets the trigger (default 60000 estimated tokens; 0 turns it off). Never throws:
    * a failed summary leaves the transcript as it was.
    */
+  /** Umbral y cola del resumen para el modelo que usa ahora esta conversación. */
+  get compaction(): { triggerTokens: number; keepRecentTokens: number } {
+    const env = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    return compactionFor(env, this.#agent.state.model?.contextWindow);
+  }
+
   async #compact(): Promise<void> {
-    const trigger = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
-    if (!this.#summarize || !Number.isFinite(trigger) || trigger <= 0) return;
+    const raw = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    if (!this.#summarize || !Number.isFinite(raw) || raw <= 0) return;
+    const trigger = this.compaction.triggerTokens;
     if (this.#summaryCooldown > 0) {
       this.#summaryCooldown--;
       return;
@@ -919,10 +927,7 @@ export class PersonalAgent {
       const r = await compactHistory(
         this.#agent.state.messages,
         this.#summarize,
-        {
-          ...DEFAULT_COMPACTION,
-          triggerTokens: trigger,
-        },
+        this.compaction,
         this.#extractFacts,
       );
       if (!r.compacted && r.before > trigger) this.#summaryCooldown = SUMMARY_COOLDOWN_TURNS;

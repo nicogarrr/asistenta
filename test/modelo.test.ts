@@ -5,6 +5,8 @@ import type { Model } from '@earendil-works/pi-ai';
 import { createFauxCore, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
+import { compactionFor, DEFAULT_COMPACTION } from '../src/core/history.js';
+import { resolveModelCaps } from '../src/core/models.js';
 import { formatModelos, parseModelo } from '../src/model-choice.js';
 
 /**
@@ -167,5 +169,42 @@ describe('/modelo: PersonalAgent.chooseModel', () => {
     const r = agent.chooseModel('alt-model');
     expect(r).toEqual({ ok: false, reason: expect.stringContaining('no permite') });
     expect(agent.modelId).toBe('test-model');
+  });
+});
+
+describe('/modelo: la ventana de contexto sigue al modelo elegido', () => {
+  it('el umbral de resumen baja con un modelo de ventana pequeña y vuelve con «normal»', async () => {
+    const base = faux.getModel();
+    const big = { ...base, contextWindow: 1_048_576 };
+    const small = { ...base, id: 'small-model', name: 'small-model', contextWindow: 32_000 };
+    const h = providerState.handle as { model: unknown; modelFor: unknown; modelById: unknown };
+    h.model = big;
+    h.modelFor = () => big;
+    h.modelById = (id: string) =>
+      id === 'small-model' ? small : id === 'test-model' ? big : undefined;
+    const agent = await makeAgent({ fallbackModel: 'small-model' });
+    expect(agent.compaction.triggerTokens).toBe(60_000);
+    expect(agent.chooseModel('small-model').ok).toBe(true);
+    expect(agent.compaction).toEqual({ triggerTokens: 19_200, keepRecentTokens: 6_400 });
+    expect(agent.chooseModel(undefined).ok).toBe(true);
+    expect(agent.compaction.triggerTokens).toBe(60_000);
+  });
+
+  it('compactionFor respeta PA_COMPACT_TOKENS más bajo y una ventana desconocida', () => {
+    expect(compactionFor(10_000, 1_048_576).triggerTokens).toBe(10_000);
+    expect(compactionFor(60_000, undefined)).toEqual(DEFAULT_COMPACTION);
+    expect(compactionFor(60_000, 0).triggerTokens).toBe(60_000);
+  });
+
+  it('PA_CONTEXT_WINDOW describe PA_MODEL, no el modelo de respaldo', () => {
+    vi.stubEnv('PA_CONTEXT_WINDOW', '200000');
+    try {
+      expect(resolveModelCaps({ model: 'otro' }).contextWindow).toBe(200_000);
+      expect(resolveModelCaps({ model: 'otro' }, { envOverrides: false }).contextWindow).not.toBe(
+        200_000,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
