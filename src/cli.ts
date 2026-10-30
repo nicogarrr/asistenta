@@ -2122,7 +2122,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // pantalla sin volver a despertar la tele.
     // Un mensaje de Telegram viejo (Asistenta apagada) no mueve la tele: src/tv/stale-order.ts.
     all.push(
-      ...tvPlugin.tools({ store, staleOrder: () => staleTvOrderNotice(inboundFor(thread).sentAt) }),
+      ...tvPlugin.tools({
+        store,
+        staleOrder: () =>
+          staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
+      }),
     );
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
@@ -4861,7 +4865,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
     const isOwner = isOwnerDm(inbound, vigilanteOwnerId);
-    const stale = args.trim() ? staleTvOrderNotice(inbound.sentAt) : null;
+    const stale = args.trim() ? staleTvOrderNotice(inbound.sentAt, inbound.receivedAt) : null;
     if (stale) {
       await say(inbound, stale, { quote: true });
       return;
