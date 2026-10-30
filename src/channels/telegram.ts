@@ -576,7 +576,7 @@ export class TelegramChannel implements ChannelAdapter {
     const text = quick ?? (await run);
     await this.#throttled(() =>
       withTimeout(
-        this.#bot.api.sendMessage(chatId, text.slice(0, 4000)),
+        this.#bot.api.sendMessage(chatId, clipTelegramText(text)),
         20_000,
         'sendMessage timed out',
       ),
@@ -644,7 +644,7 @@ export class TelegramChannel implements ChannelAdapter {
       handlers.log('warn', 'funciones button failed', { data: data.slice(0, 64) });
       return;
     }
-    const text = view.text.slice(0, 4000);
+    const text = clipTelegramText(view.text);
     const reply_markup = usableButtons(view.buttons).length
       ? buildKeyboard(view.buttons)
       : undefined;
@@ -2057,6 +2057,18 @@ export function usableButtons<T extends { label: string; action: string }>(butto
     const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
     return Boolean(b.label?.trim()) && bytes >= 1 && bytes <= 64;
   });
+}
+
+/**
+ * Corta un texto a `max` unidades sin partir un emoji (par sustituto) por la mitad:
+ * un `slice` a ciegas dejaba medio emoji al final y Telegram lo enseñaba como «�».
+ */
+export function clipTelegramText(text: string, max = 4000): string {
+  if (text.length <= max) return text;
+  let cut = max;
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return text.slice(0, cut);
 }
 
 /** Límite de Telegram para el texto de un mensaje (y de una edición). */
