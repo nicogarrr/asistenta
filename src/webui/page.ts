@@ -511,6 +511,16 @@ export function renderPage(): string {
         </div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-funciones">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-funciones">Funciones</h2>
+          <button class="mini" type="button" data-refrescar="funciones" aria-label="Refrescar Funciones">Refrescar</button>
+        </header>
+        <div id="panel-funciones" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-estado">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-estado">Estado</h2>
@@ -1284,9 +1294,38 @@ ${renderFormatScript()}
         return true;
       }
 
+      async function cargarFunciones() {
+        var contenedor = document.getElementById('panel-funciones');
+        pintarCarga(contenedor);
+        try {
+          var areas = await pedir('/api/funciones');
+          if (!Array.isArray(areas)) throw new Error('Respuesta de funciones inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Lo mismo que /funciones en Telegram: qué sé hacer, por áreas, con un ejemplo de cómo pedirlo.'));
+          areas.forEach(function (area) {
+            var bloque = nodo('section', 'sesion funcion');
+            bloque.setAttribute('data-funcion', area.id);
+            bloque.appendChild(nodo('h3', null, area.titulo));
+            bloque.appendChild(nodo('p', 'texto', area.resumen));
+            bloque.appendChild(nodo('p', 'muted', 'Ejemplo: «' + area.ejemplo + '»'));
+            var lista = nodo('ul', 'comandos');
+            (Array.isArray(area.comandos) ? area.comandos : []).forEach(function (c) {
+              var fila = nodo('li', null);
+              fila.appendChild(nodo('code', null, c.comando));
+              fila.appendChild(document.createTextNode(' — ' + c.descripcion));
+              lista.appendChild(fila);
+            });
+            bloque.appendChild(lista);
+            contenedor.appendChild(bloque);
+          });
+          finCarga(contenedor, true);
+        } catch (error) { pintarError(contenedor, error, cargarFunciones); return false; }
+        return true;
+      }
+
       var refrescos = {
         objetivos: cargarObjetivos,
         rutinas: cargarRutinas,
+        funciones: cargarFunciones,
         estado: cargarEstado,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
@@ -1303,6 +1342,7 @@ ${renderFormatScript()}
         Promise.all([
           cargarObjetivos(),
           cargarRutinas(),
+          cargarFunciones(),
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),
