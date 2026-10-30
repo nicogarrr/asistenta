@@ -14,6 +14,8 @@
  * preguntaba deje de preguntar.
  */
 
+import { normalizeHostname } from './text.js';
+
 /** Herramientas cuyo resultado NO trae contenido privado al turno. Todo lo demás sí. */
 export const NON_TAINTING_TOOLS: ReadonlySet<string> = new Set([
   'fetch',
@@ -63,7 +65,8 @@ function privateWebHost(url: unknown): string | null {
   if (typeof url !== 'string' || !url.trim()) return null;
   let host: string;
   try {
-    host = new URL(url.trim()).hostname.toLowerCase().replace(/\.$/, '');
+    // Todos los puntos finales («mail.google.com..»), no solo uno: mismo helper que egressHost.
+    host = normalizeHostname(new URL(url.trim()).hostname);
   } catch {
     return null;
   }
@@ -146,7 +149,7 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
 /** Hostname normalizado (minúsculas, sin punto final), o null si la URL no parsea. */
 export function egressHost(url: string): string | null {
   try {
-    return new URL(url).hostname.toLowerCase().replace(/\.+$/, '') || null;
+    return normalizeHostname(new URL(url).hostname) || null;
   } catch {
     return null;
   }
