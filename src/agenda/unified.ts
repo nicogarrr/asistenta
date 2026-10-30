@@ -108,6 +108,19 @@ export interface FormatOptions {
 const DEFAULT_DAYS = 7;
 
 /**
+ * How many days of calendar `loadCalendar` must read for an agenda of `agendaDays`.
+ *
+ * The two count differently: `loadCalendar({ days })` reads from today up to `days`
+ * midnights ahead (days: 1 = only today), while `buildAgenda({ days })` shows today
+ * PLUS `days` days after it. Feeding the same number to both left the last day of
+ * every agenda unread: «/agenda 1» never showed tomorrow, a 7-day agenda stopped at
+ * day 6, and the proactive watcher asked for 35 days but only ever read the default 7.
+ */
+export function calendarDaysFor(agendaDays: number = DEFAULT_DAYS): number {
+  return clampDays(agendaDays) + 1;
+}
+
+/**
  * Urgency, worst first. A deadline for today outranks a 09:00 standup even with no
  * hour on it, because the deadline is the one that gets missed.
  */

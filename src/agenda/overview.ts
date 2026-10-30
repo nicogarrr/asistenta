@@ -3,7 +3,7 @@
 import type { Followup } from '../alerts/followups.js';
 import type { Goal } from '../goals/store.js';
 import type { CalendarSnapshot } from './ics.js';
-import { buildAgenda, formatAgenda } from './unified.js';
+import { buildAgenda, calendarDaysFor, formatAgenda } from './unified.js';
 
 export interface AgendaOverviewDeps {
   authorised: () => boolean;
@@ -30,7 +30,8 @@ export async function readAgendaOverview(
   const days = Number.isFinite(requestedDays)
     ? Math.max(1, Math.min(60, Math.round(requestedDays)))
     : 7;
-  const calendar = await deps.calendar(days);
+  // The calendar reads from today; the agenda shows today plus `days` after it.
+  const calendar = await deps.calendar(calendarDaysFor(days));
   const agenda = await buildAgenda({
     calendar: async () => calendar.events,
     followups: () => deps.followups().filter((f) => f.status === 'pending'),
