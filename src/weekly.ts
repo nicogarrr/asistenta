@@ -7,6 +7,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import type { ActionEntry } from './audit/log.js';
+import { wallClock } from './datecontext.js';
 import { type BargeTotals, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
 
 const WEEK_MS = 7 * 24 * 3_600_000;
@@ -87,7 +88,9 @@ export function buildWeeklySummary(i: WeeklyInput): string {
 /** Domingo desde las 18:00 hora local y sin haberlo enviado en los últimos 6 días. */
 export function isWeeklyDue(now: Date, lastSentMs: number): boolean {
   return (
-    now.getDay() === 0 && now.getHours() >= 18 && now.getTime() - lastSentMs > 6 * 24 * 3_600_000
+    wallClock(now).weekday === 0 &&
+    wallClock(now).hour >= 18 &&
+    now.getTime() - lastSentMs > 6 * 24 * 3_600_000
   );
 }
 
