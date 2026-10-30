@@ -180,6 +180,69 @@ describe('MCP por HTTP: cliente contra servidor falso', () => {
   });
 });
 
+describe('MCP por HTTP: sesión caducada', () => {
+  it('404 con sesión → nuevo initialize y la llamada se repite una vez', async () => {
+    const seen: Array<{ method: string; headers: IncomingMessage['headers'] }> = [];
+    const inner = mcpHandler(seen);
+    let expireOnce = true;
+    const url = await fakeServer((body, req, res) => {
+      if (body.method === 'tools/call' && expireOnce) {
+        expireOnce = false;
+        seen.push({ method: 'tools/call(404)', headers: req.headers });
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      inner(body, req, res);
+    });
+    const client = new McpHttpClient({ name: 'cad', url }, async () => undefined);
+    await client.start();
+    expect(await client.callTool('eco', { texto: 'otra' })).toEqual({
+      text: 'eco:otra',
+      isError: false,
+    });
+    expect(seen.map((s) => s.method)).toEqual([
+      'initialize',
+      'notifications/initialized',
+      'tools/call(404)',
+      'initialize',
+      'notifications/initialized',
+      'tools/call',
+    ]);
+    expect(seen[3]?.headers['mcp-session-id']).toBeUndefined();
+  });
+
+  it('404 repetido no entra en bucle: falla tras un reintento', async () => {
+    let calls = 0;
+    const inner = mcpHandler([]);
+    const url = await fakeServer((body, req, res) => {
+      if (body.method === 'tools/list') {
+        calls += 1;
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      inner(body, req, res);
+    });
+    const client = new McpHttpClient({ name: 'cad2', url }, async () => undefined);
+    await client.start();
+    await expect(client.listTools()).rejects.toThrow(/caducado/);
+    expect(calls).toBe(2);
+  });
+
+  it('404 sin sesión es un error normal (sin reintento)', async () => {
+    let posts = 0;
+    const url = await fakeServer((_b, _q, res) => {
+      posts += 1;
+      res.writeHead(404);
+      res.end();
+    });
+    const client = new McpHttpClient({ name: 'nada', url }, async () => undefined);
+    await expect(client.start()).rejects.toThrow(/HTTP 404/);
+    expect(posts).toBe(1);
+  });
+});
+
 describe('MCP por HTTP: puente de tools', () => {
   it('publica las tools del servidor HTTP y la llamada funciona', async () => {
     const url = await fakeServer(mcpHandler([]));

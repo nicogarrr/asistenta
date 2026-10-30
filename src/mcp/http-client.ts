@@ -130,6 +130,9 @@ export function findSseResponse(body: string, id: number): unknown {
   return undefined;
 }
 
+/** El servidor olvido la sesion (HTTP 404 con `Mcp-Session-Id`). */
+class SessionExpiredError extends Error {}
+
 /** Cliente de un servidor MCP remoto por HTTP. Misma forma que `McpClient`. */
 export class McpHttpClient {
   readonly #config: McpHttpServerConfig;
@@ -189,8 +192,21 @@ export class McpHttpClient {
 
   async #request(method: string, params: unknown): Promise<unknown> {
     if (this.#closed) throw new Error(`El cliente MCP "${this.#config.name}" ya esta cerrado.`);
-    const id = this.#nextId++;
-    const msg = await this.#post({ jsonrpc: '2.0', id, method, params }, id);
+    let msg: unknown;
+    try {
+      const id = this.#nextId++;
+      msg = await this.#post({ jsonrpc: '2.0', id, method, params }, id);
+    } catch (error) {
+      // Sesion caducada (HTTP 404 con Mcp-Session-Id): la especificacion pide
+      // empezar una sesion nueva con `initialize`. Se hace una sola vez.
+      if (!(error instanceof SessionExpiredError) || method === 'initialize') throw error;
+      log.warn('Sesion MCP caducada: se reinicia', { server: this.#config.name });
+      this.#sessionId = undefined;
+      this.#ready = false;
+      await this.start();
+      const id = this.#nextId++;
+      msg = await this.#post({ jsonrpc: '2.0', id, method, params }, id);
+    }
     if (!isRecord(msg)) {
       throw new Error(
         `Respuesta JSON-RPC invalida del servidor MCP "${this.#config.name}" para "${method}".`,
@@ -249,6 +265,10 @@ export class McpHttpClient {
       throw new Error(
         `El servidor MCP "${name}" intento redirigir (HTTP ${res.status}); no se sigue.`,
       );
+    }
+    if (res.status === 404 && headers['mcp-session-id']) {
+      await res.body?.cancel();
+      throw new SessionExpiredError(`La sesion del servidor MCP "${name}" ha caducado (HTTP 404).`);
     }
     if (!res.ok) {
       await res.body?.cancel();
