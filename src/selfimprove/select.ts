@@ -1,6 +1,6 @@
 // Que casos corre cada ciclo. Pura. El ciclo i (0,1,2 rotando) corre:
 // todos los cheap y medium, los heavy 'always', y los heavy cuya rotation == i.
-import type { Battery, BatteryCase } from './judge.js';
+import type { Battery, BatteryCase } from '../evolve/battery-judge.js';
 
 /** Un caso puntua solo si esta activo, lo juzga la maquina y tiene criterios verificables. */
 export function scorable(c: BatteryCase): boolean {

@@ -19,10 +19,8 @@ const KNOWN_UNWIRED: Record<string, string> = {
     'cola de contradicciones; falta quien la llene (consolidación) y un comando para resolverla',
   'src/skills/catalog.ts': 'catálogo de skills; falta comando /skills catalogo (descarga remota)',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
-  'src/selfimprove/battery.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
   'src/selfimprove/cycle.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
   'src/selfimprove/decide.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
-  'src/selfimprove/judge.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
   'src/selfimprove/ledger.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
   'src/selfimprove/select.ts': 'duplicado de evolve (plan P6: fusionar o borrar)',
 };

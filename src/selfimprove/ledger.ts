@@ -1,7 +1,7 @@
 // Registro de cada ciclo: JSONL (maquina) + resumen en espanol (Nico).
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Score } from './battery.js';
+import type { Score } from '../evolve/battery.js';
 import type { Verdict } from './decide.js';
 
 export type Attempt = {

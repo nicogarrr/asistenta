@@ -3,8 +3,11 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Archive, isoWeek } from './archive.js';
+import { BATTERY_FILE, type BatteryRunner, gateFromFile } from './battery-gate.js';
+import type { Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
+import { repoRoot } from './worktree.js';
 
 /**
  * What the app calls: the weekly trigger, the /evolucion command and the proposer.
@@ -89,14 +92,50 @@ export function proposerFromEnv(
   };
 }
 
+/** Lee la traza que imprime el evaluador: la última línea JSON de su salida. Estricto. */
+export function parseTrace(stdout: string): Trace {
+  const line = stdout.trim().split('\n').pop() ?? '';
+  const t = JSON.parse(line) as Trace;
+  if (
+    typeof t?.reply !== 'string' ||
+    !Array.isArray(t.toolCalls) ||
+    typeof t.approvalsAsked !== 'number'
+  )
+    throw new Error('traza inválida');
+  return t;
+}
+
+/**
+ * PA_EVOLVE_BATTERY: comando que ejecuta UN caso de la batería contra el código de su
+ * carpeta (cwd) y escribe la traza como JSON. El caso llega en PA_BATTERY_CASE. Igual que
+ * el proponedor, recibe el entorno limpio: nada de claves salvo PA_EVOLVE_PROPOSER_PASS.
+ */
+export function batteryRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): BatteryRunner | null {
+  const cmd = env.PA_EVOLVE_BATTERY?.trim();
+  if (!cmd) return null;
+  return async (c, cwd) => {
+    const { stdout } = await exec(cmd, [], {
+      cwd,
+      timeout: 10 * 60_000,
+      windowsHide: true,
+      shell: false,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...proposerEnv(env), PA_BATTERY_CASE: JSON.stringify(c) },
+    });
+    return parseTrace(String(stdout));
+  };
+}
+
 /** What /evolucion says without running anything: the last week, in plain Spanish. */
 export function describeLast(stateDir: string): string {
   const archive = new Archive(join(stateDir, 'evolve', 'attempts.jsonl'));
   const rows = archive.read().filter((a) => a.kind === 'verdict');
   const ideas = readHypotheses(stateDir);
-  const head = proposerFromEnv()
-    ? 'Auto-mejora: activa, un ciclo cada domingo de madrugada.'
-    : 'Auto-mejora: sin proponedor configurado (PA_EVOLVE_PROPOSER), así que no puede generar cambios.';
+  const head = !proposerFromEnv()
+    ? 'Auto-mejora: sin proponedor configurado (PA_EVOLVE_PROPOSER), así que no puede generar cambios.'
+    : !batteryRunnerFromEnv()
+      ? 'Auto-mejora: falta el evaluador de la batería (PA_EVOLVE_BATTERY); sin él ningún cambio se aprueba.'
+      : 'Auto-mejora: activa, un ciclo cada domingo de madrugada; cada cambio tiene que aprobar la batería.';
   const week = isoWeek();
   const mine = rows.filter((r) => r.week === week);
   const last = (mine.length ? mine : rows.slice(-5)).slice(-5);
@@ -125,10 +164,18 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
       text: 'No hay proponedor configurado (PA_EVOLVE_PROPOSER): sin él no puedo generar cambios, así que no lanzo el ciclo.',
     };
   }
+  const run = batteryRunnerFromEnv();
+  if (!run) {
+    return {
+      text: 'No hay evaluador de la batería (PA_EVOLVE_BATTERY): sin él ningún cambio puede aprobarse, así que no lanzo el ciclo.',
+    };
+  }
   try {
+    const battery = gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run);
     const report = await runWeek({
       stateDir: i.stateDir,
       root: i.root,
+      battery,
       propose,
       hypotheses: async () => readHypotheses(i.stateDir),
       log: i.log,
