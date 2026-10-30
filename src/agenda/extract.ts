@@ -276,7 +276,7 @@ const DATE_RULES: ReadonlyArray<{
     rule: 'dia de mes',
     build: (m, ctx) =>
       calendarHit(
-        m[3] ? expandYear(Number(m[3])) : ymd(ctx.now, ctx.timeZone).year,
+        m[3] ? expandYear(Number(m[3])) : undefined,
         MONTHS[m[2] ?? ''] ?? Number.NaN,
         Number(m[1]),
         ctx,
@@ -297,7 +297,7 @@ const DATE_RULES: ReadonlyArray<{
     rule: 'mes dia',
     build: (m, ctx) =>
       calendarHit(
-        m[3] ? expandYear(Number(m[3])) : ymd(ctx.now, ctx.timeZone).year,
+        m[3] ? expandYear(Number(m[3])) : undefined,
         MONTHS[m[1] ?? ''] ?? Number.NaN,
         Number(m[2]),
         ctx,
@@ -392,7 +392,7 @@ const DATE_RULES: ReadonlyArray<{
 ];
 
 function calendarHit(
-  year: number,
+  year: number | undefined,
   month: number,
   day: number,
   ctx: Context,
@@ -401,11 +401,31 @@ function calendarHit(
   specificity: number,
 ): DateHit | undefined {
   if (!Number.isInteger(month) || month < 1 || month > 12) return undefined;
-  if (!Number.isInteger(day) || day < 1 || day > 31) return undefined;
+  if (!Number.isInteger(day) || day < 1 || day > daysInMonth(year ?? 2000, month)) return undefined;
+  if (year === undefined) {
+    // No year written: the occurrence nearest to now. "El 5 de enero" in a mail read on
+    // 20 December is next January, not eleven months ago; "el 28 de diciembre" read on
+    // 3 January is the one that just went by. Taking the current year blindly lost
+    // every January appointment mentioned in December.
+    const current = ymd(ctx.now, ctx.timeZone).year;
+    let best: number | undefined;
+    for (const candidate of [current - 1, current, current + 1]) {
+      if (day > daysInMonth(candidate, month)) continue;
+      const at = zonedTime({ year: candidate, month, day, hour: NOMINAL_HOUR }, ctx.timeZone);
+      if (Number.isNaN(at)) continue;
+      if (best === undefined || Math.abs(at - ctx.now) < Math.abs(best - ctx.now)) best = at;
+    }
+    return best === undefined ? undefined : { at: best, specificity, index: match.index, rule };
+  }
   if (!Number.isInteger(year) || year < 1970 || year > 2200) return undefined;
   const at = zonedTime({ year, month, day, hour: NOMINAL_HOUR }, ctx.timeZone);
   if (Number.isNaN(at)) return undefined;
   return { at, specificity, index: match.index, rule };
+}
+
+/** 28..31 - "31 de febrero" is not a date, and must not roll over into 3 March. */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
 /**
@@ -427,8 +447,11 @@ function slashHit(
   if (!Number.isFinite(first) || !Number.isFinite(second)) return undefined;
   let day = first;
   let month = second;
-  if (day <= 12 && day > month) [day, month] = [month, day];
-  const year = match[3] ? expandYear(Number(match[3])) : ymd(ctx.now, ctx.timeZone).year;
+  // Day-first always; only a second number that cannot be a month (`03/13`) swaps.
+  // The old test - first <= 12 and first > second - turned every unambiguous Spanish
+  // date such as `10/03` (10 March) into 3 October.
+  if (month > 12 && day <= 12) [day, month] = [month, day];
+  const year = match[3] ? expandYear(Number(match[3])) : undefined;
   return calendarHit(year, month, day, ctx, match, rule, specificity);
 }
 
