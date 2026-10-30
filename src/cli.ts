@@ -31,6 +31,7 @@ import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
 import {
   cleanForTelegram,
+  friendlyError,
   progressNote,
   shorten,
   stripVoicePrefix,
@@ -3943,9 +3944,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       parsed = parseVigilaArgs(args);
     } catch (err) {
-      return void (await say(inbound, err instanceof Error ? err.message : String(err), {
-        quote: true,
-      }));
+      return void (await say(inbound, friendlyError(err), { quote: true }));
     }
     const rawUrl = parsed?.url;
     if (!parsed || !rawUrl) {
@@ -3981,7 +3980,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       void checkPageWatch(w.id);
     } catch (err) {
-      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+      await say(inbound, friendlyError(err), { quote: true });
     }
   };
 
@@ -4040,7 +4039,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       await say(inbound, describeCompare(report), { quote: true });
     } catch (err) {
-      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+      await say(inbound, friendlyError(err), { quote: true });
     }
   };
 
@@ -4110,7 +4109,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       await say(inbound, renderReport(report), { quote: true });
     } catch (err) {
-      await say(inbound, err instanceof Error ? err.message : String(err), { quote: true });
+      await say(inbound, friendlyError(err), { quote: true });
     }
   };
 
@@ -5719,9 +5718,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     } catch (err) {
       log.error('turn threw', { thread: thread.name, err });
-      await say(inbound, `Algo falló: ${err instanceof Error ? err.message : String(err)}`, {
-        quote: true,
-      });
+      await say(inbound, friendlyError(err, 'Algo falló: '), { quote: true });
     } finally {
       finished = true;
       thread.active = false;
