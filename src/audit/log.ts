@@ -15,7 +15,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { log, redact } from '../log.js';
+import { log, redact, scrubLogText } from '../log.js';
 
 export type ActionResult = 'ok' | 'error' | 'blocked';
 
@@ -86,9 +86,10 @@ function clip(text: string, max = 60): string {
 
 function formatEntry(e: ActionEntry): string {
   const parts = [`• ${hhmm(e.ts)} ${e.actor} ${e.action}`];
-  if (e.target) parts.push(`sobre ${clip(e.target)}`);
+  // También al mostrar: las entradas escritas antes de tapar en record() siguen en disco.
+  if (e.target) parts.push(`sobre ${clip(scrubLogText(e.target))}`);
   parts.push(`→ ${e.result}`);
-  if (e.detail) parts.push(`(${clip(e.detail)})`);
+  if (e.detail) parts.push(`(${clip(scrubLogText(e.detail))})`);
   return parts.join(' ');
 }
 
@@ -111,8 +112,10 @@ export class ActionLog {
       action: entry.action,
       result: entry.result,
     };
-    if (entry.target !== undefined) line.target = entry.target;
-    if (entry.detail !== undefined) line.detail = entry.detail;
+    // target/detail los rellenan las herramientas con texto libre (una URL con
+    // ?token=…, una orden con password=…): se tapan antes de tocar el disco.
+    if (entry.target !== undefined) line.target = scrubLogText(entry.target);
+    if (entry.detail !== undefined) line.detail = scrubLogText(entry.detail);
     let serialized: string;
     try {
       serialized = `${JSON.stringify(line)}\n`;
