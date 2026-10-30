@@ -17,6 +17,7 @@
 
 import type { ResearchDeps, ResearchSource } from './deep-research.js';
 import { extractQuotes, keyTerms } from './deep-research.js';
+import { bounded, DEFAULT_CALL_TIMEOUT_MS } from './limits.js';
 
 /** Apagado por defecto: PA_INVESTIGA_AMPLIO=1 lo activa (una llamada al modelo por elemento). */
 export function wideResearchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -105,7 +106,8 @@ async function researchItem(
 ): Promise<ItemResult> {
   if (!budget.take()) throw new BudgetError();
   const query = `${item} ${question}`;
-  const hits = await deps.search(query, 5);
+  const ms = deps.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const hits = await bounded(() => deps.search(query, 5), ms);
   const terms = keyTerms(query);
   const sources: ItemResult['sources'] = [];
   for (const hit of hits) {
@@ -116,7 +118,7 @@ async function researchItem(
       break;
     }
     try {
-      const text = await deps.fetch(hit.url, FETCH_CHARS);
+      const text = await bounded(() => deps.fetch(hit.url, FETCH_CHARS), ms);
       const quotes = extractQuotes(text, terms, 2);
       if (quotes.length > 0) sources.push({ title: hit.title, url: hit.url, quotes });
     } catch {

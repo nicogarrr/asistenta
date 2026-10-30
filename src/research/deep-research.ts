@@ -18,6 +18,7 @@
 
 import { foldAccents } from '../text.js';
 import type { WebSearchItem } from '../web/router.js';
+import { bounded, DEFAULT_CALL_TIMEOUT_MS, mapLimit, RESEARCH_CONCURRENCY } from './limits.js';
 
 export interface ResearchSource {
   id: number;
@@ -49,6 +50,8 @@ export interface ResearchDeps {
   llm?: (systemPrompt: string, userPrompt: string, maxTokens: number) => Promise<string>;
   maxSources?: number;
   maxQuestions?: number;
+  /** Tope por búsqueda o lectura (ms); por defecto DEFAULT_CALL_TIMEOUT_MS. */
+  callTimeoutMs?: number;
 }
 
 const DEFAULT_MAX_SOURCES = 6;
@@ -252,31 +255,47 @@ async function gather(
   deps: ResearchDeps,
   maxSources: number,
 ): Promise<Gathered> {
+  const ms = deps.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const searched = await mapLimit(plan, RESEARCH_CONCURRENCY, async (q) => {
+    try {
+      return {
+        query: q,
+        items: await bounded(() => deps.search(q, SEARCH_RESULTS_PER_QUESTION), ms),
+      };
+    } catch {
+      return { query: q, items: null };
+    }
+  });
   const perQuery: Array<{ query: string; items: WebSearchItem[] }> = [];
   const searchFailed: string[] = [];
-  for (const q of plan) {
-    try {
-      perQuery.push({ query: q, items: await deps.search(q, SEARCH_RESULTS_PER_QUESTION) });
-    } catch {
-      searchFailed.push(q);
-    }
+  for (const s of searched) {
+    if (s.items) perQuery.push({ query: s.query, items: s.items });
+    else searchFailed.push(s.query);
   }
   const candidates = rankCandidates(perQuery, maxSources);
+  // En paralelo y con tope por lectura: una web colgada ya no bloquea el informe.
+  const texts = await mapLimit(candidates, RESEARCH_CONCURRENCY, async (c) => {
+    try {
+      return await bounded(() => deps.fetch(c.url, FETCH_CHARS), ms);
+    } catch {
+      return null;
+    }
+  });
   const sources: ResearchSource[] = [];
   const fetchFailed: string[] = [];
-  for (const c of candidates) {
-    try {
-      const text = await deps.fetch(c.url, FETCH_CHARS);
-      sources.push({
-        id: sources.length + 1,
-        title: c.title,
-        url: c.url,
-        quotes: extractQuotes(text, terms, 2),
-      });
-    } catch {
+  candidates.forEach((c, i) => {
+    const text = texts[i];
+    if (text == null) {
       fetchFailed.push(c.url);
+      return;
     }
-  }
+    sources.push({
+      id: sources.length + 1,
+      title: c.title,
+      url: c.url,
+      quotes: extractQuotes(text, terms, 2),
+    });
+  });
   return { sources, searchFailed, fetchFailed };
 }
 
