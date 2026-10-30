@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { unapprovableOperation } from './approval-text.js';
+import { COMPUTER_GRANT_WINDOW_MS, unapprovableOperation } from './approval-text.js';
 import { hashArgs } from './audit/calls.js';
 import {
   egressHost,
@@ -394,6 +394,29 @@ export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boo
   }
 }
 
+/**
+ * Un atajo de teclado del sistema: cualquier acorde con la tecla Windows
+ * (win/windows/meta/cmd/super), Ctrl+Alt (incluye AltGr+Ctrl), Alt+F4 y
+ * Ctrl+Shift+Esc. Se juzga por el texto del acorde, sin depender de cómo lo
+ * envíe luego src/screen/keys.ts, para que un alias nuevo no se cuele.
+ */
+export function isSystemKeyChord(chord: string): boolean {
+  const parts = chord
+    .toLowerCase()
+    .split('+')
+    .map((p) => p.trim().replace(/^\{|\}$/g, ''))
+    .filter(Boolean);
+  if (parts.length === 0) return false;
+  const has = (...names: string[]) => parts.some((p) => names.includes(p));
+  if (has('win', 'windows', 'meta', 'cmd', 'command', 'super', 'lwin', 'rwin')) return true;
+  const ctrl = has('ctrl', 'control', 'ctl');
+  const alt = has('alt', 'altgr', 'option');
+  if (ctrl && alt) return true;
+  if (alt && has('f4')) return true;
+  if (ctrl && has('shift') && has('esc', 'escape')) return true;
+  return false;
+}
+
 export class Gate {
   readonly #rules: Rule[];
   readonly #protected: string[];
@@ -461,7 +484,7 @@ export class Gate {
     this.#allowPayments = options.allowPayments ?? false;
     this.#allowUntilPayment = options.allowUntilPayment ?? false;
     this.#stageResolver = options.stageOf;
-    this.#grantWindowMs = options.grantWindowMs ?? 90_000;
+    this.#grantWindowMs = options.grantWindowMs ?? COMPUTER_GRANT_WINDOW_MS;
     this.#egressTaint = options.egressTaint ?? process.env.PA_TAINT_GATE !== '0';
     this.#dbPath = options.dbPath;
     // Standing grants from an earlier run are part of the policy, so they are
@@ -1037,6 +1060,13 @@ export class Gate {
   #withinGrantWindow(sessionId: string, call: ToolCall): boolean {
     if (call.tool !== 'computer') return false;
     if (this.#isPaymentConfirmation(call)) return false;
+    // Un atajo del sistema (Win+R abre «Ejecutar», Win+X el menú de administración,
+    // Ctrl+Alt+Supr, Alt+F4, Ctrl+Shift+Esc) es un salto de «clicar en una ventana»
+    // a «lanzar o cerrar cualquier cosa»: la ventana de 90 s no lo cubre y pregunta
+    // siempre, también dentro de un lote.
+    if (argString(call.args, 'action') === 'key' && isSystemKeyChord(argString(call.args, 'key'))) {
+      return false;
+    }
     const until = this.#grants.get(sessionId)?.get(call.tool);
     if (until === undefined) return false;
     if (Date.now() >= until) {

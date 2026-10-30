@@ -83,7 +83,7 @@ export function approvalReasonSpanish(reason: string): string {
 export function formatApproval(
   call: ToolCall,
   reason: string,
-  opts: { showArgs?: boolean } = {},
+  opts: { showArgs?: boolean; grantWindowMs?: number } = {},
 ): ApprovalText {
   const showArgs = opts.showArgs ?? true;
   reason = approvalReasonSpanish(reason);
@@ -153,7 +153,7 @@ export function formatApproval(
         ...rawSteps,
         `Motivo: ${reason}`,
       ].join('\n');
-      return withinBudget(raw, question, 'computer');
+      return withGrantWindowNote(withinBudget(raw, question, 'computer'), opts.grantWindowMs);
     }
     if (call.args.action === 'type' && call.args.secret === true) return deniedSecretType();
     if (hasInvisible(JSON.stringify(call.args))) return deniedInvisible('computer');
@@ -166,7 +166,7 @@ export function formatApproval(
       `Motivo: ${redactSecrets(reason)}`,
     ].join('\n');
     const raw = ['¿Permito computer?', `Acción: ${rawAction}`, `Motivo: ${reason}`].join('\n');
-    return withinBudget(raw, question, 'computer');
+    return withGrantWindowNote(withinBudget(raw, question, 'computer'), opts.grantWindowMs);
   }
   if (call.tool === 'write' || call.tool === 'edit') {
     // Escribir a ciegas no es aprobar: la pregunta enseña la ruta y lo que se va a
@@ -299,6 +299,30 @@ function deniedSecretType(): ApprovalText {
  * that fits always produces a shown text that fits. Measuring the masked text
  * instead would let a 4000-char token carry a 4000-char command past review.
  */
+/**
+ * Ventana de confianza que abre una aprobación de `computer` en el daemon
+ * (Gate.grantWindowMs). La pregunta lo dice: aprobar un clic da 90 s de
+ * teclado y ratón sin volver a preguntar, y Nico tiene que saberlo al pulsar «Sí».
+ */
+export const COMPUTER_GRANT_WINDOW_MS = 90_000;
+
+/** Añade a una pregunta de `computer` aprobable el aviso de la ventana de confianza. */
+function withGrantWindowNote(
+  text: ApprovalText,
+  windowMs: number = COMPUTER_GRANT_WINDOW_MS,
+): ApprovalText {
+  if (!text.complete || windowMs <= 0) return text;
+  const secs = Math.round(windowMs / 1000);
+  return {
+    ...text,
+    question:
+      `${text.question}\n` +
+      `Si lo apruebas, durante ${secs} s los siguientes clics y teclas de esta tarea ` +
+      'no volverán a preguntar (los atajos del sistema como Win+R, Ctrl+Alt o Alt+F4 ' +
+      'sí preguntan siempre).',
+  };
+}
+
 function withinBudget(raw: string, shown: string, tool: string): ApprovalText {
   if (raw.length <= QUESTION_BUDGET) return { question: shown, complete: true };
   return {
