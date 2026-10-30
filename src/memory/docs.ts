@@ -519,6 +519,44 @@ export class DocMemory {
     return removed;
   }
 
+  /**
+   * Retention: forget every document indexed before `now - olderThanMs`, in every
+   * scope, keeping the index and the mirror in step (rows, FTS chunks and the
+   * mirrored `.txt`). Deleting only mirror files would leave the index pointing
+   * at text that no longer exists. Returns how many documents were forgotten.
+   */
+  pruneOlderThan(olderThanMs: number, now = this.#now()): number {
+    const cutoff = now - Math.max(0, olderThanMs);
+    const ids = (
+      this.#db.prepare('SELECT doc_id FROM docs WHERE at < ?').all(cutoff) as Array<{
+        doc_id: string;
+      }>
+    ).map((r) => r.doc_id);
+    if (ids.length === 0) return 0;
+    this.#db.exec('BEGIN');
+    try {
+      const delDoc = this.#db.prepare('DELETE FROM docs WHERE doc_id = ?');
+      const delChunks = this.#db.prepare('DELETE FROM doc_chunks WHERE doc_id = ?');
+      for (const id of ids) {
+        delDoc.run(id);
+        delChunks.run(id);
+      }
+      this.#db.exec('COMMIT');
+    } catch (err) {
+      this.#db.exec('ROLLBACK');
+      throw err;
+    }
+    for (const id of ids) {
+      if (!/^[0-9a-f]{16}$/.test(id)) continue;
+      try {
+        rmSync(join(this.#directory, `${id}.txt`), { force: true });
+      } catch (err) {
+        log.warn('doc memory mirror delete failed', { error: String(err) });
+      }
+    }
+    return ids.length;
+  }
+
   /** What this scope has on the shelf, newest first. */
   list(scope: string, limit = 20): IndexedDocument[] {
     const rows = this.#db
