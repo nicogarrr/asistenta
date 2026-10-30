@@ -190,6 +190,7 @@ import { drainThreadTails } from './shutdown-drain.js';
 import { refineFromLessons } from './skills/refine.js';
 import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
+import { WebDemoRecorder } from './teach-demo-web.js';
 import {
   buildTriggerPrompt,
   formatTriggerList,
@@ -412,6 +413,7 @@ import {
   vaultGet,
   vaultList,
   vaultSet,
+  vaultSnapshotValues,
 } from './vault.js';
 import {
   getOjoEnabled,
@@ -1931,6 +1933,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const activeTopic = new Map<string, string>();
   /** chatId -> thread currently recording steps for /learn. */
   const learning = new LearnRecorder();
+  // F11 paso 3: `/learn web <url>` (solo con PA_TEACH_DEMO=1).
+  const webDemo = new WebDemoRecorder();
   /** chatId -> whether to answer with a spoken reply. */
   const voiceOn = new Map<string, boolean>();
   /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
@@ -3532,6 +3536,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
+      const web = await webDemo.finish(thread.key, {
+        browser: browserFor(thread.key),
+        store: playbooks,
+        vaultValues: vaultSnapshotValues,
+      });
+      if (web !== null) {
+        await say(inbound, web, { quote: true });
+        return;
+      }
       const ended = learning.end(inbound.chatId, thread.key, thread.agent);
       if (!ended.ok) {
         const text =
@@ -3611,6 +3624,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         { quote: true },
       );
       return;
+    }
+    const webArg = /^web(?:\s+(.*))?$/i.exec(name);
+    if (webArg) {
+      const msg = await webDemo.start(thread.key, webArg[1] ?? '', {
+        browser: browserFor(thread.key),
+      });
+      if (msg !== null) {
+        await say(inbound, msg, { quote: true });
+        return;
+      }
     }
     if (!name) {
       await say(inbound, 'Uso: /learn <nombre> para empezar, /learn end para cerrar.', {

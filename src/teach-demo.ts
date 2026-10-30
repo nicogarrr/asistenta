@@ -14,8 +14,8 @@
  *   también la reproducción;
  * - solo http/https; la URL se guarda sin usuario ni contraseña.
  * Paso 2: `demoToPlaybook` guarda lo aprendido en el playbook del gestor
- * (selectores + nombres de clave), nunca valores. Conectarlo al navegador
- * (`/learn web <url>`) es el siguiente paso.
+ * (selectores + nombres de clave), nunca valores. Paso 3: `/learn web <url>`
+ * lo conecta al navegador (src/teach-demo-web.ts).
  */
 import {
   canonicalPlaybookDomain,
