@@ -72,6 +72,13 @@ describe('procesos hijos sin credenciales del daemon', () => {
     expect(calls[0]?.env?.PA_SPK_FILE).toBe('C:\\voz\\a.wav');
   });
 
+  it('instalador de servicios adoptados (tercero) sin tokens', async () => {
+    const { defaultRunner } = await import('../src/tools/service.js');
+    await defaultRunner('instalador', ['--version']);
+    expect(calls.map((c) => c.cmd)).toEqual(['instalador']);
+    expectClean(calls[0]?.env);
+  });
+
   it('childEnv quita solo nombres de credencial y añade los del hijo', async () => {
     const { childEnv } = await import('../src/child-env.js');
     const env = childEnv(
@@ -97,6 +104,8 @@ describe('procesos hijos sin credenciales del daemon', () => {
       'src/screen/ocr.ts',
       'src/screen/windows.ts',
       'src/screen/media.ts',
+      'src/tools/service.ts',
+      'src/windows-control-native.ts',
     ];
     for (const f of files) {
       const src = readFileSync(f, 'utf8');

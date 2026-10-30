@@ -20,6 +20,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { childEnv } from '../child-env.js';
 import { containsVaultValue } from '../gestor/playbooks.js';
 import {
   buildCompose,
@@ -54,7 +55,7 @@ export const defaultRunner: Runner = (cmd, args) =>
     execFile(
       cmd,
       args,
-      { timeout: 120_000, windowsHide: true, maxBuffer: 1024 * 1024 },
+      { timeout: 120_000, windowsHide: true, maxBuffer: 1024 * 1024, env: childEnv() },
       (err, stdout, stderr) => {
         const code =
           typeof (err as { code?: number } | null)?.code === 'number'
