@@ -18,6 +18,8 @@ import { ago } from './startup-record.js';
 /** Estado del aviso en el directorio de estado (registrado en src/state-files.ts). */
 export const BOOT_NOTICE_FILE = 'boot-notice.json';
 export const BOOT_NOTICE_MIN_INTERVAL_MS = 10 * 60_000;
+/** Un último envío fechado más allá de esto en el futuro se ignora (reloj corregido). */
+export const BOOT_NOTICE_FUTURE_IGNORED_MS = 60 * 60_000;
 
 /** Encendido salvo PA_BOOT_NOTICE=0/off/false/no. */
 export function bootNoticeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -172,8 +174,13 @@ async function decideAndSend(deps: BootNoticeDeps, now: number): Promise<BootNot
   if (!bootNoticeEnabled(deps.env)) return 'off';
   if (deps.ownerChatId == null) return 'no-owner';
   const last = lastSentAt(deps.statePath);
-  // Un reloj que ha ido hacia atrás (last en el futuro) también cuenta como reciente.
-  if (now - last < BOOT_NOTICE_MIN_INTERVAL_MS) return 'rate-limited';
+  // Un reloj que ha ido un poco hacia atrás (last en el futuro) también cuenta como
+  // reciente. Pero un envío fechado más de 1 h por delante (hora corregida, reloj
+  // adelantado, arranque dual) no es un envío reciente: sin esto no volvía a avisar
+  // hasta que el reloj alcanzara esa fecha. Al mandar se guarda `now`, así que un
+  // bucle de reinicios sigue frenado desde el primer aviso.
+  const future = last - now > BOOT_NOTICE_FUTURE_IGNORED_MS;
+  if (!future && now - last < BOOT_NOTICE_MIN_INTERVAL_MS) return 'rate-limited';
   try {
     recordSent(deps.statePath, now);
   } catch {
