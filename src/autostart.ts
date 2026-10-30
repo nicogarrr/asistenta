@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { paths } from './paths.js';
+import { formatStartupRecord, readStartupRecord, STARTUP_RECORD_FILE } from './startup-record.js';
 import { unlock, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
 
@@ -8,7 +10,10 @@ export function autostartRepo(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL('..', moduleUrl));
 }
 
-export async function autostartCommand(args: string[]): Promise<number> {
+export async function autostartCommand(
+  args: string[],
+  opts: { stateDir?: string } = {},
+): Promise<number> {
   if (process.platform !== 'win32') {
     process.stderr.write('Autoarranque completo disponible solo en Windows.\n');
     return 2;
@@ -22,6 +27,10 @@ export async function autostartCommand(args: string[]): Promise<number> {
       'uso: pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]\n',
     );
     return 2;
+  }
+  if (action === 'status') {
+    const rec = readStartupRecord(join(opts.stateDir ?? paths.state, STARTUP_RECORD_FILE));
+    process.stdout.write(`${formatStartupRecord(rec)}\n`);
   }
   const exe = join(
     process.env.SystemRoot ?? 'C:\\Windows',
