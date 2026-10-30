@@ -69,8 +69,19 @@ export function sessionRetentionDays(env: NodeJS.ProcessEnv = process.env): numb
   return Math.floor(n);
 }
 
+/**
+ * Días de retención de documentos (`PA_DOCUMENT_RETENTION_DAYS`). Apagada por
+ * defecto (0): un documento que Nico subió hace meses puede seguir siendo útil.
+ */
+export function documentRetentionDays(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.PA_DOCUMENT_RETENTION_DAYS?.trim() || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 export interface RetentionDeps {
   db: DatabaseSync;
+  /** Olvida documentos (índice + mirror) más antiguos que el plazo; ver DocMemory.pruneOlderThan. */
+  pruneDocs?: (olderThanMs: number) => number;
   now: Date;
   /** Última pasada que terminó bien (ms), 0 si nunca. */
   lastRunMs: number;
@@ -83,15 +94,22 @@ export interface RetentionDeps {
  * al día a partir de las 04:00 locales (la copia de seguridad de las 03:00 ya tiene lo
  * que se va a borrar). Solo marca la pasada como hecha si terminó bien.
  */
-export function retentionIfDue(deps: RetentionDeps): { ran: boolean; sessions: number } {
+export function retentionIfDue(deps: RetentionDeps): {
+  ran: boolean;
+  sessions: number;
+  documents: number;
+} {
   const days = sessionRetentionDays(deps.env);
-  if (days === 0) return { ran: false, sessions: 0 };
+  const docDays = deps.pruneDocs ? documentRetentionDays(deps.env) : 0;
+  const idle = { ran: false, sessions: 0, documents: 0 };
+  if (days === 0 && docDays === 0) return idle;
   const now = deps.now;
-  if (now.getHours() < RETENTION_HOUR) return { ran: false, sessions: 0 };
-  if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return { ran: false, sessions: 0 };
-  const sessions = pruneSessions(deps.db, days * DAY_MS, now.getTime());
+  if (now.getHours() < RETENTION_HOUR) return idle;
+  if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return idle;
+  const sessions = days > 0 ? pruneSessions(deps.db, days * DAY_MS, now.getTime()) : 0;
+  const documents = docDays > 0 && deps.pruneDocs ? deps.pruneDocs(docDays * DAY_MS) : 0;
   deps.markRun(now.getTime());
-  return { ran: true, sessions };
+  return { ran: true, sessions, documents };
 }
 
 /**
