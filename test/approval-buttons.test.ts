@@ -284,18 +284,22 @@ describe('offerApproval con askScope', () => {
   });
 
   it('edita el mensaje con el veredicto y quita los botones', async () => {
-    const channel = await makeChannel();
-    const pending = channel.offerApproval('req-1', '42', '¿Permito shell?', { askScope: true });
-    const messageId = press('approve:session:req-1');
-    await expect(pending).resolves.toEqual({ approved: true, scope: 'session' });
-    await vi.waitFor(
-      () => {
-        const edit = harness.edits.find((e) => e.messageId === messageId);
-        expect(edit?.text).toBe('✅ Aprobado para esta sesión');
-        expect(edit?.keyboard).toEqual([]);
-      },
-      { timeout: 8_000 },
-    );
+    // La edición espera el espaciado de ~1,1 s del canal: con reloj falso no se duerme de verdad.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const t0 = performance.now();
+    try {
+      const channel = await makeChannel();
+      const pending = channel.offerApproval('req-1', '42', '¿Permito shell?', { askScope: true });
+      const messageId = press('approve:session:req-1');
+      await expect(pending).resolves.toEqual({ approved: true, scope: 'session' });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const edit = harness.edits.find((e) => e.messageId === messageId);
+      expect(edit?.text).toBe('✅ Aprobado para esta sesión');
+      expect(edit?.keyboard).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(performance.now() - t0).toBeLessThan(500);
   });
 });
 
