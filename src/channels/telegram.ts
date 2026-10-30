@@ -408,6 +408,7 @@ export class TelegramChannel implements ChannelAdapter {
       inbound.audioMimeType = reported ?? 'audio/ogg';
       inbound.audioDurationSeconds =
         'duration' in incomingAudio ? (incomingAudio.duration ?? undefined) : undefined;
+      inbound.audioSizeBytes = (incomingAudio as { file_size?: number }).file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
     }
 
@@ -424,6 +425,7 @@ export class TelegramChannel implements ChannelAdapter {
       inbound.documentFileId = msg.document.file_id;
       inbound.documentMimeType = msg.document.mime_type ?? undefined;
       inbound.documentName = msg.document.file_name ?? undefined;
+      inbound.documentSizeBytes = msg.document.file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
     }
 
@@ -2070,4 +2072,18 @@ export function clipDraftText(text: string): string {
   const code = text.charCodeAt(cut - 1);
   if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
   return `${text.slice(0, cut)}…`;
+}
+
+/** Lo más que un bot puede descargar de Telegram (getFile de la Bot API); lo mismo que corta downloadFile. */
+export const TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES = 20_000_000;
+
+/**
+ * Frase para un archivo que Telegram declara por encima del límite de descarga de los
+ * bots: antes solo se decía «Telegram no devolvió el archivo» y no se sabía por qué.
+ * Sin tamaño, o por debajo del límite, devuelve undefined.
+ */
+export function tooBigForBotDownload(sizeBytes: number | undefined): string | undefined {
+  if (!sizeBytes || sizeBytes <= TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES) return undefined;
+  const mb = Math.ceil(sizeBytes / 1_000_000);
+  return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
 }
