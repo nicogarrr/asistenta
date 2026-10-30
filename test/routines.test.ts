@@ -85,8 +85,14 @@ describe('validateSchedule', () => {
     const result = validateSchedule('*/5 * * * *');
     expect(result.ok).toBe(true);
     expect(result.ok && result.next).toMatch(
-      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC[+-]\d{2}:\d{2} \(in [^)]+\)$/,
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC[+-]\d{2}:\d{2} \(en [^)]+\)$/,
     );
+  });
+
+  it('reports the distance in Spanish, not English', () => {
+    const result = validateSchedule('*/5 * * * *');
+    expect(result.ok && result.next).toMatch(/\(en \d+ (min \d+ s|s)\)$/);
+    expect(result.ok && result.next).not.toMatch(/\(in |\d+m |\d+h /);
   });
 
   it('accepts a 6-field form and treats the first field as seconds', () => {
