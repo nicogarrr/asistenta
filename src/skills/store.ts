@@ -30,6 +30,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from '../datecontext.js';
+import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import type { Skill, SkillDraft, SkillTrust } from './types.js';
 
@@ -351,7 +352,7 @@ export class SkillStore {
   #write(skill: Skill): void {
     mkdirSync(join(this.dir, skill.id), { recursive: true });
     const file = this.fileFor(skill.id);
-    const tmp = `${file}.tmp`;
+    const tmp = uniqueTmpPath(file);
     writeFileSync(tmp, serializeSkillMarkdown(skill), 'utf8');
     renameSync(tmp, file);
     log.debug('skill written', { id: skill.id, version: skill.version });

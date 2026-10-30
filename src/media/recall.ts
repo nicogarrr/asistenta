@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { uniqueTmpPath } from '../fs-tmp.js';
 /** Audio handles and optional local originals, isolated per chat and bounded by
  * the same TTL and per-chat cap. The local original survives a daemon restart
  * so replay does not depend on another Telegram download. */
@@ -231,8 +232,14 @@ export class AudioRecall {
   #save(): void {
     if (!this.#directory) return;
     const path = join(this.#directory, 'index.json');
-    writeFileSync(`${path}.tmp`, JSON.stringify([...this.#byChat]), { mode: 0o600 });
-    renameSync(`${path}.tmp`, path);
+    const tmp = uniqueTmpPath(path);
+    try {
+      writeFileSync(tmp, JSON.stringify([...this.#byChat]), { mode: 0o600 });
+      renameSync(tmp, path);
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
+    }
   }
   retain(chat: string, message: string, bytes: Buffer): void {
     if (!this.byMessage(chat, message) || bytes.length === 0 || bytes.length > 25_000_000) return;

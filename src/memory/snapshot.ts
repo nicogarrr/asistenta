@@ -48,6 +48,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 
 export interface MemorySnapshotOptions {
@@ -358,7 +359,7 @@ export class MemorySnapshot {
     // tmp + verificación + rename: una escritura truncada (disco lleno, cuota) o un
     // corte a medias deja el PERFIL.md anterior intacto. Antes se escribía encima y
     // el error llegaba con el perfil ya destrozado.
-    const tmp = `${path}.tmp`;
+    const tmp = uniqueTmpPath(path);
     try {
       writeFileSync(tmp, content, 'utf8');
       if (readFileSync(tmp, 'utf8') !== content) {
