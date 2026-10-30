@@ -962,6 +962,7 @@ export class PersonalAgent {
       // Un tracker por RUN (no por intento): un reintento transitorio no debe
       // olvidar las escrituras que el intento anterior ya hizo (#134 ronda 3).
       fileWrites: new FileWriteTracker(),
+      deadline: Date.now() + this.#config.runTimeoutMs,
     };
     let attempt = 0;
     // Quota fallback (P2-17): a quota-class error means retrying the primary is
@@ -1004,6 +1005,7 @@ export class PersonalAgent {
         while (
           attempt < this.#config.retry.attempts &&
           !this.#externalAbort &&
+          Date.now() < shared.deadline &&
           isTransientProviderError(result.error)
         ) {
           attempt++;
@@ -1036,7 +1038,8 @@ export class PersonalAgent {
           !overflowRetried &&
           result.error &&
           isContextOverflow(result.error) &&
-          !this.#externalAbort
+          !this.#externalAbort &&
+          Date.now() < shared.deadline
         ) {
           overflowRetried = true;
           log.warn('context overflow: compactando y reintentando', {
@@ -1202,10 +1205,15 @@ export class PersonalAgent {
     }, 10_000);
     watchdog.unref();
 
-    const timer = setTimeout(() => {
-      log.warn('run hit its wall-clock ceiling, aborting', { ms: this.#config.runTimeoutMs });
-      this.#agent.abort();
-    }, this.#config.runTimeoutMs);
+    // Lo que QUEDA del plazo de la corrida: un reintento no reinicia el reloj
+    // (antes, con 3 reintentos, una corrida «de 15 min» podía durar ~60).
+    const timer = setTimeout(
+      () => {
+        log.warn('run hit its wall-clock ceiling, aborting', { ms: this.#config.runTimeoutMs });
+        this.#agent.abort();
+      },
+      Math.max(0, shared.deadline - Date.now()),
+    );
     // unref so a finished run never holds the process open; cleared in finally so a
     // normal turn does not leave a 15 minute timer behind.
     timer.unref();
@@ -1359,4 +1367,9 @@ interface AttemptState {
   sameToolCount: number;
   /** Writes reales de la corrida entera, compartido entre intentos. */
   fileWrites: FileWriteTracker;
+  /**
+   * Fin del techo de reloj de la corrida ENTERA (epoch ms). runTimeoutMs es «hard
+   * ceiling on one agent run»: los reintentos gastan del mismo plazo, no lo reinician.
+   */
+  deadline: number;
 }
