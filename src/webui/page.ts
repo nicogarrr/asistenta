@@ -1327,6 +1327,14 @@ ${renderFormatScript()}
             if (objetivo.panelChatAvailable) {
               var enlace = nodo('a', null, 'Ir al chat principal del panel');
               enlace.href = '#titulo-chat';
+              // Lleva el foco al cuadro del chat, no solo la vista: así se escribe sin buscarlo.
+              enlace.addEventListener('click', function (evento) {
+                var campoChat = document.getElementById('texto-chat');
+                if (!campoChat || typeof campoChat.focus !== 'function') return;
+                evento.preventDefault();
+                if (typeof campoChat.scrollIntoView === 'function') campoChat.scrollIntoView({ block: 'center' });
+                campoChat.focus();
+              });
               tarjeta.appendChild(enlace);
               tarjeta.appendChild(nodo('p', 'muted', 'El chat no modifica este objetivo automáticamente.'));
             } else tarjeta.appendChild(nodo('p', 'muted', 'Continúa en el hilo original de Telegram: ' + objetivo.thread + '. El chat del panel solo abre el principal.'));
