@@ -544,6 +544,7 @@ export async function main(argv: string[]): Promise<number> {
           tvCasterFromVault(vaultGet, tvRequest, { only, saveClientKey: saveTvClientKey })(file),
         print: (line) => console.log(line),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        discard: (file) => rmSync(file, { force: true }),
       });
     }
     case 'tv':
