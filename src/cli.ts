@@ -516,6 +516,7 @@ import {
   routineNameFromPrompt,
   runCronCommand,
 } from './daemon/cron-command.js';
+import { trimForSpeech } from './daemon/speech-text.js';
 import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
 
@@ -529,6 +530,7 @@ export {
   runCronCommand,
   uniqueRoutineName,
 } from './daemon/cron-command.js';
+export { trimForSpeech } from './daemon/speech-text.js';
 
 /** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
 const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
@@ -7261,51 +7263,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   await lifecycle.done;
   return 0;
-}
-
-/**
- * Text destined for speech.
- *
- * Markdown is read terribly aloud, and a 900-character answer becomes a 90-second
- * voice note nobody asked for. Code blocks are dropped entirely and replaced by a
- * marker, because a model quoting a stack trace at 2am on a phone is useless.
- */
-export function trimForSpeech(text: string): string {
-  const cleaned = text
-    .replace(/```[\s\S]*?```/g, ' (bloque de codigo omitido) ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, '')
-    // Emojis y viñetas: la voz los lee como nombres («cara sonriente», «guion»).
-    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
-    .replace(/^[ \t]*[-•·][ \t]+/gm, '')
-    // Símbolos de texto que no son emoji: flechas, estrellas, marcas, cajas. SAPI
-    // los lee por su nombre («flecha a la derecha», «estrella negra») o se traba.
-    .replace(
-      /[ \t]*(?:[\u2190-\u21FF\u27F0-\u27FF\u2900-\u297F\u2B00-\u2B2F]|-{1,2}>|={1,2}>|<-{1,2})[ \t]*/g,
-      ', ',
-    )
-    .replace(/[\u2600-\u27BF\u25A0-\u25FF\u2700-\u27BF\u2022\u2023\u2043\u2219\u00B7]/g, ' ')
-    // Un salto de línea sin puntuación (listas) es una pausa, no una frase pegada.
-    .replace(/([^\s.!?…:;,])[ \t]*\n+/g, '$1. ')
-    .replace(/[*_#>|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (cleaned.length <= 900) return cleaned;
-  // Cortar en el último fin de frase (o palabra) antes del tope: nunca a media palabra.
-  const head = cleaned.slice(0, 900);
-  const sentenceEnd = Math.max(
-    head.lastIndexOf('. '),
-    head.lastIndexOf('? '),
-    head.lastIndexOf('! '),
-  );
-  const cut =
-    sentenceEnd >= 450
-      ? sentenceEnd + 1
-      : head.lastIndexOf(' ') >= 450
-        ? head.lastIndexOf(' ')
-        : 900;
-  return `${cleaned.slice(0, cut).trimEnd()}...`;
 }
 
 /**
