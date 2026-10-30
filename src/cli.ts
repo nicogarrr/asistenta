@@ -5649,7 +5649,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         try {
           const out = await ocrImageBytes(bytes, mime, { ocrAvailable, ocrImage });
           const indexed =
-            out.status === 'ok' ? docMemory.indexOcr(thread.key, ref, out.text, caption) : null;
+            out.status === 'ok'
+              ? docMemory.indexOcr(memoryScopesFor(thread.key).write, ref, out.text, caption)
+              : null;
           return imageNote(label, out, indexed);
         } catch (err) {
           log.warn('image index failed', { err: String(err) });
@@ -5689,7 +5691,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             try {
               const heard = await transcribeVoiceNote(bytes, { mimeType: docMime });
               const indexed = docMemory.indexTranscript(
-                thread.key,
+                memoryScopesFor(thread.key).write,
                 inbound.messageId,
                 heard.text,
                 inbound.documentName ?? inbound.text,
@@ -5714,7 +5716,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               // tool reads with () => thread.key, so indexing MUST use the
               // same string or nothing is findable even in the same chat.
               const indexed = await docMemory.index(
-                thread.key,
+                memoryScopesFor(thread.key).write,
                 {
                   fileId: inbound.documentFileId,
                   name: inbound.documentName,
@@ -5762,7 +5764,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // has something to act on.
           recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
           try {
-            docMemory.indexTranscript(thread.key, inbound.messageId, heard.text, inbound.text);
+            docMemory.indexTranscript(
+              memoryScopesFor(thread.key).write,
+              inbound.messageId,
+              heard.text,
+              inbound.text,
+            );
           } catch (err) {
             // The transcript is already in the turn and in the short-term recall;
             // losing only its long-term index must not kill the turn.

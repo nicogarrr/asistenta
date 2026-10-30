@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { DocMemory } from '../memory/docs.js';
+import { memoryScopesFor } from '../memory.js';
 
 /** Query access to the document memory: everything the user forwarded as a
  * file or said in a voice note, text-extracted and indexed. The note memory
@@ -81,11 +82,12 @@ export function createDocsTool(
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const scope = scopeOf();
+      const { read } = memoryScopesFor(scope);
       switch (args.action) {
         case 'search': {
           const query = String(args.query ?? '').trim();
           if (!query) throw new Error('la acción search necesita query');
-          const hits = store.search(scope, query);
+          const hits = store.searchIn(read, query);
           if (!hits.length) {
             return {
               content: [
@@ -94,7 +96,7 @@ export function createDocsTool(
                   // "No encontrado", nunca "no existe": el AND de términos y la
                   // indexación parcial de documentos largos pueden dejar fuera
                   // algo que sí llegó.
-                  text: `No he encontrado nada con esas palabras (${coverage(store.stats(scope))}). Puede estar escrito de otra forma, no haber llegado nunca, o ser de un tipo que no se pudo leer.`,
+                  text: `No he encontrado nada con esas palabras (${coverage(store.statsIn(read))}). Puede estar escrito de otra forma, no haber llegado nunca, o ser de un tipo que no se pudo leer.`,
                 },
               ],
               details: { count: 0 },
@@ -118,7 +120,7 @@ export function createDocsTool(
         case 'delete': {
           const id = String(args.docId ?? '').trim();
           if (!id) throw new Error('la acción delete necesita docId (sale de action=list)');
-          const item = store.list(scope, 1000).find((d) => d.docId === id);
+          const item = store.listIn(read, 1000).find((d) => d.docId === id);
           if (!item) {
             pending.delete(scope);
             return {
@@ -147,7 +149,7 @@ export function createDocsTool(
             };
           }
           pending.delete(scope);
-          const ok = store.remove(scope, id);
+          const ok = store.removeIn(read, id);
           return {
             content: [
               {
@@ -161,7 +163,7 @@ export function createDocsTool(
           };
         }
         case 'list': {
-          const docs = store.list(scope);
+          const docs = store.listIn(read);
           return {
             content: [
               {
