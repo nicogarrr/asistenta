@@ -231,6 +231,8 @@ function macroPrompt(routine: Routine, values: Map<string, string>, steps: strin
 export interface RoutineRunContext {
   scope: string;
   routine: Routine;
+  /** Set when this run recovers a slot missed while the PC was off or asleep (F1). */
+  late?: { scheduledFor: string };
 }
 
 export interface RoutineRunnerDeps {
@@ -240,6 +242,11 @@ export interface RoutineRunnerDeps {
   timeoutMs?: number;
   /** Injectable clock, so tests do not have to wait on a real schedule. */
   now?: () => Date;
+  /**
+   * Recover a slot missed while the PC was off or asleep, once, inside a grace
+   * window (half the period, 2 min–2 h). Off unless the caller turns it on.
+   */
+  catchUp?: boolean;
 }
 
 export interface ScheduledRoutine {
@@ -251,6 +258,8 @@ export interface ScheduledRoutine {
   /** Set when the first fire is held back to keep a fresh routine from looping. */
   startAt: string | null;
   running: boolean;
+  /** ISO of the last slot that was missed beyond its grace window and not run. */
+  missed?: string | null;
 }
 
 /**
@@ -260,6 +269,66 @@ export interface ScheduledRoutine {
  * for a minute costs at most a minute of latency and keeps the loop unreachable.
  */
 const SELF_TRIGGER_COOLDOWN_MS = 60_000;
+
+/** F1: grace to recover a missed fire is half the period, clamped to 2 min–2 h. */
+const CATCHUP_MIN_GRACE_MS = 2 * 60_000;
+const CATCHUP_MAX_GRACE_MS = 2 * 60 * 60_000;
+/** A slot only counts as missed once croner has had this long to fire it itself. */
+const CATCHUP_SETTLE_MS = 90_000;
+/** How often to look for missed slots (a PC waking from sleep does not restart us). */
+const CATCHUP_CHECK_MS = 60_000;
+/** How far back a missed slot is looked for, and the iteration ceiling for it. */
+const CATCHUP_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+const CATCHUP_MAX_SLOTS = 20_000;
+
+export interface MissedSlot {
+  /** The most recent slot that should have fired and did not. */
+  slot: Date;
+  graceMs: number;
+  withinGrace: boolean;
+}
+
+/**
+ * The most recent slot of `expr` after `since` that is already overdue at `now`,
+ * or null when nothing was missed. Only the LAST missed slot counts: a job every
+ * 5 minutes with the PC off for an hour is recovered once, not twelve times.
+ */
+export function findMissedSlot(expr: string, since: Date, now: Date): MissedSlot | null {
+  let cron: Cron;
+  try {
+    cron = new Cron(normalizeExpr(expr), { mode: '5-or-6-parts', paused: true });
+  } catch {
+    return null;
+  }
+  try {
+    const nowMs = now.getTime();
+    const horizon = nowMs - CATCHUP_SETTLE_MS;
+    let from = new Date(Math.max(since.getTime(), nowMs - CATCHUP_LOOKBACK_MS));
+    let last: Date | null = null;
+    let i = 0;
+    for (; i < CATCHUP_MAX_SLOTS; i++) {
+      const next = cron.nextRun(from);
+      if (!next || next.getTime() > horizon) break;
+      last = next;
+      from = next;
+    }
+    if (!last || i >= CATCHUP_MAX_SLOTS) return null;
+    const after = cron.nextRun(last);
+    const period = after ? after.getTime() - last.getTime() : 2 * CATCHUP_MAX_GRACE_MS;
+    const graceMs = Math.min(
+      CATCHUP_MAX_GRACE_MS,
+      Math.max(CATCHUP_MIN_GRACE_MS, Math.floor(period / 2)),
+    );
+    return { slot: last, graceMs, withinGrace: nowMs - last.getTime() <= graceMs };
+  } finally {
+    cron.stop();
+  }
+}
+
+/** The line a late run starts with, so the reply says it is late and why. */
+export function lateRunNote(scheduledFor: Date): string {
+  return `(Ejecución con retraso: tocaba ${localStamp(scheduledFor)}; el equipo estaba apagado o dormido, o Asistenta parada.)`;
+}
 
 type ScheduleCheck = { ok: true; next: Date } | { ok: false; error: string };
 
@@ -400,6 +469,11 @@ export class RoutineRunner {
   readonly #now: () => Date;
   readonly #jobs = new Map<string, { job: Cron; schedule: string; startAt: string | null }>();
   readonly #inFlight = new Set<string>();
+  readonly #catchUp: boolean;
+  #catchUpTimer: ReturnType<typeof setInterval> | null = null;
+  /** Slots already recovered or reported, so a slot is handled once. */
+  readonly #handledSlots = new Set<string>();
+  readonly #missed = new Map<string, string>();
   #started = false;
 
   constructor(deps: RoutineRunnerDeps) {
@@ -409,15 +483,23 @@ export class RoutineRunner {
     // second constant that would drift away from it.
     this.#timeoutMs = deps.timeoutMs ?? loadConfig().runTimeoutMs;
     this.#now = deps.now ?? (() => new Date());
+    this.#catchUp = deps.catchUp ?? false;
   }
 
   start(): void {
     if (this.#started) return;
     this.#started = true;
     this.sync();
+    if (this.#catchUp) {
+      this.#catchUpAll();
+      this.#catchUpTimer = setInterval(() => this.#catchUpAll(), CATCHUP_CHECK_MS);
+      this.#catchUpTimer.unref?.();
+    }
   }
 
   stop(): void {
+    if (this.#catchUpTimer) clearInterval(this.#catchUpTimer);
+    this.#catchUpTimer = null;
     for (const { job } of this.#jobs.values()) job.stop();
     this.#jobs.clear();
     this.#started = false;
@@ -463,6 +545,7 @@ export class RoutineRunner {
         next: next ? next.toISOString() : null,
         startAt: held.startAt,
         running: this.#inFlight.has(key),
+        missed: this.#missed.get(key) ?? null,
       };
     });
   }
@@ -565,7 +648,55 @@ export class RoutineRunner {
     });
   }
 
-  async #runRoutine(routine: Routine): Promise<boolean> {
+  /** F1: recover the last slot missed while the PC was off or asleep, once. */
+  #catchUpAll(): void {
+    if (!this.#started) return;
+    let routines: Routine[];
+    try {
+      routines = this.#store.listRoutines();
+    } catch (err) {
+      log.warn('routine catch-up could not read routines', { ...redact({ err }) });
+      return;
+    }
+    const now = this.#now();
+    for (const routine of routines) {
+      if (routine.kind !== 'schedule' || !routine.enabled || !routine.schedule) continue;
+      const key = routineKey(routine.scope, routine.name);
+      if (!this.#jobs.has(key) || this.#inFlight.has(key)) continue;
+      const created = Date.parse(routine.createdAt);
+      const lastRun = routine.lastRunAt ? Date.parse(routine.lastRunAt) : Number.NaN;
+      // Never before the routine existed (plus the self-trigger cooldown), never
+      // a slot that already ran.
+      const floor = Number.isFinite(created) ? created + SELF_TRIGGER_COOLDOWN_MS - 1 : 0;
+      const since = Math.max(floor, Number.isFinite(lastRun) ? lastRun : 0);
+      if (!since) continue;
+      const missed = findMissedSlot(routine.schedule, new Date(since), now);
+      if (!missed) continue;
+      const slotIso = missed.slot.toISOString();
+      const handled = `${key}@${slotIso}`;
+      if (this.#handledSlots.has(handled)) continue;
+      if (this.#handledSlots.size > 1000) this.#handledSlots.clear();
+      this.#handledSlots.add(handled);
+      if (!missed.withinGrace) {
+        this.#missed.set(key, slotIso);
+        log.warn('routine slot missed beyond its grace window, not run', {
+          scope: routine.scope,
+          name: routine.name,
+          slot: localStamp(missed.slot),
+          graceMin: Math.round(missed.graceMs / 60_000),
+        });
+        continue;
+      }
+      log.info('routine catch-up: running a missed slot late', {
+        scope: routine.scope,
+        name: routine.name,
+        slot: localStamp(missed.slot),
+      });
+      void this.#runRoutine(routine, { scheduledFor: missed.slot });
+    }
+  }
+
+  async #runRoutine(routine: Routine, late?: { scheduledFor: Date }): Promise<boolean> {
     const key = routineKey(routine.scope, routine.name);
     if (this.#inFlight.has(key)) {
       // The reason this log exists: silence here reads as "the schedule is
@@ -584,7 +715,14 @@ export class RoutineRunner {
     const startedAt = this.#now().getTime();
     let run: Promise<void>;
     try {
-      run = this.#run(summarizeRoutine(routine), { scope: routine.scope, routine });
+      const prompt = late
+        ? `${lateRunNote(late.scheduledFor)}\n\n${summarizeRoutine(routine)}`
+        : summarizeRoutine(routine);
+      run = this.#run(prompt, {
+        scope: routine.scope,
+        routine,
+        ...(late ? { late: { scheduledFor: late.scheduledFor.toISOString() } } : {}),
+      });
     } catch (err) {
       this.#inFlight.delete(key);
       log.error('routine threw before returning a promise', {
