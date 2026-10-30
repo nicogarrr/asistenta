@@ -63,15 +63,106 @@ export function isProtectedPath(f: string): boolean {
 
 export type Violation = { file: string; rule: string };
 
-/** Extrae los archivos tocados de un diff unificado (a/ y b/). */
+/**
+ * Deshace el entrecomillado de git (core.quotePath): `"a/caf\\303\\251"` -> `a/café`.
+ * Git entrecomilla nombres con comillas, barras invertidas, caracteres de control
+ * o no ASCII; sin esto esos archivos no se revisaban.
+ */
+export function unquoteGitPath(s: string): string {
+  if (!(s.length >= 2 && s.startsWith('"') && s.endsWith('"'))) return s;
+  const body = s.slice(1, -1);
+  const bytes: number[] = [];
+  const esc: Record<string, number> = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    '\\': 92,
+  };
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string;
+    if (c !== '\\') {
+      for (const b of Buffer.from(c, 'utf8')) bytes.push(b);
+      continue;
+    }
+    const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (oct) {
+      bytes.push(Number.parseInt(oct[0], 8) & 0xff);
+      i += 3;
+    } else {
+      const n = body[i + 1] as string;
+      bytes.push(esc[n] ?? n.charCodeAt(0));
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** Lee un nombre entrecomillado al principio de `s`; devuelve [nombre, resto] o null. */
+function readQuoted(s: string): [string, string] | null {
+  if (!s.startsWith('"')) return null;
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] === '\\') i++;
+    else if (s[i] === '"') return [unquoteGitPath(s.slice(0, i + 1)), s.slice(i + 1)];
+  }
+  return null;
+}
+
+/** Extrae los archivos tocados de un diff unificado (a/ y b/), con nombres entrecomillados. */
 export function changedFiles(diff: string): string[] {
   const out = new Set<string>();
-  for (const line of diff.split('\n')) {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (m) {
-      out.add(m[1] as string);
-      out.add(m[2] as string);
+  const add = (f: string, prefix?: 'a/' | 'b/') => {
+    if (prefix) {
+      if (!f.startsWith(prefix)) return;
+      f = f.slice(2);
     }
+    if (f) out.add(f);
+  };
+  let header = false;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      header = true;
+      const rest = line.slice('diff --git '.length);
+      const m = /^a\/(.+?) b\/(.+)$/.exec(rest);
+      if (m) {
+        add(m[1] as string);
+        add(m[2] as string);
+        continue;
+      }
+      // Entrecomillado (uno o ambos lados).
+      const q1 = readQuoted(rest);
+      if (q1) {
+        add(q1[0], 'a/');
+        const r = q1[1].trimStart();
+        const q2 = readQuoted(r);
+        if (q2) add(q2[0], 'b/');
+        else add(r, 'b/');
+      } else {
+        const i = rest.indexOf(' "b/');
+        if (i > 0) {
+          add(rest.slice(0, i), 'a/');
+          const q2 = readQuoted(rest.slice(i + 1));
+          if (q2) add(q2[0], 'b/');
+        }
+      }
+      continue;
+    }
+    if (!header) continue;
+    if (line.startsWith('@@')) {
+      header = false;
+      continue;
+    }
+    // Cabeceras del archivo: sin ambiguedad por espacios y con el mismo entrecomillado.
+    const h = /^(---|\+\+\+|rename from|rename to|copy from|copy to) (.+)$/.exec(line);
+    if (!h) continue;
+    const name = unquoteGitPath(h[2] as string);
+    if (h[1] === '---') add(name, 'a/');
+    else if (h[1] === '+++') add(name, 'b/');
+    else add(name);
   }
   return [...out];
 }
@@ -110,7 +201,7 @@ export function checkPatch(diff: string): Violation[] {
       if (re.test(line)) v.push({ file: '(contenido)', rule: `${rule}: ${line.slice(0, 80)}` });
   }
   // Borrar tests tambien es cambiar la regla de medir.
-  if (/^deleted file mode/m.test(diff) && /^diff --git a\/test\//m.test(diff)) {
+  if (/^deleted file mode/m.test(diff) && /^diff --git "?a\/test\//m.test(diff)) {
     v.push({ file: 'test/', rule: 'borra tests' });
   }
   const seen = new Set<string>();
