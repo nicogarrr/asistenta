@@ -42,17 +42,17 @@ describe('F9 servidor MCP de solo lectura', () => {
     expect(r.result.serverInfo.name).toBe('asistenta');
   });
 
-  it('tools/list: solo las tres de lectura, ninguna que escriba', () => {
+  it('tools/list: solo las cuatro de lectura, ninguna que escriba', () => {
     const r = handleMcpMessage(deps, { jsonrpc: '2.0', id: 2, method: 'tools/list' }) as {
       result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> };
     };
     const names = r.result.tools.map((t) => t.name);
-    expect(names).toEqual(['memoria_buscar', 'sesiones_buscar', 'objetivos_listar']);
+    expect(names).toEqual(['memoria_buscar', 'sesiones_buscar', 'objetivos_listar', 'agenda_hoy']);
     expect(names.some((n) => /guardar|borrar|crear|enviar|escribir|set|write|delete/.test(n))).toBe(
       false,
     );
     expect(r.result.tools.every((t) => t.annotations.readOnlyHint)).toBe(true);
-    expect(READ_ONLY_TOOLS).toHaveLength(3);
+    expect(READ_ONLY_TOOLS).toHaveLength(4);
   });
 
   it('memoria_buscar tapa secretos y respeta el límite', () => {
