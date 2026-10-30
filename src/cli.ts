@@ -457,6 +457,9 @@ Usage:
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa vigilancias [--json] qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
+  pa tv orden "<texto>"   dar una orden en palabras (p. ej. "apaga la tele", "volumen a 15")
+  pa tv mac <MAC>|auto    guardar la MAC de la tele para poder encenderla (auto: la busca en la red)
+  pa tv wake              encender la tele por la red (Wake-on-LAN; necesita pa tv mac)
   pa tv toast <mensaje>   mostrar un aviso en la tele
   pa tv apps              listar apps instaladas (ids para pa tv launch)
   pa tv launch <appId>    lanzar una app en la tele
