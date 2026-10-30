@@ -433,6 +433,8 @@ Usage:
   pa tv key <NOMBRE>      pulsar una tecla del mando (HOME, BACK, ENTER, UP/DOWN/LEFT/RIGHT)
   pa tv shot [fichero]    capturar la pantalla de la tele (960x540 jpg; DRM sale en negro)
   pa tv off               apagar la tele
+  pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]  probar que un audio suena en la tele
+  pa voice enroll|verify|list|remove  voces del hogar: enrolar, puntuar un audio, listar, borrar
   pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
@@ -444,6 +446,9 @@ Usage:
   pa stop                 Linux: cierre graceful autenticado, sin matar por PID
   pa restart              no disponible sin verificar supervisor
   pa doctor               check the environment
+  pa backup [lista]       copias de seguridad; pa backup restaurar <AAAA-MM-DD|ultima> con el daemon parado
+  pa auditoria [--tool <n>] [--verdict allow|deny] [--since 24h|7d] [--last N] [--json]  registro de llamadas (solo lectura)
+  pa mcp serve            servidor MCP de solo lectura por stdio (Claude Desktop, Cursor)
   pa iniciar [--solo-comprobar] [--sin-red] [--json]  comprueba todo (verde/rojo) y arranca si está listo
   pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
 `;
