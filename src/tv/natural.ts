@@ -420,7 +420,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
   // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
+    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| mas| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
   ).exec(t);
   if (m?.[1]) {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
@@ -460,7 +460,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
   m =
     /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ??
-    /^(?:pon|ponme) la (\d{1,2})$/.exec(t) ??
+    /^(?:pon|ponme) (?:la|el) (\d{1,2})$/.exec(t) ??
     CAMBIA_A_LA_NUM.exec(t);
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
   // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
@@ -488,18 +488,22 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'media', command: 'rewind' };
   }
   if (
-    /^(?:pausa|pausala|pausalo|para|pon(?:le)?(?: la)? pausa|(?:pausa|para) la (?:peli|pelicula|serie|cancion|video))$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) la (?:peli|pelicula|serie|cancion|video))$/.test(
       t,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
-    /^(?:play|dale (?:al|a) play|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) la (?:peli|pelicula|serie|cancion|video))$/.test(
+    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) la (?:peli|pelicula|serie|cancion|video))$/.test(
       t,
     )
   ) {
     return { action: 'media', command: 'play' };
+  }
+  // «stop», «pulsa stop», «dale al stop»: la tecla stop del mando (como en tools/tv.ts media).
+  if (/^(?:(?:dale (?:al?)|pulsa|presiona|toca) )?stop$/.test(t)) {
+    return { action: 'media', command: 'stop' };
   }
 
   // Apps: "abre X" acepta cualquier nombre; "pon X" solo nombres conocidos
