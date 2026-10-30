@@ -33,6 +33,8 @@ import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
+import { EMAIL_CHANNEL, EMAIL_TAINT_SOURCE } from './channels/email.js';
+import { setupEmailChannel } from './channels/email-setup.js';
 import {
   cleanForTelegram,
   friendlyError,
@@ -84,6 +86,7 @@ import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
+import { pollGmailCommandMail } from './mail/command-inbox.js';
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
 import { listReplyInbox, resolveReplyCard } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
@@ -1627,6 +1630,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   const registry = new ChannelRegistry();
   registry.register(telegram);
+  // F10: correo como canal (apagado salvo PA_CORREO_CANAL=1; solo remitentes de la lista con dkim=pass).
+  const emailSetup = await setupEmailChannel({
+    stateDir: paths.state,
+    loadRead: () => loadReadMailAccount(),
+    loadSend: () => loadSendMailAccount(),
+    send: (account, req) => sendMail(account, req),
+    poll: (account, cursorFile) => pollGmailCommandMail(account, cursorFile),
+    audit: (e) =>
+      e.accepted ? log.info('correo canal: aceptado', e) : log.warn('correo canal: ignorado', e),
+  });
+  if (emailSetup.channel) registry.register(emailSetup.channel);
+  else if (process.env.PA_CORREO_CANAL === '1')
+    log.warn('correo canal sin arrancar', { reason: emailSetup.reason });
 
   const screen = new WindowsScreen();
   const tts = createDefaultTts(process.env, {
@@ -5514,6 +5530,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Taint gate (F2): a new message from the owner starts clean; what the
     // previous turn read from outside no longer blocks standing approvals.
     thread.gate.clearTaint(thread.key);
+    // F10: un turno que entra por correo es contenido externo: lo que no sea lectura pregunta.
+    if (inbound.channel === EMAIL_CHANNEL) thread.gate.markTainted(thread.key, EMAIL_TAINT_SOURCE);
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
