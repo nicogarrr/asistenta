@@ -60,16 +60,22 @@ export const log = {
 const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
 /** Recognizable credential formats only; arbitrary unlabelled secrets cannot be inferred. */
 export function scrubLogText(text: string): string {
-  return scrubUrls(text)
-    .replace(
-      /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g,
-      '[redacted]',
-    )
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.:-]+/gi, '$1 [redacted]')
-    .replace(
-      /\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
-      '$1=[redacted]',
-    );
+  return (
+    scrubUrls(text)
+      .replace(
+        /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g,
+        '[redacted]',
+      )
+      // Token de bot de Telegram (`123456789:AA…`, 35 caracteres tras los dos puntos) y
+      // clave de Google/Gemini (`AIza…`): fuera de una URL no los tapaba nada.
+      .replace(/\b\d{6,12}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
+      .replace(/\bAIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
+      .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.:-]+/gi, '$1 [redacted]')
+      .replace(
+        /\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+        '$1=[redacted]',
+      )
+  );
 }
 
 /**
