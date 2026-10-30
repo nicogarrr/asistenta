@@ -90,7 +90,7 @@ describe('panel: chat sin conexión', () => {
       const campo = { value: '', focus() {} };
       const boton = { disabled: false };
       const turno = () => {
-        const cuerpo = { textContent: '', className: '' };
+        const cuerpo = { textContent: '', className: '', appendChild() {} };
         return { className: '', querySelector: () => cuerpo, appendChild() {} };
       };
       return new Function(
@@ -110,7 +110,7 @@ describe('panel: chat sin conexión', () => {
         turno,
         { textoEspera: () => 'Pensando…' },
         enviar,
-        () => ({ type: '', addEventListener() {} }),
+        () => ({ type: '', addEventListener() {}, setAttribute() {} }),
         (...a: unknown[]) => llamadas.push(a),
         () => false,
         () => {},

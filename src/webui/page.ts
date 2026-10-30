@@ -1129,11 +1129,16 @@ ${renderFormatScript()}
         boton.disabled = true;
         campo.value = '';
         anadirTurno('yo', 'Tú', texto);
-        var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
+        var espera = anadirTurno('asistente esperando', 'Asistenta', 'Pensando…');
         var cuerpo = espera.querySelector('.texto');
+        // Los segundos cambian cada segundo dentro del registro vivo del chat: van aparte
+        // y ocultos al lector de pantalla (si no, leería «Pensando… 1 s, 2 s…» sin parar).
+        var segundos = nodo('span', 'segundos', '');
+        segundos.setAttribute('aria-hidden', 'true');
+        cuerpo.appendChild(segundos);
         var inicio = Date.now();
         var reloj = window.setInterval(function () {
-          cuerpo.textContent = formato.textoEspera(Date.now() - inicio);
+          segundos.textContent = formato.textoEspera(Date.now() - inicio).replace('Pensando…', '');
         }, 1000);
         try {
           var datos = await enviar('/api/chat', { text: texto });
@@ -1229,7 +1234,8 @@ ${renderFormatScript()}
       async function repetirUltimo() {
         if (chatOcupado) return;
         chatOcupado = true;
-        var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
+        // Sin reloj: «Pensando… 0 s» se quedaba congelado hasta la respuesta.
+        var espera = anadirTurno('asistente esperando', 'Asistenta', 'Pensando…');
         espera.setAttribute('data-reintento', 'true');
         var cuerpo = espera.querySelector('.texto');
         try {
