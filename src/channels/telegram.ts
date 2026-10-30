@@ -473,6 +473,15 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Botón que equivale a teclear una orden (p. ej. «Dejar de vigilar» en
+    // /vigilando): entra como si quien pulsa la hubiera escrito en ese chat, por el
+    // mismo camino y con los mismos permisos. Solo órdenes de una lista cerrada;
+    // nunca resuelve ni toca aprobaciones.
+    if (data.startsWith(COMMAND_CALLBACK_PREFIX)) {
+      await this.#onCommandPress(ctx, handlers, data, userId);
+      return;
+    }
+
     const parsed = parseApprovalCallback(data);
     const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
     if (!parsed || !entry || entry.expires < Date.now()) {
@@ -571,6 +580,39 @@ export class TelegramChannel implements ChannelAdapter {
    * Pulsación de un área de /funciones: edita el mensaje con el texto del área y
    * sus botones. Si no se puede editar (mensaje viejo o borrado), lo manda nuevo.
    */
+  async #onCommandPress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    const text = commandFromCallback(data);
+    const message = ctx.callbackQuery?.message;
+    if (!text || !message) {
+      await ctx.answerCallbackQuery({ text: STALE_BUTTON }).catch(() => {});
+      return;
+    }
+    await ctx.answerCallbackQuery().catch(() => {});
+    const threadId =
+      'message_thread_id' in message && message.message_thread_id
+        ? String(message.message_thread_id)
+        : undefined;
+    const from = ctx.from;
+    await handlers.onMessage({
+      channel: this.name,
+      account: this.account,
+      chatId: String(message.chat.id),
+      threadId,
+      userId: String(userId),
+      displayName: from?.username ? `@${from.username}` : (from?.first_name ?? String(userId)),
+      text,
+      authorised: true,
+      isGroup: message.chat.type !== 'private',
+      messageId: String(message.message_id),
+      receivedAt: new Date().toISOString(),
+    });
+  }
+
   async #onFuncionesPress(
     ctx: Context,
     handlers: ChannelHandlers,
@@ -1517,6 +1559,43 @@ function decisionLabel(choice: ApprovalChoice): string {
  * approved. Callback data is passed through untouched and the decision is carried
  * inside it, so there is exactly one place that decides approve vs deny.
  */
+/** Prefijo de los botones que equivalen a teclear una orden (ver commandButton). */
+export const COMMAND_CALLBACK_PREFIX = 'cmd:';
+/** Aviso de un botón de orden que ya no se reconoce. */
+export const STALE_BUTTON = 'Este botón ya no sirve. Escribe la orden a mano.';
+/**
+ * Órdenes que un botón puede lanzar. Lista cerrada: un callback_data inventado no
+ * puede lanzar otra orden, y cada una pasa por el mismo camino (y permisos) que si
+ * se tecleara.
+ */
+const BUTTON_COMMANDS: ReadonlySet<string> = new Set(['dejar_de_vigilar']);
+const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
+
+/**
+ * Botón en línea que equivale a escribir `/<orden> <arg>`. Devuelve undefined si la
+ * orden no está en la lista o el argumento no es un id simple (o no cabe en los 64
+ * bytes de callback_data de Telegram).
+ */
+export function commandButton(
+  label: string,
+  command: string,
+  arg: string,
+): { label: string; action: string } | undefined {
+  const action = `${COMMAND_CALLBACK_PREFIX}${command} ${arg}`;
+  if (!BUTTON_COMMANDS.has(command) || !BUTTON_ARG.test(arg) || action.length > 64)
+    return undefined;
+  const short = label.length > 40 ? `${label.slice(0, 39)}…` : label;
+  return { label: short, action };
+}
+
+/** El texto de orden (`/dejar_de_vigilar abc`) de un botón, o undefined si no vale. */
+export function commandFromCallback(data: string): string | undefined {
+  if (!data.startsWith(COMMAND_CALLBACK_PREFIX)) return undefined;
+  const m = /^([a-z_]{1,32}) (\S+)$/.exec(data.slice(COMMAND_CALLBACK_PREFIX.length));
+  if (!m?.[1] || !m[2] || !BUTTON_COMMANDS.has(m[1]) || !BUTTON_ARG.test(m[2])) return undefined;
+  return `/${m[1]} ${m[2]}`;
+}
+
 export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
   const kb = new InlineKeyboard();
   // Hasta dos botones van en una fila; con más, filas de dos. Los cuatro botones de
