@@ -120,8 +120,9 @@ describe('batería: medir y aprobar', () => {
 });
 
 describe('evaluador de la batería por comando (PA_EVOLVE_BATTERY)', () => {
-  it('sin comando no hay evaluador', () => {
-    expect(batteryRunnerFromEnv({})).toBeNull();
+  it('«off» apaga el evaluador (sin comando se usa el script del repo)', () => {
+    expect(batteryRunnerFromEnv({ PA_EVOLVE_BATTERY: 'off' })).toBeNull();
+    expect(batteryRunnerFromEnv({})).not.toBeNull();
   });
   it('la traza es la última línea JSON y se valida', () => {
     expect(parseTrace('log\n{"reply":"hola","toolCalls":[],"approvalsAsked":0}\n').reply).toBe(
@@ -130,19 +131,22 @@ describe('evaluador de la batería por comando (PA_EVOLVE_BATTERY)', () => {
     expect(() => parseTrace('{"reply":1}')).toThrow();
     expect(() => parseTrace('nada')).toThrow();
   });
-  it('/evolucion avisa de que falta el evaluador y el ciclo no se lanza', async () => {
+  it('/evolucion avisa de que el evaluador está apagado y el ciclo no se lanza', async () => {
     const saved = { p: process.env.PA_EVOLVE_PROPOSER, b: process.env.PA_EVOLVE_BATTERY };
     process.env.PA_EVOLVE_PROPOSER = 'node';
-    delete process.env.PA_EVOLVE_BATTERY;
+    process.env.PA_EVOLVE_BATTERY = 'off';
     const st = mkdtempSync(join(tmpdir(), 'evo-bat-st-'));
     try {
-      expect(describeLast(st)).toMatch(/falta el evaluador de la batería \(PA_EVOLVE_BATTERY\)/);
+      expect(describeLast(st)).toMatch(
+        /evaluador de la batería está apagado \(PA_EVOLVE_BATTERY=off\)/,
+      );
       expect(describeLast(st)).toContain('Batería: todavía no se ha medido ningún candidato.');
       expect((await runEvolution({ stateDir: st })).text).toMatch(/no lanzo el ciclo/);
     } finally {
       if (saved.p === undefined) delete process.env.PA_EVOLVE_PROPOSER;
       else process.env.PA_EVOLVE_PROPOSER = saved.p;
-      if (saved.b !== undefined) process.env.PA_EVOLVE_BATTERY = saved.b;
+      if (saved.b === undefined) delete process.env.PA_EVOLVE_BATTERY;
+      else process.env.PA_EVOLVE_BATTERY = saved.b;
       rmSync(st, { recursive: true, force: true });
     }
   });
