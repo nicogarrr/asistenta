@@ -271,6 +271,44 @@ export function telegramHtml(text: string): string {
 }
 
 /**
+ * Texto del usuario (un recordatorio, una cita, un objetivo) dentro de una respuesta con
+ * formato marks: sus `**` y acentos graves se neutralizan para que nunca se lean como
+ * negrita o código. `**` lleva un separador invisible (U+2060) y se sigue viendo igual;
+ * el acento grave pasa a «ˋ» (U+02CB), casi idéntico.
+ */
+export function escapeMarks(text: string): string {
+  return text.replace(/\*\*/g, '*\u2060*').replace(/`/g, '\u02CB');
+}
+
+/**
+ * Respuesta de comando en texto plano → formato marks: todo se escapa (es texto del
+ * usuario o del calendario) y solo las líneas que `isTitle` reconoce van en negrita.
+ */
+export function marksWithTitles(text: string, isTitle: (line: string) => boolean): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const safe = escapeMarks(line);
+      return line.trim() && isTitle(line) ? `**${safe.trim()}**` : safe;
+    })
+    .join('\n');
+}
+
+/** Cabeceras de /recordatorios (formatReminderRows). */
+export function isReminderTitle(line: string): boolean {
+  return /^Recordatorios: \d+$/.test(line);
+}
+
+/** Cabeceras de /agenda (formatAgenda, rutinas y objetivos de readAgendaOverview). */
+export function isAgendaTitle(line: string): boolean {
+  return (
+    /^(?:Hoy|Esta semana|Pendientes|Objetivos abiertos)$/.test(line) ||
+    /^Mañana, \S/.test(line) ||
+    /^Rutinas programadas: \d+$/.test(line)
+  );
+}
+
+/**
  * The same text with the kept marks removed: what the chat shows when Telegram
  * refuses the HTML. Fences stay (Telegram shows them as they are, and they mark
  * where code starts); `**` and inline backticks go, exactly like `cleanForTelegram`.
