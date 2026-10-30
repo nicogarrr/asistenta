@@ -2919,7 +2919,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (args.trim() === 'lista') {
       try {
         const account = await loadReadMailAccount();
-        if (!account) throw new Error('No account');
+        if (!account) {
+          await say(
+            inbound,
+            'No tienes configurada la lectura del correo. «/correo estado» te dice qué falta.',
+            { quote: true },
+          );
+          return;
+        }
         const rows = await listReplyInbox(account);
         for (const row of rows) {
           const clean = (text: string) => text.replace(/\s+/g, ' ').slice(0, 180);
@@ -2935,7 +2942,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
         }
         if (!rows.length) await say(inbound, 'INBOX no devuelve correos.', { quote: true });
-      } catch {
+      } catch (err) {
+        log.warn('mail list failed', redact({ err }));
         await say(inbound, 'No se pudo leer la lista de correo.', { quote: true });
       }
       return;
