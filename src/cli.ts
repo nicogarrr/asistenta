@@ -32,6 +32,7 @@ import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
+import { routeInboundToAltavoz } from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
@@ -6722,39 +6723,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const { dedupKey } = started;
 
           // Altavoz: la nota suena sola en el PC/la tele, sin esperar al modelo.
-          if (inbound.audioFileId && !inbound.text.trim().startsWith('/')) {
-            const mode = altavoz.get(chatKey_);
-            if (mode !== 'off' && desktop && isOwnerDm(inbound, vigilanteOwnerId)) {
-              const fileId = inbound.audioFileId;
-              const mimeType = inbound.audioMimeType ?? 'audio/ogg';
-              const queued = altavozPlayer.enqueue(
-                mode,
-                async () => {
-                  const bytes = await telegram.downloadFile(fileId, 25_000_000).catch(() => null);
-                  return bytes ? { bytes, mimeType } : null;
-                },
-                (err) => {
-                  const why = err instanceof Error ? err.message : String(err);
-                  void say(inbound, `🔇 No he podido soltarla en el altavoz: ${why}`, {
-                    quote: true,
-                  });
-                },
-                chatKey_,
-                (text) => {
-                  void say(inbound, text, { quote: true });
-                },
-              );
-              if (!queued) {
-                void say(
-                  inbound,
-                  'Hay demasiadas notas en cola en el altavoz; esta no la suelto.',
-                  {
-                    quote: true,
-                  },
-                );
-              }
-            }
-          }
+          routeInboundToAltavoz(inbound, {
+            mode: altavoz.get(chatKey_),
+            desktop,
+            ownerUserId: vigilanteOwnerId,
+            player: altavozPlayer,
+            download: (fileId) => telegram.downloadFile(fileId, 25_000_000),
+            reply: (text) => {
+              void say(inbound, text, { quote: true });
+            },
+            key: chatKey_,
+          });
 
           if (isMailReplyRequest(inbound.text)) return cmdCorreo(inbound, inbound.text);
           const erase = eraseConfirm.consume(chatKey_, inbound.text);
