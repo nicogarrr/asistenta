@@ -4607,7 +4607,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         addHypothesis(paths.state, a.replace(/^idea\s*/i, ''));
         await say(inbound, 'Anotada. La probará el próximo ciclo.', { quote: true });
       } catch (err) {
-        await say(inbound, `No la he anotado: ${(err as Error).message}`, { quote: true });
+        await say(inbound, failedReply('No la he anotado', err), { quote: true });
       }
       return;
     }
@@ -4843,7 +4843,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           { quote: true },
         );
       } catch (err) {
-        await say(inbound, `No pude resumir el historial: ${String(err).slice(0, 160)}`, {
+        await say(inbound, failedReply('No pude resumir el historial', err), {
           quote: true,
         });
       }
@@ -5686,11 +5686,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       );
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido usar la camara: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido usar la cámara', err), { quote: true });
     }
   };
 
@@ -5708,11 +5704,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await telegram.sendVoiceBytes(Number(inbound.chatId), bytes, inbound.threadId, rec.seconds);
       });
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido grabar el microfono: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido grabar el micrófono', err), { quote: true });
     }
   };
 
@@ -5771,11 +5763,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         { quote: true },
       );
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido reproducir el audio: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido reproducir el audio', err), { quote: true });
     } finally {
       if (playable) rmSync(playable, { force: true });
       currentWake()?.suppress(WAKE_TAIL_MS);
@@ -6141,11 +6129,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
         } catch (err) {
           if (receipt.id) progressIds.push(receipt.id);
-          await tell(
-            inbound,
-            `No he entendido la nota de voz: ${err instanceof Error ? err.message : String(err)}`,
-            { quote: true },
-          );
+          await tell(inbound, failedReply('No he entendido la nota de voz', err), { quote: true });
           return;
         }
       }
@@ -6683,7 +6667,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (told) return;
         told = true;
         void notifyLastChat(
-          `He dejado de escuchar "${wakeWord}": ${err.message}. Vuelve a activarlo con /wake on.`,
+          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} Vuelve a activarlo con /wake on.`,
         ).catch(() => {});
       },
     });
@@ -6934,11 +6918,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       if (!currentWake()?.isRunning()) await startWake();
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido abrir el micrófono: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido abrir el micrófono', err), { quote: true });
       return;
     }
     conversationOn = true;
@@ -6959,7 +6939,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     } catch (err) {
       await say(
         inbound,
-        `No he podido ${next ? 'activar' : 'desactivar'} la palabra: ${err instanceof Error ? err.message : String(err)}`,
+        failedReply(`No he podido ${next ? 'activar' : 'desactivar'} la palabra`, err),
         { quote: true },
       );
       return;
@@ -7330,7 +7310,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             messageId: 'wake-start-failed',
             receivedAt: new Date().toISOString(),
           },
-          `No he podido escuchar la palabra "${wakeWord}": ${err instanceof Error ? err.message : String(err)}`,
+          failedReply(`No he podido escuchar la palabra "${wakeWord}"`, err),
           { quote: true },
         );
       }
@@ -7690,6 +7670,22 @@ export function pricewatchMuteReply(
     text: `🔕 Silenciado 1 día: ${hit.product}. Sigo leyendo el precio, pero no te aviso de posibles errores de precio hasta ${fmtMuteUntil(hit.until)}. Para quitarlo antes: /precio avisar ${key}`,
     buttons: again ? [again] : [],
   };
+}
+
+/**
+ * Respuesta de «no he podido …» para el chat: conserva un error ya en castellano, dice claro
+ * si falta un programa en el PC y nunca pega salida técnica (ffmpeg, rutas, JSON, pilas).
+ */
+export function failedReply(what: string, err: unknown): string {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  const missing = /\bspawn (\S+) ENOENT\b/.exec(raw)?.[1];
+  if (missing) return `${what}: no encuentro «${missing.split(/[\\/]/).pop()}» instalado en el PC.`;
+  const friendly = friendlyError(err, `${what}: `);
+  if (friendly.startsWith(`${what}: `)) return friendly;
+  if (/^(?:Algo ha fallado|Se me ha roto algo)/.test(friendly)) {
+    return `${what} (error interno). Prueba otra vez; si se repite, mira /estado.`;
+  }
+  return `${what}. ${friendly}`;
 }
 
 const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);
