@@ -13,7 +13,21 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
-import { McpClient, type McpServerConfig, type McpToolInfo } from './client.js';
+import {
+  McpClient,
+  type McpServerConfig,
+  type McpToolCallResult,
+  type McpToolInfo,
+} from './client.js';
+import { McpHttpClient, type McpHttpServerConfig } from './http-client.js';
+
+/** Lo que el puente necesita de un cliente MCP, sea stdio o HTTP. */
+interface McpToolClient {
+  start(): Promise<void>;
+  listTools(): Promise<McpToolInfo[]>;
+  callTool(name: string, args?: Record<string, unknown>): Promise<McpToolCallResult>;
+  close(): void;
+}
 
 const TOOL_NAME_MAX = 64;
 
@@ -21,7 +35,7 @@ const TOOL_NAME_MAX = 64;
  * Clientes que deben seguir vivos aunque un servidor no haya anunciado tools.
  * No se exporta un `closeAll()`: el proceso entero termina con ellos.
  */
-const liveClients: McpClient[] = [];
+const liveClients: McpToolClient[] = [];
 
 /**
  * Convierte el par servidor/tool en un nombre valido para el proveedor:
@@ -41,10 +55,17 @@ export function mcpToolName(server: string, tool: string): string {
  * impide usar los demas. Los clientes quedan vivos hasta que termine el
  * proceso: no hay `closeAll()` porque no se recargan en caliente.
  */
-export async function createMcpTools(servers: McpServerConfig[]): Promise<AgentTool[]> {
+export async function createMcpTools(
+  servers: McpServerConfig[],
+  httpServers: McpHttpServerConfig[] = [],
+): Promise<AgentTool[]> {
   const tools: AgentTool[] = [];
-  for (const server of servers) {
-    const client = new McpClient(server);
+  const entries: Array<{ server: McpServerConfig | McpHttpServerConfig; client: McpToolClient }> = [
+    ...servers.map((server) => ({ server, client: new McpClient(server) })),
+    // Solo llegan si PA_MCP_HTTP=1 (ver cli.ts); apagado por defecto.
+    ...httpServers.map((server) => ({ server, client: new McpHttpClient(server) })),
+  ];
+  for (const { server, client } of entries) {
     try {
       await client.start();
       const remoteTools = await client.listTools();
@@ -69,9 +90,9 @@ export async function createMcpTools(servers: McpServerConfig[]): Promise<AgentT
 }
 
 function createAgentTool(
-  server: McpServerConfig,
+  server: { name: string },
   remote: McpToolInfo,
-  client: McpClient,
+  client: McpToolClient,
 ): AgentTool {
   const description = remote.description?.trim();
   return {

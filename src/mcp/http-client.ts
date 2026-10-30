@@ -1,0 +1,290 @@
+/**
+ * Cliente MCP por HTTP («Streamable HTTP»), apagado por defecto.
+ *
+ * Solo se usa con PA_MCP_HTTP=1. Las entradas de PA_MCP_SERVERS que llevan
+ * `url` (en vez de `command`) se hablan por HTTP: cada mensaje JSON-RPC es un
+ * POST; la respuesta llega como JSON o como `text/event-stream` (SSE), y la
+ * cabecera `Mcp-Session-Id` que devuelve `initialize` se reenvia despues.
+ *
+ * Seguridad (solo mas estricto que stdio):
+ * - solo `https://`, o `http://` hacia el propio equipo (localhost/127.x/::1);
+ * - las redirecciones se rechazan (el token no viaja a otro host);
+ * - el token sale del almacen privado (`mcp:<nombre>:token`), nunca de la
+ *   configuracion, y nunca aparece en logs ni en mensajes de error;
+ * - 401/403 hace fallar el arranque: `createMcpTools` omite el servidor;
+ * - cada peticion tiene su timeout y la respuesta un tope de tamano.
+ */
+import { log } from '../log.js';
+import { vaultGet } from '../vault.js';
+import {
+  type McpToolCallResult,
+  type McpToolInfo,
+  parseToolCall,
+  parseToolList,
+} from './client.js';
+
+/** Configuracion de un servidor MCP remoto (entrada de PA_MCP_SERVERS con `url`). */
+export interface McpHttpServerConfig {
+  name: string;
+  url: string;
+  timeoutMs?: number;
+  /** Si se define, solo se publican las tools de esta lista (comparacion exacta). */
+  allowedTools?: string[];
+}
+
+export type SecretGetter = (key: string) => Promise<string | null | undefined>;
+
+const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const PROTOCOL_VERSION = '2025-03-26';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** true si PA_MCP_HTTP activa el transporte HTTP (apagado por defecto). */
+export function mcpHttpEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.PA_MCP_HTTP ?? '').trim() === '1';
+}
+
+/** `https:` siempre; `http:` solo hacia el propio equipo. Devuelve null si no vale. */
+export function checkMcpUrl(raw: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password) return null;
+  if (url.protocol === 'https:') return url;
+  if (url.protocol !== 'http:') return null;
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host)) return url;
+  return null;
+}
+
+/**
+ * Lee las entradas HTTP de PA_MCP_SERVERS (las que tienen `url` y no `command`).
+ * Se descartan nombres invalidos o repetidos y URLs no permitidas (con aviso).
+ */
+export function parseMcpHttpServers(raw: string | undefined): McpHttpServerConfig[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const servers: McpHttpServerConfig[] = [];
+  for (const item of parsed) {
+    if (!isRecord(item) || typeof item.name !== 'string' || typeof item.url !== 'string') continue;
+    if (typeof item.command === 'string') continue;
+    const name = item.name.trim();
+    if (!name || !NAME_PATTERN.test(name) || seen.has(name)) continue;
+    const url = checkMcpUrl(item.url.trim());
+    if (!url) {
+      log.warn('Servidor MCP HTTP omitido: URL no permitida (https, o http solo a localhost)', {
+        server: name,
+      });
+      continue;
+    }
+    const server: McpHttpServerConfig = { name, url: url.toString() };
+    if (
+      typeof item.timeoutMs === 'number' &&
+      Number.isFinite(item.timeoutMs) &&
+      item.timeoutMs > 0
+    ) {
+      server.timeoutMs = item.timeoutMs;
+    }
+    if (Array.isArray(item.allowedTools)) {
+      server.allowedTools = item.allowedTools
+        .filter((tool): tool is string => typeof tool === 'string' && tool.trim().length > 0)
+        .map((tool) => tool.trim());
+    }
+    seen.add(name);
+    servers.push(server);
+  }
+  return servers;
+}
+
+/** Busca en un cuerpo SSE el mensaje JSON-RPC con el id pedido. */
+export function findSseResponse(body: string, id: number): unknown {
+  for (const block of body.replace(/\r\n?/g, '\n').split('\n\n')) {
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n');
+    if (!data.trim()) continue;
+    let msg: unknown;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (isRecord(msg) && msg.id === id) return msg;
+  }
+  return undefined;
+}
+
+/** Cliente de un servidor MCP remoto por HTTP. Misma forma que `McpClient`. */
+export class McpHttpClient {
+  readonly #config: McpHttpServerConfig;
+  readonly #getSecret: SecretGetter;
+  #token: string | undefined;
+  #sessionId: string | undefined;
+  #nextId = 1;
+  #ready = false;
+  #starting: Promise<void> | undefined;
+  #closed = false;
+
+  constructor(config: McpHttpServerConfig, getSecret: SecretGetter = vaultGet) {
+    this.#config = config;
+    this.#getSecret = getSecret;
+  }
+
+  get name(): string {
+    return this.#config.name;
+  }
+
+  /** `initialize` + `notifications/initialized`. Idempotente. */
+  async start(): Promise<void> {
+    if (this.#closed) throw new Error(`El cliente MCP "${this.#config.name}" ya esta cerrado.`);
+    if (this.#ready) return;
+    if (this.#starting) return this.#starting;
+    this.#starting = this.#init().finally(() => {
+      this.#starting = undefined;
+    });
+    return this.#starting;
+  }
+
+  async listTools(): Promise<McpToolInfo[]> {
+    return parseToolList(this.#config.name, await this.#request('tools/list', {}));
+  }
+
+  async callTool(name: string, args: Record<string, unknown> = {}): Promise<McpToolCallResult> {
+    const result = await this.#request('tools/call', { name, arguments: args });
+    return parseToolCall(this.#config.name, name, result);
+  }
+
+  close(): void {
+    this.#closed = true;
+    this.#ready = false;
+  }
+
+  async #init(): Promise<void> {
+    const token = await this.#getSecret(`mcp:${this.#config.name}:token`);
+    this.#token = typeof token === 'string' && token.trim() ? token.trim() : undefined;
+    await this.#request('initialize', {
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: 'asistenta', version: '0.1.0' },
+    });
+    await this.#post({ jsonrpc: '2.0', method: 'notifications/initialized' }, undefined);
+    this.#ready = true;
+  }
+
+  async #request(method: string, params: unknown): Promise<unknown> {
+    if (this.#closed) throw new Error(`El cliente MCP "${this.#config.name}" ya esta cerrado.`);
+    const id = this.#nextId++;
+    const msg = await this.#post({ jsonrpc: '2.0', id, method, params }, id);
+    if (!isRecord(msg)) {
+      throw new Error(
+        `Respuesta JSON-RPC invalida del servidor MCP "${this.#config.name}" para "${method}".`,
+      );
+    }
+    if (isRecord(msg.error)) {
+      const text =
+        typeof msg.error.message === 'string' ? msg.error.message : 'error JSON-RPC sin mensaje';
+      throw new Error(`El servidor MCP "${this.#config.name}" fallo en "${method}": ${text}`);
+    }
+    if (!('result' in msg)) {
+      throw new Error(
+        `Respuesta JSON-RPC invalida del servidor MCP "${this.#config.name}" para "${method}".`,
+      );
+    }
+    return msg.result;
+  }
+
+  /** POST de un mensaje. Con `id` devuelve la respuesta; sin `id` (notificacion) nada. */
+  async #post(body: unknown, id: number | undefined): Promise<unknown> {
+    const name = this.#config.name;
+    const timeoutMs = this.#config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'mcp-protocol-version': PROTOCOL_VERSION,
+    };
+    if (this.#token) headers.authorization = `Bearer ${this.#token}`;
+    if (this.#sessionId) headers['mcp-session-id'] = this.#sessionId;
+    const method = isRecord(body) && typeof body.method === 'string' ? body.method : '?';
+    let res: Response;
+    try {
+      res = await fetch(this.#config.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      throw new Error(
+        timedOut
+          ? `Tiempo de espera agotado (${timeoutMs} ms) esperando "${method}" del servidor MCP "${name}".`
+          : `No se pudo conectar con el servidor MCP "${name}".`,
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      await res.body?.cancel();
+      throw new Error(
+        `El servidor MCP "${name}" rechazo la autorizacion (HTTP ${res.status}); revisa mcp:${name}:token en el almacen privado.`,
+      );
+    }
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      throw new Error(
+        `El servidor MCP "${name}" intento redirigir (HTTP ${res.status}); no se sigue.`,
+      );
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`El servidor MCP "${name}" respondio HTTP ${res.status} a "${method}".`);
+    }
+    const session = res.headers.get('mcp-session-id');
+    if (session && /^[\x21-\x7e]{1,256}$/.test(session)) this.#sessionId = session;
+    if (id === undefined) {
+      await res.body?.cancel();
+      return undefined;
+    }
+    const text = await readCapped(res, MAX_RESPONSE_BYTES, name);
+    const type = (res.headers.get('content-type') ?? '').toLowerCase();
+    if (type.includes('text/event-stream')) return findSseResponse(text, id);
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+async function readCapped(res: Response, max: number, name: string): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      throw new Error(`La respuesta del servidor MCP "${name}" supera ${max} bytes.`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
