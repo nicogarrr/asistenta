@@ -13,8 +13,16 @@
  * - navegar a un host de la lista «nunca aprobar» aborta la grabación entera y
  *   también la reproducción;
  * - solo http/https; la URL se guarda sin usuario ni contraseña.
- * Conectarlo al navegador (`/learn web <url>`) es el siguiente paso.
+ * Paso 2: `demoToPlaybook` guarda lo aprendido en el playbook del gestor
+ * (selectores + nombres de clave), nunca valores. Conectarlo al navegador
+ * (`/learn web <url>`) es el siguiente paso.
  */
+import {
+  canonicalPlaybookDomain,
+  MAX_PLAYBOOK_LINES_PER_SECTION,
+  type Playbook,
+  validatePlaybook,
+} from './gestor/playbooks.js';
 import { normalizeHostname, urlHostname } from './text.js';
 
 export interface DemoTarget {
@@ -215,4 +223,71 @@ export function replayDemo(
     if (value === undefined) throw new Error(`Falta el valor de «${step.param}».`);
     return { action: 'fill', selector: step.selector, value };
   });
+}
+
+export type DemoPlaybookResult = { ok: true; playbook: Playbook } | { ok: false; reason: string };
+
+/**
+ * F11 paso 2 (puro): demostración grabada → playbook por dominio del gestor.
+ * Solo guarda lo que se reutiliza: los selectores que funcionaron con el
+ * NOMBRE del parámetro y, para campos sensibles, el NOMBRE de la clave del
+ * almacén. Los valores de ejemplo de la demostración (correo, búsquedas…) y
+ * los secretos no se escriben nunca. Un solo dominio por playbook: si la
+ * demostración cambia de dominio, o `existing` es de otro, se rechaza. Fusiona
+ * con `existing` sin duplicar (sus líneas primero) y pasa por
+ * `validatePlaybook`: lo que no cabe se rechaza, no se recorta en silencio.
+ */
+export function demoToPlaybook(
+  demo: DemoPlaybook,
+  opts: { env?: NodeJS.ProcessEnv; now?: Date; existing?: Playbook | null } = {},
+): DemoPlaybookResult {
+  if (!teachDemoEnabled(opts.env)) return { ok: false, reason: TEACH_DEMO_OFF };
+  let domain: string | null = null;
+  const login: string[] = [];
+  const selectores: string[] = [];
+  for (const step of demo.steps) {
+    if (step.action === 'goto') {
+      const d = canonicalPlaybookDomain(step.url);
+      if (!d)
+        return { ok: false, reason: 'La demostración tiene una dirección sin dominio válido.' };
+      if (domain && d !== domain) {
+        return {
+          ok: false,
+          reason: `La demostración pasa de ${domain} a ${d}: un playbook es de un solo dominio.`,
+        };
+      }
+      domain = d;
+      continue;
+    }
+    if (step.action === 'click') selectores.push(`clic: ${step.selector}`);
+    else if (step.action === 'submit') selectores.push(`enviar: ${step.selector}`);
+    else if ('param' in step) selectores.push(`campo «${step.param}»: ${step.selector}`);
+    else {
+      const field = /^\{\{vault:[^:]*:([^}]+)\}\}$/.exec(step.secret)?.[1] ?? 'secreto';
+      login.push(
+        `campo secreto ${step.selector}: clave del almacén vault:${domain ?? 'web'}:${field}`,
+      );
+    }
+  }
+  if (!domain) return { ok: false, reason: 'La demostración no abre ninguna página.' };
+  const ex = opts.existing ?? null;
+  if (ex && ex.domain !== domain) {
+    return { ok: false, reason: `El playbook existente es de ${ex.domain}, no de ${domain}.` };
+  }
+  const merge = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
+  const playbook: Playbook = {
+    domain,
+    updatedAt: (opts.now ?? new Date()).toISOString(),
+    login: merge(ex?.login ?? [], login),
+    selectores: merge(ex?.selectores ?? [], selectores),
+    quirks: [...(ex?.quirks ?? [])],
+  };
+  if (playbook.selectores.length > MAX_PLAYBOOK_LINES_PER_SECTION) {
+    return {
+      ok: false,
+      reason: `La demostración deja ${playbook.selectores.length} selectores (máximo ${MAX_PLAYBOOK_LINES_PER_SECTION}): enséñala en partes más cortas.`,
+    };
+  }
+  const invalid = validatePlaybook(playbook);
+  return invalid ? { ok: false, reason: invalid } : { ok: true, playbook };
 }
