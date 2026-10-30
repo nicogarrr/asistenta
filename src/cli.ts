@@ -140,6 +140,7 @@ import {
   learnFromTurn,
 } from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
+import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import type { SessionHit } from './memory/sessions.js';
 import { SessionStore } from './memory/sessions.js';
@@ -5237,6 +5238,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       return;
     }
+    if (sub === 'revisar' || sub === 'contradicciones' || sub === 'review') {
+      await say(inbound, contradictionsReply(vigentes()), { quote: true });
+      return;
+    }
     if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
       if (!restText) {
         await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
@@ -5283,9 +5288,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       return;
     }
-    await say(inbound, 'Uso: /memoria [listar | buscar <texto> | olvidar <id> | exportar]', {
-      quote: true,
-    });
+    await say(
+      inbound,
+      'Uso: /memoria [listar | buscar <texto> | revisar | olvidar <id> | exportar]',
+      {
+        quote: true,
+      },
+    );
   };
 
   /**
