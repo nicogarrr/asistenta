@@ -35,3 +35,5 @@ Apagado por defecto. Con `PA_MCP_RESOURCES=1`, cada servidor MCP (stdio o HTTP) 
 - `mcp_<servidor>_usar_prompt`: sin `nombre` lista los prompts; con `nombre` (y `argumentos`) devuelve su texto. Comprueba los argumentos obligatorios.
 
 Si el servidor tiene `allowedTools`, hay que añadir `"@recursos"` y/o `"@prompts"` a la lista para publicarlas. Lo que devuelven cuenta como contenido externo (como cualquier tool `mcp_*`), y el texto se recorta a 20 000 caracteres.
+
+`pa doctor` muestra la línea `mcp recursos`: apagado, o activado con, por servidor en uso, qué herramientas (`mcp_<servidor>_leer_recurso` / `mcp_<servidor>_usar_prompt`) publicaría si el servidor los lista según `allowedTools`. No conecta con ningún servidor ni muestra URLs.

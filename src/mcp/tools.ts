@@ -22,8 +22,14 @@ import {
   type McpServerConfig,
   type McpToolCallResult,
   type McpToolInfo,
+  parseMcpServers,
 } from './client.js';
-import { McpHttpClient, type McpHttpServerConfig } from './http-client.js';
+import {
+  McpHttpClient,
+  type McpHttpServerConfig,
+  mcpHttpEnabled,
+  readMcpHttpServers,
+} from './http-client.js';
 
 /** Lo que el puente necesita de un cliente MCP, sea stdio o HTTP. */
 interface McpToolClient {
@@ -54,6 +60,45 @@ export function mcpResourcesEnabled(env: NodeJS.ProcessEnv = process.env): boole
 /** Con `allowedTools`, estos nombres habilitan explícitamente recursos y prompts. */
 export const MCP_RESOURCES_ALLOW = '@recursos';
 export const MCP_PROMPTS_ALLOW = '@prompts';
+
+/**
+ * Lineas de `pa doctor` sobre recursos y prompts MCP (PA_MCP_RESOURCES). No
+ * conecta con ningun servidor: dice, por servidor en uso, que herramientas
+ * publicaria si el servidor los lista, segun `allowedTools`. Nunca muestra URLs.
+ */
+export function mcpResourcesDoctorLines(env: NodeJS.ProcessEnv = process.env): string[] {
+  const label = 'mcp recursos    ';
+  if (!mcpResourcesEnabled(env)) return [`${label}apagado (PA_MCP_RESOURCES=1 para activarlo)`];
+  const servers: Array<{ name: string; allowedTools?: string[] }> = [
+    ...parseMcpServers(env.PA_MCP_SERVERS),
+    // Igual que en el arranque: los servidores HTTP solo cuentan con PA_MCP_HTTP=1.
+    ...(mcpHttpEnabled(env) ? readMcpHttpServers(env.PA_MCP_SERVERS).servers : []),
+  ];
+  if (!servers.length) return [`${label}activado, pero sin servidores en PA_MCP_SERVERS`];
+  const lines = [`${label}activado (PA_MCP_RESOURCES=1)`];
+  for (const server of servers) {
+    const allowed = server.allowedTools;
+    const res = allowed === undefined || allowed.includes(MCP_RESOURCES_ALLOW);
+    const pro = allowed === undefined || allowed.includes(MCP_PROMPTS_ALLOW);
+    const names = [
+      ...(res ? [mcpToolName(server.name, 'leer_recurso')] : []),
+      ...(pro ? [mcpToolName(server.name, 'usar_prompt')] : []),
+    ];
+    if (!names.length) {
+      lines.push(
+        `  ${server.name}: ninguno: allowedTools sin ${MCP_RESOURCES_ALLOW} ni ${MCP_PROMPTS_ALLOW}`,
+      );
+      continue;
+    }
+    const missing = !res
+      ? `; recursos no: falta ${MCP_RESOURCES_ALLOW} en allowedTools`
+      : !pro
+        ? `; prompts no: falta ${MCP_PROMPTS_ALLOW} en allowedTools`
+        : '';
+    lines.push(`  ${server.name}: ${names.join(' y ')} (si el servidor los lista)${missing}`);
+  }
+  return lines;
+}
 
 /** Tope de texto que vuelve al modelo por llamada. */
 const OUTPUT_MAX = 20_000;
