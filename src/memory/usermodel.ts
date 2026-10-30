@@ -17,7 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { uniqueTmpPath } from '../fs-tmp.js';
+import { setAsideCorrupt, uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 
 /** Dias distintos que debe repetirse un hecho para autoguardarse. */
@@ -46,6 +46,8 @@ export function trackerKey(suggestion: string): string {
 export class NudgeTracker {
   readonly #path: string;
   #map: Map<string, Tracked> | null = null;
+  /** El fichero existe pero no se pudo leer: apartarlo antes de la siguiente escritura. */
+  #corrupt = false;
 
   constructor(dir: string) {
     this.#path = join(dir, 'nudge-tracker.json');
@@ -56,7 +58,11 @@ export class NudgeTracker {
     this.#map = new Map();
     try {
       if (existsSync(this.#path)) {
-        const raw = JSON.parse(readFileSync(this.#path, 'utf8')) as Record<string, Tracked>;
+        const parsed: unknown = JSON.parse(readFileSync(this.#path, 'utf8').replace(/^\uFEFF/, ''));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('no es un objeto JSON');
+        }
+        const raw = parsed as Record<string, Tracked>;
         for (const [key, value] of Object.entries(raw)) {
           if (value && Array.isArray(value.days) && typeof value.suggestion === 'string') {
             this.#map.set(key, {
@@ -68,9 +74,13 @@ export class NudgeTracker {
         }
       }
     } catch (err) {
-      // Estado corrupto: empezar vacio es seguro (como mucho, se pregunta de nuevo).
+      // Estado corrupto: empezar vacio para seguir funcionando, pero sin pisar el
+      // fichero: guarda que sugerencias ya se autoguardaron (si se perdiera, una
+      // entrada que el usuario borro del perfil podria volver a grabarse sola).
+      // La siguiente escritura lo aparta a `.corrupt-<fecha>`.
       log.warn('nudge tracker ilegible, se reinicia', { err: String(err) });
       this.#map = new Map();
+      this.#corrupt = true;
     }
     return this.#map;
   }
@@ -84,6 +94,11 @@ export class NudgeTracker {
       map.delete(oldest.value);
     }
     mkdirSync(join(this.#path, '..'), { recursive: true });
+    if (this.#corrupt) {
+      const backup = setAsideCorrupt(this.#path);
+      log.warn('nudge tracker corrupto apartado antes de escribir', { backup });
+      this.#corrupt = false;
+    }
     const tmp = uniqueTmpPath(this.#path);
     writeFileSync(tmp, JSON.stringify(Object.fromEntries(map)), 'utf8');
     renameSync(tmp, this.#path);
