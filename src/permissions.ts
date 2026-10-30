@@ -330,6 +330,8 @@ export function amountWithinCap(amountCents: number, cap: number): boolean {
 
 /** Acciones de `computer` que mueven el ratón o escriben: jamás un permiso reutilizable. */
 const COMPUTER_NEVER_SCOPED = new Set(['type', 'key', 'click', 'drag']);
+/** Pasos de entrada que, justo después de un atajo del sistema, preguntan aunque haya ventana. */
+const COMPUTER_AFTER_CHORD = new Set(['type', 'key', 'click', 'drag']);
 
 /** Acciones de `media` que abren cámara o micrófono: jamás un permiso reutilizable. */
 /** media play con target=tele: nunca libre ni cubierto por «siempre»/sesión. */
@@ -503,12 +505,41 @@ export function isSystemKeyChord(chord: string): boolean {
     .filter(Boolean);
   if (parts.length === 0) return false;
   const has = (...names: string[]) => parts.some((p) => names.includes(p));
-  if (has('win', 'windows', 'meta', 'cmd', 'command', 'super', 'lwin', 'rwin')) return true;
+  if (
+    has(
+      'win',
+      'windows',
+      'winkey',
+      'meta',
+      'cmd',
+      'command',
+      'super',
+      'lwin',
+      'rwin',
+      'os',
+      'start',
+    )
+  ) {
+    return true;
+  }
+  // Sintaxis SendKeys tal cual («#r», «^%{DEL}», «%{F4}», «^{ESC}»): el texto no
+  // trae `+` y se juzga por sus prefijos, para que no se cuele por el split.
+  if (parts.length === 1 && /^[\^%+#]+./.test(chord.trim())) {
+    const raw = chord.trim().toLowerCase();
+    const prefix = raw.match(/^[\^%+#]+/)?.[0] ?? '';
+    const rest = raw.slice(prefix.length).replace(/^\{|\}$/g, '');
+    if (prefix.includes('#')) return true;
+    if (prefix.includes('^') && prefix.includes('%')) return true;
+    if (prefix.includes('%') && rest === 'f4') return true;
+    if (prefix.includes('^') && (rest === 'esc' || rest === 'escape')) return true;
+  }
   const ctrl = has('ctrl', 'control', 'ctl');
   const alt = has('alt', 'altgr', 'option');
   if (ctrl && alt) return true;
   if (alt && has('f4')) return true;
-  if (ctrl && has('shift') && has('esc', 'escape')) return true;
+  // Ctrl+Esc abre el menú Inicio igual que la tecla Windows (y Ctrl+Shift+Esc,
+  // el Administrador de tareas).
+  if (ctrl && has('esc', 'escape')) return true;
   return false;
 }
 
@@ -693,7 +724,8 @@ export class Gate {
         verdict: 'ask',
         reason: 'drives the desktop',
         match: (c) =>
-          c.tool === 'computer' && ['click', 'type', 'key'].includes(argString(c.args, 'action')),
+          c.tool === 'computer' &&
+          ['click', 'type', 'key', 'drag'].includes(argString(c.args, 'action')),
       },
       {
         id: 'ask-shell-destructive',
@@ -1172,7 +1204,13 @@ export class Gate {
     // Lo que se escribe justo después de un atajo del sistema (Win+R → «cmd⏎»)
     // es la orden que ese atajo abre: el primer `type` tras el atajo pregunta
     // también, aunque la ventana siga abierta. Luego la ventana vuelve a valer.
-    if (argString(call.args, 'action') === 'type' && this.#afterSystemChord.has(sessionId)) {
+    // Lo mismo para la primera tecla, clic o arrastre: «key enter» tras Win+R
+    // ejecuta lo que hubiera en «Ejecutar», y un clic tras Win+X elige una
+    // entrada del menú de administración.
+    if (
+      COMPUTER_AFTER_CHORD.has(argString(call.args, 'action')) &&
+      this.#afterSystemChord.has(sessionId)
+    ) {
       this.#afterSystemChord.delete(sessionId);
       return false;
     }
