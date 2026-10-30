@@ -1,12 +1,14 @@
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { uniqueTmpPath } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
@@ -57,7 +59,11 @@ function pidPath(stateDir: string, name: string): string {
  * with a dead pid means the previous run died uncleanly; it is reported, cleaned,
  * and only then may boot proceed.
  */
-export function assertNotRunning(stateDir: string, name: string): void {
+export function assertNotRunning(
+  stateDir: string,
+  name: string,
+  opts: { imageOf?: (pid: number) => string | null } = {},
+): void {
   const pidFile = pidPath(stateDir, name);
   if (!existsSync(pidFile)) return;
   const raw = readFileSync(pidFile, 'utf8').trim();
@@ -82,7 +88,18 @@ export function assertNotRunning(stateDir: string, name: string): void {
     return;
   }
   if (processAlive(pid)) {
-    throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+    // A pid file left by a crash or a hard exit can name a pid the OS has since
+    // handed to an unrelated program (Windows reuses pids quickly). Only a pid
+    // whose executable is known NOT to be node is treated as stale; an unknown
+    // image keeps refusing. The foreign process is never signalled.
+    const image = (opts.imageOf ?? processImageName)(pid);
+    if (image === null || isNodeImage(image)) {
+      throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+    }
+    log.warn('pid file names a process that is not Asistenta (pid reused); ignoring it', {
+      pid,
+      image: image.slice(0, 64),
+    });
   }
   if (existsSync(stalePath(stateDir, name))) {
     log.warn('previous instance died without clean shutdown', { pid });
@@ -95,6 +112,50 @@ export function assertNotRunning(stateDir: string, name: string): void {
   try {
     unlinkSync(pidFile);
   } catch {}
+}
+
+/** True for the node executable that runs Asistenta (node, node.exe, this execPath). */
+export function isNodeImage(image: string): boolean {
+  const b = basename(image.trim()).toLowerCase();
+  if (b === '') return false;
+  const own = basename(process.execPath).toLowerCase();
+  return b === own || /^node(\d+)?(\.exe)?$/.test(b);
+}
+
+/** First field of `tasklist /FO CSV /NH` output («"chrome.exe","1234",…»), or null. */
+export function parseTasklistImage(out: string, pid: number): string | null {
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
+    if (m && Number(m[2]) === pid) return m[1] ?? null;
+  }
+  return null;
+}
+
+/**
+ * Executable name of a live pid, or null when it cannot be told (then the
+ * caller stays conservative and refuses to start). Read-only: never signals.
+ */
+export function processImageName(pid: number): string | null {
+  try {
+    if (process.platform === 'linux') {
+      return basename(readlinkSync(`/proc/${pid}/exe`));
+    }
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        timeout: 3000,
+        windowsHide: true,
+      });
+      return parseTasklistImage(out, pid);
+    }
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      encoding: 'utf8',
+      timeout: 3000,
+    }).trim();
+    return out === '' ? null : basename(out);
+  } catch {
+    return null;
+  }
 }
 
 /**
