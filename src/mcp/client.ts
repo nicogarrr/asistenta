@@ -161,6 +161,117 @@ export function parseToolCall(server: string, name: string, result: unknown): Mc
   return { text: texts.join(''), isError: result.isError === true };
 }
 
+/** Normaliza la respuesta de `resources/list` (stdio y HTTP). */
+export function parseResourceList(server: string, result: unknown): McpResourceInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.resources)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de recursos invalida.`);
+  }
+  const resources: McpResourceInfo[] = [];
+  for (const item of result.resources) {
+    if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
+      log.warn('Recurso MCP ignorado: URI invalida', { server });
+      continue;
+    }
+    const info: McpResourceInfo = { uri: item.uri };
+    if (typeof item.name === 'string') info.name = item.name;
+    if (typeof item.description === 'string') info.description = item.description;
+    if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
+    resources.push(info);
+  }
+  return resources;
+}
+
+/** Normaliza la respuesta de `resources/read` (stdio y HTTP). */
+export function parseResourceRead(
+  server: string,
+  target: string,
+  result: unknown,
+): McpResourceContent[] {
+  if (!isRecord(result) || !Array.isArray(result.contents)) {
+    throw new Error(
+      `El servidor MCP "${server}" devolvio un contenido invalido para el recurso "${target}".`,
+    );
+  }
+  const contents: McpResourceContent[] = [];
+  for (const item of result.contents) {
+    if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
+      log.warn('Contenido MCP ignorado: URI invalida', {
+        server,
+        recurso: target,
+      });
+      continue;
+    }
+    const content: McpResourceContent = { uri: item.uri };
+    if (typeof item.mimeType === 'string') content.mimeType = item.mimeType;
+    if (typeof item.text === 'string') content.text = item.text;
+    if (typeof item.blob === 'string') content.blob = item.blob;
+    if (content.text === undefined && content.blob === undefined) {
+      log.warn('Contenido MCP ignorado: sin text ni blob', {
+        server,
+        recurso: target,
+      });
+      continue;
+    }
+    contents.push(content);
+  }
+  if (contents.length === 0) {
+    throw new Error(
+      `El servidor MCP "${server}" no devolvio contenido legible para el recurso "${target}".`,
+    );
+  }
+  return contents;
+}
+
+/** Normaliza la respuesta de `prompts/list` (stdio y HTTP). */
+export function parsePromptList(server: string, result: unknown): McpPromptInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.prompts)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de prompts invalida.`);
+  }
+  const prompts: McpPromptInfo[] = [];
+  for (const item of result.prompts) {
+    if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
+      log.warn('Prompt MCP ignorado: nombre invalido', { server });
+      continue;
+    }
+    const info: McpPromptInfo = { name: item.name };
+    if (typeof item.description === 'string') info.description = item.description;
+    if (Array.isArray(item.arguments)) {
+      const args: McpPromptArgument[] = [];
+      for (const arg of item.arguments) {
+        if (!isRecord(arg) || typeof arg.name !== 'string' || !arg.name.trim()) continue;
+        const parsed: McpPromptArgument = { name: arg.name };
+        if (typeof arg.description === 'string') parsed.description = arg.description;
+        if (typeof arg.required === 'boolean') parsed.required = arg.required;
+        args.push(parsed);
+      }
+      info.arguments = args;
+    }
+    prompts.push(info);
+  }
+  return prompts;
+}
+
+/** Normaliza la respuesta de `prompts/get` (stdio y HTTP). */
+export function parsePromptGet(server: string, target: string, result: unknown): McpPromptResult {
+  if (!isRecord(result) || !Array.isArray(result.messages)) {
+    throw new Error(`El servidor MCP "${server}" devolvio un prompt invalido para "${target}".`);
+  }
+  const messages: McpPromptMessage[] = [];
+  for (const item of result.messages) {
+    if (!isRecord(item) || typeof item.role !== 'string' || !('content' in item)) {
+      log.warn('Mensaje MCP ignorado: formato invalido', {
+        server,
+        prompt: target,
+      });
+      continue;
+    }
+    messages.push({ role: item.role, content: item.content });
+  }
+  const prompt: McpPromptResult = { messages };
+  if (typeof result.description === 'string') prompt.description = result.description;
+  return prompt;
+}
+
 /**
  * Lee la variable PA_MCP_SERVERS.
  *
@@ -308,128 +419,28 @@ export class McpClient {
 
   /** Lista los recursos anunciados por el servidor. */
   async listResources(): Promise<McpResourceInfo[]> {
-    const result = await this.#request<unknown>('resources/list', {});
-    if (!isRecord(result) || !Array.isArray(result.resources)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de recursos invalida.`,
-      );
-    }
-    const resources: McpResourceInfo[] = [];
-    for (const item of result.resources) {
-      if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
-        log.warn('Recurso MCP ignorado: URI invalida', { server: this.#config.name });
-        continue;
-      }
-      const info: McpResourceInfo = { uri: item.uri };
-      if (typeof item.name === 'string') info.name = item.name;
-      if (typeof item.description === 'string') info.description = item.description;
-      if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
-      resources.push(info);
-    }
-    return resources;
+    return parseResourceList(this.#config.name, await this.#request<unknown>('resources/list', {}));
   }
 
   /** Lee un recurso y devuelve todos sus bloques de contenido. */
   async readResource(uri: string): Promise<McpResourceContent[]> {
     const target = uri.trim();
     if (!target) throw new Error('readResource: falta la URI del recurso.');
-
     const result = await this.#request<unknown>('resources/read', { uri: target });
-    if (!isRecord(result) || !Array.isArray(result.contents)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un contenido invalido para el recurso "${target}".`,
-      );
-    }
-    const contents: McpResourceContent[] = [];
-    for (const item of result.contents) {
-      if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
-        log.warn('Contenido MCP ignorado: URI invalida', {
-          server: this.#config.name,
-          recurso: target,
-        });
-        continue;
-      }
-      const content: McpResourceContent = { uri: item.uri };
-      if (typeof item.mimeType === 'string') content.mimeType = item.mimeType;
-      if (typeof item.text === 'string') content.text = item.text;
-      if (typeof item.blob === 'string') content.blob = item.blob;
-      if (content.text === undefined && content.blob === undefined) {
-        log.warn('Contenido MCP ignorado: sin text ni blob', {
-          server: this.#config.name,
-          recurso: target,
-        });
-        continue;
-      }
-      contents.push(content);
-    }
-    if (contents.length === 0) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" no devolvio contenido legible para el recurso "${target}".`,
-      );
-    }
-    return contents;
+    return parseResourceRead(this.#config.name, target, result);
   }
 
   /** Lista los prompts anunciados por el servidor. */
   async listPrompts(): Promise<McpPromptInfo[]> {
-    const result = await this.#request<unknown>('prompts/list', {});
-    if (!isRecord(result) || !Array.isArray(result.prompts)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de prompts invalida.`,
-      );
-    }
-    const prompts: McpPromptInfo[] = [];
-    for (const item of result.prompts) {
-      if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
-        log.warn('Prompt MCP ignorado: nombre invalido', { server: this.#config.name });
-        continue;
-      }
-      const info: McpPromptInfo = { name: item.name };
-      if (typeof item.description === 'string') info.description = item.description;
-      if (Array.isArray(item.arguments)) {
-        const args: McpPromptArgument[] = [];
-        for (const arg of item.arguments) {
-          if (!isRecord(arg) || typeof arg.name !== 'string' || !arg.name.trim()) continue;
-          const parsed: McpPromptArgument = { name: arg.name };
-          if (typeof arg.description === 'string') parsed.description = arg.description;
-          if (typeof arg.required === 'boolean') parsed.required = arg.required;
-          args.push(parsed);
-        }
-        info.arguments = args;
-      }
-      prompts.push(info);
-    }
-    return prompts;
+    return parsePromptList(this.#config.name, await this.#request<unknown>('prompts/list', {}));
   }
 
   /** Obtiene un prompt con sus argumentos ya sustituidos por el servidor. */
   async getPrompt(name: string, args: Record<string, string> = {}): Promise<McpPromptResult> {
     const target = name.trim();
     if (!target) throw new Error('getPrompt: falta el nombre del prompt.');
-
-    const result = await this.#request<unknown>('prompts/get', {
-      name: target,
-      arguments: args,
-    });
-    if (!isRecord(result) || !Array.isArray(result.messages)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un prompt invalido para "${target}".`,
-      );
-    }
-    const messages: McpPromptMessage[] = [];
-    for (const item of result.messages) {
-      if (!isRecord(item) || typeof item.role !== 'string' || !('content' in item)) {
-        log.warn('Mensaje MCP ignorado: formato invalido', {
-          server: this.#config.name,
-          prompt: target,
-        });
-        continue;
-      }
-      messages.push({ role: item.role, content: item.content });
-    }
-    const prompt: McpPromptResult = { messages };
-    if (typeof result.description === 'string') prompt.description = result.description;
-    return prompt;
+    const result = await this.#request<unknown>('prompts/get', { name: target, arguments: args });
+    return parsePromptGet(this.#config.name, target, result);
   }
 
   /** Cierra el proceso. Es idempotente y no espera a que termine. */

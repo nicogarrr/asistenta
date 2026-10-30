@@ -17,8 +17,16 @@
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import {
+  type McpPromptInfo,
+  type McpPromptResult,
+  type McpResourceContent,
+  type McpResourceInfo,
   type McpToolCallResult,
   type McpToolInfo,
+  parsePromptGet,
+  parsePromptList,
+  parseResourceList,
+  parseResourceRead,
   parseToolCall,
   parseToolList,
 } from './client.js';
@@ -171,6 +179,32 @@ export class McpHttpClient {
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<McpToolCallResult> {
     const result = await this.#request('tools/call', { name, arguments: args });
     return parseToolCall(this.#config.name, name, result);
+  }
+
+  /** Lista los recursos del servidor (`resources/list`). */
+  async listResources(): Promise<McpResourceInfo[]> {
+    return parseResourceList(this.#config.name, await this.#request('resources/list', {}));
+  }
+
+  /** Lee un recurso (`resources/read`) y devuelve sus bloques de contenido. */
+  async readResource(uri: string): Promise<McpResourceContent[]> {
+    const target = uri.trim();
+    if (!target) throw new Error('readResource: falta la URI del recurso.');
+    const result = await this.#request('resources/read', { uri: target });
+    return parseResourceRead(this.#config.name, target, result);
+  }
+
+  /** Lista los prompts del servidor (`prompts/list`). */
+  async listPrompts(): Promise<McpPromptInfo[]> {
+    return parsePromptList(this.#config.name, await this.#request('prompts/list', {}));
+  }
+
+  /** Obtiene un prompt con sus argumentos ya sustituidos (`prompts/get`). */
+  async getPrompt(name: string, args: Record<string, string> = {}): Promise<McpPromptResult> {
+    const target = name.trim();
+    if (!target) throw new Error('getPrompt: falta el nombre del prompt.');
+    const result = await this.#request('prompts/get', { name: target, arguments: args });
+    return parsePromptGet(this.#config.name, target, result);
   }
 
   close(): void {

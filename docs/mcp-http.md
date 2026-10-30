@@ -18,3 +18,7 @@ Apagado por defecto. Con `PA_MCP_HTTP=1`, las entradas de `PA_MCP_SERVERS` que l
 - Sus tools se publican igual que las de stdio (`mcp_<servidor>_<tool>`).
 
 Sin `PA_MCP_HTTP=1` nada cambia: las entradas con `url` se ignoran como hasta ahora.
+
+## Recursos y prompts
+
+Además de las tools, el cliente HTTP habla `resources/list`, `resources/read`, `prompts/list` y `prompts/get` con la misma forma que el cliente stdio (mismas comprobaciones y mensajes de error). Sigue apagado por defecto: solo se usa con `PA_MCP_HTTP=1`.
