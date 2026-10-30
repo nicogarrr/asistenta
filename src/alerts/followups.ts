@@ -170,24 +170,21 @@ export class FollowupTracker {
    * letras («pagar el seguro» ↔ «el seguro ya está»). Devuelve cuántas tocó.
    */
   touchMentioned(chatKey: string, text: string, now = this.#now()): number {
-    const said = new Set(
-      foldAccents(text)
-        .split(/[^a-z0-9ñ]+/)
-        .filter((w) => w.length >= 4)
-        .map((w) => w.slice(0, 4)),
-    );
+    const said = new Set(mentionTokens(text));
     if (!said.size) return 0;
     let touched = 0;
     const update = this.#db.prepare('UPDATE followups SET last_contact = ? WHERE id = ?');
     for (const note of this.forChat(chatKey, 500)) {
       if (note.status !== 'pending') continue;
-      const stems = foldAccents(note.subject)
-        .split(/[^a-z0-9ñ]+/)
-        .filter((w) => w.length >= 4)
-        .map((w) => w.slice(0, 4));
-      if (!stems.length) continue;
-      const hits = stems.filter((s) => said.has(s)).length;
-      if (hits * 2 >= stems.length) {
+      const tokens = mentionTokens(note.subject);
+      // El verbo genérico («llamar», «pagar», «revisar») no identifica la nota:
+      // «tengo que llamar al banco» no es hablar de «llamar a Juan». Solo cuenta
+      // si la nota no tiene otra cosa.
+      const content = tokens.filter((t) => !GENERIC_STEMS.has(t));
+      const keys = content.length ? content : tokens;
+      if (!keys.length) continue;
+      const hits = keys.filter((s) => said.has(s)).length;
+      if (hits > 0 && hits * 2 >= keys.length) {
         update.run(now, note.id);
         touched++;
       }
@@ -346,4 +343,102 @@ export function ownerDmFollowups(
   limit = 200,
 ): Followup[] {
   return ownerChatKey ? tracker.forChat(ownerChatKey, limit) : [];
+}
+
+/** Verbos de tarea que salen en cualquier frase: no bastan para reconocer una nota. */
+const GENERIC_STEMS = new Set([
+  'llam',
+  'mira',
+  'hace',
+  'hago',
+  'hech',
+  'envi',
+  'mand',
+  'revi',
+  'pasa',
+  'habl',
+  'escr',
+  'busc',
+  'pedi',
+  'pide',
+  'tene',
+  'teng',
+  'tien',
+  'deci',
+  'dime',
+  'comp',
+  'paga',
+  'pagu',
+  'pend',
+  'reco',
+  'nota',
+  'apun',
+  'ahor',
+  'lueg',
+  'mana',
+  'sema',
+  'tard',
+  'noch',
+  'esto',
+  'esta',
+  'este',
+  'para',
+  'pero',
+  'como',
+  'cuan',
+  'todo',
+  'toda',
+  'algo',
+  'tamb',
+]);
+
+/** Palabras cortas que no dicen de qué se habla. */
+const SHORT_STOPWORDS = new Set([
+  'que',
+  'los',
+  'las',
+  'del',
+  'con',
+  'por',
+  'una',
+  'uno',
+  'mas',
+  'hay',
+  'muy',
+  'sin',
+  'ese',
+  'esa',
+  'eso',
+  'son',
+  'fue',
+  'era',
+  'vez',
+  'hoy',
+  'mis',
+  'tus',
+  'sus',
+  'les',
+  'nos',
+  'ver',
+  'dar',
+  'voy',
+  'van',
+  'han',
+  'has',
+  'hey',
+  'asi',
+  'ahi',
+  'aun',
+]);
+
+/**
+ * Lo que identifica una frase para reconocer una nota: raíz de 4 letras de las
+ * palabras de 4+ letras, y las de 3 letras enteras salvo vacías («luz», «iva»,
+ * «Ana»): antes se descartaban y «pagar la luz» no se reconocía en «ya pagué la luz».
+ */
+function mentionTokens(text: string): string[] {
+  return foldAccents(text)
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w.length >= 4 || (w.length === 3 && !SHORT_STOPWORDS.has(w)))
+    .map((w) => (w.length >= 4 ? w.slice(0, 4) : w));
 }
