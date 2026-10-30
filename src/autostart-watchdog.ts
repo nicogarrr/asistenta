@@ -14,7 +14,7 @@
  * ejecutar nada de verdad).
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 
 export const WATCHDOG_TASK_NAME = 'Asistenta-vigilante';
 export const WATCHDOG_INTERVAL_MIN = 5;
@@ -44,6 +44,9 @@ export function watchdogCommand(nodeExe: string, cliJs: string, systemRoot = 'C:
 /** XML de la tarea: al iniciar sesión y cada 5 min, una sola instancia, sin privilegios. */
 export function watchdogTaskXml(opts: { nodeExe: string; cliJs: string; systemRoot?: string }) {
   const { command, arguments: args } = watchdogCommand(opts.nodeExe, opts.cliJs, opts.systemRoot);
+  // Sin carpeta de trabajo la tarea corre en System32 y el CLI no lee el `.env` del repo
+  // (PA_WATCHDOG=0, PA_STATE_DIR…): igual que la tarea del daemon, arranca en la raíz del repo.
+  const repoDir = win32.dirname(win32.dirname(opts.cliJs));
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -82,6 +85,7 @@ export function watchdogTaskXml(opts: { nodeExe: string; cliJs: string; systemRo
     <Exec>
       <Command>${xmlEscape(command)}</Command>
       <Arguments>${xmlEscape(args)}</Arguments>
+      <WorkingDirectory>${xmlEscape(repoDir)}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
