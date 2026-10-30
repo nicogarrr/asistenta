@@ -16,4 +16,9 @@ contesta, la puerta de exfiltración pregunta con la URL completa tras leer un a
 hoy` y `/correo` se niegan fuera del DM del dueño. Para un escenario propio:
 `bash scripts/qa-daemon/run.sh <dir> <guion.json> <inbox.jsonl> [segundos]` y leer el outbox.
 
+**DM del dueño (solo pruebas):** con `PA_QA_OWNER_DM=1`, una línea del buzón con `"owner": true`
+entra como el DM privado del dueño (chatId == userId), así que `/resumen hoy`, `/correo` y el resumen
+diario se prueban de verdad. Apagado por defecto; lo que sale hacia ese chat se queda en el outbox
+y nunca llega a Telegram. `smoke.sh` lo usa en los casos `dueno`.
+
 Nunca en Windows (el canal de QA se niega a arrancar allí) y nunca con secretos reales.

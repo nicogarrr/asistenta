@@ -159,6 +159,13 @@ export class QaChannel extends TelegramChannel {
   #seq = 0;
   #fileSeq = 0;
   readonly #userId: string;
+  /**
+   * PA_QA_OWNER_DM=1 (solo pruebas, apagado por defecto): una línea del buzón con
+   * `"owner": true` entra como el DM del dueño (chatId == userId), para probar por el
+   * daemon real lo que solo se permite ahí (/resumen hoy, /correo, el resumen diario).
+   * Todo lo que sale hacia ese chat se queda en el outbox: nunca llega a Telegram.
+   */
+  readonly #ownerDm: boolean;
 
   constructor(options: QaOptions) {
     super(options);
@@ -172,7 +179,13 @@ export class QaChannel extends TelegramChannel {
     this.#dir = options.dir;
     this.#pollMs = options.pollMs ?? 1_000;
     this.#userId = String(options.allowedUserIds[0] ?? 0);
+    this.#ownerDm = process.env.PA_QA_OWNER_DM === '1' && /^[1-9]\d*$/.test(this.#userId);
     mkdirSync(join(this.#dir, 'files'), { recursive: true });
+  }
+
+  /** Chats que este canal atiende por ficheros: los de QA y, con PA_QA_OWNER_DM=1, el DM del dueño. */
+  #mine(chatId: string | number): boolean {
+    return isQaChatId(chatId) || (this.#ownerDm && String(chatId) === this.#userId);
   }
 
   #out(chatId: string | number, rec: Record<string, unknown>): void {
@@ -211,15 +224,20 @@ export class QaChannel extends TelegramChannel {
     this.#offset = end;
     for (const line of chunk.split('\n')) {
       if (!line.trim()) continue;
-      let msg: { case?: string; text?: string };
+      let msg: { case?: string; text?: string; owner?: boolean };
       try {
-        msg = JSON.parse(line) as { case?: string; text?: string };
+        msg = JSON.parse(line) as { case?: string; text?: string; owner?: boolean };
       } catch {
         this.#handlers?.log('warn', 'qa inbox: linea mal formada ignorada', { chars: line.length });
         continue;
       }
       if (!msg.case || !msg.text) continue;
       let chatId = this.#chatByCase.get(msg.case);
+      if (!chatId && msg.owner === true && this.#ownerDm) {
+        chatId = this.#userId;
+        this.#chatByCase.set(msg.case, chatId);
+        this.#caseByChat.set(chatId, msg.case);
+      }
       if (!chatId) {
         chatId = String(QA_CHAT_BASE + ++this.#seq);
         this.#chatByCase.set(msg.case, chatId);
@@ -251,7 +269,7 @@ export class QaChannel extends TelegramChannel {
   }
 
   override async send(outbound: Outbound): Promise<string | null> {
-    if (!isQaChatId(outbound.chatId)) return super.send(outbound);
+    if (!this.#mine(outbound.chatId)) return super.send(outbound);
     this.#out(outbound.chatId, {
       kind: 'text',
       text: outbound.format === 'marks' ? stripMarks(outbound.text) : outbound.text,
@@ -274,7 +292,7 @@ export class QaChannel extends TelegramChannel {
     threadId?: string,
     size?: { width: number; height: number },
   ): Promise<string | null> {
-    if (!isQaChatId(chatId)) return super.sendPhotoBytes(chatId, bytes, threadId, size);
+    if (!this.#mine(chatId)) return super.sendPhotoBytes(chatId, bytes, threadId, size);
     this.#saveFile(chatId, 'foto.png', bytes, 'photo');
     return String(1_000_000 + ++this.#fileSeq);
   }
@@ -285,7 +303,7 @@ export class QaChannel extends TelegramChannel {
     threadId: string | undefined,
     seconds: number,
   ): Promise<void> {
-    if (!isQaChatId(chatId)) return super.sendVoiceBytes(chatId, bytes, threadId, seconds);
+    if (!this.#mine(chatId)) return super.sendVoiceBytes(chatId, bytes, threadId, seconds);
     this.#saveFile(chatId, 'voz.ogg', bytes, 'voice');
   }
 
@@ -295,7 +313,7 @@ export class QaChannel extends TelegramChannel {
     durationSeconds: number,
     caption: string,
   ): Promise<void> {
-    if (!isQaChatId(chatId)) return super.sendVideo(chatId, bytes, durationSeconds, caption);
+    if (!this.#mine(chatId)) return super.sendVideo(chatId, bytes, durationSeconds, caption);
     this.#saveFile(chatId, 'video.mp4', bytes, 'video');
   }
 
@@ -306,23 +324,23 @@ export class QaChannel extends TelegramChannel {
     caption: string,
     threadId?: string,
   ): Promise<void> {
-    if (!isQaChatId(chatId)) {
+    if (!this.#mine(chatId)) {
       return super.sendDocumentBytes(chatId, bytes, filename, caption, threadId);
     }
     this.#saveFile(chatId, filename.replace(/[^\w.-]+/g, '_'), bytes, 'document');
   }
 
   override async editPhoto(chatId: string, messageId: string, bytes: Buffer): Promise<void> {
-    if (!isQaChatId(chatId)) return super.editPhoto(chatId, messageId, bytes);
+    if (!this.#mine(chatId)) return super.editPhoto(chatId, messageId, bytes);
   }
 
   override async editMessageText(chatId: string, messageId: string, text: string): Promise<void> {
-    if (!isQaChatId(chatId)) return super.editMessageText(chatId, messageId, text);
+    if (!this.#mine(chatId)) return super.editMessageText(chatId, messageId, text);
     this.#out(chatId, { kind: 'edit', text });
   }
 
   override async deleteMessage(chatId: string, messageId: string): Promise<void> {
-    if (!isQaChatId(chatId)) return super.deleteMessage(chatId, messageId);
+    if (!this.#mine(chatId)) return super.deleteMessage(chatId, messageId);
   }
 
   override async action(
@@ -334,7 +352,7 @@ export class QaChannel extends TelegramChannel {
       | 'upload_video'
       | 'upload_document' = 'typing',
   ): Promise<void> {
-    if (!isQaChatId(chatId)) return super.action(chatId, action);
+    if (!this.#mine(chatId)) return super.action(chatId, action);
     this.#out(chatId, { kind: 'action', action });
   }
 
@@ -349,7 +367,7 @@ export class QaChannel extends TelegramChannel {
     question: string,
     opts?: { askScope?: boolean },
   ): Promise<ApprovalChoice> {
-    if (!isQaChatId(chatId)) return super.offerApproval(id, chatId, question, opts);
+    if (!this.#mine(chatId)) return super.offerApproval(id, chatId, question, opts);
     const approved = qaApproves(question);
     this.#out(chatId, { kind: 'approval', question, approved });
     return Promise.resolve({ approved, scope: 'once' });

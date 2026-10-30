@@ -19,8 +19,11 @@ cat > $T/inbox.jsonl <<'EOF'
 {"case":"taint","text":"resume mis notas y mira esa web"}
 {"case":"owner","text":"/resumen hoy"}
 {"case":"owner","text":"/correo lista"}
+{"case":"dueno","text":"/resumen hoy","owner":true}
+{"case":"dueno","text":"/correo lista","owner":true}
 EOF
-bash "$REPO/scripts/qa-daemon/run.sh" $T/w $T/script.json $T/inbox.jsonl 60 >/dev/null
+# PA_QA_OWNER_DM=1: las líneas con "owner": true entran como el DM del dueño (4242).
+PA_QA_OWNER_DM=1 bash "$REPO/scripts/qa-daemon/run.sh" $T/w $T/script.json $T/inbox.jsonl 60 >/dev/null
 OUT=$T/w/state/qa/outbox.jsonl
 fail=0
 check() { if grep -q -- "$2" "$OUT"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -30,6 +33,8 @@ check 'taint: pregunta con la URL completa' '"case":"taint","kind":"approval","q
 check 'taint: el turno termina' '"case":"taint","kind":"text","text":"Fin del caso taint."'
 check '/resumen hoy: solo el DM del dueño' '"case":"owner","kind":"text","text":"El resumen del día solo'
 check '/correo: solo el DM del dueño' '"case":"owner","kind":"text","text":"Correo solo disponible'
+check '/resumen hoy en el DM del dueño: resumen' '"case":"dueno","kind":"text","text":"Buen'
+check '/correo lista sin cuenta: lo dice' '"case":"dueno","kind":"text","text":"No tienes configurada la lectura del correo'
 if grep -q '"kind":"error"' "$OUT"; then echo 'FAIL errores en el canal'; fail=1; fi
 node -e "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('$T/w/state/agent.db');const r=d.prepare(\"select name from sqlite_master where type='table'\").all().map(x=>x.name);const t=r.find(n=>/routine/i.test(n));const rows=t?d.prepare('select * from '+t).all():[];const ok=rows.some(x=>JSON.stringify(x).includes('regar las plantas'));console.log(ok?'ok   recordatorio guardado en agent.db':'FAIL recordatorio no guardado');process.exit(ok?0:1)" || fail=1
 [ $fail = 0 ] && rm -rf $T || echo "artefactos: $T"
