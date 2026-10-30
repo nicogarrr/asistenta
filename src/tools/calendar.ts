@@ -240,6 +240,10 @@ function salvageResponses(text: string): CalendarResponse[] {
  * `end` is the raw RFC 5545 boundary, so for an all-day event it is the EXCLUSIVE
  * end: local midnight at the start of the following day.
  */
+function statusOf(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
 export function parseIcs(text: string, now: Date = new Date()): CalendarEvent[] {
   const events: CalendarEvent[] = [];
   const to = new Date(now.getTime() + MAX_AGENDA_DAYS * DAY_MS);
@@ -265,6 +269,12 @@ export function parseIcs(text: string, now: Date = new Date()): CalendarEvent[] 
         // An override (RECURRENCE-ID) carries its own copy of the properties it
         // changed; everything it left alone still lives on the base event.
         const source = instance.event;
+        // STATUS:CANCELLED (RFC 5545 §3.8.1.11) is how a calendar says "this no longer
+        // happens": a whole event the organiser called off, or one instance of a series
+        // cancelled through a RECURRENCE-ID override. Google keeps both in the feed, so
+        // without this check a cancelled meeting still showed in /agenda and still
+        // counted as busy time.
+        if (statusOf(source.status ?? event.status) === 'CANCELLED') continue;
         const uid = plain(event.uid) ?? 'unknown';
         const location = clip(plain(source.location) ?? plain(event.location), 80);
         const description = clip(plain(source.description) ?? plain(event.description), 120);
