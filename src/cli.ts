@@ -72,7 +72,7 @@ import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
-import { isDuplicateUpdate, queueThreadTurn } from './daemon/inbound.js';
+import { beginInbound, isMailReplyRequest, queueThreadTurn } from './daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
@@ -6680,46 +6680,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await withInboundFailureReply(
         async () => {
           const chatKey_ = chatKey(inbound);
-          log.info('message', {
-            chatId: inbound.chatId,
-            user: inbound.displayName,
-            chars: inbound.text.length,
-            hasPhoto: Boolean(inbound.photoFileId),
-            hasVoice: Boolean(inbound.audioFileId),
+          const started = beginInbound(inbound, chatKey_, {
+            seen: seenMessages,
+            log,
+            emitMessageTrigger: (scope, text) =>
+              triggerEngine.emit({ type: 'mensaje', scope, text }),
+            setLastChat: (chat) => {
+              lastChat = chat;
+            },
+            recordAudio: (key, audio) => {
+              recall.record(key, audio);
+            },
           });
-
-          // Telegram delivers at-least-once; a redelivered update must not run the task
-          // twice. Bounded by a one hour TTL, which comfortably outlives a redelivery.
-          const dedupKey = `${chatKey_}:${inbound.messageId}`;
-          if (isDuplicateUpdate(seenMessages, dedupKey)) {
-            log.info('duplicate update ignored', { messageId: inbound.messageId });
-            return;
-          }
-
-          // Disparador 'mensaje': texto normal (nunca un comando) cruza los
-          // triggers del chat. No bloquea la respuesta al usuario.
-          if (inbound.text && !inbound.text.startsWith('/')) {
-            void triggerEngine
-              .emit({ type: 'mensaje', scope: chatKey_, text: inbound.text })
-              .catch((err) => {
-                log.warn('trigger mensaje falló', { err: String(err) });
-              });
-          }
-
-          // Where a wake word gets answered, and what "the last audio" means from now on.
-          lastChat = { key: chatKey_, chatId: inbound.chatId, threadId: inbound.threadId };
-
-          // Recorded before the command dispatch, because "/play" typed as the caption of
-          // an audio has to be able to find that audio by its own message id.
-          if (inbound.audioFileId) {
-            recall.record(chatKey_, {
-              fileId: inbound.audioFileId,
-              mimeType: inbound.audioMimeType ?? 'audio/ogg',
-              messageId: inbound.messageId,
-              durationSeconds: inbound.audioDurationSeconds,
-              caption: inbound.text.trim() || undefined,
-            });
-          }
+          if (!started) return;
+          const { dedupKey } = started;
 
           // Altavoz: la nota suena sola en el PC/la tele, sin esperar al modelo.
           if (inbound.audioFileId && !inbound.text.trim().startsWith('/')) {
@@ -6753,8 +6727,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }
           }
 
-          if (/^responde(?:r)? a ese\s*\n/i.test(inbound.text))
-            return cmdCorreo(inbound, inbound.text);
+          if (isMailReplyRequest(inbound.text)) return cmdCorreo(inbound, inbound.text);
           const erase = eraseConfirm.consume(chatKey_, inbound.text);
           if (erase === 'confirmed') return cmdBorrarChatConfirmado(inbound);
           if (erase === 'cancelled')

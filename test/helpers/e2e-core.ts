@@ -10,12 +10,13 @@ import type {
 import { createFauxCore, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { ActionRecord } from '../../src/audit/log.js';
 import type { ApprovalChoice } from '../../src/channels/telegram.js';
+import type { Inbound } from '../../src/channels/types.js';
 import { buildContextNote, createDaemonGate } from '../../src/cli.js';
 import type { Config } from '../../src/config.js';
 import { PersonalAgent } from '../../src/core/agent.js';
 import { createGoalNotifySend } from '../../src/daemon/goal-notify.js';
 import { createGoalTickExecute, type ThreadTickDeps } from '../../src/daemon/goal-tick.js';
-import { queueThreadTurn } from '../../src/daemon/inbound.js';
+import { beginInbound, queueThreadTurn } from '../../src/daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from '../../src/daemon/routine-fire.js';
 import { createRoutineTask } from '../../src/daemon/routine-task.js';
 import { Store } from '../../src/db.js';
@@ -392,6 +393,36 @@ export class Core {
   }
 
   extraTools: AgentTool[] = [];
+
+  /** Ids ya vistos y último chat, como en onMessage del daemon. */
+  readonly seenMessages = new Map<string, number>();
+  lastChat: { key: string; chatId: string; threadId?: string } | null = null;
+  readonly receivedAudio: Array<{ chatKey: string; fileId: string }> = [];
+  readonly messageTriggers: Array<{ scope: string; text: string }> = [];
+
+  /**
+   * Un mensaje entrante como lo trata el daemon: el arranque REAL de onMessage
+   * (beginInbound: repetidos, disparador, último chat, audio) y, si no es un
+   * update repetido, el turno por la cola del hilo. `undefined` = descartado.
+   */
+  async deliver(inbound: Inbound): Promise<Awaited<ReturnType<Thread['user']>> | undefined> {
+    const started = beginInbound(inbound, chatKey(inbound.chatId), {
+      seen: this.seenMessages,
+      log: { info: () => {}, warn: () => {} },
+      emitMessageTrigger: async (scope, text) => {
+        this.messageTriggers.push({ scope, text });
+      },
+      setLastChat: (chat) => {
+        this.lastChat = chat;
+      },
+      recordAudio: (key, audio) => {
+        this.receivedAudio.push({ chatKey: key, fileId: audio.fileId });
+      },
+    });
+    if (!started) return undefined;
+    const thread = await this.thread(inbound.chatId);
+    return thread.user(inbound.text);
+  }
 
   /** Parada del daemon: temporizadores fuera y bases cerradas. */
   stop(): void {
