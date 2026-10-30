@@ -174,7 +174,7 @@ const liveClients: McpToolClient[] = [];
 export interface McpLiveServer {
   name: string;
   allowedTools?: string[];
-  client: Pick<McpToolClient, 'listResources' | 'listPrompts'>;
+  client: Pick<McpToolClient, 'listResources' | 'listPrompts' | 'listResourceTemplates'>;
 }
 
 /** Los servidores que arrancaron, para `/mcp` (solo lectura; no se cierran aquí). */
@@ -575,6 +575,7 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
  * lo mismo que las herramientas: apagado sin PA_MCP_RESOURCES=1 y, con
  * `allowedTools`, solo servidores que incluyan `@recursos` / `@prompts`.
  * Cada servidor tiene un tope de tiempo; uno que no responde no bloquea al resto.
+ * Con PA_MCP_RESOURCE_TEMPLATES=1, `/mcp recursos` lista también las plantillas.
  */
 export async function mcpCommandText(
   rawArgs: string,
@@ -620,6 +621,25 @@ export async function mcpCommandText(
               );
       } catch {
         return `${name}: no responde`;
+      }
+      if (
+        kind === 'recursos' &&
+        mcpResourceTemplatesEnabled(opts.env ?? process.env) &&
+        server.client.listResourceTemplates
+      ) {
+        try {
+          const templates = await withTimeout(
+            server.client.listResourceTemplates(),
+            opts.timeoutMs ?? MCP_COMMAND_TIMEOUT_MS,
+          );
+          for (const tpl of templates) {
+            items.push(
+              `plantilla ${tpl.name ? `${commandLine(tpl.name)} (${commandLine(tpl.uriTemplate)})` : commandLine(tpl.uriTemplate)}`,
+            );
+          }
+        } catch {
+          items.push('plantillas: no responden');
+        }
       }
       if (!items.length) return `${name}: ninguno`;
       const shown = items.slice(0, MCP_COMMAND_ITEMS).map((line) => `• ${line}`);
