@@ -520,7 +520,7 @@ function pct(v: number): string {
  * on `changed`) and the sentence says plainly that the answer is unknown, names the
  * reason, and tells the model what to do instead of guessing.
  */
-function notCompared(reason: string): FrameDiff {
+export function notCompared(reason: string): FrameDiff {
   return {
     changed: false,
     ratio: 0,
