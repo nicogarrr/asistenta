@@ -185,6 +185,7 @@ No es necesario arrancar todos los componentes para usar el chat básico. Consul
 - El almacén portable no equivale al cifrado DPAPI de Windows. Revisa [la entrada segura por stdin](docs/vault-stdin-qa.md).
 - Navegar, ejecutar una herramienta y obtener un resultado son hechos distintos. Una prueba con mocks o en Linux no certifica el control del escritorio Windows.
 - Los servicios externos tienen sus propios términos, cuotas y políticas de datos. Revisa el plan antes de activar una clave o una integración.
+- Puerta de exfiltración: en cuanto un turno lee algo privado (archivos, memoria, correo, documentos, pantalla, terminal…), una petición de `fetch`, `download` o del navegador con datos (query, ruta larga, usuario en la URL o subdominio largo) a un dominio que el turno aún no ha visitado pide aprobación enseñando la URL completa. Antes de leer nada privado, navegar sigue siendo libre. `PA_TAINT_GATE=0` la apaga.
 - El código de delegación no se presenta aquí como un sistema multiagente operativo: su existencia no prueba conexión al daemon.
 
 ## Contribuir
