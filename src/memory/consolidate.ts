@@ -31,7 +31,7 @@
  * el backup de las 03:00: sin la flag, el comportamiento es exactamente el de
  * antes.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { log } from '../log.js';
 import type { MemoryEntry, MemoryStore } from '../memory.js';
@@ -490,12 +490,4 @@ export async function runConsolidation(opts: {
     backups: backups.length,
   });
   return report;
-}
-
-/** Visible para tests: lista los .md de scopes sin tocar MemoryStore. */
-export function scopeFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.md'))
-    .map((name) => join(dir, name));
 }

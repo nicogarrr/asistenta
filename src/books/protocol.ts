@@ -22,7 +22,6 @@ export interface BookCard {
 }
 
 export const EPUB_BUTTON = 'Epub';
-export const PAGINATION_BUTTONS = ['⏮', '◀', '▶', '⏭'] as const;
 
 const CODE_RE = /\/(b[A-Za-z0-9]{4,5})(?![A-Za-z0-9])/g;
 

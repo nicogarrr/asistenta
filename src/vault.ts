@@ -174,10 +174,6 @@ function writeVaultFile(payload: VaultFile): void {
   renameSync(tmp, paths.vault);
 }
 
-export function isUnlocked(): boolean {
-  return cache.size > 0;
-}
-
 export function vaultExists(): boolean {
   if (vaultBackend() === 'portable') return true;
   return existsSync(paths.vault);

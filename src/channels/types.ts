@@ -106,13 +106,6 @@ export interface Outbound {
   replyToMessageId?: string;
 }
 
-/** Asks the human a question and resolves with the answer, or null on timeout. */
-export type Prompter = (
-  inbound: Inbound,
-  question: string,
-  timeoutMs: number,
-) => Promise<boolean | null>;
-
 export interface ChannelAdapter {
   readonly name: string;
   readonly account: string;

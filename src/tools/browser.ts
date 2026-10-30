@@ -1050,14 +1050,3 @@ function describeWait(result: WaitResult): string {
   }
   return result.reason ?? `"${result.waitedFor}" no ha aparecido.`;
 }
-
-/**
- * A script can return a screenshot as a marker line, e.g.
- * `return { shot: await page.screenshot() }` is too heavy, so the documented way is
- * to return the string `__shot__<base64>`. Parsing it here keeps the escape hatch
- * usable without teaching the model a second tool call.
- */
-export function extractScreenshot(text: string): string | null {
-  const match = /__shot__([A-Za-z0-9+/=]{32,})/.exec(text);
-  return match?.[1] ?? null;
-}

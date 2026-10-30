@@ -226,11 +226,6 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
   );
 }
 
-/** True para el preset opencode-local (serve local en la maquina del usuario). */
-export function isOpenCodeLocalProvider(provider: string): boolean {
-  return provider === 'opencode-local';
-}
-
 /**
  * Handle para `opencode serve` local: sin key aqui (la guarda el propio serve),
  * streamFn va al cliente local y completeSimple (resumenes y extraccion de
