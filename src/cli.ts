@@ -142,6 +142,7 @@ import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries }
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
+import { trackBusyIn } from './ocupada.js';
 import { DEFAULT_QUIET_HOURS } from './ojo.js';
 import {
   createDownloadsController,
@@ -2552,6 +2553,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  // La autoactualización solo reinicia con este fichero diciendo «libre».
+  trackBusyIn(paths.state);
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
