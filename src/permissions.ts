@@ -1123,6 +1123,14 @@ export class Gate {
     // a «lanzar o cerrar cualquier cosa»: la ventana de 90 s no lo cubre y pregunta
     // siempre, también dentro de un lote.
     if (argString(call.args, 'action') === 'key' && isSystemKeyChord(argString(call.args, 'key'))) {
+      this.#afterSystemChord.add(sessionId);
+      return false;
+    }
+    // Lo que se escribe justo después de un atajo del sistema (Win+R → «cmd⏎»)
+    // es la orden que ese atajo abre: el primer `type` tras el atajo pregunta
+    // también, aunque la ventana siga abierta. Luego la ventana vuelve a valer.
+    if (argString(call.args, 'action') === 'type' && this.#afterSystemChord.has(sessionId)) {
+      this.#afterSystemChord.delete(sessionId);
       return false;
     }
     const until = this.#grants.get(sessionId)?.get(call.tool);
@@ -1159,6 +1167,7 @@ export class Gate {
     this.#privateTaint.delete(sessionId);
     this.#contactedHosts.delete(sessionId);
     this.#privateGrams.delete(sessionId);
+    this.#afterSystemChord.delete(sessionId);
   }
 
   /**
@@ -1305,6 +1314,8 @@ export class Gate {
 
   /** Tool -> epoch ms until which further calls to it are trusted. */
   #grants = new Map<string, Map<string, number>>();
+  /** Sesiones cuyo último atajo del sistema aún no ha ido seguido de un `type`. */
+  #afterSystemChord = new Set<string>();
 
   registerSession(sessionId: string): void {
     if (!this.#approved.has(sessionId)) this.#approved.set(sessionId, new Set());
