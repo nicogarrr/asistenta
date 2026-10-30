@@ -4,8 +4,16 @@ import type { CycleLog } from './pricewatch-runner.js';
 /**
  * Identity fallback is explicit, same chat only. Never log credentials or provider bodies.
  * Los botones (p. ej. «🔕 Silenciar 1 día») solo viajan cuando avisa el bot principal: la
- * pulsación llega al bot que envió el mensaje, y solo el principal la atiende.
+ * pulsación llega al bot que envió el mensaje, y solo el principal la atiende. Si avisa otro
+ * bot, el aviso lleva en su lugar la orden escrita (p. ej. «/precio silenciar a1b2c3d4»).
  */
+export function typedButtonsHint(buttons: Array<{ label: string; action: string }>): string {
+  return buttons
+    .filter((b) => b.action.startsWith('cmd:'))
+    .map((b) => `${b.label}: escribe /${b.action.slice(4)} al bot principal de Asistenta.`)
+    .join('\n');
+}
+
 export function pricewatchNotifier(opts: {
   token: string;
   mainBotToken: string;
@@ -16,13 +24,16 @@ export function pricewatchNotifier(opts: {
 }): (text: string, opts?: PriceNotifyOpts) => Promise<void> {
   return async (text, opts2) => {
     await opts.out(text);
+    const hint = opts.mainBotToken && opts2?.buttons?.length ? typedButtonsHint(opts2.buttons) : '';
+    const textFor = (token: string) =>
+      hint && token !== opts.mainBotToken ? `${text}\n\n${hint}` : text;
     const send = async (token: string) =>
       (opts.send ?? fetch)(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           chat_id: opts.chatId,
-          text,
+          text: textFor(token),
           disable_web_page_preview: true,
           ...(token === opts.mainBotToken && opts2?.buttons?.length
             ? {
