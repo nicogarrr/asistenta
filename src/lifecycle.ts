@@ -137,6 +137,27 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
     resolveDone = r;
   });
 
+  // Claim the pid file FIRST, before any handler is installed: the loser of
+  // the race must leave nothing behind - no signal or crash handler whose
+  // stop() would later write a .stale marker over the winner's and delete the
+  // winner's pid file (which reopens the door to a third instance).
+  // Exclusive create: two daemons racing through assertNotRunning together must not
+  // both proceed. Whoever loses gets EEXIST instead of a second live instance.
+  try {
+    writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    throw new Error(
+      `could not claim ${pidFile} (another instance won the race): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // Only ever remove the pid file while it still names this process.
+  const releasePidFile = (): void => {
+    try {
+      if (readFileSync(pidFile, 'utf8').trim() !== String(process.pid)) return;
+      unlinkSync(pidFile);
+    } catch {}
+  };
+
   const writeAtomic = (file: string, contents: string): void => {
     const tmp = uniqueTmpPath(file);
     mkdirSync(dirname(file), { recursive: true });
@@ -178,9 +199,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
             unlinkSync(stale);
           } catch {}
         }
-        try {
-          unlinkSync(pidFile);
-        } catch {}
+        releasePidFile();
         clearInterval(timer);
         outcome = code === 0 ? 'clean' : 'failed';
         process.exitCode = code;
@@ -221,15 +240,6 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
     log.error('unhandled rejection', { err: reason });
   });
 
-  // Exclusive create: two daemons racing through assertNotRunning together must not
-  // both proceed. Whoever loses gets EEXIST instead of a second live instance.
-  try {
-    writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
-  } catch (err) {
-    throw new Error(
-      `could not claim ${pidFile} (another instance won the race): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
   const timer = setInterval(() => void heartbeat(), 15_000);
   timer.unref();
   void heartbeat();
