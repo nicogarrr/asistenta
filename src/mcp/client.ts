@@ -123,6 +123,44 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Interpreta el resultado de `tools/list` (compartido por stdio y HTTP). */
+export function parseToolList(server: string, result: unknown): McpToolInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.tools)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de herramientas invalida.`);
+  }
+  const tools: McpToolInfo[] = [];
+  for (const item of result.tools) {
+    if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
+      log.warn('Herramienta MCP ignorada: nombre invalido', { server });
+      continue;
+    }
+    const info: McpToolInfo = { name: item.name };
+    if (typeof item.description === 'string') info.description = item.description;
+    if (isRecord(item.inputSchema)) info.inputSchema = item.inputSchema;
+    tools.push(info);
+  }
+  return tools;
+}
+
+/**
+ * Interpreta el resultado de `tools/call`: concatena los bloques de texto en
+ * orden e ignora los que no son texto (compartido por stdio y HTTP).
+ */
+export function parseToolCall(server: string, name: string, result: unknown): McpToolCallResult {
+  if (!isRecord(result)) {
+    throw new Error(`El servidor MCP "${server}" devolvio un resultado invalido para "${name}".`);
+  }
+  const texts: string[] = [];
+  if (Array.isArray(result.content)) {
+    for (const block of result.content) {
+      if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+        texts.push(block.text);
+      }
+    }
+  }
+  return { text: texts.join(''), isError: result.isError === true };
+}
+
 /**
  * Lee la variable PA_MCP_SERVERS.
  *
@@ -245,26 +283,7 @@ export class McpClient {
 
   /** Lista las herramientas anunciadas por el servidor. */
   async listTools(): Promise<McpToolInfo[]> {
-    const result = await this.#request<unknown>('tools/list', {});
-    if (!isRecord(result) || !Array.isArray(result.tools)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de herramientas invalida.`,
-      );
-    }
-    const tools: McpToolInfo[] = [];
-    for (const item of result.tools) {
-      if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
-        log.warn('Herramienta MCP ignorada: nombre invalido', {
-          server: this.#config.name,
-        });
-        continue;
-      }
-      const info: McpToolInfo = { name: item.name };
-      if (typeof item.description === 'string') info.description = item.description;
-      if (isRecord(item.inputSchema)) info.inputSchema = item.inputSchema;
-      tools.push(info);
-    }
-    return tools;
+    return parseToolList(this.#config.name, await this.#request<unknown>('tools/list', {}));
   }
 
   /**
@@ -450,20 +469,7 @@ export class McpClient {
       name,
       arguments: args,
     });
-    if (!isRecord(result)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un resultado invalido para "${name}".`,
-      );
-    }
-    const texts: string[] = [];
-    if (Array.isArray(result.content)) {
-      for (const block of result.content) {
-        if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
-          texts.push(block.text);
-        }
-      }
-    }
-    return { text: texts.join(''), isError: result.isError === true };
+    return parseToolCall(this.#config.name, name, result);
   }
 
   async #recover(): Promise<void> {

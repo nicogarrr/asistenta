@@ -291,6 +291,7 @@ import {
   funcionesText,
 } from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
+import { mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
 import { buildMemoryPromptSection } from './memory/prompt.js';
@@ -1657,14 +1658,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
   // entran en todos los hilos. Un servidor caído se salta y no impide arrancar.
   const mcpServers = parseMcpServers(process.env.PA_MCP_SERVERS);
-  const mcpTools = mcpServers.length
-    ? await createMcpTools(mcpServers).catch((err: unknown) => {
-        log.warn('mcp: no se pudieron arrancar los servidores', { err });
-        return [] as AgentTool[];
-      })
-    : [];
+  // Entradas con `url` (MCP por HTTP): solo con PA_MCP_HTTP=1.
+  const mcpHttpServers = mcpHttpEnabled() ? parseMcpHttpServers(process.env.PA_MCP_SERVERS) : [];
+  const mcpTools =
+    mcpServers.length || mcpHttpServers.length
+      ? await createMcpTools(mcpServers, mcpHttpServers).catch((err: unknown) => {
+          log.warn('mcp: no se pudieron arrancar los servidores', { err });
+          return [] as AgentTool[];
+        })
+      : [];
   if (mcpTools.length)
-    log.info('mcp: tools listas', { servers: mcpServers.length, tools: mcpTools.length });
+    log.info('mcp: tools listas', {
+      servers: mcpServers.length + mcpHttpServers.length,
+      tools: mcpTools.length,
+    });
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
   if (process.env.PA_WEB_PORT) {
