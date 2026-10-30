@@ -14,6 +14,7 @@ Deterministas, sin modelo. Ejemplos:
 | «canal 5», «pon la 1», «siguiente canal» | `channel` (dígitos + ENTER, CHANNELUP/DOWN) |
 | «abre Netflix», «pon YouTube», «quiero ver DAZN» | `launch` por nombre |
 | «pausa», «pon pausa», «dale al play» | `media` |
+| «adelanta», «avance rápido», «rebobina (el vídeo)», «retrocede» | `media` avance/retroceso (una pulsación; con segundos va al modelo) |
 | «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
 | «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20» | volumen a ese número |
 | «pon el HDMI 2» | `input` |
@@ -75,7 +76,7 @@ Nico pidió «elige las opciones con más lógica»:
 
 - «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla ATRÁS del mando (BACK).
 - «ve a inicio», «vuelve al inicio», «pulsa el botón de inicio», «pantalla de inicio», «home»: tecla INICIO del mando (HOME).
-- «ok», «pulsa ok», «aceptar»: tecla OK (ENTER). «arriba», «pulsa abajo», «flecha izquierda», «muévete a la derecha»: flechas del mando. «salir», «sal de la app»: tecla SALIR (EXIT).
+- «ok», «pulsa ok», «aceptar»: tecla OK (ENTER). «arriba», «pulsa abajo», «flecha izquierda», «muévete a la derecha»: flechas del mando. «salir», «sal de la app», «cierra la app»: tecla SALIR (EXIT).
 - Canales: «cambia a la 2», «pon la tele en la 1», «ponla en la 5», «cámbiala a la tres»; «cambia de canal» = canal siguiente.
 - Modo de imagen por voz: «pon la imagen en estándar» (o «normal»), «imagen oscura» / «modo ahorro» (eco), «imagen en modo cine», «imagen viva», «modo estándar», «modo vivo», «modo eco» («modo normal» a secas es ambiguo y lo decide el modelo), «modo de imagen juego», «imagen de deportes». Un modo que no conozco no se adivina. «modo cine» sin «imagen» sigue siendo la rutina de cine y no toca la imagen.
 - «sube 20» sube como mucho 15 de una vez (seguridad) y ahora lo dice: «Pediste subir 20, pero de una vez subo como mucho 15: lo he subido 15.». Para un valor exacto: «volumen a 40».
