@@ -9,8 +9,8 @@ import {
 } from '../src/core/capabilities.js';
 import { MACHINE_TOOLS } from '../src/core/tool-registry.js';
 import { DEFERRED_DEFAULTS, THREAD_ALLOW_TOOLS } from '../src/core/toolset.js';
+import { checkPatch } from '../src/evolve/guard.js';
 import { DESKTOP_ONLY_TOOLS } from '../src/platform.js';
-import { checkPatch } from '../src/selfimprove/guard.js';
 
 // Valores exactos que tenían las cuatro listas sueltas antes del catálogo (main 76667ff).
 // Si cambias el catálogo a propósito, actualiza esto en la misma PR: es el contrato.

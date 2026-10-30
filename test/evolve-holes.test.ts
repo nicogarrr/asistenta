@@ -11,11 +11,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { checkPatch } from '../src/evolve/guard.js';
 import { runWeek } from '../src/evolve/loop.js';
 import { cleanEnv, parseJsonReport } from '../src/evolve/measure.js';
 import { proposerEnv } from '../src/evolve/run.js';
 import { judge, type Measurement, touchesForbidden } from '../src/evolve/score.js';
-import { checkPatch } from '../src/selfimprove/guard.js';
 
 const m = (over: Partial<Measurement> = {}): Measurement => ({
   passed: 100,

@@ -2,10 +2,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { changedFiles, checkPatch } from '../src/evolve/guard.js';
 import { type CaseResult, casePasses, scoreRun } from '../src/selfimprove/battery.js';
 import { type Deps, runCycle } from '../src/selfimprove/cycle.js';
 import { decide } from '../src/selfimprove/decide.js';
-import { changedFiles, checkPatch } from '../src/selfimprove/guard.js';
 import { appendCycle, readCycles, renderCycle } from '../src/selfimprove/ledger.js';
 
 const mk = (pass: string[], fail: string[]): CaseResult[] => [
