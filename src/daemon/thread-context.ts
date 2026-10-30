@@ -11,7 +11,7 @@
  * Es el paso previo a Computer Use como plugin (ARCHITECTURE.md §5): el plugin recibirá
  * este contexto en vez de los cierres de cli.ts.
  */
-import type { TurnOutput } from './panel-chat.js';
+import type { TurnFile, TurnOutput } from './panel-chat.js';
 
 /** Qué salida tiene ahora mismo cada hilo (solo mientras su turno corre). */
 export class ThreadOutputs {
@@ -52,6 +52,12 @@ export interface ThreadContext<G> {
    * es exactamente `viaChannel()`, con su resultado y sus errores.
    */
   sendPhoto<T>(bytes: Buffer, viaChannel: () => Promise<T>): Promise<T | true>;
+  /**
+   * Manda un archivo (documento, libro, vídeo, nota de voz). En un turno del panel va
+   * al panel; si el panel no lo acepta (demasiado grande o demasiados), se avisa en el
+   * panel y va por el canal como antes. Sin turno del panel es exactamente `viaChannel()`.
+   */
+  sendFile<T>(file: TurnFile, viaChannel: () => Promise<T>): Promise<T | true>;
 }
 
 export function threadContext<G>(deps: ThreadContextDeps<G>): ThreadContext<G> {
@@ -64,6 +70,15 @@ export function threadContext<G>(deps: ThreadContextDeps<G>): ThreadContext<G> {
       if (out?.photo) {
         out.photo(bytes);
         return true;
+      }
+      return viaChannel();
+    },
+    sendFile: async <T>(file: TurnFile, viaChannel: () => Promise<T>): Promise<T | true> => {
+      const out = deps.outputs.get(deps.key);
+      if (out?.file) {
+        if (out.file(file)) return true;
+        const mb = (file.bytes.length / (1024 * 1024)).toFixed(1);
+        out.note(`«${file.name}» (${mb} MB) no cabe en el panel: te lo mando por Telegram.`);
       }
       return viaChannel();
     },

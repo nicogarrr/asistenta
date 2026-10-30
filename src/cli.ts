@@ -1977,15 +1977,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // tienen el libro. Perezoso: sin setup, la tool lo dice y sigue.
         secret: new SecretLibrary(),
         sendDocument: (bytes, filename, caption) =>
-          telegram
-            .sendDocumentBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              filename,
-              caption,
-              inboundFor(thread).threadId,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: filename }, () =>
+            telegram
+              .sendDocumentBytes(
+                Number(thread.chatKey.split(':')[2]),
+                bytes,
+                filename,
+                caption,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         saveKindleAddress: (address) => vaultSet(KINDLE_VAULT_KEY, address),
         kindle: {
           getAddress: async () => (await vaultGet(KINDLE_VAULT_KEY)) ?? null,
@@ -2011,19 +2013,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             detail: r.ok ? r.kind : r.reason,
           }),
         sendVideo: (bytes, seconds, label) =>
-          telegram
-            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
-            .then(() => true),
+          ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
+            telegram
+              .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+              .then(() => true),
+          ),
         sendDocument: (bytes, filename, caption) =>
-          telegram
-            .sendDocumentBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              filename,
-              caption,
-              inboundFor(thread).threadId,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: filename }, () =>
+            telegram
+              .sendDocumentBytes(
+                Number(thread.chatKey.split(':')[2]),
+                bytes,
+                filename,
+                caption,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
         options: {
           cookiesFromBrowser: config.downloadCookiesBrowser,
@@ -2042,29 +2048,36 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         maxEdge: config.screenshotMaxEdge,
         // Telegram's photo sender wants both dimensions together, and a caller that
         // knows neither has nothing useful to say about the size anyway.
-        sendPhoto: (bytes, opts) => {
-          const chatId = Number(thread.chatKey.split(':')[2]);
-          const threadId = inboundFor(thread).threadId;
-          return opts?.width !== undefined && opts.height !== undefined
-            ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
-                width: opts.width,
-                height: opts.height,
-              })
-            : telegram.sendPhotoBytes(chatId, bytes, threadId);
-        },
+        sendPhoto: (bytes, opts) =>
+          ctx
+            .sendPhoto(bytes, () => {
+              const chatId = Number(thread.chatKey.split(':')[2]);
+              const threadId = inboundFor(thread).threadId;
+              return opts?.width !== undefined && opts.height !== undefined
+                ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
+                    width: opts.width,
+                    height: opts.height,
+                  })
+                : telegram.sendPhotoBytes(chatId, bytes, threadId);
+            })
+            .then((sent) => (sent === true ? 'panel' : sent)),
         sendVideo: (bytes, seconds, label) =>
-          telegram
-            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
-            .then(() => true),
+          ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
+            telegram
+              .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+              .then(() => true),
+          ),
         sendVoice: (bytes, seconds) =>
-          telegram
-            .sendVoiceBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              inboundFor(thread).threadId,
-              seconds,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: 'nota-de-voz.ogg' }, () =>
+            telegram
+              .sendVoiceBytes(
+                Number(thread.chatKey.split(':')[2]),
+                bytes,
+                inboundFor(thread).threadId,
+                seconds,
+              )
+              .then(() => true),
+          ),
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
         live: {
           start: (source, intervalSeconds) =>
