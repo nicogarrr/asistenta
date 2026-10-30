@@ -24,6 +24,20 @@ export function computerOffSaved(stateDir: string): boolean {
   return existsSync(join(stateDir, COMPUTER_OFF_FILE));
 }
 
+/**
+ * Arranque: si hay un «/ordenador off» guardado, apaga Computer Use en la config
+ * (solo más estricto; PA_COMPUTER_USE=0 en el .env manda siempre). Devuelve true
+ * si lo ha apagado. El aviso «Asistenta lista ✅» lee esta misma config después.
+ */
+export function applySavedComputerOff(
+  config: { computerUse?: boolean },
+  stateDir: string,
+): boolean {
+  if (config.computerUse === false || !computerOffSaved(stateDir)) return false;
+  config.computerUse = false;
+  return true;
+}
+
 /** Saves «off» (atomic write) or removes it for «on». Throws if the disk refuses. */
 export function saveComputerSwitch(stateDir: string, on: boolean): void {
   const file = join(stateDir, COMPUTER_OFF_FILE);

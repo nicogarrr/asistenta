@@ -322,6 +322,7 @@ import {
   validateSchedule,
 } from './routines.js';
 import {
+  applySavedComputerOff,
   computerOffSaved,
   computerSwitchCommand,
   saveComputerSwitch,
@@ -1545,8 +1546,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
   // /ordenador off guardado: el PC sigue sin control tras reiniciar (solo más estricto;
   // PA_COMPUTER_USE=0 en el .env manda siempre).
-  if (config.computerUse !== false && computerOffSaved(paths.state)) {
-    config.computerUse = false;
+  if (applySavedComputerOff(config, paths.state)) {
     log.warn(
       'Computer Use arranca desactivado: /ordenador off guardado (usa /ordenador on para activarlo)',
     );
