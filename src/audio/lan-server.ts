@@ -107,24 +107,27 @@ function removeQuietly(file: string): void {
 
 /**
  * Un único rango `bytes=a-b` (lo que piden los reproductores de la tele). Lo que no
- * entendemos (varios rangos, otra unidad) se ignora y se sirve el fichero entero con
- * 200, como permite el RFC 9110 §14.2; 416 solo para un rango que no cabe.
+ * entendemos (varios rangos, otra unidad, un rango mal escrito o al revés como
+ * `bytes=5-3`) se ignora y se sirve el fichero entero con 200, como manda el
+ * RFC 9110 §14.2; 416 solo para un rango bien escrito que no cabe.
  */
 function parseRange(header: string | undefined, size: number): [number, number] | null | 'bad' {
   if (!header) return null;
   const h = header.trim();
   if (!/^bytes=/i.test(h) || h.includes(',')) return null;
   const m = /^bytes=(\d*)-(\d*)$/i.exec(h);
-  if (!m) return 'bad';
+  if (!m) return null;
+  if (m[1] === '' && m[2] === '') return null;
   let start: number;
   let end: number;
-  if (m[1] === '' && m[2] === '') return 'bad';
   if (m[1] === '') {
     const n = Number(m[2]);
+    if (n === 0) return 'bad';
     start = Math.max(0, size - n);
     end = size - 1;
   } else {
     start = Number(m[1]);
+    if (m[2] !== '' && Number(m[2]) < start) return null;
     end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
   }
   if (start > end || start >= size) return 'bad';
