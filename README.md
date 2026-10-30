@@ -188,6 +188,7 @@ El runner ejecuta una fase general y una fase serial para pruebas de recursos. L
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
 - [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): parada Linux, pruebas y límites.
+- [`docs/tv-ordenes.md`](docs/tv-ordenes.md): órdenes a la tele LG y encendido por red; `pa tv mac auto` lee la MAC de la tele de la red (con la tele encendida).
 - [`docs/skills-incluidas.md`](docs/skills-incluidas.md): skills de ingeniería incluidas (diagnosticar bugs, TDD), que solo se cargan al programar.
 - Rutinas programadas: si el PC estaba apagado o dormido a la hora de una rutina, al volver se ejecuta UNA vez con retraso (avisando de la hora a la que tocaba) si no ha pasado la ventana de gracia (mitad del periodo, entre 2 min y 2 h); si ya pasó, no se ejecuta y queda anotada como perdida. Desactivar: `PA_ROUTINE_CATCHUP=0`.
 - Evolución semanal (`src/evolve`): un candidato solo se promueve con la checklist de verificación completa (spec escrita, sin ficheros prohibidos, medición válida, sin más fallos que la base) y deja `state/evolve/promovido-<n>.receipt.md` junto al parche.

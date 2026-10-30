@@ -13,7 +13,7 @@ import {
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { readNeighborMac } from './neighbor-mac.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
-import { parseMac, sendWakeOnLan, validateTvMac } from './wol.js';
+import { sendWakeOnLan, validateTvMac } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
@@ -29,9 +29,11 @@ export function macFromNetworkInfo(info: unknown): string | null {
     const raw = rec(root[key]).macAddress;
     if (typeof raw !== 'string') continue;
     try {
-      return parseMac(raw);
+      // Misma validación que `pa tv mac`: una MAC multicast (ID de app), todo
+      // ceros o broadcast no es la de la tarjeta de red y no sirve para WoL.
+      return validateTvMac(raw).mac;
     } catch {
-      // MAC ausente o basura: probar la siguiente interfaz
+      // MAC ausente, basura o imposible: probar la siguiente interfaz
     }
   }
   return null;

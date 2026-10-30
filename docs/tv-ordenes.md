@@ -29,7 +29,7 @@ Sin captura y sin cambiar nada: encendida / pantalla apagada / en reposo / no re
 ## Encendido por red (Wake-on-LAN)
 Con la tele apagada del todo no hay nada escuchando: «enciende la tele» manda un paquete Wake-on-LAN y espera hasta 20 s a que responda, y solo dice «encendida» si responde.
 
-- La MAC se guarda sola al emparejar (`pa tv setup <ip>`) si la tele la da; si no: `pa tv mac AA:BB:CC:DD:EE:FF` (Ajustes > General > Acerca de esta TV).
+- La MAC se guarda sola al emparejar (`pa tv setup <ip>`) si la tele da una válida (una MAC multicast, todo ceros o broadcast se ignora); si no: `pa tv mac auto` con la tele encendida la lee de la red, o a mano `pa tv mac AA:BB:CC:DD:EE:FF` (Ajustes > General > Acerca de esta TV). `pa tv mac` rechaza las MAC imposibles (p. ej. el ID de una app de IPTV).
 - En la tele: activar «Encender con Wi-Fi» / «Mobile TV On» (Ajustes > General > Dispositivos).
 - `pa tv wake` envía el paquete a mano.
 
