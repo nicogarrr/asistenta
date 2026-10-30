@@ -64,11 +64,48 @@ function num(s: string | undefined): number | null {
 
 const TV = '(?:la )?(?:tele|tv|television|televisor|pantalla)';
 
-export function parseTvCommand(text: string): TvIntent | null {
-  const t = normalizeTvText(text)
+const CUANTOS =
+  '(?:\\d{1,3}|un|una|uno|dos|tres|cuatro|cinco|diez|quince|veinte|treinta|cuarenta|media|un par de)';
+const HORA = '(?:\\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)';
+
+/**
+ * Hora, plazo o condicion («en 10 minutos», «a las 12», «cuando acabe»,
+ * «manana»…): el parser no programa nada, asi que una orden asi NO puede
+ * ejecutarse al momento. Devolver null la deja al modelo, que si programa.
+ */
+const DEFERRED = new RegExp(
+  [
+    `\\ben ${CUANTOS} ?(?:min|mins|minutos?|seg|segundos?|h|horas?|rato|ratito)\\b`,
+    '\\ben (?:un )?(?:rato|ratito|momento|poco)\\b',
+    `\\bdurante ${CUANTOS}\\b`,
+    '\\bdentro de\\b',
+    `\\b(?:a|hasta) (?:las ${HORA}|la una)\\b`,
+    '\\bhasta que\\b',
+    '\\b(?:cuando|luego|despues|manana)\\b',
+    '\\bmas tarde\\b',
+    '\\b(?:esta|por la) (?:noche|tarde|manana)\\b',
+  ].join('|'),
+);
+
+/** «… en la tele» al final no forma parte de la orden («abre Netflix en la tele»). */
+const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
+
+function normalizeOrder(text: string): string {
+  return normalizeTvText(text)
     .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
-    .trim();
+    .trim()
+    .replace(EN_LA_TELE, '');
+}
+
+/** La orden lleva hora, plazo o condicion: no es para ejecutarla ya. */
+export function tvOrderHasTime(text: string): boolean {
+  return DEFERRED.test(normalizeOrder(text));
+}
+
+export function parseTvCommand(text: string): TvIntent | null {
+  const t = normalizeOrder(text);
   if (!t) return null;
+  if (DEFERRED.test(t)) return null;
   let m: RegExpExecArray | null;
 
   // Rutinas: "modo cine", "pon el modo cine con Netflix", "noche de peli".

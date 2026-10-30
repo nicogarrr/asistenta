@@ -3,7 +3,7 @@ import { type Static, Type } from 'typebox';
 import { log } from '../log.js';
 import { needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
-import { describeTvIntent, parseTvCommand } from '../tv/natural.js';
+import { describeTvIntent, parseTvCommand, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
@@ -595,6 +595,11 @@ async function runTvAction(
       const text = (args.text ?? '').trim();
       if (!text) throw new Error('action=command necesita text: la orden en castellano.');
       const intent = parseTvCommand(text);
+      if (!intent && tvOrderHasTime(text)) {
+        throw new Error(
+          `"${text.slice(0, 80)}" lleva hora, plazo o condicion: action=command solo ejecuta ordenes para AHORA y no ha tocado la tele. No la ejecutes ya con otra accion: programala para su momento (p. ej. con la tool reminder) o preguntale a Nico.`,
+        );
+      }
       if (!intent) {
         throw new Error(
           `No he entendido "${text.slice(0, 80)}" como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Tambien puedes usar las acciones explicitas.`,
