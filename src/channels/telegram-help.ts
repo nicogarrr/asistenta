@@ -96,6 +96,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: '🖥️ Tu PC',
     entries: [
+      { command: 'tv', args: '<orden>', description: 'orden directa a la tele, sin gastar tokens' },
       { command: 'screen', args: '[live|off]', description: 'captura ahora o foto en directo' },
       {
         command: 'watch',

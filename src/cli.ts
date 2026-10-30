@@ -311,6 +311,7 @@ import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { tvPower } from './tv/power.js';
 import { readTvStatus } from './tv/status.js';
+import { tvChatCommand } from './tv/tv-chat-command.js';
 import { sendWakeOnLan } from './tv/wol.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex, plainInline } from './utils.js';
@@ -4537,6 +4538,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, `Borrado: ${reminderText(pick.routine)}.`, { quote: true });
   };
 
+  /** /tv <orden>: orden simple a la tele sin pasar por el modelo (solo el dueño, en privado). */
+  let tvChatTool: ReturnType<typeof createTvTool> | undefined;
+  const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
+    const reply = await tvChatCommand(args, {
+      isOwner: isOwnerDm(inbound, vigilanteOwnerId),
+      run: async (text) => {
+        tvChatTool ??= createTvTool(tvToolDeps(store));
+        const res = await tvChatTool.execute('tv-chat', { action: 'command', text });
+        return res.content
+          .map((c) => (c.type === 'text' ? c.text : ''))
+          .join(' ')
+          .trim();
+      },
+    });
+    await say(inbound, reply, { quote: true });
+  };
+
   /** /consumo [hoy|semana|mes|N]: tokens y coste estimado por día y modelo (solo lectura). */
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
@@ -6594,6 +6612,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'recordatorios':
               case 'reminders':
                 return cmdRecordatorios(inbound, command.args);
+              case 'tv':
+                return cmdTv(inbound, command.args);
               case 'consumo':
               case 'uso':
                 return cmdConsumo(inbound, command.args);
