@@ -420,6 +420,7 @@ import { splitPhrases } from './voice/phrases.js';
 import { createDefaultTts } from './voice/piper.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
+import { stopSpokenReply } from './voice/stop-speech.js';
 import { transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
@@ -5503,7 +5504,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     stopLiveView(inbound.chatId);
     for (const thread of mine) thread.gate.clearSession(thread.key);
     // Notas de voz en el altavoz (/altavoz): la que suena se corta y la cola se vacía.
-    const notes = altavozPlayer.clear(chatKey_);
+    // La respuesta que el PC dice en voz alta en la conversación por voz de este chat.
+    const notes =
+      altavozPlayer.clear(chatKey_) +
+      stopSpokenReply({
+        chatKey: chatKey_,
+        sessionChatKey,
+        speech: activeSpeech,
+        playback: sessionPlayback,
+      });
     log.info('stop requested', {
       chatId: inbound.chatId,
       wasActive,
@@ -6495,6 +6504,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   let session: ConversationSession | null = null;
   let sessionPlayback: Playback | null = null;
   let activeSpeech: { abort(): void } | null = null;
+  /** Chat dueño de la conversación por voz abierta (para que /stop solo corte la suya). */
+  let sessionChatKey: string | null = null;
   /** How easily talking over the agent cuts it off. Not persisted. */
   let bargeLevel: BargeInLevel = 'altavoces';
   let conversationCount = 0;
@@ -6604,6 +6615,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       onClose: (reason, detail) => {
         if (session === created) {
           session = null;
+          sessionChatKey = null;
         }
         sessionPlayback?.stop();
         activeSpeech?.abort();
@@ -6625,6 +6637,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
     });
     session = created;
+    sessionChatKey = chat.key;
     conversationCount++;
     listener.hold(true);
     log.info('voice session opened', { chatId: chat.chatId, n: conversationCount });
