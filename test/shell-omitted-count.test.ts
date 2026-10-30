@@ -22,7 +22,7 @@ function marker(out: string): { bytes: number; lines: number | null; shown: numb
 }
 
 const numbered = (n: number) =>
-  Array.from({ length: n }, (_, i) => `line ${String(i).padStart(5, '0')}`).join('\n') + '\n';
+  `${Array.from({ length: n }, (_, i) => `line ${String(i).padStart(5, '0')}`).join('\n')}\n`;
 
 describe('shell: el aviso de salida recortada cuenta lo que de verdad no se ve', () => {
   it('bytes omitidos + bytes mostrados = bytes que emitió el comando (incluidos los trozos de línea recortados)', () => {
@@ -42,7 +42,7 @@ describe('shell: el aviso de salida recortada cuenta lo que de verdad no se ve',
   });
 
   it('con caracteres de varios bytes la cuenta sigue cuadrando en bytes', () => {
-    const text = Array.from({ length: 300 }, (_, i) => `canción ñandú ${i}`).join('\n') + '\n';
+    const text = `${Array.from({ length: 300 }, (_, i) => `canción ñandú ${i}`).join('\n')}\n`;
     const m = marker(collect(text, 200, 7));
     expect(m.bytes + m.shown).toBe(Buffer.byteLength(text));
   });
