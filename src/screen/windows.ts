@@ -181,16 +181,36 @@ for ($i=1; $i -le $steps; $i++) {
    * after Ctrl+V — never over something the app or Nico put there meanwhile.
    */
   async type(text: string): Promise<void> {
+    const total = Array.from(text).length;
+    let done = 0;
     for (const segment of splitAsciiSegments(text)) {
-      if (segment.kind === 'ascii') {
-        const escaped = escapeForSendKeys(segment.text);
-        await this.#ps(`
+      // Long ASCII runs go in chunks: one SendWait of a whole email body can outlast
+      // the 30 s PowerShell timeout in a slow app, which killed the call halfway and
+      // the model, told only "failed", typed the WHOLE text again (duplicated).
+      const pieces =
+        segment.kind === 'ascii' ? chunkText(segment.text, SENDKEYS_CHUNK) : [segment.text];
+      for (const piece of pieces) {
+        try {
+          if (segment.kind === 'ascii') {
+            const escaped = escapeForSendKeys(piece);
+            await this.#ps(`
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait('${escaped.replace(/'/g, "''")}')
 `);
-      } else {
-        await this.#pasteText(segment.text);
+          } else {
+            await this.#pasteText(piece);
+          }
+        } catch (err) {
+          if (done === 0) throw err;
+          const reason = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `${reason}\nPartial: ${done} of ${total} characters were already typed before the failure — ` +
+              'do not retype the whole text; take a screenshot and continue from where it stopped. ' +
+              `Ya se habían escrito ${done} de ${total} caracteres.`,
+          );
+        }
+        done += Array.from(piece).length;
       }
     }
   }
@@ -457,4 +477,16 @@ export function powerShellError(err: unknown): Error {
   return new Error(
     short ? `PowerShell falló${code}: ${short}` : `PowerShell falló${code} sin mensaje de error.`,
   );
+}
+
+/** Max characters per SendKeys call (each call is one PowerShell process, 30 s timeout). */
+export const SENDKEYS_CHUNK = 200;
+
+/** Splits text into pieces of at most `size` code points (never inside an emoji). */
+export function chunkText(text: string, size: number): string[] {
+  const chars = Array.from(text);
+  if (chars.length <= size) return [text];
+  const out: string[] = [];
+  for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(''));
+  return out;
 }
