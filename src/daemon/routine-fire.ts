@@ -1,3 +1,4 @@
+import { isCommandRoutine } from '../command-routine.js';
 import type { Store } from '../db.js';
 import { isGoalRoutine } from '../goals/runner.js';
 import { log } from '../log.js';
@@ -43,6 +44,11 @@ export interface RoutineFireDeps {
   outputDir: string;
   /** Fichero jsonl donde se apuntan los recordatorios puntuales abandonados. */
   droppedRemindersPath: string;
+  /**
+   * F4: ejecuta una rutina de comando (sin modelo). Ausente = función apagada:
+   * la rutina avisa y no hace nada; jamás cae a runTask.
+   */
+  fireCommand?: (ctx: RoutineRunContext) => Promise<{ body: string; failed: boolean }>;
 }
 
 /**
@@ -83,11 +89,26 @@ export function createRoutineFire(
     let plan: DeliveryPlan | null = null;
     if (!reminder) {
       let failed = false;
-      try {
-        body = await deps.runTask(task, ctx);
-      } catch (err) {
-        failed = true;
-        log.warn('routine execution failed', { routine: ctx.routine.name, err });
+      if (isCommandRoutine(ctx.routine)) {
+        // F4: un comando aprobado, sin modelo. Nunca se manda a runTask.
+        const out = deps.fireCommand
+          ? await deps.fireCommand(ctx).catch((err: unknown) => ({
+              body: `No se pudo ejecutar el comando: ${String(err)}`,
+              failed: true,
+            }))
+          : {
+              body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
+              failed: true,
+            };
+        body = out.body;
+        failed = out.failed;
+      } else {
+        try {
+          body = await deps.runTask(task, ctx);
+        } catch (err) {
+          failed = true;
+          log.warn('routine execution failed', { routine: ctx.routine.name, err });
+        }
       }
       if (!body.trim()) {
         failed = true;

@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -197,6 +197,16 @@ import {
 } from './briefing-daily.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
 import { helpText, startText } from './channels/telegram-help.js';
+import {
+  approvalCode,
+  COMMAND_PROMPT_PREFIX,
+  CommandRoutineStore,
+  commandRoutinesEnabled,
+  displayArgv,
+  fireCommandRoutine,
+  isCommandRoutine,
+  parseCommandAdd,
+} from './command-routine.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { parseMcpServers } from './mcp/client.js';
@@ -2548,8 +2558,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
   const sendToChat = (chatId: string, text: string) =>
     telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+  // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
+  const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
   const runRoutineFire = createRoutineFire({
     store,
+    fireCommand: commandRoutinesEnabled()
+      ? (ctx) => fireCommandRoutine(commandRoutines, ctx.routine, { enabled: true })
+      : undefined,
     tickGoal: (name) => goalRunner.tickByRoutineName(name),
     runTask: runRoutineTask,
     send: sendToChat,
@@ -3527,6 +3542,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       prompt =
         routine.kind === 'schedule' && routine.prompt ? routine.prompt : procedurePrompt(routine);
     }
+    // F4: una rutina de comando jamás se manda al modelo.
+    if (isCommandRoutine(routine)) {
+      await say(
+        inbound,
+        `"${routine.name}" es una rutina de comando: pruébala con /cron probar ${routine.name}.`,
+        { quote: true },
+      );
+      return;
+    }
     store.markRoutineRun(routine.scope, routine.name);
     messageThread.set(`${chatKey(inbound)}:${inbound.messageId}`, thread.key);
     await enqueue(thread, () => runTurn(thread, inbound, prompt, {}));
@@ -3676,6 +3700,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           threadKey: thread.key,
           chatKey: chatKey(inbound),
           delivery: routineDelivery,
+          commands: commandRoutines,
+          isOwner: isOwnerDm(inbound, vigilanteOwnerId),
+          commandCwd: homedir(),
         },
         args,
       ),
@@ -6778,6 +6805,14 @@ export interface CronCommandDeps {
   chatKey: string;
   /** Where each routine's output goes (F6); absent = `/cron entrega` unavailable. */
   delivery?: RoutineDeliveryStore;
+  /** F4: comandos propuestos/aprobados; absent = `/cron comando` unavailable. */
+  commands?: CommandRoutineStore;
+  /** F4: solo el dueño en su chat privado programa comandos. */
+  isOwner?: boolean;
+  /** F4: carpeta fija donde corre cada comando. */
+  commandCwd?: string;
+  /** F4: PA_CRON_COMANDOS; inyectable para los tests. */
+  commandsEnabled?: boolean;
 }
 
 /**
@@ -6899,6 +6934,68 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     return `Hecho: la rutina "${routine.name}" entregará ${describeDelivery(next)}.`;
   }
 
+  if (sub === 'comando' || sub === 'comandos') {
+    const enabled = deps.commandsEnabled ?? commandRoutinesEnabled();
+    if (!enabled) {
+      return 'Las rutinas de comando están desactivadas. Actívalas con PA_CRON_COMANDOS=1 y reinicia Asistenta.';
+    }
+    if (!deps.commands || !deps.isOwner) {
+      return 'Solo el dueño, en su chat privado, puede programar comandos.';
+    }
+    if ((restParts[0] ?? '').toLowerCase() === 'confirmar') {
+      const name = restParts[1] ?? '';
+      const code = restParts[2] ?? '';
+      if (!name || !code) return 'Uso: /cron comando confirmar <nombre> <código>.';
+      if (deps.store.getRoutine(deps.threadKey, name)) {
+        return `Ya hay una rutina llamada "${name}". Vuelve a proponer el comando con /cron comando.`;
+      }
+      const spec = deps.commands.approve(deps.threadKey, name, code);
+      if (!spec) {
+        return 'Ese código no corresponde al comando propuesto (o ya no existe). No se ha programado nada.';
+      }
+      const created = deps.store.saveRoutine({
+        scope: deps.threadKey,
+        name,
+        kind: 'schedule',
+        prompt: `${COMMAND_PROMPT_PREFIX}${displayArgv(spec.argv)}`,
+        schedule: spec.schedule,
+      });
+      deps.routineRunner.sync();
+      const live = deps.routineRunner
+        .status()
+        .find((st) => st.scope === created.scope && st.name === created.name);
+      return [
+        `Rutina de comando "${name}" programada con horario ${spec.schedule}. No usa el modelo.`,
+        `Comando: ${displayArgv(spec.argv)}`,
+        `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
+        `Para que solo avise cuando cambie la salida: /cron entrega ${name} chat solo-si-cambia`,
+      ].join('\n');
+    }
+    const parsed = parseCommandAdd(restParts.join(' '), validateSchedule);
+    if (!parsed.ok) return parsed.error;
+    const program = (parsed.value.argv[0] ?? '').split(/[\\/]/).pop() ?? '';
+    const name = uniqueRoutineName(
+      deps.store,
+      deps.threadKey,
+      routineNameFromPrompt(`comando ${program}`),
+    );
+    const spec = deps.commands.propose(deps.threadKey, name, {
+      argv: parsed.value.argv,
+      cwd: deps.commandCwd ?? process.cwd(),
+      timeoutMs: parsed.value.timeoutMs,
+      schedule: parsed.value.schedule,
+      createdAt: new Date().toISOString(),
+    });
+    return [
+      'Revisa el comando exacto antes de aprobarlo (se ejecuta sin shell y sin preguntarte cada vez):',
+      `Programa y argumentos: ${displayArgv(spec.argv)}`,
+      `Carpeta: ${spec.cwd}`,
+      `Horario: ${spec.schedule} · tope: ${Math.round(spec.timeoutMs / 1000)} s`,
+      `Para aprobar exactamente este comando: /cron comando confirmar ${name} ${approvalCode(spec)}`,
+      'Si cambia algo del comando, hará falta una aprobación nueva.',
+    ].join('\n');
+  }
+
   if (sub === 'del' || sub === 'borra' || sub === 'rm') {
     const name = rest.trim();
     if (!name) return 'Uso: /cron del <nombre>.';
@@ -6910,6 +7007,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     }
     if (isGoalRoutine(routine)) return goalRoutineCronRefusal(routine.name, 'borrar');
     deps.store.deleteRoutine(routine.scope, routine.name);
+    deps.commands?.remove(routine.scope, routine.name);
     // Live without restart: the runner drops the timer on this sync. An
     // execution already in flight is NOT cancelled (the runner awaits its
     // in-flight set, it does not interrupt it), so the confirmation only
