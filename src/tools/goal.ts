@@ -15,6 +15,7 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
+import { localTimeZone } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
 import { goalRoutineName } from '../goals/runner.js';
@@ -78,7 +79,7 @@ export function checkCadence(expr: string): string | null {
   }
   let runs: Date[];
   try {
-    runs = new Cron(fields.join(' '), { paused: true }).nextRuns(8);
+    runs = new Cron(fields.join(' '), { paused: true, timezone: localTimeZone() }).nextRuns(8);
   } catch {
     return `La cadencia "${expr}" no es un cron válido.`;
   }

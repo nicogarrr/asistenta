@@ -1,5 +1,6 @@
 import { Cron } from 'croner';
 import { loadConfig } from './config.js';
+import { localTimeZone } from './datecontext.js';
 import {
   type Routine,
   type RoutineParam,
@@ -303,7 +304,11 @@ function graceAfter(cron: Cron, slot: Date): number {
 export function findMissedSlot(expr: string, since: Date, now: Date): MissedSlot | null {
   let cron: Cron;
   try {
-    cron = new Cron(normalizeExpr(expr), { mode: '5-or-6-parts', paused: true });
+    cron = new Cron(normalizeExpr(expr), {
+      mode: '5-or-6-parts',
+      paused: true,
+      timezone: localTimeZone(),
+    });
   } catch {
     return null;
   }
@@ -351,7 +356,11 @@ function parseSchedule(expr: string): ScheduleCheck {
   }
   let job: Cron;
   try {
-    job = new Cron(fields.join(' '), { mode: '5-or-6-parts', paused: true });
+    job = new Cron(fields.join(' '), {
+      mode: '5-or-6-parts',
+      paused: true,
+      timezone: localTimeZone(),
+    });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -363,12 +372,24 @@ function parseSchedule(expr: string): ScheduleCheck {
   return { ok: true, next };
 }
 
-function localStamp(date: Date): string {
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  const offset = -date.getTimezoneOffset();
-  const sign = offset >= 0 ? '+' : '-';
-  const abs = Math.abs(offset);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} UTC${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+function localStamp(date: Date, timeZone: string = localTimeZone()): string {
+  // En la zona configurada (PA_TIMEZONE), igual que el disparo: con el proceso
+  // en UTC, «0 8 * * *» se mostraba como «07:00 UTC+00:00» y parecía otra hora.
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'longOffset',
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? '';
+  const offset = get('timeZoneName').replace(/^GMT/, '') || '+00:00';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')} UTC${offset}`;
 }
 
 function humanizeMs(ms: number): string {
@@ -599,6 +620,10 @@ export class RoutineRunner {
         expr,
         {
           mode: '5-or-6-parts',
+          // Same zone as «hoy» and the model's <now> (PA_TIMEZONE), never the
+          // process TZ by accident: a library caller that skipped
+          // applyConfiguredTimeZone() would otherwise fire an hour off.
+          timezone: localTimeZone(),
           // Unreferenced so a routine left registered cannot hold the process
           // open on its own; the daemon is kept alive by its channels.
           unref: true,
