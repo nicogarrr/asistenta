@@ -624,6 +624,9 @@ ${renderFormatScript()}
       var aviso = document.getElementById('aviso');
 
       function mostrarAviso(texto) {
+        // role=alert: reescribir el mismo texto (p. ej. cada refresco de 15 s con el token
+        // rechazado) haría que el lector lo anunciara otra vez. Solo se toca si cambia.
+        if (aviso.textContent === texto && aviso.hidden === !texto) return;
         aviso.textContent = texto;
         aviso.hidden = !texto;
       }
