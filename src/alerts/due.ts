@@ -1,3 +1,5 @@
+import { wallClock, zonedTime } from '../datecontext.js';
+
 /**
  * When a promise the user made is due, read from the words around it.
  *
@@ -77,35 +79,35 @@ export function hasDateSignal(text: string): boolean {
 }
 
 /** `now` moved `days` calendar days on the local calendar, same wall-clock time. */
+// Todo en la zona de Nico (PA_TIMEZONE), no en la del proceso: con el servidor en UTC
+// «vence el viernes» dicho el sábado a las 00:30 de Madrid daba el viernes que acababa
+// de pasar, y «mañana» cruzando el cambio de hora movía la hora de pared.
+function subMinute(now: number): number {
+  return ((now % 60_000) + 60_000) % 60_000;
+}
+
 function plusDays(now: number, days: number): number {
-  const d = new Date(now);
-  return new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate() + days,
-    d.getHours(),
-    d.getMinutes(),
-    d.getSeconds(),
-    d.getMilliseconds(),
-  ).getTime();
+  const w = wallClock(new Date(now));
+  return zonedTime(w.year, w.month, w.day + days, w.hour, w.minute) + subMinute(now);
 }
 
 /** A calendar day at `now`'s wall-clock time, or null when the day does not exist (31/11). */
 function onDay(now: number, year: number, month: number, day: number): number | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const d = new Date(now);
-  const at = new Date(year, month - 1, day, d.getHours(), d.getMinutes(), d.getSeconds());
-  return at.getMonth() === month - 1 ? at.getTime() : null;
+  if (new Date(Date.UTC(year, month - 1, day)).getUTCMonth() !== month - 1) return null;
+  const w = wallClock(new Date(now));
+  const seconds = Math.floor(subMinute(now) / 1000) * 1000;
+  return zonedTime(year, month, day, w.hour, w.minute) + seconds;
 }
 
 function startOfToday(now: number): number {
-  const d = new Date(now);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const w = wallClock(new Date(now));
+  return zonedTime(w.year, w.month, w.day);
 }
 
 /** Day and month with no year: this year, or next year once it has gone by. */
 function nextDayMonth(now: number, month: number, day: number): number | null {
-  const year = new Date(now).getFullYear();
+  const year = wallClock(new Date(now)).year;
   const thisYear = onDay(now, year, month, day);
   if (thisYear !== null && thisYear >= startOfToday(now)) return thisYear;
   return onDay(now, year + 1, month, day);
@@ -113,11 +115,11 @@ function nextDayMonth(now: number, month: number, day: number): number | null {
 
 /** A day of the month with no month: this month, or the next month that has that day. */
 function nextDayOfMonth(now: number, day: number): number | null {
-  const d = new Date(now);
+  const w = wallClock(new Date(now));
   for (let ahead = 0; ahead < 3; ahead++) {
     // Date normalises month 12 to January of the next year.
-    const first = new Date(d.getFullYear(), d.getMonth() + ahead, 1);
-    const at = onDay(now, first.getFullYear(), first.getMonth() + 1, day);
+    const first = new Date(Date.UTC(w.year, w.month - 1 + ahead, 1));
+    const at = onDay(now, first.getUTCFullYear(), first.getUTCMonth() + 1, day);
     if (at !== null && at >= startOfToday(now)) return at;
   }
   return null;
@@ -157,7 +159,7 @@ export function estimateDueAt(text: string, now: number): number {
   if (dayName && target !== undefined) {
     // Next occurrence, today included: "vence el viernes" said on a Friday is about
     // today. "El lunes que viene" / "el próximo lunes" said on a Monday is next week.
-    let delta = (target - new Date(now).getDay() + 7) % 7;
+    let delta = (target - wallClock(new Date(now)).weekday + 7) % 7;
     if (delta === 0 && (dayName[1] || dayName[3])) delta = 7;
     return plusDays(now, delta);
   }

@@ -15,6 +15,7 @@
  */
 
 import { type BriefingInput, briefingDue, buildBriefing, watchHit } from './briefing.js';
+import { localDay, wallClock, zonedTime } from './datecontext.js';
 import type { MailMessage } from './mail/types.js';
 import { isReminder, reminderText } from './tools/reminder.js';
 
@@ -70,7 +71,7 @@ export interface DailyBriefingResult {
 }
 
 export function greetingFor(now: Date): string {
-  const h = now.getHours();
+  const h = wallClock(now).hour;
   if (h < 6) return 'Hola';
   if (h < 14) return 'Buenos días';
   if (h < 21) return 'Buenas tardes';
@@ -191,7 +192,7 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
   inFlight = true;
   try {
     const latest = Math.max(hour + 1, deps.latestHour ?? DEFAULT_BRIEFING_LATEST_HOUR);
-    if (now.getHours() >= latest) {
+    if (wallClock(now).hour >= latest) {
       // Tarde para un resumen de la mañana: se salta el de hoy sin escribir nada.
       deps.markSent(now.getTime());
       return { status: 'skipped-late' };
@@ -345,11 +346,7 @@ export async function fetchWeatherLine(
 }
 
 function sameLocalDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+  return localDay(a) === localDay(b);
 }
 
 /**
@@ -393,10 +390,11 @@ export function followupsDue(
   items: ReadonlyArray<{ subject: string; dueAt: number; status: string }>,
   now: Date,
 ): BriefingInput['followups'] {
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  // Fin de hoy en la zona de Nico: el primer instante de mañana menos 1 ms.
+  const w = wallClock(now);
+  const end = zonedTime(w.year, w.month, w.day + 1) - 1;
   return items
-    .filter((f) => f.status === 'pending' && Number.isFinite(f.dueAt) && f.dueAt <= end.getTime())
+    .filter((f) => f.status === 'pending' && Number.isFinite(f.dueAt) && f.dueAt <= end)
     .sort((a, b) => a.dueAt - b.dueAt)
     .slice(0, 5)
     .map((f) => ({
