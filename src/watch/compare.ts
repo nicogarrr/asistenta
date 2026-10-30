@@ -262,6 +262,25 @@ function rowFromFicha(
  * un fallo deja esa fila en "error" y el resto sigue. Lanza solo si la semilla
  * no es una tienda conocida o no tiene identidad aprovechable.
  */
+/**
+ * Por qué no se pudo leer la ficha, en una frase en español para el chat. Antes salía el
+ * texto técnico tal cual («403 Forbidden for https://…», «fetch timed out after 20s», «fetch failed»).
+ */
+export function fichaReadReason(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const status = /^(\d{3})\b/.exec(raw)?.[1];
+  if (status === '404' || status === '410') return 'esa página ya no existe en la tienda.';
+  if (status === '401' || status === '403' || status === '429')
+    return 'la tienda no me deja leerla ahora mismo; prueba en un rato.';
+  if (status?.startsWith('5')) return 'la tienda está fallando ahora mismo; prueba en un rato.';
+  if (/timed out|timeout|aborted/i.test(raw)) return 'la tienda ha tardado demasiado en responder.';
+  if (/not a public http|refusing to fetch/i.test(raw))
+    return 'ese enlace no es una página web pública.';
+  if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|network|socket/i.test(raw))
+    return 'no consigo conectar con la tienda; mira la conexión del PC.';
+  return 'la tienda no me ha devuelto la página.';
+}
+
 export async function compareProduct(seedUrl: string, d: CompareDeps): Promise<CompareReport> {
   const seedStore = (Object.keys(STORES) as StoreId[]).find((id) =>
     STORES[id].hosts.some((h) => {
@@ -276,9 +295,7 @@ export async function compareProduct(seedUrl: string, d: CompareDeps): Promise<C
   try {
     seedHtml = await d.fetchHtml(seedUrl);
   } catch (err) {
-    throw new Error(
-      `no pude leer la ficha que me pasas (${err instanceof Error ? err.message : String(err)})`,
-    );
+    throw new Error(`no pude leer la ficha que me pasas: ${fichaReadReason(err)}`);
   }
   const identity = productIdentity(seedHtml);
   if (!identity.title && !identity.ean) {
