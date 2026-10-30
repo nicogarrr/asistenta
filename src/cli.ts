@@ -109,7 +109,7 @@ import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
-import { looksLikeCredential, MemoryStore, memoryScopesFor } from './memory.js';
+import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
@@ -1815,7 +1815,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             uptimeSeconds: Math.round(process.uptime()),
           }),
           sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
-          memory: (scope?: string) => memory.all(scope ?? 'local'),
+          memory: (scope?: string) =>
+            panelMemoryEntries(memory, scope, vigilanteOwnerId ?? undefined),
           memoryScopes: () => memory.scopes(),
           auditVerify: () => verifyCallAudit(),
           // Chat del panel: corre en el hilo principal del propietario, con el
