@@ -156,6 +156,7 @@ El runner ejecuta una fase general y una fase serial para pruebas de recursos. L
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
 - [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): parada Linux, pruebas y límites.
+- [`docs/skills-incluidas.md`](docs/skills-incluidas.md): skills de ingeniería incluidas (diagnosticar bugs, TDD), que solo se cargan al programar.
 
 ## Cómo está organizado
 

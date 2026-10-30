@@ -217,6 +217,7 @@ import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { formatServicesList, ServiceStore } from './services/store.js';
+import { seedBuiltinSkills, skillsForContext } from './skills/builtin.js';
 import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
@@ -1493,6 +1494,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
+  seedBuiltinSkills(skills);
   const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
   const adoptedServices = new ServiceStore({ dir: join(paths.state, 'services') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
@@ -1684,6 +1687,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                     skills,
                     sessions,
                     ownerProfile,
+                    text,
                   ),
                 );
                 const r = await thread.agent.run(text);
@@ -2478,6 +2482,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               skills,
               sessions,
               ownerProfile,
+              prompt,
             ),
           );
           result = await thread.agent.run(prompt);
@@ -2549,6 +2554,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             skills,
             sessions,
             ownerProfile,
+            prompt,
           ),
         );
         const result = await thread.agent.run(prompt);
@@ -5359,6 +5365,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           skills,
           sessions,
           ownerProfile,
+          prompt,
         ),
       );
 
@@ -6982,6 +6989,7 @@ export function buildContextNote(
   skills?: SkillStore,
   sessions?: SessionStore,
   profile?: OwnerProfile,
+  request?: string,
 ): string {
   const parts: string[] = [];
 
@@ -7063,7 +7071,8 @@ export function buildContextNote(
   if (skills) {
     let index = '';
     try {
-      index = skillsIndex(skills.list());
+      // Las skills de programación solo entran si la petición suena a código.
+      index = skillsIndex(skillsForContext(skills.list(), request));
     } catch (err) {
       log.warn('skills index failed', { err: String(err) });
     }
