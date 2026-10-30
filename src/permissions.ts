@@ -526,11 +526,11 @@ const BROWSER_TYPING_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 function browserFillEchoReason(source: string): string {
-  return `Vas a escribir en un formulario web un trozo literal de ${source} leído en este turno; al enviarlo saldría de tu PC.`;
+  return `Iba a escribir en un formulario web un trozo literal de ${source} que acabo de leer; al enviarlo saldría de tu PC.`;
 }
 
 function mcpEchoReason(source: string, tool: string): string {
-  return `Vas a enviar a la herramienta ${tool} un trozo literal de ${source} leído en este turno; su servidor puede estar fuera de tu PC.`;
+  return `Iba a pasarle a ${tool} un trozo literal de ${source} que acabo de leer; ese servicio puede estar fuera de tu PC.`;
 }
 
 /** Los textos de los argumentos de una llamada MCP (hasta 3 niveles), unidos. */
@@ -545,14 +545,14 @@ function mcpArgText(args: unknown, depth = 0): string {
 }
 
 function searchEchoReason(source: string): string {
-  return `Vas a enviar a un buscador o tienda externa una búsqueda con un trozo literal de ${source} leído en este turno; saldría de tu PC.`;
+  return `Iba a hacer una búsqueda en un buscador o tienda de fuera con un trozo literal de ${source} que acabo de leer; saldría de tu PC.`;
 }
 
 function egressEchoReason(source: string, host: string): string {
   return (
-    `Este turno ya ha leído contenido privado (${source}) y ahora quiere abrir una URL ` +
-    `de ${host} que lleva dentro un trozo literal de ese contenido. Revisa la URL completa: ` +
-    'si no la esperabas, puede ser una página intentando sacar tus datos.'
+    `Acabo de leer contenido privado (${source}) y ahora iba a abrir una dirección ` +
+    `de ${host} que lleva dentro un trozo literal de eso. Mira la dirección completa: ` +
+    'si no te la esperabas, puede ser una página intentando sacar tus datos.'
   );
 }
 
