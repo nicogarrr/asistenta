@@ -18,6 +18,7 @@ import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
+import { extractBodyText } from './mime.js';
 import {
   GMAIL_IMAP_HOST,
   GMAIL_IMAP_PORT,
@@ -75,19 +76,10 @@ export function toMessage(
   folder: string,
 ): MailMessage {
   const envelope = raw.envelope ?? {};
-  const source = typeof raw.source === 'string' ? raw.source : (raw.source?.toString('utf8') ?? '');
-  // Body text only: everything after the blank line that separates headers from body,
-  // with HTML stripped so a tracking pixel's markup is not quoted back to the user.
-  const splitAt = source.search(/\r?\n\r?\n/);
-  const body = splitAt >= 0 ? source.slice(splitAt + (source[splitAt] === '\r' ? 4 : 2)) : source;
-  const text = body
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+  // Cuerpo decodificado (MIME, quoted-printable, base64, charset), prefiriendo
+  // text/plain; el HTML pierde el marcado para no citar el píxel de seguimiento.
+  const text = extractBodyText(raw.source ?? '')
+    .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
