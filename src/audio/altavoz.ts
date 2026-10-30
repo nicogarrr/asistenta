@@ -94,7 +94,13 @@ export interface AltavozPlayerDeps {
    */
   playOnPc(file: string, signal?: AbortSignal): Promise<void>;
   /** Manda un fichero a la tele (se queda con él). Ausente si la tele está apagada. */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  castToTv?: (file: string) => Promise<{
+    ok: boolean;
+    message: string;
+    hits?: () => number;
+    /** Para esa nota en la tele (el cast sabe si la abrió el visor, el navegador o Glasshouse). */
+    stop?: () => Promise<unknown>;
+  }>;
   /**
    * Si la tele aceptó la orden pero no ha descargado el fichero en este tiempo, se avisa
    * (una vez por sesión) de que suele ser el firewall de Windows. Por defecto 15 s.
@@ -153,7 +159,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
   const now = deps.now ?? Date.now;
   /** Última nota mandada a la tele por chat (la tele se queda con ella y sigue sonando). */
-  const lastTele = new Map<string | undefined, number>();
+  const lastTele = new Map<string | undefined, { at: number; stop?: () => Promise<unknown> }>();
   /**
    * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
    * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
@@ -199,7 +205,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);
-      lastTele.set(item.key, now());
+      lastTele.set(item.key, { at: now(), stop: r.stop });
       watchFetch(r.hits, onNotice);
       return;
     }
@@ -217,20 +223,24 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   /** Para en la tele la nota de ese chat (o de cualquiera sin `key`) si es reciente. */
   const stopRecentTele = (key?: string): number => {
     const { stopTv } = deps;
-    if (!stopTv) return 0;
     const window = deps.teleStopWindowMs ?? 120_000;
     const t = now();
-    let recent = false;
-    for (const [k, at] of lastTele) {
+    const stops = new Set<() => Promise<unknown>>();
+    for (const [k, e] of lastTele) {
       if (key !== undefined && k !== key) continue;
       lastTele.delete(k);
-      if (t - at <= window) recent = true;
+      if (t - e.at > window) continue;
+      // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
+      const stop = e.stop ?? stopTv;
+      if (stop) stops.add(stop);
     }
-    if (!recent) return 0;
-    try {
-      void Promise.resolve(stopTv()).catch((err) => deps.onError?.(err));
-    } catch (err) {
-      deps.onError?.(err);
+    if (!stops.size) return 0;
+    for (const stop of stops) {
+      try {
+        void Promise.resolve(stop()).catch((err) => deps.onError?.(err));
+      } catch (err) {
+        deps.onError?.(err);
+      }
     }
     return 1;
   };

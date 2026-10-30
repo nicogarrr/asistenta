@@ -76,6 +76,28 @@ export interface TvCastResult {
   tried?: string[];
   /** Cuántas veces ha descargado la tele el fichero (para avisar del firewall). */
   hits?: () => number;
+  /**
+   * Para ESTA nota en la tele (/stop). Con media.viewer es media.controls/stop; si se
+   * abrió con el navegador (launcher) o Glasshouse, además cierra la app que abrió el
+   * cast, solo si sigue en primer plano y nunca el inicio ni la TV en directo.
+   */
+  stop?: () => Promise<void>;
+}
+
+const TV_FOREGROUND = 'com.webos.applicationManager/getForegroundAppInfo';
+/** Apps que parar una nota no cierra nunca. */
+const TV_NEVER_CLOSE = new Set([
+  'com.webos.app.home',
+  'com.webos.app.livetv',
+  'com.webos.app.launcher',
+  'com.webos.app.discovery',
+]);
+
+function appIdOf(res: unknown): string | undefined {
+  if (!res || typeof res !== 'object') return undefined;
+  const r = res as Record<string, unknown>;
+  const id = r.appId ?? r.id;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
 export function audioTeleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -116,6 +138,38 @@ export async function castAudioToTv(
     };
   }
   const errors: string[] = [];
+  const foreground = async (): Promise<string | undefined> => {
+    try {
+      return appIdOf(await deps.ssap(TV_FOREGROUND, {}));
+    } catch {
+      return undefined;
+    }
+  };
+  /** App en primer plano antes de abrir con Glasshouse (para saber cuál abrió el cast). */
+  let ghBefore: string | undefined;
+  const stopFor = (via: TvCastVia, opened: unknown) => {
+    const mediaStop = () => deps.ssap('media.controls/stop', {});
+    if (via === 'media.viewer') {
+      return async (): Promise<void> => {
+        await mediaStop();
+      };
+    }
+    const launched = via === 'launcher' ? appIdOf(opened) : undefined;
+    const before = via === 'glasshouse' ? ghBefore : undefined;
+    return async (): Promise<void> => {
+      try {
+        await mediaStop();
+      } catch {
+        // Una URL abierta en el navegador no siempre atiende a media.controls.
+      }
+      const fg = await foreground();
+      if (!fg || TV_NEVER_CLOSE.has(fg)) return;
+      // Solo la app de NUESTRO cast: la que devolvió launcher, o la que apareció con
+      // Glasshouse (si no sabemos qué había antes, no se cierra nada).
+      if (launched ? fg !== launched : before === undefined || fg === before) return;
+      await deps.ssap('system.launcher/close', { id: fg });
+    };
+  };
   const attempts: Array<[TvCastVia, () => Promise<unknown>, string]> = [
     [
       'media.viewer',
@@ -139,14 +193,17 @@ export async function castAudioToTv(
   if (gh) {
     attempts.push([
       'glasshouse',
-      () => gh(served.url),
+      async () => {
+        ghBefore = await foreground();
+        await gh(served.url);
+      },
       'La tele no aceptó el audio por webOS; lo he abierto con Glasshouse. No puedo confirmar que se haya oído.',
     ]);
   }
   for (const [via, run, message] of attempts) {
     if (deps.only && deps.only !== via) continue;
     try {
-      await run();
+      const opened = await run();
       return {
         ok: true,
         via,
@@ -154,6 +211,7 @@ export async function castAudioToTv(
         message,
         tried: errors.length ? [...errors] : undefined,
         hits: () => served.hits(),
+        stop: stopFor(via, opened),
       };
     } catch (err) {
       errors.push(`${via}: ${err instanceof Error ? err.message : String(err)}`);

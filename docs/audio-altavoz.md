@@ -60,3 +60,5 @@ directo desde el panel web) se estudian aparte.
 Orden de vías: `media.viewer/open`, luego `system.launcher/open` y, solo si `tv:glasshouseUrl` está en el vault, Glasshouse (`url`).
 
 Si la tele acepta pero nunca descarga el audio, casi siempre es el firewall de Windows: permite Node.js en redes privadas y comprueba que la Wi-Fi del PC está marcada como «privada».
+
+- /stop con la tele: si la nota se abrió con el navegador de la tele o con Glasshouse, además de media.controls/stop se cierra la app que abrió ese envío, solo si sigue en primer plano (nunca el inicio ni la TV en directo).
