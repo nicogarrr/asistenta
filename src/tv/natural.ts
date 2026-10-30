@@ -281,7 +281,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // «muévete a la derecha» (flechas); «salir», «sal de la app» (EXIT).
   const PULSA =
     '(?:(?:pulsa|presiona|toca|dale(?: al?)?|da(?:le)? a) (?:(?:el )?boton(?: de)? )?)?';
-  if (new RegExp(`^${PULSA}(?:ok|okay|aceptar|enter)$`).test(t)) {
+  if (new RegExp(`^${PULSA}(?:ok|okay|aceptar|enter|intro)$`).test(t)) {
     return { action: 'key', name: 'ENTER' };
   }
   m = new RegExp(
@@ -346,7 +346,7 @@ export function parseTvCommand(text: string): TvIntent | null {
 
   // Sonido antes que energia: "apaga el sonido" es silenciar, no apagar la tele.
   if (
-    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon|vuelve a poner) (?:el )?sonido\b|\bdesilencia/.test(
+    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon|vuelve a poner) (?:el )?sonido\b|\b(?:enciende|enciendele) (?:el )?(?:sonido|audio)\b|\bdesilencia|\bdesmute/.test(
       t,
     )
   ) {
@@ -404,6 +404,12 @@ export function parseTvCommand(text: string): TvIntent | null {
       t,
     )
   ) {
+    return { action: 'volume', level: VOLUME_MINIMO };
+  }
+  // «volumen máximo», «pon el volumen máximo» (sin «al»): igual que «al máximo»; «volumen mínimo»: 1.
+  if (/^(?:(?:pon(?:me|le)? )?el )?volumen maximo$/.test(t))
+    return { action: 'volume', level: VOLUME_TOPE };
+  if (/^(?:(?:pon(?:me|le)? )?el )?volumen minimo$/.test(t)) {
     return { action: 'volume', level: VOLUME_MINIMO };
   }
   // «volumen al mínimo», «bájalo al mínimo»: VOLUME_MINIMO (1), nunca 0 ni silencio.
@@ -470,10 +476,10 @@ export function parseTvCommand(text: string): TvIntent | null {
     }
   }
   // «más volumen», «un poco más de volumen», «volumen (para) arriba»; «menos volumen», «volumen abajo».
-  if (/^(?:(?:un poco )?mas (?:de )?volumen|volumen (?:para )?arriba)$/.test(t)) {
+  if (/^(?:(?:un poco )?mas (?:de )?volumen|volumen (?:(?:para )?arriba|mas))$/.test(t)) {
     return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
   }
-  if (/^(?:(?:un poco )?menos (?:de )?volumen|volumen (?:para )?abajo)$/.test(t)) {
+  if (/^(?:(?:un poco )?menos (?:de )?volumen|volumen (?:(?:para )?abajo|menos))$/.test(t)) {
     return { action: 'volumeStep', steps: -DEFAULT_VOLUME_STEP };
   }
   // «más alto», «pon la tele más baja», «ponla más fuerte», «más bajito».
@@ -498,7 +504,7 @@ export function parseTvCommand(text: string): TvIntent | null {
     /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ??
     /^(?:pon|ponme) (?:la|el) (\d{1,2})$/.exec(t) ??
     // «cambia al 7», «cámbiala al 24», «cambia la tele al 3».
-    new RegExp(`^(?:cambia|cambiala|cambialo)(?: ${TV})? al (\\d{1,2})$`).exec(t) ??
+    new RegExp(`^(?:(?:cambia|cambiala|cambialo)(?: ${TV})?|pasa|pasate) al (\\d{1,2})$`).exec(t) ??
     CAMBIA_A_LA_NUM.exec(t);
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
   // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
@@ -526,14 +532,14 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'media', command: 'rewind' };
   }
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) la (?:peli|pelicula|serie|cancion|video))$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion)|el video))$/.test(
       t,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
-    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) la (?:peli|pelicula|serie|cancion|video))$/.test(
+    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion)|el video))$/.test(
       t,
     )
   ) {
@@ -551,7 +557,9 @@ export function parseTvCommand(text: string): TvIntent | null {
       t,
     );
   if (m?.[1]) return { action: 'launch', appId: m[1].trim() };
-  m = /\b(?:pon|ponme) (?:el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
+  m =
+    /\b(?:pon|ponme) (?:el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t) ??
+    /^(?:ve|vete|ir|vamos) a (?:el |la |la app de )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
   if (m?.[1] && APP_ALIASES[m[1].trim()] !== undefined)
     return { action: 'launch', appId: m[1].trim() };
 
