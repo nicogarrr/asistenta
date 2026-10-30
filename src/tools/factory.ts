@@ -182,9 +182,21 @@ export function createFactoryTool(
           // AFTER the sandbox run and hash that, never a cached field.
           const after = readFactoryTool(args.id as string);
           const realHash = after ? sha256(after.code) : t.meta.codeSha256;
+          // Re-testing an installed tool must not silently uninstall it: a pass
+          // of the very artifact the approval covered keeps it installed. If the
+          // code on disk is not that artifact, the install is retracted
+          // ('tested' -> install asks the human again), never re-blessed.
+          const wasInstalled = t.meta.status === 'installed';
+          const keepInstalled = wasInstalled && result.ok && realHash === t.meta.testedSha256;
           const meta: FactoryToolMeta = {
             ...t.meta,
-            status: result.ok ? 'tested' : t.meta.status === 'installed' ? 'installed' : 'built',
+            status: result.ok
+              ? keepInstalled
+                ? 'installed'
+                : 'tested'
+              : wasInstalled
+                ? 'installed'
+                : 'built',
             updatedAt: now,
             testedSha256: result.ok ? realHash : t.meta.testedSha256,
             contract: result.ok ? (result.contract ?? t.meta.contract) : t.meta.contract,
@@ -200,6 +212,7 @@ export function createFactoryTool(
               '',
             ].join('\n'),
           );
+          if (wasInstalled && meta.status !== 'installed') opts.onChange?.();
           log.info('factory test', { id: args.id, ok: result.ok, stage: result.stage });
           if (!result.ok) {
             return text(
