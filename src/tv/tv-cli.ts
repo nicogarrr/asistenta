@@ -36,10 +36,22 @@ export function macFromNetworkInfo(info: unknown): string | null {
   return null;
 }
 
+/**
+ * Si la tele olvido la client-key (reset, actualizacion de webOS) y Nico acepta
+ * el aviso de nuevo, la clave nueva se guarda: sin esto cada `pa tv …` volveria
+ * a sacar el aviso (igual que la tool tv, #660).
+ */
+async function saveNewClientKey(key: string): Promise<void> {
+  const { vaultSet } = await import('../vault.js');
+  await vaultSet(TV_CLIENT_KEY, key);
+  process.stderr.write('pa tv: la tele se ha vuelto a emparejar; client-key nueva guardada.\n');
+}
+
 async function requirePaired(): Promise<{
   host: string;
   clientKey: string;
   allowPlaintext: boolean;
+  onNewClientKey: (key: string) => Promise<void>;
 }> {
   const { vaultGet } = await import('../vault.js');
   const host = await vaultGet(TV_HOST_KEY);
@@ -51,7 +63,12 @@ async function requirePaired(): Promise<{
   }
   // Si el pairing solo pudo ir por ws (3000), los requests siguen por ws; si
   // fue por wss, el downgrade a ws queda prohibido (ver lgtv.ts).
-  return { host, clientKey, allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0' };
+  return {
+    host,
+    clientKey,
+    allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0',
+    onNewClientKey: saveNewClientKey,
+  };
 }
 
 export interface TvCliDeps {
@@ -197,19 +214,19 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write('uso: pa tv toast <mensaje>\n');
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvToast(host, clientKey, message, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvToast(host, clientKey, message, { allowPlaintext, onNewClientKey });
       process.stdout.write('Toast enviado.\n');
       return 0;
     }
     case 'apps': {
-      const { host, clientKey, allowPlaintext } = await requirePaired();
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
       const res = await tvRequest(
         host,
         clientKey,
         'com.webos.applicationManager/listLaunchPoints',
         {},
-        { allowPlaintext },
+        { allowPlaintext, onNewClientKey },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
       // Titulos remotos sanitizados: la tele no controla esta terminal.
@@ -223,14 +240,20 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write('uso: pa tv launch <appId>   (ids: pa tv apps)\n');
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvRequest(host, clientKey, 'system.launcher/launch', { id: appId }, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvRequest(
+        host,
+        clientKey,
+        'system.launcher/launch',
+        { id: appId },
+        { allowPlaintext, onNewClientKey },
+      );
       process.stdout.write(`Lanzada ${appId}.\n`);
       return 0;
     }
     case 'off': {
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext, onNewClientKey });
       process.stdout.write('Tele apagada.\n');
       return 0;
     }
@@ -269,8 +292,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write(`pa tv shot: ${out} ya existe; usa --force para sobrescribir.\n`);
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      const deps = { allowPlaintext };
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      const deps = { allowPlaintext, onNewClientKey };
       if (keyName) {
         await tvKey(host, clientKey, keyName, deps);
         // La app tarda en redirigir: sin esta espera la captura sale en negro.
@@ -301,8 +324,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         );
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvKey(host, clientKey, name, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey });
       // El protocolo del socket de input no confirma la pulsacion: se
       // reporta el envio, no el efecto en la tele.
       process.stdout.write(`Tecla ${name} enviada (sin confirmacion de la tele).\n`);
