@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { TV_FIREWALL_HINT } from './tv-cast.js';
 
 /**
  * Modo altavoz: con `/altavoz pc` (o `tele`), cada nota de voz que manda el dueño
@@ -89,7 +90,12 @@ export interface AltavozPlayerDeps {
    */
   playOnPc(file: string, signal?: AbortSignal): Promise<void>;
   /** Manda un fichero a la tele (se queda con él). Ausente si la tele está apagada. */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string }>;
+  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  /**
+   * Si la tele aceptó la orden pero no ha descargado el fichero en este tiempo, se avisa
+   * (una vez por sesión) de que suele ser el firewall de Windows. Por defecto 15 s.
+   */
+  noFetchMs?: number;
   /** Borra la copia temporal del PC. */
   remove(file: string): void;
   onError?: (err: unknown) => void;
@@ -107,6 +113,8 @@ export interface AltavozPlayer {
     onFail?: (err: unknown) => void,
     /** Chat que la mandó: /stop en ese chat la para. */
     key?: string,
+    /** Aviso a quien la mandó cuando la tele la aceptó pero nunca la descargó. */
+    onNotice?: (text: string) => void,
   ): boolean;
   /**
    * /stop: descarta las notas en cola de ese chat (o de todos sin `key`) y corta la que
@@ -127,10 +135,33 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   let waiting = 0;
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
+  /** El aviso del firewall sale una sola vez por sesión: repetirlo en cada nota cansa. */
+  let firewallWarned = false;
+  const watchFetch = (hits: (() => number) | undefined, onNotice?: (text: string) => void) => {
+    if (!hits || !onNotice || firewallWarned) return;
+    const timer = setTimeout(() => {
+      if (firewallWarned) return;
+      let served = 1;
+      try {
+        served = hits();
+      } catch {
+        return;
+      }
+      if (served > 0) return;
+      firewallWarned = true;
+      try {
+        onNotice(`📺 ${TV_FIREWALL_HINT}`);
+      } catch {
+        // Un aviso que falla no puede romper nada.
+      }
+    }, deps.noFetchMs ?? 15_000);
+    timer.unref?.();
+  };
   const playOne = async (
     mode: 'pc' | 'tele',
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
     item: { dropped: boolean; abort?: AbortController },
+    onNotice?: (text: string) => void,
   ): Promise<void> => {
     if (item.dropped) return;
     const got = await load();
@@ -148,6 +179,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);
+      watchFetch(r.hits, onNotice);
       return;
     }
     const abort = new AbortController();
@@ -162,7 +194,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     }
   };
   return {
-    enqueue(mode, load, onFail, key) {
+    enqueue(mode, load, onFail, key, onNotice) {
       if (waiting >= ALTAVOZ_MAX_QUEUE) return false;
       waiting++;
       const item: { key?: string; dropped: boolean; abort?: AbortController } = {
@@ -171,7 +203,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       };
       live.add(item);
       chain = chain
-        .then(() => playOne(mode, load, item))
+        .then(() => playOne(mode, load, item, onNotice))
         .catch((err) => {
           if (item.dropped) return;
           deps.onError?.(err);
