@@ -2,7 +2,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lstatSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { DaemonControl } from './daemon-control.js';
+import { type DaemonControl, DaemonNotRunningError, isMissingFile } from './daemon-control.js';
 import { windowsNative, windowsOwnership } from './windows-control-native.js';
 
 const HEX = /^[a-f0-9]{64}$/;
@@ -174,9 +174,15 @@ export async function stopWindowsDaemon(
   timeoutMs = 30_000,
 ): Promise<{ instanceId: string }> {
   const state = resolve(input);
-  const original = record(state);
-  if (windowsNative(state, 'probe') !== 'busy')
-    throw new Error('No hay propietario Windows activo; no se confirma parada.');
+  let original: RecordV1;
+  try {
+    original = record(state);
+  } catch (error) {
+    if (isMissingFile(error)) throw new DaemonNotRunningError();
+    throw error;
+  }
+  // Nobody holds the owner lock: a ready record left by a crash, nothing to stop.
+  if (windowsNative(state, 'probe') !== 'busy') throw new DaemonNotRunningError();
   const requestNonce = nonce();
   publish(state, 'request.json', {
     instanceId: original.instanceId,
