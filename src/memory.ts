@@ -6,14 +6,13 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from './datecontext.js';
+import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
 
@@ -741,9 +740,8 @@ export class MemoryStore {
     // rather than a half-written file the parser would read as "no memories".
     // Per-process (and per-call) temp name: a shared `${file}.tmp` let a CLI and
     // the daemon write into the same temp file and rename each other's bytes.
-    const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-    writeFileSync(tmp, text, 'utf8');
-    renameSync(tmp, file);
+    // writeFileReplacing también borra el tmp si el rename falla (Windows, destino abierto).
+    writeFileReplacing(file, text);
     log.debug('memory written', { scope, entries: doc.entries.length, bytes: text.length });
   }
 }

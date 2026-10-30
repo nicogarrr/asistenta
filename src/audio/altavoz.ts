@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { writeFileReplacing } from '../fs-tmp.js';
 import {
   claimTeleFirewallWarning,
   TV_FIREWALL_HINT,
@@ -79,9 +80,7 @@ export class AltavozStore {
     if (mode === 'off') delete this.#modes[chat];
     else this.#modes[chat] = mode;
     mkdirSync(dirname(this.#file), { recursive: true });
-    const tmp = `${this.#file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.#modes, null, 2));
-    renameSync(tmp, this.#file);
+    writeFileReplacing(this.#file, JSON.stringify(this.#modes, null, 2));
   }
 }
 
