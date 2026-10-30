@@ -24,6 +24,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { chatIdOf } from '../channels/types.js';
 import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
@@ -85,7 +86,7 @@ export function goalNotifyTarget(scope: string): {
   replyToMessageId?: string;
 } | null {
   const { chatKey, thread } = splitGoalScope(scope);
-  const chatId = chatKey.split(':')[2] ?? '';
+  const chatId = chatIdOf(chatKey);
   if (!chatId) return null;
   if (/^t\d+$/.test(thread)) return { chatKey, chatId, threadId: thread.slice(1) };
   if (/^m\d+$/.test(thread)) return { chatKey, chatId, replyToMessageId: thread.slice(1) };

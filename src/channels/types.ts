@@ -195,3 +195,24 @@ export function chatKey(
   if (inbound.threadId) parts.push(inbound.threadId);
   return parts.join(':');
 }
+
+/** The pieces of a {@link chatKey}: `channel:account:chatId[:threadId]`. Missing pieces are undefined. */
+export function parseChatKey(key: string): {
+  channel: string | undefined;
+  account: string | undefined;
+  chatId: string | undefined;
+  threadId: string | undefined;
+} {
+  const [channel, account, chatId, threadId] = key.split(':');
+  return { channel, account, chatId, threadId };
+}
+
+/** The chat id inside a {@link chatKey} (for Telegram, the chat to send to); '' when missing. */
+export function chatIdOf(key: string): string {
+  return parseChatKey(key).chatId ?? '';
+}
+
+/** The chat id as a number (Telegram's send API); NaN when missing, as `Number(undefined)`. */
+export function chatNumberOf(key: string): number {
+  return Number(parseChatKey(key).chatId);
+}
