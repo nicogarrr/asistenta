@@ -260,6 +260,15 @@ describe('computer · coordenadas', () => {
 });
 
 describe('computer · teclado', () => {
+  it('type cuenta un emoji como un carácter, igual que el aviso «Parcial»', async () => {
+    const { backend } = fake();
+    const tool = createComputerTool(makeConfig(), backend, allowAll);
+    const r = await tool.execute('t', { action: 'type', text: 'ok 👍🏽' });
+    // «o», «k», espacio, 👍 y el tono de piel: 5 puntos de código (antes decía 7).
+    expect(textOf(r)).toBe('Escritos 5 caracteres');
+    expect(r.details).toMatchObject({ chars: 5 });
+  });
+
   it('type escribe el texto y cuenta caracteres; vacío es un error', async () => {
     const { backend, calls } = fake();
     const tool = createComputerTool(makeConfig(), backend, allowAll);
