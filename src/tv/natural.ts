@@ -30,7 +30,7 @@ export type TvIntent =
   | { action: 'input'; input: string }
   | { action: 'status' }
   | { action: 'scene'; scene: string; appId?: string }
-  | { action: 'key'; name: 'BACK' }
+  | { action: 'key'; name: 'BACK' | 'HOME' }
   | { action: 'picture'; pictureMode: string };
 
 /** Modos de imagen de LG que se pueden pedir con palabras («pon la imagen en estándar»). */
@@ -38,7 +38,7 @@ const PICTURE_WORDS: ReadonlyArray<[RegExp, string]> = [
   [/^(?:estandar|normal)$/, 'standard'],
   [/^(?:oscura|eco|ahorro|ahorro de energia)$/, 'eco'],
   [/^(?:cine|pelicula|peli)$/, 'cinema'],
-  [/^(?:viva|vivida|intensa|brillante)$/, 'vivid'],
+  [/^(?:viva|vivo|vivida|vivido|intensa|intenso|brillante)$/, 'vivid'],
   [/^(?:juego|juegos|videojuegos)$/, 'game'],
   [/^(?:deporte|deportes|futbol)$/, 'sports'],
 ];
@@ -203,6 +203,15 @@ export function parseTvCommand(text: string): TvIntent | null {
   ) {
     return { action: 'key', name: 'BACK' };
   }
+  // «ve a inicio», «vuelve al inicio», «pulsa el botón de inicio», «pantalla de inicio»,
+  // «home»: tecla HOME del mando (la pantalla de inicio de la tele).
+  if (
+    new RegExp(
+      `^(?:(?:ve|vete|vuelve|volver|ir|regresa|regresar|vamos) (?:a|al|a la) |(?:dale(?: al?)?|pulsa|presiona|toca) (?:(?:el )?boton(?: de)? )?)?(?:(?:la )?(?:pantalla|menu) de )?(?:inicio|home)(?: (?:en|de) ${TV})?$`,
+    ).test(t)
+  ) {
+    return { action: 'key', name: 'HOME' };
+  }
   // Modo de imagen: «pon la imagen en estándar», «imagen oscura», «pon el modo de imagen juego».
   // Va antes de las rutinas: «la imagen en modo cine» cambia la imagen, «modo cine» es la rutina.
   m = new RegExp(
@@ -225,10 +234,11 @@ export function parseTvCommand(text: string): TvIntent | null {
     m = /\bcon ([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
     return { action: 'scene', scene: 'noche', ...(m?.[1] ? { appId: m[1].trim() } : {}) };
   }
-  // «modo juego», «pon el modo deportes»: el modo de imagen de la tele («modo cine»
+  // «modo juego», «pon el modo deportes», «modo estándar/vivo/eco»: el modo de imagen
+  // de la tele. «modo normal» a secas no: es ambiguo y va al modelo. («modo cine»
   // es la rutina de arriba, que además baja luces y abre la app).
   m = new RegExp(
-    `^(?:(?:pon|ponme|poner|activa|activar|cambia a|cambiar a)(?: el)? )?modo (juego|juegos|videojuegos|deporte|deportes|futbol)(?: (?:en|de) ${TV})?$`,
+    `^(?:(?:pon|ponme|poner|activa|activar|cambia a|cambiar a)(?: el)? )?modo (juego|juegos|videojuegos|deporte|deportes|futbol|estandar|vivo|viva|vivido|vivida|intenso|intensa|eco|ahorro|ahorro de energia)(?: (?:en|de) ${TV})?$`,
   ).exec(t);
   if (m?.[1]) {
     const word = m[1];
@@ -297,15 +307,24 @@ export function parseTvCommand(text: string): TvIntent | null {
   // "sube a tope", "volumen al maximo": 100. Nico lo decidio el 30-oct-2026
   // («a tope es a tope»); antes era un tope de seguridad de 50.
   if (
-    /^(?:sube(?:le)?(?: el volumen)?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^(?:sube(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|pon(?:me)?(?:lo|la)?(?: (?:la tele|la tv))?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
     return { action: 'volume', level: VOLUME_TOPE };
   }
+  // «bájala a tope», «baja el volumen al máximo»: bajar todo lo posible es el mínimo
+  // (VOLUME_MINIMO, 1), nunca 0 ni silencio.
+  if (
+    /^baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))? (?:a|al) (?:tope|maximo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+      t,
+    )
+  ) {
+    return { action: 'volume', level: VOLUME_MINIMO };
+  }
   // «volumen al mínimo», «bájalo al mínimo»: VOLUME_MINIMO (1), nunca 0 ni silencio.
   if (
-    /^(?:baja(?:le|lo)?(?: el volumen)?|(?:pon(?:me|le|lo|la)? )?el volumen|volumen|pon(?:lo|la)) (?:a|al) (?:minimo|lo minimo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^(?:baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|(?:pon(?:me|le|lo|la)? )?el volumen|volumen|pon(?:lo|la)) (?:a|al) (?:minimo|lo minimo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
@@ -431,7 +450,7 @@ export function describeTvIntent(i: TvIntent): string {
       if (i.scene === 'apagar-todo') return 'apagarlo todo';
       return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
     case 'key':
-      return 'volver atrás';
+      return i.name === 'HOME' ? 'ir a la pantalla de inicio' : 'volver atrás';
     case 'picture':
       return `poner la imagen en modo ${PICTURE_NAMES[i.pictureMode] ?? i.pictureMode}`;
   }

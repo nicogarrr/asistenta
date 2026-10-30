@@ -47,7 +47,7 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 
 ## Desde Telegram sin gastar
 - `/tv <orden>` (solo tú, en tu chat privado): «/tv apaga la tele», «/tv abre Netflix», «/tv volumen a 15», «/tv modo cine», «/tv estado». Va directo a la tele, sin pasar por el modelo (0 tokens). Si no la entiende, lo dice y no hace nada.
-- Frases: «pon la uno» (canal en palabras), «sube a tope» / «volumen al máximo» = volumen 100 (el máximo de la tele; decisión de Nico, 30-oct-2026; para menos, dilo con número: «volumen a 30»), «quita el sonido» = silencio.
+- Frases: «pon la uno» (canal en palabras), «sube a tope» / «volumen al máximo» / «súbela al máximo» / «pon la tele a tope» = volumen 100 (el máximo de la tele; decisión de Nico, 30-oct-2026; para menos, dilo con número: «volumen a 30»; «bájala a tope» / «baja el volumen al máximo» = volumen 1, nunca silencio), «quita el sonido» = silencio.
 - `pa tv orden "<texto>"` en la terminal del PC: la misma orden, igual de directa y sin modelo («pa tv orden "volumen a 15"»). Código 0 si se hizo, 2 si no se entiende (no toca la tele), 1 si la tele falla.
 
 ## Mando con botones
@@ -72,5 +72,6 @@ Nico pidió «elige las opciones con más lógica»:
 ### Mando: atrás, imagen y límites
 
 - «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla ATRÁS del mando (BACK).
-- Modo de imagen por voz: «pon la imagen en estándar» (o «normal»), «imagen oscura» / «modo ahorro» (eco), «imagen en modo cine», «imagen viva», «modo de imagen juego», «imagen de deportes». Un modo que no conozco no se adivina. «modo cine» sin «imagen» sigue siendo la rutina de cine y no toca la imagen.
+- «ve a inicio», «vuelve al inicio», «pulsa el botón de inicio», «pantalla de inicio», «home»: tecla INICIO del mando (HOME).
+- Modo de imagen por voz: «pon la imagen en estándar» (o «normal»), «imagen oscura» / «modo ahorro» (eco), «imagen en modo cine», «imagen viva», «modo estándar», «modo vivo», «modo eco» («modo normal» a secas es ambiguo y lo decide el modelo), «modo de imagen juego», «imagen de deportes». Un modo que no conozco no se adivina. «modo cine» sin «imagen» sigue siendo la rutina de cine y no toca la imagen.
 - «sube 20» sube como mucho 15 de una vez (seguridad) y ahora lo dice: «Pediste subir 20, pero de una vez subo como mucho 15: lo he subido 15.». Para un valor exacto: «volumen a 40».
