@@ -57,3 +57,5 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 Si la orden tarda más de 2,5 s (encender por WoL, tele lenta), el botón contesta al momento «Enviando a la tele…» y el resultado llega después como mensaje en el mismo chat: Telegram solo deja contestar al botón durante unos segundos.
 
 `/tv baja a la mitad` (o «volumen a la mitad») lee el volumen real y lo deja en la mitad; nunca lo sube y, si no puede leerlo, no toca nada.
+
+Doble toque: si se pulsa el mismo botón del mando dos veces en menos de 1 s (o Telegram entrega dos veces el mismo toque), la orden se manda una sola vez y el aviso dice «Ya lo he mandado; espera un segundo para repetir». Vol + y Vol − no se filtran: dos toques seguidos suben o bajan dos pasos.

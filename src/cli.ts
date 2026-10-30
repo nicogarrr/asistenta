@@ -350,6 +350,7 @@ import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { tvRequest } from './tv/lgtv.js';
 import {
+  createTvPressGuard,
   TV_BUTTONS_TITLE,
   tvButtonCommand,
   tvButtons,
@@ -4606,6 +4607,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /tv <orden>: orden simple a la tele sin pasar por el modelo (solo el dueño, en privado). */
   let tvChatTool: ReturnType<typeof createTvTool> | undefined;
+  // Doble toque en el mando /tv (o Telegram entregando dos veces): misma orden una vez.
+  const tvPressGuard = createTvPressGuard();
   const runTvOrder = async (text: string): Promise<string> => {
     tvChatTool ??= createTvTool(tvToolDeps(store));
     const res = await tvChatTool.execute('tv-chat', { action: 'command', text });
@@ -6701,6 +6704,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       tvButtonCommand(press.data, {
         isOwner: isOwnerDm(press, vigilanteOwnerId),
         run: runTvOrder,
+        guard: tvPressGuard,
+        chatId: press.chatId,
       }),
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
