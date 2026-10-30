@@ -501,6 +501,10 @@ export class PersonalAgent {
   readonly #sharedBudget: boolean;
   /** Quota fallback for one run (P2-17); undefined when no fallback is configured. */
   readonly #fallbackFor?: (sessionId?: string) => Model<string>;
+  /** /modelo: modelos registrados por id; undefined si el proveedor no lo permite. */
+  readonly #modelById?: (id: string, sessionId?: string) => Model<string> | undefined;
+  /** Modelo elegido con /modelo para esta conversación; undefined = PA_MODEL. */
+  #modelChoice: string | undefined;
 
   private constructor(
     agent: Agent,
@@ -510,6 +514,7 @@ export class PersonalAgent {
     budget: IterationBudget,
     sharedBudget: boolean,
     fallbackFor?: (sessionId?: string) => Model<string>,
+    modelById?: (id: string, sessionId?: string) => Model<string> | undefined,
   ) {
     this.#agent = agent;
     this.#config = config;
@@ -519,6 +524,42 @@ export class PersonalAgent {
     this.#runToolCallCeiling = config.maxToolCalls;
     this.#sharedBudget = sharedBudget;
     this.#fallbackFor = fallbackFor;
+    this.#modelById = modelById;
+  }
+
+  /** /modelo: los modelos configurados (PA_MODEL y PA_FALLBACK_MODEL), sin repetir. */
+  get availableModels(): string[] {
+    const ids = [this.#config.model, this.#config.fallbackModel]
+      .map((m) => m?.trim() ?? '')
+      .filter((m) => m !== '');
+    return [...new Set(ids)];
+  }
+
+  /** El modelo que usa esta conversación ahora (el elegido con /modelo o PA_MODEL). */
+  get modelId(): string {
+    return this.#modelChoice ?? this.#config.model;
+  }
+
+  /**
+   * /modelo: cambia el modelo de ESTA conversación entre los configurados.
+   * `undefined` vuelve a PA_MODEL. Nunca acepta un id fuera de la lista: un
+   * nombre mal escrito no puede mandar el historial a otro modelo.
+   */
+  chooseModel(id: string | undefined): { ok: true; model: string } | { ok: false; reason: string } {
+    const target = id ?? this.#config.model;
+    if (!this.availableModels.includes(target)) {
+      return {
+        ok: false,
+        reason: `«${target.slice(0, 60)}» no está entre los modelos configurados`,
+      };
+    }
+    const model = this.#modelById?.(target, `pa-${this.#sessionId}`);
+    if (!model) {
+      return { ok: false, reason: 'este proveedor no permite cambiar de modelo en caliente' };
+    }
+    this.#agent.state.model = model;
+    this.#modelChoice = target === this.#config.model ? undefined : target;
+    return { ok: true, model: target };
   }
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
@@ -567,7 +608,8 @@ export class PersonalAgent {
       deferTools?: boolean;
     } = {},
   ): Promise<PersonalAgent> {
-    const { models, model, streamFn, modelFor, fallbackFor } = await createProviderHandle(config);
+    const { models, model, streamFn, modelFor, fallbackFor, modelById } =
+      await createProviderHandle(config);
     const stream = opts.stream ?? false;
     const loadout = opts.deferTools ? new ToolLoadout(tools) : undefined;
     let seenVersion = 0;
@@ -704,6 +746,7 @@ export class PersonalAgent {
       budget,
       sharedBudget,
       fallbackFor,
+      modelById,
     );
     // Summaries come from the same model, with no tools and a short answer cap.
     personal.#summarize = async (prompt) => {
