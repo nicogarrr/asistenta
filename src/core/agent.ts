@@ -278,13 +278,16 @@ export function truncateOldImages(messages: AgentMessage[], keep = 3): AgentMess
       continue;
     }
     const content = (message as { content: Array<{ type?: unknown }> }).content;
-    const rewritten = content.map((block) => {
-      if (block?.type !== 'image') return block;
+    // Newest-first inside the message too: the last image of a message is the
+    // most recent one, so it is the one that must survive the cut.
+    const rewritten: Array<{ type?: unknown; text?: unknown }> = content.slice();
+    for (let j = rewritten.length - 1; j >= 0; j--) {
+      if (rewritten[j]?.type !== 'image') continue;
       seen++;
-      return seen > keep
-        ? { type: 'text', text: '[earlier screenshot omitted to save context]' }
-        : block;
-    });
+      if (seen > keep) {
+        rewritten[j] = { type: 'text', text: '[earlier screenshot omitted to save context]' };
+      }
+    }
     out.unshift({ ...(message as object), content: rewritten } as AgentMessage);
   }
   return out;
