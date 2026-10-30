@@ -15,6 +15,7 @@
  * - Contenido web NO fiable: al modelo se le pasa entre marcas <fuente>.
  */
 
+import { foldAccents } from '../text.js';
 import type { ResearchDeps, ResearchSource } from './deep-research.js';
 import { extractQuotes, keyTerms } from './deep-research.js';
 
@@ -269,10 +270,7 @@ export function wideCsvAttachment(
     ...report.rows.map((r) => `${esc(r.item)},${esc(r.cell)}`),
   ].join('\r\n');
   const slug =
-    report.question
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
+    foldAccents(report.question)
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 40)
