@@ -37,6 +37,39 @@ describe('deshacer la última escritura', () => {
     expect(existsSync(f)).toBe(false);
   });
 
+  it('una escritura que falló no bloquea deshacer la anterior', () => {
+    const f = join(work, 'a.txt');
+    writeFileSync(f, 'v1');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'v2');
+    recordAfterWrite('v2');
+    // write lanza (EISDIR, EACCES...) después de recordBeforeWrite: el fichero no cambia
+    // y nunca llega recordAfterWrite.
+    recordBeforeWrite(f);
+    expect(undoLast()).toContain('He repuesto');
+    expect(readFileSync(f, 'utf8')).toBe('v1');
+  });
+
+  it('una creación que falló no bloquea deshacer la anterior', () => {
+    const f = join(work, 'a.txt');
+    writeFileSync(f, 'v1');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'v2');
+    recordAfterWrite('v2');
+    recordBeforeWrite(join(work, 'no-se-creo.txt'));
+    expect(undoLast()).toContain('He repuesto');
+    expect(readFileSync(f, 'utf8')).toBe('v1');
+  });
+
+  it('sin hash y con el fichero cambiado sigue negándose', () => {
+    const f = join(work, 'a.txt');
+    writeFileSync(f, 'v1');
+    recordBeforeWrite(f);
+    writeFileSync(f, 'otra cosa');
+    expect(undoLast()).toContain('ha cambiado');
+    expect(readFileSync(f, 'utf8')).toBe('otra cosa');
+  });
+
   it('deshace de una en una, de la más reciente a la más antigua', () => {
     const f = join(work, 'b.txt');
     writeFileSync(f, 'v1');

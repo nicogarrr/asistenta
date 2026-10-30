@@ -86,20 +86,43 @@ export function recordAfterWrite(content: string): void {
   }
 }
 
+/**
+ * Una entrada sin `writtenSha` cuyo fichero sigue exactamente como estaba antes es
+ * una escritura que nunca llegó a hacerse (la herramienta `write` lanzó entre
+ * `recordBeforeWrite` y `recordAfterWrite`: EISDIR, EACCES, disco lleno...). No hay
+ * nada que deshacer en ella, y dejarla arriba bloqueaba /deshacer para siempre.
+ */
+function neverLanded(meta: Meta, dir: string): boolean {
+  if (meta.writtenSha !== undefined || meta.tooBig) return false;
+  try {
+    const isFile = existsSync(meta.path) && statSync(meta.path).isFile();
+    if (!meta.existed) return !existsSync(meta.path);
+    if (!isFile) return false;
+    return sha(readFileSync(meta.path)) === sha(readFileSync(join(dir, 'content')));
+  } catch {
+    return false;
+  }
+}
+
 /** Repone la última escritura guardada. Devuelve el texto para el usuario. */
 export function undoLast(): string {
   if (!undoDir || !existsSync(undoDir)) return 'No tengo ninguna escritura que deshacer.';
   const all = readdirSync(undoDir).sort();
-  const id = all[all.length - 1];
-  if (!id) return 'No tengo ninguna escritura que deshacer.';
-  const dir = join(undoDir, id);
-  let meta: Meta;
-  try {
-    meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')) as Meta;
-  } catch {
+  let dir = '';
+  let meta: Meta | undefined;
+  for (let i = all.length - 1; i >= 0; i--) {
+    dir = join(undoDir, all[i] as string);
+    try {
+      meta = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')) as Meta;
+    } catch {
+      rmSync(dir, { recursive: true, force: true });
+      return 'La última copia estaba dañada y la he descartado. Prueba otra vez.';
+    }
+    if (!neverLanded(meta, dir)) break;
     rmSync(dir, { recursive: true, force: true });
-    return 'La última copia estaba dañada y la he descartado. Prueba otra vez.';
+    meta = undefined;
   }
+  if (!meta) return 'No tengo ninguna escritura que deshacer.';
   if (!insideCwd(meta.path)) {
     return `No toco ${meta.path}: queda fuera del directorio de trabajo.`;
   }
