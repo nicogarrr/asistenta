@@ -126,6 +126,9 @@ export const DEFAULT_VOLUME_STEP = 3;
 /** «a tope» / «al máximo» por voz: 100, el máximo de la tele (decisión de Nico, 30-oct-2026: «a tope es a tope»). */
 export const VOLUME_TOPE = 100;
 const MAX_VOLUME_STEP = 15;
+/** «sube mucho», «baja bastante», «sube un montón»: paso grande, por debajo de MAX_VOLUME_STEP. */
+export const BIG_VOLUME_STEP = 10;
+const MUCHO = '(?:mucho|muchisimo|bastante|un monton|un mogollon)';
 /**
  * «volumen al mínimo»: 1, no 0. A 0 la tele parece silenciada o rota; quien
  * quiera 0 o silencio lo pide («volumen a 0», «silencia la tele»).
@@ -418,6 +421,29 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (m) {
     const level = num(m[1]);
     if (level !== null && level >= 0 && level <= 100) return { action: 'volume', level };
+  }
+  // Paso grande: «sube mucho», «bájale bastante», «sube un montón», «baja mucho más el volumen».
+  m = new RegExp(
+    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: (?:el|al) volumen)? ${MUCHO}(?: mas)?(?: (?:el|al) volumen)?(?: (?:a |de )?${TV})?$`,
+  ).exec(t);
+  if (m?.[1]) {
+    return {
+      action: 'volumeStep',
+      steps: m[1].startsWith('sube') ? BIG_VOLUME_STEP : -BIG_VOLUME_STEP,
+    };
+  }
+  // «mucho más volumen», «bastante menos volumen», «mucho más alto», «ponla mucho más fuerte».
+  if (
+    new RegExp(`^${MUCHO} mas (?:de )?volumen$`).test(t) ||
+    new RegExp(`\\b${MUCHO} mas (?:alto|alta|fuerte)\\b`).test(t)
+  ) {
+    return { action: 'volumeStep', steps: BIG_VOLUME_STEP };
+  }
+  if (
+    new RegExp(`^${MUCHO} menos (?:de )?volumen$`).test(t) ||
+    new RegExp(`\\b${MUCHO} mas (?:bajo|baja|bajito|bajita|flojo|flojito|suave)\\b`).test(t)
+  ) {
+    return { action: 'volumeStep', steps: -BIG_VOLUME_STEP };
   }
   // Volumen relativo: "sube el volumen", "baja 5", "sube un poco", "bajale dos",
   // "bajalo un poco", "sube un pelin" (aqui ya se habla de la tele: lo es el volumen).
