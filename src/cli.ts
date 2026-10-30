@@ -443,6 +443,10 @@ export async function main(argv: string[]): Promise<number> {
       const { diagnoseCommand } = await import('./diagnose-cli.js');
       return diagnoseCommand(rest);
     }
+    case 'auditoria': {
+      const { auditCommand } = await import('./audit/audit-cli.js');
+      return auditCommand(rest);
+    }
     case 'doctor':
       return doctorCommand();
     case 'llm-health':
