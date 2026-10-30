@@ -1477,6 +1477,10 @@ ${renderFormatScript()}
         try {
           var rutinas = await pedir('/api/routines');
           if (!Array.isArray(rutinas)) throw new Error('Respuesta de rutinas inválida');
+          // Repintado en silencio (al volver a la pestaña): si el foco estaba en la tarjeta (p. ej. en
+          // «Reintentar») y desaparece, va al título de la tarjeta y no al principio de la página.
+          var foco = document.activeElement;
+          var focoDentro = silencio === true && !!foco && foco !== contenedor && contenedor.contains(foco);
           contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
           if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
           rutinas.forEach(function (rutina) {
@@ -1493,6 +1497,10 @@ ${renderFormatScript()}
             contenedor.appendChild(tarjeta);
           });
           finCarga(contenedor, true);
+          if (focoDentro && !contenedor.contains(document.activeElement)) {
+            var tarjetaRutinas = contenedor.closest ? contenedor.closest('.tarjeta') : null;
+            devolverFoco((tarjetaRutinas && tarjetaRutinas.querySelector('h2')) || contenedor);
+          }
         } catch (error) {
           if (silencio === true) return false;
           pintarError(contenedor, error, cargarRutinas); return false;
