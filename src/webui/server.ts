@@ -37,7 +37,11 @@ export interface WebUiDeps {
    * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409).
    * Si falta, la ruta responde 503.
    */
-  retry?(): Promise<{ text: string } | null>;
+  retry?(): Promise<{
+    text: string;
+    images?: string[];
+    files?: { name: string; url: string }[];
+  } | null>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -268,35 +272,7 @@ async function respondApi(
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
-        // Capturas del turno del panel (#arch8): solo data: de imagen, nada más.
-        const images = Array.isArray(answer.images)
-          ? answer.images.filter(
-              (u): u is string =>
-                typeof u === 'string' && /^data:image\/(png|jpeg);base64,/.test(u),
-            )
-          : [];
-        // Archivos del turno del panel (documentos, vídeo, voz): nombre sin rutas y
-        // `data:` de una lista corta de tipos; nada más, máx. 4.
-        const files = Array.isArray(answer.files)
-          ? answer.files
-              .filter(
-                (f): f is { name: string; url: string } =>
-                  isRecord(f) &&
-                  typeof f.name === 'string' &&
-                  f.name.length > 0 &&
-                  f.name.length <= 120 &&
-                  // biome-ignore lint/suspicious/noControlCharactersInRegex: se rechazan a propósito nombres con caracteres de control
-                  !/[\\/\u0000-\u001f"<>]/.test(f.name) &&
-                  typeof f.url === 'string' &&
-                  PANEL_FILE_URL.test(f.url),
-              )
-              .slice(0, 4)
-              .map((f) => ({ name: f.name, url: f.url }))
-          : [];
-        const out: Record<string, unknown> = { text: answer.text };
-        if (images.length > 0) out.images = images;
-        if (files.length > 0) out.files = files;
-        payload = out;
+        payload = panelReply(answer);
         break;
       }
       case 'chatRetry': {
@@ -305,7 +281,8 @@ async function respondApi(
         if (answer === null) throw new HttpError(409, 'No hay un mensaje reciente que repetir');
         if (!isRecord(answer) || typeof answer.text !== 'string')
           throw new Error('deps.retry devolvio una respuesta invalida');
-        payload = { text: answer.text };
+        // Lo mismo que /api/chat: un turno repetido también trae sus capturas y archivos.
+        payload = panelReply(answer);
         break;
       }
       case 'approval': {
@@ -538,4 +515,36 @@ export async function startWebUi(
   };
 
   return { url, close };
+}
+
+/** Respuesta de un turno del panel (chat o «Reintentar»): texto, capturas y archivos filtrados. */
+function panelReply(answer: Record<string, unknown> & { text: string }): Record<string, unknown> {
+  // Capturas del turno del panel (#arch8): solo data: de imagen, nada más.
+  const images = Array.isArray(answer.images)
+    ? answer.images.filter(
+        (u): u is string => typeof u === 'string' && /^data:image\/(png|jpeg);base64,/.test(u),
+      )
+    : [];
+  // Archivos del turno del panel (documentos, vídeo, voz): nombre sin rutas y
+  // `data:` de una lista corta de tipos; nada más, máx. 4.
+  const files = Array.isArray(answer.files)
+    ? answer.files
+        .filter(
+          (f): f is { name: string; url: string } =>
+            isRecord(f) &&
+            typeof f.name === 'string' &&
+            f.name.length > 0 &&
+            f.name.length <= 120 &&
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: se rechazan a propósito nombres con caracteres de control
+            !/[\\/\u0000-\u001f"<>]/.test(f.name) &&
+            typeof f.url === 'string' &&
+            PANEL_FILE_URL.test(f.url),
+        )
+        .slice(0, 4)
+        .map((f) => ({ name: f.name, url: f.url }))
+    : [];
+  const out: Record<string, unknown> = { text: answer.text };
+  if (images.length > 0) out.images = images;
+  if (files.length > 0) out.files = files;
+  return out;
 }

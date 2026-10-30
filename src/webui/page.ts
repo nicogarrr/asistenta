@@ -335,6 +335,8 @@ export function renderPage(): string {
     .lista { margin: 0; padding-left: 18px; }
     .lista li { margin: 3px 0; }
     .texto { white-space: pre-wrap; word-break: break-word; }
+    .capturas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde, #ccc); }
     .nulo { color: var(--suave); font-style: italic; }
     .muted { color: var(--suave); }
     [aria-busy='true'] { opacity: 0.6; transition: opacity 0.2s; }
@@ -1153,7 +1155,25 @@ ${renderFormatScript()}
         var datos = url.slice(coma + 1);
         return datos.length > 0 && datos.split('/').every(function (p) { return /^[A-Za-z0-9+=]*$/.test(p); });
       }
+      // Capturas de un turno (chat o «Reintentar»): solo PNG/JPEG en «data:» base64, máx. 4.
+      function pintarImagenes(turno, datos) {
+        var lista = datos && Array.isArray(datos.images) ? datos.images : [];
+        var validas = lista.filter(function (u) {
+          return typeof u === 'string' && /^data:image\\/(png|jpeg);base64,[A-Za-z0-9+\\/]+=*$/.test(u);
+        }).slice(0, 4);
+        if (!validas.length) return;
+        var caja = nodo('div', 'capturas');
+        caja.setAttribute('data-capturas', String(validas.length));
+        validas.forEach(function (u, i) {
+          var img = nodo('img', 'captura');
+          img.src = u;
+          img.alt = 'Captura ' + (i + 1) + ' del turno';
+          caja.appendChild(img);
+        });
+        turno.appendChild(caja);
+      }
       function pintarArchivos(turno, datos) {
+        pintarImagenes(turno, datos);
         var lista = datos && Array.isArray(datos.files) ? datos.files : [];
         var validos = lista.filter(function (f) {
           return f && typeof f.name === 'string' && f.name.trim() && archivoValido(f.url);
