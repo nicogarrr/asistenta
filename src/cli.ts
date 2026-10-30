@@ -249,8 +249,8 @@ import {
   fetchWeatherLine,
   followupsDue,
   pickImportantMail,
-  runDailyBriefingIfDue,
   scheduledForToday,
+  startDailyBriefingTimer,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 
@@ -4388,7 +4388,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     () => {
       for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
-      if (process.env.PA_BRIEFING === '1') void runDailyBriefingIfDue(briefingDeps);
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
@@ -4398,6 +4397,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     10 * 60 * 1000,
   );
   pageWatchTimer.unref();
+  // El resumen diario se comprueba cada minuto (antes, cada 2 h con las vigilancias).
+  startDailyBriefingTimer(briefingDeps);
 
   // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
   // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
