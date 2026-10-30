@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { type DownloadOptions, downloadFromLink } from '../media/download.js';
+import { urlHostname } from '../text.js';
 
 /**
  * "Descárgame este vídeo" / "pásame este PDF", with a link.
@@ -42,12 +43,9 @@ const Params = Type.Object({
   ),
 });
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return 'enlace no válido';
-  }
+/** Host para logs y avisos: el mismo host comparable que el navegador y las vigilancias. */
+export function hostOf(url: string): string {
+  return urlHostname(url) ?? 'enlace no válido';
 }
 
 function ok(text: string, details: Record<string, unknown> = {}) {

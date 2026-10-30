@@ -6,7 +6,7 @@ import { type BrowserContext, chromium, type Locator, type Page } from 'playwrig
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
-import { foldAccents, normalizeHostname } from '../text.js';
+import { foldAccents, urlHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
@@ -374,14 +374,11 @@ interface Session {
 
 /** Hostname of a URL, or null when the string is not a URL. */
 export function hostOf(url: string): string | null {
-  try {
-    // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
-    // and to Chromium, so it must be the same host here: otherwise it walks past the
-    // never-approve list and past every domain approval.
-    return normalizeHostname(new URL(url).hostname).replace(/^www\./, '');
-  } catch {
-    return null;
-  }
+  // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
+  // and to Chromium, so it must be the same host here: otherwise it walks past the
+  // never-approve list and past every domain approval. urlHostname normalizes it.
+  const host = urlHostname(url);
+  return host === null ? null : host.replace(/^www\./, '');
 }
 
 /**
