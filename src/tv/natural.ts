@@ -22,6 +22,7 @@ export type TvIntent =
   | { action: 'power'; on: boolean }
   | { action: 'volume'; level: number }
   | { action: 'volumeStep'; steps: number }
+  | { action: 'volumeHalf' }
   | { action: 'mute'; on: boolean }
   | { action: 'channel'; channel: string }
   | { action: 'launch'; appId: string }
@@ -123,6 +124,17 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'power', on: true };
   }
 
+  // "baja a la mitad", "volumen a la mitad": lee el volumen real y lo deja
+  // en la mitad; nunca sube. "sube a la mitad" no entra (seria ambiguo).
+  if (
+    /^(?:(?:baja(?:le|lo)?|pon(?:me|le)?|deja(?:lo)?|reduce)(?: el)?(?: volumen)?(?: la (?:tele|tv))?|(?:el )?volumen) (?:(?:de|en) (?:la )?(?:tele|tv) )?(?:a|hasta) la mitad(?: (?:(?:a|de|en) )?(?:la )?(?:tele|tv))?$/.test(
+      t,
+    ) ||
+    /^(?:(?:baja|pon|deja)(?:me|le|lo)? )?(?:la )?mitad de(?: el)? volumen$/.test(t)
+  ) {
+    return { action: 'volumeHalf' };
+  }
+
   // "sube a tope", "volumen al maximo": tope de seguridad, no 100 (una LG a
   // 100 revienta los altavoces); quien quiera mas lo dice con numero.
   if (
@@ -204,6 +216,8 @@ export function describeTvIntent(i: TvIntent): string {
       return i.on ? 'encender la tele' : 'apagar la tele';
     case 'volume':
       return `poner el volumen a ${i.level}`;
+    case 'volumeHalf':
+      return 'bajar el volumen a la mitad';
     case 'volumeStep':
       return i.steps > 0 ? `subir el volumen ${i.steps}` : `bajar el volumen ${-i.steps}`;
     case 'mute':
