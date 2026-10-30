@@ -258,15 +258,4 @@ export async function runBatteryCase(c: BatteryCase, deps: CaseRunDeps): Promise
   }
 }
 
-/** Lee el caso de PA_BATTERY_CASE; lanza si no es un caso con id y prompt. */
-export function caseFromEnv(env: NodeJS.ProcessEnv = process.env): BatteryCase {
-  let c: Partial<BatteryCase> | null = null;
-  try {
-    c = JSON.parse(env.PA_BATTERY_CASE ?? '') as Partial<BatteryCase>;
-  } catch {
-    c = null;
-  }
-  if (!c || typeof c.id !== 'string' || typeof c.prompt !== 'string' || !c.prompt.trim())
-    throw new Error('PA_BATTERY_CASE no es un caso válido (hace falta id y prompt).');
-  return { machine: {}, ...c } as BatteryCase;
-}
+export { caseFromEnv } from './battery-case-env.js';

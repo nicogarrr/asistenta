@@ -31,17 +31,21 @@ process.env.PA_VAULT_BACKEND = 'portable';
 
 let code = 1;
 try {
-  const mod = await import(
-    pathToFileURL(join(process.cwd(), 'src', 'evolve', 'battery-case.ts')).href
+  // Primero el caso (módulo ligero): un caso inválido se rechaza sin cargar el asistente entero.
+  const { caseFromEnv } = await import(
+    pathToFileURL(join(process.cwd(), 'src', 'evolve', 'battery-case-env.ts')).href
   );
   let c;
   try {
-    c = mod.caseFromEnv(process.env);
+    c = caseFromEnv(process.env);
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
     code = 2;
   }
   if (c) {
+    const mod = await import(
+      pathToFileURL(join(process.cwd(), 'src', 'evolve', 'battery-case.ts')).href
+    );
     const { loadConfig } = await import(
       pathToFileURL(join(process.cwd(), 'src', 'config.ts')).href
     );
