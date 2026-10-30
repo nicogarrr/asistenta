@@ -1,20 +1,9 @@
-// Auditoria de context engineering: el texto que el agente guardo antes (un
-// hecho de memoria, el resumen de una sesion, un frente de trabajo, el nombre
-// de una rutina) vuelve al prompt dentro de los bloques cercados de la nota de
-// contexto (<memory>, <historial>, <workstreams>, <routines>). Ese texto pudo
-// venir de una web o de un resultado de herramienta que el modelo releyo, y un
-// valor con la etiqueta de cierre romperia la cerca y se haria pasar por
-// marcado del prompt. skillsIndex ya lo neutralizaba para <skills>; estos
-// tests fijan la misma defensa en los demas bloques, siempre en el render: lo
-// almacenado no se reescribe.
-// biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que paths.ts lo capture
-import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
 import { mkdtempSync } from 'node:fs';
-import { Store } from '../src/db.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildContextNote } from '../src/cli.js';
+import { Store } from '../src/db.js';
 import { MemorySnapshot } from '../src/memory/snapshot.js';
 import { MemoryStore } from '../src/memory.js';
 import { createMemoryTool } from '../src/tools/memory.js';
