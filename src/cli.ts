@@ -334,7 +334,7 @@ import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
-import { startWebUi } from './webui/server.js';
+import { parseAllowedHosts, startWebUi } from './webui/server.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
@@ -1730,7 +1730,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') =>
             approvals.resolve(id, decision),
         },
-        { port: Number(process.env.PA_WEB_PORT) },
+        {
+          port: Number(process.env.PA_WEB_PORT),
+          allowedHosts: parseAllowedHosts(process.env.PA_WEB_ALLOWED_HOSTS),
+        },
       )
         .then((ui) => log.info('panel web listo', { url: ui.url }))
         .catch((err: unknown) => log.warn('panel web no arrancó', { err }));
