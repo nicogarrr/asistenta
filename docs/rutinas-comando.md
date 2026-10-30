@@ -21,3 +21,5 @@ Reglas de seguridad:
 - `/cron del <nombre>` borra la rutina y su aprobación. `/cron probar <nombre>` la ejecuta ahora.
 
 `/cron` (la lista) marca cada rutina de comando con ⚙️: «sin aprobar (no se ejecuta)», «apagado (PA_CRON_COMANDOS=1 para activarlo)» o el comando exacto que va a correr.
+
+`/agenda` (y la parte de rutinas de la agenda del dueño) muestra la misma marca ⚙️ que `/cron`: sin aprobar, apagado o el comando exacto.
