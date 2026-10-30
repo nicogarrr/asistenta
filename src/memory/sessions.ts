@@ -370,11 +370,14 @@ export class SessionStore {
     if (scope !== undefined) params.push(scope);
     // Limit distinct sessions, not matching turns from a chatty session.
     params.push(limit);
+    // The two FTS5 indexes score on different scales (bm25 depends on each index's own
+    // document count and lengths): in a young store a term in most session titles gets
+    // a near-zero rank, so one passing mention in a turn outranked the sessions *titled*
+    // with it. Normalise each source against its own best hit (1 = best) and let the
+    // header (title + summary: what the session was about) weigh double a turn mention.
     const rows = this.#db
       .prepare(
-        `SELECT id, title, summary, started_at,
-                COALESCE(MAX(CASE WHEN src = 1 THEN snippet END), MAX(snippet)) AS snippet,
-                MAX(src) AS src FROM (
+        `WITH hits AS (
            SELECT s.id AS id, s.title AS title, s.summary AS summary, s.started_at AS started_at,
                   snippet(sessions_fts, -1, '', '', '…', 10) AS snippet,
                   0 AS src, rank AS r
@@ -389,8 +392,19 @@ export class SessionStore {
              JOIN session_turns t ON t.id = session_turns_fts.rowid
              JOIN sessions s ON s.id = t.session_id
             WHERE session_turns_fts MATCH ?${filter}
-         ) GROUP BY id, title, summary, started_at
-           ORDER BY MIN(r), started_at DESC, id LIMIT ?`,
+         ), norm AS (
+           SELECT *, CASE WHEN MIN(r) OVER (PARTITION BY src) < 0
+                          THEN r / MIN(r) OVER (PARTITION BY src) ELSE 1 END AS n
+             FROM hits
+         )
+         SELECT id, title, summary, started_at,
+                COALESCE(MAX(CASE WHEN src = 1 THEN snippet END), MAX(snippet)) AS snippet,
+                MAX(src) AS src,
+                2 * COALESCE(MAX(CASE WHEN src = 0 THEN n END), 0)
+                  + COALESCE(MAX(CASE WHEN src = 1 THEN n END), 0) AS score
+           FROM norm
+          GROUP BY id, title, summary, started_at
+          ORDER BY score DESC, started_at DESC, id LIMIT ?`,
       )
       .all(...params) as FtsRow[];
     return mergeFtsRows(rows, limit);
