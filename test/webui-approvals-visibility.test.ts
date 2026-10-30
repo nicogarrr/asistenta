@@ -14,12 +14,19 @@ function montar(token: string) {
   const documento = { visibilityState: 'visible' };
   let cargas = 0;
   const fuente = `var ocultaDesde = 0;\n${funcion(html, 'alCambiarVisibilidad')}\nreturn alCambiarVisibilidad;`;
-  const cambiar = new Function('document', 'token', 'cargarAprobacionesEnSilencio', fuente)(
+  const cambiar = new Function(
+    'document',
+    'token',
+    'cargarAprobacionesEnSilencio',
+    'cargarRutinas',
+    fuente,
+  )(
     documento,
     token,
     () => {
       cargas += 1;
     },
+    () => {},
   ) as () => void;
   const ir = (estado: 'visible' | 'hidden') => {
     documento.visibilityState = estado;

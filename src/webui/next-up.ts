@@ -75,6 +75,8 @@ export interface PanelRoutineSource {
   schedule: string | null;
   enabled: boolean;
   prompt: string | null;
+  /** Última ejecución tal como la guarda el store (ISO), o null si nunca se ha ejecutado. */
+  lastRunAt?: string | null;
 }
 
 /** Una fila de la tarjeta Rutinas (solo lectura). */
@@ -86,9 +88,17 @@ export interface PanelRoutine {
   proxima: string;
   /** Texto de commandRoutineTag sin el icono, o null si habla con el modelo. */
   comando: string | null;
+  /** «vie 30/10 18:00», o null si nunca se ha ejecutado (o la fecha guardada no se entiende). */
+  ultima: string | null;
 }
 
 const MAX_RUTINAS = 50;
+
+function ultimaEjecucion(guardada: string | null | undefined): string | null {
+  if (!guardada) return null;
+  const d = /^\d+$/.test(guardada) ? new Date(Number(guardada)) : new Date(guardada);
+  return Number.isNaN(d.getTime()) ? null : fechaCortaEs(d);
+}
 
 /**
  * Rutinas programadas del dueño para la tarjeta Rutinas: mismo ámbito que Estado
@@ -127,6 +137,7 @@ export function panelRoutines(
         activa: r.enabled,
         proxima: !r.enabled ? 'Pausada' : valida && at ? cuando(at, now) : 'Sin próxima ejecución',
         comando: isCommandRoutine(r) ? marca || 'comando' : null,
+        ultima: ultimaEjecucion(r.lastRunAt),
       },
     });
   }
