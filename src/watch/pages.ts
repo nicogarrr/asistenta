@@ -84,7 +84,12 @@ export type CheckOutcome =
     }
   | { kind: 'error'; message: string; failures: number; notify: boolean };
 
-const AMOUNT = String.raw`(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
+// Miles con espacio tipográfico (duro, estrecho o fino: lo que sale de `&nbsp;` o de
+// Intl fr-FR) como en el lector de precios compartido (#451): «1 299,00 €» son 1299 €.
+// Un número pegado con espacio normal delante («1 299,00 €», «talla 42 199 €») es
+// ambiguo: no se lee la cola como si fuera el precio entero (antes daba 299 €).
+const THIN = String.raw`\u00a0\u202f\u2009`;
+const AMOUNT = String.raw`(?<![\d.,${THIN}])(?<!\d )(\d{1,3}(?:[${THIN}]\d{3})+(?:,\d{1,2})?|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
 const PRICE = new RegExp(String.raw`(?:${AMOUNT}\s?(?:€|eur\b)|(?:€|eur\b)\s?${AMOUNT})`, 'i');
 
 /**
@@ -127,7 +132,7 @@ export function parseAmount(raw: string): [string, string] | null {
 export function extractPrice(text: string): string | null {
   const m = PRICE.exec(text);
   if (!m) return null;
-  const parsed = parseAmount(m[1] ?? m[2] ?? '');
+  const parsed = parseAmount((m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, ''));
   // Ambiguous format: keep exactly what the page wrote rather than a made-up number.
   if (!parsed) return m[0].replace(/\s+/g, ' ').trim();
   return `${parsed[0]},${parsed[1]} €`;
