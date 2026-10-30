@@ -24,8 +24,6 @@ const KNOWN_UNWIRED: Record<string, string> = {
   'src/memory/review.ts':
     'cola de contradicciones; falta quien la llene (consolidación) y un comando para resolverla',
   'src/skills/catalog.ts': 'catálogo de skills; falta comando /skills catalogo (descarga remota)',
-  'src/autoupdate.ts':
-    'autoactualización: la conectan las PR siguientes (pa autoupdate y el vigilante de Windows)',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
 };
 

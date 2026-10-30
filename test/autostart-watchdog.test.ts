@@ -45,8 +45,11 @@ beforeEach(() => {
   });
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   delete process.env.PA_WATCHDOG;
+  // Estos tests no lanzan la autoactualización (la cubre autoupdate-cli.test.ts).
+  process.env.PA_AUTOUPDATE = '0';
 });
 afterEach(() => {
+  delete process.env.PA_AUTOUPDATE;
   vi.restoreAllMocks();
   if (prevEnv === undefined) delete process.env.PA_WATCHDOG;
   else process.env.PA_WATCHDOG = prevEnv;

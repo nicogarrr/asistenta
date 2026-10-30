@@ -86,6 +86,14 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'autoupdate',
+    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada y el registro de cada fallo (*.log)',
+    backup: false,
+    why: 'se regenera: el interruptor vuelve a encendido y el resto es diagnóstico',
+    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    prune: { match: /\.log$/ },
+  },
+  {
     name: 'iniciar-ultimo.json',
     what: 'resultado de la última comprobación de pa iniciar (lo enseña pa autostart status)',
     backup: 'file',

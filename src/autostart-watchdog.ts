@@ -115,7 +115,10 @@ export type DaemonRunState = 'running' | 'stopped' | 'unknown';
 
 export type WatchdogDecision =
   | { action: 'start' }
-  | { action: 'skip'; reason: 'apagado' | 'en-marcha' | 'dudoso' | 'parado-a-proposito' };
+  | {
+      action: 'skip';
+      reason: 'apagado' | 'en-marcha' | 'dudoso' | 'parado-a-proposito' | 'actualizando';
+    };
 
 export function watchdogDecide(input: {
   enabled: boolean;
@@ -124,8 +127,11 @@ export function watchdogDecide(input: {
   stoppedAt?: number;
   /** ms epoch del último arranque del PC. */
   bootAt: number;
+  /** Una autoactualización tiene el daemon parado a propósito mientras compila. */
+  updating?: boolean;
 }): WatchdogDecision {
   if (!input.enabled) return { action: 'skip', reason: 'apagado' };
+  if (input.updating) return { action: 'skip', reason: 'actualizando' };
   if (input.state === 'running') return { action: 'skip', reason: 'en-marcha' };
   if (input.state === 'unknown') return { action: 'skip', reason: 'dudoso' };
   if (input.stoppedAt !== undefined && input.stoppedAt >= input.bootAt) {
@@ -142,6 +148,7 @@ export function describeDecision(d: WatchdogDecision | { action: 'start-failed' 
     'en-marcha': 'en marcha',
     dudoso: 'no sé si corre: no toco nada',
     'parado-a-proposito': 'la paraste tú: sigue apagada hasta reiniciar el PC o pa iniciar',
+    actualizando: 'se está actualizando: no la toco',
   }[d.reason];
 }
 
