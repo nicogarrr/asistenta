@@ -84,8 +84,13 @@ const SEND_MAX_TOTAL_MS = 90_000;
  */
 const DRAFT_MIN_INTERVAL_MS = 1_200;
 
-/** Lo que queda escrito cuando una aprobación caduca sin respuesta. */
-const APPROVAL_EXPIRED_TEXT = 'Caducada';
+/**
+ * Lo que queda escrito cuando una aprobación caduca sin respuesta. Antes era solo
+ * «Caducada»: no decía qué pasó con la petición ni qué hacer. Mismo tono que los demás
+ * avisos de botones («Este botón ya no sirve. …»).
+ */
+export const APPROVAL_EXPIRED_TEXT =
+  '⌛ Solicitud caducada: no se ha hecho nada. Si aún lo quieres, pídemelo otra vez.';
 
 /**
  * Una respuesta completa se guarda para "Dime más". Diez minutos cubren la lectura
@@ -1234,7 +1239,7 @@ export class TelegramChannel implements ChannelAdapter {
    * Deja constancia visible de que la aprobación caducó y retira los botones.
    *
    * Se hace en dos llamadas porque son dos operaciones distintas en la Bot API: el
-   * texto pasa a "Caducada" y `editMessageReplyMarkup` con un teclado vacío borra los
+   * texto pasa a APPROVAL_EXPIRED_TEXT y `editMessageReplyMarkup` con un teclado vacío borra los
    * botones. Un fallo aquí es cosmético (la aprobación ya se resolvió como denegada),
    * así que se registra y no se propaga.
    */

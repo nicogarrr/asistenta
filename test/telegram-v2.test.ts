@@ -266,7 +266,7 @@ describe('offerApproval', () => {
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
   });
 
-  it('al caducar deja "Caducada" y retira el teclado', async () => {
+  it('al caducar dice que caducó y que no se hizo nada, y retira el teclado', async () => {
     vi.useFakeTimers();
     const channel = makeChannel(1_000);
     const pending = channel.offerApproval('req-2', '42', '¿Permito shell?', { threadId: '77' });
@@ -278,7 +278,13 @@ describe('offerApproval', () => {
 
     // Los dos avisos visuales pasan por el espaciado global de la Bot API.
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(state.edits).toEqual([{ chatId: 42, messageId: 100, text: 'Caducada' }]);
+    expect(state.edits).toEqual([
+      {
+        chatId: 42,
+        messageId: 100,
+        text: '⌛ Solicitud caducada: no se ha hecho nada. Si aún lo quieres, pídemelo otra vez.',
+      },
+    ]);
     expect(state.markupEdits).toEqual([{ chatId: 42, messageId: 100, keyboard: [] }]);
   });
 });
