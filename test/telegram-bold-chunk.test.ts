@@ -113,7 +113,17 @@ describe('chunkText con marcas: negrita partida por el corte', () => {
   });
 
   it('send() con formato marks manda las dos partes en negrita (HTML)', async () => {
-    await channel().send(out(longLine, 'marks'));
+    // El canal espacia los trozos ~1,1 s: con reloj falso no se duerme de verdad.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const t0 = performance.now();
+    try {
+      const sending = channel().send(out(longLine, 'marks'));
+      await vi.runAllTimersAsync();
+      await sending;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(performance.now() - t0).toBeLessThan(500);
     expect(state.sent.length).toBe(2);
     for (const s of state.sent) {
       expect(s.parseMode).toBe('HTML');
