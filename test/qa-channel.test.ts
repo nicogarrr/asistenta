@@ -1,7 +1,40 @@
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// El canal de QA hereda de TelegramChannel: sin esto, start() abría polling real contra
+// api.telegram.org y stop() esperaba un getUpdates de red sin límite. Con la red lenta o la
+// máquina cargada, el test se colgaba hasta los 60 s. El bot falso nunca toca la red.
+vi.mock('grammy', () => {
+  const api = new Proxy({ config: { use: () => {} } } as Record<string, unknown>, {
+    get: (o, k) => (k in o ? o[k as string] : async () => true),
+  });
+  class FakeBot {
+    api = api;
+    #end: (() => void) | null = null;
+    catch(): void {}
+    on(): void {}
+    use(): void {}
+    start(): Promise<void> {
+      return new Promise((resolve) => {
+        this.#end = resolve;
+      });
+    }
+    async stop(): Promise<void> {
+      this.#end?.();
+    }
+  }
+  return {
+    Bot: FakeBot,
+    GrammyError: class extends Error {},
+    HttpError: class extends Error {},
+    InlineKeyboard: class {},
+    InputFile: class {},
+  };
+});
+
 import {
   isQaChatId,
   looksLikeMoney,
@@ -74,10 +107,12 @@ describe('canal de QA', () => {
         },
         log: () => {},
       };
+      // Ni una conexión de red: el canal de QA vive de ficheros.
+      const connect = vi.spyOn(Socket.prototype, 'connect');
       const started = ch.start(handlers);
       appendFileSync(join(dir, 'inbox.jsonl'), `${JSON.stringify({ case: 'A1', text: 'hola' })}\n`);
-      await new Promise((r) => setTimeout(r, 200));
-      expect(got).toHaveLength(1);
+      // Espera a que llegue (sondeo cada 20 ms), sin un plazo fijo que la carga pueda pisar.
+      await vi.waitFor(() => expect(got).toHaveLength(1), { timeout: 10_000, interval: 20 });
       expect(got[0]?.authorised).toBe(true);
       expect(isQaChatId(got[0]?.chatId ?? '')).toBe(true);
       const chatId = got[0]?.chatId ?? '';
@@ -98,6 +133,8 @@ describe('canal de QA', () => {
       expect(lines.map((l) => l.kind)).toEqual(['in', 'text', 'approval', 'approval']);
       await ch.stop();
       await started.catch(() => {});
+      expect(connect).not.toHaveBeenCalled();
+      connect.mockRestore();
     },
   );
 
