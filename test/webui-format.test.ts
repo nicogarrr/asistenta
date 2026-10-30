@@ -43,7 +43,10 @@ describe('panel: fechas, duraciones y etiquetas legibles', () => {
 
   it('la copia del navegador formatea igual y la página la usa', () => {
     const ctx: { asistentaFormato?: { formatearCampo: typeof formatearCampo } } = {};
-    runInNewContext(renderFormatScript().replace('var asistentaFormato', 'this.asistentaFormato'), ctx);
+    runInNewContext(
+      renderFormatScript().replace('var asistentaFormato', 'this.asistentaFormato'),
+      ctx,
+    );
     expect(ctx.asistentaFormato?.formatearCampo('uptimeSeconds', 93_784)).toBe('1 d 2 h 3 min');
     const html = renderPage();
     expect(html).toContain('formato.formatearCampo(clave, valor)');

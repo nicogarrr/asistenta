@@ -139,3 +139,25 @@ export function formatearCampo(clave: string, valor: unknown, zona?: string): st
     return new Date(ms).toISOString();
   }
 }
+
+/**
+ * Texto en español para un fallo de la API del panel. Usa el mensaje que manda
+ * el servidor (p. ej. «Objetivos aún no disponibles») en vez de solo el código.
+ */
+export function mensajeDeError(estado: number, cuerpo: unknown): string {
+  const detalle =
+    cuerpo &&
+    typeof cuerpo === 'object' &&
+    typeof (cuerpo as { error?: unknown }).error === 'string'
+      ? String((cuerpo as { error: string }).error).trim()
+      : '';
+  if (estado === 401) return 'Token rechazado. Pega el token correcto arriba.';
+  if (estado === 500 || (estado > 500 && !detalle)) {
+    return 'Error interno del asistente. Revisa el registro local y vuelve a intentarlo.';
+  }
+  if (estado === 503) {
+    return `${detalle || 'No disponible ahora mismo'}. Si el asistente está arrancando, reintenta en unos segundos.`;
+  }
+  if (detalle) return `${detalle.replace(/\.$/, '')}.`;
+  return `El panel respondió con el código ${estado}.`;
+}
