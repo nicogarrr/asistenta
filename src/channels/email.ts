@@ -252,6 +252,12 @@ export interface EmailChannelDeps {
   now?: () => Date;
 }
 
+/**
+ * Hilos de correo recordados para engancharles la respuesta. Sin tope, un daemon que
+ * dura semanas guardaba en memoria cada correo recibido (con su texto) para siempre.
+ */
+export const EMAIL_THREADS_MAX = 1000;
+
 export const EMAIL_APPROVAL_NOTE =
   'Esto necesita tu aprobación: te la he mandado por Telegram (las aprobaciones nunca van por correo).';
 
@@ -302,7 +308,13 @@ export class EmailChannel implements ChannelAdapter {
         }
         this.#deps.audit({ uid: raw.uid, accepted: true });
         const messageId = v.messageId ?? `uid:${raw.uid}`;
+        this.#threads.delete(messageId);
         this.#threads.set(messageId, v);
+        while (this.#threads.size > EMAIL_THREADS_MAX) {
+          const oldest = this.#threads.keys().next();
+          if (oldest.done) break;
+          this.#threads.delete(oldest.value);
+        }
         const inbound: Inbound = {
           channel: EMAIL_CHANNEL,
           account: this.account,
