@@ -10,10 +10,29 @@ import {
   tvScreenshot,
   tvToast,
 } from './lgtv.js';
+import { parseMac, sendWakeOnLan } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
 const TV_SECURE_KEY = 'tv:secure';
+const TV_MAC_KEY = 'tv:mac';
+
+/** MAC de la tele desde connectionmanager/getinfo (cable primero, luego wifi). */
+export function macFromNetworkInfo(info: unknown): string | null {
+  const rec = (v: unknown): Record<string, unknown> =>
+    v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const root = rec(info);
+  for (const key of ['wiredInfo', 'wifiInfo']) {
+    const raw = rec(root[key]).macAddress;
+    if (typeof raw !== 'string') continue;
+    try {
+      return parseMac(raw);
+    } catch {
+      // MAC ausente o basura: probar la siguiente interfaz
+    }
+  }
+  return null;
+}
 
 async function requirePaired(): Promise<{
   host: string;
@@ -77,12 +96,32 @@ export async function tvCommand(args: string[]): Promise<number> {
         throw err;
       }
       const { clientKey, secure } = paired;
+      // MAC para el encendido por red (Wake-on-LAN): best-effort, la tele
+      // puede no conceder READ_NETWORK_STATE; sin ella todo sigue igual.
+      let mac: string | null = null;
+      try {
+        mac = macFromNetworkInfo(
+          await tvRequest(
+            host,
+            clientKey,
+            'com.webos.service.connectionmanager/getinfo',
+            {},
+            {
+              allowPlaintext: !secure,
+            },
+          ),
+        );
+      } catch {
+        mac = null;
+      }
       const { vaultSetMany } = await import('../vault.js');
       await vaultSetMany({
         [TV_HOST_KEY]: host,
         [TV_CLIENT_KEY]: clientKey,
         [TV_SECURE_KEY]: secure ? '1' : '0',
+        ...(mac ? { [TV_MAC_KEY]: mac } : {}),
       });
+      if (mac) process.stdout.write(`MAC guardada para encenderla por red: ${mac}\n`);
       process.stdout.write(
         secure
           ? 'Tele emparejada y guardada (canal cifrado). Prueba: pa tv toast "hola"\n'
@@ -207,8 +246,46 @@ export async function tvCommand(args: string[]): Promise<number> {
       process.stdout.write(`Tecla ${name} enviada (sin confirmacion de la tele).\n`);
       return 0;
     }
+    case 'mac': {
+      const { vaultGet, vaultSetMany } = await import('../vault.js');
+      const raw = rest.find((a) => !a.startsWith('--'))?.trim();
+      if (!raw) {
+        const current = await vaultGet(TV_MAC_KEY);
+        process.stdout.write(
+          current
+            ? `MAC de la tele: ${current}\n`
+            : 'Sin MAC guardada. uso: pa tv mac AA:BB:CC:DD:EE:FF (Ajustes > General > Acerca de esta TV)\n',
+        );
+        return 0;
+      }
+      let mac: string;
+      try {
+        mac = parseMac(raw);
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 2;
+      }
+      await vaultSetMany({ [TV_MAC_KEY]: mac });
+      process.stdout.write(
+        `MAC guardada: ${mac}. Ya puedo encender la tele por red (pa tv wake).\n`,
+      );
+      return 0;
+    }
+    case 'wake': {
+      const { vaultGet } = await import('../vault.js');
+      const mac = await vaultGet(TV_MAC_KEY);
+      if (!mac) {
+        process.stderr.write('Sin MAC guardada: pa tv mac AA:BB:CC:DD:EE:FF\n');
+        return 2;
+      }
+      const sent = await sendWakeOnLan(mac, { host: await vaultGet(TV_HOST_KEY) });
+      process.stdout.write(
+        `Encendido por red enviado a ${mac} (${sent.join(', ')}). UDP no confirma: mira la tele.\n`,
+      );
+      return 0;
+    }
     default:
-      process.stderr.write('uso: pa tv <setup|toast|apps|launch|key|shot|off>\n');
+      process.stderr.write('uso: pa tv <setup|toast|apps|launch|key|shot|off|mac|wake>\n');
       return 2;
   }
 }
