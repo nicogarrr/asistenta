@@ -18,6 +18,13 @@ Sin batería configurada no se promueve nada.
   llega como JSON en `PA_BATTERY_CASE`; la última línea de su salida debe ser la traza JSON
   (`{"reply": "...", "toolCalls": [...], "approvalsAsked": 0, ...}`, ver `battery-judge.ts`).
   Recibe el mismo entorno limpio que el proponedor (solo las claves de `PA_EVOLVE_PROPOSER_PASS`).
+- **Sin definir** se usa `scripts/evolve-battery-case.mjs` con el mismo Node: corre el caso con el
+  código fuente de la copia que se mide, datos en una carpeta temporal que se borra y sin cuentas
+  reales. Memoria y recordatorios funcionan de verdad (en esa carpeta); correo, navegador, web,
+  shell, ficheros, Renfe y PC existen con su nombre pero no hacen nada y quedan en la traza. Toda
+  petición de aprobación se cuenta y se deniega. El modelo es el de tu configuración: pon en
+  `PA_EVOLVE_PROPOSER_PASS` las variables que necesita (p. ej. `PA_API_KEY,PA_MODEL,PA_BASE_URL`).
+- `PA_EVOLVE_BATTERY=off` apaga el evaluador: entonces ningún cambio se aprueba.
 
 ## Cómo se puntúa
 

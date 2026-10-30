@@ -105,16 +105,22 @@ export function parseTrace(stdout: string): Trace {
   return t;
 }
 
+/** Evaluador por defecto: el script del propio código que se mide (scripts/evolve-battery-case.mjs). */
+export const DEFAULT_BATTERY_SCRIPT = join('scripts', 'evolve-battery-case.mjs');
+
 /**
  * PA_EVOLVE_BATTERY: comando que ejecuta UN caso de la batería contra el código de su
  * carpeta (cwd) y escribe la traza como JSON. El caso llega en PA_BATTERY_CASE. Igual que
  * el proponedor, recibe el entorno limpio: nada de claves salvo PA_EVOLVE_PROPOSER_PASS.
+ * Sin definir se usa el script del repo con este mismo Node (datos temporales, sin cuentas
+ * reales); `off` o `0` lo apagan y entonces ningún cambio se aprueba.
  */
 export function batteryRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): BatteryRunner | null {
-  const cmd = env.PA_EVOLVE_BATTERY?.trim();
-  if (!cmd) return null;
+  const raw = env.PA_EVOLVE_BATTERY?.trim() ?? '';
+  if (/^(off|0|no|false)$/i.test(raw)) return null;
+  const [file, args] = raw ? [raw, [] as string[]] : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
   return async (c, cwd) => {
-    const { stdout } = await exec(cmd, [], {
+    const { stdout } = await exec(file, args, {
       cwd,
       timeout: 10 * 60_000,
       windowsHide: true,
@@ -142,7 +148,7 @@ export function describeLast(stateDir: string): string {
   const head = !proposerFromEnv()
     ? 'Auto-mejora: sin proponedor configurado (PA_EVOLVE_PROPOSER), así que no puede generar cambios.'
     : !batteryRunnerFromEnv()
-      ? 'Auto-mejora: falta el evaluador de la batería (PA_EVOLVE_BATTERY); sin él ningún cambio se aprueba.'
+      ? 'Auto-mejora: el evaluador de la batería está apagado (PA_EVOLVE_BATTERY=off); sin él ningún cambio se aprueba.'
       : 'Auto-mejora: activa, un ciclo cada domingo de madrugada; cada cambio tiene que aprobar la batería.';
   const week = isoWeek();
   const mine = rows.filter((r) => r.week === week);
@@ -176,7 +182,7 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
   const run = batteryRunnerFromEnv();
   if (!run) {
     return {
-      text: 'No hay evaluador de la batería (PA_EVOLVE_BATTERY): sin él ningún cambio puede aprobarse, así que no lanzo el ciclo.',
+      text: 'El evaluador de la batería está apagado (PA_EVOLVE_BATTERY=off): sin él ningún cambio puede aprobarse, así que no lanzo el ciclo.',
     };
   }
   try {
