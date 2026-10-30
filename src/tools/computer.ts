@@ -455,6 +455,17 @@ function parseClicks(value: unknown): number {
   return n;
 }
 
+/**
+ * Text for type/key: a string as given, a finite number as its digits, anything
+ * else (object, list, boolean, null) as empty so the caller refuses it with its
+ * own Spanish error instead of typing «[object Object]».
+ */
+function textArg(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+}
+
 /** Actions that change the screen, and therefore deserve before/after verification. */
 function isMutatingAction(name: string): boolean {
   return name === 'click' || name === 'drag' || name === 'type' || name === 'key';
@@ -850,7 +861,10 @@ export function createComputerTool(
       }
 
       case 'type': {
-        const text = String(record.text ?? '');
+        // Only a string (or a plain number, e.g. a code): `String()` turned an
+        // object or a list from a batch item into «[object Object]» / «a,b» and
+        // typed that on the real desktop.
+        const text = textArg(record.text);
         if (!text) throw new Error('la acción type necesita texto');
         // Characters as a person counts them (code points): `text.length` counts an
         // emoji as 2, so «Escritos N» disagreed with the «Parcial: … N de M» that
@@ -871,7 +885,7 @@ export function createComputerTool(
       }
 
       case 'key': {
-        const key = String(record.key ?? '');
+        const key = textArg(record.key);
         if (!key) throw new Error('la acción key necesita el nombre de una tecla');
         const check = await act(() => backend.key(key));
         return {
