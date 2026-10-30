@@ -224,16 +224,25 @@ Add-Type -AssemblyName System.Windows.Forms
 
   async key(key: string): Promise<void> {
     const vks = winChordVirtualKeys(key);
-    if (vks) {
-      await this.#ps(winChordScript(vks));
-      return;
-    }
-    const seq = parseKeyChord(key);
-    await this.#ps(`
+    const script = vks
+      ? winChordScript(vks)
+      : `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait('${seq.replace(/'/g, "''")}')
-`);
+[System.Windows.Forms.SendKeys]::SendWait('${parseKeyChord(key).replace(/'/g, "''")}')
+`;
+    try {
+      await this.#ps(script);
+    } catch (err) {
+      // A PowerShell killed by the timeout never reaches the chord's `finally`
+      // (nor SendKeys' own key-up), so Win/Ctrl/Shift/Alt can stay held and every
+      // later keystroke on Nico's PC turns into a shortcut. Release whatever is
+      // still down, best effort, and report the original failure.
+      try {
+        await this.#ps(releaseModifiersScript());
+      } catch {}
+      throw err;
+    }
   }
 
   async dispose(): Promise<void> {
@@ -264,6 +273,37 @@ public class M {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
 }
 '@`;
+
+/** Modifier virtual keys `releaseModifiersScript` checks: Win L/R, Shift, Ctrl, Alt (generic + L/R). */
+export const MODIFIER_VKS: readonly number[] = [
+  0x5b, 0x5c, 0x10, 0xa0, 0xa1, 0x11, 0xa2, 0xa3, 0x12, 0xa4, 0xa5,
+];
+
+/**
+ * Key-up for every modifier Windows still reports as down, and only those: a
+ * key-up for a key that is not held is never sent. When a Win key is released a
+ * harmless unassigned key (0xE8) is tapped first so the lone Win key-up does not
+ * open the Start menu.
+ */
+export function releaseModifiersScript(): string {
+  const list = MODIFIER_VKS.map((vk) => `0x${vk.toString(16).padStart(2, '0')}`).join(',');
+  return `
+$ErrorActionPreference='Stop'
+Add-Type @'
+using System;using System.Runtime.InteropServices;
+public class R {
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk,byte scan,uint flags,UIntPtr extra);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+}
+'@
+$held = @(${list}) | Where-Object { ([R]::GetAsyncKeyState($_) -band 0x8000) -ne 0 }
+if ($held | Where-Object { $_ -eq 0x5b -or $_ -eq 0x5c }) {
+  [R]::keybd_event(0xe8,0,0,[UIntPtr]::Zero); [R]::keybd_event(0xe8,0,2,[UIntPtr]::Zero)
+}
+foreach ($vk in $held) { [R]::keybd_event([byte]$vk,0,2,[UIntPtr]::Zero) }
+Write-Output ("released:" + ($held -join ','))
+`;
+}
 
 /**
  * Key-down for each code in order, then key-up in reverse order, released in a
