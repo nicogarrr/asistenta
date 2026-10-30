@@ -102,8 +102,13 @@ describe('followupFromMessage', () => {
     expect(hit?.dueAt).toBe(TUESDAY_NOON + DAY_MS);
   });
 
-  it('falls back to a week when the date cannot be placed', () => {
+  it('reads a day of the month as that day, not as a week from now', () => {
     const hit = followupFromMessage('voy a pagar el seguro antes del 12', TUESDAY_NOON);
+    expect(hit?.dueAt).toBe(TUESDAY_NOON + 6 * DAY_MS);
+  });
+
+  it('falls back to a week when the date cannot be placed', () => {
+    const hit = followupFromMessage('voy a pagar el seguro antes de que cierren', TUESDAY_NOON);
     expect(hit?.dueAt).toBe(TUESDAY_NOON + 7 * DAY_MS);
   });
 
