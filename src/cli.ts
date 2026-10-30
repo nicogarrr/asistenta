@@ -361,6 +361,7 @@ import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTvTool } from './tools/tv.js';
+import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
@@ -1911,6 +1912,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         isFetchable: (url) => isFetchableResolved(url),
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
+      createWeatherTool(() => weatherConfigFromEnv()),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,

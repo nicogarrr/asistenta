@@ -1206,6 +1206,8 @@ export class Gate {
       case 'windows':
       case 'ocr':
       case 'cargar_herramienta':
+      // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
+      case 'tiempo':
         return 'lee';
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
@@ -2027,6 +2029,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'windows',
   'ocr',
   'cargar_herramienta',
+  'tiempo',
   'fetch',
   'write',
   'edit',
