@@ -29,6 +29,8 @@ export interface Attempt {
   reason?: string;
   /** How many tries this hypothesis has had. The loop gives up at the limit. */
   tries?: number;
+  /** Nota de la batería del candidato y del kernel, cuando se llegó a medir. */
+  battery?: { passed: number; total: number; basePassed: number; baseTotal: number };
 }
 
 export class Archive {

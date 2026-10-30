@@ -137,6 +137,7 @@ describe('evaluador de la batería por comando (PA_EVOLVE_BATTERY)', () => {
     const st = mkdtempSync(join(tmpdir(), 'evo-bat-st-'));
     try {
       expect(describeLast(st)).toMatch(/falta el evaluador de la batería \(PA_EVOLVE_BATTERY\)/);
+      expect(describeLast(st)).toContain('Batería: todavía no se ha medido ningún candidato.');
       expect((await runEvolution({ stateDir: st })).text).toMatch(/no lanzo el ciclo/);
     } finally {
       if (saved.p === undefined) delete process.env.PA_EVOLVE_PROPOSER;
@@ -199,6 +200,7 @@ describe('runWeek: un candidato solo se promueve si aprueba la batería', () => 
 
   it('se descarta si rompe un caso que pasaba en el kernel', async () => {
     const r = await week(gate((cwd) => (cwd === root ? 'alfa' : 'beta')));
+    expect(describeLast(state)).toMatch(/Última batería .*: 1\/2 casos; el kernel tenía 1\/2\./);
     expect(r.promoted).toBe(false);
     expect(r.attempts[0]?.verdict).toBe('discard');
     expect(r.attempts[0]?.reason).toMatch(/rompe casos que pasaban: a/);
@@ -210,5 +212,8 @@ describe('runWeek: un candidato solo se promueve si aprueba la batería', () => 
     expect(r.batteryBaseline?.passed).toBe(1);
     expect(r.attempts[0]?.reason).toMatch(/batería 1\/2 \(antes 1\/2\), sin regresiones/);
     expect(summarize(r)).toContain('Batería 1/2.');
+    expect(describeLast(state)).toMatch(
+      /Última batería \(\d{4}-W\d+\): 1\/2 casos; el kernel tenía 1\/2\./,
+    );
   });
 });

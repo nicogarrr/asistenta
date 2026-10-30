@@ -221,6 +221,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         }
         // Los tests dicen si el código mejora; la batería, si el asistente sigue portándose
         // bien. Solo se corre cuando tests y checklist ya aprobarían (cuesta llamadas al modelo).
+        let batteryAfter: BatteryRun | undefined;
         if (verdict.kind === 'promote') {
           if (!opts.battery || !batteryBase) {
             verdict = {
@@ -229,7 +230,8 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
               reason: 'sin batería de evaluación: ningún cambio se promueve sin aprobarla',
             };
           } else {
-            const bv = batteryVerdict(batteryBase, await measureBattery(opts.battery, sandbox.dir));
+            batteryAfter = await measureBattery(opts.battery, sandbox.dir);
+            const bv = batteryVerdict(batteryBase, batteryAfter);
             verdict = bv.ok
               ? { ...verdict, reason: `${verdict.reason}; ${bv.reason}` }
               : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
@@ -251,6 +253,15 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
             checksFailed: candidate.checksFailed,
           },
           tries: attempt,
+          battery:
+            batteryAfter && batteryBase
+              ? {
+                  passed: batteryAfter.score.passed,
+                  total: batteryAfter.score.total,
+                  basePassed: batteryBase.score.passed,
+                  baseTotal: batteryBase.score.total,
+                }
+              : undefined,
         });
         report.attempts.push({
           hypothesis,
