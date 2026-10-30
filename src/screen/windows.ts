@@ -451,7 +451,7 @@ export const POWERSHELL_TIMEOUT_MS = 30_000;
  * and that can reach the chat. Keep only PowerShell's error sentence; say
  * plainly when it was the timeout.
  */
-export function powerShellError(err: unknown): Error {
+export function powerShellError(err: unknown, timeoutMs = POWERSHELL_TIMEOUT_MS): Error {
   const e = (err ?? {}) as {
     killed?: boolean;
     signal?: string | null;
@@ -460,7 +460,7 @@ export function powerShellError(err: unknown): Error {
   };
   if (e.killed || e.signal === 'SIGTERM') {
     return new Error(
-      `PowerShell no respondió en ${POWERSHELL_TIMEOUT_MS / 1000} s y se cortó (el PC va lento o la ventana no responde).`,
+      `PowerShell no respondió en ${Math.round(timeoutMs / 1000)} s y se cortó (el PC va lento o la ventana no responde).`,
     );
   }
   if (e.code === 'ENOENT') return new Error('No encuentro powershell.exe en este equipo.');
