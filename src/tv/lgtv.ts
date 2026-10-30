@@ -33,6 +33,54 @@ export interface TvSocket {
 
 export type TvSocketFactory = (url: string) => TvSocket;
 
+/** Subconjunto de ws que usa el socket de input de botones (tvKey). */
+export interface TvInputSocket {
+  on(event: 'open' | 'error' | 'close', cb: (...args: unknown[]) => void): void;
+  send(data: string): void;
+  close(): void;
+}
+
+export type TvInputSocketFactory = (url: string) => TvInputSocket;
+
+/** Esperas de tvKey por defecto (comportamiento comprobado en la tele real). */
+export const TV_KEY_TIMEOUT_MS = 5_000;
+export const TV_KEY_GRACE_MS = 800;
+
+function envMs(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/**
+ * Esperas efectivas de tvKey: deps > PA_TV_KEY_TIMEOUT_MS / PA_TV_KEY_GRACE_MS
+ * > 5000/800. Acotadas (timeout 1–30 s, margen 50 ms–5 s) para que un valor
+ * absurdo no deje la orden colgada ni la cierre antes de que la tele la lea.
+ */
+export function tvKeyTimings(deps: Pick<TvClientDeps, 'keyTimeoutMs' | 'keyGraceMs'> = {}): {
+  timeoutMs: number;
+  graceMs: number;
+} {
+  const clamp = (v: number | undefined, fb: number, min: number, max: number) =>
+    v !== undefined && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : fb;
+  return {
+    timeoutMs: clamp(
+      deps.keyTimeoutMs,
+      envMs('PA_TV_KEY_TIMEOUT_MS', TV_KEY_TIMEOUT_MS, 1_000, 30_000),
+      1_000,
+      30_000,
+    ),
+    graceMs: clamp(
+      deps.keyGraceMs,
+      envMs('PA_TV_KEY_GRACE_MS', TV_KEY_GRACE_MS, 50, 5_000),
+      50,
+      5_000,
+    ),
+  };
+}
+
 export interface TvClientDeps {
   factory?: TvSocketFactory;
   pairTimeoutMs?: number;
@@ -61,6 +109,12 @@ export interface TvClientDeps {
   connectRetryDelayMs?: number;
   /** Timeout de apertura del socket por intento (por defecto 5 s). */
   connectTimeoutMs?: number;
+  /** Socket de input de botones (tvKey); por defecto ws real. Inyectable en tests. */
+  inputFactory?: TvInputSocketFactory;
+  /** Timeout total de envio de una tecla (por defecto 5 s; PA_TV_KEY_TIMEOUT_MS). */
+  keyTimeoutMs?: number;
+  /** Margen tras enviar la tecla antes de cerrar (por defecto 800 ms; PA_TV_KEY_GRACE_MS). */
+  keyGraceMs?: number;
 }
 
 /**
@@ -566,13 +620,16 @@ export async function tvKey(
     'wss:',
   ]);
   if (!socketUrl) throw new Error('La tele devolvio un socket de input no valido.');
+  const { timeoutMs, graceMs } = tvKeyTimings(deps);
+  const openInput: TvInputSocketFactory =
+    deps.inputFactory ?? ((url) => new WebSocket(url, { rejectUnauthorized: false }));
   await new Promise<void>((resolve, reject) => {
-    const ws = new WebSocket(socketUrl, { rejectUnauthorized: false });
+    const ws = openInput(socketUrl);
     let settled = false;
     let grace: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       fail(new Error('timeout enviando la tecla'));
-    }, 5000);
+    }, timeoutMs);
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
@@ -597,7 +654,7 @@ export async function tvKey(
         clearTimeout(timer);
         ws.close();
         resolve();
-      }, 800);
+      }, graceMs);
     });
     ws.on('error', () => fail(new Error('no se pudo enviar la tecla')));
     ws.on('close', () => {
