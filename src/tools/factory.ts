@@ -196,7 +196,10 @@ export function createFactoryTool(
                 : 'tested'
               : wasInstalled
                 ? 'installed'
-                : 'built',
+                : // Un test fallido no borra que Nico la retiró: sigue «disabled».
+                  t.meta.status === 'disabled'
+                  ? 'disabled'
+                  : 'built',
             updatedAt: now,
             testedSha256: result.ok ? realHash : t.meta.testedSha256,
             contract: result.ok ? (result.contract ?? t.meta.contract) : t.meta.contract,

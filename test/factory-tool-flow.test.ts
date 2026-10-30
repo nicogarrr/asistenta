@@ -175,3 +175,16 @@ describe('fabrica: ramas sin cubrir', () => {
     await expect(s.run({ action: 'borrar' })).rejects.toThrow(/accion desconocida/);
   });
 });
+
+describe('fabrica: una herramienta retirada', () => {
+  it('un test fallido la deja «disabled», no la rebaja a «built»', async () => {
+    const s = await installed('retirada-falla');
+    await s.run({ action: 'uninstall', id: 'retirada-falla' });
+    const dir = join(store.factoryRoot(), 'retirada-falla');
+    writeFileSync(join(dir, 'tool.js'), BAD);
+    const r = await s.run({ action: 'test', id: 'retirada-falla' });
+    expect(txt(r)).toContain('TEST FALLIDO');
+    expect(store.readFactoryTool('retirada-falla')?.meta.status).toBe('disabled');
+    await expect(s.run({ action: 'install', id: 'retirada-falla' })).rejects.toThrow(/test/);
+  });
+});
