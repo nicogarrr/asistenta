@@ -125,7 +125,7 @@ export class FakeTelegram {
   readonly sent: Sent[] = [];
   readonly approvals: Array<{ chatId: string; question: string; approved: boolean }> = [];
   /** Respuestas que dará Nico a los próximos botones (por defecto, «no»). */
-  readonly answers: boolean[] = [];
+  readonly answers: Array<boolean | ApprovalChoice> = [];
   failSends = 0;
 
   async send(o: { chatId: string; text: string }): Promise<string | null> {
@@ -138,9 +138,11 @@ export class FakeTelegram {
   }
 
   async offerApproval(chatId: string, question: string): Promise<ApprovalChoice> {
-    const approved = this.answers.shift() ?? false;
-    this.approvals.push({ chatId, question, approved });
-    return { approved, scope: 'once' };
+    const next = this.answers.shift() ?? false;
+    const choice: ApprovalChoice =
+      typeof next === 'boolean' ? { approved: next, scope: 'once' } : next;
+    this.approvals.push({ chatId, question, approved: choice.approved });
+    return choice;
   }
 }
 
