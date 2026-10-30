@@ -94,6 +94,12 @@ const Params = Type.Object({
   volume: Type.Optional(
     Type.Number({ description: 'For play: 0-100. Default 100 (as loud as asked).' }),
   ),
+  which: Type.Optional(
+    Type.Number({
+      description:
+        'For play: which audio, counting back. 1 = the last one sent (default), 2 = the one before, … (list_audio shows them in that order).',
+    }),
+  ),
   target: Type.Optional(
     Type.Union([Type.Literal('pc'), Type.Literal('tele')], {
       description:
@@ -135,6 +141,9 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
       '"suéltalo", "reproduce ese audio", "sóname lo que te mandé", "ponlo a 40".',
       'target=tele plays it on the TV instead ("reprodúcelo en la tele"); target=pc (default)',
       'is the PC ("en el ordenador", "por los altavoces"). volume only applies to the PC.',
+      'which=2 plays the one before the last ("el de antes", "el penúltimo"), and so on.',
+      'If the user wants EVERY voice note to play on arrival, tell them to send /altavoz pc',
+      '(or /altavoz tele); you cannot switch that mode on yourself.',
       'action=list_audio reports which audios are still remembered and when each arrived,',
       'with its transcript when it has one. Use it when the user says "el último" and you',
       'need to tell them which one you are about to play.',
@@ -159,7 +168,12 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
     execute: async (_id, args) => {
       switch (args.action) {
         case 'play':
-          return playReceived(deps, clamp(args.volume, 100, 0, 100), args.target ?? 'pc');
+          return playReceived(
+            deps,
+            clamp(args.volume, 100, 0, 100),
+            args.target ?? 'pc',
+            Math.max(1, Math.floor(args.which ?? 1)),
+          );
 
         case 'list_audio':
           return listAudio(deps);
@@ -262,14 +276,26 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
  * Playback is wrapped so the wake-word listener goes quiet first. The speakers are
  * the microphone's other half, and an agent that hears its own playback answers it.
  */
-async function playReceived(deps: MediaToolDeps, volume: number, target: 'pc' | 'tele' = 'pc') {
+async function playReceived(
+  deps: MediaToolDeps,
+  volume: number,
+  target: 'pc' | 'tele' = 'pc',
+  which = 1,
+) {
   if (target === 'tele' && !deps.castToTv) {
     return ok(
       'Reproducir en la tele está apagado o no hay tele emparejada. Se activa con PA_AUDIO_TELE=1 (y la tele emparejada con pa tv). Puedo sonarlo en el PC si quieres.',
       { played: false, reason: 'tele off', target },
     );
   }
-  const audio = deps.recall.last(deps.chatKey);
+  const remembered = deps.recall.list(deps.chatKey);
+  if (which > 1 && remembered.length > 0 && which > remembered.length) {
+    return ok(
+      `Solo me quedan ${remembered.length} audio${remembered.length === 1 ? '' : 's'} tuyos; dime cuál o vuelve a mandármelo.`,
+      { played: false, reason: 'not that many', count: remembered.length },
+    );
+  }
+  const audio = which > 1 ? (remembered[which - 1] ?? null) : deps.recall.last(deps.chatKey);
   if (!audio) {
     return ok('No me queda ningún audio tuyo que pueda reproducir. Mándame uno y te lo suelto.', {
       played: false,

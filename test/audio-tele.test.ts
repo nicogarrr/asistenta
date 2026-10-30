@@ -272,4 +272,27 @@ describe('media action=play (caracterización + target)', () => {
     // el fichero es ahora del caster (lo borra cuando la tele lo ha bajado)
     expect(readFileSync(mp3, 'utf8')).toBe('x');
   });
+
+  it('which=2 suena el penúltimo; pedir más de los que hay lo dice', async () => {
+    const recall = new AudioRecall({});
+    recall.record(CHAT, { fileId: 'VIEJO', mimeType: 'audio/ogg', messageId: '1' });
+    recall.record(CHAT, { fileId: 'NUEVO', mimeType: 'audio/ogg', messageId: '2' });
+    const downloadAudio = vi.fn(async (_id: string) => Buffer.from('OggS'));
+    const tool = createMediaTool({
+      chatKey: CHAT,
+      recall,
+      downloadAudio,
+      chatId: '1',
+      maxEdge: 1280,
+      sendPhoto: async () => '1',
+      sendVideo: async () => true,
+      sendVoice: async () => true,
+    });
+    toPlayableAudio.mockResolvedValue(join(dir, 'w.mp3'));
+    playAudioFile.mockResolvedValue({ ok: true, seconds: 1, volumeSet: 100 });
+    await tool.execute('c', { action: 'play', which: 2 });
+    expect(downloadAudio).toHaveBeenCalledWith('VIEJO', expect.any(Number));
+    const r = await tool.execute('c', { action: 'play', which: 5 });
+    expect(r.details).toMatchObject({ played: false, reason: 'not that many', count: 2 });
+  });
 });
