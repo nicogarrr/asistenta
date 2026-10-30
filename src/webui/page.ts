@@ -457,7 +457,7 @@ export function renderPage(): string {
       <article id="tarjeta-aprobaciones" class="tarjeta" aria-labelledby="titulo-aprobaciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
-          <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="aprobaciones" aria-label="Refrescar Aprobaciones">Refrescar</button>
         </header>
         <p id="conexion-aprobaciones" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente. Reintento cada 15 s; lo que ves puede estar desactualizado.</p>
         <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope">
@@ -494,7 +494,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-objetivos">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-objetivos">Objetivos</h2>
-          <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="objetivos" aria-label="Refrescar Objetivos">Refrescar</button>
         </header>
         <div id="panel-objetivos" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
@@ -504,7 +504,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-rutinas">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-rutinas">Rutinas</h2>
-          <button class="mini" type="button" data-refrescar="rutinas">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="rutinas" aria-label="Refrescar Rutinas">Refrescar</button>
         </header>
         <div id="panel-rutinas" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
@@ -514,7 +514,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-estado">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-estado">Estado</h2>
-          <button class="mini" type="button" data-refrescar="estado">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="estado" aria-label="Refrescar Estado">Refrescar</button>
         </header>
         <div id="panel-estado" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
@@ -529,7 +529,7 @@ export function renderPage(): string {
               Buscar
               <input id="buscar-sesiones" type="search" placeholder="Texto…" autocomplete="off" spellcheck="false" />
             </label>
-            <button class="mini" type="button" data-refrescar="sesiones">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Sesiones">Refrescar</button>
           </div>
         </header>
         <div id="panel-sesiones" class="tarjeta-cuerpo">
@@ -545,7 +545,7 @@ export function renderPage(): string {
               Ámbito
               <select id="ambito-memoria"><option value="">Por defecto</option></select>
             </label>
-            <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="memoria" aria-label="Refrescar Memoria">Refrescar</button>
           </div>
         </header>
         <div id="panel-memoria" class="tarjeta-cuerpo">
@@ -556,7 +556,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-auditoria">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-auditoria">Auditoría</h2>
-          <button class="mini" type="button" data-refrescar="auditoria">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="auditoria" aria-label="Refrescar Auditoría">Refrescar</button>
         </header>
         <div id="panel-auditoria" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
