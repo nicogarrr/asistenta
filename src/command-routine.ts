@@ -213,6 +213,7 @@ export type SpawnLike = typeof spawn;
 export function runCommand(
   spec: Pick<CommandSpec, 'argv' | 'cwd' | 'timeoutMs'>,
   spawnImpl: SpawnLike = spawn,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     const [file, ...args] = spec.argv;
@@ -240,7 +241,16 @@ export function runCommand(
     }
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      // En Windows no hay señales y kill() solo mata al hijo directo: un .bat o
+      // un script que lanza otro programa dejaría nietos vivos. taskkill /T mata
+      // el árbol entero, igual que la herramienta shell.
+      if (platform === 'win32' && child.pid) {
+        try {
+          spawnImpl('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true });
+        } catch {}
+      } else {
+        child.kill('SIGKILL');
+      }
     }, spec.timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
