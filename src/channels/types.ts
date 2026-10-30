@@ -61,6 +61,8 @@ export interface Inbound {
   isGroup?: boolean;
   messageId: string;
   receivedAt: string;
+  /** Cuándo se envió el mensaje según el canal (Telegram: msg.date). Ausente = en vivo. */
+  sentAt?: string;
 }
 
 /**

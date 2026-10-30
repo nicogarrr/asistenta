@@ -14,6 +14,6 @@ describe('la tele como plugin (solo cableado)', () => {
   it('cli.ts ya no lleva el cableado de la tele: lo pide al plugin', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
     expect(cli).not.toMatch(/function tvToolDeps\(/);
-    expect(cli).toMatch(/tvPlugin\.tools\(\{ store \}\)/);
+    expect(cli).toMatch(/tvPlugin\.tools\(\{ store[ ,]/);
   });
 });

@@ -261,7 +261,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
 }
 
 /** La tele como plugin: una tool `tv` por Store. Modos/exclusividad salen del catálogo (core/capabilities.ts). */
-export const tvPlugin: CapabilityPlugin<{ store: Store }> = {
+export const tvPlugin: CapabilityPlugin<{ store: Store; staleOrder?: () => string | null }> = {
   id: 'tv',
-  tools: ({ store }) => [createTvTool(tvToolDeps(store))],
+  tools: ({ store, staleOrder }) => [createTvTool({ ...tvToolDeps(store), staleOrder })],
 };
