@@ -565,6 +565,10 @@ export async function main(argv: string[]): Promise<number> {
       const { auditCommand } = await import('./audit/audit-cli.js');
       return auditCommand(rest);
     }
+    case 'mcp': {
+      const { mcpCommand } = await import('./mcp/serve-cli.js');
+      return mcpCommand(rest);
+    }
     case 'doctor':
       return doctorCommand();
     case 'llm-health':
