@@ -12,7 +12,7 @@ import { allowedBookHost, downloadBook, sniff } from '../src/books/net.js';
 import {
   isSpanish,
   pickFile,
-  resolveArchive,
+  resolveArchiveItem,
   searchArchive,
   searchGutenberg,
   searchOpenLibrary,
@@ -107,14 +107,16 @@ describe('sources', () => {
   });
 
   it('Archive resolve: refuses items not marked public domain', async () => {
-    await expect(resolveArchive('abc', async () => meta('UNKNOWN'))).rejects.toThrow(
+    await expect(resolveArchiveItem('abc', async () => meta('UNKNOWN'))).rejects.toThrow(
       /dominio público/,
     );
-    await expect(resolveArchive('../x', async () => meta('NOT_IN_COPYRIGHT'))).rejects.toThrow();
+    await expect(
+      resolveArchiveItem('../x', async () => meta('NOT_IN_COPYRIGHT')),
+    ).rejects.toThrow();
   });
 
   it('prefers EPUB, then text PDF, then scanned PDF', async () => {
-    const files = await resolveArchive('abc', async () => meta('NOT_IN_COPYRIGHT'));
+    const { files } = await resolveArchiveItem('abc', async () => meta('NOT_IN_COPYRIGHT'));
     expect(files).toHaveLength(3);
     expect(pickFile(files)?.kind).toBe('epub');
     expect(pickFile(files.filter((f) => f.kind === 'pdf'))?.scanned).toBeUndefined();
