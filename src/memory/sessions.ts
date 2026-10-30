@@ -30,6 +30,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { memoryScopesFor } from '../memory.js';
 
 /** One conversation. `endedAt` stays null while the session is still open. */
 export interface Session {
@@ -362,12 +363,9 @@ export class SessionStore {
    */
   #searchFts(needle: string, scope: string | undefined, limit: number): SessionHit[] {
     // `rank` is FTS5's own relevance: best match first, not newest first.
-    const filter = scope === undefined ? '' : ' AND s.scope = ?';
+    const { filter, scopes } = scopeFilter(scope);
     const q = matchQuery(needle);
-    const params: Array<string | number> = [q];
-    if (scope !== undefined) params.push(scope);
-    params.push(q);
-    if (scope !== undefined) params.push(scope);
+    const params: Array<string | number> = [q, ...scopes, q, ...scopes];
     // Limit distinct sessions, not matching turns from a chatty session.
     params.push(limit);
     // The two FTS5 indexes score on different scales (bm25 depends on each index's own
@@ -417,9 +415,8 @@ export class SessionStore {
    */
   #searchLike(needle: string, scope: string | undefined, limit: number): SessionHit[] {
     const like = `%${escapeLike(needle)}%`;
-    const filter = scope === undefined ? '' : ' AND s.scope = ?';
-    const params: Array<string | number> = [like, like, like, like];
-    if (scope !== undefined) params.push(scope);
+    const { filter, scopes } = scopeFilter(scope);
+    const params: Array<string | number> = [like, like, like, like, ...scopes];
     params.push(limit);
     const rows = this.#db
       .prepare(
@@ -443,4 +440,15 @@ export class SessionStore {
       at: Number(r.started_at),
     }));
   }
+}
+
+/**
+ * Filtro por ámbito de la búsqueda: igual que la memoria (#473), desde un hilo se
+ * ve también el chat principal del mismo chat (`<chat>#main`), nunca otro chat.
+ * Desde `#main` o un ámbito sin `#` solo ese ámbito.
+ */
+function scopeFilter(scope: string | undefined): { filter: string; scopes: string[] } {
+  if (scope === undefined) return { filter: '', scopes: [] };
+  const scopes = [...memoryScopesFor(scope).read];
+  return { filter: ` AND s.scope IN (${scopes.map(() => '?').join(', ')})`, scopes };
 }
