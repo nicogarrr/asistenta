@@ -1,6 +1,7 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { log, redact } from '../log.js';
 import { Mutex, withTimeout } from '../utils.js';
+import { stripMarks, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
 
@@ -600,17 +601,39 @@ export class TelegramChannel implements ChannelAdapter {
         reply_markup:
           first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
       });
+      const rich = outbound.format === 'marks';
+      let html = rich;
       const call = (withThread: boolean, withReply: boolean) =>
         this.#throttled(() =>
           withTimeout(
-            this.#bot.api.sendMessage(chatId, chunk, options(withThread, withReply)),
+            this.#bot.api.sendMessage(
+              chatId,
+              html ? telegramHtml(chunk) : rich ? stripMarks(chunk) : chunk,
+              html
+                ? { ...options(withThread, withReply), parse_mode: 'HTML' as const }
+                : options(withThread, withReply),
+            ),
             20_000,
             'sendMessage timed out',
           ),
         );
+      // Negritas reales: si Telegram rechaza el HTML («can't parse entities»), el
+      // mismo trozo sale UNA vez como texto plano en vez de perder la respuesta.
+      const callWithFallback = async (withThread: boolean, withReply: boolean) => {
+        try {
+          return await call(withThread, withReply);
+        } catch (err) {
+          if (!html || !isEntityParseError(err)) throw err;
+          log.warn('telegram rejected the HTML, sending plain text', {
+            error: describeError(err),
+          });
+          html = false;
+          return call(withThread, withReply);
+        }
+      };
       let sent: Awaited<ReturnType<typeof call>>;
       try {
-        sent = await call(true, true);
+        sent = await callWithFallback(true, true);
       } catch (err) {
         // Un reply a un mensaje borrado o un tema cerrado da un 400 permanente. Antes
         // eso perdía la respuesta entera: se reintenta UNA vez sin hilo ni reply, que
@@ -623,7 +646,7 @@ export class TelegramChannel implements ChannelAdapter {
         log.warn('telegram send rejected the thread/reply target, sending without them', {
           error: describeError(err),
         });
-        sent = await call(false, false);
+        sent = await callWithFallback(false, false);
       }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
       first = false;
@@ -1296,6 +1319,17 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
  * Se cuenta en puntos de código, no en unidades UTF-16: cortar a mitad de un emoji deja un
  * surrogate suelto y un carácter de reemplazo en el chat.
  */
+/** Telegram's 400 for markup it cannot parse (HTML parse mode). */
+export function isEntityParseError(err: unknown): boolean {
+  return (
+    err instanceof GrammyError &&
+    err.error_code === 400 &&
+    /parse entities|can't find end|unsupported start tag|unexpected end tag|entity/i.test(
+      err.description,
+    )
+  );
+}
+
 export function chunkText(text: string, size: number): string[] {
   if (Array.from(text).length <= size) return [text];
   const out: string[] = [];

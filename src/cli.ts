@@ -39,7 +39,7 @@ import {
 import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
-import type { ChannelAudio, Inbound } from './channels/types.js';
+import type { ChannelAudio, Inbound, Outbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
@@ -2369,7 +2369,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const say = async (
     inbound: Inbound,
     text: string,
-    opts: { audio?: ChannelAudio; images?: Inbound['images']; quote?: boolean } = {},
+    opts: {
+      audio?: ChannelAudio;
+      images?: Inbound['images'];
+      quote?: boolean;
+      format?: Outbound['format'];
+    } = {},
   ): Promise<string | null> => {
     return telegram
       .send({
@@ -2382,6 +2387,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // belongs to which request.
         replyToMessageId: opts.quote === false ? undefined : inbound.messageId,
         text,
+        format: opts.format,
         images: opts.images,
         audio: opts.audio,
       })
@@ -2403,7 +2409,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    */
   const answer = async (thread: Thread, inbound: Inbound, text: string): Promise<void> => {
     const wantsVoice = voiceOn.get(inbound.chatId) ?? voiceDefault;
-    const cleaned = cleanForTelegram(stripVoicePrefix(text.trim()));
+    // keepMarks: títulos y **negritas** salen en negrita de verdad (HTML escapado,
+    // con texto plano de respaldo si Telegram rechaza el formato).
+    const cleaned = cleanForTelegram(stripVoicePrefix(text.trim()), { keepMarks: true });
     const short = shorten(cleaned);
     let audio: ChannelAudio | undefined;
     if (desktop && wantsVoice && inbound.audioFileId && text.trim()) {
@@ -2419,7 +2427,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         };
       }
     }
-    const id = await say(inbound, short.text, { audio });
+    const id = await say(inbound, short.text, { audio, format: 'marks' });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
     if (short.truncated) {
       log.info('reply shortened', { chars: cleaned.length, thread: thread.name });
@@ -6574,7 +6582,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (!inbound.images?.length && isMoreRequest(inbound.text)) {
             const full = takeFullReply(thread.key);
             if (full) {
-              await say(inbound, full);
+              // Antes salía el markdown crudo del modelo (### y tablas con |).
+              await say(inbound, cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }), {
+                format: 'marks',
+              });
               return;
             }
           }

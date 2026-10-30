@@ -89,6 +89,14 @@ export interface Outbound {
   chatId: string;
   threadId?: string;
   text: string;
+  /**
+   * `'marks'`: `text` keeps the few marks a chat can show (`**negrita**`, `código`,
+   * bloques ```), as produced by `cleanForTelegram(text, { keepMarks: true })`.
+   * Telegram renders them as HTML (fully escaped) and falls back to the same text
+   * without marks if Telegram rejects the formatting; other adapters strip them.
+   * Absent: plain text, sent as is.
+   */
+  format?: 'marks';
   images?: ChannelImage[];
   /**
    * Audio reply. Transports that can send a real voice note (Telegram needs

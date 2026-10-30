@@ -121,7 +121,7 @@ const TABLE_ROW = /^\s*\|.+\|\s*$/;
  * wall of text with no way to tell where it starts. The lines inside are still
  * never rewritten: they are content, not markup.
  */
-export function cleanForTelegram(text: string): string {
+export function cleanForTelegram(text: string, opts: { keepMarks?: boolean } = {}): string {
   text = dropEnglishMonologue(text);
   const out: string[] = [];
   let inFence = false;
@@ -142,7 +142,7 @@ export function cleanForTelegram(text: string): string {
       if (row.length > 0) out.push(row);
       continue;
     }
-    out.push(cleanInline(rawLine));
+    out.push(opts.keepMarks ? keepInlineMarks(rawLine) : cleanInline(rawLine));
   }
   return collapseBlankRuns(out).join('\n').trim();
 }
@@ -191,6 +191,106 @@ function cleanInline(line: string): string {
     .replace(/•/g, '-')
     .replace(/^\s*[-*+]\s+/, '- ')
     .trimEnd();
+}
+
+/**
+ * Like {@link cleanInline}, but the emphasis the chat CAN show survives: a heading
+ * becomes a bold line, `**negrita**` and `código` keep their marks. Only
+ * {@link telegramHtml} reads these marks; {@link stripMarks} removes them.
+ */
+function keepInlineMarks(line: string): string {
+  const heading = HEADER_LINE.test(line);
+  let out = line
+    .replace(HEADER_LINE, '')
+    .replace(/•/g, '-')
+    .replace(/^\s*[-*+]\s+/, '- ')
+    .trimEnd();
+  if (heading) {
+    const words = out.replace(/\*\*/g, '').trim();
+    out = words ? `**${words}**` : '';
+  }
+  return out;
+}
+
+/** Escape the three characters Telegram's HTML parse mode treats as markup. */
+export function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** One prose line: `código` spans first (never bolded inside), then **negrita**. */
+function inlineToHtml(line: string): string {
+  return line
+    .split(/(`[^`\n]+`)/)
+    .map((part, i) => {
+      if (i % 2 === 1) return `<code>${escapeTelegramHtml(part.slice(1, -1))}</code>`;
+      return escapeTelegramHtml(part)
+        .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<b>$1</b>')
+        .replace(/\*\*/g, '');
+    })
+    .join('');
+}
+
+/**
+ * Render the marks kept by `cleanForTelegram(text, { keepMarks: true })` as
+ * Telegram HTML (`parse_mode: 'HTML'`): `**x**` → <b>, `x` → <code>, fenced blocks
+ * → <pre>. EVERYTHING else is escaped, so a `<`, `&` or `>` written by the model or
+ * quoted from a mail can never be read as a tag. A fence left open (a cut chunk) is
+ * closed at the end; a stray `**` is dropped rather than shown.
+ */
+export function telegramHtml(text: string): string {
+  const out: string[] = [];
+  let fence: string[] | null = null;
+  let lang = '';
+  const closeFence = () => {
+    if (!fence) return;
+    const body = escapeTelegramHtml(fence.join('\n'));
+    out.push(
+      lang ? `<pre><code class="language-${lang}">${body}</code></pre>` : `<pre>${body}</pre>`,
+    );
+    fence = null;
+  };
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (FENCE_LINE.test(line)) {
+      if (fence) closeFence();
+      else {
+        fence = [];
+        lang = (
+          line
+            .trim()
+            .replace(/^(?:`+|~+)/, '')
+            .match(/^[\w+-]+/)?.[0] ?? ''
+        ).toLowerCase();
+      }
+      continue;
+    }
+    if (fence) fence.push(line);
+    else out.push(inlineToHtml(line));
+  }
+  closeFence();
+  return out.join('\n');
+}
+
+/**
+ * The same text with the kept marks removed: what the chat shows when Telegram
+ * refuses the HTML. Fences stay (Telegram shows them as they are, and they mark
+ * where code starts); `**` and inline backticks go, exactly like `cleanForTelegram`.
+ */
+export function stripMarks(text: string): string {
+  let inFence = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (FENCE_LINE.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\*\*/g, '');
+    })
+    .join('\n');
 }
 
 /** A fenced block, opened with ``` or ~~~, anywhere in the reply. */
