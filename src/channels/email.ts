@@ -82,7 +82,17 @@ export interface AcceptedMail {
 export interface RejectedMail {
   ok: false;
   reason: string;
+  /**
+   * Solo cuando el remitente YA está verificado (lista + dkim=pass) y el correo
+   * se descarta por tamaño: a quién avisar en el mismo hilo. A un remitente sin
+   * verificar nunca se le contesta (sería rebote a una dirección falsificada).
+   */
+  notify?: AcceptedMail;
 }
+
+/** Aviso al remitente verificado cuyo correo se ha descartado por tamaño. */
+export const EMAIL_TOO_BIG_TEXT =
+  'Tu correo pesa más de 5 MB (seguramente por un adjunto) y no lo he leído. Mándame la petición en un correo sin adjuntos grandes, o compárteme un enlace al fichero.';
 
 /** Cabeceras desplegadas (lineas de continuacion unidas), en orden. */
 export function parseHeaders(raw: string): Array<{ name: string; value: string }> {
@@ -170,13 +180,19 @@ export function verifyCommandMail(
   if (!dkimPassFor(hs, domain, cfg.authserv)) {
     return { ok: false, reason: `sin dkim=pass de ${cfg.authserv} para ${domain}` };
   }
-  if (mail.size > EMAIL_MAX_BYTES) return { ok: false, reason: 'correo de más de 5 MB' };
-  const text = stripQuoted(mail.text).slice(0, MAX_TEXT);
-  if (!text) return { ok: false, reason: 'correo sin texto' };
   const mid = header(hs, 'message-id');
   const messageId =
     mid.length === 1 && ids(mid[0] ?? '').length === 1 ? (ids(mid[0] ?? '')[0] ?? null) : null;
   const references = [...new Set(ids(header(hs, 'references').join(' ')))].slice(-20);
+  if (mail.size > EMAIL_MAX_BYTES) {
+    return {
+      ok: false,
+      reason: 'correo de más de 5 MB',
+      notify: { ok: true, from, subject, text: '', messageId, references },
+    };
+  }
+  const text = stripQuoted(mail.text).slice(0, MAX_TEXT);
+  if (!text) return { ok: false, reason: 'correo sin texto' };
   return { ok: true, from, subject, text, messageId, references };
 }
 
@@ -193,13 +209,45 @@ export function replyRequest(to: AcceptedMail, text: string): SendRequest {
   };
 }
 
+export type EmailAuditEvent = {
+  uid: string;
+  accepted: boolean;
+  reason?: string;
+  /** Correo descartado por tamaño: si el aviso al remitente verificado salió. */
+  notified?: boolean;
+};
+
+/**
+ * Lo ignorado va al registro de auditoría (`pa auditoria`), no solo al log:
+ * es la única huella de que alguien intentó mandar órdenes por correo.
+ */
+export function emailAuditRecord(e: EmailAuditEvent): {
+  actor: string;
+  action: string;
+  target: string;
+  result: 'blocked';
+  detail: string;
+} {
+  const detail = e.reason ?? 'ignorado';
+  return {
+    actor: EMAIL_CHANNEL,
+    action: 'correo.ignorado',
+    target: `uid:${e.uid}`,
+    result: 'blocked',
+    detail:
+      e.notified === undefined
+        ? detail
+        : `${detail}; aviso al remitente ${e.notified ? 'enviado' : 'NO enviado'}`,
+  };
+}
+
 export interface EmailChannelDeps {
   config: EmailChannelConfig;
   /** Correos nuevos desde la ultima llamada (el buzon recuerda su cursor). */
   poll(): Promise<RawCommandMail[]>;
   send(req: SendRequest): Promise<SendResult>;
   /** Registro de auditoria de lo ignorado. */
-  audit(event: { uid: string; accepted: boolean; reason?: string }): void;
+  audit(event: EmailAuditEvent): void;
   intervalMs?: number;
   now?: () => Date;
 }
@@ -242,7 +290,14 @@ export class EmailChannel implements ChannelAdapter {
       for (const raw of await this.#deps.poll()) {
         const v = verifyCommandMail(raw, this.#deps.config);
         if (!v.ok) {
-          this.#deps.audit({ uid: raw.uid, accepted: false, reason: v.reason });
+          if (v.notify) {
+            const r = await this.#deps
+              .send(replyRequest(v.notify, EMAIL_TOO_BIG_TEXT))
+              .catch(() => ({ ok: false }) as SendResult);
+            this.#deps.audit({ uid: raw.uid, accepted: false, reason: v.reason, notified: r.ok });
+          } else {
+            this.#deps.audit({ uid: raw.uid, accepted: false, reason: v.reason });
+          }
           continue;
         }
         this.#deps.audit({ uid: raw.uid, accepted: true });

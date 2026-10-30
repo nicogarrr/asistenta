@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import type { ReadMailAccount } from '../mail/idle.js';
 import type { MailAccount, SendRequest, SendResult } from '../mail/types.js';
 import {
+  type EmailAuditEvent,
   EmailChannel,
   emailChannelConfig,
   emailChannelEnabled,
@@ -21,7 +22,7 @@ export interface EmailSetupDeps {
   loadSend(): Promise<MailAccount | null>;
   send(account: MailAccount, req: SendRequest): Promise<SendResult>;
   poll(account: ReadMailAccount, cursorFile: string): Promise<RawCommandMail[]>;
-  audit(event: { uid: string; accepted: boolean; reason?: string }): void;
+  audit(event: EmailAuditEvent): void;
 }
 
 export async function setupEmailChannel(

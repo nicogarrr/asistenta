@@ -18,3 +18,5 @@ Lo demás se ignora y queda en la auditoría con el motivo. Se quita la cita del
 Las aprobaciones nunca van por correo: llegan por Telegram y el correo solo lo avisa. Un turno de correo cuenta como contenido externo para la puerta de permisos (fuente «correo»).
 
 Requiere las cuentas de lectura (`mailRead:*`) y envío (`mailSend:*`) del vault. El daemon revisa el buzón cada minuto, en solo lectura, y solo lo llegado después de activarlo (cursor en `<estado>/correo-canal.json`). Sin lista o sin cuentas no arranca y lo dice en el log.
+
+Lo que se ignora (sin etiqueta, remitente fuera de la lista, sin dkim=pass, sin texto, más de 5 MB) queda en `pa auditoria` como `correo.ignorado` con el motivo. Si un remitente ya verificado manda más de 5 MB, recibe en el mismo hilo un aviso de que no se ha leído; a un remitente sin verificar nunca se le contesta.
