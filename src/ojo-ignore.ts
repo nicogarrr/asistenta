@@ -140,15 +140,19 @@ export function confirmNotices(db: DatabaseSync, ns: readonly number[]): void {
 
 /**
  * Envío fallido: se sueltan las reservas y los números no se gastan (el siguiente intento
- * reutiliza los mismos). Solo es seguro porque el barrido está serializado.
+ * reutiliza los mismos). Solo es seguro porque el barrido está serializado: los números
+ * soltados son los últimos asignados. La secuencia vuelve justo antes del menor de ellos,
+ * nunca más abajo: un número gastado antes (una reserva huérfana que quizá salió, un
+ * aviso enviado o descartado) no se vuelve a dar.
  */
 export function releaseNotices(db: DatabaseSync, ns: readonly number[]): void {
   if (ns.length === 0) return;
   const del = db.prepare("DELETE FROM vigilante_notices WHERE n = ? AND status = 'reservado'");
   for (const n of ns) del.run(n);
+  const floor = Math.min(...ns) - 1;
   db.prepare(
-    "UPDATE sqlite_sequence SET seq = max((SELECT COALESCE(MAX(n), 0) FROM vigilante_notices), (SELECT COALESCE(MAX(n), 0) FROM vigilante_dismissals)) WHERE name = 'vigilante_notices'",
-  ).run();
+    "UPDATE sqlite_sequence SET seq = min(seq, max(?, (SELECT COALESCE(MAX(n), 0) FROM vigilante_notices), (SELECT COALESCE(MAX(n), 0) FROM vigilante_dismissals))) WHERE name = 'vigilante_notices'",
+  ).run(floor);
 }
 
 /**
