@@ -46,7 +46,7 @@ export interface DailyBriefingDeps {
    * PA_BRIEFING_VOZ=1: manda además el resumen como nota de voz, después del texto y
    * sin esperarla. Solo se llama si el texto salió bien.
    */
-  speak?: (chatId: string, text: string) => Promise<void>;
+  speak?: (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
   /** Objetivos activos o bloqueados del dueño. */
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
   /** Vigilancias de precio activas del dueño. */
@@ -160,9 +160,58 @@ let inFlight = false;
  */
 function speakAfterText(deps: DailyBriefingDeps, chatId: string, text: string): void {
   if (!deps.speak) return;
+  const ctl = new AbortController();
+  let set = pendingVoice.get(chatId);
+  if (!set) {
+    set = new Set();
+    pendingVoice.set(chatId, set);
+  }
+  set.add(ctl);
   void Promise.resolve()
-    .then(() => deps.speak?.(chatId, text))
-    .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }));
+    .then(() => deps.speak?.(chatId, text, ctl.signal))
+    .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }))
+    .finally(() => {
+      const s = pendingVoice.get(chatId);
+      s?.delete(ctl);
+      if (s && s.size === 0) pendingVoice.delete(chatId);
+    });
+}
+
+/** Notas de voz del resumen que aún se están preparando, por chat. */
+const pendingVoice = new Map<string, Set<AbortController>>();
+
+/**
+ * /stop: la nota de voz del resumen tarda unos segundos en sintetizarse y llegaba
+ * después de «Detenido.». Esto la cancela si aún no ha salido. Devuelve cuántas paró.
+ */
+export function stopBriefingVoice(chatId: string): number {
+  const set = pendingVoice.get(chatId);
+  if (!set) return 0;
+  let n = 0;
+  for (const ctl of set) {
+    if (!ctl.signal.aborted) {
+      ctl.abort();
+      n++;
+    }
+  }
+  pendingVoice.delete(chatId);
+  return n;
+}
+
+/**
+ * La voz del resumen (PA_BRIEFING_VOZ): sintetiza y manda la nota, salvo que /stop
+ * la haya cancelado mientras se sintetizaba.
+ */
+export function briefingSpeaker<A>(opts: {
+  synth: (text: string) => Promise<A | null | undefined>;
+  send: (chatId: string, audio: A) => Promise<unknown>;
+}): (chatId: string, text: string, signal?: AbortSignal) => Promise<void> {
+  return async (chatId, text, signal) => {
+    if (signal?.aborted) return;
+    const audio = await opts.synth(text);
+    if (!audio || signal?.aborted) return;
+    await opts.send(chatId, audio);
+  };
 }
 
 /**

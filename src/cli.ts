@@ -264,12 +264,14 @@ import { SecretLibrary } from './books/secret.js';
 import {
   agendaTodayLines,
   answerBriefingOnDemand,
+  briefingSpeaker,
   type DailyBriefingDeps,
   fetchWeatherLine,
   followupsDue,
   pickImportantMail,
   scheduledForToday,
   startDailyBriefingTimer,
+  stopBriefingVoice,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 
@@ -4410,26 +4412,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     speak:
       process.env.PA_BRIEFING_VOZ === '1' && desktop
-        ? async (chatId, text) => {
-            const spoken = await speakWithin(
-              tts,
-              trimForSpeech(text),
-              REPLY_TTS_BUDGET_MS,
-              (reason) => log.warn('briefing: sin voz', { reason }),
-            );
-            if (!spoken) return;
-            await telegram.send({
-              channel: 'telegram',
-              account: telegram.account,
-              chatId,
-              text: '🔊 Resumen de hoy',
-              audio: {
-                mimeType: spoken.mimeType,
-                data: spoken.data.toString('base64'),
-                durationSeconds: spoken.durationSeconds,
-              },
-            });
-          }
+        ? briefingSpeaker({
+            synth: (text) =>
+              speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+                log.warn('briefing: sin voz', { reason }),
+              ),
+            send: (chatId, spoken) =>
+              telegram.send({
+                channel: 'telegram',
+                account: telegram.account,
+                chatId,
+                text: '🔊 Resumen de hoy',
+                audio: {
+                  mimeType: spoken.mimeType,
+                  data: spoken.data.toString('base64'),
+                  durationSeconds: spoken.durationSeconds,
+                },
+              }),
+          })
         : undefined,
     goals: () => {
       const owner = briefingOwner();
@@ -5519,7 +5519,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sessionChatKey,
         speech: activeSpeech,
         playback: sessionPlayback,
-      });
+      }) +
+      stopBriefingVoice(inbound.chatId);
     log.info('stop requested', {
       chatId: inbound.chatId,
       wasActive,
