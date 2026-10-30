@@ -117,6 +117,8 @@ export interface MediaToolDeps {
     hits?: () => number;
     /** Para ESTA nota en la tele (cierra el navegador/Glasshouse solo si lo abrió este cast). */
     stop?: () => Promise<unknown>;
+    /** Cierra ya el servidor LAN de esta nota y borra la copia. */
+    close?: () => void;
   }>;
   /**
    * La tele aceptó el audio: quien lleva /stop apunta el «parar» de este cast para que
@@ -218,7 +220,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
     ].join('\n'),
     parameters: Params,
     executionMode: 'sequential',
-    execute: async (_id, args) => {
+    execute: async (_id, args, signal) => {
       switch (args.action) {
         case 'play':
           return playReceived(
@@ -226,6 +228,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
             clamp(args.volume, 100, 0, 100),
             args.target ?? 'pc',
             Math.max(1, Math.floor(args.which ?? 1)),
+            signal,
           );
 
         case 'list_audio':
@@ -318,6 +321,9 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
   };
 }
 
+/** Respuesta cuando /stop corta «reprodúcelo en la tele». */
+const TELE_STOPPED = 'Parado: no lo he dejado sonar en la tele.';
+
 /**
  * Download, convert and play the audio the user last sent.
  *
@@ -334,6 +340,7 @@ async function playReceived(
   volume: number,
   target: 'pc' | 'tele' = 'pc',
   which = 1,
+  signal?: AbortSignal,
 ) {
   if (target === 'tele' && !deps.castToTv) {
     return ok(
@@ -371,10 +378,23 @@ async function playReceived(
   try {
     playable = await toPlayableAudio(bytes, audio.mimeType);
     if (target === 'tele' && deps.castToTv) {
+      // /stop antes de mandarlo: no se manda (la copia la borra el finally).
+      if (signal?.aborted) return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
       // El fichero pasa a la tele: castToTv lo borra cuando la tele ya lo ha bajado.
       const file = playable;
       playable = null;
       const res = await deps.castToTv(file);
+      if (res.ok && signal?.aborted) {
+        // /stop llegó mientras la tele abría el audio (conectar tarda segundos): antes
+        // se apuntaba el «parar» DESPUÉS de que /stop ya hubiera mirado, y la nota sonaba
+        // igual con su servidor abierto hasta 10 min. Se para ya y se cierra el servidor.
+        const { stop, close } = res;
+        void Promise.resolve()
+          .then(() => stop?.())
+          .catch((err) => log.warn('media: no pude parar la nota en la tele', { err }))
+          .finally(() => close?.());
+        return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
+      }
       if (res.ok) {
         watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
         deps.onTeleCast?.(res.stop);
