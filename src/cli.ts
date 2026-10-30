@@ -3980,12 +3980,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         silence.action === 'silenciar'
           ? pageWatches.mute(inbound.chatId, silence.id, PAGE_MUTE_MS)
           : pageWatches.unmute(inbound.chatId, silence.id);
-      const text = !w
-        ? 'No encuentro esa vigilancia en este chat. Mira /vigilando.'
-        : silence.action === 'silenciar'
-          ? `🔕 Silenciada 1 día: ${w.label || w.url}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`
-          : `🔔 Vuelvo a avisarte de ${w.label || w.url}.`;
-      return void (await say(inbound, text, { quote: true }));
+      const reply = vigilaSilenceReply(silence.action, w);
+      return void (await say(inbound, reply.text, {
+        quote: true,
+        ...(reply.buttons.length ? { buttons: reply.buttons } : {}),
+      }));
     }
     let parsed: ReturnType<typeof parseVigilaArgs>;
     try {
@@ -7543,6 +7542,25 @@ export function vigilaSilenceArgs(
   const m = /^(silenciar|avisar) ([A-Za-z0-9_-]{1,40})$/.exec(raw.trim());
   if (!m?.[1] || !m[2]) return null;
   return { action: m[1] as 'silenciar' | 'avisar', id: m[2] };
+}
+
+/**
+ * Respuesta a `/vigila silenciar|avisar <id>`. Tras silenciar lleva «🔔 Avisar otra vez»
+ * (= `/vigila avisar <id>`): solo deshace el silencio, no borra nada.
+ */
+export function vigilaSilenceReply(
+  action: 'silenciar' | 'avisar',
+  w: { id: string; label: string; url: string; mutedUntil: number } | null | undefined,
+): { text: string; buttons: Array<{ label: string; action: string }> } {
+  if (!w)
+    return { text: 'No encuentro esa vigilancia en este chat. Mira /vigilando.', buttons: [] };
+  const name = w.label || w.url;
+  if (action === 'avisar') return { text: `🔔 Vuelvo a avisarte de ${name}.`, buttons: [] };
+  const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
+  return {
+    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`,
+    buttons: again ? [again] : [],
+  };
 }
 
 const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);

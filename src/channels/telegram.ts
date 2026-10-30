@@ -1591,7 +1591,7 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['dejar_de_vigilar', new Set([''])],
   // «👀 Vigilar» de /compara: el arg es un id corto en memoria, nunca el enlace.
   // «🔕 Silenciar 1 día» en un aviso de precio: calla la página 24 h, no borra nada.
-  ['vigila', new Set(['enlace', 'silenciar'])],
+  ['vigila', new Set(['enlace', 'silenciar', 'avisar'])],
   // Solo lectura: enseña la ficha de precio de una página vigilada.
   ['precio', new Set([''])],
   // Botones de un recordatorio que acaba de avisar: no borran nada (+1h crea otro).
