@@ -332,7 +332,7 @@ export function scheduledForToday(
   for (const { r, at } of today) {
     if (isReminder(r))
       out.reminders.push({
-        text: reminderText({ name: r.name, prompt: r.prompt ?? undefined }),
+        text: reminderText({ name: r.name, prompt: r.prompt ?? null }),
         at: hhmm(at, timeZone),
       });
     else out.routines.push({ name: r.name, nextRun: hhmm(at, timeZone) });
