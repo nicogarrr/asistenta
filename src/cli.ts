@@ -511,6 +511,7 @@ import {
 } from './daemon/gate.js';
 import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
+import { summarizeTranscript } from './daemon/transcript-summary.js';
 import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
 
@@ -529,6 +530,7 @@ export {
 export { approvalsDbPath, createDaemonGate, type DaemonGateOptions } from './daemon/gate.js';
 export { formatSessionHits } from './daemon/session-hits.js';
 export { trimForSpeech } from './daemon/speech-text.js';
+export { summarizeTranscript } from './daemon/transcript-summary.js';
 
 /** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
 const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
@@ -7757,49 +7759,6 @@ function summarizeToolUse(summary: string): string {
   // `redact` blanks any value that looks like a secret whatever the key is called,
   // so passing the summary under a neutral key still gets it scrubbed.
   return redact({ detail }).detail as string;
-}
-
-/**
- * Flatten a transcript into text for the /learn summariser.
- *
- * Only the turns that describe actions: tool names and the model's own words. The
- * user's messages are included because "haz la compra" is the intent the steps have
- * to serve, but the tool *arguments* are not, because a typed password would be
- * written into a routine that lives in the database forever.
- */
-export function summarizeTranscript(messages: readonly unknown[]): string {
-  const lines: string[] = [];
-  for (const message of messages) {
-    const m = message as {
-      role?: string;
-      content?: unknown;
-      toolName?: string;
-    };
-    if (!m || typeof m !== 'object') continue;
-    if (m.role === 'user') {
-      const text = textOf(m.content);
-      if (text) lines.push(`usuario: ${text.slice(0, 300)}`);
-    } else if (m.role === 'assistant') {
-      const text = textOf(m.content);
-      if (text) lines.push(`agente: ${text.slice(0, 300)}`);
-    } else if (m.role === 'toolResult' || m.toolName) {
-      const name = (m as { toolName?: string }).toolName;
-      if (name) lines.push(`herramienta: ${name}`);
-    }
-  }
-  return lines.slice(-80).join('\n') || '(no hubo actividad)';
-}
-
-function textOf(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((b): b is { type: string; text: string } => {
-      const block = b as { type?: unknown; text?: unknown };
-      return block?.type === 'text' && typeof block.text === 'string';
-    })
-    .map((b) => b.text)
-    .join(' ');
 }
 
 /**
