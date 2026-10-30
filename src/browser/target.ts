@@ -139,10 +139,16 @@ async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
  * targets that look like money so ordinary clicks stay cheap.
  */
 export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string> {
+  // page.evaluate takes no timeout: a page busy in a long script (or a hung
+  // renderer) would otherwise hold the payment confirmation forever. The
+  // summary is optional context, so a slow page just gives ''.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const lines = await page.evaluate(() => {
+    const read = page.evaluate(() => {
+      // Same currencies the target check marks (symbol or ISO code), so a
+      // «Total: $49.99» or «USD 49.99» line is shown, not only euros.
       const re =
-        /(€|\beur\b|total|subtotal|env[ií]o|entrega|direcci[oó]n|calle|avenida|plaza|c\/)/i;
+        /(€|\$|£|\b(eur|usd|gbp|chf)\b|total|subtotal|env[ií]o|entrega|direcci[oó]n|calle|avenida|plaza|c\/)/i;
       const seen = new Set<string>();
       const out: string[] = [];
       for (const raw of document.body.innerText.split('\n')) {
@@ -154,10 +160,18 @@ export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string
       }
       return out;
     });
-    void timeoutMs;
-    return lines.join('\n');
+    read.catch(() => {});
+    const lines = await Promise.race([
+      read,
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), timeoutMs);
+      }),
+    ]);
+    return lines ? lines.join('\n') : '';
   } catch {
     return '';
+  } finally {
+    clearTimeout(timer);
   }
 }
 
