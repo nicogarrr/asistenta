@@ -225,7 +225,7 @@ import {
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 
-import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
+import { cacheFullReply, isMoreRequest, moreButton, takeFullReply } from './channels/telegram.js';
 import { helpText, startText } from './channels/telegram-help.js';
 import {
   approvalCode,
@@ -2437,6 +2437,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       images?: Inbound['images'];
       quote?: boolean;
       format?: Outbound['format'];
+      buttons?: Outbound['buttons'];
     } = {},
   ): Promise<string | null> => {
     return telegram
@@ -2453,6 +2454,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         format: opts.format,
         images: opts.images,
         audio: opts.audio,
+        buttons: opts.buttons,
       })
       .catch((err: unknown) => {
         log.warn('send failed', { err });
@@ -2495,7 +2497,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // agente; ahora una respuesta entera borra la copia de la anterior.
     if (short.truncated && text.trim()) cacheFullReply(thread.key, text.trim());
     else takeFullReply(thread.key);
-    const id = await say(inbound, short.text, { audio, format: 'marks' });
+    // Recortada: botón «📖 Ver todo» (además de poder escribir «más»).
+    const buttons =
+      short.truncated && text.trim()
+        ? [moreButton(thread.key, inbound.chatId, inbound.threadId)]
+        : undefined;
+    const id = await say(inbound, short.text, { audio, format: 'marks', buttons });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
     if (short.truncated) {
       log.info('reply shortened', { chars: cleaned.length, thread: thread.name });
