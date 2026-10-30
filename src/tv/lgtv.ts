@@ -55,6 +55,15 @@ function envMs(name: string, fallback: number, min: number, max: number): number
 }
 
 /**
+ * Espera de respuesta de una orden (tvRequest: toast, apagar, volumen, apps…):
+ * deps.commandTimeoutMs > PA_TV_CMD_TIMEOUT_MS (2000–60000) > 10 s. Basura o
+ * vacío → 10 s, igual que siempre.
+ */
+export function tvCommandTimeoutMs(): number {
+  return envMs('PA_TV_CMD_TIMEOUT_MS', CMD_TIMEOUT_MS, 2_000, 60_000);
+}
+
+/**
  * Esperas efectivas de tvKey: deps > PA_TV_KEY_TIMEOUT_MS / PA_TV_KEY_GRACE_MS
  * > 5000/800. Acotadas (timeout 1–30 s, margen 50 ms–5 s) para que un valor
  * absurdo no deje la orden colgada ni la cierre antes de que la tele la lea.
@@ -466,7 +475,7 @@ export async function tvRequest(
     { allowPlaintext: deps.allowPlaintext ?? false },
     deps,
   );
-  const cmdTimeout = deps.commandTimeoutMs ?? CMD_TIMEOUT_MS;
+  const cmdTimeout = deps.commandTimeoutMs ?? tvCommandTimeoutMs();
   try {
     await register(opened.ws, clientKey, cmdTimeout);
     const id = `cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
