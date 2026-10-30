@@ -27,6 +27,11 @@ export function attentionFreeConfig(config: Config): boolean {
   );
 }
 
+/** The model id that will actually be sent is one of the free route's. */
+function isFreeModelId(config: Config, id: string): boolean {
+  return id.length > 0 && id.endsWith(config.provider === 'opencode-local' ? '-free' : ':free');
+}
+
 export function createAttentionJudge(config: Config) {
   return async (
     stage: 'screen' | 'review',
@@ -36,7 +41,12 @@ export function createAttentionJudge(config: Config) {
     if (!attentionFreeConfig(config)) throw new Error('Filtro requiere ruta gratuita existente.');
     // Secondary configured free model for screening when available; otherwise same model,
     // low effort vs configured effort. No claim of a smaller model without evidence.
-    const selected = stage === 'screen' ? (config.fallbackModel ?? config.model) : config.model;
+    // `||`, not `??`: an empty fallback ('') passes the free check above (it
+    // is falsy) but is not a model; with `??` it was sent as the model id and
+    // the provider picked whatever its default is - possibly a paid one.
+    const selected = stage === 'screen' ? config.fallbackModel || config.model : config.model;
+    if (!isFreeModelId(config, selected))
+      throw new Error('Filtro requiere ruta gratuita existente.');
     const handle = await createProviderHandle({
       ...config,
       model: selected,
