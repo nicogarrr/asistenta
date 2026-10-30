@@ -206,12 +206,17 @@ function readRefusal(stderr: string): string | null {
   return null;
 }
 
-/** The first line PowerShell printed that is not its own "at line N character 1" furniture. */
-function firstRealLine(stderr: string): string | null {
+/**
+ * The first line PowerShell printed that is not its own furniture: "At line N char M",
+ * the quoted script line and its `~~~` marker (both start with `+`), and the
+ * CategoryInfo / FullyQualifiedErrorId block. A parse error prints the message only
+ * AFTER the quoted line, which used to come back as the reason («+ $bmp = …»).
+ */
+export function firstRealLine(stderr: string): string | null {
   for (const raw of stderr.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
-    if (/^(En l[ií]nea|At line|\+ CategoryInfo|\s*\+ FullyQualifiedErrorId)/i.test(line)) continue;
+    if (/^(En l[ií]nea|At line|\+|~+$)/i.test(line)) continue;
     return line;
   }
   return null;
