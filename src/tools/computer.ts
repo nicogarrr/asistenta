@@ -420,6 +420,25 @@ export function createComputerTool(
   // NOT change it: a crop keeps the capture's scale, so the model's roi-relative
   // coordinates share this space already (see `captureRoi`).
   let view: { width: number; height: number } | null = null;
+  /**
+   * The physical desktop size `view` was measured against. Coordinates the model
+   * reads off a screenshot only map back to the screen that screenshot was taken
+   * of: after a resolution, scaling or primary-monitor change (docking a laptop,
+   * a TV taking over as display) the same image pixel lands somewhere else.
+   */
+  let viewNative: { width: number; height: number } | null = null;
+
+  /** Refuse to map coordinates from a screenshot of a desktop that no longer exists. */
+  const assertSameDesktop = (native: { width: number; height: number }): void => {
+    if (!view || !viewNative) return;
+    if (viewNative.width === native.width && viewNative.height === native.height) return;
+    throw new Error(
+      `the desktop changed from ${viewNative.width}x${viewNative.height} to ` +
+        `${native.width}x${native.height} since your last screenshot (resolution, scaling or ` +
+        'monitor): take a new screenshot before using coordinates. ' +
+        'La pantalla ha cambiado desde la última captura: haz una captura nueva.',
+    );
+  };
 
   /**
    * Verify that an action changed something, by diffing the screen before and after.
@@ -519,6 +538,7 @@ export function createComputerTool(
               width: Math.max(1, Math.round(native.width * scale)),
               height: Math.max(1, Math.round(native.height * scale)),
             };
+            viewNative = { width: native.width, height: native.height };
           }
           log.debug('screenshot roi', {
             ...cropped,
@@ -561,6 +581,7 @@ export function createComputerTool(
         }
         const shot: Screenshot = await backend.screenshot();
         view = { width: shot.width, height: shot.height };
+        viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
         const sent = record.send
@@ -595,6 +616,7 @@ export function createComputerTool(
 
       case 'click': {
         const native = await backend.screenSize();
+        assertSameDesktop(native);
         const roi = parseRegionField(record.roi, 'roi');
         const button = String(record.button ?? 'left');
         const clicks = Number(record.clicks ?? 1);
@@ -660,6 +682,7 @@ export function createComputerTool(
 
       case 'move': {
         const native = await backend.screenSize();
+        assertSameDesktop(native);
         const p = coords(record, view ?? native, native);
         // A move is an observation, not an action. Verifying it would cost two
         // screenshots to learn that a hover sometimes does nothing, which is both
@@ -674,6 +697,7 @@ export function createComputerTool(
 
       case 'drag': {
         const native = await backend.screenSize();
+        assertSameDesktop(native);
         const from = coords(record, view ?? native, native);
         const to = coords({ x: record.toX, y: record.toY }, view ?? native, native);
         const check = await act(() => backend.drag(from.x, from.y, to.x, to.y));
