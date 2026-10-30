@@ -1572,6 +1572,8 @@ export const STALE_BUTTON = 'Este botón ya no sirve. Escribe la orden a mano.';
  */
 const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['dejar_de_vigilar', new Set([''])],
+  // Solo lectura: enseña la ficha de precio de una página vigilada.
+  ['precio', new Set([''])],
   ['cron', new Set(['pausa', 'reanudar'])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;

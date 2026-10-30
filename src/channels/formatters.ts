@@ -319,6 +319,17 @@ export function marksWithTitles(text: string, isTitle: (line: string) => boolean
 }
 
 /**
+ * Ficha de un solo elemento (/precio, /compara): la primera línea es su nombre y va en
+ * negrita; todo lo demás (y el propio nombre, que lo puso el usuario o la tienda) se
+ * escapa, así que un `**` o un acento grave nunca formatean.
+ */
+export function marksCardTitle(text: string): string {
+  const [first = '', ...rest] = text.split('\n');
+  const title = escapeMarks(first).trim();
+  return [title ? `**${title}**` : first, ...rest.map(escapeMarks)].join('\n');
+}
+
+/**
  * Cabeceras de /estado (formatStatus): la primera línea «Asistenta <versión> …
  * encendida desde hace …» y «Esta conversación:». Las líneas de herramientas, log y
  * errores recientes no son títulos (un error puede empezar por cualquier cosa).
