@@ -46,7 +46,7 @@
  *   write is worse than no memory at all. So the writers return a SaveResult
  *   and only `ok: true` once the bytes are verified on disk.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from '../log.js';
 
@@ -355,9 +355,19 @@ export class MemorySnapshot {
     mkdirSync(this.dir, { recursive: true });
     const path = this.#path();
     const content = SPEC.template + body;
-    writeFileSync(path, content, 'utf8');
-    if (readFileSync(path, 'utf8') !== content) {
-      throw new Error('memory snapshot write verification did not match');
+    // tmp + verificación + rename: una escritura truncada (disco lleno, cuota) o un
+    // corte a medias deja el PERFIL.md anterior intacto. Antes se escribía encima y
+    // el error llegaba con el perfil ya destrozado.
+    const tmp = `${path}.tmp`;
+    try {
+      writeFileSync(tmp, content, 'utf8');
+      if (readFileSync(tmp, 'utf8') !== content) {
+        throw new Error('memory snapshot write verification did not match');
+      }
+      renameSync(tmp, path);
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
     }
   }
 }
