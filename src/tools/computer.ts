@@ -226,6 +226,14 @@ const ComputerParams = Type.Object({
         'context.',
     }),
   ),
+  look: Type.Optional(
+    Type.Boolean({
+      description:
+        'For click, move, drag, type, key and batch: also return a screenshot of the screen ' +
+        'after the action, so you can check the result and find the next target in the same ' +
+        'call instead of a separate screenshot. Its coordinates are what the next click uses.',
+    }),
+  ),
   actions: Type.Optional(
     Type.Array(Type.Record(Type.String(), Type.Unknown()), {
       description: 'For the batch action: the actions to run in order, each like a single action.',
@@ -459,6 +467,39 @@ export function createComputerTool(
    * a TV taking over as display) the same image pixel lands somewhere else.
    */
   let viewNative: { width: number; height: number } | null = null;
+  /** The post-action frame `verify` captured last, reused by `look` instead of a new capture. */
+  let lastAfter: Screenshot | null = null;
+
+  /**
+   * `look: true`: the screen after the action, as the same image a `screenshot`
+   * action returns, so the model checks the result and picks its next target in
+   * the SAME tool call instead of paying another round trip for a screenshot. The
+   * verification frame is reused when there is one (it is captured at exactly the
+   * model's size); otherwise one capture after the settle delay. It also becomes
+   * the coordinate space for the next click, like any screenshot.
+   */
+  const lookAfter = async (): Promise<ContentBlock[]> => {
+    let shot = lastAfter;
+    if (!shot) {
+      await sleep(config.verifySettleMs);
+      try {
+        shot = await backend.screenshot();
+      } catch (err) {
+        return [
+          { type: 'text', text: `No he podido capturar la pantalla después (${errorText(err)}).` },
+        ];
+      }
+    }
+    view = { width: shot.width, height: shot.height };
+    viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
+    return [
+      {
+        type: 'text',
+        text: `Screenshot after the action: ${shot.width}x${shot.height}. Origin top-left.`,
+      },
+      { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
+    ];
+  };
 
   /** Refuse to map coordinates from a screenshot of a desktop that no longer exists. */
   const assertSameDesktop = (native: { width: number; height: number }): void => {
@@ -517,7 +558,9 @@ export function createComputerTool(
     await sleep(config.verifySettleMs);
     let after: Buffer;
     try {
-      after = (await backend.screenshot()).image;
+      const shot = await backend.screenshot();
+      lastAfter = shot;
+      after = shot.image;
     } catch (err) {
       log.warn('verification post-action capture failed', { err });
       return notCompared(`la captura posterior ha fallado (${errorText(err)})`);
@@ -919,6 +962,7 @@ export function createComputerTool(
       // where most of the saved latency lives (see `verify`).
       await sleep(config.verifySettleMs);
       const after = await backend.screenshot();
+      lastAfter = after;
       // Each pair shares the two frames and differs in the window it checks: a
       // click's window is the 96x96 box around its point (radius 48, matching a
       // standalone click), an untargeted action counts anywhere.
@@ -973,6 +1017,7 @@ export function createComputerTool(
       'the screen really changed (once for a whole batch). If it says it did not, do not',
       'repeat the action: take a fresh screenshot and locate the element again, because the',
       'coordinates were wrong.',
+      'Add look: true to an action or batch to get the screen after it in the same call.',
     ].join(' '),
     parameters: ComputerParams,
     // Sequential on purpose: two input actions in one batch can interleave and fight
@@ -981,13 +1026,20 @@ export function createComputerTool(
     executionMode: 'sequential',
     execute: async (_id, args, signal) => {
       const record = args as unknown as Record<string, unknown>;
-      if (args.action === 'batch') return runBatch(record, signal);
+      lastAfter = null;
+      const wantsLook = record.look === true && args.action !== 'screenshot';
+      if (args.action === 'batch') {
+        const out = await runBatch(record, signal);
+        if (!wantsLook) return out;
+        return { ...out, content: [...out.content, ...(await lookAfter())] };
+      }
       if (signal?.aborted && args.action !== 'screenshot') {
         // A queued call that arrives after /stop must not touch mouse or keyboard.
         throw new Error('cancelled: the run was stopped before this action (parada solicitada)');
       }
       const out = await runAction(record, { verifyResult: true });
-      return { content: out.content, details: out.details };
+      if (!wantsLook) return { content: out.content, details: out.details };
+      return { content: [...out.content, ...(await lookAfter())], details: out.details };
     },
   };
 }
