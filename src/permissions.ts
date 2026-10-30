@@ -451,7 +451,12 @@ export function listAlwaysGrantsWithChat(dbPath: string | undefined): AlwaysGran
  * alone would leave a running daemon trusting the grant until its restart,
  * so callers pair this with `Gate.revokeAlways` on every live gate.
  */
-export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boolean {
+export function deleteAlwaysGrant(
+  dbPath: string | undefined,
+  tool: string,
+  /** Solo el «Siempre» de este chat (`/permisos revocar <herramienta> este chat`). */
+  chat?: string,
+): boolean {
   if (!dbPath) return false;
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -463,9 +468,10 @@ export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boo
     const res = db
       .prepare(
         `DELETE FROM approval_scopes
-          WHERE tool = ? OR scope_key = ? OR substr(scope_key, 1, ?) = ?`,
+          WHERE (tool = ? OR scope_key = ? OR substr(scope_key, 1, ?) = ?)
+            AND (? IS NULL OR chat_key = ?)`,
       )
-      .run(tool, `always:${tool}`, prefix.length, prefix);
+      .run(tool, `always:${tool}`, prefix.length, prefix, chat ?? null, chat ?? null);
     return Number(res.changes) > 0;
   } finally {
     db.close();
@@ -1565,7 +1571,11 @@ export class Gate {
    * existed anywhere. Narrowing a grant instead of removing it stays
    * `setScope`'s job.
    */
-  revokeAlways(tool: string): boolean {
+  revokeAlways(tool: string, chat?: string): boolean {
+    // Revocar solo en otro chat: la memoria de este gate es de SU chat y no se toca.
+    if (chat !== undefined && chat !== this.#approvalChat) {
+      return deleteAlwaysGrant(this.#dbPath, tool, chat);
+    }
     let inMemory = this.#alwaysAllow.delete(tool);
     for (const stored of [...this.#alwaysAllow]) {
       if (stored.startsWith(`${tool}:`)) {
@@ -1573,7 +1583,7 @@ export class Gate {
         inMemory = true;
       }
     }
-    const inDb = deleteAlwaysGrant(this.#dbPath, tool);
+    const inDb = deleteAlwaysGrant(this.#dbPath, tool, chat);
     // Trust DERIVED from the revoked grant dies with it, or "te volvere a
     // pedir permiso" would be a lie until the session ended: exact-call
     // fingerprints (the `previously approved` memo), open trust windows and
@@ -2342,11 +2352,21 @@ export function runPermisosCommand(
     return (
       `Permisos "siempre" activos (${tools.length}): ${tools.map(withChats).join(', ')}. ` +
       'Cada uno vale solo en el chat donde lo diste. ' +
-      'Quita uno con /permisos revocar <herramienta> o todos con /permisos revocar todo. ' +
+      'Quita uno con /permisos revocar <herramienta> (o solo aquí: … este chat) o todos con /permisos revocar todo. ' +
       'Dinero, credenciales y activaciones te preguntan siempre, haya o no un "siempre".'
     );
   }
   if (sub !== 'revocar') return 'Uso: /permisos [estado] ⬦ /permisos revocar <herramienta>|todo';
+  const tail = parts.slice(-2).join(' ').toLowerCase();
+  if (parts.length >= 3 && tail === 'este chat') {
+    return revokeHere(
+      gates,
+      dbPath,
+      parts.slice(1, -2).join(' ').toLowerCase(),
+      currentChat,
+      chatsOf,
+    );
+  }
   const target = parts.slice(1).join(' ').toLowerCase();
   if (target === '') return 'Uso: /permisos revocar <herramienta>|todo';
   const revokeOne = (tool: string): boolean => {
@@ -2372,6 +2392,45 @@ export function runPermisosCommand(
   return `Permiso "siempre" de ${found} quitado. Te volveré a pedir permiso la próxima vez que haga falta.`;
 }
 
+/**
+ * `/permisos revocar <herramienta>|todo este chat`: quita el «Siempre» SOLO en el chat
+ * desde el que se pide (DB y memoria de los gates de ese chat); en los demás chats
+ * sigue valiendo. Sin chat conocido no adivina: no quita nada.
+ */
+function revokeHere(
+  gates: readonly Gate[],
+  dbPath: string | undefined,
+  target: string,
+  currentChat: string | undefined,
+  chatsOf: ReadonlyMap<string, ReadonlySet<string>>,
+): string {
+  if (currentChat === undefined) {
+    return 'No sé desde qué chat me escribes, así que no he quitado nada. Usa /permisos revocar <herramienta> para quitarlo en todos los chats.';
+  }
+  if (target === '') return 'Uso: /permisos revocar <herramienta>|todo este chat';
+  const here = [...chatsOf.entries()]
+    .filter(([, chats]) => chats.has(currentChat))
+    .map(([tool]) => tool)
+    .sort();
+  const picked = target === 'todo' ? here : here.filter((tool) => tool.toLowerCase() === target);
+  if (picked.length === 0) {
+    return target === 'todo'
+      ? 'No había ningún permiso "siempre" en este chat.'
+      : `No había un permiso "siempre" para ${target} en este chat.`;
+  }
+  for (const tool of picked) {
+    for (const gate of gates) gate.revokeAlways(tool, currentChat);
+    deleteAlwaysGrant(dbPath, tool, currentChat);
+  }
+  const elsewhere = picked.filter((tool) =>
+    [...(chatsOf.get(tool) ?? [])].some((chat) => chat !== currentChat),
+  );
+  const rest =
+    elsewhere.length > 0
+      ? ` Sigue valiendo en otros chats para: ${elsewhere.join(', ')} (quítalo allí o con /permisos revocar <herramienta>).`
+      : '';
+  return `Permiso "siempre" de ${picked.join(', ')} quitado en este chat. Te volveré a pedir permiso aquí la próxima vez.${rest}`;
+}
 /**
  * Taint gate: the outside source a call reads, or null when it reads nothing
  * from outside. Web search, page fetches, the browser, downloads, documents,
