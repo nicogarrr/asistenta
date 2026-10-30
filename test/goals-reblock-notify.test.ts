@@ -50,7 +50,6 @@ describe('aviso de un bloqueo repetido', () => {
       store: {
         getRoutine: () => null,
         deleteRoutine: () => true,
-        markRoutineRun: () => {},
         listRoutines: () => [],
       },
       sync: () => {},
