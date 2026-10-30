@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { wallClock } from './datecontext.js';
 import { memoryFile } from './memory.js';
 import { capped, prunable } from './state-files.js';
 
@@ -195,7 +196,7 @@ export function retentionIfDue(deps: RetentionDeps): {
   const idle = { ran: false, sessions: 0, documents: 0, files: 0 };
   if (days === 0 && docDays === 0 && fileDays === 0) return idle;
   const now = deps.now;
-  if (now.getHours() < RETENTION_HOUR) return idle;
+  if (wallClock(now).hour < RETENTION_HOUR) return idle;
   if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return idle;
   const sessions = days > 0 ? pruneSessions(deps.db, days * DAY_MS, now.getTime()) : 0;
   const documents = docDays > 0 && deps.pruneDocs ? deps.pruneDocs(docDays * DAY_MS) : 0;

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { wallClock } from '../datecontext.js';
 import { Archive, isoWeek } from './archive.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
@@ -19,7 +20,9 @@ const exec = promisify(execFile);
 /** Sunday from 03:00 local, once every 6 days: the machine is idle and the owner is asleep. */
 export function isEvolveDue(now: Date, lastRunMs: number): boolean {
   return (
-    now.getDay() === 0 && now.getHours() >= 3 && now.getTime() - lastRunMs > 6 * 24 * 3_600_000
+    wallClock(now).weekday === 0 &&
+    wallClock(now).hour >= 3 &&
+    now.getTime() - lastRunMs > 6 * 24 * 3_600_000
   );
 }
 
