@@ -300,7 +300,7 @@ import {
 } from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
 import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
-import { createMcpTools, mcpResourcesDoctorLines } from './mcp/tools.js';
+import { createMcpTools, mcpCommandText, mcpResourcesDoctorLines } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
 import {
   currentLimits,
@@ -7070,6 +7070,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     {
       names: ['servicios'],
       run: (inbound) => say(inbound, formatServicesList(adoptedServices.list()), { quote: true }),
+    },
+    {
+      // /mcp recursos|prompts: solo lectura y solo el dueño en privado.
+      names: ['mcp'],
+      run: async (inbound, args) => {
+        if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+          await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+            quote: true,
+          });
+          return;
+        }
+        await say(inbound, await mcpCommandText(args), { quote: true });
+      },
     },
     { names: ['vigila'], run: (inbound, args) => cmdVigila(inbound, args) },
     { names: ['vigilando'], run: (inbound) => cmdVigilando(inbound) },
