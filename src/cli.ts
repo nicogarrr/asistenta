@@ -6234,6 +6234,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         reply: result.text,
         hinted: learnHint !== null,
         tainted: thread.gate.taintOf(thread.key) !== null,
+        // «(/olvida N para borrarla)» solo donde /olvida existe (Telegram, no el panel).
+        forgetScopes: opts.out ? undefined : memoryScopesFor(thread.key).read,
       });
       if (learnt.outcome)
         log.info('correction learned', { thread: thread.name, status: learnt.outcome.status });

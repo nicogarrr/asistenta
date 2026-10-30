@@ -191,6 +191,11 @@ export function learnFromTurn(opts: {
   reply: string;
   hinted: boolean;
   tainted: boolean;
+  /**
+   * Ámbitos que lee /aprendido en este chat (Telegram). Si se dan, la línea dice con qué
+   * número se borra («/olvida 2»); sin ellos (el panel, sin /olvida) no se dice.
+   */
+  forgetScopes?: readonly string[];
 }): { text: string; line: string | null; outcome: LearnOutcome | null } {
   const { text, topic, rule } = extractLearnedMarker(opts.reply);
   // Sin instrucción en este turno (no lo pidió el dueño), una marca no vale: se quita y ya.
@@ -204,7 +209,12 @@ export function learnFromTurn(opts: {
   }
   const outcome = saveLearnedRule(opts.memory, opts.scope, rule, topic);
   if (outcome.status === 'saved' || outcome.status === 'updated') {
-    return { text, line: `📝 Aprendido: ${outcome.rule}`, outcome };
+    const n = opts.forgetScopes
+      ? learnedRules(opts.memory, opts.forgetScopes).findIndex((e) => e.id === outcome.id) + 1
+      : 0;
+    // Solo con un número que /olvida acepta (sale en /aprendido: del 1 al 15).
+    const how = n >= 1 && n <= 15 ? ` (/olvida ${n} para borrarla)` : '';
+    return { text, line: `📝 Aprendido: ${outcome.rule}${how}`, outcome };
   }
   if (outcome.status === 'unsafe') {
     return {
