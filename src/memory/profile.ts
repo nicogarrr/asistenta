@@ -145,7 +145,8 @@ export class OwnerProfile {
   /**
    * Todos los hechos, vigentes y sustituidos. Un fichero ausente, ilegible o
    * corrupto se trata como un perfil vacío: perder una respuesta es peor que
-   * perder un recuerdo, y el siguiente `add` reescribe el fichero.
+   * perder un recuerdo. El siguiente `add` aparta el corrupto a
+   * `<perfil>.corrupt-<fecha>` (no se pierde) y empieza un perfil nuevo.
    */
   load(): ProfileFact[] {
     if (!existsSync(this.file)) return [];
@@ -333,6 +334,39 @@ export class OwnerProfile {
     }
   }
 
+  /**
+   * `load()` lee un fichero corrupto como perfil vacío; si a continuación se
+   * escribiera encima, todos los hechos que contenía se perderían. Antes de
+   * escribir se aparta a `<perfil>.corrupt-<fecha>` para poder recuperarlo.
+   */
+  #setAsideIfCorrupt(): void {
+    let raw: string;
+    try {
+      if (!existsSync(this.file)) return;
+      raw = readFileSync(this.file, 'utf8').replace(/^\uFEFF/, '');
+    } catch {
+      return;
+    }
+    if (!raw.trim()) return;
+    let readable = false;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      readable = Array.isArray(parsed) || (isRecord(parsed) && Array.isArray(parsed.facts));
+    } catch {
+      readable = false;
+    }
+    if (readable) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backup = `${this.file}.corrupt-${stamp}-${randomBytes(2).toString('hex')}`;
+    try {
+      renameSync(this.file, backup);
+    } catch (err) {
+      log.warn('perfil v2 corrupto y no se pudo apartar; no se sobrescribe', { err: String(err) });
+      throw new Error('El perfil está corrupto y no se pudo apartar; no se sobrescribe');
+    }
+    log.warn('perfil v2 corrupto apartado antes de escribir', { backup });
+  }
+
   #serialize(facts: ProfileFact[]): string {
     return `${JSON.stringify(facts, null, 2)}\n`;
   }
@@ -344,6 +378,7 @@ export class OwnerProfile {
    */
   #write(facts: ProfileFact[]): void {
     mkdirSync(dirname(this.file), { recursive: true });
+    this.#setAsideIfCorrupt();
     const tmp = `${this.file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     try {
       writeFileSync(tmp, this.#serialize(facts), 'utf8');
