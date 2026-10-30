@@ -40,6 +40,8 @@ const NON_TAINTING_ACTIONS: ReadonlySet<string> = new Set([
   'memory:forget_profile',
   'reminder:create',
   'reminder:cancel',
+  'vigilar_precio:add',
+  'vigilar_precio:remove',
 ]);
 
 const LABELS: Record<string, string> = {
@@ -58,6 +60,7 @@ const LABELS: Record<string, string> = {
   system: 'el sistema',
   delegate: 'un subagente',
   reminder: 'los recordatorios',
+  vigilar_precio: 'las vigilancias de precio',
 };
 
 /**
@@ -81,6 +84,8 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   if (!url) return null;
   if (tool === 'fetch' || tool === 'download') return url;
   if (tool === 'browser' && (args.action === 'open' || args.action === undefined)) return url;
+  // Una vigilancia hace peticiones periódicas a esa URL: misma salida que un fetch.
+  if (tool === 'vigilar_precio' && args.action === 'add') return url;
   return null;
 }
 

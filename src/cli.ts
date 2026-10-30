@@ -273,6 +273,7 @@ import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
 import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
+import { createPriceWatchTool } from './tools/price-watch.js';
 import {
   createReminderTool,
   deliverMissedReminders,
@@ -1930,6 +1931,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      // «Avísame si baja de X»: mismo registro que /vigila, lecturas sin modelo.
+      createPriceWatchTool({
+        watches: pageWatches,
+        scopeOf: () => inboundFor(thread).chatId,
+        isFetchable: (url) => isFetchableResolved(url),
+      }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
       createGoalTool({
         goals: goalStore,
