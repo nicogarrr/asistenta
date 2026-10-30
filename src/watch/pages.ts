@@ -132,10 +132,27 @@ export function parseAmount(raw: string): [string, string] | null {
 export function extractPrice(text: string): string | null {
   const m = PRICE.exec(text);
   if (!m) return null;
-  const parsed = parseAmount((m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, ''));
-  // Ambiguous format: keep exactly what the page wrote rather than a made-up number.
-  if (!parsed) return m[0].replace(/\s+/g, ' ').trim();
+  const raw = (m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, '');
+  const parsed = parseAmount(raw);
+  // Ambiguous format: keep the digits exactly as the page wrote them rather than a
+  // made-up number, in one canonical shape («1,459 €»). The symbol's spelling and
+  // position («1,459€», «1,459 EUR», «€ 1,459») is not part of the value: if it
+  // were, a cosmetic change on the page would read as a price change.
+  if (!parsed) return `${raw} €`;
   return `${parsed[0]},${parsed[1]} €`;
+}
+
+/**
+ * Whether two stored readings are the same value. Prices are compared in their
+ * canonical shape, so a literal saved by an older version («1,459€», «1,459 EUR»)
+ * still equals today's «1,459 €» and the first check after an update is not a
+ * false «cambio de precio». Keyword and text-hash values compare as they are.
+ */
+export function sameWatchValue(a: string, b: string): boolean {
+  if (a === b) return true;
+  const canon = (v: string): string =>
+    v.startsWith('texto:') || v === 'presente' || v === 'ausente' ? v : (extractPrice(v) ?? v);
+  return canon(a) === canon(b);
 }
 
 const fold = (t: string): string =>
@@ -489,7 +506,7 @@ export class PageWatchStore {
       )
       .run(value, this.now(), w.id);
     if (!w.lastValue) return { kind: 'baseline', value };
-    if (value === w.lastValue) return { kind: 'unchanged', value };
+    if (sameWatchValue(value, w.lastValue)) return { kind: 'unchanged', value };
     return { kind: 'changed', from: w.lastValue, to: value };
   }
 }
