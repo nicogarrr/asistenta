@@ -197,7 +197,8 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
       { day: number; month: string },
       { day: number; month: string },
     ];
-    const asks = /(aclar|cu[aá]l|te refieres|quieres decir)/i.test(t.reply);
+    // Palabras enteras: «cual» dentro de «actual» o «cualquier» no es preguntar.
+    const asks = /\b(aclar\w*|cu[aá]l(es)?|te refieres|quieres decir)\b/i.test(t.reply);
     const hasDate = (x: { day: number; month: string }) =>
       new RegExp(`\\b${x.day}( de)? ${x.month}\\b`, 'i').test(t.reply);
     if (!/viernes/i.test(t.reply)) fail('no menciona viernes');
