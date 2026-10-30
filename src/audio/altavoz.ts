@@ -166,8 +166,22 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
   const now = deps.now ?? Date.now;
-  /** Última nota mandada a la tele por chat (la tele se queda con ella y sigue sonando). */
-  const lastTele = new Map<string | undefined, { at: number; stop?: () => Promise<unknown> }>();
+  /**
+   * Notas mandadas a la tele por chat (la tele se queda con ellas y siguen sonando). Se
+   * guardan todas las de la ventana, no solo la última: dos casts seguidos tienen cada uno
+   * su propio «parar» (servidor LAN, Glasshouse…) y /stop debe llamar a los dos.
+   */
+  const teleCasts = new Map<
+    string | undefined,
+    Array<{ at: number; stop?: () => Promise<unknown> }>
+  >();
+  const noteTeleCast = (key: string | undefined, stop?: () => Promise<unknown>) => {
+    const window = deps.teleStopWindowMs ?? 120_000;
+    const t = now();
+    const kept = (teleCasts.get(key) ?? []).filter((e) => t - e.at <= window);
+    kept.push({ at: t, stop });
+    teleCasts.set(key, kept);
+  };
   /**
    * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
    * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
@@ -224,7 +238,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
           .finally(() => r.close?.());
         return;
       }
-      lastTele.set(item.key, { at: now(), stop: r.stop });
+      noteTeleCast(item.key, r.stop);
       watchFetch(r.hits, onNotice);
       return;
     }
@@ -245,13 +259,15 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     const window = deps.teleStopWindowMs ?? 120_000;
     const t = now();
     const stops = new Set<() => Promise<unknown>>();
-    for (const [k, e] of lastTele) {
+    for (const [k, list] of teleCasts) {
       if (key !== undefined && k !== key) continue;
-      lastTele.delete(k);
-      if (t - e.at > window) continue;
-      // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
-      const stop = e.stop ?? stopTv;
-      if (stop) stops.add(stop);
+      teleCasts.delete(k);
+      for (const e of list) {
+        if (t - e.at > window) continue;
+        // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
+        const stop = e.stop ?? stopTv;
+        if (stop) stops.add(stop);
+      }
     }
     if (!stops.size) return 0;
     for (const stop of stops) {
@@ -301,7 +317,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       return stopped;
     },
     noteTele(key, stop) {
-      lastTele.set(key, { at: now(), stop });
+      noteTeleCast(key, stop);
     },
     idle: () => chain,
     pending: () => waiting,
