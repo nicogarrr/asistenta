@@ -4128,6 +4128,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const messages = await searchMail(account, { since, unreadOnly: true }, 30, 15_000);
       return pickImportantMail(messages, Date.now());
     },
+    speak:
+      process.env.PA_BRIEFING_VOZ === '1' && desktop
+        ? async (chatId, text) => {
+            const spoken = await speakWithin(
+              tts,
+              trimForSpeech(text),
+              REPLY_TTS_BUDGET_MS,
+              (reason) => log.warn('briefing: sin voz', { reason }),
+            );
+            if (!spoken) return;
+            await telegram.send({
+              channel: 'telegram',
+              account: telegram.account,
+              chatId,
+              text: '🔊 Resumen de hoy',
+              audio: {
+                mimeType: spoken.mimeType,
+                data: spoken.data.toString('base64'),
+                durationSeconds: spoken.durationSeconds,
+              },
+            });
+          }
+        : undefined,
     goals: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;

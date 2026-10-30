@@ -41,6 +41,11 @@ export interface DailyBriefingDeps {
   followups?: () => BriefingInput['followups'] | Promise<BriefingInput['followups']>;
   weather?: () => Promise<string | null>;
   mail?: () => Promise<BriefingInput['mail']>;
+  /**
+   * PA_BRIEFING_VOZ=1: manda además el resumen como nota de voz, después del texto y
+   * sin esperarla. Solo se llama si el texto salió bien.
+   */
+  speak?: (chatId: string, text: string) => Promise<void>;
   /** Objetivos activos o bloqueados del dueño. */
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
   /** Vigilancias de precio activas del dueño. */
@@ -176,6 +181,13 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
     });
     if (!ok) return { status: 'send-failed', text };
     deps.markSent(now.getTime());
+    if (deps.speak) {
+      // La voz va DESPUÉS del texto y sin esperarla: un TTS lento o roto nunca
+      // retrasa ni impide el resumen escrito, ni hace que se reenvíe.
+      void Promise.resolve()
+        .then(() => deps.speak?.(chatId, text))
+        .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }));
+    }
     return { status: 'sent', text };
   } finally {
     inFlight = false;

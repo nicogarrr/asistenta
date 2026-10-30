@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildBriefing, euros } from '../src/briefing.js';
-import { composeDailyBriefing, type DailyBriefingDeps } from '../src/briefing-daily.js';
+import {
+  _resetDailyBriefingForTests,
+  composeDailyBriefing,
+  type DailyBriefingDeps,
+  runDailyBriefingIfDue,
+} from '../src/briefing-daily.js';
 
 const base = {
   greeting: 'Buenos días',
@@ -99,5 +104,74 @@ describe('briefing: objetivos y vigilancias de precio', () => {
       }),
     );
     expect(text).toContain('Llamar al banco');
+  });
+});
+
+describe('briefing: PA_BRIEFING_VOZ', () => {
+  const day = { reminders: () => [{ text: 'Llamar al banco' }] };
+
+  it('tras enviar el texto, manda la voz con el mismo texto', async () => {
+    _resetDailyBriefingForTests();
+    const order: string[] = [];
+    const spoken: string[] = [];
+    const res = await runDailyBriefingIfDue(
+      deps({
+        ...day,
+        send: async () => {
+          order.push('texto');
+          return true;
+        },
+        speak: async (_chat, text) => {
+          order.push('voz');
+          spoken.push(text);
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.status).toBe('sent');
+    expect(order).toEqual(['texto', 'voz']);
+    expect(spoken[0]).toContain('Llamar al banco');
+  });
+
+  it('no espera a la voz ni falla si la voz se cuelga o revienta', async () => {
+    _resetDailyBriefingForTests();
+    const warns: string[] = [];
+    const res = await runDailyBriefingIfDue(
+      deps({
+        ...day,
+        speak: () => new Promise(() => {}),
+      }),
+    );
+    expect(res.status).toBe('sent');
+    _resetDailyBriefingForTests();
+    const res2 = await runDailyBriefingIfDue(
+      deps({
+        ...day,
+        speak: async () => {
+          throw new Error('sapi');
+        },
+        warn: (m) => warns.push(m),
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res2.status).toBe('sent');
+    expect(warns).toContain('briefing: voz falló');
+  });
+
+  it('sin texto enviado no hay voz', async () => {
+    _resetDailyBriefingForTests();
+    let spoke = false;
+    const res = await runDailyBriefingIfDue(
+      deps({
+        ...day,
+        send: async () => false,
+        speak: async () => {
+          spoke = true;
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.status).toBe('send-failed');
+    expect(spoke).toBe(false);
   });
 });
