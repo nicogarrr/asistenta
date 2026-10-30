@@ -1793,6 +1793,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }),
           sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
           memory: (scope?: string) => memory.all(scope ?? 'local'),
+          memoryScopes: () => memory.scopes(),
           auditVerify: () => verifyCallAudit(),
           // Chat del panel: corre en el hilo principal del propietario, con el
           // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).

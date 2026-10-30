@@ -308,3 +308,23 @@ export function anuncioPendientes(antes: number | null, ahora: number): string {
   if (nuevas <= 0) return '';
   return `${nuevas === 1 ? 'Nueva aprobación' : `${nuevas} aprobaciones nuevas`}: ${plural(n)}.`;
 }
+
+/** Nombre legible de un ámbito de memoria («telegram:dm:123#main» → «Telegram privado 123 · hilo main»). */
+export function etiquetaAmbito(ambito: string): string {
+  if (!ambito || ambito === 'local') return 'Local (este PC)';
+  var almohadilla = ambito.indexOf('#');
+  var base = almohadilla >= 0 ? ambito.slice(0, almohadilla) : ambito;
+  var hilo = almohadilla >= 0 ? ambito.slice(almohadilla + 1) : '';
+  var partes = base.split(':');
+  var tipos: Record<string, string> = {
+    dm: 'privado',
+    private: 'privado',
+    group: 'grupo',
+    supergroup: 'grupo',
+  };
+  var texto = base;
+  if (partes[0] === 'telegram' && partes.length >= 3) {
+    texto = `Telegram ${tipos[partes[1] ?? ''] || partes[1]} ${partes.slice(2).join(':')}`;
+  }
+  return hilo ? `${texto} · hilo ${hilo}` : texto;
+}

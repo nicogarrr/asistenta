@@ -9,6 +9,7 @@
 
 import {
   anuncioPendientes,
+  etiquetaAmbito,
   etiquetaCampo,
   formatearCampo,
   mensajeDeError,
@@ -50,7 +51,9 @@ export function renderFormatScript(): string {
   var tituloPestana = ${tituloPestana.toString()};
   var resumenSesion = ${resumenSesion.toString()};
   var anuncioPendientes = ${anuncioPendientes.toString()};
+  var etiquetaAmbito = ${etiquetaAmbito.toString()};
   return {
+    etiquetaAmbito: etiquetaAmbito,
     anuncioPendientes: anuncioPendientes,
     resumenSesion: resumenSesion,
     tituloPestana: tituloPestana,
@@ -258,7 +261,8 @@ export function renderPage(): string {
       text-transform: uppercase;
       color: var(--suave);
     }
-    .buscador input {
+    .buscador input,
+    .buscador select {
       width: min(210px, 52vw);
       padding: 7px 9px;
       border: 1px solid #2a3a4d;
@@ -271,7 +275,8 @@ export function renderPage(): string {
       text-transform: none;
     }
     .buscador input::placeholder { color: #667486; }
-    .buscador input:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .buscador input:focus-visible,
+    .buscador select:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
     .buscador textarea {
       width: 100%;
       min-height: 82px;
@@ -384,7 +389,8 @@ export function renderPage(): string {
       body { padding: 14px; }
       .rejilla { grid-template-columns: 1fr; }
       .tarjeta-cuerpo { max-height: none; }
-      .buscador input { width: 100%; }
+      .buscador input,
+      .buscador select { width: 100%; }
       .cabecera { align-items: flex-start; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -500,7 +506,7 @@ export function renderPage(): string {
           <div class="controles">
             <label class="buscador" for="ambito-memoria">
               Ámbito
-              <input id="ambito-memoria" type="text" placeholder="local" autocomplete="off" spellcheck="false" />
+              <select id="ambito-memoria"><option value="">Local (este PC)</option></select>
             </label>
             <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
           </div>
@@ -1206,6 +1212,7 @@ ${renderFormatScript()}
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),
+          cargarAmbitos(),
           cargarAuditoria(),
           cargarAprobaciones()
         ])
@@ -1247,10 +1254,34 @@ ${renderFormatScript()}
       });
 
       var temporizadorMemoria = 0;
-      document.getElementById('ambito-memoria').addEventListener('input', function () {
+      document.getElementById('ambito-memoria').addEventListener('change', function () {
         window.clearTimeout(temporizadorMemoria);
-        temporizadorMemoria = window.setTimeout(cargarMemoria, 300);
+        cargarMemoria();
       });
+
+      // Ámbitos conocidos (chats con memoria) en vez de escribir «telegram:dm:…» a mano.
+      async function cargarAmbitos() {
+        var lista = document.getElementById('ambito-memoria');
+        var ambitos;
+        try {
+          ambitos = await pedir('/api/memory/scopes');
+        } catch (error) {
+          return;
+        }
+        if (!Array.isArray(ambitos)) return;
+        var elegido = lista.value;
+        var opciones = [nodo('option', null, formato.etiquetaAmbito(''))];
+        opciones[0].value = '';
+        ambitos.forEach(function (ambito) {
+          if (typeof ambito !== 'string' || !ambito || ambito === 'local') return;
+          var opcion = nodo('option', null, formato.etiquetaAmbito(ambito));
+          opcion.value = ambito;
+          opciones.push(opcion);
+        });
+        lista.replaceChildren.apply(lista, opciones);
+        lista.value = elegido;
+        if (lista.value !== elegido) lista.value = '';
+      }
 
       var formularioChat = document.getElementById('form-chat');
       formularioChat.addEventListener('submit', enviarChat);
