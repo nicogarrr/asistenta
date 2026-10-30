@@ -134,7 +134,7 @@ const Params = Type.Object({
   scene: Type.Optional(
     Type.String({
       description:
-        'Para scene: la rutina, hoy "cine" (enciende si hace falta, quita el silencio, volumen 20 o level, abre appId si se pide y muestra un aviso).',
+        'Para scene: la rutina. "cine" (enciende si hace falta, quita el silencio, volumen 20 o level, abre appId si se pide y muestra un aviso); "noche" (volumen 8 o level y aviso, sin encender una tele apagada); "apagar-todo" (aviso y apagar la tele si esta encendida).',
     }),
   ),
   text: Type.Optional(
@@ -236,6 +236,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       '"volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Si no la entiende, lo dice.',
       'action=scene scene=cine es el "modo cine": encender si hace falta, quitar silencio, volumen (level, por defecto 20),',
       'abrir la app que pidan (appId, p.ej. Netflix) y un aviso; devuelve el resultado de cada paso.',
+      'scene=noche baja el volumen (level, por defecto 8) sin encender; scene=apagar-todo avisa y apaga la tele.',
       'Via Glasshouse (si esta configurado): action=volume con level (0-100, nivel absoluto - "sube el',
       'volumen a 13" es volume level=13), action=mute, action=input (hdmi1-4/tv), action=url (abrir web),',
       'action=closeApp, action=screen (panel negro con audio), action=media (play/pause/stop...),',
