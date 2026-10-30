@@ -42,7 +42,7 @@
 
 import { localTimeZone } from '../datecontext.js';
 import type { MailMessage } from '../mail/types.js';
-import { zonedDayKey, zonedDayStart, zonedParts, zonedTime } from './ics.js';
+import { zonedAddDays, zonedDayKey, zonedParts, zonedTime } from './ics.js';
 
 /** A commitment found in a mail, ready to be proposed to the user. */
 export interface ExtractedCommitment {
@@ -223,8 +223,7 @@ function ymd(at: number, timeZone: string): YearMonthDay {
 
 /** Calendar-day arithmetic in the user's zone, so "en 3 dias" survives a DST change. */
 function dayOffset(ctx: Context, days: number): YearMonthDay {
-  const todayStart = zonedDayStart(ctx.now, ctx.timeZone);
-  return ymd(zonedDayStart(todayStart + days * DAY_MS, ctx.timeZone), ctx.timeZone);
+  return ymd(zonedAddDays(ctx.now, days, ctx.timeZone), ctx.timeZone);
 }
 
 function expandYear(value: number): number {
@@ -323,7 +322,10 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => {
       const target = WEEKDAYS[m[2] ?? ''];
       if (target === undefined) return undefined;
-      const here = new Date(ctx.now).getDay();
+      // The weekday in the user's zone, not the host's: at 03:00 on a Saturday in
+      // Madrid it is still Friday in New York, and "el lunes" is three days away there.
+      const today = ymd(ctx.now, ctx.timeZone);
+      const here = new Date(Date.UTC(today.year, today.month - 1, today.day)).getUTCDay();
       const delta = (target - here + 7) % 7;
       const forward = /proximo|proxima|next/.test(m[1] ?? '') && delta === 0 ? 7 : delta;
       return {
