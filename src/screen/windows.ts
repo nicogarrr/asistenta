@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ScreenBackend } from '../tools/computer.js';
-import { escapeForSendKeys, parseKeyChord, splitAsciiSegments } from './keys.js';
+import {
+  escapeForSendKeys,
+  parseKeyChord,
+  splitAsciiSegments,
+  winChordVirtualKeys,
+} from './keys.js';
 import { jpegGeometry, parseCaptureGeometry, physicalScript } from './windows-geometry.js';
 
 const execFileAsync = promisify(execFile);
@@ -203,6 +208,11 @@ if ($null -ne $previous) {
   }
 
   async key(key: string): Promise<void> {
+    const vks = winChordVirtualKeys(key);
+    if (vks) {
+      await this.#ps(winChordScript(vks));
+      return;
+    }
     const seq = parseKeyChord(key);
     await this.#ps(`
 $ErrorActionPreference='Stop'
@@ -239,6 +249,34 @@ public class M {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
 }
 '@`;
+
+/**
+ * Key-down for each code in order, then key-up in reverse order, released in a
+ * `finally` so a failure halfway never leaves the Windows key (or a modifier) held.
+ */
+export function winChordScript(vks: readonly number[]): string {
+  const hex = (n: number) => `0x${n.toString(16).padStart(2, '0')}`;
+  const down = vks.map((vk) => `  [K]::keybd_event(${hex(vk)},0,0,[UIntPtr]::Zero)`).join('\n');
+  const up = [...vks]
+    .reverse()
+    .map((vk) => `  [K]::keybd_event(${hex(vk)},0,2,[UIntPtr]::Zero)`)
+    .join('\n');
+  return `
+$ErrorActionPreference='Stop'
+Add-Type @'
+using System;using System.Runtime.InteropServices;
+public class K {
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk,byte scan,uint flags,UIntPtr extra);
+}
+'@
+try {
+${down}
+  Start-Sleep -Milliseconds 30
+} finally {
+${up}
+}
+`;
+}
 
 /**
  * Capture, optionally downscale, save as JPEG, and echo the size actually written.
