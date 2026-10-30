@@ -428,7 +428,12 @@ import { transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
-import { compareProduct, describeCompare } from './watch/compare.js';
+import {
+  COMPARE_WATCH_STALE,
+  CompareWatchLinks,
+  compareProduct,
+  describeCompare,
+} from './watch/compare.js';
 import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
   describeChange,
@@ -3937,7 +3942,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * cambie el precio de una página, cuando baje de un objetivo o un %, o cuando una
    * palabra aparezca/desaparezca.
    */
-  const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
+  // «👀 Vigilar» de /compara: id corto → enlace (una vez, 24 h, mismo chat).
+  const compareWatchLinks = new CompareWatchLinks();
+  const cmdVigila = async (inbound: Inbound, rawArgs: string): Promise<void> => {
+    let args = rawArgs;
+    const fromButton = /^enlace ([0-9a-f]{8})$/.exec(rawArgs.trim());
+    if (fromButton?.[1]) {
+      const url = compareWatchLinks.take(fromButton[1], inbound.chatId);
+      if (!url) return void (await say(inbound, COMPARE_WATCH_STALE, { quote: true }));
+      args = url;
+    }
     let parsed: ReturnType<typeof parseVigilaArgs>;
     try {
       parsed = parseVigilaArgs(args);
@@ -4042,7 +4056,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         fetchHtml: fetchPageHtml,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
-      await say(inbound, marksCardTitle(describeCompare(report)), { quote: true, format: 'marks' });
+      await say(inbound, marksCardTitle(describeCompare(report)), {
+        quote: true,
+        format: 'marks',
+        buttons: compareWatchButtons(compareWatchLinks.remember(inbound.chatId, url)),
+      });
     } catch (err) {
       await say(inbound, friendlyError(err), { quote: true });
     }
@@ -7571,6 +7589,17 @@ export function reminderButtons(id: string): Array<{ label: string; action: stri
     commandButton('🌅 Mañana 9:00', 'recordatorios', id, 'manana'),
   ].filter((x): x is { label: string; action: string } => x !== undefined);
   return buttons.length ? buttons : undefined;
+}
+
+/**
+ * /compara: «👀 Vigilar» equivale a /vigila <ese enlace>. El botón lleva el id corto de
+ * CompareWatchLinks, nunca el enlace.
+ */
+export function compareWatchButtons(
+  id: string,
+): Array<{ label: string; action: string }> | undefined {
+  const b = commandButton('👀 Vigilar', 'vigila', id, 'enlace');
+  return b ? [b] : undefined;
 }
 
 export function cronListButtons(

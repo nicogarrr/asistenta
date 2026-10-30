@@ -44,9 +44,8 @@ describe('ficha con nombre en negrita', () => {
     expect(precio).toContain('marksCardTitle(describeWatch(w, pageWatches.summary(w.id)))');
     expect(precio).toContain("format: 'marks'");
     const compara = src.slice(src.indexOf('const cmdCompara = async')).slice(0, 1800);
-    expect(compara).toContain(
-      "marksCardTitle(describeCompare(report)), { quote: true, format: 'marks' }",
-    );
+    expect(compara).toContain('marksCardTitle(describeCompare(report)), {');
+    expect(compara).toContain("format: 'marks'");
     const vigilando = src.slice(src.indexOf('const cmdVigilando = async')).slice(0, 400);
     expect(vigilando).toContain('buttons: watchListButtons(list)');
   });

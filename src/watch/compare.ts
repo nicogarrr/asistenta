@@ -21,6 +21,7 @@
  *   mismo camino con control SSRF que la tool fetch).
  */
 
+import { randomBytes } from 'node:crypto';
 import { type Card, extractCards, modelKey } from './listscan.js';
 import { eur } from './pages.js';
 import {
@@ -399,4 +400,46 @@ export function describeCompare(r: CompareReport): string {
     }
   }
   return lines.join('\n');
+}
+
+/** Cuánto vale el botón «👀 Vigilar» de /compara (24 h). */
+export const COMPARE_WATCH_MS = 24 * 3_600_000;
+/** Respuesta de un «👀 Vigilar» caducado, ya usado, de otro chat o de antes de reiniciar. */
+export const COMPARE_WATCH_STALE =
+  'Este botón ya no sirve (vale una vez y 24 horas). Escribe /vigila <enlace>.';
+
+/**
+ * Enlaces de /compara para su botón «👀 Vigilar». El enlace no cabe (ni debe ir) en el
+ * callback_data de Telegram: el botón lleva un id corto (8 hex) que apunta aquí. Solo en
+ * memoria, vale una vez, 24 h y solo desde el chat que comparó.
+ */
+export class CompareWatchLinks {
+  readonly #items = new Map<string, { chatId: string; url: string; at: number }>();
+  readonly #now: () => number;
+  readonly #max: number;
+
+  constructor(now: () => number = Date.now, max = 200) {
+    this.#now = now;
+    this.#max = max;
+  }
+
+  /** Apunta el enlace y devuelve su id. Tira los caducados y, si sobran, los más viejos. */
+  remember(chatId: string, url: string): string {
+    const t = this.#now();
+    for (const [k, v] of this.#items) {
+      if (t - v.at <= COMPARE_WATCH_MS && this.#items.size < this.#max) break;
+      this.#items.delete(k);
+    }
+    const id = randomBytes(4).toString('hex');
+    this.#items.set(id, { chatId, url, at: t });
+    return id;
+  }
+
+  /** El enlace del id (y lo saca: vale una vez); otro chat o caducado → undefined. */
+  take(id: string, chatId: string): string | undefined {
+    const v = this.#items.get(id);
+    if (!v || v.chatId !== chatId || this.#now() - v.at > COMPARE_WATCH_MS) return undefined;
+    this.#items.delete(id);
+    return v.url;
+  }
 }
