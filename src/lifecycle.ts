@@ -170,10 +170,14 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
       try {
         await deps.onShutdown(reason);
         clearTimeout(hard);
-        // Removing the marker is the signal that shutdown finished normally.
-        try {
-          unlinkSync(stale);
-        } catch {}
+        // Removing the marker is the signal that shutdown finished normally. A
+        // stop with a non-zero code (uncaughtException, failed startup) drained
+        // fine but is still a crash: the marker stays so the crash counter sees it.
+        if (code === 0) {
+          try {
+            unlinkSync(stale);
+          } catch {}
+        }
         try {
           unlinkSync(pidFile);
         } catch {}
@@ -193,7 +197,17 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   };
 
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) {
-    process.on(sig, () => stop(sig));
+    process.on(sig, () => {
+      // A second Ctrl+C (or Ctrl+Break) while draining means «now»: exit at once
+      // instead of ignoring it for up to the whole shutdown budget. The .stale
+      // marker written by the first stop stays, so it counts as unfinished.
+      // A repeated SIGTERM (service manager) keeps waiting for the drain.
+      if (closing && sig !== 'SIGTERM') {
+        log.warn('second interrupt during shutdown, exiting now', { sig });
+        process.exit(130);
+      }
+      stop(sig);
+    });
   }
   // SCM hard-stops arrive as a process message, not a signal on Windows.
   process.on('message', (m) => {

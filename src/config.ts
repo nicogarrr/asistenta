@@ -130,8 +130,10 @@ function num(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive number, got ${JSON.stringify(raw)}`);
+  // Todos los num() son cuentas, milisegundos o tokens: un «2.5» daba 2,5 intentos
+  // (el bucle hacía 3) o un timeout fraccionario. Se rechaza igual que «abc».
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
   }
   return parsed;
 }
