@@ -484,6 +484,10 @@ export async function main(argv: string[]): Promise<number> {
       const { vigilanciasCommand } = await import('./watch/overview-cli.js');
       return vigilanciasCommand(rest);
     }
+    case 'backup': {
+      const { backupCommand } = await import('./backup-restore.js');
+      return backupCommand(rest);
+    }
     case 'auditoria': {
       const { auditCommand } = await import('./audit/audit-cli.js');
       return auditCommand(rest);
