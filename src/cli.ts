@@ -443,6 +443,12 @@ import {
   PageWatchStore,
   parseVigilaArgs,
 } from './watch/pages.js';
+import {
+  PRICE_MUTE_MS,
+  type PriceNotifyOpts,
+  PriceStore,
+  parseConfig as parsePricewatchConfig,
+} from './watch/pricewatch.js';
 import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
@@ -4052,7 +4058,43 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
+  // «🔕 Silenciar 1 día» / «🔔 Avisar otra vez» de un aviso del vigilante de precios
+  // (pricewatch): solo desde el chat al que avisa ese vigilante.
+  const cmdPrecioMute = async (
+    inbound: Inbound,
+    m: { action: 'silenciar' | 'avisar'; key: string },
+  ): Promise<void> => {
+    const cfgPath = process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json');
+    let chatId = '';
+    try {
+      chatId = parsePricewatchConfig(JSON.parse(readFileSync(cfgPath, 'utf8'))).telegram.chatId;
+    } catch {
+      chatId = '';
+    }
+    if (!chatId || chatId !== inbound.chatId) {
+      return void (await say(inbound, 'Ese aviso de precio no es de este chat.', { quote: true }));
+    }
+    const db = new DatabaseSync(join(paths.state, 'pricewatch.sqlite'));
+    let hit: { product: string; until: number } | null = null;
+    try {
+      const pw = new PriceStore(db);
+      if (m.action === 'silenciar') hit = pw.mute(m.key, PRICE_MUTE_MS);
+      else {
+        const product = pw.unmute(m.key);
+        hit = product ? { product, until: 0 } : null;
+      }
+    } finally {
+      db.close();
+    }
+    const reply = pricewatchMuteReply(m.action, m.key, hit);
+    await say(inbound, reply.text, {
+      quote: true,
+      ...(reply.buttons.length ? { buttons: reply.buttons } : {}),
+    });
+  };
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
+    const mute = precioMuteArgs(args);
+    if (mute) return void (await cmdPrecioMute(inbound, mute));
     const id = args.trim();
     const w = id
       ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
@@ -4632,11 +4674,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const pwNotify = pwDeps.makeNotify;
     pwDeps.makeNotify = (cfg) => {
       const notify = pwNotify(cfg);
-      return async (text: string) => {
+      return async (text: string, opts?: PriceNotifyOpts) => {
         void triggerEngine.emit({ type: 'precio', scope: '', text }).catch((err) => {
           log.warn('trigger precio falló', { err: String(err) });
         });
-        return notify(text);
+        return notify(
+          text,
+          opts?.muteKey ? { ...opts, buttons: pricewatchMuteButtons(opts.muteKey) } : opts,
+        );
       };
     };
     startPricewatchLoop({
@@ -7568,6 +7613,44 @@ export function vigilaSilenceReply(
   const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
   return {
     text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`,
+    buttons: again ? [again] : [],
+  };
+}
+
+/** `/precio silenciar|avisar <clave>`: botones de un aviso del vigilante de precios. */
+export function precioMuteArgs(
+  raw: string,
+): { action: 'silenciar' | 'avisar'; key: string } | null {
+  const m = /^(silenciar|avisar) ([0-9a-f]{8})$/.exec(raw.trim());
+  if (!m?.[1] || !m[2]) return null;
+  return { action: m[1] as 'silenciar' | 'avisar', key: m[2] };
+}
+
+/** «🔕 Silenciar 1 día» de un aviso de posible error de precio (= /precio silenciar <clave>). */
+export function pricewatchMuteButtons(key: string): Array<{ label: string; action: string }> {
+  const b = commandButton('🔕 Silenciar 1 día', 'precio', key, 'silenciar');
+  return b ? [b] : [];
+}
+
+/** Respuesta a /precio silenciar|avisar; tras silenciar ofrece «🔔 Avisar otra vez». */
+export function pricewatchMuteReply(
+  action: 'silenciar' | 'avisar',
+  key: string,
+  hit: { product: string; until: number } | null,
+): { text: string; buttons: Array<{ label: string; action: string }> } {
+  if (!hit) {
+    return {
+      text:
+        action === 'silenciar'
+          ? 'No encuentro ese aviso de precio.'
+          : 'Ese producto no estaba silenciado.',
+      buttons: [],
+    };
+  }
+  if (action === 'avisar') return { text: `🔔 Vuelvo a avisarte de ${hit.product}.`, buttons: [] };
+  const again = commandButton('🔔 Avisar otra vez', 'precio', key, 'avisar');
+  return {
+    text: `🔕 Silenciado 1 día: ${hit.product}. Sigo leyendo el precio, pero no te aviso de posibles errores de precio hasta ${fmtMuteUntil(hit.until)}. Para quitarlo antes: /precio avisar ${key}`,
     buttons: again ? [again] : [],
   };
 }

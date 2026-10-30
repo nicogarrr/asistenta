@@ -1,6 +1,11 @@
+import type { PriceNotifyOpts } from './pricewatch.js';
 import type { CycleLog } from './pricewatch-runner.js';
 
-/** Identity fallback is explicit, same chat only. Never log credentials or provider bodies. */
+/**
+ * Identity fallback is explicit, same chat only. Never log credentials or provider bodies.
+ * Los botones (p. ej. «🔕 Silenciar 1 día») solo viajan cuando avisa el bot principal: la
+ * pulsación llega al bot que envió el mensaje, y solo el principal la atiende.
+ */
 export function pricewatchNotifier(opts: {
   token: string;
   mainBotToken: string;
@@ -8,14 +13,27 @@ export function pricewatchNotifier(opts: {
   out: (text: string) => Promise<void>;
   log: CycleLog;
   send?: typeof fetch;
-}): (text: string) => Promise<void> {
-  return async (text) => {
+}): (text: string, opts?: PriceNotifyOpts) => Promise<void> {
+  return async (text, opts2) => {
     await opts.out(text);
     const send = async (token: string) =>
       (opts.send ?? fetch)(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: opts.chatId, text, disable_web_page_preview: true }),
+        body: JSON.stringify({
+          chat_id: opts.chatId,
+          text,
+          disable_web_page_preview: true,
+          ...(token === opts.mainBotToken && opts2?.buttons?.length
+            ? {
+                reply_markup: {
+                  inline_keyboard: [
+                    opts2.buttons.map((b) => ({ text: b.label, callback_data: b.action })),
+                  ],
+                },
+              }
+            : {}),
+        }),
       });
     try {
       if (!opts.token && !opts.mainBotToken) {

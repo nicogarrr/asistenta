@@ -31,6 +31,7 @@ import {
   hostOf,
   isBlockedPage,
   MIN_GAP_MS,
+  type PriceNotifyOpts,
   PriceStore,
   type Product,
   parseConfig,
@@ -88,7 +89,9 @@ export interface CycleLog {
 export interface CycleDeps {
   readConfig: () => unknown;
   openDb: () => DatabaseSync;
-  makeNotify: (cfg: ReturnType<typeof parseConfig>) => (text: string) => Promise<void>;
+  makeNotify: (
+    cfg: ReturnType<typeof parseConfig>,
+  ) => (text: string, opts?: PriceNotifyOpts) => Promise<void>;
   managesRequestBudget?: boolean;
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;

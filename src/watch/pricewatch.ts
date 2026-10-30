@@ -22,6 +22,7 @@
  *   precio": es una sospecha, no un hecho. No compra nada.
  */
 
+import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { localDay } from '../datecontext.js';
 import { urlHostname } from '../text.js';
@@ -37,6 +38,19 @@ export const BACKOFF_MINUTES = [1, 5, 30, 120];
 export const REALERT_MS = 24 * 3600 * 1000;
 export const EMPTY_RUNS_BEFORE_NOTICE = 3;
 export const SOURCE_TOLERANCE = 0.02;
+/** «🔕 Silenciar 1 día» en un aviso de posible error de precio: calla ese producto 24 h. */
+export const PRICE_MUTE_MS = 24 * 3600 * 1000;
+
+/** Clave corta (8 hex) de un producto para el botón de silenciar (cabe en callback_data). */
+export function priceMuteKey(product: string): string {
+  return createHash('sha256').update(product).digest('hex').slice(0, 8);
+}
+
+/** Opciones de un aviso: muteKey = el aviso admite «🔕 Silenciar 1 día» (botón del bot principal). */
+export interface PriceNotifyOpts {
+  muteKey?: string;
+  buttons?: Array<{ label: string; action: string }>;
+}
 export const CONFIRM_TOLERANCE = 0.05;
 
 export type StoreId =
@@ -375,6 +389,7 @@ export class PriceStore {
       CREATE TABLE IF NOT EXISTS price_meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS price_observations (product TEXT NOT NULL, store TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, cents INTEGER NOT NULL, first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL, reads INTEGER NOT NULL, PRIMARY KEY (product, store));
       CREATE TABLE IF NOT EXISTS discovered_terms (term TEXT PRIMARY KEY, first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS price_mutes (product TEXT PRIMARY KEY, until INTEGER NOT NULL);
     `);
   }
 
@@ -411,6 +426,45 @@ export class PriceStore {
       .prepare('SELECT COUNT(*) AS n FROM price_alerts WHERE product = ? AND store = ? AND ts >= ?')
       .get(product, store, this.now() - REALERT_MS) as { n: number };
     return row.n > 0;
+  }
+
+  /** Hasta cuándo está silenciado el producto (0 = no lo está). */
+  mutedUntil(product: string): number {
+    const row = this.db.prepare('SELECT until FROM price_mutes WHERE product = ?').get(product) as
+      | { until: number }
+      | undefined;
+    return row && row.until > this.now() ? row.until : 0;
+  }
+
+  /**
+   * Silencia `ms` el producto que ya avisó con esa clave. Sigue leyendo y guardando precios;
+   * solo calla los avisos. null si ningún aviso tiene esa clave.
+   */
+  mute(key: string, ms: number): { product: string; until: number } | null {
+    const products = this.db.prepare('SELECT DISTINCT product FROM price_alerts').all() as {
+      product: string;
+    }[];
+    const hit = products.find((r) => priceMuteKey(r.product) === key);
+    if (!hit) return null;
+    const until = this.now() + ms;
+    this.db
+      .prepare(
+        'INSERT INTO price_mutes (product, until) VALUES (?, ?) ON CONFLICT(product) DO UPDATE SET until = excluded.until',
+      )
+      .run(hit.product, until);
+    return { product: hit.product, until };
+  }
+
+  /** Quita el silencio antes de tiempo; devuelve el producto o null si no estaba silenciado. */
+  unmute(key: string): string | null {
+    const rows = this.db.prepare('SELECT product, until FROM price_mutes').all() as {
+      product: string;
+      until: number;
+    }[];
+    const hit = rows.find((r) => priceMuteKey(r.product) === key && r.until > this.now());
+    if (!hit) return null;
+    this.db.prepare('DELETE FROM price_mutes WHERE product = ?').run(hit.product);
+    return hit.product;
   }
 
   markAlerted(product: string, store: StoreId, cents: number): void {
@@ -554,7 +608,7 @@ export interface RunDeps {
   fetchPage: (url: string) => Promise<{ status: number; html: string }>;
   robotsAllows: (url: string) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
-  notify: (text: string) => Promise<void>;
+  notify: (text: string, opts?: PriceNotifyOpts) => Promise<void>;
   /** Tope diario de peticiones por host (compartido con el barrido); sin valor, sin tope. */
   dailyCap?: number;
 }
@@ -681,7 +735,12 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
       d.store.record(it.product, it.store, ex.cents);
       continue;
     }
-    if (ex.inStock === false || d.store.alertedRecently(it.product, it.store)) continue;
+    if (
+      ex.inStock === false ||
+      d.store.alertedRecently(it.product, it.store) ||
+      d.store.mutedUntil(it.product) > d.now()
+    )
+      continue;
     if (overCap(host)) continue;
     const again = await get(host, it.url);
     if (!again || isBlockedPage(again.status, again.html)) {
@@ -700,6 +759,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
       continue;
     await d.notify(
       alertText(it.label, it.store, it.url, suspicion, ex2.inStock, new Date(d.now())),
+      { muteKey: priceMuteKey(it.product) },
     );
     d.store.markAlerted(it.product, it.store, ex2.cents);
     out.alerts++;

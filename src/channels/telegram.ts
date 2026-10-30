@@ -1593,7 +1593,8 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // «🔕 Silenciar 1 día» en un aviso de precio: calla la página 24 h, no borra nada.
   ['vigila', new Set(['enlace', 'silenciar', 'avisar'])],
   // Solo lectura: enseña la ficha de precio de una página vigilada.
-  ['precio', new Set([''])],
+  // …y «🔕 Silenciar 1 día» / «🔔 Avisar otra vez» de un aviso del vigilante de precios.
+  ['precio', new Set(['', 'silenciar', 'avisar'])],
   // Botones de un recordatorio que acaba de avisar: no borran nada (+1h crea otro).
   ['recordatorios', new Set(['hecho', 'pospone', 'manana'])],
   ['cron', new Set(['pausa', 'reanudar'])],
