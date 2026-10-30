@@ -2071,7 +2071,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sendVideo: (bytes, seconds, label) =>
           ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
             telegram
-              .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+              .sendVideo(
+                Number(thread.chatKey.split(':')[2]),
+                bytes,
+                seconds,
+                label,
+                inboundFor(thread).threadId,
+              )
               .then(() => true),
           ),
         sendDocument: (bytes, filename, caption) =>
@@ -2120,7 +2126,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sendVideo: (bytes, seconds, label) =>
           ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
             telegram
-              .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
+              .sendVideo(
+                Number(thread.chatKey.split(':')[2]),
+                bytes,
+                seconds,
+                label,
+                inboundFor(thread).threadId,
+              )
               .then(() => true),
           ),
         sendVoice: (bytes, seconds) =>
@@ -3349,7 +3361,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
         const bytes = readFileSync(recording.file);
         rmSync(recording.file, { force: true });
-        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Pantalla');
+        await telegram.sendVideo(
+          Number(inbound.chatId),
+          bytes,
+          seconds,
+          'Pantalla',
+          inbound.threadId,
+        );
         log.info('watch clip sent', { chatId: inbound.chatId, bytes: bytes.length });
       } catch (err) {
         await say(
@@ -5455,7 +5473,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, `Grabando ${seconds}s de camara...`, { quote: true });
       const rec = await recordCamera({ seconds, fps: 10, maxEdge: config.screenshotMaxEdge });
       const bytes = consumeRecording(rec.file);
-      await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara');
+      await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara', inbound.threadId);
       return;
     }
     // Camera with the microphone attached. One ffmpeg with two inputs, because two
@@ -5472,7 +5490,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           maxEdge: config.screenshotMaxEdge,
         });
         const bytes = consumeRecording(rec.file);
-        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara y voz');
+        await telegram.sendVideo(
+          Number(inbound.chatId),
+          bytes,
+          seconds,
+          'Camara y voz',
+          inbound.threadId,
+        );
       } catch (err) {
         await say(
           inbound,

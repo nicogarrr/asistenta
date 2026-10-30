@@ -312,8 +312,10 @@ export class QaChannel extends TelegramChannel {
     bytes: Buffer,
     durationSeconds: number,
     caption: string,
+    threadId?: string,
   ): Promise<void> {
-    if (!this.#mine(chatId)) return super.sendVideo(chatId, bytes, durationSeconds, caption);
+    if (!this.#mine(chatId))
+      return super.sendVideo(chatId, bytes, durationSeconds, caption, threadId);
     this.#saveFile(chatId, 'video.mp4', bytes, 'video');
   }
 
