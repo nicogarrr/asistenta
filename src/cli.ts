@@ -22,6 +22,7 @@ import { loadCalendar } from './agenda/ics.js';
 import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda } from './agenda/unified.js';
+import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
 import { ActionLog } from './audit/log.js';
@@ -6754,62 +6755,7 @@ function foldAccents(value: string): string {
  */
 const PREFERENCE_MARKERS = /\b(prefiero|me gusta\w*|siempre|nunca)\b/iu;
 
-/**
- * Words that say "this has a date on it". Closed list on purpose: a follow-up
- * guessed from an ordinary sentence is a nudge the user never asked for.
- */
-const DATE_SIGNALS =
-  /\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|en \d{1,3} dias?|(?:el |al |los |cada )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b/;
-
-const WEEKDAYS: Record<string, number> = {
-  domingo: 0,
-  lunes: 1,
-  martes: 2,
-  miercoles: 3,
-  jueves: 4,
-  viernes: 5,
-  sabado: 6,
-};
-
 const DAY_MS = 86_400_000;
-
-/**
- * "por la mañana" says when someone likes something, never when it is due. The
- * phrase is dropped before date matching so "prefiero el café por la mañana"
- * does not become a follow-up for tomorrow.
- */
-function withoutTimeOfDay(folded: string): string {
-  return folded.replace(/\bpor la (?:manana|tarde|noche)\b/g, ' ');
-}
-
-/**
- * When a promised thing is due, from the words around it.
- *
- * Deliberately rough: a follow-up that fires on the wrong day is still useful,
- * and the tracker re-reports anything unresolved. Anything with a date we cannot
- * place ("antes del día 12") is a promise all the same, and one week out is the
- * honest default rather than dropping it.
- */
-function estimateDueAt(text: string, now: number): number {
-  const folded = withoutTimeOfDay(foldAccents(text));
-  // "pasado mañana" is read first: both sentences contain the word "mañana".
-  if (/\bpasado ma[nñ]ana\b/.test(folded)) return now + 2 * DAY_MS;
-  if (/\bma[nñ]ana\b/.test(folded)) return now + DAY_MS;
-  const inN = /\ben (\d{1,3}) (dias?|semanas?)\b/.exec(folded);
-  if (inN) {
-    const n = Number(inN[1]);
-    return now + n * ((inN[2] ?? '').startsWith('semana') ? 7 * DAY_MS : DAY_MS);
-  }
-  const dayName = /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/.exec(folded)?.[1];
-  const target = dayName ? WEEKDAYS[dayName] : undefined;
-  if (target !== undefined) {
-    // Next occurrence, today included: "vence el viernes" said on a Friday is
-    // about today, not about a week from now.
-    const delta = (target - new Date(now).getDay() + 7) % 7;
-    return now + delta * DAY_MS;
-  }
-  return now + 7 * DAY_MS;
-}
 
 /**
  * What this turn teaches the instinct store: a stated preference in the user's
@@ -6846,7 +6792,7 @@ export function followupFromMessage(
   now = Date.now(),
 ): { subject: string; dueAt: number } | null {
   const nudge = detectMemoryWorthy(text);
-  if (!nudge.worth || !DATE_SIGNALS.test(withoutTimeOfDay(foldAccents(text)))) return null;
+  if (!nudge.worth || !hasDateSignal(text)) return null;
   // The clause the nudge already quoted is the best subject: it is what the user
   // will recognise in /pendientes.
   const first = nudge.suggestion.indexOf('"');
