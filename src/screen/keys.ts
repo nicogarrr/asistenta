@@ -141,6 +141,14 @@ export function parseKeyChord(chord: string): string {
     const mapped = MODIFIERS[m.toLowerCase()];
     if (!mapped)
       throw new Error(`unknown modifier ${JSON.stringify(m)} in chord ${JSON.stringify(chord)}`);
+    if (mapped === '#') {
+      // SendKeys has no Windows-key modifier: '#' was typed as a literal "#",
+      // so "win+r" typed "#r" into whatever had focus. Those chords go through
+      // `winChordVirtualKeys` (real key events) instead.
+      throw new Error(
+        `the Windows key cannot be sent through SendKeys (chord ${JSON.stringify(chord)}); use winChordVirtualKeys`,
+      );
+    }
     if (!modifierChars.includes(mapped)) modifierChars.push(mapped);
   }
 
@@ -193,4 +201,92 @@ export function splitAsciiSegments(text: string): TextSegment[] {
   }
   push();
   return out;
+}
+
+const VK_MODIFIERS: Record<string, number> = {
+  ctrl: 0x11,
+  control: 0x11,
+  shift: 0x10,
+  alt: 0x12,
+  altgr: 0x12,
+  win: 0x5b,
+  windows: 0x5b,
+  meta: 0x5b,
+  cmd: 0x5b,
+  command: 0x5b,
+};
+
+const VK_NAMED: Record<string, number> = {
+  enter: 0x0d,
+  return: 0x0d,
+  tab: 0x09,
+  escape: 0x1b,
+  esc: 0x1b,
+  backspace: 0x08,
+  bksp: 0x08,
+  delete: 0x2e,
+  del: 0x2e,
+  insert: 0x2d,
+  ins: 0x2d,
+  home: 0x24,
+  end: 0x23,
+  pageup: 0x21,
+  pagedown: 0x22,
+  up: 0x26,
+  down: 0x28,
+  left: 0x25,
+  right: 0x27,
+  space: 0x20,
+  spacebar: 0x20,
+  printscreen: 0x2c,
+  '.': 0xbe,
+  ',': 0xbc,
+  ';': 0xba,
+};
+
+/**
+ * Virtual-key codes for a chord that uses the Windows key, in press order
+ * (modifiers first, then the key), or null when the chord has no Windows key.
+ *
+ * SendKeys cannot hold the Windows key, so these chords (win+d, win+r, win+e,
+ * win+shift+s…) are sent as real key-down/key-up events. Only keys with a fixed
+ * virtual-key code are accepted: letters, digits, f1-f24, the named keys above and
+ * the Windows key alone; anything else is refused instead of guessed.
+ */
+export function winChordVirtualKeys(chord: string): number[] | null {
+  const raw = chord.trim();
+  const parts = raw
+    .split('+')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const isWin = (p: string) => VK_MODIFIERS[p] === 0x5b;
+  if (!parts.some(isWin)) return null;
+  // "win" on its own opens Start: the Windows key is the whole chord.
+  if (parts.length === 1) return [0x5b];
+  const last = parts[parts.length - 1] as string;
+  const codes: number[] = [];
+  for (const m of parts.slice(0, -1)) {
+    const vk = VK_MODIFIERS[m];
+    if (vk === undefined) {
+      throw new Error(`unknown modifier ${JSON.stringify(m)} in chord ${JSON.stringify(chord)}`);
+    }
+    if (!codes.includes(vk)) codes.push(vk);
+  }
+  let target: number | undefined;
+  if (VK_MODIFIERS[last] !== undefined) target = VK_MODIFIERS[last];
+  else if (VK_NAMED[last] !== undefined) target = VK_NAMED[last];
+  else if (/^[a-z0-9]$/.test(last)) target = last.toUpperCase().charCodeAt(0);
+  else {
+    const f = /^f([1-9]|1\d|2[0-4])$/.exec(last);
+    if (f) target = 0x70 + Number(f[1]) - 1;
+  }
+  if (target === undefined) {
+    throw new Error(
+      `unrecognised key ${JSON.stringify(last)} in Windows-key chord ${JSON.stringify(chord)}. ` +
+        'Use a letter, a digit, f1-f24 or a named key (enter, tab, arrows…).',
+    );
+  }
+  if (!codes.includes(target)) codes.push(target);
+  return codes;
 }
