@@ -5976,6 +5976,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // A promise with a date attached is a follow-up, not just a fact: "voy a
       // pagar el seguro el viernes" is something to mention on Friday.
+      // Hablar otra vez de algo pendiente reinicia su reloj de «llevas N d sin tocar».
+      safeRemember(() => followups.touchMentioned(chatKey(inbound), inbound.text));
       const promised = followupFromMessage(inbound.text);
       if (promised) {
         safeRemember(() => followups.track(thread.key, 'date', promised.subject, promised.dueAt));

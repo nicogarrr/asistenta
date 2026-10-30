@@ -21,6 +21,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 
 export interface Followup {
   id: string;
@@ -158,6 +159,40 @@ export class FollowupTracker {
         `UPDATE followups SET last_contact = ? WHERE scope = ? AND subject = ? AND status = 'pending'`,
       )
       .run(this.#now(), scope, subject);
+  }
+
+  /**
+   * El usuario ha vuelto a hablar de una nota pendiente de ESTE chat: reinicia
+   * su reloj de silencio. `touch()` existía pero nadie lo llamaba, así que
+   * «Llevas 5 d sin tocar: pagar el seguro» salía aunque Nico hubiera escrito
+   * ayer «ya he mirado lo del seguro». Coincide si al menos la mitad de las
+   * palabras con contenido de la nota (4+ letras) aparecen por su raíz de 4
+   * letras («pagar el seguro» ↔ «el seguro ya está»). Devuelve cuántas tocó.
+   */
+  touchMentioned(chatKey: string, text: string, now = this.#now()): number {
+    const said = new Set(
+      foldAccents(text)
+        .split(/[^a-z0-9ñ]+/)
+        .filter((w) => w.length >= 4)
+        .map((w) => w.slice(0, 4)),
+    );
+    if (!said.size) return 0;
+    let touched = 0;
+    const update = this.#db.prepare('UPDATE followups SET last_contact = ? WHERE id = ?');
+    for (const note of this.forChat(chatKey, 500)) {
+      if (note.status !== 'pending') continue;
+      const stems = foldAccents(note.subject)
+        .split(/[^a-z0-9ñ]+/)
+        .filter((w) => w.length >= 4)
+        .map((w) => w.slice(0, 4));
+      if (!stems.length) continue;
+      const hits = stems.filter((s) => said.has(s)).length;
+      if (hits * 2 >= stems.length) {
+        update.run(now, note.id);
+        touched++;
+      }
+    }
+    return touched;
   }
 
   /** Notes whose date has arrived. */
