@@ -14,6 +14,7 @@ import {
   progresoPlan,
   resumenAprobacion,
   resumenMemoria,
+  textoEspera,
   tiempoRestante,
 } from './client-format.js';
 
@@ -42,7 +43,9 @@ export function renderFormatScript(): string {
   var mensajeDeError = ${mensajeDeError.toString()};
   var resumenMemoria = ${resumenMemoria.toString()};
   var progresoPlan = ${progresoPlan.toString()};
+  var textoEspera = ${textoEspera.toString()};
   return {
+    textoEspera: textoEspera,
     resumenMemoria: resumenMemoria,
     progresoPlan: progresoPlan,
     mensajeDeError: mensajeDeError,
@@ -179,6 +182,13 @@ export function renderPage(): string {
     .recuerdo p { margin: 0; }
     .recuerdo .muted { font-size: 12px; margin-top: 3px; }
     .meta-objetivo { margin: 6px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .turno { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--borde); }
+    .turno p { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    .turno .quien { font-size: 12px; color: var(--suave); margin-bottom: 2px; }
+    .turno.yo { background: #13202c; border-color: #264357; margin-left: 12%; }
+    .turno.asistente { background: var(--panel-2); margin-right: 12%; }
+    .turno.esperando .texto { color: var(--suave); font-variant-numeric: tabular-nums; }
+    .turno button { margin-top: 6px; }
     .rejilla {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -397,7 +407,7 @@ export function renderPage(): string {
               <button id="enviar-chat" type="submit">Enviar</button>
             </div>
           </form>
-          <div id="panel-chat" class="chat-respuesta" aria-live="polite"></div>
+          <div id="panel-chat" class="chat-respuesta" role="log" aria-live="polite" aria-label="Conversación"></div>
         </div>
       </article>
 
@@ -921,29 +931,62 @@ ${renderFormatScript()}
         } catch (error) {}
       }
 
-      async function enviarChat(evento) {
-        evento.preventDefault();
+      // Conversación de esta pestaña: el panel no guarda historial en el servidor.
+      var MAX_TURNOS_CHAT = 20;
+
+      function anadirTurno(clase, quien, texto) {
+        var panel = document.getElementById('panel-chat');
+        var turno = nodo('div', 'turno ' + clase);
+        turno.appendChild(nodo('p', 'quien', quien));
+        var cuerpo = nodo('p', 'texto', texto);
+        turno.appendChild(cuerpo);
+        panel.appendChild(turno);
+        while (panel.children.length > MAX_TURNOS_CHAT * 2) panel.removeChild(panel.firstChild);
+        turno.scrollIntoView({ block: 'nearest' });
+        return turno;
+      }
+
+      async function enviarChat(evento, textoForzado) {
+        if (evento) evento.preventDefault();
         var campo = document.getElementById('texto-chat');
         var boton = document.getElementById('enviar-chat');
-        var panel = document.getElementById('panel-chat');
-        var texto = campo.value;
+        var texto = textoForzado !== undefined ? textoForzado : campo.value;
         if (!texto.trim()) {
           campo.focus();
           return;
         }
         boton.disabled = true;
-        panel.replaceChildren(nodo('p', 'muted', 'Esperando respuesta…'));
+        campo.value = '';
+        anadirTurno('yo', 'Tú', texto);
+        var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
+        var cuerpo = espera.querySelector('.texto');
+        var inicio = Date.now();
+        var reloj = window.setInterval(function () {
+          cuerpo.textContent = formato.textoEspera(Date.now() - inicio);
+        }, 1000);
         try {
           var datos = await enviar('/api/chat', { text: texto });
           var respuesta =
             datos && typeof datos === 'object' && typeof datos.text === 'string'
               ? datos.text
               : JSON.stringify(datos);
-          panel.replaceChildren(nodo('p', 'texto', respuesta));
-          campo.value = '';
+          espera.className = 'turno asistente';
+          cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
         } catch (error) {
-          pintarError(panel, error);
+          espera.className = 'turno asistente fallo';
+          cuerpo.className = 'texto error';
+          cuerpo.textContent =
+            error && error.message ? error.message : 'No se pudo enviar el mensaje.';
+          var reintentar = nodo('button', 'mini', 'Reintentar');
+          reintentar.type = 'button';
+          reintentar.addEventListener('click', function () {
+            reintentar.disabled = true;
+            enviarChat(null, texto);
+          });
+          espera.appendChild(reintentar);
+          if (!campo.value) campo.value = texto;
         } finally {
+          window.clearInterval(reloj);
           boton.disabled = false;
           campo.focus();
         }
