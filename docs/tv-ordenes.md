@@ -7,13 +7,15 @@ Deterministas, sin modelo. Ejemplos:
 
 | Dices | Hace |
 |---|---|
-| «apaga la tele» / «enciende la tele» | `power` (ver encendido por red) |
+| «apaga la tele» / «enciende la tele» / «apágala» / «enciéndela» / «apaga el televisor» | `power` (ver encendido por red) |
 | «volumen a 20» | volumen absoluto (necesita Glasshouse) |
 | «sube el volumen», «baja 5», «más alto» | pulsaciones del mando (`volumeStep`, sin Glasshouse) |
-| «silencio» / «apaga el sonido» / «quita el silencio» | `mute` |
+| «silencio» / «apaga el sonido» / «quítale el sonido» / «quita el silencio» | `mute` |
 | «canal 5», «pon la 1», «siguiente canal» | `channel` (dígitos + ENTER, CHANNELUP/DOWN) |
 | «abre Netflix», «pon YouTube», «quiero ver DAZN» | `launch` por nombre |
-| «pausa», «dale al play» | `media` |
+| «pausa», «pon pausa», «dale al play» | `media` |
+| «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
+| «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20» | volumen a ese número |
 | «pon el HDMI 2» | `input` |
 | «¿qué está viendo?», «¿está encendida?» | `status` |
 | «modo cine», «modo cine con Netflix» | rutina `scene=cine` |
