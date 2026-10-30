@@ -96,6 +96,10 @@ export function isExcludedWindow(w: WindowLite): boolean {
 
 const HIDDEN = '[oculto]';
 
+/** A line that talks about a one-time code, PIN or key (see `redact`). */
+const OTP_HINT =
+  /(?:^|[^\p{L}\p{N}])(c[oó]digo|code|otp|pin|clave|contrase[ñn]a|password|passcode|token|2fa|cvv|cvc|verificaci[oó]n|verification)(?![\p{L}\p{N}])/iu;
+
 /** Quita control, formato (bidi, ZW...), sin asignar y privado; colapsa espacios. */
 function clean(s: string): string {
   return s
@@ -141,6 +145,12 @@ export function redact(input: string): string {
   // Cadenas de alta entropía (tokens, claves, hashes): 20+ caracteres sin espacios con mezcla.
   s = s.replace(/\b[A-Za-z0-9_\-+/=]{20,}\b/g, HIDDEN);
   s = s.replace(/\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{12,}\b/g, HIDDEN);
+  // The keyword rule hides what comes AFTER «código»/«code»/«PIN»… but a code
+  // written BEFORE it («123456 es tu código para confirmar el pago de 49,99 €», the
+  // usual bank/3DS and Google «G-482913 es tu código» shape) stayed in clear. On a
+  // line that names a code, every short digit run is hidden wherever it sits.
+  // Runs last, so IBANs, cards and phones are already matched whole above.
+  if (OTP_HINT.test(s)) s = s.replace(/(?<![\d,.])\d{4,8}(?![\d,.]\d)/g, HIDDEN);
   return s.replace(/\s+/g, ' ').trim();
 }
 
