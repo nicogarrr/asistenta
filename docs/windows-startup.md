@@ -72,11 +72,15 @@ Los avisos usan un proceso CLI separado, DPAPI y contenido fijo. Van solo al own
 - Si no puede saber si corre: «no sé si corre: no toco nada».
 - Si la paraste con `pa stop`: «la paraste tú: sigue apagada hasta reiniciar el PC o pa iniciar».
 
+La tarea corre en la carpeta del repo, así que lee el mismo `.env` que el daemon (`PA_WATCHDOG`, `PA_STATE_DIR`). Si la registraste antes de #873, vuelve a ejecutar `pa autostart install` una vez para que se actualice.
+
 La última decisión se guarda en `<estado>/vigilante.json` y sale en `pa autostart status`. Con `PA_WATCHDOG=0` en `.env`, `pa autostart install` no registra el vigilante; si ya estaba registrado, sigue corriendo pero no hace nada («vigilante apagado (PA_WATCHDOG=0)»), y `pa autostart uninstall` lo quita. En los tests `schtasks` va simulado: no se crea ninguna tarea real.
 
 ## Parada y desinstalación
 
 `pa stop` conserva la parada limpia autenticada. Si fue una parada voluntaria con exit 0, el launcher no solicita reinicio.
+
+Si Asistenta ya no estaba en marcha, `pa stop` lo dice («Asistenta no estaba en marcha: no había nada que parar»), sale con 0 y también la deja apagada para el vigilante hasta reiniciar el PC o `pa iniciar`. Si la parada falla de verdad, sale con 1 y no marca nada.
 
 ```powershell
 node dist/cli.js autostart uninstall

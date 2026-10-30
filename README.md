@@ -149,6 +149,8 @@ El panel y Telegram ven las mismas aprobaciones pendientes. La vista web no impl
 
 Consulta [`deploy/windows/README.md`](deploy/windows/README.md). No lo actives hasta comprobar el arranque manual. El script usa la raíz del repositorio como directorio de trabajo; el CLI carga desde allí el `.env` opcional. Las variables ya presentes en el entorno del usuario de la tarea tienen prioridad sobre el archivo. No coloques secretos en el comando de la tarea. No se ha validado una instalación nativa Windows en esta ronda de QA.
 
+En Windows, el arranque completo (una sola orden `node dist/cli.js autostart install --start`, la lista previa de `pa iniciar --solo-comprobar` y el vigilante «Asistenta-vigilante», que la vuelve a levantar cada 5 min si se cae) está en [`docs/windows-startup.md`](docs/windows-startup.md); el vigilante tiene su apartado en [Vigilante: «Asistenta-vigilante»](docs/windows-startup.md#vigilante-asistenta-vigilante). `pa stop` la deja apagada hasta reiniciar el PC o `pa iniciar`, también si ya no estaba en marcha.
+
 ## OCR local (opcional)
 
 Asistenta puede sacar el texto de una imagen o un PDF escaneado con un motor OCR que corre en tu PC: sin red (salvo la primera descarga de los pesos), sin APIs de pago y sin usar tus claves del modelo. Está **apagado por defecto**; al activarlo aparece la herramienta `ocr_local`, que solo lee ficheros dentro de la carpeta de trabajo (y de `PA_OCR_WATCH_DIR` si la tienes). La herramienta `ocr` de siempre (texto de la pantalla con el OCR de Windows) no cambia.
