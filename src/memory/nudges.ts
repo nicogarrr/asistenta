@@ -34,6 +34,13 @@ const MIN_CHARS = 15;
  * and `\w` are ASCII-only, so a trigger ending in `é` would never match with a
  * trailing `\b`.
  */
+const WORD_CHAR = '[\\p{L}\\p{N}_]';
+/** Límite de palabra que trata «é», «ñ», «á»… como letras (el `\\b` de JS no lo hace). */
+const UNICODE_BOUNDARY = `(?:(?<!${WORD_CHAR})(?=${WORD_CHAR})|(?<=${WORD_CHAR})(?!${WORD_CHAR}))`;
+function unicodeWords(re: RegExp): RegExp {
+  return new RegExp(re.source.replaceAll('\\b', UNICODE_BOUNDARY), re.flags);
+}
+
 const CATEGORIES: RegExp[][] = [
   // Corrección: the user is fixing something the agent believes.
   [/\bme llamo\b/iu, /\ben realidad\b/iu, /\bmejor dicho\b/iu, /\bno es\b[^.!?]*?\bsino\b/iu],
@@ -49,7 +56,7 @@ const CATEGORIES: RegExp[][] = [
   ],
   // Decisión.
   [/\bhe decidido\b/iu, /\bvoy a\b/iu, /\bempezar[ée](?!\p{L})/iu],
-];
+].map((patterns) => patterns.map(unicodeWords));
 
 /**
  * What survives the question filter. "¿siempre llegas tarde?" is about the
@@ -57,8 +64,9 @@ const CATEGORIES: RegExp[][] = [
  * tarde" carries a real preference in its own clause and does. A question that
  * names the user ("me llamo…", "tengo…") is an affirmation in disguise.
  */
-const STRONG_AFFIRMATION =
-  /\b(?:me llamo|me llaman|prefiero|me gustan?|tengo|vivo en|trabajo en|mi objetivo|he decidido|voy a|mi\s+[\p{L}\p{N}_]+\s+es)\b/iu;
+const STRONG_AFFIRMATION = unicodeWords(
+  /\b(?:me llamo|me llaman|prefiero|me gustan?|tengo|vivo en|trabajo en|mi objetivo|he decidido|voy a|mi\s+[\p{L}\p{N}_]+\s+es)\b/iu,
+);
 
 /** Everything that is only a greeting, so "hola, ¿qué tal?" is not a fact. */
 const GREETINGS = new Set([
@@ -91,8 +99,9 @@ const GREETINGS = new Set([
  * "porque" and "como" are deliberately absent: "porque prefiero el té" is an
  * affirmation.
  */
-const QUESTION_START =
-  /^(?:qué|cómo|cuándo|dónde|quién|cuál|cuánto|cuántos|cuántas|por qué|puedes|podrías|podrias|sabes|dime|what|how|when|where|why|who|which|can you|could you|would you|do you)\b/iu;
+const QUESTION_START = unicodeWords(
+  /^(?:qué|cómo|cuándo|dónde|quién|cuál|cuánto|cuántos|cuántas|por qué|puedes|podrías|podrias|sabes|dime|what|how|when|where|why|who|which|can you|could you|would you|do you)\b/iu,
+);
 
 /**
  * A request, not a statement about the user: "resúmeme el último correo que
