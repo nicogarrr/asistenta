@@ -134,7 +134,8 @@ export function formatApproval(
   if (call.tool === 'computer') {
     if (call.args.action === 'batch' && Array.isArray(call.args.actions)) {
       const steps = call.args.actions as Array<Record<string, unknown>>;
-      if (steps.some((s) => s.action === 'type' && s.secret === true)) return deniedSecretType();
+      if (steps.some((s) => s.action === 'type' && flaggedSecret(s.secret)))
+        return deniedSecretType();
       if (hasInvisible(JSON.stringify(steps))) return deniedInvisible('computer');
       const rawSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, IDENTITY)}`);
       const shownSteps = steps.map(
@@ -155,7 +156,7 @@ export function formatApproval(
       ].join('\n');
       return withGrantWindowNote(withinBudget(raw, question, 'computer'), opts.grantWindowMs);
     }
-    if (call.args.action === 'type' && call.args.secret === true) return deniedSecretType();
+    if (call.args.action === 'type' && flaggedSecret(call.args.secret)) return deniedSecretType();
     if (hasInvisible(JSON.stringify(call.args))) return deniedInvisible('computer');
     const rawAction = describeComputerAction(call.args, IDENTITY);
     const shownAction = describeComputerAction(call.args, redactSecrets);
@@ -275,6 +276,18 @@ function deniedAltered(tool: string): ApprovalText {
       'DENEGADA. Ejecútala a mano o reescríbela sin secretos literales.',
     complete: false,
   };
+}
+
+/**
+ * Whether a `secret` flag asks for secret handling. Only the literal `true` used
+ * to count, so `secret: "true"` or `secret: 1` (a batch item, which the schema
+ * does not check) turned into an ordinary approval question that SHOWED the
+ * secret in the chat. Anything but an explicit no counts as secret.
+ */
+function flaggedSecret(value: unknown): boolean {
+  if (value === undefined || value === null || value === false || value === 0) return false;
+  if (typeof value === 'string' && /^\s*(false|no|0)?\s*$/i.test(value)) return false;
+  return true;
 }
 
 /**
