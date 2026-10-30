@@ -333,3 +333,10 @@ export function etiquetaAmbito(ambito: string): string {
   }
   return hilo ? `${texto} · hilo ${hilo}` : texto;
 }
+
+/** Primera opción del selector de Memoria: qué ámbito se lee sin elegir ninguno. */
+export function etiquetaAmbitoPorDefecto(porDefecto: string): string {
+  // «Por defecto» delante: en el móvil el selector corta el final.
+  if (!porDefecto || porDefecto === 'local') return 'Por defecto · Local (este PC)';
+  return `Por defecto · ${etiquetaAmbito(porDefecto)}`;
+}

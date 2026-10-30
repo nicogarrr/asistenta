@@ -1674,6 +1674,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           memory: (scope?: string) =>
             panelMemoryEntries(memory, scope, vigilanteOwnerId ?? undefined),
           memoryScopes: () => memory.scopes(),
+          // El mismo ámbito que panelMemoryEntries lee sin `scope` (#555).
+          memoryDefaultScope: () =>
+            vigilanteOwnerId === undefined || vigilanteOwnerId === null
+              ? 'local'
+              : `telegram:dm:${String(vigilanteOwnerId)}#main`,
           auditVerify: () => verifyCallAudit(),
           // Chat del panel: corre en el hilo principal del propietario, con el
           // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).
