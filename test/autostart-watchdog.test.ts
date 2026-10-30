@@ -238,3 +238,22 @@ describe('pa autostart con el vigilante (todo simulado)', () => {
     expect(names).toContain('vigilante.json');
   });
 });
+
+describe('vigilante: carpeta de trabajo de la tarea', () => {
+  it('arranca en la raíz del repo (donde está el .env), no en System32', () => {
+    const xml = watchdogTaskXml({
+      nodeExe: 'C:\\Program Files\\nodejs\\node.exe',
+      cliJs: 'C:\\Users\\Nico\\asis & co\\dist\\cli.js',
+    });
+    expect(xml).toContain('<WorkingDirectory>C:\\Users\\Nico\\asis &amp; co</WorkingDirectory>');
+    // El esquema del Programador de tareas exige Command, Arguments, WorkingDirectory en ese orden.
+    const exec = xml.slice(xml.indexOf('<Exec>'), xml.indexOf('</Exec>'));
+    expect(exec.indexOf('<Arguments>')).toBeLessThan(exec.indexOf('<WorkingDirectory>'));
+    expect(exec.indexOf('<Command>')).toBeLessThan(exec.indexOf('<Arguments>'));
+  });
+
+  it('también con barras normales en la ruta del CLI', () => {
+    const xml = watchdogTaskXml({ nodeExe: 'node.exe', cliJs: 'D:/repos/asistenta/dist/cli.js' });
+    expect(xml).toContain('<WorkingDirectory>D:/repos/asistenta</WorkingDirectory>');
+  });
+});
