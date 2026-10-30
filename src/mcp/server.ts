@@ -8,6 +8,7 @@
  */
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
+import { localDay } from '../datecontext.js';
 
 export const MCP_SERVER_NAME = 'asistenta';
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -78,12 +79,7 @@ export const READ_ONLY_TOOLS: readonly ToolDef[] = [
       const { q, limit } = readQuery(args);
       const hits = deps.sessionSearch(q, limit);
       return hits.length
-        ? hits
-            .map(
-              (h) =>
-                `- ${new Date(h.at).toISOString().slice(0, 10)} ${h.title}: ${h.summary || h.snippet}`,
-            )
-            .join('\n')
+        ? hits.map((h) => `- ${localDay(h.at)} ${h.title}: ${h.summary || h.snippet}`).join('\n')
         : 'Ninguna sesión casa con esa búsqueda.';
     },
   },
