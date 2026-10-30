@@ -1,4 +1,16 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defineConfig } from 'vitest/config';
+
+// Los tests NUNCA escriben en el estado real del agente. Sin PA_STATE_DIR, paths.ts
+// usa ~/.local/share/personal-agent: la suite dejaba allí perfiles de Chromium,
+// browser/grants.json y logs; en el PC de Nico, encima de su estado de verdad.
+// Un directorio temporal por ejecución, siempre (aunque la shell traiga otro
+// PA_STATE_DIR); los tests que necesitan el suyo lo siguen fijando ellos mismos.
+// global-state-dir.ts lo borra al terminar.
+const testStateDir = mkdtempSync(join(tmpdir(), 'pa-test-state-'));
+process.env.PA_TEST_STATE_DIR = testStateDir;
 
 export default defineConfig({
   test: {
@@ -11,7 +23,8 @@ export default defineConfig({
     // were a stale fixed date and the pdfjs engine). Pin the zone so the suite means the same
     // thing everywhere; Node reads TZ lazily on Linux, and on Windows the
     // system zone already is Madrid.
-    env: { TZ: 'Europe/Madrid' },
+    env: { TZ: 'Europe/Madrid', PA_STATE_DIR: testStateDir },
+    globalSetup: ['test/helpers/global-state-dir.ts'],
     // Generous, because the slow tests are the honest ones: they launch a real Chromium
     // and paint frames with PowerShell and System.Drawing. Both compete for the same
     // processes when the whole suite runs at once, and a 20s budget turned that
