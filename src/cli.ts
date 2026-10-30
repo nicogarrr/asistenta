@@ -213,6 +213,14 @@ import {
 } from './notice-pace.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import {
+  type DeliveryPlan,
+  describeDelivery,
+  parseDeliveryArgs,
+  planDelivery,
+  RoutineDeliveryStore,
+  writeRoutineOutput,
+} from './routine-delivery.js';
+import {
   buildMacroPrompt,
   canonicalMacroName,
   detectMacroParams,
@@ -2618,6 +2626,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     return next;
   };
 
+  const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
   const runRoutineFire = async (_prompt: string, ctx: RoutineRunContext) => {
     // A goal tick EXECUTES; it never delivers its prompt as a message.
     if (isGoalRoutine(ctx.routine)) {
@@ -2645,13 +2654,37 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ? ctx.routine.prompt
         : procedurePrompt(ctx.routine);
     let body = '';
+    let plan: DeliveryPlan | null = null;
     if (!reminder) {
+      let failed = false;
       try {
         body = await runRoutineTask(task, ctx);
       } catch (err) {
+        failed = true;
         log.warn('routine execution failed', { routine: ctx.routine.name, err });
       }
-      if (!body.trim()) body = 'No devolvió respuesta.';
+      if (!body.trim()) {
+        failed = true;
+        body = 'No devolvió respuesta.';
+      }
+      // F6: where the output goes (chat by default) and «solo si cambia».
+      const setting = routineDelivery.get(ctx.scope, ctx.routine.name);
+      plan = planDelivery(setting, setting.lastHash, body, failed);
+      if (plan.file) {
+        try {
+          writeRoutineOutput(join(paths.state, 'salidas'), ctx.routine.name, body);
+          if (!plan.chat) routineDelivery.commit(ctx.scope, ctx.routine.name, plan.hash);
+        } catch (err) {
+          log.warn('routine output file failed', { routine: ctx.routine.name, err });
+        }
+      }
+      if (!plan.chat) {
+        log.info('routine output not sent to chat', {
+          routine: ctx.routine.name,
+          reason: plan.skipped ?? 'fichero',
+        });
+        return;
+      }
     }
     const sent = await telegram
       .send({
@@ -2667,6 +2700,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.warn('routine send failed', { err });
         return false;
       });
+    if (sent && plan && !reminder) routineDelivery.commit(ctx.scope, ctx.routine.name, plan.hash);
     // A one-time reminder is a cron pinned to a date: it would fire again next year.
     // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
     // instead of vanishing.
@@ -3819,7 +3853,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       runCronCommand(
-        { store, routineRunner, threadKey: thread.key, chatKey: chatKey(inbound) },
+        {
+          store,
+          routineRunner,
+          threadKey: thread.key,
+          chatKey: chatKey(inbound),
+          delivery: routineDelivery,
+        },
         args,
       ),
       { quote: true },
@@ -6890,6 +6930,8 @@ export interface CronCommandDeps {
   threadKey: string;
   /** chatKey without the `#thread` suffix. */
   chatKey: string;
+  /** Where each routine's output goes (F6); absent = `/cron entrega` unavailable. */
+  delivery?: RoutineDeliveryStore;
 }
 
 /**
@@ -6987,6 +7029,29 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
   const sub = (subRaw ?? '').toLowerCase();
   const rest = restParts.join(' ');
+
+  if (sub === 'entrega') {
+    const parsed = parseDeliveryArgs(rest);
+    if (!parsed || !deps.delivery) {
+      return 'Uso: /cron entrega <nombre> [chat|fichero|ninguno] [solo-si-cambia|siempre].';
+    }
+    const routine =
+      deps.store.getRoutine(deps.threadKey, parsed.name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, parsed.name);
+    if (!routine || routine.kind !== 'schedule' || isReminder(routine)) {
+      return `No tengo ninguna rutina programada llamada "${parsed.name}".`;
+    }
+    const current = deps.delivery.get(routine.scope, routine.name);
+    if (parsed.setting.target === undefined && parsed.setting.soloSiCambia === undefined) {
+      return `La rutina "${routine.name}" entrega ${describeDelivery(current)}.`;
+    }
+    const next = {
+      target: parsed.setting.target ?? current.target,
+      soloSiCambia: parsed.setting.soloSiCambia ?? current.soloSiCambia,
+    };
+    deps.delivery.set(routine.scope, routine.name, next);
+    return `Hecho: la rutina "${routine.name}" entregará ${describeDelivery(next)}.`;
+  }
 
   if (sub === 'del' || sub === 'borra' || sub === 'rm') {
     const name = rest.trim();
