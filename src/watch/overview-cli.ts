@@ -7,10 +7,12 @@ import {
   formatOverview,
   forScope,
   fromOjo,
+  fromOjoRules,
   fromPageWatches,
   fromPriceConfig,
   fromRoutines,
   fromTriggers,
+  type OjoRule,
   type OjoState,
   type OverviewEntry,
 } from './overview.js';
@@ -54,6 +56,17 @@ export function readOjoState(db: DatabaseSync): OjoState {
   };
 }
 
+/** Reglas «no avisar» del ojo, solo lectura (sin la tabla: ninguna). */
+export function readOjoRules(db: DatabaseSync): OjoRule[] {
+  const has = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vigilante_rules'")
+    .get();
+  if (!has) return [];
+  return db
+    .prepare('SELECT id, kind, src, pattern, status FROM vigilante_rules ORDER BY id')
+    .all() as unknown as OjoRule[];
+}
+
 /** Lee todas las listas. Una fuente que falla se informa y no tumba las demás. */
 export function collectWatches(src: OverviewSources): {
   entries: OverviewEntry[];
@@ -74,6 +87,7 @@ export function collectWatches(src: OverviewSources): {
     try {
       if (db) {
         entries.push(...fromOjo(readOjoState(db)));
+        entries.push(...fromOjoRules(readOjoRules(db)));
       }
     } catch (err) {
       errors.push(`ojo: ${err instanceof Error ? err.message : String(err)}`);

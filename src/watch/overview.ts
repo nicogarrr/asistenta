@@ -15,7 +15,14 @@ import type { Routine, RoutineTrigger } from '../db.js';
 import type { PageWatch } from './pages.js';
 import type { WatchConfig } from './pricewatch.js';
 
-export type OverviewKind = 'pagina' | 'precio' | 'tiendas' | 'rutina' | 'disparador' | 'ojo';
+export type OverviewKind =
+  | 'pagina'
+  | 'precio'
+  | 'tiendas'
+  | 'rutina'
+  | 'disparador'
+  | 'ojo'
+  | 'silencio';
 
 export interface OverviewEntry {
   kind: OverviewKind;
@@ -33,7 +40,15 @@ export interface OverviewEntry {
   detail?: string;
 }
 
-const KIND_ORDER: OverviewKind[] = ['pagina', 'precio', 'tiendas', 'rutina', 'disparador', 'ojo'];
+const KIND_ORDER: OverviewKind[] = [
+  'pagina',
+  'precio',
+  'tiendas',
+  'rutina',
+  'disparador',
+  'ojo',
+  'silencio',
+];
 
 const KIND_TITLE: Record<OverviewKind, string> = {
   pagina: 'Páginas vigiladas',
@@ -42,6 +57,7 @@ const KIND_TITLE: Record<OverviewKind, string> = {
   rutina: 'Rutinas programadas',
   disparador: 'Disparadores',
   ojo: 'Ojo de águila (avisos sin modelo)',
+  silencio: 'Ojo: «no avisar» (silencios)',
 };
 
 function euros(cents: number): string {
@@ -164,6 +180,31 @@ export function fromOjo(s: OjoState): OverviewEntry[] {
   ];
 }
 
+/** Una regla «no avisar» del ojo (tabla vigilante_rules de ojo-ignore.ts). */
+export interface OjoRule {
+  id: number;
+  kind: string;
+  src: string;
+  pattern: string;
+  status: string;
+}
+
+/**
+ * Silencios del ojo: lo que Asistenta ha dejado de avisar. Las «propuesta» aún no
+ * silencian nada (esperan tu sí), así que salen en pausa.
+ */
+export function fromOjoRules(rules: readonly OjoRule[]): OverviewEntry[] {
+  return rules.map((r) => ({
+    kind: 'silencio' as const,
+    id: `silencio:${r.id}`,
+    label: r.pattern,
+    target: r.src ? `${r.kind} de ${r.src}` : r.kind,
+    scope: '',
+    enabled: r.status === 'activa',
+    detail: r.status === 'activa' ? undefined : 'propuesta, sin confirmar',
+  }));
+}
+
 export function forScope(entries: readonly OverviewEntry[], scope?: string): OverviewEntry[] {
   if (!scope) return [...entries];
   return entries.filter((e) => e.scope === scope || e.scope === '');
@@ -199,7 +240,7 @@ export function formatOverview(
       if (e.target && e.target !== e.label) parts.push(`— ${e.target}`);
       if (e.detail) parts.push(`(${e.detail})`);
       if (!e.enabled) parts.push('[en pausa]');
-      if (e.kind !== 'ojo') {
+      if (e.kind !== 'ojo' && e.kind !== 'silencio') {
         parts.push(e.lastRunMs ? `· última: ${ago(e.lastRunMs, now)}` : '· aún no se ha ejecutado');
       }
       lines.push(parts.join(' '));
