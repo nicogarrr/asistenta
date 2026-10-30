@@ -115,6 +115,10 @@ export const CAPABILITIES: readonly Capability[] = [
     desktopOnly: true,
     note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio.',
   },
+  {
+    name: 'ocr_local',
+    note: 'OCR local opcional (PA_OCR_LOCAL=1): lee una imagen/PDF de las carpetas permitidas; la Gate decide.',
+  },
 ];
 
 const names = (pick: (c: Capability) => boolean | undefined): string[] =>

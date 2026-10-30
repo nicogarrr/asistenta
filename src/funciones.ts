@@ -218,6 +218,10 @@ export const TOOL_ABILITIES: Readonly<
   list: { area: 'pc', text: 'te digo qué hay en una carpeta' },
   write: { area: 'pc', text: 'creo o cambio ficheros, con tu permiso' },
   iphone: { area: 'pc', text: 'hago cosas en tu iPhone a través del puente de casa' },
+  ocr_local: {
+    area: 'pc',
+    text: 'leo el texto de fotos y PDF escaneados con el OCR local, si lo activas',
+  },
   media: { area: 'audio', text: 'grabo y reproduzco audio, hago fotos y uso la cámara o el micro' },
   download: { area: 'audio', text: 'descargo un vídeo, un PDF o solo el audio de un enlace' },
   reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
