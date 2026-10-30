@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from './datecontext.js';
 import { paths } from './paths.js';
+import { psErrorSummary } from './tools/ps-error.js';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -92,6 +93,8 @@ const isSecretKey = (key: string): boolean => SECRET_KEY.test(key) && !INNOCENT_
 export function scrubLogText(text: string): string {
   return (
     scrubUrls(text)
+      // Mensaje de execFile/exec copiado a texto: la primera línea es la orden entera.
+      .replace(/\bCommand failed: [^\r\n]*/g, 'Command failed: [orden omitida]')
       .replace(
         /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+)\b/g,
         '[redacted]',
@@ -125,6 +128,19 @@ export function redact(fields: Record<string, unknown>): Record<string, unknown>
     seen.add(value);
     try {
       if (value instanceof Error) {
+        // Error de execFile/exec: `message` y `cmd` llevan la línea de órdenes entera
+        // (script, títulos, texto del usuario, rutas). Solo código, señal y la primera
+        // línea de stderr con lo entrecomillado tapado.
+        const cmd = (value as { cmd?: unknown }).cmd;
+        if (typeof cmd === 'string' && cmd.length > 0) {
+          const { message: _m, stderr, ...rest } = psErrorSummary(value);
+          return {
+            name: scrubLogText(value.name),
+            message: 'Command failed: [orden omitida]',
+            ...rest,
+            ...(stderr ? { stderr: scrubLogText(stderr) } : {}),
+          };
+        }
         return { name: scrubLogText(value.name), message: scrubLogText(value.message) };
       }
       if (Array.isArray(value)) return value.map((v) => visit(v, '', depth + 1));
