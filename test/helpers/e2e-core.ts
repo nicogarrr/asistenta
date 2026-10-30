@@ -8,18 +8,17 @@ import type {
   TranscriptContext,
 } from '@earendil-works/pi-ai';
 import { createFauxCore, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import type { ActionRecord } from '../../src/audit/log.js';
 import type { ApprovalChoice } from '../../src/channels/telegram.js';
 import { buildContextNote, createDaemonGate } from '../../src/cli.js';
 import type { Config } from '../../src/config.js';
 import { PersonalAgent } from '../../src/core/agent.js';
-import {
-  chatIdOfScope,
-  createRoutineFire,
-  deliverMissedThenStart,
-} from '../../src/daemon/routine-fire.js';
+import { createGoalTickExecute, type ThreadTickDeps } from '../../src/daemon/goal-tick.js';
+import { createRoutineFire, deliverMissedThenStart } from '../../src/daemon/routine-fire.js';
+import { createRoutineTask } from '../../src/daemon/routine-task.js';
 import { Store } from '../../src/db.js';
 import { GoalNotifier } from '../../src/goals/notify.js';
-import { GoalRunner, type GoalTickResult } from '../../src/goals/runner.js';
+import { GoalRunner } from '../../src/goals/runner.js';
 import { GoalStore, splitGoalScope } from '../../src/goals/store.js';
 import { SessionStore } from '../../src/memory/sessions.js';
 import { WorkstreamStore } from '../../src/memory/workstreams.js';
@@ -28,15 +27,7 @@ import { RoutineDeliveryStore } from '../../src/routine-delivery.js';
 import { RoutineRunner } from '../../src/routines.js';
 import { createGoalTool } from '../../src/tools/goal.js';
 import { createMemoryTool } from '../../src/tools/memory.js';
-import {
-  createReminderTool,
-  deliverMissedReminders,
-  isOneShotReminder,
-  isReminder,
-  oneShotStillPending,
-  reminderText,
-  settleOneShot,
-} from '../../src/tools/reminder.js';
+import { createReminderTool } from '../../src/tools/reminder.js';
 import { createTvTool, type TvMemoryState } from '../../src/tools/tv.js';
 
 /**
@@ -196,6 +187,9 @@ export interface Thread {
   gate: ReturnType<typeof createDaemonGate>;
   /** Un mensaje de Nico: sesión, nota de contexto y turno del agente, como el daemon. */
   user: (text: string) => Promise<Awaited<ReturnType<PersonalAgent['run']>>>;
+  tail: Promise<unknown>;
+  generation: number;
+  active: boolean;
 }
 
 /**
@@ -253,13 +247,8 @@ export class Core {
       notifier: this.notifier,
       store: this.store,
       sync: () => this.routines.sync(),
-      execute: async (goal, prompt): Promise<GoalTickResult> => {
-        const { chatKey: ck, thread } = splitGoalScope(goal.scope);
-        const t = await this.thread(ck.split(':')[2] ?? '', thread);
-        const r = await t.agent.run(prompt);
-        t.gate.clearSession(t.key);
-        return { text: r.text ?? '', error: r.error };
-      },
+      // El MISMO execute que el daemon (src/daemon/goal-tick.ts).
+      execute: createGoalTickExecute({ ...this.#tickDeps(), actions: this.actions }),
     });
     this.#fire = this.#createFire();
   }
@@ -270,19 +259,38 @@ export class Core {
    */
   readonly #fire: ReturnType<typeof createRoutineFire>;
 
+  /** Registro de acciones (en memoria) que alimenta el tick de objetivo. */
+  readonly actions = {
+    records: [] as ActionRecord[],
+    record(entry: ActionRecord): void {
+      this.records.push(entry);
+    },
+  };
+
+  /** Dependencias de tick (objetivo/rutina) como las construye el daemon. */
+  #tickDeps(): ThreadTickDeps<Thread> {
+    return {
+      threadFor: (chatKey, name) => this.thread(chatKey.split(':')[2] ?? '', name),
+      sessions: this.sessions,
+      contextNoteFor: (t) =>
+        buildContextNote(
+          { key: t.key, name: t.name },
+          this.store,
+          this.memory,
+          undefined,
+          this.workstreams,
+          undefined,
+          this.sessions,
+        ),
+      safeRemember: (fn) => fn(),
+    };
+  }
+
   #createFire(): ReturnType<typeof createRoutineFire> {
     return createRoutineFire({
       store: this.store,
       tickGoal: (name) => this.goalRunner.tickByRoutineName(name),
-      runTask: async (task, ctx) => {
-        const [chatPart, threadName] = ctx.scope.split('#');
-        const t = await this.thread(chatIdOfScope(chatPart ?? ''), threadName || 'main');
-        try {
-          return (await t.agent.run(task)).text ?? '';
-        } finally {
-          t.gate.clearSession(t.key);
-        }
-      },
+      runTask: createRoutineTask(this.#tickDeps()),
       send: (chatId, text) => this.telegram.send({ chatId, text }),
       delivery: new RoutineDeliveryStore(join(this.#stateDir, 'routine-delivery.json')),
       outputDir: join(this.#stateDir, 'salidas'),
@@ -344,6 +352,9 @@ export class Core {
       name,
       agent,
       gate,
+      tail: Promise.resolve(),
+      generation: 0,
+      active: false,
       user: async (text: string) => {
         const sid = this.sessions.begin(key, text.slice(0, 80));
         this.sessions.addTurn(sid, 'user', text);
