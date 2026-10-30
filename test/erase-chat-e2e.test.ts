@@ -14,6 +14,10 @@ import { ProjectContextStore } from '../src/project-context.js';
  * verdad está cableado a esos mismos almacenes, sin copias en caché.
  */
 const CLI = readFileSync(join(import.meta.dirname, '..', 'src', 'cli.ts'), 'utf8');
+const INBOUND = readFileSync(
+  join(import.meta.dirname, '..', 'src', 'daemon', 'inbound.ts'),
+  'utf8',
+);
 
 function bodyOf(name: string): string {
   const start = CLI.indexOf(`const ${name} = async`);
@@ -107,9 +111,17 @@ describe('e2e /borrar_chat: proyecto y modelo no vuelven tras borrar ni tras rei
   });
 
   it('cli.ts: «BORRAR» llega a cmdBorrarChatConfirmado, que borra proyecto, modelo e hilos vivos', () => {
-    expect(CLI).toMatch(
-      /eraseConfirm\.consume\(chatKey_, inbound\.text\);\s*if \(erase === 'confirmed'\) return cmdBorrarChatConfirmado\(inbound\);/,
-    );
+    // The confirmation may live in cli.ts or, since the inbound-control move, in
+    // src/daemon/inbound.ts with cli.ts wiring eraseConfirm and cmdBorrarChatConfirmado.
+    const inline =
+      /eraseConfirm\.consume\(chatKey_, inbound\.text\);\s*if \(erase === 'confirmed'\) return cmdBorrarChatConfirmado\(inbound\);/;
+    if (!inline.test(CLI)) {
+      expect(CLI).toMatch(/consumeErase: \(key, text\) => eraseConfirm\.consume\(key, text\),/);
+      expect(CLI).toMatch(/eraseConfirmed: \(m\) => cmdBorrarChatConfirmado\(m\),/);
+      expect(INBOUND).toMatch(
+        /const erase = deps\.consumeErase\(key, inbound\.text\);\s*if \(erase === 'confirmed'\) \{\s*(return )?(await )?deps\.eraseConfirmed\(inbound\)/,
+      );
+    }
     const ask = bodyOf('cmdBorrarChat');
     expect(ask.indexOf('isOwnerDm(inbound')).toBeGreaterThan(-1);
     expect(ask.indexOf('isOwnerDm(inbound')).toBeLessThan(ask.indexOf('eraseConfirm.request('));

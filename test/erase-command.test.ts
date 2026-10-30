@@ -108,8 +108,14 @@ describe('cableado', () => {
   it('cli.ts: el dueño en privado, y la confirmación se mira antes que cualquier comando', () => {
     const src = readFileSync(join(__dirname, '../src/cli.ts'), 'utf8');
     expect(src).toMatch(/names: \['borrar_chat'\],\s*run: \(inbound\) => cmdBorrarChat\(inbound\)/);
-    const consume = src.indexOf('eraseConfirm.consume(');
-    const parse = src.indexOf('parseCommand(inbound.text)');
+    // onMessage pasa la confirmación a routeInboundControl, que la mira antes que los
+    // comandos (orden fijado en test/daemon-inbound-control.test.ts).
+    expect(src).toMatch(
+      /routeInboundControl\(inbound, chatKey_, \{[^}]*consumeErase: \(key, text\) => eraseConfirm\.consume\(key, text\)/,
+    );
+    const inb = readFileSync(join(__dirname, '../src/daemon/inbound.ts'), 'utf8');
+    const consume = inb.indexOf('deps.consumeErase(');
+    const parse = inb.indexOf('deps.parseCommand(');
     expect(consume).toBeGreaterThan(0);
     expect(consume).toBeLessThan(parse);
     const body = src.slice(src.indexOf('const cmdBorrarChatConfirmado'), src.indexOf('// F13:'));

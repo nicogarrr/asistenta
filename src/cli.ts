@@ -94,9 +94,9 @@ import { createGoalTickExecute } from './daemon/goal-tick.js';
 import {
   beginInbound,
   cachedFullReply,
-  isMailReplyRequest,
   queueThreadTurn,
   resolveInboundThread,
+  routeInboundControl,
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
@@ -7034,23 +7034,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             key: chatKey_,
           });
 
-          if (isMailReplyRequest(inbound.text)) return cmdCorreo(inbound, inbound.text);
-          const erase = eraseConfirm.consume(chatKey_, inbound.text);
-          if (erase === 'confirmed') return cmdBorrarChatConfirmado(inbound);
-          if (erase === 'cancelled')
-            await say(inbound, 'Cancelado: no he borrado nada.', { quote: true });
-          const command = parseCommand(inbound.text);
-          if (command) {
+          // Correo, confirmación de /borrar_chat y comandos: antes de cualquier hilo.
+          const control = await routeInboundControl(inbound, chatKey_, {
+            mailReply: (m) => cmdCorreo(m, m.text),
+            consumeErase: (key, text) => eraseConfirm.consume(key, text),
+            eraseConfirmed: (m) => cmdBorrarChatConfirmado(m),
+            eraseCancelled: (m) => say(m, 'Cancelado: no he borrado nada.', { quote: true }),
+            parseCommand,
             // Commands bypass the agent entirely: they are the user's hands on the
             // machine, not a task to delegate, and they must work even when every thread
             // is busy or the provider is down.
-            return dispatchCommand(commandTable, inbound, command, async (name) => {
-              // Unknown slash command: say so instead of silently running it as a task.
-              await say(inbound, `No conozco el comando /${name}. /help para ver la lista.`, {
-                quote: true,
-              });
-            });
-          }
+            runCommand: (m, command) =>
+              dispatchCommand(commandTable, m, command, async (name) => {
+                // Unknown slash command: say so instead of silently running it as a task.
+                await say(m, `No conozco el comando /${name}. /help para ver la lista.`, {
+                  quote: true,
+                });
+              }),
+          });
+          if (control === 'handled') return;
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
