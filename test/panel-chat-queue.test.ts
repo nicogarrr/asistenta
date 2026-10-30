@@ -94,7 +94,7 @@ describe('chat del panel → turno normal del daemon (paso 2)', () => {
     it('el panel usa runTurn con salida propia y apunta el turno en lastTurns', () => {
       expect(cli).toMatch(/return runPanelChat\(thread, text, \{/);
       expect(cli).toMatch(
-        /runTurn: \(t, said, out\) => runTurn\(t, panelInbound, said, \{ out \}\)/,
+        /runTurn: \(t, said, out\) => runTurn\(t, panelInbound, said, \{ out, panel: true \}\)/,
       );
       expect(cli).toMatch(/remember: \(t, said\) =>\s*lastTurns\.remember\(t\.key/);
     });

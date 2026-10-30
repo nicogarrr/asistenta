@@ -1839,7 +1839,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                   mark: t.agent.messages.length,
                   compactions: t.agent.compactions,
                 }),
-              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
             });
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
@@ -1882,7 +1882,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                   compactions: t.agent.compactions,
                 });
               },
-              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
             });
           },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
@@ -5881,6 +5881,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       spoken?: (text: string) => Promise<void>;
       /** Otro destino (el panel): nada del turno sale por Telegram, todo va aquí. */
       out?: TurnOutput;
+      /** Turno del chat del panel (loopback + token): lo escribe el dueño, puede enseñar reglas. */
+      panel?: boolean;
     },
   ): Promise<void> => {
     const generation = thread.generation;
@@ -6193,6 +6195,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const learnHint = correctionHint({
         enabled: learnCorrectionsEnabled(),
         ownerDm: isOwnerDm(inbound, vigilanteOwnerId),
+        // El panel solo lo usa el dueño (loopback + token) y siempre en su hilo principal.
+        panelOwner: opts.panel === true && opts.out !== undefined && thread.name === 'main',
         ownerText: text,
       });
       const contextNote = buildContextNote(
