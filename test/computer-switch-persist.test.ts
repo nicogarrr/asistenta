@@ -92,7 +92,8 @@ describe('/ordenador con save', () => {
 describe('cableado en el daemon', () => {
   const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
   it('arranca apagado si hay un off guardado (el .env=0 sigue mandando)', () => {
-    expect(cli).toMatch(/config\.computerUse !== false && computerOffSaved\(paths\.state\)/);
+    // applySavedComputerOff respeta PA_COMPUTER_USE=0 (test/boot-notice-ordenador-off.test.ts).
+    expect(cli).toContain('applySavedComputerOff(config, paths.state)');
   });
   it('/ordenador guarda la elección', () => {
     expect(cli).toContain('save: (on) => saveComputerSwitch(paths.state, on)');
