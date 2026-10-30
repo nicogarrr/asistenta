@@ -2390,10 +2390,12 @@ export function runPermisosCommand(
       `Permisos "siempre" activos (${tools.length}): ${tools.map(withChats).join(', ')}. ` +
       'Cada uno vale solo en el chat donde lo diste. ' +
       'Quita uno con /permisos revocar <herramienta> (o solo aquí: … este chat) o todos con /permisos revocar todo. ' +
-      'Dinero, credenciales y activaciones te preguntan siempre, haya o no un "siempre".'
+      'Dinero, credenciales y activaciones te preguntan siempre, haya o no un "siempre". ' +
+      'Con fecha y chat de cada uno: /permisos lista.'
     );
   }
-  if (sub !== 'revocar') return 'Uso: /permisos [estado] ⬦ /permisos revocar <herramienta>|todo';
+  if (sub !== 'revocar')
+    return 'Uso: /permisos [estado|lista] ⬦ /permisos revocar <herramienta>|todo';
   const tail = parts.slice(-2).join(' ').toLowerCase();
   if (parts.length >= 3 && tail === 'este chat') {
     return revokeHere(
