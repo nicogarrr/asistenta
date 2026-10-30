@@ -429,6 +429,33 @@ export function rewindFailedAttempt(messages: AgentMessage[], start: number): Ag
   return onlyItsPrompt ? messages.slice(0, from) : messages.slice(0, end);
 }
 
+/**
+ * Remove the guard's one-off instruction from the transcript once its report turn
+ * is over. The report itself (the assistant's answer) stays: it is what the user
+ * was told. A report turn that failed leaves nothing (see rewindFailedAttempt).
+ */
+export function dropGuardPrompt(
+  messages: AgentMessage[],
+  at: number,
+  prompt: string,
+): AgentMessage[] {
+  const rewound = rewindFailedAttempt(messages, at);
+  // pi may put its own markers (a tool-change system message) before the prompt,
+  // so the instruction is found by its text, never by position alone.
+  const i = rewound.findIndex((m, idx) => {
+    if (idx < at) return false;
+    const msg = m as { role?: unknown; content?: unknown };
+    if (msg.role !== 'user') return false;
+    const text = Array.isArray(msg.content)
+      ? msg.content
+          .map((b: { text?: unknown }) => (typeof b?.text === 'string' ? b.text : ''))
+          .join('')
+      : String(msg.content ?? '');
+    return text === prompt;
+  });
+  return i < 0 ? rewound : [...rewound.slice(0, i), ...rewound.slice(i + 1)];
+}
+
 /** A hung model must not hold the turn: the summary gives up and the history stays. */
 const SUMMARY_TIMEOUT_MS = 40_000;
 const SUMMARY_COOLDOWN_TURNS = 3;
@@ -1224,6 +1251,11 @@ export class PersonalAgent {
     const agent = this.#agent;
     const previousTools = agent.state.tools;
     let summary = '';
+    // The guard's instruction ("ya no tienes herramientas…") is for this one turn.
+    // Left in the transcript it reads as a standing order in every later request:
+    // the next task would start out believing it has no tools.
+    const guardAt = agent.state.messages.length;
+    const guardPrompt = `${reason}\n\nYa no tienes herramientas disponibles. Escribe tu mensaje final para el usuario en español, en dos o tres frases: qué conseguiste, dónde te quedaste y qué necesitas de él.`;
     try {
       agent.state.tools = [];
       const off = agent.subscribe((event) => {
@@ -1237,9 +1269,7 @@ export class PersonalAgent {
         // must fail fast instead of hanging the chat queue forever.
         await Promise.race([
           agent
-            .prompt(
-              `${reason}\n\nYa no tienes herramientas disponibles. Escribe tu mensaje final para el usuario en español, en dos o tres frases: qué conseguiste, dónde te quedaste y qué necesitas de él.`,
-            )
+            .prompt(guardPrompt)
             // Si gana el timeout, el abort hace rechazar este prompt: el catch evita
             // una promesa rechazada sin manejar.
             .catch(() => undefined),
@@ -1259,6 +1289,7 @@ export class PersonalAgent {
       log.warn('guard report turn failed', { err });
     } finally {
       agent.state.tools = previousTools;
+      agent.state.messages = dropGuardPrompt(agent.state.messages, guardAt, guardPrompt);
     }
     return summary.trim();
   }
