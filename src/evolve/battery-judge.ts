@@ -212,7 +212,6 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
   }
   if (k.timeCheck) {
     const sched = (t.scheduled ?? []).find((s) => s.kind === 'once' && s.fireAtIso);
-    const m = /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(t.reply);
     if (!sched) fail('no hay recordatorio programado que comparar');
     else {
       const fire = new Date(sched.fireAtIso as string);
@@ -220,8 +219,20 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
         const exp = new Date(now.getTime() + 3 * 3600000);
         const diff = Math.abs(fire.getTime() - exp.getTime()) / 60000;
         if (diff > 5) fail(`programado a ${diff.toFixed(0)} min de lo pedido`);
-        if (!m) fail('no dice la hora');
-        else if (Math.abs(minutesOfDay(fire) - (Number(m[1]) * 60 + Number(m[2]))) > 0)
+        // Todas las horas dichas, no solo la primera: «son las 15:00, te aviso a las 18:00»
+        // está bien. Sigue siendo estricto: la hora programada tiene que estar entre ellas y
+        // cualquier otra solo puede ser la hora actual (±1 min).
+        const said = [...t.reply.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
+          (x) => Number(x[1]) * 60 + Number(x[2]),
+        );
+        const nowMin = minutesOfDay(now);
+        const isNow = (x: number) =>
+          Math.min((x - nowMin + 1440) % 1440, (nowMin - x + 1440) % 1440) <= 1;
+        if (said.length === 0) fail('no dice la hora');
+        else if (
+          !said.includes(minutesOfDay(fire)) ||
+          said.some((x) => x !== minutesOfDay(fire) && !isNow(x))
+        )
           fail('S1: hora dicha distinta de la programada');
       } else {
         // Mañana en el calendario de Madrid, no ahora + 24 h: el día del cambio de hora
