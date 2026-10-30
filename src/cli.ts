@@ -6144,6 +6144,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const portRaw = Number((await vaultGet('alerts:port'))?.trim());
     const listener = startAlertInbox({
       token,
+      dedupeFile: join(paths.state, 'alerts-seen.json'),
       host: (await vaultGet('alerts:host'))?.trim() || undefined,
       port: Number.isInteger(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : undefined,
       send: async (text) => {

@@ -19,7 +19,9 @@
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { dirname } from 'node:path';
 import { log } from '../log.js';
 import { isPrivateRemote } from '../tv/button-listener.js';
 
@@ -117,6 +119,45 @@ export interface AlertInboxOptions {
   /** Entrega al dueno. false = no hay chat del dueno todavia: el emisor reintenta. */
   send: (text: string) => Promise<boolean>;
   now?: () => number;
+  /**
+   * Fichero donde se recuerdan las alertas ya entregadas (24 h). Sin él, la memoria
+   * vive solo en el proceso: un reintento del emisor tras reiniciar el daemon se
+   * entregaba dos veces.
+   */
+  dedupeFile?: string;
+}
+
+/** Clave de deduplicado: el mismo id en dos fuentes son dos alertas distintas. */
+export function alertKey(alert: Pick<Alert, 'source' | 'id'>): string {
+  return `${alert.source}:${alert.id}`;
+}
+
+function loadSeen(file: string | undefined, t: number): Map<string, number> {
+  const seen = new Map<string, number>();
+  if (!file) return seen;
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+    if (raw && typeof raw === 'object') {
+      for (const [key, exp] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof exp === 'number' && Number.isFinite(exp) && exp > t) seen.set(key, exp);
+      }
+    }
+  } catch {
+    // Sin fichero o corrupto: se empieza de cero (como antes del cambio).
+  }
+  return seen;
+}
+
+function saveSeen(file: string | undefined, seen: Map<string, number>): void {
+  if (!file) return;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(seen)));
+    renameSync(tmp, file);
+  } catch (err) {
+    log.warn('alert inbox: no se pudo guardar el deduplicado', { err });
+  }
 }
 
 export interface AlertInbox {
@@ -134,7 +175,7 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
   const port = opts.port ?? ALERT_INBOX_PORT;
   const host = opts.host ?? '127.0.0.1';
   const seenSignatures = new Map<string, number>();
-  const seenIds = new Map<string, number>();
+  const seenIds = loadSeen(opts.dedupeFile, now());
   const inFlight = new Set<string>();
   let windowStart = now();
   let windowCount = 0;
@@ -242,8 +283,9 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
       }
       const { alert } = result;
       const t = now();
-      for (const [id, exp] of seenIds) if (t > exp) seenIds.delete(id);
-      if (seenIds.has(alert.id) || inFlight.has(alert.id)) {
+      const key = alertKey(alert);
+      for (const [k, exp] of seenIds) if (t > exp) seenIds.delete(k);
+      if (seenIds.has(key) || inFlight.has(key)) {
         reply(res, 200, { ok: true, duplicate: true });
         return;
       }
@@ -256,18 +298,19 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
         return;
       }
       windowCount++;
-      inFlight.add(alert.id);
+      inFlight.add(key);
       try {
         const delivered = await opts.send(formatAlert(alert));
         if (!delivered) {
           reply(res, 503, { ok: false, error: 'sin chat del dueno; reintenta' });
           return;
         }
-        seenIds.set(alert.id, t + DEDUPE_TTL_MS);
+        seenIds.set(key, t + DEDUPE_TTL_MS);
         if (seenIds.size > DEDUPE_MAX) {
           const oldest = seenIds.keys().next().value;
           if (oldest !== undefined) seenIds.delete(oldest);
         }
+        saveSeen(opts.dedupeFile, seenIds);
         log.info('alert delivered', {
           id: alert.id,
           source: alert.source,
@@ -278,7 +321,7 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
         log.warn('alert inbox: fallo de entrega', { err });
         reply(res, 503, { ok: false, error: 'entrega fallida; reintenta' });
       } finally {
-        inFlight.delete(alert.id);
+        inFlight.delete(key);
       }
     })();
   });
