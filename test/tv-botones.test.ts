@@ -270,10 +270,22 @@ describe('botones del mando: canal Telegram', () => {
     expect(harness.answers[0] ?? '').toMatch(/No he podido/);
   });
 
-  it('respuesta larga: el aviso se recorta a 190', async () => {
-    await makeChannel(async () => 'a'.repeat(400));
-    await press('tv:mute');
-    expect((harness.answers[0] ?? '').length).toBeLessThanOrEqual(190);
+  it('respuesta larga: no cabe en el aviso, llega entera como mensaje', async () => {
+    harness.sent.length = 0;
+    const long = `La tele está encendida. ${'a'.repeat(400)}`;
+    await makeChannel(async () => long);
+    await press('tv:status');
+    expect(harness.answers).toEqual(['']);
+    expect(harness.sent.map((m) => [m.chatId, m.text])).toEqual([[7, long]]);
+  });
+
+  it('el mando trae Pausa, Play y Estado, y Estado solo lee', async () => {
+    const ids = TV_BUTTONS.map((b) => b.id);
+    expect(ids).toEqual(expect.arrayContaining(['pause', 'play', 'status']));
+    const status = TV_BUTTONS.find((b) => b.id === 'status');
+    expect(parseTvCommand(status?.order ?? '')).toEqual({ action: 'status' });
+    expect(parseTvCommand('pausa')).toMatchObject({ action: 'media', command: 'pause' });
+    expect(parseTvCommand('play')).toMatchObject({ action: 'media', command: 'play' });
   });
 });
 

@@ -507,13 +507,16 @@ export class TelegramChannel implements ChannelAdapter {
       }),
     ]);
     clearTimeout(timer);
-    if (quick !== null) {
-      const short = quick.length > 190 ? `${quick.slice(0, 189)}…` : quick;
-      await ctx.answerCallbackQuery({ text: short, show_alert: quick.length > 60 }).catch(() => {});
+    // Respuesta rápida y corta: en el aviso del botón. Una larga (p. ej. «Estado»)
+    // no cabe en el aviso (200 caracteres), así que va entera como mensaje.
+    if (quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
+      await ctx.answerCallbackQuery({ text: quick, show_alert: quick.length > 60 }).catch(() => {});
       return;
     }
-    await ctx.answerCallbackQuery({ text: TV_BUTTON_SENDING }).catch(() => {});
-    const text = await run;
+    await ctx
+      .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
+      .catch(() => {});
+    const text = quick ?? (await run);
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendMessage(chatId, text.slice(0, 4000)),
@@ -1609,6 +1612,8 @@ export const MORE_CALLBACK_PREFIX = 'more:';
 
 /** Tiempo que se espera a la orden antes de contestar «Enviando…» al botón. */
 const TV_BUTTON_ACK_MS = 2500;
+/** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
+const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
 const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';

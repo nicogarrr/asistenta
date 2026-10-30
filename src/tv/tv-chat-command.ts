@@ -57,6 +57,11 @@ export const TV_BUTTONS: ReadonlyArray<{ id: string; label: string; order: strin
   { id: 'vup', label: '🔊 Vol +', order: 'sube el volumen' },
   { id: 'mute', label: '🔇 Silencio', order: 'silencio' },
   { id: 'netflix', label: '🎬 Netflix', order: 'abre netflix' },
+  // Pausa/Play van por Glasshouse (la app de la tele rooteada); sin él, el aviso
+  // lo dice y no se toca nada. Estado solo lee (SSAP).
+  { id: 'pause', label: '⏸ Pausa', order: 'pausa' },
+  { id: 'play', label: '▶️ Play', order: 'play' },
+  { id: 'status', label: 'ℹ️ Estado', order: 'que esta viendo' },
 ];
 
 export const TV_BUTTONS_TITLE = 'Mando de la tele (o escribe /tv <orden>):';
