@@ -47,13 +47,20 @@ export const LEARN_HINT =
   '`[[aprendido: <tema corto> | <regla breve en una frase>]]` (no la menciones). Si no es ' +
   'duradera, no la añadas. Nunca para permisos, aprobaciones ni seguridad.';
 
-/** Instrucción para el turno, o null si no toca (apagado, no es el dueño, no es corrección). */
+/**
+ * Instrucción para el turno, o null si no toca (apagado, no es el dueño, no es corrección).
+ * Enseña el dueño: su chat privado de Telegram (`ownerDm`) o el chat del panel local
+ * (`panelOwner`: solo loopback y con token, en su hilo principal). Nada más.
+ */
 export function correctionHint(opts: {
   enabled: boolean;
   ownerDm: boolean;
+  /** Turno del chat del panel local (loopback + token), en el hilo principal del dueño. */
+  panelOwner?: boolean;
   ownerText: string;
 }): string | null {
-  if (!opts.enabled || !opts.ownerDm) return null;
+  if (!opts.enabled) return null;
+  if (!opts.ownerDm && opts.panelOwner !== true) return null;
   return looksLikeCorrection(opts.ownerText) ? LEARN_HINT : null;
 }
 
