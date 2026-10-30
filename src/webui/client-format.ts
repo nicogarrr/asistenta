@@ -85,6 +85,8 @@ export function etiquetaCampo(clave: string): string {
     provider: 'Proveedor',
     threads: 'Conversaciones abiertas',
     uptimeSeconds: 'Tiempo encendido',
+    proximoRecordatorio: 'Próximo recordatorio',
+    proximaRutina: 'Próxima rutina',
     tool: 'Herramienta',
     reason: 'Motivo',
     question: 'Pregunta',
