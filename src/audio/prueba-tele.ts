@@ -74,9 +74,15 @@ export async function audioCommand(args: string[], deps: AudioCliDeps): Promise<
     await deps.sleep(step);
   }
   if ((r.hits?.() ?? 0) === 0) {
+    // Nadie lo va a bajar: el servidor LAN se cierra ya (si no, el comando seguía
+    // colgado hasta el ttl de 10 min con el puerto abierto).
+    r.close?.();
     deps.print(`✗ ${TV_FIREWALL_HINT}`);
     return 1;
   }
   deps.print('✓ La tele ha descargado el audio. Si no lo has oído, sube el volumen de la tele.');
+  deps.print(
+    'Sigo sirviendo el audio a la tele mientras suena (10 min como mucho). Pulsa Ctrl+C para terminar antes.',
+  );
   return 0;
 }

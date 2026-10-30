@@ -82,6 +82,12 @@ export interface TvCastResult {
    * cast, solo si sigue en primer plano y nunca el inicio ni la TV en directo.
    */
   stop?: () => Promise<void>;
+  /**
+   * Cierra ya el servidor LAN de esta nota (y borra la copia). Lo usa `pa audio
+   * prueba-tele` cuando la tele no la descargó: sin esto el comando se quedaba colgado
+   * hasta el ttl (10 min) con el puerto abierto.
+   */
+  close?: () => void;
 }
 
 const TV_FOREGROUND = 'com.webos.applicationManager/getForegroundAppInfo';
@@ -211,6 +217,7 @@ export async function castAudioToTv(
         message,
         tried: errors.length ? [...errors] : undefined,
         hits: () => served.hits(),
+        close: () => served.close(),
         stop: stopFor(via, opened),
       };
     } catch (err) {
