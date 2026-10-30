@@ -37,7 +37,7 @@ describe('computer · escribir textos largos', () => {
 
   it('si falla a medias, el error dice cuántos caracteres ya se escribieron', async () => {
     const { s } = screen(2);
-    await expect(s.type('x'.repeat(450))).rejects.toThrow(/200 of 450[\s\S]*do not retype/);
+    await expect(s.type('x'.repeat(450))).rejects.toThrow(/200 de 450[\s\S]*no vuelvas a escribir/);
   });
 
   it('si falla el primer trozo, el error es el mismo de siempre', async () => {

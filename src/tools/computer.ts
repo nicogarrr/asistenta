@@ -495,7 +495,7 @@ export function createComputerTool(
     return [
       {
         type: 'text',
-        text: `Screenshot after the action: ${shot.width}x${shot.height}. Origin top-left.`,
+        text: `Captura tras la acción: ${shot.width}x${shot.height}. Origen arriba a la izquierda.`,
       },
       { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
     ];
@@ -630,8 +630,8 @@ export function createComputerTool(
               {
                 type: 'text',
                 text:
-                  `Screenshot ${cropped.width}x${cropped.height} of roi (${roi.x},${roi.y} ` +
-                  `${roi.width}x${roi.height}). Origin top-left of the roi.` +
+                  `Captura ${cropped.width}x${cropped.height} de la roi (${roi.x},${roi.y} ` +
+                  `${roi.width}x${roi.height}). Origen arriba a la izquierda de la roi.` +
                   (cropped.detail ? ` ${cropped.detail}.` : '') +
                   (sent === undefined
                     ? ''
@@ -671,8 +671,10 @@ export function createComputerTool(
             {
               type: 'text',
               text:
-                `Screenshot ${shot.width}x${shot.height}. Origin top-left.` +
-                (downscaled ? ` Real desktop is ${shot.nativeWidth}x${shot.nativeHeight}.` : '') +
+                `Captura ${shot.width}x${shot.height}. Origen arriba a la izquierda.` +
+                (downscaled
+                  ? ` El escritorio real es ${shot.nativeWidth}x${shot.nativeHeight}.`
+                  : '') +
                 (sent === undefined
                   ? ''
                   : sent
@@ -711,7 +713,7 @@ export function createComputerTool(
             content: [
               {
                 type: 'text',
-                text: `Clicked ${p.x},${p.y} (roi-relative ${Number(record.x)},${Number(record.y)})${
+                text: `Clic en ${p.x},${p.y} (relativo a la roi ${Number(record.x)},${Number(record.y)})${
                   check ? `\n${check.verdict}` : ''
                 }`,
               },
@@ -748,7 +750,7 @@ export function createComputerTool(
         log.info('click', { ...p, changed: check?.changed ?? null });
         return {
           content: [
-            { type: 'text', text: `Clicked ${p.x},${p.y}${check ? `\n${check.verdict}` : ''}` },
+            { type: 'text', text: `Clic en ${p.x},${p.y}${check ? `\n${check.verdict}` : ''}` },
           ],
           details: {
             ...p,
@@ -768,7 +770,7 @@ export function createComputerTool(
         // true and useless.
         await backend.move(p.x, p.y);
         return {
-          content: [{ type: 'text', text: `Moved to ${p.x},${p.y}` }],
+          content: [{ type: 'text', text: `Ratón movido a ${p.x},${p.y}` }],
           details: p,
           at: null,
         };
@@ -803,7 +805,7 @@ export function createComputerTool(
           content: [
             {
               type: 'text',
-              text: `Typed ${text.length} characters${check ? `\n${check.verdict}` : ''}`,
+              text: `Escritos ${text.length} caracteres${check ? `\n${check.verdict}` : ''}`,
             },
           ],
           details: { chars: text.length, verified: verifiedOf(check) },
@@ -816,7 +818,9 @@ export function createComputerTool(
         if (!key) throw new Error('the key action requires a key name');
         const check = await act(() => backend.key(key));
         return {
-          content: [{ type: 'text', text: `Pressed ${key}${check ? `\n${check.verdict}` : ''}` }],
+          content: [
+            { type: 'text', text: `Pulsada la tecla ${key}${check ? `\n${check.verdict}` : ''}` },
+          ],
           details: { key, verified: verifiedOf(check) },
           at: null,
         };
@@ -953,7 +957,7 @@ export function createComputerTool(
           index: j,
           action: typeof item.action === 'string' ? item.action : 'unknown',
           ok: false,
-          error: 'skipped: run cancelled (parada solicitada)',
+          error: 'omitida: ejecución cancelada (parada solicitada)',
         });
       }
     }
@@ -965,7 +969,7 @@ export function createComputerTool(
           index: j,
           action: typeof item.action === 'string' ? item.action : 'unknown',
           ok: false,
-          error: `skipped: action ${cutAt} did not complete`,
+          error: `omitida: la acción ${cutAt} no se completó`,
         });
       }
     }
@@ -1007,11 +1011,11 @@ export function createComputerTool(
 
     const okCount = results.filter((r) => r.ok).length;
     const text = [
-      `Batch ${list.length} actions: ${okCount} ok, ${results.length - okCount} not executed.`,
+      `Lote de ${list.length} acciones: ${okCount} ok, ${results.length - okCount} sin ejecutar.`,
       ...results.map((r) => {
         const head = `[${r.index}] ${r.action}`;
         if (r.ok) return `${head}: ok`;
-        if (r.error?.startsWith('skipped')) return `${head}: ${r.error}`;
+        if (r.error?.startsWith('omitida')) return `${head}: ${r.error}`;
         return `${head}: FAILED — ${r.error ?? 'unknown error'}`;
       }),
       verdict ? verdict.reason : '',
@@ -1083,7 +1087,7 @@ export function createComputerTool(
           if (signal?.aborted && args.action !== 'screenshot') {
             // A queued call that arrives after /stop must not touch mouse or keyboard.
             throw new Error(
-              'cancelled: the run was stopped before this action (parada solicitada)',
+              'cancelada: la ejecución se paró antes de esta acción (parada solicitada)',
             );
           }
           const out = await runAction(record, { verifyResult: true });
@@ -1104,14 +1108,14 @@ export const SLOW_STEP_MS = 10_000;
 /**
  * The line a slow step adds. Under load one step (size + capture + action +
  * verification) can take ~90 s; without a word the model just waits and Nico
- * sees nothing for minutes. Bilingual like the kill-switch message: the English
- * half steers the model, the Spanish half is what it can pass on as-is.
+ * sees nothing for minutes. In Spanish, like every other line the model reads
+ * from this tool, so it can pass it on as-is.
  */
 export function slowStepNote(ms: number): string {
   const s = Math.round(ms / 1000);
   return (
-    `Slow step: this action took ${s} s (the PC is busy). If steps stay this slow, tell the user. ` +
-    `Paso lento: ${s} s; el PC va cargado.`
+    `Paso lento: ${s} s; el PC va cargado. ` +
+    'Si los pasos siguen así de lentos, díselo al usuario.'
   );
 }
 

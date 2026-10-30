@@ -93,7 +93,7 @@ describe('computer · verificación cuando falla una captura', () => {
     const r = await tool.execute('k', { action: 'key', key: 'enter' });
     // Antes: devolvía «Pressed enter» sin haber pulsado nada.
     expect(calls).toEqual(['screenshot', 'key:enter']);
-    expect(textOf(r)).toMatch(/^Pressed enter\nVERIFICACION: no he podido comparar/);
+    expect(textOf(r)).toMatch(/^Pulsada la tecla enter\nVERIFICACION: no he podido comparar/);
     expect(textOf(r)).toMatch(/captura previa ha fallado \(captura rota\)/);
     expect(r.details).toMatchObject({ verified: null });
     expect(compareFrames).not.toHaveBeenCalled();

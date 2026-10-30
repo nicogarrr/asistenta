@@ -61,7 +61,7 @@ it.each([1.5, 2])(
       expect(shot.details).toMatchObject(geometry);
       expect(shot.content[0]).toMatchObject({
         type: 'text',
-        text: expect.stringContaining('Screenshot 1280x853.'),
+        text: expect.stringContaining('Captura 1280x853.'),
       });
       expect(geometry.nativeWidth).not.toBe(logical.width);
       const x = 1180;

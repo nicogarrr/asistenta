@@ -104,7 +104,9 @@ describe('computer · screenshot', () => {
     const { backend } = fake();
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     const r = await tool.execute('t', { action: 'screenshot' });
-    expect(textOf(r)).toBe('Screenshot 1280x720. Origin top-left. Real desktop is 1920x1080.');
+    expect(textOf(r)).toBe(
+      'Captura 1280x720. Origen arriba a la izquierda. El escritorio real es 1920x1080.',
+    );
     const img = r.content[1] as { type: string; mimeType: string; data: string };
     expect(img.type).toBe('image');
     expect(img.mimeType).toBe('image/jpeg');
@@ -123,7 +125,7 @@ describe('computer · screenshot', () => {
     const { backend } = fake({ view: { width: 1920, height: 1080 } });
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     const r = await tool.execute('t', { action: 'screenshot' });
-    expect(textOf(r)).toBe('Screenshot 1920x1080. Origin top-left.');
+    expect(textOf(r)).toBe('Captura 1920x1080. Origen arriba a la izquierda.');
   });
 
   it('send: true envía la foto al chat y lo dice; si falla, también lo dice', async () => {
@@ -181,7 +183,7 @@ describe('computer · coordenadas', () => {
     await tool.execute('s', { action: 'screenshot' });
     const r = await tool.execute('c', { action: 'click', x: 640, y: 360 });
     expect(calls).toContain('click:960,540:left:1');
-    expect(textOf(r)).toBe('Clicked 960,540');
+    expect(textOf(r)).toBe('Clic en 960,540');
     expect(r.details).toMatchObject({ x: 960, y: 540, verified: null });
   });
 
@@ -250,7 +252,7 @@ describe('computer · coordenadas', () => {
       roi: { x: 100, y: 50, width: 200, height: 100 },
     });
     expect(calls).toContain('click:165,105:left:1');
-    expect(textOf(r)).toBe('Clicked 165,105 (roi-relative 10,20)');
+    expect(textOf(r)).toBe('Clic en 165,105 (relativo a la roi 10,20)');
     expect(r.details).toMatchObject({ viewX: 110, viewY: 70 });
   });
 });
@@ -261,7 +263,7 @@ describe('computer · teclado', () => {
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     const r = await tool.execute('t', { action: 'type', text: 'hola ñandú' });
     expect(calls).toEqual(['type:hola ñandú']);
-    expect(textOf(r)).toBe('Typed 10 characters');
+    expect(textOf(r)).toBe('Escritos 10 caracteres');
     await expect(tool.execute('t', { action: 'type', text: '' })).rejects.toThrow(/requires text/);
   });
 
@@ -270,7 +272,7 @@ describe('computer · teclado', () => {
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     const r = await tool.execute('k', { action: 'key', key: 'ctrl+s' });
     expect(calls).toEqual(['key:ctrl+s']);
-    expect(textOf(r)).toBe('Pressed ctrl+s');
+    expect(textOf(r)).toBe('Pulsada la tecla ctrl+s');
     await expect(tool.execute('k', { action: 'key', key: '' })).rejects.toThrow(/key name/);
   });
 
@@ -305,7 +307,7 @@ describe('computer · verificación antes/después', () => {
       radius: 48,
     });
     expect(textOf(r)).toBe(
-      'Clicked 960,540\nVERIFICACION: la accion ha tenido efecto (20% de la imagen).',
+      'Clic en 960,540\nVERIFICACION: la accion ha tenido efecto (20% de la imagen).',
     );
     expect(r.details).toMatchObject({ verified: true, localRatio: 0.5 });
   });

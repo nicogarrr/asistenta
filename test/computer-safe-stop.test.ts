@@ -67,9 +67,9 @@ describe('computer · parada segura', () => {
     expect(calls).toEqual(['key:a', 'key:b']);
     const results = (r.details as { results: BatchItemResult[] }).results;
     expect(results.map((x) => x.ok)).toEqual([true, true, false, false]);
-    expect(results[2]?.error).toMatch(/cancelled/);
+    expect(results[2]?.error).toMatch(/cancelada/);
     const text = r.content[0]?.type === 'text' ? r.content[0].text : '';
-    expect(text).toMatch(/2 ok, 2 not executed/);
+    expect(text).toMatch(/2 ok, 2 sin ejecutar/);
   });
 
   it('un batch que llega ya abortado no ejecuta nada', async () => {
@@ -91,10 +91,10 @@ describe('computer · parada segura', () => {
     const { backend, calls } = backendWith();
     const tool = createComputerTool(config, backend, allow);
     await expect(tool.execute('t', { action: 'key', key: 'enter' }, ctrl.signal)).rejects.toThrow(
-      /cancelled/,
+      /cancelada/,
     );
     await expect(tool.execute('t', { action: 'click', x: 1, y: 1 }, ctrl.signal)).rejects.toThrow(
-      /cancelled/,
+      /cancelada/,
     );
     await tool.execute('s', { action: 'screenshot' }, ctrl.signal);
     expect(calls).toEqual([]);

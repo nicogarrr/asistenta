@@ -117,7 +117,7 @@ describe('computer · interruptor PA_COMPUTER_USE', () => {
       const { backend, calls } = fake();
       const tool = createComputerTool(cfg, backend, allowAll);
       const r = await tool.execute('k', { action: 'key', key: 'enter' });
-      expect(textOf(r)).toMatch(/^Pressed enter/);
+      expect(textOf(r)).toMatch(/^Pulsada la tecla enter/);
       expect(calls).toEqual(['key:enter']);
     }
   });
