@@ -596,6 +596,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'iniciar': {
       const { iniciarCommand, realPreflightDeps } = await import('./iniciar.js');
       const { STARTUP_RECORD_FILE } = await import('./startup-record.js');
+      if (!rest.some((a) => ['--solo-comprobar', '--check', '--json'].includes(a))) {
+        const { clearStoppedOnPurpose } = await import('./autostart-watchdog.js');
+        clearStoppedOnPurpose(paths.state);
+      }
       return iniciarCommand(rest, {
         deps: realPreflightDeps,
         serve: () => controlledDaemon(serveCommand),
@@ -612,6 +616,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       const { stopDaemon } = await import('./daemon-control.js');
       const result = await stopDaemon(paths.state);
+      const { markStoppedOnPurpose } = await import('./autostart-watchdog.js');
+      markStoppedOnPurpose(paths.state);
       process.stdout.write(
         `Instancia ${result.instanceId.slice(0, 12)} detenida con cierre limpio confirmado.\n`,
       );
