@@ -177,8 +177,9 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
   const seenSignatures = new Map<string, number>();
   const seenIds = loadSeen(opts.dedupeFile, now());
   const inFlight = new Set<string>();
-  let windowStart = now();
-  let windowCount = 0;
+  // Sliding window: when each accepted alert of the last minute went out. A fixed
+  // window reset every 60 s let 30 through at 0:59 and 30 more at 1:00.
+  const sentAt: number[] = [];
 
   const reply = (res: ServerResponse, status: number, body: unknown): void => {
     const payload = JSON.stringify(body);
@@ -296,15 +297,12 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
         reply(res, 200, { ok: true, duplicate: true });
         return;
       }
-      if (t - windowStart >= 60_000) {
-        windowStart = t;
-        windowCount = 0;
-      }
-      if (windowCount >= RATE_LIMIT_PER_MINUTE) {
+      while (sentAt.length > 0 && t - (sentAt[0] ?? t) >= 60_000) sentAt.shift();
+      if (sentAt.length >= RATE_LIMIT_PER_MINUTE) {
         reply(res, 429, { ok: false, error: 'demasiadas alertas' });
         return;
       }
-      windowCount++;
+      sentAt.push(t);
       inFlight.add(key);
       try {
         const delivered = await opts.send(formatAlert(alert));
@@ -312,7 +310,8 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
           // Nada salió hacia Telegram: ni gasta cupo ni quema la firma. Sin esto, un
           // emisor reintentando mientras aún no hay chat del dueño agotaba el cupo del
           // minuto y la primera alerta real tras abrir el chat recibía 429.
-          windowCount = Math.max(0, windowCount - 1);
+          const slot = sentAt.lastIndexOf(t);
+          if (slot >= 0) sentAt.splice(slot, 1);
           releaseSignature();
           reply(res, 503, { ok: false, error: 'sin chat del dueno; reintenta' });
           return;
