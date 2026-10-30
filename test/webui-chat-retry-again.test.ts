@@ -66,6 +66,7 @@ function montar(respuestas: Respuesta[]) {
     },
     pintarArchivos: () => {},
     avisoConexion: (...a: unknown[]) => avisos.push(a),
+    document: { activeElement: null, body: {} },
   };
   const fn = new Function(...Object.keys(deps), `${html.slice(i, j)}; return repetirUltimo;`)(
     ...Object.values(deps),

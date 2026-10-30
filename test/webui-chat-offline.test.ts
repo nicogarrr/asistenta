@@ -100,6 +100,8 @@ describe('panel: chat sin conexión', () => {
         'enviar',
         'nodo',
         'avisoConexion',
+        'pantallaPequena',
+        'devolverFoco',
         fuente,
       )(
         { getElementById: (id: string) => (id === 'texto-chat' ? campo : boton) },
@@ -109,6 +111,8 @@ describe('panel: chat sin conexión', () => {
         enviar,
         () => ({ type: '', addEventListener() {} }),
         (...a: unknown[]) => llamadas.push(a),
+        () => false,
+        () => {},
       ) as (e: null, t: string) => Promise<void>;
     };
     await montar(() =>

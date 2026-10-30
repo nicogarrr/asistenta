@@ -1104,6 +1104,9 @@ ${renderFormatScript()}
           campo.focus();
           return;
         }
+        // En el móvil (≤ 780 px), tras pulsar «Enviar», enfocar el campo abre el teclado
+        // y tapa la respuesta: allí solo vuelve al campo si ya lo tenía (Enter).
+        var volverAlCampo = document.activeElement === campo || !pantallaPequena();
         boton.disabled = true;
         campo.value = '';
         anadirTurno('yo', 'Tú', texto);
@@ -1140,10 +1143,12 @@ ${renderFormatScript()}
           });
           espera.appendChild(reintentar);
           if (!campo.value) campo.value = texto;
+          if (!volverAlCampo) devolverFoco(reintentar);
         } finally {
           window.clearInterval(reloj);
           boton.disabled = false;
-          campo.focus();
+          if (volverAlCampo) campo.focus();
+          else devolverFoco(espera);
         }
       }
 
@@ -1211,6 +1216,7 @@ ${renderFormatScript()}
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
           if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
           avisoConexion(false);
+          devolverFoco(espera);
         } catch (error) {
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
@@ -1218,7 +1224,10 @@ ${renderFormatScript()}
           if (error && error.sinConexion) avisoConexion(true, true);
           // Si la repetición también falla, se puede volver a intentar (sin conexión o
           // turno fallido). No si no hay nada que repetir (409) o falta el token.
-          if (error && (error.estado === 409 || error.sinToken)) return;
+          if (error && (error.estado === 409 || error.sinToken)) {
+            devolverFoco(espera);
+            return;
+          }
           var otraVez = nodo('button', 'mini', 'Reintentar');
           otraVez.type = 'button';
           otraVez.addEventListener('click', function () {
@@ -1226,7 +1235,19 @@ ${renderFormatScript()}
             repetirUltimo();
           });
           espera.appendChild(otraVez);
+          devolverFoco(otraVez);
         }
+      }
+
+      // Al pulsar «Reintentar» el botón se desactiva y el foco del teclado se pierde
+      // (vuelve al principio de la página). Si nadie lo ha movido entretanto, se lleva
+      // al nuevo «Reintentar» o al turno nuevo; si Nico ya está escribiendo, no se toca.
+      function devolverFoco(destino) {
+        var activo = document.activeElement;
+        if (activo && activo !== document.body && !activo.disabled) return;
+        if (!destino || typeof destino.focus !== 'function') return;
+        if (destino.tagName !== 'BUTTON') destino.setAttribute('tabindex', '-1');
+        destino.focus();
       }
 
       async function cargarObjetivos() {
