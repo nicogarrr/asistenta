@@ -13,7 +13,7 @@
  * Todo lo que se le pasa a Windows sale de funciones puras de este fichero (tests sin
  * ejecutar nada de verdad).
  */
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, win32 } from 'node:path';
 
 export const WATCHDOG_TASK_NAME = 'Asistenta-vigilante';
@@ -129,15 +129,47 @@ export function watchdogDecide(input: {
   bootAt: number;
   /** Una autoactualización tiene el daemon parado a propósito mientras compila. */
   updating?: boolean;
+  /** ms epoch del último arranque del daemon (agent.pid), si se sabe. */
+  daemonStartedAt?: number;
+  /** ms epoch de ahora; por defecto, el reloj. */
+  now?: number;
 }): WatchdogDecision {
   if (!input.enabled) return { action: 'skip', reason: 'apagado' };
   if (input.updating) return { action: 'skip', reason: 'actualizando' };
   if (input.state === 'running') return { action: 'skip', reason: 'en-marcha' };
   if (input.state === 'unknown') return { action: 'skip', reason: 'dudoso' };
-  if (input.stoppedAt !== undefined && input.stoppedAt >= input.bootAt) {
-    return { action: 'skip', reason: 'parado-a-proposito' };
-  }
+  if (stopMarkHolds(input)) return { action: 'skip', reason: 'parado-a-proposito' };
   return { action: 'start' };
+}
+
+/** Margen para relojes que no cuadran por poco (sincronización de hora). */
+const STOP_MARK_FUTURE_SLACK_MS = 5 * 60_000;
+
+function stopMarkHolds(input: {
+  stoppedAt?: number;
+  bootAt: number;
+  daemonStartedAt?: number;
+  now?: number;
+}): boolean {
+  const { stoppedAt } = input;
+  if (stoppedAt === undefined || stoppedAt < input.bootAt) return false;
+  // Una marca con fecha futura (el reloj iba adelantado al hacer pa stop) bloquearía el
+  // relanzado hasta esa fecha, aunque se reinicie el PC: no vale.
+  if (stoppedAt > (input.now ?? Date.now()) + STOP_MARK_FUTURE_SLACK_MS) return false;
+  // Si Asistenta volvió a arrancar después de pa stop (tarea de inicio de sesión, pa serve),
+  // ya la quieren encendida. Con el inicio rápido de Windows el uptime no se reinicia al
+  // apagar, así que sin esto la marca sobreviviría al apagado y encendido.
+  if (input.daemonStartedAt !== undefined && input.daemonStartedAt > stoppedAt) return false;
+  return true;
+}
+
+/** Cuándo arrancó el daemon por última vez: la fecha del agent.pid que deja al arrancar. */
+export function readDaemonStartedAt(stateDir: string): number | undefined {
+  try {
+    return statSync(join(stateDir, 'agent.pid')).mtimeMs;
+  } catch {
+    return undefined;
+  }
 }
 
 export function describeDecision(d: WatchdogDecision | { action: 'start-failed' }): string {

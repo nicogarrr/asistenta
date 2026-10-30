@@ -71,6 +71,7 @@ Los avisos usan un proceso CLI separado, DPAPI y contenido fijo. Van solo al own
 - Si no está en marcha, arranca la tarea normal del daemon (`personal-agent-daemon`), la misma del inicio de sesión. Nunca abre una segunda copia.
 - Si no puede saber si corre: «no sé si corre: no toco nada».
 - Si la paraste con `pa stop`: «la paraste tú: sigue apagada hasta reiniciar el PC o pa iniciar».
+  La marca deja de valer si Asistenta vuelve a arrancar después (p. ej. al iniciar sesión tras un apagado con inicio rápido de Windows, que no reinicia el contador de arranque) o si tiene una fecha futura (reloj adelantado).
 
 La tarea corre en la carpeta del repo, así que lee el mismo `.env` que el daemon (`PA_WATCHDOG`, `PA_STATE_DIR`). Si la registraste antes de #873, vuelve a ejecutar `pa autostart install` una vez para que se actualice.
 
