@@ -110,10 +110,19 @@ describe('briefingDue', () => {
     expect(briefingDue(at(23, 9).getTime(), at(25, 9))).toBe(true);
   });
 
-  it('acepta otra hora y no se fía de un último envío en el futuro', () => {
+  it('acepta otra hora y no repite con un adelanto de reloj dentro de hoy', () => {
     expect(briefingDue(undefined, at(25, 9), 10)).toBe(false);
     expect(briefingDue(undefined, at(25, 10), 10)).toBe(true);
-    expect(briefingDue(at(26, 9).getTime(), at(25, 9))).toBe(false);
+    // Envío registrado hoy a las 09:30 con el reloj adelantado; ahora son las 09:00.
+    expect(briefingDue(at(25, 9, 30).getTime(), at(25, 9))).toBe(false);
     expect(briefingDue(undefined, new Date(Number.NaN))).toBe(false);
+  });
+
+  it('un último envío en un día futuro (reloj corregido) no bloquea el briefing', () => {
+    // Antes: false hasta que pasara el día 26 (y ese día tampoco, por ser "el mismo día").
+    expect(briefingDue(at(26, 9).getTime(), at(25, 9))).toBe(true);
+    expect(briefingDue(new Date(2027, 0, 1, 9).getTime(), at(25, 9))).toBe(true);
+    // Sigue respetando la hora.
+    expect(briefingDue(at(26, 9).getTime(), at(25, 7))).toBe(false);
   });
 });
