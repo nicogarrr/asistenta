@@ -15,9 +15,27 @@
  */
 export function localDay(date: Date | number = new Date()): string {
   const d = typeof date === 'number' ? new Date(date) : date;
-  const pad2 = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  // El día se calcula en la MISMA zona que `localTimeZone()` (PA_TIMEZONE si es válida),
+  // no en la del proceso: los subcomandos `pa …` y los tests no pasan por
+  // `applyConfiguredTimeZone`, y con TZ=UTC y PA_TIMEZONE=Europe/Madrid «hoy» a las
+  // 00:30 era ayer mientras `<now>` ya decía hoy.
+  const zone = localTimeZone();
+  let fmt = dayFormatters.get(zone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    dayFormatters.set(zone, fmt);
+  }
+  const parts = fmt.formatToParts(d);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
+
+const dayFormatters = new Map<string, Intl.DateTimeFormat>();
 
 export function localTimeZone(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.PA_TIMEZONE?.trim();
