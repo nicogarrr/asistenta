@@ -26,10 +26,11 @@ for i in $(seq 1 60); do [ -f $W/state/qa/inbox.jsonl ] && break; sleep 1; done
 sleep 3
 # one line at a time: wait for a new text reply (or SECS) before the next
 while IFS= read -r line; do
-  before=$(grep -c '"kind":"text"' $W/state/qa/outbox.jsonl 2>/dev/null || echo 0)
+  before=$(grep -c '"kind":"text"' $W/state/qa/outbox.jsonl 2>/dev/null || true)
   echo "$line" >> $W/state/qa/inbox.jsonl
   for i in $(seq 1 $SECS); do
-    now=$(grep -c '"kind":"text"' $W/state/qa/outbox.jsonl 2>/dev/null || echo 0)
+    now=$(grep -c '"kind":"text"' $W/state/qa/outbox.jsonl 2>/dev/null || true)
+    now=${now:-0}; before=${before:-0}
     [ "$now" -gt "$before" ] && break; sleep 1
   done
   sleep 2

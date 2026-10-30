@@ -21,6 +21,7 @@ cat > $T/inbox.jsonl <<'EOF'
 {"case":"owner","text":"/correo lista"}
 {"case":"dueno","text":"/resumen hoy","owner":true}
 {"case":"dueno","text":"/correo lista","owner":true}
+{"case":"estado","text":"/correo estado","owner":true}
 EOF
 # PA_QA_OWNER_DM=1: las líneas con "owner": true entran como el DM del dueño (4242).
 PA_QA_OWNER_DM=1 bash "$REPO/scripts/qa-daemon/run.sh" $T/w $T/script.json $T/inbox.jsonl 60 >/dev/null
@@ -34,6 +35,7 @@ check 'taint: el turno termina' '"case":"taint","kind":"text","text":"Fin del ca
 check '/resumen hoy: solo el DM del dueño' '"case":"owner","kind":"text","text":"El resumen del día solo'
 check '/correo: solo el DM del dueño' '"case":"owner","kind":"text","text":"Correo solo disponible'
 check '/resumen hoy en el DM del dueño: resumen' '"case":"dueno","kind":"text","text":"Buen'
+check '/correo estado sin cuenta: dice qué falta y cómo activarlo' '"case":"estado","kind":"text","text":"Lectura (avisos y lista): falta.*Envío con tu aprobación: falta.*Para activarlo'
 check '/correo lista sin cuenta: lo dice' '"case":"dueno","kind":"text","text":"No tienes configurada la lectura del correo'
 if grep -q '"kind":"error"' "$OUT"; then echo 'FAIL errores en el canal'; fail=1; fi
 node -e "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('$T/w/state/agent.db');const r=d.prepare(\"select name from sqlite_master where type='table'\").all().map(x=>x.name);const t=r.find(n=>/routine/i.test(n));const rows=t?d.prepare('select * from '+t).all():[];const ok=rows.some(x=>JSON.stringify(x).includes('regar las plantas'));console.log(ok?'ok   recordatorio guardado en agent.db':'FAIL recordatorio no guardado');process.exit(ok?0:1)" || fail=1
