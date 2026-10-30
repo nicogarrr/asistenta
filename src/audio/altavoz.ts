@@ -38,6 +38,14 @@ export function altavozStatusText(mode: AltavozMode): string {
   }
 }
 
+/** Respuesta de /stop: conversaciones abortadas y notas del altavoz cortadas. */
+export function stopReplyText(threads: number, notes: number): string {
+  const parts: string[] = [];
+  if (threads) parts.push(`${threads} conversación(es) abortadas y la cola limpia`);
+  if (notes) parts.push(`${notes} nota(s) de voz paradas en el altavoz`);
+  return parts.length ? `Detenido. ${parts.join('; ')}.` : 'No había nada en curso.';
+}
+
 export const ALTAVOZ_USAGE =
   'Uso: /altavoz pc · /altavoz tele · /altavoz off · /altavoz (ver estado)';
 
@@ -75,8 +83,11 @@ export class AltavozStore {
 export interface AltavozPlayerDeps {
   /** Convierte los bytes recibidos en un fichero reproducible (MP3). */
   toPlayable(bytes: Buffer, mimeType: string): Promise<string>;
-  /** Suena un fichero en el PC sin tocar el volumen; se resuelve al acabar. */
-  playOnPc(file: string): Promise<void>;
+  /**
+   * Suena un fichero en el PC sin tocar el volumen; se resuelve al acabar. Si `signal`
+   * se aborta (/stop), tiene que cortar el sonido y resolverse.
+   */
+  playOnPc(file: string, signal?: AbortSignal): Promise<void>;
   /** Manda un fichero a la tele (se queda con él). Ausente si la tele está apagada. */
   castToTv?: (file: string) => Promise<{ ok: boolean; message: string }>;
   /** Borra la copia temporal del PC. */
@@ -94,7 +105,14 @@ export interface AltavozPlayer {
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
     /** Aviso por nota: quien la mandó tiene que saber que no ha sonado. */
     onFail?: (err: unknown) => void,
+    /** Chat que la mandó: /stop en ese chat la para. */
+    key?: string,
   ): boolean;
+  /**
+   * /stop: descarta las notas en cola de ese chat (o de todos sin `key`) y corta la que
+   * suena en el PC. Devuelve cuántas notas paró. Las descartadas no avisan de fallo.
+   */
+  clear(key?: string): number;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
   pending(): number;
@@ -107,13 +125,22 @@ export interface AltavozPlayer {
 export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   let chain: Promise<void> = Promise.resolve();
   let waiting = 0;
+  /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
+  const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
   const playOne = async (
     mode: 'pc' | 'tele',
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
+    item: { dropped: boolean; abort?: AbortController },
   ): Promise<void> => {
+    if (item.dropped) return;
     const got = await load();
+    if (item.dropped) return;
     if (!got) throw new Error('no he podido descargar la nota de voz');
     const file = await deps.toPlayable(got.bytes, got.mimeType);
+    if (item.dropped) {
+      deps.remove(file);
+      return;
+    }
     if (mode === 'tele') {
       if (!deps.castToTv) {
         deps.remove(file);
@@ -123,19 +150,30 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       if (!r.ok) throw new Error(r.message);
       return;
     }
+    const abort = new AbortController();
+    item.abort = abort;
     try {
-      await deps.playOnPc(file);
+      await deps.playOnPc(file, abort.signal);
+    } catch (err) {
+      // Cortada por /stop: no es un fallo que haya que contar.
+      if (!item.dropped) throw err;
     } finally {
       deps.remove(file);
     }
   };
   return {
-    enqueue(mode, load, onFail) {
+    enqueue(mode, load, onFail, key) {
       if (waiting >= ALTAVOZ_MAX_QUEUE) return false;
       waiting++;
+      const item: { key?: string; dropped: boolean; abort?: AbortController } = {
+        key,
+        dropped: false,
+      };
+      live.add(item);
       chain = chain
-        .then(() => playOne(mode, load))
+        .then(() => playOne(mode, load, item))
         .catch((err) => {
+          if (item.dropped) return;
           deps.onError?.(err);
           try {
             onFail?.(err);
@@ -144,9 +182,20 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
           }
         })
         .finally(() => {
+          live.delete(item);
           waiting--;
         });
       return true;
+    },
+    clear(key) {
+      let stopped = 0;
+      for (const item of live) {
+        if (item.dropped || (key !== undefined && item.key !== key)) continue;
+        item.dropped = true;
+        item.abort?.abort();
+        stopped++;
+      }
+      return stopped;
     },
     idle: () => chain,
     pending: () => waiting,

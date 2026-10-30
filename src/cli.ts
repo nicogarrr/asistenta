@@ -214,6 +214,7 @@ import {
   altavozStatusText,
   createAltavozPlayer,
   parseAltavozArgs,
+  stopReplyText,
 } from './audio/altavoz.js';
 import { audioTeleEnabled, tvCasterFromVault } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
@@ -1672,10 +1673,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
   const altavozPlayer = createAltavozPlayer({
     toPlayable: (bytes, mimeType) => toPlayableAudio(bytes, mimeType),
-    playOnPc: async (file) => {
+    playOnPc: async (file, signal) => {
       currentWake()?.suppress(PLAYBACK_SUPPRESS_MS);
       try {
-        await createMciSpeaker().play(file).done;
+        const playback = createMciSpeaker().play(file);
+        signal?.addEventListener('abort', () => playback.stop(), { once: true });
+        await playback.done;
       } finally {
         currentWake()?.suppress(WAKE_TAIL_MS);
       }
@@ -5230,14 +5233,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // to prevent. The same goes for an in-flight recording.
     stopLiveView(inbound.chatId);
     for (const thread of mine) thread.gate.clearSession(thread.key);
-    log.info('stop requested', { chatId: inbound.chatId, wasActive, threads: mine.length });
-    await say(
-      inbound,
-      wasActive
-        ? `Detenido. ${wasActive} conversación(es) abortadas y la cola limpia.`
-        : 'No había nada en curso.',
-      { quote: true },
-    );
+    // Notas de voz en el altavoz (/altavoz): la que suena se corta y la cola se vacía.
+    const notes = altavozPlayer.clear(chatKey_);
+    log.info('stop requested', {
+      chatId: inbound.chatId,
+      wasActive,
+      threads: mine.length,
+      notes,
+    });
+    await say(inbound, stopReplyText(wasActive, notes), { quote: true });
   };
 
   /**
@@ -6744,6 +6748,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                     quote: true,
                   });
                 },
+                chatKey_,
               );
               if (!queued) {
                 void say(
