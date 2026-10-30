@@ -100,7 +100,7 @@ import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
-import { looksLikeCredential, MemoryStore } from './memory.js';
+import { looksLikeCredential, MemoryStore, memoryScopesFor } from './memory.js';
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
@@ -2282,18 +2282,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // no puede bloquear re-registrar la preferencia anterior (A->B->A).
         existing: () =>
           memory
-            .all(key)
+            .allIn(memoryScopesFor(key).read)
             .filter((e) => e.supersededBy === null)
             .map((e) => e.text),
         write: (facts) => {
           let written = 0;
           const active = memory
-            .all(key)
+            .allIn(memoryScopesFor(key).read)
             .filter((e) => e.supersededBy === null)
             .map((e) => e.text);
           for (const fact of dedupeNewFacts(active, facts)) {
             try {
-              memory.remember(key, fact, { tags: ['compaction'] });
+              memory.remember(memoryScopesFor(key).write, fact, { tags: ['compaction'] });
               written++;
             } catch (err) {
               log.warn('compaction fact refused by memory store', { err: String(err) });
@@ -4682,7 +4682,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
     const sub = (subRaw ?? '').toLowerCase();
     const restText = rest.join(' ').trim();
-    const vigentes = () => memory.all(thread.key).filter((e) => e.supersededBy === null);
+    const vigentes = () =>
+      memory.allIn(memoryScopesFor(thread.key).read).filter((e) => e.supersededBy === null);
     if (!sub || sub === 'listar' || sub === 'lista' || sub === 'list') {
       const entries = vigentes();
       if (!entries.length) {
@@ -4703,7 +4704,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
         return;
       }
-      const hits = memory.recall(thread.key, restText).filter((e) => e.supersededBy === null);
+      const hits = memory
+        .recallIn(memoryScopesFor(thread.key).read, restText)
+        .filter((e) => e.supersededBy === null);
       await say(
         inbound,
         hits.length
@@ -4720,7 +4723,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
         return;
       }
-      const removed = memory.forget(thread.key, restText);
+      const removed = memory.forgetIn(memoryScopesFor(thread.key).read, restText);
       await say(
         inbound,
         removed ? `Olvidado ${restText}.` : `No había nada con id ${restText} en este chat.`,
@@ -4729,7 +4732,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (sub === 'exportar' || sub === 'export') {
-      const entries = memory.all(thread.key);
+      const entries = memory.allIn(memoryScopesFor(thread.key).read);
       const payload = {
         exportado: new Date().toISOString(),
         chat: thread.key,
@@ -7086,7 +7089,7 @@ export function inspectionThreadKey(opts: {
  * the audit flagged.
  */
 export function runMemoryCommand(memory: MemoryStore, scope: string): string {
-  const entries = memory.all(scope);
+  const entries = memory.allIn(memoryScopesFor(scope).read);
   const scopes = memory.scopes();
   return entries.length
     ? [`Recuerdo ${entries.length} cosas:`, ...entries.map((e) => `- [${e.id}] ${e.text}`)].join(
@@ -7393,7 +7396,7 @@ export function buildContextNote(
   // 9b: memory as an index - the last 5 active entries in full, the rest as
   // one-line rows; superseded facts are never rendered and the section is
   // capped (see src/memory/context.ts, measured in scripts/memory-bench.ts).
-  const renderedMemory = renderMemoryContext(memory.all(thread.key));
+  const renderedMemory = renderMemoryContext(memory.allIn(memoryScopesFor(thread.key).read));
   // Perfil v2 por propietario: una sola sección (perfil + memoria) sin duplicar
   // el PERFIL.md. Si v2 está vacío se usa el perfil legado tal cual.
   let profileSection = '';

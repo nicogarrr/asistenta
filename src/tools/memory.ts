@@ -6,7 +6,13 @@ import { type Embedder, hybridRank } from '../memory/semantic.js';
 import type { SessionStore } from '../memory/sessions.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
 import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
-import { looksLikeCredential, type MemoryEntry, type MemoryStore, scoreEntry } from '../memory.js';
+import {
+  looksLikeCredential,
+  type MemoryEntry,
+  type MemoryStore,
+  memoryScopesFor,
+  scoreEntry,
+} from '../memory.js';
 
 /**
  * Long-term memory as a tool.
@@ -159,9 +165,9 @@ function renderEntry(e: MemoryEntry): string {
 }
 
 /** The empty answer says WHICH empty it is: no match, nothing stored, or all replaced. */
-function emptyMemoryText(store: MemoryStore, scope: string, query: string): string {
+function emptyMemoryText(store: MemoryStore, read: readonly string[], query: string): string {
   if (query) return 'No hay nada guardado que coincida con eso.';
-  return store.all(scope).length === 0
+  return store.allIn(read).length === 0
     ? 'Este chat no tiene memoria guardada todavía.'
     : 'No queda nada vigente: todo está sustituido. include_superseded=true muestra la historia.';
 }
@@ -211,6 +217,7 @@ export function createMemoryTool(
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const scope = scopeOf();
+      const { write, read } = memoryScopesFor(scope);
       const snapshot =
         typeof snapshotOrGetter === 'function' ? snapshotOrGetter() : snapshotOrGetter;
 
@@ -226,7 +233,7 @@ export function createMemoryTool(
             return refused(reason);
           }
           try {
-            const entry = store.remember(scope, text, { tags: args.tags ?? [] });
+            const entry = store.remember(write, text, { tags: args.tags ?? [] });
             log.info('memory stored', { scope, id: entry.id });
             return {
               content: [{ type: 'text', text: `Recordado (${entry.id}): ${entry.text}` }],
@@ -250,7 +257,7 @@ export function createMemoryTool(
             try {
               hits = await hybridRank({
                 query,
-                items: activeOnly(store.all(scope)),
+                items: activeOnly(store.allIn(read)),
                 text: (e) => `${e.text} ${e.tags.join(' ')}`,
                 lexical: scoreEntry,
                 embedder: semantic,
@@ -258,18 +265,18 @@ export function createMemoryTool(
               });
             } catch (err) {
               log.warn('semantic recall unavailable, lexical fallback', { err: safeError(err) });
-              hits = store.recall(scope, query);
+              hits = store.recallIn(read, query);
             }
           } else {
             hits = query
-              ? store.recall(scope, query)
+              ? store.recallIn(read, query)
               : args.include_superseded
-                ? store.all(scope)
-                : activeOnly(store.all(scope));
+                ? store.allIn(read)
+                : activeOnly(store.allIn(read));
           }
           if (hits.length === 0) {
             return {
-              content: [{ type: 'text', text: emptyMemoryText(store, scope, query) }],
+              content: [{ type: 'text', text: emptyMemoryText(store, read, query) }],
               details: { count: 0 },
             };
           }
@@ -286,7 +293,7 @@ export function createMemoryTool(
               'la acción get necesita el id (lo ves en el índice del contexto o en recall/list)',
             );
           }
-          const entry = store.get(scope, id);
+          const entry = store.getIn(read, id);
           if (!entry) {
             return {
               content: [
@@ -330,7 +337,7 @@ export function createMemoryTool(
             }
           }
           // The timeline is the history layer: replaced entries appear, marked.
-          const rendered = renderTimeline(store.all(scope), { from, to, cursor });
+          const rendered = renderTimeline(store.allIn(read), { from, to, cursor });
           if (!rendered) {
             return {
               content: [
@@ -356,14 +363,16 @@ export function createMemoryTool(
         }
 
         case 'list': {
-          const entries = args.include_superseded ? store.all(scope) : activeOnly(store.all(scope));
+          const entries = args.include_superseded
+            ? store.allIn(read)
+            : activeOnly(store.allIn(read));
           return {
             content: [
               {
                 type: 'text',
                 text: entries.length
                   ? entries.map(renderEntry).join('\n')
-                  : emptyMemoryText(store, scope, ''),
+                  : emptyMemoryText(store, read, ''),
               },
             ],
             details: { count: entries.length },
@@ -373,7 +382,7 @@ export function createMemoryTool(
         case 'forget': {
           const id = String(args.id ?? '').trim();
           if (!id) throw new Error('la acción forget necesita el id (mira recall o list)');
-          const removed = store.forget(scope, id);
+          const removed = store.forgetIn(read, id);
           log.info('memory removed', { scope, id, removed });
           return {
             content: [

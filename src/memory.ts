@@ -431,6 +431,28 @@ function withFileLock<T>(file: string, fn: () => T): T {
  * won, so one of the two facts was lost in silence. A lock whose owner is dead
  * or that is older than LOCK_STALE_MS is taken over.
  */
+/**
+ * Memoria por chat, no por hilo. Las conversaciones de un chat se reparten en
+ * hilos (`<chat>#main`, `<chat>#<tema>`, `<chat>#t<id>` o el hilo de una
+ * respuesta), pero un hecho que el usuario cuenta respondiendo a un mensaje es
+ * suyo en todo el chat: antes se guardaba bajo la clave del hilo y en el chat
+ * principal no se recordaba. Se escribe en `<chat>#main` y se lee la unión con el
+ * hilo actual (los hechos viejos guardados en hilos siguen apareciendo). Nunca
+ * cruza chats: la parte anterior a `#` (el chatKey) no cambia. Un ámbito sin `#`
+ * (p. ej. `local`) se queda tal cual.
+ */
+export interface MemoryScopes {
+  write: string;
+  read: readonly string[];
+}
+
+export function memoryScopesFor(scope: string): MemoryScopes {
+  const hash = scope.indexOf('#');
+  if (hash < 0) return { write: scope, read: [scope] };
+  const write = `${scope.slice(0, hash)}#main`;
+  return { write, read: write === scope ? [write] : [write, scope] };
+}
+
 export class MemoryStore {
   readonly dir: string;
 
@@ -584,6 +606,45 @@ export class MemoryStore {
     // shares vocabulary with.
     scored.sort((a, b) => b.score - a.score || b.index - a.index);
     return scored.slice(0, cap).map((hit) => hit.entry);
+  }
+
+  /** Every entry across several scopes (see memoryScopesFor), file order kept per scope. */
+  allIn(scopes: readonly string[]): MemoryEntry[] {
+    return [...new Set(scopes)].flatMap((scope) => this.all(scope));
+  }
+
+  getIn(scopes: readonly string[], id: string): MemoryEntry | null {
+    for (const scope of new Set(scopes)) {
+      const entry = this.get(scope, id);
+      if (entry) return entry;
+    }
+    return null;
+  }
+
+  forgetIn(scopes: readonly string[], id: string): boolean {
+    for (const scope of new Set(scopes)) if (this.forget(scope, id)) return true;
+    return false;
+  }
+
+  /** recall over several scopes, merged by score (the first scope wins a tie). */
+  recallIn(
+    scopes: readonly string[],
+    query: string,
+    limit: number = DEFAULT_RECALL,
+  ): MemoryEntry[] {
+    const cap = Math.max(1, Math.min(MAX_RECALL, Math.floor(limit)));
+    const unique = [...new Set(scopes)];
+    if (unique.length === 1) return this.recall(unique[0] as string, query, cap);
+    const hits = unique.flatMap((scope, rank) =>
+      this.recall(scope, query, MAX_RECALL).map((entry, index) => ({
+        entry,
+        rank,
+        index,
+        score: scoreEntry(entry, query),
+      })),
+    );
+    hits.sort((a, b) => b.score - a.score || a.rank - b.rank || a.index - b.index);
+    return hits.slice(0, cap).map((hit) => hit.entry);
   }
 
   /** Every scope that has a file, including digest-stemmed ones. */
