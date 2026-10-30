@@ -120,10 +120,10 @@ export const writeTool: AgentTool<typeof WriteParams> = {
   executionMode: 'sequential',
   execute: async (_id, args) => {
     const path = guardPath(args.path);
-    recordBeforeWrite(path);
+    const undoEntry = recordBeforeWrite(path);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, args.content, 'utf8');
-    recordAfterWrite(args.content);
+    recordAfterWrite(args.content, undoEntry);
     log.info('write', { path, bytes: args.content.length });
     return {
       content: [{ type: 'text', text: `Wrote ${args.content.length} bytes to ${args.path}` }],

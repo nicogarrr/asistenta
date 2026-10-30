@@ -140,4 +140,21 @@ describe('deshacer la última escritura', () => {
     expect(undoLast()).toContain('fuera del directorio');
     expect(readFileSync(f, 'utf8')).toBe('x');
   });
+
+  it('dos escrituras solapadas: cada hash va a su propia entrada y ambas se pueden deshacer', () => {
+    const a = join(work, 'a.txt');
+    const b = join(work, 'b.txt');
+    writeFileSync(a, 'a1');
+    writeFileSync(b, 'b1');
+    const ea = recordBeforeWrite(a);
+    const eb = recordBeforeWrite(b);
+    writeFileSync(a, 'a2');
+    recordAfterWrite('a2', ea);
+    writeFileSync(b, 'b2');
+    recordAfterWrite('b2', eb);
+    expect(undoLast()).not.toMatch(/cambiado/);
+    expect(readFileSync(b, 'utf8')).toBe('b1');
+    expect(undoLast()).not.toMatch(/cambiado/);
+    expect(readFileSync(a, 'utf8')).toBe('a1');
+  });
 });
