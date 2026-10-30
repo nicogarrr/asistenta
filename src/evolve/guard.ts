@@ -23,6 +23,13 @@ export const PROTECTED_PREFIXES: readonly string[] = [
   'evolve/',
   'scripts/evolve-battery-case.mjs',
   'vitest.config',
+  // Sin tocar vitest.config también se cambia qué se mide: un vitest.workspace/projects en la
+  // raíz sustituye su include (vitest 3 aún lo lee), vite.config lo leería si faltara, y un
+  // .npmrc con node-options carga código en el `npx vitest` de la medición.
+  'vitest.workspace',
+  'vitest.projects',
+  'vite.config',
+  '.npmrc',
   'biome.json',
   'package.json',
   'package-lock.json',
