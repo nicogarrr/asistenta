@@ -16,62 +16,74 @@ type Row =
 	| {kind: 'action'; label: string; hint: string; action: 'reset' | 'apps'}
 	| {kind: 'location'; label: string}
 	| {kind: 'tmdbkey'; label: string}
+	| {kind: 'name'; label: string}
 	| {kind: 'info'; label: string; value: string};
 
 const ROWS: Row[] = [
 	{
-		kind: 'choice', label: 'Clock format', values: ['12', '24'], labels: ['12-hour', '24-hour'],
+		kind: 'choice', label: 'Formato de hora', values: ['24', '12'], labels: ['24 h', '12 h'],
 		get: (c) => (c.clock24 ? '24' : '12'), set: (c, v) => ({...c, clock24: v === '24'})
 	},
 	{
-		kind: 'choice', label: 'Temperature', values: ['fahrenheit', 'celsius'], labels: ['°F', '°C'],
+		kind: 'choice', label: 'Temperatura', values: ['celsius', 'fahrenheit'], labels: ['°C', '°F'],
 		get: (c) => c.tempUnit, set: (c, v) => ({...c, tempUnit: v as HomeConfig['tempUnit']})
 	},
-	{kind: 'location', label: 'Location'},
+	{kind: 'name', label: 'Tu nombre'},
+	{kind: 'location', label: 'Ubicación'},
 	{
-		kind: 'choice', label: 'Recomendaciones', values: ['on', 'off'], labels: ['On', 'Off'],
-		get: (c) => (c.picksEnabled ? 'on' : 'off'), set: (c, v) => ({...c, picksEnabled: v === 'on'})
-	},
-	{kind: 'tmdbkey', label: 'Clave TMDB'},
-	{
-		kind: 'choice', label: 'Cohete', values: ['on', 'off'], labels: ['On', 'Off'],
-		get: (c) => (c.rocketEnabled ? 'on' : 'off'), set: (c, v) => ({...c, rocketEnabled: v === 'on'})
+		kind: 'choice', label: 'Tiempo en pantalla', values: ['on', 'off'], labels: ['Sí', 'No'],
+		get: (c) => (c.showWeather ? 'on' : 'off'), set: (c, v) => ({...c, showWeather: v === 'on'})
 	},
 	{
-		kind: 'choice', label: 'Lanzamientos', values: ['on', 'off'], labels: ['On', 'Off'],
-		get: (c) => (c.launchesEnabled ? 'on' : 'off'), set: (c, v) => ({...c, launchesEnabled: v === 'on'})
-	},
-	{
-		kind: 'choice', label: 'Salvapantallas', values: ['ambient', 'system'], labels: ['Reloj (app)', 'Arte (sistema)'],
+		kind: 'choice', label: 'Salvapantallas', values: ['ambient', 'system'], labels: ['Reloj de la app', 'Arte de la tele'],
 		get: (c) => c.tvScreensaver, set: (c, v) => ({...c, tvScreensaver: v as HomeConfig['tvScreensaver']})
 	},
 	{
-		kind: 'choice', label: 'Fotos en salvapantallas', values: ['on', 'off'], labels: ['On', 'Off'],
+		kind: 'choice', label: 'Reloj analógico', values: ['on', 'off'], labels: ['Sí', 'No'],
+		get: (c) => (c.analogClock ? 'on' : 'off'), set: (c, v) => ({...c, analogClock: v === 'on'})
+	},
+	{
+		kind: 'choice', label: 'Fotos del momento', values: ['on', 'off'], labels: ['Sí', 'No'],
 		get: (c) => (c.ambientPhotos ? 'on' : 'off'), set: (c, v) => ({...c, ambientPhotos: v === 'on'})
 	},
 	{
-		kind: 'choice', label: 'Background animation', values: ['on', 'off'], labels: ['On', 'Off'],
+		kind: 'choice', label: 'Fondo animado', values: ['on', 'off'], labels: ['Sí', 'No'],
 		get: (c) => (c.bgAnimated ? 'on' : 'off'), set: (c, v) => ({...c, bgAnimated: v === 'on'})
 	},
 	{
-		kind: 'choice', label: 'Color theme', values: ['classic', 'mono', 'ember', 'aurora'], labels: ['Classic', 'Mono Blue', 'Ember', 'Aurora'],
+		kind: 'choice', label: 'Tema del fondo', values: ['classic', 'mono', 'ember', 'aurora'], labels: ['Clásico', 'Azul', 'Ámbar', 'Aurora'],
 		get: (c) => c.bgTheme, set: (c, v) => ({...c, bgTheme: v as HomeConfig['bgTheme']})
 	},
 	{
-		kind: 'choice', label: 'Star density', values: ['low', 'normal', 'high'], labels: ['Low', 'Normal', 'High'],
+		kind: 'choice', label: 'Estrellas', values: ['low', 'normal', 'high'], labels: ['Pocas', 'Normal', 'Muchas'],
 		get: (c) => c.bgDensity, set: (c, v) => ({...c, bgDensity: v as HomeConfig['bgDensity']})
 	},
 	{
-		kind: 'choice', label: 'Motion speed', values: ['slow', 'normal', 'fast'], labels: ['Slow', 'Normal', 'Fast'],
+		kind: 'choice', label: 'Velocidad', values: ['slow', 'normal', 'fast'], labels: ['Lenta', 'Normal', 'Rápida'],
 		get: (c) => c.bgSpeed, set: (c, v) => ({...c, bgSpeed: v as HomeConfig['bgSpeed']})
 	},
-	{kind: 'action', label: 'Manage apps', hint: 'OK to open', action: 'apps'},
-	{kind: 'action', label: 'Reset app order', hint: 'OK to reset', action: 'reset'},
-	{kind: 'info', label: 'Version', value: `v${APP_VERSION}`}
+	{
+		kind: 'choice', label: 'Protección OLED', values: ['on', 'off'], labels: ['Sí', 'No'],
+		get: (c) => (c.oledGuard ? 'on' : 'off'), set: (c, v) => ({...c, oledGuard: v === 'on'})
+	},
+	{
+		kind: 'choice', label: 'Recomendaciones', values: ['on', 'off'], labels: ['Sí', 'No'],
+		get: (c) => (c.picksEnabled ? 'on' : 'off'), set: (c, v) => ({...c, picksEnabled: v === 'on'})
+	},
+	{kind: 'tmdbkey', label: 'Clave de TMDB'},
+	{
+		kind: 'choice', label: 'Iconos reales (root)', values: ['off', 'on'], labels: ['No', 'Sí'],
+		get: (c) => (c.liveIcons ? 'on' : 'off'), set: (c, v) => ({...c, liveIcons: v === 'on'})
+	},
+	{kind: 'action', label: 'Gestionar apps', hint: 'OK para abrir', action: 'apps'},
+	{kind: 'action', label: 'Orden de apps', hint: 'OK para restablecer', action: 'reset'},
+	{kind: 'info', label: 'Versión', value: `v${APP_VERSION}`}
 ];
 
 const LOCATION_ROW = ROWS.findIndex((r) => r.kind === 'location');
 const APPS_ROW = ROWS.findIndex((r) => r.kind === 'action' && r.action === 'apps');
+const NAME_ROW = ROWS.findIndex((r) => r.kind === 'name');
+const TMDBKEY_ROW = ROWS.findIndex((r) => r.kind === 'tmdbkey');
 
 // Manage-apps pane: every app across all categories; OK (handled by the parent
 // key handler) toggles shown/hidden.
@@ -106,7 +118,7 @@ function AppsPane ({lists, hidden, row}: {lists: Record<CatId, AppItem[]>; hidde
 									{app.title}
 								</span>
 								<span className="text-base font-medium" style={{color: isHidden ? 'rgba(255,255,255,0.4)' : '#7ee7a6'}}>
-									{isHidden ? 'Hidden' : 'Shown'}
+									{isHidden ? 'Oculta' : 'Visible'}
 								</span>
 							</div>
 						);
@@ -132,12 +144,12 @@ function LocationPane ({inputRef, query, setQuery, results, searching, mode, res
 }) {
 	return (
 		<div className="flex flex-col gap-3">
-			<div className="px-1 text-base text-white/45">Current: <span className="text-white/80">{currentName}</span></div>
+			<div className="px-1 text-base text-white/45">Ahora: <span className="text-white/80">{currentName}</span></div>
 			<input
 				ref={inputRef}
 				value={query}
 				onChange={(e) => setQuery(e.target.value)}
-				placeholder="Search for a city…"
+				placeholder="Busca una ciudad…"
 				spellCheck={false}
 				autoComplete="off"
 				className="w-full rounded-2xl px-6 py-4 text-xl text-white/95 outline-none"
@@ -147,9 +159,9 @@ function LocationPane ({inputRef, query, setQuery, results, searching, mode, res
 				}}
 			/>
 			<div className="flex max-h-[38vh] min-h-[6rem] flex-col gap-1 overflow-y-auto pr-1">
-				{searching && <div className="px-6 py-3 text-lg text-white/45">Searching…</div>}
+				{searching && <div className="px-6 py-3 text-lg text-white/45">Buscando…</div>}
 				{!searching && !!query.trim() && results.length === 0 && (
-					<div className="px-6 py-3 text-lg text-white/45">No matches</div>
+					<div className="px-6 py-3 text-lg text-white/45">Sin resultados</div>
 				)}
 				{results.map((g, i) => {
 					const focused = mode === 'pick' && i === resultRow;
@@ -180,9 +192,10 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 	hidden: Set<string>;
 	onToggleHide: (id: string) => void;
 }) {
-	const [pane, setPane] = useState<'main' | 'apps' | 'location' | 'tmdb'>('main');
+	const [pane, setPane] = useState<'main' | 'apps' | 'location' | 'tmdb' | 'name'>('main');
 	const [row, setRow] = useState(0);
 	const [resetDone, setResetDone] = useState(false);
+	const rowEls = useRef<(HTMLDivElement | null)[]>([]);
 
 	// location-pane state
 	const [query, setQuery] = useState('');
@@ -203,10 +216,16 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 	const rowCount = pane === 'main' ? ROWS.length : flatApps.length;
 
 	const openLocation = () => { setPane('location'); setLocMode('type'); setQuery(''); setResults([]); setResultRow(0); };
-	const TMDBKEY_ROW = ROWS.findIndex((r) => r.kind === 'tmdbkey');
 	const openTmdb = () => { setPane('tmdb'); setQuery(config.tmdbKey); };
 	const closeTmdb = () => { setPane('main'); setRow(TMDBKEY_ROW); setQuery(''); };
+	const openName = () => { setPane('name'); setQuery(config.userName); };
+	const closeName = () => { setPane('main'); setRow(NAME_ROW); setQuery(''); };
 	const closeLocation = () => { setPane('main'); setRow(LOCATION_ROW); setQuery(''); setResults([]); setLocMode('type'); };
+
+	// La fila enfocada queda siempre a la vista dentro del panel con scroll.
+	useEffect(() => {
+		if (pane === 'main') rowEls.current[row]?.scrollIntoView({block: 'nearest'});
+	}, [row, pane]);
 
 	// Debounced geocoder search while typing.
 	useEffect(() => {
@@ -222,7 +241,7 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 
 	// Keep the input focused whenever we're in typing mode (opens the TV keyboard).
 	useEffect(() => {
-		if ((pane === 'location' && locMode === 'type') || pane === 'tmdb') {
+		if ((pane === 'location' && locMode === 'type') || pane === 'tmdb' || pane === 'name') {
 			const id = window.setTimeout(() => inputRef.current?.focus(), 0);
 			return () => window.clearTimeout(id);
 		}
@@ -230,7 +249,7 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			const typing = (pane === 'location' && locMode === 'type') || pane === 'tmdb';
+			const typing = (pane === 'location' && locMode === 'type') || pane === 'tmdb' || pane === 'name';
 			// While typing, Backspace edits text — don't treat it as Back.
 			const isBack = e.keyCode === 461 || e.key === 'GoBack' || e.key === 'Escape'
 				|| (e.key === 'Backspace' && !typing);
@@ -238,6 +257,15 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 			// Typing mode: let characters + the IME through; only steal Back and the
 			// "go to results" keys.
 			if (typing) {
+				if (pane === 'name') {
+					if (isBack) { e.preventDefault(); e.stopPropagation(); closeName(); return; }
+					if (e.key === 'Enter') {
+						e.preventDefault(); e.stopPropagation();
+						onChange({...config, userName: query.trim() || config.userName});
+						closeName();
+					}
+					return;   // el resto: input nativo
+				}
 				if (pane === 'tmdb') {
 					if (isBack) { e.preventDefault(); e.stopPropagation(); closeTmdb(); return; }
 					if (e.key === 'Enter') {
@@ -295,6 +323,7 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 			if (def.kind === 'info') return;
 			if (def.kind === 'location') { if (e.key === 'Enter') openLocation(); return; }
 			if (def.kind === 'tmdbkey') { if (e.key === 'Enter') openTmdb(); return; }
+			if (def.kind === 'name') { if (e.key === 'Enter') openName(); return; }
 			if (def.kind === 'action') {
 				if (e.key !== 'Enter') return;
 				if (def.action === 'reset') { resetOrder(); onOrderReset(); setResetDone(true); }
@@ -311,21 +340,37 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 		return () => window.removeEventListener('keydown', onKey, true);
 	}, [pane, row, rowCount, config, onChange, onClose, onOrderReset, flatApps, onToggleHide, locMode, results, resultRow]);
 
-	const title = pane === 'main' ? 'Settings' : pane === 'apps' ? 'Manage apps' : pane === 'tmdb' ? 'Clave TMDB' : 'Set location';
+	const title = pane === 'main' ? 'Ajustes' : pane === 'apps' ? 'Gestionar apps' : pane === 'tmdb' ? 'Clave de TMDB' : pane === 'name' ? 'Tu nombre' : 'Elige tu ciudad';
 	const hint = pane === 'tmdb'
-		? 'Pega tu clave · OK guarda · Back cancela (gratis: themoviedb.org → Settings → API)'
+		? 'Pega tu clave · OK guarda · Back cancela (gratis en themoviedb.org)'
+		: pane === 'name'
+		? 'Escribe cómo te saluda el Home · OK guarda · Back cancela'
 		: pane === 'apps'
-		? '↑↓ select · OK show/hide · Back to settings'
+		? '↑↓ elegir · OK mostrar u ocultar · Back volver'
 		: pane === 'location'
-			? (locMode === 'type' ? 'Type a city · ↓ to results · Back to settings' : '↑↓ pick · OK select · Back to edit')
-			: '↑↓ select · ‹ › change · OK open · Back to close';
+			? (locMode === 'type' ? 'Escribe una ciudad · ↓ resultados · Back volver' : '↑↓ elegir · OK seleccionar · Back editar')
+			: '↑↓ elegir · ‹ › cambiar · OK abrir · Back cerrar';
 
 	return (
 		<div className="absolute inset-0 z-30 flex items-center justify-center" style={{background: 'rgba(0,0,0,0.72)'}}>
 			<div className="m3-card w-[720px] px-10 py-8" style={{animation: 'rise-in 0.35s var(--m3-ease-emphasized) both'}}>
 				<h2 className="mb-6 text-[34px] font-normal tracking-tight" style={{color: ACCENT}}>{title}</h2>
 
-				{pane === 'tmdb' ? (
+				{pane === 'name' ? (
+					<div className="flex flex-col gap-3">
+						<div className="px-1 text-base text-white/45">Así te saluda el Home. Puedes poner los dos nombres.</div>
+						<input
+							ref={inputRef}
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder="Nico y Nai"
+							spellCheck={false}
+							autoComplete="off"
+							className="w-full rounded-2xl px-6 py-4 text-xl text-white/95 outline-none"
+							style={{background: 'rgba(255,255,255,0.06)', border: `1px solid ${ACCENT}aa`}}
+						/>
+					</div>
+				) : pane === 'tmdb' ? (
 					<div className="flex flex-col gap-3">
 						<div className="px-1 text-base text-white/45">
 							{config.tmdbKey ? 'Hay una clave guardada (solo en esta TV).' : 'Sin clave: las recomendaciones se esconden.'}
@@ -349,12 +394,13 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 						searching={searching} mode={locMode} resultRow={resultRow} currentName={config.location.name}
 					/>
 				) : (
-					<div className="flex flex-col gap-2">
+					<div className="flex max-h-[58vh] flex-col gap-2 overflow-y-auto pr-2">
 						{ROWS.map((def, i) => {
 							const focused = i === row;
 							return (
 								<div
 									key={def.label}
+									ref={(el) => { rowEls.current[i] = el; }}
 									className="flex items-center justify-between rounded-2xl px-6 py-4"
 									style={{
 										background: focused ? `${ACCENT}1f` : 'transparent',
@@ -379,11 +425,16 @@ export default function Settings ({config, onChange, onClose, onOrderReset, list
 											<span>{config.tmdbKey ? 'Guardada ✓' : 'Sin clave'}</span>
 											{focused && <span className="opacity-70">›</span>}
 										</span>
+									) : def.kind === 'name' ? (
+										<span className="flex items-center gap-2 text-lg font-medium" style={{color: focused ? ACCENT : 'rgba(255,255,255,0.55)'}}>
+											<span className="max-w-[280px] truncate text-right">{config.userName}</span>
+											{focused && <span className="opacity-70">›</span>}
+										</span>
 									) : def.kind === 'info' ? (
 										<span className="text-lg font-medium text-white/40">{def.value}</span>
 									) : (
 										<span className="text-lg font-medium" style={{color: focused ? ACCENT : 'rgba(255,255,255,0.55)'}}>
-											{def.action === 'reset' && resetDone ? 'Done ✓' : def.hint}
+											{def.action === 'reset' && resetDone ? 'Hecho ✓' : def.hint}
 										</span>
 									)}
 								</div>

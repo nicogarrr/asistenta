@@ -10,6 +10,9 @@ Copyright (c) 2026 partridgeworks y rudra-avatar; a su vez fork de
 - `src/service/weather.ts` — caché de la última previsión con frescura/caducidad
   (`FORECAST_FRESH_MS`/`FORECAST_SHOWN_MS`) y patrón de reintentos 2 → 10 → 30 min
   aplicado en `src/components/widgets/WidgetCluster.tsx`.
+- `src/service/appexec.ts` — canal root opt-in vía Homebrew Channel: lista de apps
+  como root, lectura de iconos en base64 por índice (los appIds nunca llegan al
+  shell), whitelist de rutas `SAFE_PATH` + `shellQuote`, y caché de iconos podada.
 
 Texto completo de la licencia de Hearth:
 

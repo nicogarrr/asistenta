@@ -124,11 +124,12 @@ function WeatherBlock () {
 // separated. No backdrop-blur — it re-rasterizes over the moving background each
 // frame and tanks the TV GPU; the .m3-card tonal gradient fakes the surface for free.
 export default function WidgetCluster () {
+	const {showWeather} = useConfig();
 	return (
 		<div className="m3-card flex w-[340px] flex-col items-end gap-3 px-8 py-5">
 			<DateLine />
-			<div className="m3-divider" />
-			<WeatherBlock />
+			{showWeather && <div className="m3-divider" />}
+			{showWeather && <WeatherBlock />}
 			<div className="m3-divider" />
 			<Clock compact />
 		</div>

@@ -1,5 +1,4 @@
 import {useEffect, useState} from 'react';
-import {ElasticText} from '../godui/elastic-text';
 import {useConfig} from '../../lib/config';
 
 function useNow (tickMs = 1000) {
@@ -66,11 +65,9 @@ export default function Clock ({compact = false}: {compact?: boolean}) {
 		<div className="flex items-center gap-5">
 			<Analog date={now} size={compact ? 80 : 100} />
 			<div className="flex items-baseline gap-2 leading-none">
-				{/* Re-keyed by minute → one gentle elastic sweep each minute change */}
+				{/* Re-keyed by minute → barrido CSS del peso (sin framer-motion) */}
 				<div className={`${compact ? 'text-[50px]' : 'text-[68px]'} font-medium tracking-tight text-white/95`}>
-					<ElasticText key={digital} loop={false} startOnView={false} duration={1.3} minWeight={340} maxWeight={640}>
-						{digital}
-					</ElasticText>
+					<span key={digital} className="clock-sweep">{digital}</span>
 				</div>
 				{ampm && <div className="text-xl font-medium text-white/50">{ampm}</div>}
 			</div>

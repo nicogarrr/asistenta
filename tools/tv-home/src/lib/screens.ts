@@ -32,7 +32,7 @@ export interface ScreenDef {
 // Locked mapping: Up=Game, Down=Stream, Left=Media, Right=Misc.
 export const SCREENS: Record<Exclude<ScreenId, 'home'>, ScreenDef> = {
 	game: {
-		id: 'game', label: 'HDMI', direction: 'up', orientation: 'vertical',
+		id: 'game', label: 'Juegos', direction: 'up', orientation: 'vertical',
 		accent: '#b39cff', panel: {x: '0%', y: '-100%'}, world: {x: '0%', y: '100%'},
 		nearEnd: true, anchor: 0.58   // enter from bottom → rest low, focus last
 	},

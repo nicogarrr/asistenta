@@ -1,7 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import {Analog} from './widgets/Clock';
 import {useConfig} from '../lib/config';
-import {fetchNextLaunch, formatNet, type NextLaunch} from '../service/launches';
 import type {Pick} from '../service/tmdb';
 
 // Fotos del salvapantallas (idea de free-my-tv, "a screensaver to match"):
@@ -66,18 +65,11 @@ function PhotoLayer ({photos}: {photos: string[]}) {
 }
 
 export default function Ambient ({picks = []}: {picks?: Pick[]}) {
-	const {clock24, launchesEnabled, ambientPhotos} = useConfig();
+	const {clock24, ambientPhotos, analogClock} = useConfig();
 	const photos = useMemo(
 		() => (ambientPhotos ? [...new Set(picks.map((p) => p.backdrop).filter(Boolean))] : []),
 		[picks, ambientPhotos]
 	);
-	const [launch, setLaunch] = useState<NextLaunch | null>(null);
-	useEffect(() => {
-		if (!launchesEnabled) return;
-		let alive = true;
-		fetchNextLaunch().then((l) => { if (alive) setLaunch(l); });
-		return () => { alive = false; };
-	}, [launchesEnabled]);
 	const [now, setNow] = useState(() => new Date());
 	// drift offset in vw/vh around center; new spot each minute, eased by CSS
 	const [pos, setPos] = useState({x: 0, y: 0});
@@ -117,18 +109,14 @@ export default function Ambient ({picks = []}: {picks?: Pick[]}) {
 					border: '1px solid rgba(255,255,255,0.12)'
 				}}
 			>
-				<div style={{opacity: 0.9}}>
-					<Analog date={now} size={340} />
-				</div>
+				{analogClock && (
+					<div style={{opacity: 0.9}}>
+						<Analog date={now} size={340} />
+					</div>
+				)}
 				<div className="text-center">
 					<div className="text-[40px] font-light leading-none tracking-tight text-white/70">{digital}</div>
 					<div className="mt-3 text-lg font-normal tracking-[0.02em] text-white/35">{dateLine}</div>
-				{launch && (
-					<div className="mt-4 max-w-[520px] text-center text-base font-normal text-white/30">
-						Próximo lanzamiento: {launch.name} · {formatNet(launch.net)}
-						<span className="text-white/20"> · Fuente: Launch Library</span>
-					</div>
-				)}
 				</div>
 			</div>
 		</div>
