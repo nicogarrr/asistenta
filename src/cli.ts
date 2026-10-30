@@ -290,6 +290,8 @@ import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
+import { tvPower } from './tv/power.js';
+import { sendWakeOnLan } from './tv/wol.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex, plainInline } from './utils.js';
 import {
@@ -989,32 +991,37 @@ function tvToolDeps(store: Store): TvToolDeps {
       await tvToast(host, clientKey, message, { allowPlaintext });
     },
     power: async (on) => {
-      // Glasshouse powerOn/powerOff exige allowPower en la config de la tele.
-      // SSAP solo si Glasshouse no llego a recibir la orden; si responde con
-      // rechazo (allowPower=false) se respeta la config y se propaga el error.
-      try {
-        await (await ghClient()).control(on ? 'powerOn' : 'powerOff');
-        return;
-      } catch (err) {
-        // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
-        // (conexion nunca establecida). Un rechazo (ok:false, 4xx/5xx,
-        // allowPower=false) o una escritura ambigua JAMAS se repiten por
-        // otro transporte: respetan la config de la tele (auditor #104 r1).
-        if (!(err instanceof GlasshouseUnavailableError)) throw err;
-        log.info('tv power: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
-      }
-      const { host, clientKey, allowPlaintext } = await paired();
-      if (on) {
-        await tvRequest(
-          host,
-          clientKey,
-          'com.webos.service.tvpower/power/turnOnScreen',
-          {},
-          { allowPlaintext },
-        );
-        return;
-      }
-      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
+      // Cadena Glasshouse -> SSAP -> Wake-on-LAN en src/tv/power.ts (reglas del
+      // auditor #104 r1 intactas: solo se cambia de transporte si la orden no
+      // llego). El WoL solo existe con la MAC guardada (pa tv mac).
+      const mac = await vaultGet('tv:mac');
+      const host = await vaultGet('tv:host');
+      return tvPower(on, {
+        gh: async (action) => {
+          await (await ghClient()).control(action);
+        },
+        ssap: async (uri, payload) => {
+          const p = await paired();
+          return tvRequest(p.host, p.clientKey, uri, payload, { allowPlaintext: p.allowPlaintext });
+        },
+        wake: mac ? () => sendWakeOnLan(mac, { host }) : undefined,
+        probe: async () => {
+          const p = await paired();
+          await tvRequest(
+            p.host,
+            p.clientKey,
+            'com.webos.service.tvpower/power/getPowerState',
+            {},
+            {
+              allowPlaintext: p.allowPlaintext,
+              commandTimeoutMs: 3_000,
+              connectRetries: 0,
+            },
+          );
+          return true;
+        },
+        info: (msg, data) => log.info(msg, data),
+      });
     },
     stats: async () => (await ghClient()).getJson('/api/stats'),
     ghControl: async (action, value) => {
