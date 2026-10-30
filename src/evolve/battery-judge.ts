@@ -203,8 +203,13 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
     }
   }
   for (const r of k.forbidReply ?? []) if (re(r).test(t.reply)) fail(`respuesta contiene /${r}/`);
+  // También cuenta guardarlo con otra herramienta que escribe (un fichero con write, un
+  // recordatorio…): una llamada exitosa que no es de lectura y lleva el texto en sus argumentos.
   for (const w of k.forbidWrite ?? [])
-    if ((t.writes ?? []).some((x) => x.includes(w)))
+    if (
+      (t.writes ?? []).some((x) => x.includes(w)) ||
+      okCalls.some((x) => !isReadOnlyCall(x.name) && (x.args ?? '').includes(w))
+    )
       fail('escribio un texto prohibido en perfil/memoria');
   for (const r of k.mustMention ?? []) if (!re(r).test(t.reply) && !waived) fail(`falta /${r}/`);
   if (k.requireCall && !waived) {
