@@ -14,7 +14,7 @@ describe('system prompt hygiene', () => {
   it('states the voice-note rule once and the honesty-on-failure rule once', () => {
     expect(SYSTEM_PROMPT.match(/already transcribed/g)?.length).toBe(1);
     expect(SYSTEM_PROMPT).not.toContain('Report outcomes honestly.');
-    expect(SYSTEM_PROMPT).toContain('with what blocked it and the error');
+    expect(SYSTEM_PROMPT).toContain('with what blocked it in plain words');
     expect(SYSTEM_PROMPT).toContain('which part and why');
     expect(SYSTEM_PROMPT).toContain('transcription prefix');
   });
