@@ -92,6 +92,7 @@ import {
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
+import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
@@ -320,7 +321,7 @@ import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
-import { createComputerTool } from './tools/computer.js';
+import { type ActionGate, createComputerTool } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
@@ -1788,6 +1789,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * from a tool call, where quoting the current turn's message is the right guess.
    */
   const threadInbound = new Map<string, Inbound>();
+  /** thread.key -> salida del turno vivo cuando no es Telegram (el panel); ver thread-context.ts. */
+  const threadOutputs = new ThreadOutputs();
 
   const inboundFor = (thread: Thread): Inbound => {
     const live = threadInbound.get(thread.key);
@@ -1811,6 +1814,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threadTools = (thread: Thread): AgentTool[] => {
     const scope = () => thread.key;
+    const computerGate: ActionGate = (call) =>
+      thread.gate.check(thread.key, { ...call, actor: 'asistenta' });
+    const ctx = threadContext({ key: thread.key, outputs: threadOutputs, gate: computerGate });
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
@@ -1824,11 +1830,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // silently blocks every batch. `sendPhoto` is what lets the model put a
       // capture in the user's chat instead of only in its own context: a
       // screenshot the user cannot see is a screenshot nobody sent.
-      createComputerTool(
-        config,
-        screen,
-        (call) => thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
-        async (bytes, opts) => {
+      // Gate y envío de capturas salen del contexto del hilo: en un turno del panel la
+      // captura va al panel (thread-context.ts); en Telegram, igual que siempre.
+      createComputerTool(config, screen, ctx.gate, (bytes, opts) =>
+        ctx.sendPhoto(bytes, async () => {
           const chatId = Number(thread.chatKey.split(':')[2]);
           const threadId = inboundFor(thread).threadId;
           await telegram.action(thread.chatKey.split(':')[2] ?? '', 'upload_photo');
@@ -1839,12 +1844,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               log.warn('desktop screenshot send failed', { err });
               return false;
             });
-        },
+        }),
       ),
       createBrowserTool(browserFor(thread.key), scope, (png) =>
-        telegram
-          .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
-          .then(() => true),
+        ctx.sendPhoto(png, () =>
+          telegram
+            .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
+            .then(() => true),
+        ),
       ),
       // Buying something, from searching to the payment screen, with one question at
       // the end and no way through it: `confirm` takes no selector and `select` refuses
@@ -5533,6 +5540,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
+    threadOutputs.bind(thread.key, out);
     // Taint gate (F2): a new message from the owner starts clean; what the
     // previous turn read from outside no longer blocks standing approvals.
     thread.gate.clearTaint(thread.key);
@@ -6048,6 +6056,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       for (const key of purchaseAnswers.keys()) {
         if (key.startsWith(`${thread.key}:`)) purchaseAnswers.delete(key);
       }
+      threadOutputs.release(thread.key, out);
     }
   };
 

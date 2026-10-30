@@ -27,6 +27,22 @@ export interface TurnOutput {
   answer(text: string): void;
   /** Un aviso aparte (presupuesto, sugerencia de memoria, error). */
   note(text: string): void;
+  /** Una imagen que el turno manda a la conversación (captura del PC o del navegador). */
+  photo?(bytes: Buffer): void;
+}
+
+/** Cuántas imágenes devuelve como mucho un turno del panel (el resto se cuenta). */
+export const PANEL_MAX_IMAGES = 4;
+
+/** `data:` URL de una imagen PNG/JPEG; otra cosa no se muestra en el panel. */
+export function imageDataUrl(bytes: Buffer): string | null {
+  if (bytes.length >= 8 && bytes.readUInt32BE(0) === 0x89504e47) {
+    return `data:image/png;base64,${bytes.toString('base64')}`;
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return `data:image/jpeg;base64,${bytes.toString('base64')}`;
+  }
+  return null;
 }
 
 export interface PanelChatDeps<T extends PanelChatThread> {
@@ -40,10 +56,12 @@ export async function runPanelChat<T extends PanelChatThread>(
   thread: T,
   text: string,
   deps: PanelChatDeps<T>,
-): Promise<{ text: string }> {
+): Promise<{ text: string; images?: string[] }> {
   const out = await queueThreadTurn(thread, async () => {
     let answer = '';
     const notes: string[] = [];
+    const images: string[] = [];
+    let dropped = 0;
     deps.remember(thread, text);
     await deps.runTurn(thread, text, {
       answer: (t) => {
@@ -52,8 +70,15 @@ export async function runPanelChat<T extends PanelChatThread>(
       note: (t) => {
         if (t.trim()) notes.push(t.trim());
       },
+      photo: (bytes) => {
+        const url = imageDataUrl(bytes);
+        if (url && images.length < PANEL_MAX_IMAGES) images.push(url);
+        else dropped++;
+      },
     });
-    return { text: [answer.trim(), ...notes].filter(Boolean).join('\n\n') };
+    if (dropped > 0) notes.push(`(${dropped} imagen(es) más no se muestran en el panel)`);
+    const reply = [answer.trim(), ...notes].filter(Boolean).join('\n\n');
+    return images.length > 0 ? { text: reply, images } : { text: reply };
   });
   return out ?? { text: '' };
 }
