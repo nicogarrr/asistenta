@@ -14,6 +14,9 @@ Deterministas, sin modelo. Ejemplos:
 | «canal 5», «pon la 1», «siguiente canal» | `channel` (dígitos + ENTER, CHANNELUP/DOWN) |
 | «abre Netflix», «pon YouTube», «quiero ver DAZN» | `launch` por nombre |
 | «pausa», «pon pausa», «dale al play» | `media` |
+| «dale a pausa», «pulsa pausa», «detén (la peli)»; «pulsa play»; «stop», «pulsa stop» | `media` pausa / play / stop |
+| «súbele más», «baja más (el volumen)» | paso de volumen (3) |
+| «pon el 5», «ponme el 24» | canal (como «pon la 5») |
 | «adelanta», «avance rápido», «rebobina (el vídeo)», «retrocede» | `media` avance/retroceso (una pulsación; con segundos va al modelo) |
 | «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
 | «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20» | volumen a ese número |
