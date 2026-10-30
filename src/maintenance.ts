@@ -124,10 +124,20 @@ export function pruneStateFiles(stateDir: string, olderThanMs: number, now = Dat
     }
   };
   for (const p of prunable()) walk(join(stateDir, p.dir), p.match);
+  return removed + capStateFiles(stateDir);
+}
+
+/**
+ * Aplica el tope de tamaño a los ficheros de añadido del registro (campo `cap`).
+ * Es un tope de tamaño, no una poda por antigüedad: corre siempre, también con la
+ * retención apagada. Devuelve cuántos recortó.
+ */
+export function capStateFiles(stateDir: string): number {
+  let n = 0;
   for (const c of capped()) {
-    if (capAppendFile(join(stateDir, c.file), c.maxBytes)) removed++;
+    if (capAppendFile(join(stateDir, c.file), c.maxBytes)) n++;
   }
-  return removed;
+  return n;
 }
 
 /**
@@ -184,6 +194,9 @@ export function retentionIfDue(deps: RetentionDeps): {
   const docDays = deps.pruneDocs ? documentRetentionDays(deps.env) : 0;
   const fileDays = deps.stateDir ? fileRetentionDays(deps.env) : 0;
   const idle = { ran: false, sessions: 0, documents: 0, files: 0 };
+  // Con la poda de ficheros apagada (por defecto) el tope de tamaño de los ficheros de
+  // añadido no corría nunca y web-metrics.jsonl crecía sin fin. Mirarlo es un lstat.
+  if (fileDays === 0 && deps.stateDir) capStateFiles(deps.stateDir);
   if (days === 0 && docDays === 0 && fileDays === 0) return idle;
   const now = deps.now;
   if (wallClock(now).hour < RETENTION_HOUR) return idle;
