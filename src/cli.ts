@@ -2436,6 +2436,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         };
       }
     }
+    // «Dime más» solo tiene sentido si se recortó algo. Antes se guardaba CUALQUIER
+    // respuesta, y un «sigue»/«más» posterior reenviaba la anterior sin tocar el
+    // agente; ahora una respuesta entera borra la copia de la anterior.
+    if (short.truncated && text.trim()) cacheFullReply(thread.key, text.trim());
+    else takeFullReply(thread.key);
     const id = await say(inbound, short.text, { audio, format: 'marks' });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
     if (short.truncated) {
@@ -5704,7 +5709,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         outputTokens: result.outputTokens ?? 0,
         kind: 'turn',
       });
-      if (result.text.trim()) cacheFullReply(thread.key, result.text.trim());
       if (config.dailyBudgetEur > 0 && dailyBudgetExceeded(config.dailyBudgetEur)) {
         const budgetDay = localDay();
         if (budgetWarnedDay !== budgetDay) {
