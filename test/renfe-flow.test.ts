@@ -11,6 +11,10 @@ interface FakeState {
   cellExists: boolean;
   body: string;
   rows: { labels: string[]; text: string }[];
+  /** Texto del modal «Detalles del trayecto» que abre cada fila (null = no abre). */
+  modals?: (string | null)[];
+  /** El modal anterior se queda abierto: `.modal:visible` sigue dando el primero. */
+  modalSticks?: boolean;
 }
 
 const DATE = '2099-11-04';
@@ -42,7 +46,10 @@ function fakeBrowser(over: Partial<FakeState> = {}) {
     ],
     ...over,
   };
-  const log = { closed: 0, launched: 0, cellClicks: 0, picked: [] as string[] };
+  const log = { closed: 0, launched: 0, cellClicks: 0, picked: [] as string[], modalCloses: 0 };
+  // Fila de resultados abierta ahora y modal que se ve (para «Ver detalles del trayecto»).
+  let row = -1;
+  let shownModal = -1;
   const values: Record<string, string> = {};
   let field = '';
   // Como Renfe: el desplegable solo enseña estaciones que empiezan como lo tecleado.
@@ -63,7 +70,10 @@ function fakeBrowser(over: Partial<FakeState> = {}) {
       });
     const self: Record<string, unknown> = {
       first: () => self,
-      nth: () => self,
+      nth: (i: number) => {
+        if (sel.endsWith('.selectedTren')) row = i;
+        return self;
+      },
       filter: (o: { hasText?: RegExp }) =>
         o.hasText instanceof RegExp ? loc(sel, opts, [...more, o.hasText]) : self,
       locator: (s: string) => loc(`${sel} ${s}`),
@@ -90,7 +100,10 @@ function fakeBrowser(over: Partial<FakeState> = {}) {
       waitFor: async () => {
         if (sel.startsWith('li[role=option]') && matching().length === 0)
           throw new Error('timeout');
-        if (sel.startsWith('.modal')) throw new Error('timeout');
+        if (sel.startsWith('.modal')) {
+          if (st.modals?.[row] == null) throw new Error('timeout');
+          if (!st.modalSticks || shownModal < 0) shownModal = row;
+        }
       },
       count: async () => {
         if (sel.startsWith('li[role=option]')) return matching().length;
@@ -98,8 +111,14 @@ function fakeBrowser(over: Partial<FakeState> = {}) {
         return 0;
       },
       isVisible: async () => sel.startsWith('button.day_cell'),
-      innerText: async () => (sel === 'body' ? st.body : ''),
-      evaluate: async () => undefined,
+      innerText: async () => {
+        if (sel.startsWith('.modal')) return st.modals?.[shownModal] ?? '';
+        return sel === 'body' ? st.body : '';
+      },
+      evaluate: async () => {
+        if (sel.startsWith('.modal') && sel.endsWith('.close')) log.modalCloses++;
+        return undefined;
+      },
     };
     return self;
   };
@@ -260,5 +279,102 @@ describe('searchRenfe con página falsa', () => {
     );
     expect(err?.message).toMatch(/paso navegador: .*npx playwright install chromium/);
     expect(err?.message).not.toMatch(/╔|\n/);
+  });
+});
+
+// Texto real del modal de Renfe: iconos sueltos, horas HH:MM y la estación debajo.
+const DETAIL_0627 = `Detalles del trayecto
+radio_button_checked
+06:27
+MADRID-PUERTA DE ATOCHA
+07:45
+ZARAGOZA-DELICIAS
+location_on
+09:56
+BARCELONA-SANTS
+close`;
+const DETAIL_1627 = `Detalles del trayecto
+radio_button_checked
+16:27
+MADRID-PUERTA DE ATOCHA
+location_on
+19:44
+BARCELONA-SANTS`;
+
+describe('searchRenfe: estaciones desde «Ver detalles del trayecto» (página falsa)', () => {
+  it('cada tren recibe las estaciones y paradas de SU modal y el modal se cierra tras leerlo', async () => {
+    const f = fakeBrowser({ modals: [DETAIL_0627, DETAIL_1627] });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.trains[0]).toMatchObject({
+      estacionSalida: 'MADRID-PUERTA DE ATOCHA',
+      estacionLlegada: 'BARCELONA-SANTS',
+      paradas: ['07:45 ZARAGOZA-DELICIAS'],
+    });
+    expect(r.trains[1]).toMatchObject({
+      estacionSalida: 'MADRID-PUERTA DE ATOCHA',
+      estacionLlegada: 'BARCELONA-SANTS',
+      paradas: [],
+    });
+    expect(f.log.modalCloses).toBe(2);
+    expect(f.log.closed).toBe(1);
+  });
+
+  it('un modal anterior que sigue abierto (horas de otro tren) no asigna estaciones', async () => {
+    const f = fakeBrowser({ modals: [DETAIL_0627, DETAIL_1627], modalSticks: true });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.trains[0]?.estacionSalida).toBe('MADRID-PUERTA DE ATOCHA');
+    expect(r.trains[1]?.estacionSalida).toBeUndefined();
+    expect(r.trains[1]?.estacionLlegada).toBeUndefined();
+    expect(r.trains[1]?.paradas).toBeUndefined();
+  });
+
+  it('el modal es de la misma hora de salida pero otra llegada: no se asigna nada', async () => {
+    const otro = DETAIL_1627.replace('19:44', '20:10');
+    const f = fakeBrowser({ modals: [DETAIL_0627, otro] });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.trains[0]?.estacionLlegada).toBe('BARCELONA-SANTS');
+    expect(r.trains[1]?.estacionLlegada).toBeUndefined();
+  });
+
+  it('el modal no se abre en una fila: ese tren sale sin estaciones y los demás siguen', async () => {
+    const f = fakeBrowser({ modals: [null, DETAIL_1627] });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.total).toBe(2);
+    expect(r.trains[0]?.estacionSalida).toBeUndefined();
+    expect(r.trains[1]?.estacionSalida).toBe('MADRID-PUERTA DE ATOCHA');
+    expect(f.log.closed).toBe(1);
+  });
+
+  it('un modal con una sola parada legible no inventa estaciones', async () => {
+    const f = fakeBrowser({
+      modals: ['Detalles del trayecto\n06:27\nMADRID-PUERTA DE ATOCHA', null],
+    });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.trains[0]?.estacionSalida).toBeUndefined();
+    expect(r.trains[0]?.paradas).toBeUndefined();
+  });
+
+  it('la fila cuya hora no cuadra con el tren no se abre ni se le piden detalles', async () => {
+    const f = fakeBrowser({
+      modals: [DETAIL_0627, DETAIL_1627],
+      rows: [
+        { labels: ['Tren con salida a las 06:27 horas'], text: '' },
+        { labels: ['Tren con salida a las 16:30 horas'], text: '' },
+      ],
+    });
+    const r = await searchRenfe(base, { launch: f.launch });
+    expect(r.trains[0]?.estacionSalida).toBe('MADRID-PUERTA DE ATOCHA');
+    expect(r.trains[1]?.estacionSalida).toBeUndefined();
+    expect(f.log.modalCloses).toBe(1);
+  });
+
+  it('el texto de la herramienta muestra «origen -> destino» solo para el tren con estaciones', async () => {
+    const f = fakeBrowser({ modals: [DETAIL_0627, null] });
+    const tool = createRenfeTool({ launch: f.launch });
+    const res = await tool.execute('t1', base);
+    const text = res.content.map((c) => ('text' in c ? c.text : '')).join('');
+    expect(text).toContain('MADRID-PUERTA DE ATOCHA -> BARCELONA-SANTS');
+    expect(text.match(/ -> BARCELONA-SANTS/g)?.length).toBe(1);
+    expect(text).toMatch(/16:27 -> 19:44 \(/);
   });
 });
