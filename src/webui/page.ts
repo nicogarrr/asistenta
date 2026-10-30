@@ -1242,9 +1242,10 @@ ${renderFormatScript()}
         return true;
       }
 
-      async function cargarRutinas() {
+      // silencio = true: recarga al volver a la pestaña, sin «Cargando…» y sin tapar lo que ya se ve si falla.
+      async function cargarRutinas(silencio) {
         var contenedor = document.getElementById('panel-rutinas');
-        pintarCarga(contenedor);
+        if (silencio !== true) pintarCarga(contenedor);
         try {
           var rutinas = await pedir('/api/routines');
           if (!Array.isArray(rutinas)) throw new Error('Respuesta de rutinas inválida');
@@ -1259,11 +1260,15 @@ ${renderFormatScript()}
             tarjeta.appendChild(titulo);
             if (rutina.activa) tarjeta.appendChild(nodo('p', 'texto', 'Próxima: ' + rutina.proxima));
             tarjeta.appendChild(nodo('p', 'muted', 'Horario: ' + rutina.horario));
+            tarjeta.appendChild(nodo('p', 'muted', 'Última: ' + (rutina.ultima || 'todavía no se ha ejecutado')));
             if (rutina.comando) tarjeta.appendChild(nodo('p', 'muted', rutina.comando));
             contenedor.appendChild(tarjeta);
           });
           finCarga(contenedor, true);
-        } catch (error) { pintarError(contenedor, error, cargarRutinas); return false; }
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarRutinas); return false;
+        }
         return true;
       }
 
@@ -1402,7 +1407,8 @@ ${renderFormatScript()}
         if (document.visibilityState === 'visible' && token) cargarAprobacionesEnSilencio();
       }, 15000);
 
-      // Al volver a la pestaña tras tenerla oculta, las aprobaciones se recargan ya (sin esperar hasta 15 s).
+      // Al volver a la pestaña tras tenerla oculta, las aprobaciones se recargan ya (sin esperar hasta 15 s)
+      // y las Rutinas también, para que «Próxima» y «Última» no se queden viejas.
       var ocultaDesde = 0;
       function alCambiarVisibilidad() {
         if (document.visibilityState !== 'visible') {
@@ -1411,7 +1417,10 @@ ${renderFormatScript()}
         }
         var volvio = ocultaDesde > 0;
         ocultaDesde = 0;
-        if (volvio && token) cargarAprobacionesEnSilencio();
+        if (volvio && token) {
+          cargarAprobacionesEnSilencio();
+          cargarRutinas(true);
+        }
       }
       document.addEventListener('visibilitychange', alCambiarVisibilidad);
 
