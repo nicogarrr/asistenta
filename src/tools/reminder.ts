@@ -89,28 +89,67 @@ export interface ReminderDeps {
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
+/** Wall-clock fields of `d` in the configured zone (PA_TIMEZONE), not the process TZ. */
+function wallClock(d: Date, timeZone: string = localTimeZone()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((p) => p.type === type)?.value);
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+  };
+}
+
 function stamp(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const w = wallClock(d);
+  return `${w.year}-${pad(w.month)}-${pad(w.day)} ${pad(w.hour)}:${pad(w.minute)}`;
 }
 
 function reply(text: string, isError = false): AgentToolResult {
   return { content: [{ type: 'text', text }], details: {}, isError };
 }
 
-/** `YYYY-MM-DDTHH:MM` as local wall-clock time, or null when it is not one. */
+/**
+ * `YYYY-MM-DDTHH:MM` as wall-clock time in the configured zone (PA_TIMEZONE),
+ * or null when it is not one. croner fires in that zone (#485), so reading the
+ * stamp — and writing `onceCron` — in the process TZ would put a reminder an
+ * hour off whenever the two differ.
+ */
 export function parseLocalStamp(raw: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?$/.exec(raw.trim());
   if (!m) return null;
   const [y, mo, d, h, mi] = m.slice(1).map(Number) as [number, number, number, number, number];
-  const date = new Date(y, mo - 1, d, h, mi, 0, 0);
-  // new Date rolls 31 February over to March: reject instead of firing on the wrong day.
-  if (date.getMonth() !== mo - 1 || date.getDate() !== d || date.getHours() !== h) return null;
+  const zone = localTimeZone();
+  const naive = Date.UTC(y, mo - 1, d, h, mi);
+  // Two passes settle the zone offset, DST changes included.
+  let at = naive;
+  for (let i = 0; i < 2; i++) {
+    const w = wallClock(new Date(at), zone);
+    at -= Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute) - naive;
+  }
+  const date = new Date(at);
+  // 31 February rolls over and 02:30 on the spring-forward night does not exist:
+  // reject instead of firing on the wrong day or hour.
+  const w = wallClock(date, zone);
+  if (w.year !== y || w.month !== mo || w.day !== d || w.hour !== h || w.minute !== mi) return null;
   return date;
 }
 
 /** Cron pinned to one minute, day and month: fires once a year, and we delete it after. */
 export function onceCron(d: Date): string {
-  return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+  const w = wallClock(d);
+  return `${w.minute} ${w.hour} ${w.day} ${w.month} *`;
 }
 
 /**
