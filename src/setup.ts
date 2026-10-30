@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.js';
 import { paths } from './paths.js';
 import { desktopEnabled } from './platform.js';
@@ -29,6 +29,13 @@ export interface SetupDeps {
   nodeMajor: number;
   built: boolean;
 }
+/**
+ * dist/cli.js de ESTA instalación (junto a src/ y dist/), no del directorio
+ * actual: `pa setup` se puede lanzar desde cualquier carpeta.
+ */
+export function builtCliPath(moduleUrl: string = import.meta.url): string {
+  return fileURLToPath(new URL('../dist/cli.js', moduleUrl));
+}
 const yes = (s: string) => /^(si|sí)$/i.test(s.trim());
 export async function setupCommand(
   args: string[],
@@ -52,7 +59,7 @@ export async function setupCommand(
     desktop: desktopEnabled(),
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     nodeMajor: Number(process.versions.node.split('.')[0]),
-    built: existsSync(resolve('dist/cli.js')),
+    built: existsSync(builtCliPath()),
     ...partial,
   };
   // Windows guide-only, before TTY, paths, vault, ACL or prompts.
@@ -66,9 +73,14 @@ export async function setupCommand(
     write('El wizard Linux requiere modo servidor (PA_DESKTOP=off); no se ha cambiado nada.\n');
     return 1;
   }
-  if (deps.nodeMajor < 24 || !deps.built || !deps.prerequisites()) {
+  const missing = [
+    deps.nodeMajor < 24 ? `Node 24 (tienes ${deps.nodeMajor})` : '',
+    deps.built ? '' : 'dist/cli.js (ejecuta npm run build)',
+  ].filter(Boolean);
+  if (!missing.length && !deps.prerequisites()) missing.push('flock');
+  if (missing.length) {
     write(
-      'Se requieren Node24, dist/cli.js compilado y flock disponible; no se ha cambiado nada.\n',
+      `Se requieren Node24, dist/cli.js compilado y flock disponible. Falta: ${missing.join(', ')}. No se ha cambiado nada.\n`,
     );
     return 1;
   }
