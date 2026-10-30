@@ -36,14 +36,14 @@ const files = walk(SRC).map((p) => ({ p, t: readFileSync(p, 'utf8') }));
 const consts = new Map<string, string>();
 for (const { t } of files) {
   for (const m of t.matchAll(/export const ([A-Z_]+)\s*=\s*'([a-z_0-9]+)'/g))
-    consts.set(m[1], m[2]);
+    consts.set(m[1] ?? '', m[2] ?? '');
 }
 
 /** Nombres de herramienta (name: 'x' o name: CONSTANTE) definidos en un texto. */
 function toolNamesIn(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(/\bname:\s*(?:'([a-z_0-9]+)'|([A-Z_]+)\b)/g)) {
-    const n = m[1] ?? consts.get(m[2]);
+    const n = m[1] ?? consts.get(m[2] ?? '');
     if (n) out.push(n);
   }
   return out;
@@ -69,6 +69,7 @@ function builtToolNames(): Map<string, string> {
     [...threadToolsBlock().matchAll(/\b(create\w*Tools?)\(/g)].map((m) => m[1]),
   );
   for (const fac of factories) {
+    if (!fac) continue;
     const def = files.find(({ t }) => new RegExp(`export (async )?function ${fac}\\b`).test(t));
     if (!def) continue; // fábricas de stores/páginas, no herramientas
     for (const n of toolNamesIn(def.t)) byName.set(n, fac);
