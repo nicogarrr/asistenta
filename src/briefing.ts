@@ -23,6 +23,10 @@ export interface BriefingInput {
   followups: Array<{ subject: string; due?: string }>;
   reminders: Array<{ text: string; at?: string }>;
   agenda: Array<{ title: string; when: string }>;
+  /** Una línea ya redactada con el tiempo de hoy («Madrid: 12–21 °C, despejado»). */
+  weather?: string;
+  /** Correo sin leer que merece mirarse hoy. Solo remitente y asunto, nunca el cuerpo. */
+  mail?: Array<{ from: string; subject: string }>;
 }
 
 const WEEKDAYS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -69,6 +73,12 @@ function followupLine(item: { subject: string; due?: string }): string | null {
   return due ? `${subject} (${due})` : subject;
 }
 
+function mailLine(item: { from: string; subject: string }): string | null {
+  const subject = oneLine(item.subject, 140) || '(sin asunto)';
+  const from = oneLine(item.from, 60);
+  return from ? `${from}: ${subject}` : subject;
+}
+
 function section(items: Array<string | null>): string[] {
   return items.filter((item): item is string => item !== null);
 }
@@ -86,7 +96,8 @@ function clamp(text: string): string {
 }
 
 /**
- * Construye el briefing. Las cuatro secciones van en orden fijo para que el mismo día
+ * Construye el briefing. Las secciones van en orden fijo (Hoy, Correo, Pendiente,
+ * Recordatorios, Seguimientos; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
  * se lea siempre igual; las que no tienen contenido no aparecen.
  */
 export function buildBriefing(input: BriefingInput): string {
@@ -95,6 +106,10 @@ export function buildBriefing(input: BriefingInput): string {
     {
       title: 'Hoy',
       items: section(input.agenda.map(agendaLine)),
+    },
+    {
+      title: 'Correo',
+      items: section((input.mail ?? []).map(mailLine)),
     },
     {
       title: 'Pendiente',
@@ -111,6 +126,8 @@ export function buildBriefing(input: BriefingInput): string {
   ];
 
   const lines: string[] = [greeting];
+  const weather = oneLine(input.weather ?? '', 160);
+  if (weather) lines.push(weather);
   let wroteSection = false;
   for (const block of blocks) {
     if (block.items.length === 0) continue;
