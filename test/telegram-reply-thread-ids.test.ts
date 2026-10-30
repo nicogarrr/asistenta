@@ -73,10 +73,20 @@ describe('hilo de cada trozo enviado', () => {
   it('un texto de 3 trozos apunta los 3 ids al hilo', async () => {
     const map = new Map<string, string>();
     const long = Array.from({ length: 3 }, (_, i) => `${String(i).repeat(3900)}`).join('\n');
-    await channel().send(
-      { channel: 'telegram', account: 'a', chatId: '7', text: long, format: 'marks' },
-      threadForSentIds(map, 'telegram:dm:7', 'hilo-B'),
-    );
+    // El canal espacia los trozos ~1,1 s: con reloj falso no se duerme de verdad.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const t0 = performance.now();
+    try {
+      const sending = channel().send(
+        { channel: 'telegram', account: 'a', chatId: '7', text: long, format: 'marks' },
+        threadForSentIds(map, 'telegram:dm:7', 'hilo-B'),
+      );
+      await vi.runAllTimersAsync();
+      await sending;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(performance.now() - t0).toBeLessThan(1_000);
     expect(state.sent.length).toBe(3);
     expect([...map.entries()]).toEqual([
       ['telegram:dm:7:1', 'hilo-B'],
