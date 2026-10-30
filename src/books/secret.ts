@@ -23,6 +23,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { localDay } from '../datecontext.js';
 import { log } from '../log.js';
 import { discoverBotHandle, invalidateBotCache } from './discover.js';
 import { MAX_BOOK_BYTES } from './net.js';
@@ -251,7 +252,7 @@ export class SecretLibrary implements SecretSource {
 
   private countInteraction(): void {
     const max = this.deps.maxInteractionsPerDay ?? MAX_INTERACTIONS_PER_DAY;
-    const day = new Date(this.deps.now()).toISOString().slice(0, 10);
+    const day = localDay(this.deps.now());
     if (!this.usage) this.usage = this.loadUsage();
     if (this.usage.day !== day) this.usage = { day, count: 0 };
     if (this.usage.count >= max) {
@@ -276,7 +277,7 @@ export class SecretLibrary implements SecretSource {
     } catch {
       // Sin fichero o corrupto: contador nuevo. Nunca bloquea el pipeline.
     }
-    return { day: new Date(this.deps.now()).toISOString().slice(0, 10), count: 0 };
+    return { day: localDay(this.deps.now()), count: 0 };
   }
 
   private saveUsage(usage: Usage): void {

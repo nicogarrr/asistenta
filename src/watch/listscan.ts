@@ -6,6 +6,7 @@
  * (consenso, stock, referencia, relectura >= 30 s, dedupe, alerta).
  */
 
+import { localDay } from '../datecontext.js';
 import {
   candidateTerms,
   MAX_DISCOVERED_TERMS,
@@ -467,7 +468,7 @@ function jobsFor(listings: Listing[]): Map<StoreId, Job[]> {
 }
 
 function dayKey(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+  return localDay(ms);
 }
 
 export async function scanOnce(d: ScanDeps): Promise<ScanSummary> {

@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { localDay } from './datecontext.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
 
@@ -279,7 +280,7 @@ export function emptyMemoryDoc(scope: string): string {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 /**

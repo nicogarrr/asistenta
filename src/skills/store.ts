@@ -29,6 +29,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { localDay } from '../datecontext.js';
 import { log } from '../log.js';
 import type { Skill, SkillDraft, SkillTrust } from './types.js';
 
@@ -89,7 +90,7 @@ function parseTs(value: string | undefined): number | null {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 function splitFrontmatter(markdown: string): { meta: Map<string, string>; body: string } {
