@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 // Trinquete de cobertura: los umbrales de vitest.config.ts solo suben. Medido en CI (job
-// `check`, main ef119c8, 30-oct 19:56Z): líneas/sentencias 82,71 %, ramas 84,96 %, funciones 85,73 %. Los umbrales
-// quedan algo por debajo para que una PR normal no se ponga roja por décimas.
+// `check`, main 44dca1a, 30-oct 20:54Z): líneas/sentencias 83,17 %, ramas 84,90 %, funciones 86,24 %. Los umbrales
+// quedan al menos 1 punto por debajo para que una PR normal no se ponga roja por décimas (ramas sigue en 84).
 const config = readFileSync(new URL('../vitest.config.ts', import.meta.url), 'utf8');
 const thresholds = (): Record<string, number> => {
   const m = config.match(/thresholds:\s*\{([^}]*)\}/);
@@ -14,11 +14,11 @@ const thresholds = (): Record<string, number> => {
 };
 
 describe('umbrales de cobertura', () => {
-  it('no bajan de lo medido en CI (81 líneas/sentencias, 84 ramas, 84 funciones)', () => {
+  it('no bajan de lo medido en CI (82 líneas/sentencias, 84 ramas, 85 funciones)', () => {
     const t = thresholds();
-    expect(t.lines).toBeGreaterThanOrEqual(81);
-    expect(t.statements).toBeGreaterThanOrEqual(81);
+    expect(t.lines).toBeGreaterThanOrEqual(82);
+    expect(t.statements).toBeGreaterThanOrEqual(82);
     expect(t.branches).toBeGreaterThanOrEqual(84);
-    expect(t.functions).toBeGreaterThanOrEqual(84);
+    expect(t.functions).toBeGreaterThanOrEqual(85);
   });
 });
