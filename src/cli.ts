@@ -241,6 +241,7 @@ import {
   commandRoutinesEnabled,
   displayArgv,
   fireCommandRoutine,
+  isApproved,
   isCommandRoutine,
   parseCommandAdd,
 } from './command-routine.js';
@@ -7698,11 +7699,12 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     return 'No hay rutinas programadas. Crea una con /cron add 0 8 * * * | resumen del día.';
   }
   const live = deps.routineRunner.status();
+  const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
   return [
     `Rutinas programadas: ${list.length}`,
     ...list.map(
       (r) =>
-        `- ${r.name} [${r.schedule}] — ${
+        `- ${r.name}${commandRoutineTag(r, deps.commands, commandsOn)} [${r.schedule}] — ${
           r.enabled
             ? `próxima: ${nextRunLabel(
                 r.schedule ?? null,
@@ -7712,6 +7714,24 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
         }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
     ),
   ].join('\n');
+}
+
+/**
+ * F4: en la lista de /cron una rutina de comando no se confunde con una que
+ * habla con el modelo, y se ve si de verdad va a correr (aprobada y con
+ * PA_CRON_COMANDOS=1) o se quedará parada en el aviso.
+ */
+export function commandRoutineTag(
+  r: { scope: string; name: string; prompt: string | null },
+  commands: Pick<CommandRoutineStore, 'get'> | undefined,
+  enabled: boolean,
+): string {
+  if (!isCommandRoutine(r)) return '';
+  const spec = commands?.get(r.scope, r.name) ?? null;
+  if (!spec || !isApproved(spec)) return ' ⚙️ comando, sin aprobar (no se ejecuta)';
+  if (!enabled) return ' ⚙️ comando, apagado (PA_CRON_COMANDOS=1 para activarlo)';
+  const shown = displayArgv(spec.argv);
+  return ` ⚙️ comando: ${shown.length > 60 ? `${shown.slice(0, 59)}…` : shown}`;
 }
 
 export function nextRunLabel(
