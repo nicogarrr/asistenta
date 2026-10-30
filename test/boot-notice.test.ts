@@ -1,0 +1,161 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  BOOT_NOTICE_MIN_INTERVAL_MS,
+  bootBanner,
+  bootNoticeEnabled,
+  bootNoticeText,
+  maybeSendBootNotice,
+} from '../src/boot-notice.js';
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+function statePath(): string {
+  const d = mkdtempSync(join(tmpdir(), 'pa-boot-'));
+  dirs.push(d);
+  return join(d, 'boot-notice.json');
+}
+
+const facts = { model: 'modelo-x', tv: true, computerUse: true, mail: false, threads: 2 };
+const ON = { PA_BOOT_NOTICE: '1' };
+
+describe('aviso de arranque', () => {
+  it('apagado por defecto: sin PA_BOOT_NOTICE no manda nada', async () => {
+    const send = vi.fn(async () => {});
+    expect(bootNoticeEnabled({})).toBe(false);
+    expect(bootNoticeEnabled({ PA_BOOT_NOTICE: '0' })).toBe(false);
+    expect(
+      await maybeSendBootNotice({ env: {}, statePath: statePath(), ownerChatId: 42, send, facts }),
+    ).toBe('off');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('encendido: un mensaje al chat privado del dueño con el estado corto', async () => {
+    const send = vi.fn(async (_chat: string, _text: string) => {});
+    const path = statePath();
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: path,
+        ownerChatId: 42,
+        send,
+        facts,
+        now: () => 1_000_000,
+      }),
+    ).toBe('sent');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0]).toBe('42');
+    const text = send.mock.calls[0]?.[1] ?? '';
+    expect(text.split('\n')[0]).toBe('Asistenta lista ✅');
+    expect(text).toContain('Tele: sí');
+    expect(text).toContain('Correo: no');
+    expect(text).toContain('/funciones');
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ lastSentAt: 1_000_000 });
+  });
+
+  it('sin dueño conocido no manda nada (nunca al último chat ni a un grupo)', async () => {
+    const send = vi.fn(async () => {});
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: statePath(),
+        ownerChatId: null,
+        send,
+        facts,
+      }),
+    ).toBe('no-owner');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('como mucho uno cada 10 minutos, aunque el daemon se reinicie en bucle', async () => {
+    const send = vi.fn(async () => {});
+    const path = statePath();
+    let t = 5_000_000;
+    const run = () =>
+      maybeSendBootNotice({ env: ON, statePath: path, ownerChatId: 42, send, facts, now: () => t });
+    expect(await run()).toBe('sent');
+    t += 60_000;
+    expect(await run()).toBe('rate-limited');
+    t += BOOT_NOTICE_MIN_INTERVAL_MS;
+    expect(await run()).toBe('sent');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('un envío que falla también cuenta (se apunta antes de enviar)', async () => {
+    const path = statePath();
+    const failing = vi.fn(async () => {
+      throw new Error('red caída');
+    });
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: path,
+        ownerChatId: 42,
+        send: failing,
+        facts,
+        now: () => 10_000_000,
+      }),
+    ).toBe('failed');
+    const send = vi.fn(async () => {});
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: path,
+        ownerChatId: 42,
+        send,
+        facts,
+        now: () => 10_000_100,
+      }),
+    ).toBe('rate-limited');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('fichero roto o reloj hacia atrás: no revienta', async () => {
+    const path = statePath();
+    writeFileSync(path, '{roto');
+    const send = vi.fn(async () => {});
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: path,
+        ownerChatId: 42,
+        send,
+        facts,
+        now: () => 50_000_000,
+      }),
+    ).toBe('sent');
+    expect(
+      await maybeSendBootNotice({
+        env: ON,
+        statePath: path,
+        ownerChatId: 42,
+        send,
+        facts,
+        now: () => 49_000_000,
+      }),
+    ).toBe('rate-limited');
+  });
+
+  it('banner: una sola línea para la consola', () => {
+    const line = bootBanner({ ...facts, panelUrl: 'http://127.0.0.1:7777' });
+    expect(line).not.toContain('\n');
+    expect(line.startsWith('Asistenta lista ✅')).toBe(true);
+    expect(line).toContain('modelo modelo-x');
+    expect(line).toContain('panel http://127.0.0.1:7777');
+    expect(bootNoticeText({ tv: false, computerUse: false, mail: true })).not.toContain('Modelo');
+  });
+
+  it('el daemon lo cablea tras «daemon ready» y PA_BOOT_NOTICE está en .env.example', () => {
+    const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
+    const ready = cli.indexOf("log.info('daemon ready'");
+    expect(ready).toBeGreaterThan(0);
+    expect(cli.indexOf('maybeSendBootNotice({', ready)).toBeGreaterThan(ready);
+    expect(cli).toContain('ownerChatId: vigilanteOwnerId');
+    const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    expect(env).toMatch(/^# PA_BOOT_NOTICE=0/m);
+  });
+});

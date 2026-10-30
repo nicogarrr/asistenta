@@ -62,6 +62,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'cursor del canal de correo (correos ya leídos)',
     backup: 'file',
   },
+  {
+    name: 'boot-notice.json',
+    what: 'hora del último aviso «Asistenta lista» (PA_BOOT_NOTICE, uno cada 10 min)',
+    backup: 'file',
+  },
   { name: 'voice.db', what: 'estado de voz', backup: 'db' },
   { name: 'approvals.db', what: 'aprobaciones guardadas', backup: 'db' },
   { name: 'pricewatch.sqlite', what: 'historial de precios vigilados', backup: 'db' },
