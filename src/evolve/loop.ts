@@ -15,6 +15,7 @@ import {
   changedFiles,
   commitAll,
   createSandbox,
+  depsFingerprint,
   diffText,
   dropSandbox,
   headCommit,
@@ -168,6 +169,8 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         break;
       }
 
+      // Lo que el intento haga en su node_modules no entra en el diff: se compara la huella.
+      const depsBefore = depsFingerprint(sandbox.dir);
       try {
         try {
           await opts.propose(sandbox.dir, hypothesis, attempt);
@@ -200,6 +203,9 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           ...touchesForbidden(touched),
           ...checkPatch(patch).map((v) => `${v.file} (${v.rule})`),
           ...ignoredFiles(sandbox.dir).map((f) => `${f} (fichero ignorado por git)`),
+          ...(depsFingerprint(sandbox.dir) !== depsBefore
+            ? ['node_modules (el intento cambió las dependencias)']
+            : []),
         ];
         if (!touched.length) {
           const reason = 'el intento no cambió nada';
