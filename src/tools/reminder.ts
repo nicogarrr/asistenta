@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
@@ -275,6 +276,83 @@ export async function deliverMissedReminders(
 
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
+}
+
+/** Cuánto vale un botón «✅ Hecho» / «⏰ +1h» de un aviso. */
+export const FIRED_BUTTON_MS = 24 * 3_600_000;
+/** Aviso de un botón de recordatorio caducado, ya usado o de antes de reiniciar. */
+export const FIRED_BUTTON_STALE =
+  'Este botón ya no sirve (vale una vez y 24 horas). Mira /recordatorios.';
+
+/**
+ * Recordatorios que acaban de avisar, para sus botones «✅ Hecho» y «⏰ +1h». Solo en
+ * memoria: un recordatorio puntual se borra al avisar, así que el botón lleva un id
+ * corto que apunta aquí. Tras reiniciar, el botón contesta FIRED_BUTTON_STALE.
+ */
+export class FiredReminders {
+  readonly #items = new Map<string, { scope: string; text: string; at: number }>();
+  readonly #now: () => number;
+  readonly #max: number;
+
+  constructor(now: () => number = Date.now, max = 200) {
+    this.#now = now;
+    this.#max = max;
+  }
+
+  /** Apunta un aviso y devuelve su id (8 hex). Tira los caducados y, si sobran, los más viejos. */
+  remember(scope: string, text: string): string {
+    const t = this.#now();
+    for (const [k, v] of this.#items) {
+      if (t - v.at <= FIRED_BUTTON_MS && this.#items.size < this.#max) break;
+      this.#items.delete(k);
+    }
+    const id = randomBytes(4).toString('hex');
+    this.#items.set(id, { scope, text, at: t });
+    return id;
+  }
+
+  /** Lo saca (un botón vale una vez). Solo desde el chat del aviso; caducado → undefined. */
+  take(
+    id: string,
+    sameChat: (scope: string) => boolean,
+  ): { scope: string; text: string } | undefined {
+    const v = this.#items.get(id);
+    if (!v || this.#now() - v.at > FIRED_BUTTON_MS || !sameChat(v.scope)) return undefined;
+    this.#items.delete(id);
+    return { scope: v.scope, text: v.text };
+  }
+}
+
+/**
+ * `/recordatorios hecho|pospone <id>` (los botones del aviso). «Hecho» solo lo da por
+ * visto: no borra nada (un recordatorio que se repite sigue). «+1h» crea un recordatorio
+ * puntual con el mismo texto dentro de una hora, en el mismo hilo. Devuelve la respuesta.
+ */
+export function reminderButtonCommand(
+  deps: {
+    fired: FiredReminders;
+    store: Pick<Store, 'saveRoutine' | 'listRoutines'>;
+    sameChat: (scope: string) => boolean;
+    now?: () => number;
+  },
+  sub: 'hecho' | 'pospone',
+  id: string,
+): string {
+  const hit = deps.fired.take(id, deps.sameChat);
+  if (!hit) return FIRED_BUTTON_STALE;
+  if (sub === 'hecho') return `✅ Hecho: ${hit.text}`;
+  if (deps.store.listRoutines(hit.scope).filter(isReminder).length >= MAX_REMINDERS_PER_CHAT) {
+    return `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`;
+  }
+  const when = new Date((deps.now ?? Date.now)() + 3_600_000);
+  deps.store.saveRoutine({
+    scope: hit.scope,
+    name: nameFor(REMINDER_ONCE_PREFIX, hit.text, ` @${stamp(when)}`),
+    kind: 'schedule',
+    prompt: hit.text,
+    schedule: onceCron(when),
+  });
+  return `⏰ Te lo vuelvo a recordar a las ${stamp(when).slice(11)}: ${hit.text}`;
 }
 
 export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params> {

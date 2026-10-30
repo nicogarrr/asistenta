@@ -35,7 +35,19 @@ export interface RoutineFireDeps {
   /** Ejecuta el trabajo real de una rutina (no recordatorio) y devuelve su texto. */
   runTask: (task: string, ctx: RoutineRunContext) => Promise<string>;
   /** Envía un mensaje al chat. Rechaza si el envío falla. */
-  send: (chatId: string, text: string) => Promise<unknown>;
+  send: (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => Promise<unknown>;
+  /**
+   * Botones del aviso de un recordatorio («✅ Hecho» / «⏰ +1h»), o undefined para
+   * mandarlo sin botones. Recibe el ámbito y el texto del recordatorio.
+   */
+  reminderButtons?: (
+    scope: string,
+    text: string,
+  ) => Array<{ label: string; action: string }> | undefined;
   /** Re-sincroniza el planificador (tras borrar o reprogramar un recordatorio puntual). */
   sync: () => void;
   /** F6: adónde va la salida de cada rutina (chat/fichero/nada) y «solo si cambia». */
@@ -133,13 +145,13 @@ export function createRoutineFire(
         return;
       }
     }
-    const sent = await deps
-      .send(
-        chatId,
-        reminder
-          ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-          : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`,
-      )
+    const text = reminder
+      ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
+      : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`;
+    const buttons = reminder
+      ? deps.reminderButtons?.(ctx.scope, reminderText(ctx.routine))
+      : undefined;
+    const sent = await (buttons ? deps.send(chatId, text, buttons) : deps.send(chatId, text))
       .then(() => true)
       .catch((err: unknown) => {
         log.warn('routine send failed', { err });

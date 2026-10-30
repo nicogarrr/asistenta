@@ -100,7 +100,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
-import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
+import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
@@ -367,10 +367,12 @@ import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import { createPriceWatchTool } from './tools/price-watch.js';
 import {
   createReminderTool,
+  FiredReminders,
   formatReminderRows,
   isReminder,
   pickReminder,
   readDroppedReminders,
+  reminderButtonCommand,
   reminderRows,
   reminderText,
 } from './tools/reminder.js';
@@ -2575,8 +2577,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const runRoutineTask = createRoutineTask(threadTickDeps);
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
-  const sendToChat = (chatId: string, text: string) =>
-    telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+  const sendToChat = (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => telegram.send({ channel: 'telegram', account: telegram.account, chatId, text, buttons });
+  const firedReminders = new FiredReminders();
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
   const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
   const runRoutineFire = createRoutineFire({
@@ -2587,6 +2593,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     tickGoal: (name) => goalRunner.tickByRoutineName(name),
     runTask: runRoutineTask,
     send: sendToChat,
+    reminderButtons: (scope, text) => reminderButtons(firedReminders.remember(scope, text)),
     delivery: routineDelivery,
     outputDir: join(paths.state, 'salidas'),
     sync: () => routineRunner.sync(),
@@ -4727,6 +4734,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
     const rows = () => reminderRows(store.listRoutines(scope));
+    const b = /^(hecho|pospone) ([0-9a-f]{8})$/.exec(args.trim());
+    if (b?.[2]) {
+      const reply = reminderButtonCommand(
+        {
+          fired: firedReminders,
+          store,
+          sameChat: (s) => chatIdOfScope(s) === inbound.chatId,
+        },
+        b[1] === 'hecho' ? 'hecho' : 'pospone',
+        b[2],
+      );
+      if (b[1] === 'pospone') routineRunner.sync();
+      await say(inbound, reply, { quote: true });
+      return;
+    }
     const m = /^(borrar|cancelar|quitar|del)\b\s*(.*)$/i.exec(args.trim());
     if (!m) {
       if (args.trim()) {
@@ -7438,6 +7460,18 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
  * activa y «▶️ Reanudar …» si está en pausa; equivalen a escribir /cron pausa|reanudar
  * <nombre>. Borrar no tiene botón: sigue pidiendo escribirlo.
  */
+/**
+ * Aviso de un recordatorio: «✅ Hecho» (lo da por visto) y «⏰ +1h» (otro igual dentro
+ * de una hora). Ninguno borra nada. `id` es el de FiredReminders.
+ */
+export function reminderButtons(id: string): Array<{ label: string; action: string }> | undefined {
+  const buttons = [
+    commandButton('✅ Hecho', 'recordatorios', id, 'hecho'),
+    commandButton('⏰ +1h', 'recordatorios', id, 'pospone'),
+  ].filter((x): x is { label: string; action: string } => x !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
 export function cronListButtons(
   list: ReadonlyArray<{ name: string; kind: string; schedule?: string | null; enabled: boolean }>,
 ): Array<{ label: string; action: string }> | undefined {
