@@ -15,7 +15,7 @@ import type { Routine, RoutineTrigger } from '../db.js';
 import type { PageWatch } from './pages.js';
 import type { WatchConfig } from './pricewatch.js';
 
-export type OverviewKind = 'pagina' | 'precio' | 'tiendas' | 'rutina' | 'disparador';
+export type OverviewKind = 'pagina' | 'precio' | 'tiendas' | 'rutina' | 'disparador' | 'ojo';
 
 export interface OverviewEntry {
   kind: OverviewKind;
@@ -33,7 +33,7 @@ export interface OverviewEntry {
   detail?: string;
 }
 
-const KIND_ORDER: OverviewKind[] = ['pagina', 'precio', 'tiendas', 'rutina', 'disparador'];
+const KIND_ORDER: OverviewKind[] = ['pagina', 'precio', 'tiendas', 'rutina', 'disparador', 'ojo'];
 
 const KIND_TITLE: Record<OverviewKind, string> = {
   pagina: 'Páginas vigiladas',
@@ -41,6 +41,7 @@ const KIND_TITLE: Record<OverviewKind, string> = {
   tiendas: 'Vigilante de precios (pricewatch.json)',
   rutina: 'Rutinas programadas',
   disparador: 'Disparadores',
+  ojo: 'Ojo de águila (avisos sin modelo)',
 };
 
 function euros(cents: number): string {
@@ -117,6 +118,52 @@ export function fromTriggers(list: readonly RoutineTrigger[]): OverviewEntry[] {
 }
 
 /** Filtra por chat (scope) si se da; las entradas globales (scope vacío) siempre entran. */
+/** Interruptores del ojo de águila (vigilante.ts, ojo-screen.ts, ojo-downloads.ts). */
+export interface OjoState {
+  /** Interruptor general (`/ojo on|off`): encendido por defecto. */
+  attention: boolean;
+  /** `/ojo pantalla on|off`: apagado por defecto. */
+  screen: boolean;
+  /** `/ojo descargas on|off`: apagado por defecto. */
+  downloads: boolean;
+}
+
+/**
+ * Pantalla y descargas solo vigilan si además está encendido el interruptor general:
+ * con el ojo apagado salen en pausa aunque su propio interruptor diga «on».
+ */
+export function fromOjo(s: OjoState): OverviewEntry[] {
+  const off = s.attention ? undefined : 'el ojo general está apagado';
+  return [
+    {
+      kind: 'ojo',
+      id: 'ojo',
+      label: 'Atención general',
+      target: 'correo, cargos y eventos',
+      scope: '',
+      enabled: s.attention,
+    },
+    {
+      kind: 'ojo',
+      id: 'ojo:pantalla',
+      label: 'Pantalla',
+      target: 'avisos que aparecen en pantalla',
+      scope: '',
+      enabled: s.attention && s.screen,
+      detail: s.screen ? off : undefined,
+    },
+    {
+      kind: 'ojo',
+      id: 'ojo:descargas',
+      label: 'Descargas',
+      target: 'ficheros nuevos en Descargas',
+      scope: '',
+      enabled: s.attention && s.downloads,
+      detail: s.downloads ? off : undefined,
+    },
+  ];
+}
+
 export function forScope(entries: readonly OverviewEntry[], scope?: string): OverviewEntry[] {
   if (!scope) return [...entries];
   return entries.filter((e) => e.scope === scope || e.scope === '');
@@ -152,7 +199,9 @@ export function formatOverview(
       if (e.target && e.target !== e.label) parts.push(`— ${e.target}`);
       if (e.detail) parts.push(`(${e.detail})`);
       if (!e.enabled) parts.push('[en pausa]');
-      parts.push(e.lastRunMs ? `· última: ${ago(e.lastRunMs, now)}` : '· aún no se ha ejecutado');
+      if (e.kind !== 'ojo') {
+        parts.push(e.lastRunMs ? `· última: ${ago(e.lastRunMs, now)}` : '· aún no se ha ejecutado');
+      }
       lines.push(parts.join(' '));
     }
   }

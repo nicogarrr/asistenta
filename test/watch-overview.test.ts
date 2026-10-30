@@ -152,7 +152,12 @@ describe('pa vigilancias: lee las bases reales sin modificar nada', () => {
     const src = { stateDir: dir, agentDb, priceConfig };
     const { entries, errors } = collectWatches(src);
     expect(errors).toEqual([]);
-    expect(entries.map((e) => e.kind).sort()).toEqual(['pagina', 'tiendas']);
+    expect(
+      entries
+        .filter((e) => e.kind !== 'ojo')
+        .map((e) => e.kind)
+        .sort(),
+    ).toEqual(['pagina', 'tiendas']);
     let out = '';
     expect(
       await vigilanciasCommand([], src, (s) => {
