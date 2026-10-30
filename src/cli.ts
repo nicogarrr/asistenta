@@ -44,6 +44,7 @@ import {
   friendlyError,
   isAgendaTitle,
   isReminderTitle,
+  isStatusTitle,
   marksWithTitles,
   progressNote,
   shorten,
@@ -4709,7 +4710,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       pageWatches: pageWatches.list(inbound.chatId).length,
       droppedReminders: readDroppedReminders(join(paths.state, 'dropped-reminders.jsonl')),
     });
-    await say(inbound, text, { quote: true });
+    await say(inbound, marksWithTitles(text, isStatusTitle), { quote: true, format: 'marks' });
   };
 
   /** What the user said they would do, in the tracker's own Spanish summary. */
