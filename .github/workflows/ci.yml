@@ -58,6 +58,8 @@ jobs:
       - run: npm test -- --coverage
         env:
           CI: '1'
+          # Las pruebas con Chromium real solo corren aquí (ver test/helpers/real-browser.ts).
+          PA_TEST_REAL_BROWSER: '1'
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
       - name: Resumen de cobertura

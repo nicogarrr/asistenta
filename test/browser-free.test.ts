@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { formatApprovalQuestion } from '../src/approval-text.js';
 import { describeTarget, pageSummary } from '../src/browser/target.js';
 import { BROWSER_FREE_ACTIONS, Gate, isPaymentText } from '../src/permissions.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // The Gate is built the way gateFor builds it, with the real free-action list.
 const makeGate = (log: string[], opts: { fullControl?: boolean } = {}) =>
@@ -106,7 +107,7 @@ describe('browser without prompts, money and credentials first', () => {
   });
 });
 
-describe('approval text for a payment', () => {
+describeBrowser('approval text for a payment', () => {
   const PAGE = `<div>Hamburguesa clásica 9,90 €</div><div>Envío 1,50 €</div>
 <div>Total 11,40 €</div><div>Entrega en: Calle Alcalá 10, Madrid</div><div>Gracias por elegirnos</div>
 <button id="pay">Realizar pedido</button><button id="more">Ver más</button>`;

@@ -1,7 +1,8 @@
 import { type Browser, chromium, type Page } from 'playwright';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { describeTarget, UNREADABLE_TARGET } from '../src/browser/target.js';
 import { Gate } from '../src/permissions.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 const PAGE = `
 <button id="btn-23">Realizar pedido</button>
@@ -13,7 +14,7 @@ const PAGE = `
 <button id="icon" aria-label="Pagar con tarjeta"><svg width="10" height="10"></svg></button>
 `;
 
-describe('describeTarget + gate', () => {
+describeBrowser('describeTarget + gate', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {

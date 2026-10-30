@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { describeBrowser } from './helpers/real-browser.js';
 
 /**
  * «Siempre» por acción (#425) de punta a punta: modelo guionizado, Gate del daemon,
@@ -105,7 +106,7 @@ const clickOn = (selector: string, label = 'Enviar', h1 = 'Escribir a soporte') 
   call('browser', { action: 'click', selector }),
 ];
 
-describe('«Siempre» por acción de punta a punta', () => {
+describeBrowser('«Siempre» por acción de punta a punta', () => {
   it('«Siempre» en «Enviar»: el siguiente «Enviar» no pregunta, «Borrar mensajes» sí', async () => {
     const core = boot('a');
     core.telegram.answers.push({ approved: true, scope: 'always' }, false);
