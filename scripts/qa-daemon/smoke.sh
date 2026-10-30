@@ -22,6 +22,11 @@ cat > $T/inbox.jsonl <<'EOF'
 {"case":"dueno","text":"/resumen hoy","owner":true}
 {"case":"dueno","text":"/correo lista","owner":true}
 {"case":"estado","text":"/correo estado","owner":true}
+{"case":"borrar-otro","text":"/borrar_chat"}
+{"case":"borrar-pide","text":"/borrar_chat","owner":true}
+{"case":"borrar-cancela","text":"/estado","owner":true}
+{"case":"borrar-pide2","text":"/borrar_chat","owner":true}
+{"case":"borrar-ok","text":"BORRAR","owner":true}
 EOF
 # PA_QA_OWNER_DM=1: las líneas con "owner": true entran como el DM del dueño (4242).
 PA_QA_OWNER_DM=1 bash "$REPO/scripts/qa-daemon/run.sh" $T/w $T/script.json $T/inbox.jsonl 60 >/dev/null
@@ -37,6 +42,11 @@ check '/correo: solo el DM del dueño' '"case":"owner","kind":"text","text":"Cor
 check '/resumen hoy en el DM del dueño: resumen' '"case":"dueno","kind":"text","text":"Buen'
 check '/correo estado sin cuenta: dice qué falta y cómo activarlo' '"case":"estado","kind":"text","text":"Lectura (avisos y lista): falta.*Envío con tu aprobación: falta.*Para activarlo'
 check '/correo lista sin cuenta: lo dice' '"case":"dueno","kind":"text","text":"No tienes configurada la lectura del correo'
+check '/borrar_chat fuera del DM del dueño: no borra' '"case":"borrar-otro","kind":"text","text":"Este comando solo funciona en el chat privado del dueño'
+check '/borrar_chat en el DM del dueño: pide BORRAR' '"case":"borrar-pide","kind":"text","text":"⚠️ Esto borra'
+check '/borrar_chat: otro mensaje lo cancela' '"case":"borrar-cancela","kind":"text","text":"Cancelado: no he borrado nada'
+check '/borrar_chat + BORRAR: borra y lo dice' '"case":"borrar-ok","kind":"text","text":"🗑️ Hecho'
+if grep -q '"case":"borrar-cancela","kind":"text","text":"🗑️' "$OUT"; then echo 'FAIL /borrar_chat cancelado pero borró'; fail=1; fi
 if grep -q '"kind":"error"' "$OUT"; then echo 'FAIL errores en el canal'; fail=1; fi
 node -e "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('$T/w/state/agent.db');const r=d.prepare(\"select name from sqlite_master where type='table'\").all().map(x=>x.name);const t=r.find(n=>/routine/i.test(n));const rows=t?d.prepare('select * from '+t).all():[];const ok=rows.some(x=>JSON.stringify(x).includes('regar las plantas'));console.log(ok?'ok   recordatorio guardado en agent.db':'FAIL recordatorio no guardado');process.exit(ok?0:1)" || fail=1
 [ $fail = 0 ] && rm -rf $T || echo "artefactos: $T"
