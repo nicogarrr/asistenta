@@ -34,6 +34,19 @@ describe('parseo de precio', () => {
     expect(parseEuroCents('1,299.50 €')).toBeNull();
     expect(parseEuroCents('sin precio')).toBeNull();
   });
+  it('miles separados por espacio (normal, duro, estrecho o fino) no pierden los miles', () => {
+    expect(parseEuroCents('1\u202f299,00\u00a0€')).toBe(129900);
+    expect(parseEuroCents('1\u2009299,00 €')).toBe(129900);
+    expect(parseEuroCents('1\u00a0299,99 €')).toBe(129999);
+    expect(parseEuroCents('Portátil 1 299,00 €')).toBe(129900);
+    expect(parseEuroCents('12 345 678 €')).toBe(1234567800);
+    expect(parseEuroCents('Precio 299,00 €')).toBe(29900);
+    expect(
+      parseEuroCents(
+        new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(1299),
+      ),
+    ).toBe(129900);
+  });
   it('lee precios de máquina (JSON-LD y metaetiquetas)', () => {
     expect(parseMachinePrice('1299.99')).toBe(129999);
     expect(parseMachinePrice(549.99)).toBe(54999);
