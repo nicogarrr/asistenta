@@ -165,6 +165,7 @@ export class MailIdleTransport {
   private async run(): Promise<void> {
     let failures = 0;
     while (!this.stopped) {
+      let connectedAt: number | null = null;
       try {
         const account = await this.bounded(this.deps.account());
         if (!account) {
@@ -205,7 +206,7 @@ export class MailIdleTransport {
         const scope = idleScope(account);
         let cursor = reconcileCursor(this.deps.load(scope), mailbox);
         this.deps.save(scope, cursor);
-        const connectedAt = (this.deps.now ?? Date.now)();
+        connectedAt = (this.deps.now ?? Date.now)();
         this.deps.status('connected');
         // Catch up missed arrivals by UID on reconnect, even if EXISTS count did not change.
         dirty = true;
@@ -282,13 +283,18 @@ export class MailIdleTransport {
           if (!dirty && !closed && (this.deps.now ?? Date.now)() - idleAt < 1000)
             throw new Error('IDLE ended early');
         }
-        if ((this.deps.now ?? Date.now)() - connectedAt > 60_000) failures = 0;
       } catch {
         /* No server text/passwords are logged. Status is deliberately generic. */
       } finally {
         this.client?.close();
         this.client = null;
       }
+      // Una conexión que estuvo sana más de un minuto reinicia la espera, acabe
+      // como acabe. Antes solo se reiniciaba si el bucle salía sin excepción: cada
+      // corte que terminaba en error (timeout, IDLE cortado) sumaba un fallo y,
+      // tras unos días de cortes normales, la reconexión esperaba hasta 64 min.
+      if (connectedAt !== null && (this.deps.now ?? Date.now)() - connectedAt > 60_000)
+        failures = 0;
       if (this.stopped) break;
       this.deps.status('retrying');
       await this.wait(Math.min(60 * 60_000, 30_000 * 2 ** Math.min(failures++, 7)));

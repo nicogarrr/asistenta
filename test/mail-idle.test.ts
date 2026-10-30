@@ -260,3 +260,35 @@ it('disconnect during a burst never advances past undelivered UIDs', async () =>
   expect(s.saved.v?.next).toBeLessThan(8);
   expect(c.fetchOne).toHaveBeenCalledTimes(1);
 });
+
+it('una conexión sana que acaba en error no alarga la espera de reconexión', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const delays: number[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+    fn: () => void,
+    ms?: number,
+  ) => {
+    if ((ms ?? 0) >= 30_000) delays.push(ms ?? 0);
+    return realSetTimeout(fn, ms);
+  }) as typeof setTimeout);
+  let clock = 1_000_000;
+  const clients = [new Mock(), new Mock(), new Mock()];
+  for (const c of clients) {
+    let opens = 0;
+    // El segundo EXAMINE (el de ponerse al día) llega 2 h después: conexión sana.
+    c.mailboxOpen = vi.fn(async () => {
+      if (++opens === 2) clock += 2 * 60 * 60_000;
+      return { ...c.box };
+    });
+    // Y luego el IDLE se corta enseguida: termina en excepción («IDLE ended early»).
+    c.idle = vi.fn(async () => true);
+  }
+  setup(clients, null, { now: () => clock });
+  for (let i = 0; i < 3; i++) {
+    await tick();
+    await vi.advanceTimersByTimeAsync(delays[delays.length - 1] ?? 30_000);
+  }
+  spy.mockRestore();
+  expect(delays.slice(0, 3)).toEqual([30_000, 30_000, 30_000]);
+});
