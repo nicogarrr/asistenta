@@ -19,3 +19,5 @@ Reglas de seguridad:
 - Código de salida distinto de 0 o tiempo agotado: aviso con las últimas líneas (siempre se avisa).
 - Con la función apagada, una rutina de comando avisa y no hace nada: nunca se manda al modelo.
 - `/cron del <nombre>` borra la rutina y su aprobación. `/cron probar <nombre>` la ejecuta ahora.
+
+`/cron` (la lista) marca cada rutina de comando con ⚙️: «sin aprobar (no se ejecuta)», «apagado (PA_CRON_COMANDOS=1 para activarlo)» o el comando exacto que va a correr.
