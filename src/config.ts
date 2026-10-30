@@ -112,6 +112,15 @@ function oneOf<T extends string>(name: string, allowed: readonly T[], fallback: 
   return hit;
 }
 
+/**
+ * Texto opcional. Vacío o solo espacios cuenta como «no definido», igual que en
+ * num/flag/oneOf: una línea `PA_MODEL=` en el .env no puede dejar el modelo en ''.
+ */
+function str(name: string): string | undefined {
+  const raw = process.env[name]?.trim();
+  return raw ? raw : undefined;
+}
+
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -179,7 +188,7 @@ export function loadConfig(): Config {
   // Preset de proveedor: OpenCode Zen free es el default; 'openrouter' conmuta
   // todos los defaults a OpenRouter (PA_PROVIDER/PA_MODEL/PA_BASE_URL siguen
   // pudiendo anular cada valor por encima del preset elegido).
-  const providerPreset = process.env.PA_PROVIDER_PRESET ?? 'opencode';
+  const providerPreset = str('PA_PROVIDER_PRESET')?.toLowerCase() ?? 'opencode';
   if (!['opencode', 'openrouter', 'opencode-local'].includes(providerPreset)) {
     throw new Error(
       `PA_PROVIDER_PRESET must be 'opencode', 'openrouter' or 'opencode-local', got ${JSON.stringify(providerPreset)}`,
@@ -212,14 +221,14 @@ export function loadConfig(): Config {
           };
   cached = {
     providerPreset,
-    provider: process.env.PA_PROVIDER ?? presetDefaults.provider,
-    model: process.env.PA_MODEL ?? presetDefaults.model,
+    provider: str('PA_PROVIDER') ?? presetDefaults.provider,
+    model: str('PA_MODEL') ?? presetDefaults.model,
     fallbackModel: pickFallbackModel(
       providerPreset,
       process.env.PA_FALLBACK_MODEL,
-      process.env.PA_MODEL ?? presetDefaults.model,
+      str('PA_MODEL') ?? presetDefaults.model,
     ),
-    baseUrl: process.env.PA_BASE_URL ?? presetDefaults.baseUrl,
+    baseUrl: str('PA_BASE_URL') ?? presetDefaults.baseUrl,
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     contextWindowTokens: num('PA_CONTEXT_WINDOW', 1_048_576),
     maxOutputTokens: num('PA_MAX_OUTPUT_TOKENS', 32_000),
