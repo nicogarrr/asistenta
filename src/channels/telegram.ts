@@ -197,6 +197,35 @@ export class TelegramChannel implements ChannelAdapter {
     this.#bot = new Bot(this.#options.token);
   }
 
+  /** Mensaje con el texto completo de «📖 Ver todo» → mensaje recortado del que salió. */
+  readonly #replyAliases = new Map<string, string>();
+
+  #aliasReply(chatId: string, messageId: string, target: string): void {
+    this.#replyAliases.set(`${chatId}:${messageId}`, target);
+    while (this.#replyAliases.size > 200) {
+      const oldest = this.#replyAliases.keys().next();
+      if (oldest.done) break;
+      this.#replyAliases.delete(oldest.value);
+    }
+  }
+
+  #resolveReply(chatId: string, messageId: string): string {
+    return this.#replyAliases.get(`${chatId}:${messageId}`) ?? messageId;
+  }
+
+  /** Quita el teclado inline de un mensaje propio; un fallo (ya editado, borrado) no importa. */
+  #clearKeyboard(chatId: number, messageId: number): void {
+    void this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageReplyMarkup(chatId, messageId, {
+          reply_markup: { inline_keyboard: [] },
+        }),
+        20_000,
+        'editMessageReplyMarkup timed out',
+      ),
+    ).catch(() => {});
+  }
+
   isReady(): boolean {
     return this.#ready;
   }
@@ -356,7 +385,9 @@ export class TelegramChannel implements ChannelAdapter {
       isGroup,
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
-      replyToMessageId: msg.reply_to_message ? String(msg.reply_to_message.message_id) : undefined,
+      replyToMessageId: msg.reply_to_message
+        ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
+        : undefined,
     };
 
     if (incomingAudio) {
@@ -558,15 +589,23 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
     await ctx.answerCallbackQuery().catch(() => {});
-    await this.send({
-      channel: this.name,
-      account: this.account,
-      chatId: entry.chatId,
-      threadId: entry.threadId,
-      replyToMessageId: message ? String(message.message_id) : undefined,
-      text: cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }),
-      format: 'marks',
-    });
+    // Responder al texto completo debe seguir el hilo del recorte: cada trozo enviado
+    // se registra como alias del mensaje recortado, que el CLI sí conoce.
+    const trimmedId = message ? String(message.message_id) : undefined;
+    await this.send(
+      {
+        channel: this.name,
+        account: this.account,
+        chatId: entry.chatId,
+        threadId: entry.threadId,
+        replyToMessageId: trimmedId,
+        text: cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }),
+        format: 'marks',
+      },
+      (id) => {
+        if (trimmedId) this.#aliasReply(entry.chatId, id, trimmedId);
+      },
+    );
   }
 
   /**
@@ -696,7 +735,7 @@ export class TelegramChannel implements ChannelAdapter {
    * answers instead of floating free in the chat, and it is the key that routes a
    * later reply back to the same conversation.
    */
-  async send(outbound: Outbound): Promise<string | null> {
+  async send(outbound: Outbound, onSent?: (messageId: string) => void): Promise<string | null> {
     const chatId = Number(outbound.chatId);
     if (!Number.isFinite(chatId)) {
       throw new Error(`invalid telegram chat id: ${outbound.chatId}`);
@@ -764,6 +803,15 @@ export class TelegramChannel implements ChannelAdapter {
           error: describeError(err),
         });
         sent = await callWithFallback(false, false);
+      }
+      if (sent?.message_id) {
+        const sentId = sent.message_id;
+        if (first) {
+          bindMoreButtons(outbound.buttons, String(chatId), () =>
+            this.#clearKeyboard(chatId, sentId),
+          );
+        }
+        onSent?.(String(sentId));
       }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
       first = false;
@@ -1624,6 +1672,34 @@ interface MoreToken {
   chatId: string;
   threadId?: string;
   expires: number;
+  /** Quita el botón del mensaje recortado; lo pone el canal al enviarlo. */
+  retire?: () => void;
+}
+
+/**
+ * La copia completa de `threadKey` se ha usado («más» escrito) o sustituido (otra
+ * respuesta): sus botones «📖 Ver todo» ya solo dirían «Ya no tengo el texto», así
+ * que se retiran del chat y sus fichas se invalidan.
+ */
+function retireMoreButtons(threadKey: string): void {
+  for (const [token, entry] of moreTokens) {
+    if (entry.threadKey !== threadKey) continue;
+    moreTokens.delete(token);
+    entry.retire?.();
+  }
+}
+
+/** Liga las fichas «more:» de `buttons` al mensaje que las lleva (para poder retirarlas). */
+function bindMoreButtons(
+  buttons: ReadonlyArray<{ action: string }> | undefined,
+  chatId: string,
+  retire: () => void,
+): void {
+  for (const button of buttons ?? []) {
+    if (!button.action.startsWith(MORE_CALLBACK_PREFIX)) continue;
+    const entry = moreTokens.get(button.action.slice(MORE_CALLBACK_PREFIX.length));
+    if (entry && entry.chatId === chatId) entry.retire = retire;
+  }
 }
 
 /** Fichas cortas de botón → hilo: la clave del hilo no cabe (ni debe ir) en los 64 bytes del callback. */
@@ -1677,7 +1753,8 @@ export function cacheFullReply(threadKey: string, text: string): void {
     if (entry.expires <= now) fullReplies.delete(key);
   }
   // Reinsertar refresca el orden de expulsión: la entrada vuelve a ser la más nueva.
-  fullReplies.delete(threadKey);
+  // La copia anterior se pierde: su botón ya no sirve.
+  if (fullReplies.delete(threadKey)) retireMoreButtons(threadKey);
   fullReplies.set(threadKey, { text, expires: now + FULL_REPLY_TTL_MS });
   while (fullReplies.size > FULL_REPLY_MAX_ENTRIES) {
     const oldest = fullReplies.keys().next();
@@ -1697,6 +1774,7 @@ export function takeFullReply(threadKey: string): string | null {
   const entry = fullReplies.get(threadKey);
   if (!entry) return null;
   fullReplies.delete(threadKey);
+  retireMoreButtons(threadKey);
   return entry.expires > Date.now() ? entry.text : null;
 }
 

@@ -272,3 +272,100 @@ describe('botón «📖 Ver todo»', () => {
     await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
   });
 });
+
+describe('«📖 Ver todo» retirado y el texto completo en el mismo hilo', () => {
+  it('pedido con «más» escrito: el botón desaparece del mensaje recortado', async () => {
+    const channel = await makeChannel();
+    cacheFullReply('hilo-mas', FULL);
+    const button = moreButton('hilo-mas', '42');
+    await channel.send({
+      channel: 'telegram',
+      account: 'main',
+      chatId: '42',
+      text: 'Recorte…',
+      buttons: [button],
+    });
+    const trimmedId = harness.sent.length;
+    expect(harness.markups).toEqual([]);
+    expect(takeFullReply('hilo-mas')).toBe(FULL);
+    await vi.waitFor(
+      () => expect(harness.markups).toEqual([{ chatId: 42, messageId: trimmedId, rows: 0 }]),
+      { timeout: 4000 },
+    );
+    // Y la ficha ya no vale: pulsarlo avisa y no envía nada.
+    const before = harness.sent.length;
+    await press(button.action);
+    expect(harness.sent.length).toBe(before);
+  });
+
+  it('una respuesta nueva del mismo hilo retira el botón de la anterior', async () => {
+    const channel = await makeChannel();
+    cacheFullReply('hilo-nuevo', FULL);
+    const old = moreButton('hilo-nuevo', '42');
+    await channel.send({
+      channel: 'telegram',
+      account: 'main',
+      chatId: '42',
+      text: 'Recorte 1',
+      buttons: [old],
+    });
+    const oldId = harness.sent.length;
+    cacheFullReply('hilo-nuevo', `${FULL} (otra)`);
+    await vi.waitFor(
+      () => expect(harness.markups).toEqual([{ chatId: 42, messageId: oldId, rows: 0 }]),
+      { timeout: 4000 },
+    );
+  });
+
+  it('el botón de otro hilo no se toca', async () => {
+    const channel = await makeChannel();
+    cacheFullReply('hilo-x', FULL);
+    await channel.send({
+      channel: 'telegram',
+      account: 'main',
+      chatId: '42',
+      text: 'X',
+      buttons: [moreButton('hilo-x', '42')],
+    });
+    cacheFullReply('hilo-y', FULL);
+    takeFullReply('hilo-y');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(harness.markups).toEqual([]);
+  });
+
+  it('responder al texto completo llega como respuesta al mensaje recortado (mismo hilo)', async () => {
+    const inbound: Array<{ replyToMessageId?: string }> = [];
+    const channel = new TelegramChannel({
+      token: 'test-token',
+      allowedUserIds: [7],
+      approvalTtlMs: 60_000,
+    });
+    await channel.start({
+      onMessage: (m: { replyToMessageId?: string }) => void inbound.push(m),
+      log: () => {},
+    } as never);
+    cacheFullReply('hilo-alias', FULL);
+    const button = moreButton('hilo-alias', '42');
+    const trimmedId = await press(button.action);
+    const fullId = harness.sent.length;
+    expect(harness.sent[fullId - 1]?.text).toContain('Punto clave');
+    const onMessage = harness.handlers.get('message');
+    if (!onMessage) throw new Error('no message handler');
+    const msg = (reply: number) => ({
+      message: {
+        message_id: 900 + reply,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: 42, type: 'private' },
+        from: { id: 7, first_name: 'Nico' },
+        text: 'vale, ¿y lo segundo?',
+        reply_to_message: { message_id: reply },
+      },
+      from: { id: 7, first_name: 'Nico' },
+      chat: { id: 42, type: 'private' },
+    });
+    await onMessage(msg(fullId));
+    await onMessage(msg(12345));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(inbound.map((m) => m.replyToMessageId)).toEqual([String(trimmedId), '12345']);
+  });
+});
