@@ -50,13 +50,16 @@ export default defineConfig({
     // and CPU; eight at a time keeps the wall clock sane and the browsers alive.
     maxWorkers: 8,
     // Cobertura solo cuando se pide (`npm test -- --coverage`); CI la publica como
-    // resumen y artefacto. No hay umbral todavía: primero medir, luego subirlo.
+    // resumen y artefacto. Umbral = línea base medida (30 oct: líneas 78,4 %,
+    // ramas 83,3 %) menos un margen pequeño: CI falla si la cobertura baja de ahí.
+    // Súbelo cuando la línea base suba; no lo bajes para que pase una PR.
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts'],
       reporter: ['text-summary', 'json-summary', 'html'],
       reportsDirectory: 'coverage',
+      thresholds: { lines: 77, statements: 77, branches: 82, functions: 82 },
     },
   },
 });

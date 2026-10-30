@@ -40,7 +40,11 @@ async function measure(fn) {
     const chars = typeof r.text === 'string' ? r.text.length : (r.chars ?? 0);
     return { ok: true, ms: Math.round(performance.now() - started), chars, items: r.items?.length };
   } catch (err) {
-    return { ok: false, ms: Math.round(performance.now() - started), error: String(err?.message ?? err).slice(0, 80) };
+    return {
+      ok: false,
+      ms: Math.round(performance.now() - started),
+      error: String(err?.message ?? err).slice(0, 80),
+    };
   }
 }
 
@@ -70,7 +74,8 @@ for (const b of backends) {
 const byBackend = {};
 for (const r of rows) {
   const k = `${r.op}:${r.backend}`;
-  (byBackend[k] ??= []).push(r);
+  byBackend[k] ??= [];
+  byBackend[k].push(r);
 }
 const summary = Object.entries(byBackend).map(([k, list]) => {
   const ok = list.filter((r) => r.ok);
@@ -94,7 +99,10 @@ const md = [
   '',
   '| op | backend | llamadas | ok | latencia mediana (ms) | chars entregados medios |',
   '|---|---|---|---|---|---|',
-  ...summary.map((s) => `| ${s.op} | ${s.backend} | ${s.n} | ${s.ok} | ${s.medianaMs ?? '—'} ms | ${s.charsMedios} |`),
+  ...summary.map(
+    (s) =>
+      `| ${s.op} | ${s.backend} | ${s.n} | ${s.ok} | ${s.medianaMs ?? '—'} ms | ${s.charsMedios} |`,
+  ),
   '',
   'Detalle por llamada:',
   '',

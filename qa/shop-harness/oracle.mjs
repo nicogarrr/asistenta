@@ -36,6 +36,8 @@ export function judge({ goal, run, allPicks, sel = '', storeLoads }) {
         : picks.length
           ? 'history-ok'
           : 'no-picks-recorded';
-  const storeLoadCount = Array.isArray(storeLoads) ? storeLoads.filter((l) => l.run === run).length : null;
+  const storeLoadCount = Array.isArray(storeLoads)
+    ? storeLoads.filter((l) => l.run === run).length
+    : null;
   return { picks, verdict, historyVerdict, storeLoadCount };
 }

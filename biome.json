@@ -5,9 +5,11 @@
     "includes": [
       "**/*.ts",
       "**/*.json",
+      "**/*.mjs",
       "!dist",
       "!node_modules",
       "!tools/tv-home",
+      "!deploy/tv-webos",
       "!var",
       "!.data"
     ]

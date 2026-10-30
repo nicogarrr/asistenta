@@ -19,7 +19,14 @@ export function coverageMarkdown(summary) {
     const m = total[key] ?? { pct: 0, covered: 0, total: 0 };
     return `| ${label} | ${Number(m.pct).toFixed(2)} % | ${m.covered} / ${m.total} |`;
   });
-  return ['### Cobertura (src/)', '', '| Métrica | % | Cubiertas / total |', '|---|---:|---:|', ...rows, ''].join('\n');
+  return [
+    '### Cobertura (src/)',
+    '',
+    '| Métrica | % | Cubiertas / total |',
+    '|---|---:|---:|',
+    ...rows,
+    '',
+  ].join('\n');
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
