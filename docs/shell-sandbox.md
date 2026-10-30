@@ -8,7 +8,7 @@
 - 1 CPU, 512 MB, 256 procesos como mucho;
 - solo la carpeta de trabajo montada en `/work`.
 
-Imagen: `PA_SHELL_SANDBOX_IMAGE` (por defecto `mcr.microsoft.com/powershell:latest`). Si se agota el tiempo se mata el contenedor por nombre.
+Imagen: `PA_SHELL_SANDBOX_IMAGE` (por defecto `mcr.microsoft.com/powershell:7.4-ubuntu-22.04` fijada por digest sha256; una imagen propia conviene darla como `imagen@sha256:…`; `pa doctor` dice el modo, si docker responde y si la imagen va fijada por digest). Si se agota el tiempo se mata el contenedor por nombre.
 
 Si docker no está instalado o el valor de `PA_SHELL_SANDBOX` no se reconoce, el comando se **rechaza**: nunca se ejecuta en el PC sin aislamiento a escondidas.
 
