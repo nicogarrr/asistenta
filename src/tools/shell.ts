@@ -39,16 +39,24 @@ const MIN_TIMEOUT_MS = 1_000;
 
 export function headTail(head: string, tail: string, omitted: number): string {
   if (omitted <= 0) return head + tail;
-  const headLines = head.split('\n').length;
-  const marker =
-    `\n... [${omitted} bytes (~${headLines} lines) omitted from the middle. ` +
-    'Re-run with a filter, or redirect to a file and read it with the read tool.] ...\n';
   // Trim to line boundaries so neither end is half a line: a truncated JSON object
   // or a half-written log line reads as corruption rather than as truncation.
   const headBreak = head.lastIndexOf('\n');
   const headClean = headBreak >= 0 ? head.slice(0, headBreak) : head;
   const tailStart = tail.indexOf('\n');
   const tailClean = tailStart >= 0 ? tail.slice(tailStart + 1) : tail;
+  // Los trozos de línea recortados tampoco se ven: cuentan como omitidos. Antes el
+  // aviso solo contaba el hueco del medio y daba como «líneas omitidas» las líneas
+  // de la cabeza (12 líneas de cabeza = «~12 lines» aunque faltaran miles).
+  const keptBytes = Buffer.byteLength(head) + Buffer.byteLength(tail);
+  const hidden = omitted + keptBytes - Buffer.byteLength(headClean) - Buffer.byteLength(tailClean);
+  const keptLines = (head.match(/\n/g)?.length ?? 0) + (tail.match(/\n/g)?.length ?? 0);
+  // Sin saltos de línea a la vista no hay base para estimar líneas: no se inventa.
+  const lines =
+    keptLines > 0 ? ` (~${Math.max(1, Math.round(hidden / (keptBytes / keptLines)))} lines)` : '';
+  const marker =
+    `\n... [${hidden} bytes${lines} omitted from the middle. ` +
+    'Re-run with a filter, or redirect to a file and read it with the read tool.] ...\n';
   return `${headClean}${marker}${tailClean}`;
 }
 
@@ -118,12 +126,15 @@ export class OutputCollector {
     // una «ñ» o una «á» que cayera justo en el corte en dos caracteres basura.
     if (this.omitted === 0) return Buffer.concat([...this.#head, ...this.#tail]).toString('utf8');
     // Con hueco, ni la cabeza termina ni la cola empieza a mitad de carácter.
-    const head = new TextDecoder().decode(Buffer.concat(this.#head), { stream: true });
+    const headBuf = Buffer.concat(this.#head);
+    const head = new TextDecoder().decode(headBuf, { stream: true });
+    // Los bytes de un carácter partido en el corte tampoco se muestran: al aviso.
+    const cutHead = Math.max(0, headBuf.length - Buffer.byteLength(head));
     let tail = Buffer.concat(this.#tail);
     let skip = 0;
     while (skip < tail.length && skip < 3 && ((tail[skip] as number) & 0xc0) === 0x80) skip++;
     tail = tail.subarray(skip);
-    return headTail(head, tail.toString('utf8'), this.omitted);
+    return headTail(head, tail.toString('utf8'), this.omitted + cutHead + skip);
   }
 }
 export function resolveShell(): { file: string } {
