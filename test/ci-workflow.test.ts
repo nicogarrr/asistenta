@@ -23,4 +23,10 @@ describe('CI workflow', () => {
     expect(workflow).toMatch(/^on:\n(?:.*\n)*?\s+pull_request:/m);
     expect(workflow).toMatch(/push:\n\s+branches: \[main\]/);
   });
+
+  it('mide la cobertura en CI y la publica como resumen y artefacto', () => {
+    expect(workflow).toMatch(/run: npm test -- --coverage\b/);
+    expect(workflow).toContain('scripts/coverage-summary.mjs');
+    expect(workflow).toMatch(/name: coverage\n/);
+  });
 });

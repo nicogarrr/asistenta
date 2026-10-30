@@ -24,5 +24,14 @@ export default defineConfig({
     // Letting every file in the suite do that at the same time starves them of handles
     // and CPU; eight at a time keeps the wall clock sane and the browsers alive.
     maxWorkers: 8,
+    // Cobertura solo cuando se pide (`npm test -- --coverage`); CI la publica como
+    // resumen y artefacto. No hay umbral todavía: primero medir, luego subirlo.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.d.ts'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      reportsDirectory: 'coverage',
+    },
   },
 });

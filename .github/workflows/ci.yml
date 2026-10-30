@@ -32,11 +32,23 @@ jobs:
       - run: npm run build
       # Los tests de navegador real necesitan Chromium; sin él fallan por entorno, no por código.
       - run: npx playwright install --with-deps chromium
-      - run: npm test
+      # La cobertura se mide en la suite general (la fase de recursos lanza procesos hijos).
+      - run: npm test -- --coverage
         env:
           CI: '1'
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
+      - name: Resumen de cobertura
+        if: always()
+        run: node scripts/coverage-summary.mjs coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Informe de cobertura (HTML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 14
       # Bateria de evaluacion (25 tareas): valida la propia bateria y sus checks.
       - run: node scripts/run-evals.mjs --dry
 
