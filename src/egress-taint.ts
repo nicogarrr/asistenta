@@ -147,6 +147,8 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   if (tool === 'web' && args.action === 'fetch') return url;
   if (tool === 'book' && args.action === 'get_url') return url;
   if (tool === 'checkout' && args.action === 'search') return url;
+  // La tele abre esa página en su navegador: la petición sale igual que un fetch.
+  if (tool === 'tv' && args.action === 'url') return url;
   // Una herramienta MCP con `url` http(s): el servidor externo hará esa petición, y la
   // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
   if (tool.startsWith('mcp_') && /^https?:\/\//i.test(url)) return url;
