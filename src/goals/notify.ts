@@ -36,6 +36,14 @@ export const NOTIFY_RETRY_MAX_AGE_MS = 24 * 60 * 60_000;
  */
 export const NOTIFY_FLUSH_INTERVAL_MS = 5 * 60_000;
 
+/**
+ * A tick error with the SAME text as one already delivered is told again once
+ * this much time has passed since that delivery. Without it the stable key
+ * silenced a persisting failure forever: Nico heard the first failure, never
+ * that the goal was still failing days later (and every tick burnt).
+ */
+export const ERROR_RENOTIFY_COOLDOWN_MS = 24 * 60 * 60_000;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS goal_notifications (
   goal_id     TEXT NOT NULL,
@@ -159,10 +167,16 @@ export class GoalNotifier {
     const key = notifyKey(kind, reason);
     const text = formatGoalMessage(kind, goal, reason);
     const existing = this.#db
-      .prepare('SELECT delivered FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
-      .get(goal.id, key) as { delivered: number } | undefined;
+      .prepare(
+        'SELECT delivered, delivered_at FROM goal_notifications WHERE goal_id = ? AND nkey = ?',
+      )
+      .get(goal.id, key) as { delivered: number; delivered_at: string | null } | undefined;
     if (existing && existing.delivered === 1) {
-      if (!REASKED_KINDS.has(kind)) return 'duplicate';
+      const deliveredMs = existing.delivered_at ? Date.parse(existing.delivered_at) : Number.NaN;
+      const errorCooledDown =
+        kind === 'error' &&
+        (!Number.isFinite(deliveredMs) || this.#now() - deliveredMs >= ERROR_RENOTIFY_COOLDOWN_MS);
+      if (!REASKED_KINDS.has(kind) && !errorCooledDown) return 'duplicate';
       // A block or a decision is reported once per block EPISODE: the runner
       // only reports it on the active -> blocked transition. The same question
       // raised again after Nico resumed the goal is a new episode, and the copy
