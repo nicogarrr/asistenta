@@ -1,9 +1,17 @@
 name: CI
 
+# Un cambio solo de documentación no lanza CI (la cola de Actions se atascaba
+# con decenas de PRs por hora). Windows va en windows.yml, con su propio filtro.
 on:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
 
 permissions:
   contents: read
@@ -31,7 +39,21 @@ jobs:
       - run: npm run lint:check
       - run: npm run build
       # Los tests de navegador real necesitan Chromium; sin él fallan por entorno, no por código.
-      - run: npx playwright install --with-deps chromium
+      # Chromium (~150 MB) en caché por versión de Playwright; las dependencias del
+      # sistema (apt) no se pueden cachear y se instalan siempre.
+      - name: Versión de Playwright
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Caché de navegadores de Playwright
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       # La cobertura se mide en la suite general (la fase de recursos lanza procesos hijos).
       - run: npm test -- --coverage
         env:
@@ -60,54 +82,3 @@ jobs:
       - uses: actions/checkout@v4
       - run: scripts/tv/test-tv-token-patch-mock.sh
       - run: scripts/tv/test-tv-rollback-mock.sh
-
-  # Windows es la plataforma de producción. Solo se ejecuta un subconjunto sin
-  # navegador real, micrófono ni escritorio interactivo (eso solo se prueba en el PC).
-  # Gate bloqueante tras primera ejecución Windows verde en el PR.
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run typecheck
-      - run: npm run build
-      - run: >-
-          npx vitest run
-          test/windows-daemon-control.test.ts
-          test/windows-screen-dpi.test.ts
-          test/windows-autostart.test.ts
-          test/autostart.test.ts
-          test/windows-launcher.test.ts
-          test/windows-platform.test.ts
-          test/platform-desktop-tools.test.ts
-          test/vault-portable.test.ts
-          test/vault-file-lock.test.ts
-          test/lifecycle-pidfile.test.ts
-          test/envfile-loads.test.ts
-          test/envfile-malformed.test.ts
-          test/envfile-missing.test.ts
-          test/envfile-no-override.test.ts
-          test/status.test.ts
-          test/daemon-status.test.ts
-        env:
-          CI: '1'
-          TZ: Europe/Madrid
-
-      - name: OCR real de documentos (imagen sintetica)
-        if: always()
-        run: npx vitest run test/ocrdoc-windows.test.ts
-        env:
-          CI: '1'
-
-      - name: Synthetic DPI corner frames (no desktop/user capture)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: synthetic-dpi-frames
-          path: test-output/dpi-*.jpg
-          if-no-files-found: ignore
