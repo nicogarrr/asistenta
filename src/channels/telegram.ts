@@ -422,7 +422,7 @@ export class TelegramChannel implements ChannelAdapter {
     const parsed = parseApprovalCallback(data);
     const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
     if (!parsed || !entry || entry.expires < Date.now()) {
-      await ctx.answerCallbackQuery({ text: 'That request is no longer pending.' }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: NOT_PENDING }).catch(() => {});
       return;
     }
 
@@ -431,7 +431,7 @@ export class TelegramChannel implements ChannelAdapter {
     const pressedIn = ctx.callbackQuery?.message?.chat?.id;
     if (pressedIn !== undefined && entry.chatId !== String(pressedIn)) {
       handlers.log('warn', 'approval pressed from another chat', { id: parsed.id });
-      await ctx.answerCallbackQuery({ text: 'That request is no longer pending.' }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: NOT_PENDING }).catch(() => {});
       return;
     }
 
@@ -536,14 +536,14 @@ export class TelegramChannel implements ChannelAdapter {
         text: question,
         buttons: opts?.askScope
           ? [
-              { label: 'Una vez', action: `approve:once:${id}` },
-              { label: 'Esta sesión', action: `approve:session:${id}` },
-              { label: 'Siempre', action: `approve:always:${id}` },
-              { label: 'Denegar', action: `deny:${id}` },
+              { label: '✅ Una vez', action: `approve:once:${id}` },
+              { label: '🕒 Esta sesión', action: `approve:session:${id}` },
+              { label: '♾️ Siempre', action: `approve:always:${id}` },
+              { label: '❌ Denegar', action: `deny:${id}` },
             ]
           : [
-              { label: 'Permitir', action: `approve:${id}` },
-              { label: 'Denegar', action: `deny:${id}` },
+              { label: '✅ Permitir', action: `approve:${id}` },
+              { label: '❌ Denegar', action: `deny:${id}` },
             ],
       })
         .then((sentId) => {
@@ -1238,6 +1238,12 @@ export function parseApprovalCallback(data: string): { id: string; scope: Approv
   return id === '' ? null : { id, scope: 'once' };
 }
 
+/**
+ * Aviso al pulsar un botón de una aprobación que ya no espera respuesta (resuelta,
+ * caducada o de otro chat). Antes salía en inglés, lo único en inglés del bot.
+ */
+export const NOT_PENDING = 'Esta solicitud ya no está pendiente.';
+
 /** Spanish verdicts, one per scope. */
 const DECISION_LABELS: Record<ApprovalScope, string> = {
   once: '✅ Aprobado para esta vez',
@@ -1263,11 +1269,16 @@ function decisionLabel(choice: ApprovalChoice): string {
  * approved. Callback data is passed through untouched and the decision is carried
  * inside it, so there is exactly one place that decides approve vs deny.
  */
-function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
+export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (const b of buttons) {
+  // Hasta dos botones van en una fila; con más, filas de dos. Los cuatro botones de
+  // una aprobación en una sola fila se truncaban en el móvil («Esta se…», «Siem…») y
+  // era fácil pulsar el vecino. El orden y el callback_data no cambian.
+  const perRow = 2;
+  buttons.forEach((b, i) => {
+    if (i > 0 && i % perRow === 0) kb.row();
     kb.text(b.label, b.action);
-  }
+  });
   return kb;
 }
 

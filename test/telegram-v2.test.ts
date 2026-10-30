@@ -38,6 +38,10 @@ const harness = vi.hoisted(() => {
 
   class FakeInlineKeyboard {
     inline_keyboard: Array<Array<{ text: string; callback_data: string }>> = [[]];
+    row(): FakeInlineKeyboard {
+      this.inline_keyboard.push([]);
+      return this;
+    }
     text(label: string, callbackData: string): FakeInlineKeyboard {
       this.inline_keyboard[this.inline_keyboard.length - 1]?.push({
         text: label,
