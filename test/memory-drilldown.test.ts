@@ -4,7 +4,7 @@
 // (lo que el modelo consulta) nunca muestran una superada como vigente.
 // biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que paths.ts lo capture
 import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildContextNote } from '../src/cli.js';
@@ -102,9 +102,12 @@ describe('9b r2: drill-down sin hechos sustituidos (auditor #136)', () => {
     const vacio = await tool.execute('c8', { action: 'list' });
     expect(textOf(vacio)).toContain('no tiene memoria guardada');
 
-    correctedPair();
-    const vigente = memory.all(SCOPE).find((e) => e.supersededBy === null);
-    memory.forget(SCOPE, vigente?.id ?? '');
+    // Solo un fichero editado a mano llega a «todo sustituido»: forget() de la
+    // corrección ya devuelve el hecho viejo a vigente (no deja punteros colgando).
+    writeFileSync(
+      memory.fileFor(SCOPE),
+      `# Memory for ${SCOPE}\n\n- [aaaaaaaa] (2026-10-01, superseded-by: bbbbbbbb) vivo en Madrid\n`,
+    );
     const todas = await tool.execute('c9', { action: 'list' });
     expect(textOf(todas)).toContain('No queda nada vigente');
     const historia = await tool.execute('c10', { action: 'list', include_superseded: true });

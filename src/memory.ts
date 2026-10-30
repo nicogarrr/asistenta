@@ -1,11 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from './datecontext.js';
@@ -323,16 +328,108 @@ export function scoreEntry(entry: MemoryEntry, query: string): number {
   return score;
 }
 
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 5_000;
+const LOCK_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * After deleting `gone`, no remaining fact may point at them. A deleted
+ * correction used to leave the fact it replaced with `superseded-by: <gone id>`:
+ * hidden from recall for good, corrected by something that no longer exists.
+ * Forgetting the correction makes the older fact current again.
+ */
+function unlinkRemoved(doc: MemoryDoc, gone: Set<string>): void {
+  for (const e of doc.entries) {
+    if (e.supersededBy !== null && gone.has(e.supersededBy)) e.supersededBy = null;
+    if (e.supersedes.some((x) => gone.has(x)))
+      e.supersedes = e.supersedes.filter((x) => !gone.has(x));
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: the process exists but belongs to someone else.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** True when the lock at `lock` can be taken over: owner gone or lock too old. */
+function lockIsStale(lock: string): boolean {
+  try {
+    const age = Date.now() - statSync(lock).mtimeMs;
+    if (age > LOCK_STALE_MS) return true;
+    const pid = Number.parseInt(readFileSync(lock, 'utf8').trim(), 10);
+    // An empty lock is one being written right now by its creator: not stale yet.
+    if (Number.isNaN(pid)) return false;
+    return !pidAlive(pid);
+  } catch {
+    // Vanished between the failed open and here: the next attempt will get it.
+    return false;
+  }
+}
+
+/**
+ * Run `fn` holding an exclusive cross-process lock on `file`. Synchronous on
+ * purpose: MemoryStore methods are synchronous, and a short spin (10 ms steps)
+ * is what a CLI racing the daemon needs. After LOCK_WAIT_MS the write goes ahead
+ * anyway with a warning: losing one fact is better than a memory that can never
+ * be written again because of a lock nobody releases.
+ */
+function withFileLock<T>(file: string, fn: () => T): T {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let fd: number | null = null;
+  for (;;) {
+    try {
+      fd = openSync(lock, 'wx');
+      writeSync(fd, String(process.pid));
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (lockIsStale(lock)) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          // someone else took it over first
+        }
+        continue;
+      }
+      if (Date.now() > deadline) {
+        log.warn('memory lock wait timed out, writing anyway', { file });
+        break;
+      }
+      Atomics.wait(LOCK_SLEEP, 0, 0, 10);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (fd !== null) {
+      closeSync(fd);
+      try {
+        unlinkSync(lock);
+      } catch {
+        // already gone (stolen as stale): nothing to release
+      }
+    }
+  }
+}
+
 /**
  * One markdown file per scope.
  *
  * Concurrency: every method here runs synchronously from the first read to the
  * last rename, so two facts cannot be written over each other inside one
- * process even though the surrounding turn awaits things between calls. What is
- * NOT protected is a second process — a CLI command and the daemon editing the
- * same scope interleave their read-modify-write and the last rename wins.
- * `assertNotRunning` keeps a second daemon off the state dir; nothing keeps a
- * stray CLI out, so long-lived memory edits belong in the daemon.
+ * process even though the surrounding turn awaits things between calls. Across
+ * processes (a `pa` CLI command while the daemon is running) every
+ * read-modify-write holds `<file>.lock`, created with O_EXCL, and the temp file
+ * is per process: before, both wrote the same `<file>.tmp` and the last rename
+ * won, so one of the two facts was lost in silence. A lock whose owner is dead
+ * or that is older than LOCK_STALE_MS is taken over.
  */
 export class MemoryStore {
   readonly dir: string;
@@ -380,6 +477,10 @@ export class MemoryStore {
       throw new Error(`memory is ${clean.length} chars, limit is ${MAX_ENTRY_CHARS}`);
     }
 
+    return withFileLock(this.fileFor(scope), () => this.#rememberLocked(scope, clean, opts));
+  }
+
+  #rememberLocked(scope: string, clean: string, opts: RememberOptions): MemoryEntry {
     const doc = this.#load(scope);
     const id = opts.id ?? this.#newId(doc);
     const tags = normalizeTags(opts.tags);
@@ -429,12 +530,15 @@ export class MemoryStore {
   }
 
   forget(scope: string, id: string): boolean {
-    const doc = this.#load(scope);
-    const before = doc.entries.length;
-    doc.entries = doc.entries.filter((e) => e.id !== id);
-    if (doc.entries.length === before) return false;
-    this.#save(scope, doc);
-    return true;
+    return withFileLock(this.fileFor(scope), () => {
+      const doc = this.#load(scope);
+      const before = doc.entries.length;
+      doc.entries = doc.entries.filter((e) => e.id !== id);
+      if (doc.entries.length === before) return false;
+      unlinkRemoved(doc, new Set([id]));
+      this.#save(scope, doc);
+      return true;
+    });
   }
 
   /**
@@ -445,23 +549,28 @@ export class MemoryStore {
   forgetMatching(scope: string, needle: string): string[] {
     const clean = needle.trim().toLowerCase();
     if (!clean) return [];
-    const doc = this.#load(scope);
-    const removed = doc.entries
-      .filter((e) => e.text.toLowerCase().includes(clean))
-      .map((e) => e.id);
-    if (removed.length === 0) return [];
-    const gone = new Set(removed);
-    doc.entries = doc.entries.filter((e) => !gone.has(e.id));
-    this.#save(scope, doc);
-    return removed;
+    return withFileLock(this.fileFor(scope), () => {
+      const doc = this.#load(scope);
+      const removed = doc.entries
+        .filter((e) => e.text.toLowerCase().includes(clean))
+        .map((e) => e.id);
+      if (removed.length === 0) return [];
+      const gone = new Set(removed);
+      doc.entries = doc.entries.filter((e) => !gone.has(e.id));
+      unlinkRemoved(doc, gone);
+      this.#save(scope, doc);
+      return removed;
+    });
   }
 
   clear(scope: string): number {
-    const doc = this.#load(scope);
-    const removed = doc.entries.length;
-    doc.entries = [];
-    this.#save(scope, doc);
-    return removed;
+    return withFileLock(this.fileFor(scope), () => {
+      const doc = this.#load(scope);
+      const removed = doc.entries.length;
+      doc.entries = [];
+      this.#save(scope, doc);
+      return removed;
+    });
   }
 
   /** Superseded facts are hidden: a fact that was corrected must not win a recall. */
@@ -553,7 +662,9 @@ export class MemoryStore {
     const file = this.fileFor(scope);
     // tmp + rename: a crash mid-write must leave the previous memory intact
     // rather than a half-written file the parser would read as "no memories".
-    const tmp = `${file}.tmp`;
+    // Per-process (and per-call) temp name: a shared `${file}.tmp` let a CLI and
+    // the daemon write into the same temp file and rename each other's bytes.
+    const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     writeFileSync(tmp, text, 'utf8');
     renameSync(tmp, file);
     log.debug('memory written', { scope, entries: doc.entries.length, bytes: text.length });
