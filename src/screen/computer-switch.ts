@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { uniqueTmpPath } from '../fs-tmp.js';
+import { foldAccents } from '../text.js';
 
 /** Name of the saved «off» inside the state dir (registered in src/state-files.ts). */
 export const COMPUTER_OFF_FILE = 'ordenador-off.json';
@@ -75,8 +76,43 @@ function trySave(deps: ComputerSwitchDeps, on: boolean): boolean | undefined {
   }
 }
 
-const OFF = new Set(['off', 'apagar', 'apaga', 'desactivar', 'desactiva', 'no', '0', 'stop']);
-const ON = new Set(['on', 'encender', 'enciende', 'activar', 'activa', 'si', 'sí', '1']);
+// Comparadas ya sin tildes ni mayúsculas (ver switchWord): «apágalo» → «apagalo», «sí» → «si».
+const OFF = new Set([
+  'off',
+  'apagar',
+  'apaga',
+  'apagado',
+  'apagalo',
+  'desactivar',
+  'desactiva',
+  'desactivado',
+  'desactivalo',
+  'no',
+  '0',
+  'stop',
+]);
+const ON = new Set([
+  'on',
+  'encender',
+  'enciende',
+  'encendido',
+  'enciendelo',
+  'activar',
+  'activa',
+  'activado',
+  'activalo',
+  'si',
+  '1',
+]);
+
+/**
+ * La palabra de /ordenador comparable: sin tildes, en minúsculas y sin
+ * puntuación alrededor («¡Apágalo!» → «apagalo», «off.» → «off»). Una palabra
+ * desconocida sigue dando la ayuda; esto no cambia ningún permiso.
+ */
+function switchWord(args: string): string {
+  return foldAccents(args.trim()).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+}
 
 export const COMPUTER_SWITCH_USAGE = 'Uso: /ordenador ⬦ /ordenador on ⬦ /ordenador off';
 
@@ -84,7 +120,8 @@ export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): s
   if (!deps.isOwner) {
     return 'Solo el dueño, en su chat privado, puede encender o apagar el control del ordenador.';
   }
-  const word = args.trim().toLowerCase();
+  const word = switchWord(args);
+  if (word === '' && args.trim() !== '') return COMPUTER_SWITCH_USAGE;
   if (word === '' || word === 'estado') {
     const enabled = deps.enabled();
     const head = enabled
