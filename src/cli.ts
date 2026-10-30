@@ -648,13 +648,14 @@ export async function main(argv: string[]): Promise<number> {
         return 2;
       }
       const { stopDaemon } = await import('./daemon-control.js');
-      const result = await stopDaemon(paths.state);
       const { markStoppedOnPurpose } = await import('./autostart-watchdog.js');
-      markStoppedOnPurpose(paths.state);
-      process.stdout.write(
-        `Instancia ${result.instanceId.slice(0, 12)} detenida con cierre limpio confirmado.\n`,
-      );
-      return 0;
+      const { runStopCommand } = await import('./stop-command.js');
+      return runStopCommand({
+        stop: () => stopDaemon(paths.state),
+        markStopped: () => markStoppedOnPurpose(paths.state),
+        write: (text) => process.stdout.write(text),
+        writeErr: (text) => process.stderr.write(text),
+      });
     }
     case 'restart':
       process.stderr.write(

@@ -160,6 +160,23 @@ function receive(socket: Socket): Promise<Record<string, unknown>> {
     socket.once('end', end);
   });
 }
+/**
+ * `pa stop` needs to tell «there is no Asistenta to stop» apart from «stopping failed».
+ * Both control paths (Unix socket and Windows) throw this only when it is certain that no
+ * daemon owns the state dir: no signed ready record, no control socket, or (Windows) no
+ * owner holding the lock. Anything ambiguous keeps throwing its own error.
+ */
+export class DaemonNotRunningError extends Error {
+  constructor() {
+    super('Asistenta no está en marcha.');
+    this.name = 'DaemonNotRunningError';
+  }
+}
+
+export function isMissingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
 export interface DaemonControl {
   instanceId: string;
   /** Publish READY only after the daemon has finished startup. */
@@ -404,8 +421,16 @@ export async function stopDaemon(
     return stopWindowsDaemon(stateDir, Math.max(timeoutMs, 30_000));
   }
   const dir = controlDir(stateDir);
-  const original = recordAt(join(dir, 'ready.json'));
-  const ack = await requestDaemonControl(stateDir, 'stop');
+  let original: RecordV1;
+  let ack: { instanceId: string; state: State };
+  try {
+    original = recordAt(join(dir, 'ready.json'));
+    ack = await requestDaemonControl(stateDir, 'stop');
+  } catch (error) {
+    // No ready record, or a record left behind with no control socket: nothing is running.
+    if (isMissingFile(error)) throw new DaemonNotRunningError();
+    throw error;
+  }
   if (ack.instanceId !== original.instanceId)
     throw new Error('Instancia cambiada; no se confirma la parada.');
   const deadline = Date.now() + timeoutMs;
