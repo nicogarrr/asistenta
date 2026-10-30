@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { log } from '../log.js';
 import { clipRegion, type Region, scaleRegion } from './regions.js';
-import type { WindowsScreen } from './windows.js';
+import { powerShellError, type WindowsScreen } from './windows.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -760,6 +760,9 @@ export async function captureRoi(
   }
 }
 
+/** execFile timeout for the ROI crop (ms). */
+const CROP_TIMEOUT_MS = 20_000;
+
 /** Crop one JPEG rectangle in PowerShell. Throws on failure; the caller degrades. */
 async function cropJpeg(input: Buffer, crop: Region): Promise<Buffer> {
   const dir = mkdtempSync(join(tmpdir(), 'pa-crop-'));
@@ -767,12 +770,19 @@ async function cropJpeg(input: Buffer, crop: Region): Promise<Buffer> {
   const out = join(dir, 'out.jpg');
   try {
     writeFileSync(src, input);
-    await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', buildCropScript(src, out, crop)],
-      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 20_000 },
-    );
-    if (!existsSync(out)) throw new Error('crop produced no file');
+    try {
+      await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', buildCropScript(src, out, crop)],
+        { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: CROP_TIMEOUT_MS },
+      );
+    } catch (err) {
+      // execFile's message is `Command failed: powershell.exe … -Command <script>`:
+      // kilobytes of script in the `detail` the model reads. Same trimming as the
+      // desktop calls (#504): PowerShell's own sentence, or a plain timeout line.
+      throw powerShellError(err, CROP_TIMEOUT_MS);
+    }
+    if (!existsSync(out)) throw new Error('el recorte no generó ningún archivo');
     return readFileSync(out);
   } finally {
     rmSync(dir, { recursive: true, force: true });
