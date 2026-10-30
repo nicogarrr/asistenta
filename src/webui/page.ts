@@ -311,6 +311,7 @@ export function renderPage(): string {
     .texto { white-space: pre-wrap; word-break: break-word; }
     .nulo { color: var(--suave); font-style: italic; }
     .muted { color: var(--suave); }
+    [aria-busy='true'] { opacity: 0.6; transition: opacity 0.2s; }
     .error { color: var(--mal); }
     .chip {
       display: inline-flex;
@@ -626,11 +627,22 @@ ${renderFormatScript()}
         return nodo('span', 'texto', String(valor));
       }
 
+      // Recarga manual: si ya hay datos a la vista se quedan (atenuados) hasta que llega la
+      // respuesta, sin parpadeo de «Cargando…». Solo la primera carga muestra el aviso.
       function pintarCarga(contenedor) {
+        contenedor.setAttribute('aria-busy', 'true');
+        if (contenedor.getAttribute('data-cargado') === 'si') return;
         contenedor.replaceChildren(nodo('p', 'muted', 'Cargando…'));
       }
 
+      function finCarga(contenedor, ok) {
+        contenedor.removeAttribute('aria-busy');
+        if (ok) contenedor.setAttribute('data-cargado', 'si');
+        else contenedor.removeAttribute('data-cargado');
+      }
+
       function pintarError(contenedor, error, reintentar) {
+        finCarga(contenedor, false);
         var mensaje =
           error && error.message ? error.message : 'No se pudo cargar la información.';
         var bloque = nodo('div', 'error-bloque');
@@ -965,6 +977,7 @@ ${renderFormatScript()}
         pintarCarga(contenedor);
         try {
           pintarAprobaciones(contenedor, await pedir('/api/approvals'));
+          finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarAprobaciones); return false;
         }
@@ -977,6 +990,7 @@ ${renderFormatScript()}
         if (contenedor.contains(document.activeElement) && document.activeElement.tagName === 'BUTTON') return;
         try {
           pintarAprobaciones(contenedor, await pedir('/api/approvals'));
+          finCarga(contenedor, true);
         } catch (error) {}
       }
 
@@ -1078,6 +1092,7 @@ ${renderFormatScript()}
             } else tarjeta.appendChild(nodo('p', 'muted', 'Continúa en el hilo original de Telegram: ' + objetivo.thread + '. El chat del panel solo abre el principal.'));
             contenedor.appendChild(tarjeta);
           });
+          finCarga(contenedor, true);
         } catch (error) { pintarError(contenedor, error, cargarObjetivos); return false; }
         return true;
       }
@@ -1087,6 +1102,7 @@ ${renderFormatScript()}
         pintarCarga(contenedor);
         try {
           contenedor.replaceChildren(renderValor(await pedir('/api/status'), 0));
+          finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarEstado); return false;
         }
@@ -1100,6 +1116,7 @@ ${renderFormatScript()}
         pintarCarga(contenedor);
         try {
           pintarSesiones(contenedor, await pedir(ruta));
+          finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarSesiones); return false;
         }
@@ -1150,6 +1167,7 @@ ${renderFormatScript()}
         pintarCarga(contenedor);
         try {
           pintarMemoria(contenedor, await pedir(ruta));
+          finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarMemoria); return false;
         }
@@ -1161,6 +1179,7 @@ ${renderFormatScript()}
         pintarCarga(contenedor);
         try {
           pintarAuditoria(contenedor, await pedir('/api/audit/verify'));
+          finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarAuditoria); return false;
         }
