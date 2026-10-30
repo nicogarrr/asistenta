@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { onDiskSpelling } from '../permissions.js';
 import { recordAfterWrite, recordBeforeWrite } from '../undo.js';
 
 const MAX_READ_BYTES = 512 * 1024;
@@ -42,6 +43,16 @@ function guardPath(raw: string): string {
   const rel = relative(process.cwd(), p);
   if (rel.startsWith('..') || isAbsolute(rel)) {
     throw new Error(`path escapes the working directory: ${raw}`);
+  }
+  // Same rule on the on-disk spelling (#1005): a symlink or junction inside the
+  // working directory must not lead the read/write/list outside it.
+  const disk = onDiskSpelling(p);
+  if (disk !== null) {
+    const root = onDiskSpelling(process.cwd()) ?? process.cwd();
+    const realRel = relative(root, disk);
+    if (realRel.startsWith('..') || isAbsolute(realRel)) {
+      throw new Error(`path escapes the working directory: ${raw}`);
+    }
   }
   return p;
 }
