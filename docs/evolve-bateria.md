@@ -20,9 +20,10 @@ Sin batería configurada no se promueve nada.
   Recibe el mismo entorno limpio que el proponedor (solo las claves de `PA_EVOLVE_PROPOSER_PASS`).
 - **Sin definir** se usa `scripts/evolve-battery-case.mjs` con el mismo Node: corre el caso con el
   código fuente de la copia que se mide, datos en una carpeta temporal que se borra y sin cuentas
-  reales. Memoria y recordatorios funcionan de verdad (en esa carpeta); correo, navegador, web,
-  shell, ficheros, Renfe y PC existen con su nombre pero no hacen nada y quedan en la traza. Toda
-  petición de aprobación se cuenta y se deniega. El modelo es el de tu configuración y no hay que
+  reales. Memoria, recordatorios y `read`/`write`/`list` funcionan de verdad (en esa carpeta, sin
+  aprobación); `web`, `fetch`, `download`, `browser`, `shell`, `renfe` y `computer` existen con su
+  nombre real pero no hacen nada y quedan en la traza. Cualquier otra petición de aprobación se
+  cuenta y se deniega. El modelo es el de tu configuración y no hay que
   configurar nada: el asistente le pasa `PA_PROVIDER,PA_MODEL,PA_BASE_URL,PA_PROVIDER_PRESET` (si los
   tienes) y lee de su almacén (el cifrado de Windows) **solo** la clave de ese modelo
   (`provider:apiKey`; con OpenRouter `provider:openrouterKey`, con Gemini `provider:geminiKey`). Se

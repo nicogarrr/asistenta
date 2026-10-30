@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFauxCore, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
@@ -78,15 +78,15 @@ describe('evaluador de un caso de la batería (modelo simulado)', () => {
     expect(trace.approvalsAsked).toBe(0);
   });
 
-  it('el correo existe pero no envía nada: la llamada queda apuntada como fallida', async () => {
-    const trace = await runBatteryCase(caso('manda un correo a Ana'), {
+  it('la web existe pero no sale a la red: la llamada queda apuntada como fallida', async () => {
+    const trace = await runBatteryCase(caso('busca el tiempo en Madrid'), {
       config: CONFIG,
       ...fake(
-        call('mail', { action: 'send', to: 'ana@example.com' }),
+        call('web', { action: 'search', query: 'tiempo Madrid' }),
         fauxAssistantMessage('No he podido.'),
       ),
     });
-    const sent = trace.toolCalls.filter((c) => c.name === 'mail.send');
+    const sent = trace.toolCalls.filter((c) => c.name === 'web.search');
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((c) => c.ok === false)).toBe(true);
   });
@@ -110,6 +110,30 @@ describe('evaluador de un caso de la batería (modelo simulado)', () => {
     });
     expect(trace.toolCalls.map((c) => c.name)).toContain('reminder.create');
     expect(Array.isArray(trace.scheduled)).toBe(true);
+  });
+
+  it('B23: write y read funcionan dentro de la carpeta temporal, sin aprobación', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-battery-ws-'));
+    fake(
+      call('write', { path: 'pruebas/hola.txt', content: 'hola' }),
+      call('read', { path: 'pruebas/hola.txt' }),
+      call('list', { path: 'pruebas' }),
+      call('write', { path: '../fuera.txt', content: 'x' }),
+      fauxAssistantMessage('Pone: hola'),
+    );
+    const t = await runBatteryCase(caso('Crea pruebas/hola.txt con hola y léemelo'), {
+      config: CONFIG,
+      stateDir: dir,
+    });
+    expect(t.toolCalls.map((c) => [c.name, c.ok])).toEqual([
+      ['write', true],
+      ['read', true],
+      ['list', true],
+      ['write', false],
+    ]);
+    expect(t.approvalsAsked).toBe(0);
+    expect(readFileSync(join(dir, 'espacio', 'pruebas', 'hola.txt'), 'utf8')).toBe('hola');
+    expect(existsSync(join(dir, 'fuera.txt'))).toBe(false);
   });
 
   it('con carpeta temporal propia no deja nada detrás', async () => {
