@@ -201,6 +201,18 @@ export function parseTriggerAdd(
   };
 }
 
+/**
+ * `lastFiredAt` is stored as an ISO instant (UTC). Nico reads the list on his own
+ * clock, so it is shown in the process zone (PA_TIMEZONE, applied at start-up):
+ * slicing the ISO string printed 22:30 for a fire at 23:30 in Madrid.
+ */
+function localMinute(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** One list line per trigger, numbered the way /disparador del expects. */
 export function formatTriggerList(triggers: readonly RoutineTrigger[]): string {
   if (!triggers.length) {
@@ -208,7 +220,8 @@ export function formatTriggerList(triggers: readonly RoutineTrigger[]): string {
   }
   const lines = triggers.map((t, i) => {
     const off = t.enabled ? '' : ' (desactivado)';
-    const last = t.lastFiredAt ? `, último: ${t.lastFiredAt.slice(0, 16).replace('T', ' ')}` : '';
+    const when = t.lastFiredAt ? localMinute(t.lastFiredAt) : '';
+    const last = when ? `, último: ${when}` : '';
     return `${i + 1}. [${t.event}] "${t.match}" → ${t.routine}${off} (cada ${t.cooldownSeconds}s mínimo${last})`;
   });
   return [`Disparadores: ${triggers.length}`, ...lines].join('\n');
