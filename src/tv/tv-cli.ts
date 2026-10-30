@@ -10,6 +10,8 @@ import {
   tvScreenshot,
   tvToast,
 } from './lgtv.js';
+import { describeTvIntent, parseTvCommand } from './natural.js';
+import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { parseMac, sendWakeOnLan } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
@@ -52,9 +54,61 @@ async function requirePaired(): Promise<{
   return { host, clientKey, allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0' };
 }
 
-export async function tvCommand(args: string[]): Promise<number> {
+export interface TvCliDeps {
+  /** Ejecuta una orden en castellano con la tool tv (action=command). */
+  runOrder?: (text: string) => Promise<string>;
+  out?: (s: string) => void;
+  err?: (s: string) => void;
+}
+
+export const TV_ORDER_USAGE =
+  'uso: pa tv orden "<texto>"  (p. ej. pa tv orden "apaga la tele", pa tv orden "volumen a 15")';
+
+/**
+ * `pa tv orden "<texto>"`: la misma orden simple que `/tv` en Telegram, desde
+ * la terminal del PC y SIN modelo. Mismo parser (natural.ts) y misma tool
+ * (action=command). Si no se entiende, se dice y no se ejecuta nada.
+ */
+export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<number> {
+  const out = deps.out ?? ((s: string) => process.stdout.write(s));
+  const err = deps.err ?? ((s: string) => process.stderr.write(s));
+  const order = text.trim();
+  if (!order) {
+    err(`${TV_ORDER_USAGE}\n`);
+    return 2;
+  }
+  if (order.length > TV_CHAT_MAX_LEN) {
+    err(`La orden es demasiado larga (máx. ${TV_CHAT_MAX_LEN} caracteres).\n`);
+    return 2;
+  }
+  const intent = parseTvCommand(order);
+  if (!intent) {
+    err(
+      `No he entendido «${order.slice(0, 80)}» como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 15", "silencio", "modo cine", "estado".\n`,
+    );
+    return 2;
+  }
+  if (!deps.runOrder) {
+    err('Órdenes a la tele no disponibles en este proceso.\n');
+    return 1;
+  }
+  try {
+    const res = (await deps.runOrder(order)).trim();
+    out(`${res || `Hecho: ${describeTvIntent(intent)}.`}\n`);
+    return 0;
+  } catch (e) {
+    err(
+      `No he podido ${describeTvIntent(intent)}: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    return 1;
+  }
+}
+
+export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
+    case 'orden':
+      return tvOrderCommand(rest.join(' '), deps);
     case 'setup': {
       const allowPlaintext = rest.includes('--allow-plaintext');
       const hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
@@ -285,7 +339,7 @@ export async function tvCommand(args: string[]): Promise<number> {
       return 0;
     }
     default:
-      process.stderr.write('uso: pa tv <setup|toast|apps|launch|key|shot|off|mac|wake>\n');
+      process.stderr.write('uso: pa tv <orden|setup|toast|apps|launch|key|shot|off|mac|wake>\n');
       return 2;
   }
 }

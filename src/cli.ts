@@ -454,7 +454,18 @@ export async function main(argv: string[]): Promise<number> {
       }
       return new Promise<number>(() => {});
     case 'tv':
-      return tvCommand(rest);
+      return tvCommand(rest, {
+        runOrder: async (text) => {
+          const res = await createTvTool(tvToolDeps(new Store())).execute('tv-cli', {
+            action: 'command',
+            text,
+          });
+          return res.content
+            .map((c) => (c.type === 'text' ? c.text : ''))
+            .join(' ')
+            .trim();
+        },
+      });
     case 'voice': {
       const { voiceCommand } = await import('./voice/voice-cli.js');
       return voiceCommand(rest);
