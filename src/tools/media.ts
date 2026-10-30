@@ -1,6 +1,7 @@
 import { rmSync } from 'node:fs';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { TV_FIREWALL_HINT } from '../audio/tv-cast.js';
 import { log } from '../log.js';
 import { type AudioRecall, agoLabel } from '../media/recall.js';
 import {
@@ -37,6 +38,43 @@ import { playAudioFile, playbackRestoreText } from './system.js';
 /** Ceilings, matching the slash commands, so neither path can be talked out of them. */
 const MAX_CLIP_SECONDS = 60;
 const MAX_PLAY_BYTES = 25_000_000;
+
+/** El aviso del firewall sale una sola vez por sesión del daemon. */
+let teleFirewallWarned = false;
+
+/** Solo para pruebas: vuelve a permitir el aviso del firewall. */
+export function resetTeleFirewallWarning(): void {
+  teleFirewallWarned = false;
+}
+
+/**
+ * Tras una orden aceptada por la tele, espera (sin bloquear la respuesta) a que la tele
+ * descargue el fichero; si no lo ha hecho en el plazo, avisa al chat del firewall.
+ */
+function watchTeleFetch(
+  hits: (() => number) | undefined,
+  notify: ((text: string) => void) | undefined,
+  ms = 15_000,
+): void {
+  if (!hits || !notify || teleFirewallWarned) return;
+  const timer = setTimeout(() => {
+    if (teleFirewallWarned) return;
+    let served = 1;
+    try {
+      served = hits();
+    } catch {
+      return;
+    }
+    if (served > 0) return;
+    teleFirewallWarned = true;
+    try {
+      notify(`📺 ${TV_FIREWALL_HINT}`);
+    } catch {
+      // Un aviso que falla no rompe nada.
+    }
+  }, ms);
+  timer.unref?.();
+}
 
 export interface MediaToolDeps {
   /** Which chat this tool is answering, for the recall registry and for sends. */
@@ -75,7 +113,13 @@ export interface MediaToolDeps {
    * Plays an already-playable MP3 on the TV. Takes ownership of the file (deletes it
    * when done). Absent when the TV target is off (PA_AUDIO_TELE) or no TV is paired.
    */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string }>;
+  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  /**
+   * Aviso al chat cuando la tele aceptó el audio pero no lo ha descargado en
+   * `teleNoFetchMs` (15 s): suele ser el firewall de Windows. Una vez por sesión.
+   */
+  notifyChat?: (text: string) => void;
+  teleNoFetchMs?: number;
   beforePlayback?: () => void;
   afterPlayback?: () => void;
 }
@@ -322,6 +366,7 @@ async function playReceived(
       const file = playable;
       playable = null;
       const res = await deps.castToTv(file);
+      if (res.ok) watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
       return ok(res.message, { played: res.ok, target, audioAt: audio.at });
     }
     deps.beforePlayback?.();

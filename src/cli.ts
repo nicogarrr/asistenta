@@ -2012,6 +2012,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // the sound comes out or the agent answers its own playback.
         // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
         castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+        // Si la tele aceptó pero nunca bajó el fichero: aviso del firewall al chat.
+        notifyChat: (text) => {
+          void say(inboundFor(thread), text);
+        },
         beforePlayback: () => currentWake()?.suppress(PLAYBACK_SUPPRESS_MS),
         afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
       }),
