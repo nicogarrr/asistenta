@@ -32,6 +32,10 @@ export interface BatteryGate {
   /** Ciclo para rotar los casos heavy (ver selectCases); sin él corren todos. */
   cycle?: number;
   now?: () => Date;
+  /** Casos apartados (externos que fallan en la base 3 semanas, battery-history.ts): ni corren ni puntúan. */
+  quarantined?: Set<string>;
+  /** Se llama con la medida de la base (el kernel) para anotar el historial por caso. */
+  onBase?: (base: BatteryRun) => void;
 }
 
 export interface BatteryRun {
@@ -90,7 +94,11 @@ export function gateFromFile(path: string, run: BatteryRunner, repeats?: number)
 export async function measureBattery(g: BatteryGate, cwd: string): Promise<BatteryRun> {
   const repeats = Math.max(1, Math.floor(g.repeats ?? 3));
   const results: CaseResult[] = [];
-  const chosen = g.cycle === undefined ? g.cases.filter(scorable) : selectCases(g, g.cycle);
+  const skip = g.quarantined ?? new Set<string>();
+  const chosen =
+    g.cycle === undefined
+      ? g.cases.filter((c) => scorable(c) && !skip.has(c.id))
+      : selectCases(g, g.cycle, skip);
   for (const c of chosen) {
     const verdicts: Verdict[] = [];
     for (let i = 0; i < repeats; i++) {

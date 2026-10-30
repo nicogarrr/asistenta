@@ -115,6 +115,11 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
   let batteryBase: BatteryRun | undefined;
   if (opts.battery) {
     batteryBase = await measureBattery(opts.battery, root);
+    try {
+      opts.battery.onBase?.(batteryBase);
+    } catch {
+      // El historial es una ayuda: si no se puede escribir, el ciclo sigue igual.
+    }
     say(`Batería base: ${batteryBase.score.passed}/${batteryBase.score.total} casos.`);
   }
 

@@ -107,6 +107,15 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'factory', what: 'herramientas de la fábrica (TOOL.md editables)', backup: 'dir' },
   { name: 'evolve', what: 'historial de intentos de auto-mejora', backup: 'dir' },
   {
+    name: 'evolve-historial',
+    what: 'resultado semanal de cada caso de la batería en la base (aparta casos de webs caídas)',
+    backup: false,
+    why: 'se rehace solo: cada ciclo de evolve anota su semana',
+    retention:
+      'una hoja por semana ISO; PA_FILE_RETENTION_DAYS poda las viejas (solo cuentan las 3 últimas)',
+    prune: { match: /^\d{4}-W\d{2}\.json$/ },
+  },
+  {
     name: 'docs',
     what: 'memoria de documentos (índice FTS + mirror de texto)',
     backup: 'docs',

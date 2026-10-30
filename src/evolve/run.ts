@@ -3,8 +3,15 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Archive, isoWeek } from './archive.js';
-import { BATTERY_FILE, type BatteryRunner, gateFromFile } from './battery-gate.js';
-import type { Trace } from './battery-judge.js';
+import {
+  BATTERY_FILE,
+  type BatteryRun,
+  type BatteryRunner,
+  gateFromFile,
+  unscored,
+} from './battery-gate.js';
+import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history.js';
+import { loadBattery, type Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
 import { repoRoot } from './worktree.js';
@@ -140,6 +147,26 @@ function lastBattery(rows: ReturnType<Archive['read']>): string {
   return `Última batería (${last.week}): ${b.passed}/${b.total} casos; el kernel tenía ${b.basePassed}/${b.baseTotal}.`;
 }
 
+/** Cuántos casos de la batería no cuentan en la nota, y por qué, en una línea. */
+export function notCounting(stateDir: string, file = join(repoRoot(), BATTERY_FILE)): string {
+  try {
+    const b = loadBattery(file);
+    const off = unscored(b, quarantinedCases(join(stateDir, HISTORY_DIR), b.cases));
+    if (off.length === 0) return `Casos que no cuentan: ninguno (los ${b.cases.length} puntúan).`;
+    const n = (re: RegExp) => off.filter((x) => re.test(x.why)).length;
+    const parts = [
+      [n(/^desactivado/), 'desactivados'],
+      [n(/^servicio externo/), 'apartados por webs que fallan 3 semanas'],
+      [n(/^sin criterio/), 'sin criterio de máquina'],
+    ]
+      .filter(([k]) => (k as number) > 0)
+      .map(([k, what]) => `${k} ${what}`);
+    return `Casos que no cuentan: ${off.length} de ${b.cases.length} (${parts.join(', ')}).`;
+  } catch {
+    return 'Casos que no cuentan: no se pudo leer la batería.';
+  }
+}
+
 /** What /evolucion says without running anything: the last week, in plain Spanish. */
 export function describeLast(stateDir: string): string {
   const archive = new Archive(join(stateDir, 'evolve', 'attempts.jsonl'));
@@ -160,6 +187,7 @@ export function describeLast(stateDir: string): string {
     head,
     `Ideas en cola: ${ideas.length}.`,
     lastBattery(rows),
+    notCounting(stateDir),
     ...lines,
     'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
   ].join('\n');
@@ -188,7 +216,14 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
   try {
     // Los casos heavy rotan por semana ISO: base y candidato corren la misma selección.
     const cycle = Number(isoWeek().split('W')[1]) || 0;
-    const battery = { ...gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run), cycle };
+    const gate = gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run);
+    const historyDir = join(i.stateDir, HISTORY_DIR);
+    const battery = {
+      ...gate,
+      cycle,
+      quarantined: quarantinedCases(historyDir, gate.cases),
+      onBase: (base: BatteryRun) => recordBaseWeek(historyDir, base.results),
+    };
     const report = await runWeek({
       stateDir: i.stateDir,
       root: i.root,
