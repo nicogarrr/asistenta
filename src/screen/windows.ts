@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { ScreenBackend } from '../tools/computer.js';
 import {
   escapeForSendKeys,
+  highFunctionKeyVirtualKeys,
   parseKeyChord,
   splitAsciiSegments,
   winChordVirtualKeys,
@@ -258,7 +259,7 @@ Add-Type -AssemblyName System.Windows.Forms
   }
 
   async key(key: string): Promise<void> {
-    const vks = winChordVirtualKeys(key);
+    const vks = winChordVirtualKeys(key) ?? highFunctionKeyVirtualKeys(key);
     const script = vks
       ? winChordScript(vks)
       : `
