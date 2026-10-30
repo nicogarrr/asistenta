@@ -3741,7 +3741,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ),
       isCronTitle,
     );
-    await say(inbound, text, { quote: true, format: 'marks' });
+    // Solo la lista (/cron sin más) lleva botones; las respuestas de una suborden no.
+    const buttons = args.trim()
+      ? undefined
+      : cronListButtons(store.listRoutines().filter((r) => inChatScope(r.scope, chatKey(inbound))));
+    await say(inbound, text, { quote: true, format: 'marks', buttons });
   };
 
   /**
@@ -7424,6 +7428,26 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
  * /vigilando: un botón «🗑 Dejar de vigilar …» por página (hasta 8), que equivale a
  * escribir /dejar_de_vigilar <id>. Sin páginas, sin botones.
  */
+/**
+ * /cron (lista): un botón por rutina programada (hasta 8), «⏸ Pausar …» si está
+ * activa y «▶️ Reanudar …» si está en pausa; equivalen a escribir /cron pausa|reanudar
+ * <nombre>. Borrar no tiene botón: sigue pidiendo escribirlo.
+ */
+export function cronListButtons(
+  list: ReadonlyArray<{ name: string; kind: string; schedule?: string | null; enabled: boolean }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = list
+    .filter((r) => r.kind === 'schedule' && r.schedule)
+    .slice(0, 8)
+    .map((r) =>
+      r.enabled
+        ? commandButton(`⏸ Pausar ${r.name}`, 'cron', r.name, 'pausa')
+        : commandButton(`▶️ Reanudar ${r.name}`, 'cron', r.name, 'reanudar'),
+    )
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
 export function watchStopButtons(
   list: ReadonlyArray<{ id: string; label: string; url: string }>,
 ): Array<{ label: string; action: string }> | undefined {
