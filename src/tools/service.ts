@@ -350,6 +350,18 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
         if (s.port === undefined) {
           return reply(`"${s.name}" no tiene puerto declarado; no hay nada que servir.`, true);
         }
+        // `tailscale serve --https=443` apunta la raíz del nodo a UN puerto: servir otro
+        // servicio reemplazaría al que ya está (cuya ficha seguiría diciendo «servido»
+        // con un enlace que abre otra cosa), y pararlo luego apagaría a los dos.
+        const occupant = deps.services
+          .list()
+          .find((o) => o.name !== s.name && o.expose === 'tailnet');
+        if (occupant) {
+          return reply(
+            `Tu tailnet ya sirve "${occupant.name}" y solo cabe un servicio a la vez: servir "${s.name}" lo reemplazaría. Para "${occupant.name}" primero (acción parar) y lo sirvo. No he expuesto nada.`,
+            true,
+          );
+        }
         const cli = await run('tailscale', ['version']);
         if (cli.code !== 0) {
           return reply(
