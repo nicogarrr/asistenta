@@ -290,7 +290,10 @@ Write-Output ("N|" + $(if ($online) { '1' } else { '0' }) + "|" + $(if ($ip) { $
 
   return {
     batteryPercent: num(get('B|')[0]),
-    onBattery: get('P|')[0] === '2',
+    // Win32_Battery.BatteryStatus: 1 = descargándose, 4/5 = baja/crítica (sin
+    // corriente); 2 = con corriente alterna, 3 = cargada, 6-9 = cargando. «2» es
+    // justo el enchufado: leerlo como «con batería» invertía el «(enchufado)».
+    onBattery: ['1', '4', '5'].includes(get('P|')[0] ?? ''),
     diskFreeGb: num(get('D|')[0]) ?? 0,
     diskTotalGb: num(get('D|')[1]) ?? 0,
     ramUsedGb: num(get('R|')[0]) ?? 0,
