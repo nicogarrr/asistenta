@@ -71,7 +71,11 @@ async function importPair(files) {
   if (typeof harness.assertThresholds !== 'function') {
     throw new Error(`${files[1]} no exporta assertThresholds`);
   }
-  return { BATTERY: battery.BATTERY, runEval: harness.runEval, assertThresholds: harness.assertThresholds };
+  return {
+    BATTERY: battery.BATTERY,
+    runEval: harness.runEval,
+    assertThresholds: harness.assertThresholds,
+  };
 }
 
 export async function loadEvals() {
@@ -229,7 +233,9 @@ async function runLive(evals, min) {
 }
 
 function usage() {
-  console.log('Uso: node scripts/run-evals.mjs [--dry|--live] [--min-global=N] [--min-<categoria>=N]');
+  console.log(
+    'Uso: node scripts/run-evals.mjs [--dry|--live] [--min-global=N] [--min-<categoria>=N]',
+  );
   console.log('  --dry   valida la bateria sin agente (por defecto)');
   console.log('  --live  carga dist/cli.js y ejecuta si expone execEvalTask');
 }
@@ -284,7 +290,9 @@ export async function main(argv = []) {
 
 function isDirectRun() {
   if (!process.argv[1]) return false;
-  const self = fileURLToPath(import.meta.url).replace(/\\/g, '/').toLowerCase();
+  const self = fileURLToPath(import.meta.url)
+    .replace(/\\/g, '/')
+    .toLowerCase();
   const entry = resolve(process.argv[1]).replace(/\\/g, '/').toLowerCase();
   return self === entry;
 }

@@ -93,3 +93,27 @@ describe('CI workflow', () => {
     expect(covered('package-lock.json')).toBe(true);
   });
 });
+
+describe('workflows: tv-mocks y biome', () => {
+  it('los mocks de la tele van en su propio workflow, solo en rutas de la tele', () => {
+    expect(workflow).not.toMatch(/tv-mocks:/);
+    const tv = readFileSync(new URL('../.github/workflows/tv-mocks.yml', import.meta.url), 'utf8');
+    for (const p of [
+      "'scripts/tv/**'",
+      "'deploy/tv-webos/**'",
+      "'.github/workflows/tv-mocks.yml'",
+    ]) {
+      expect(tv.split(p).length - 1, p).toBe(2); // en pull_request y en push
+    }
+    for (const m of tv.matchAll(/run: (scripts\/tv\/[\w.-]+)/g)) {
+      expect(existsSync(new URL(`../${m[1]}`, import.meta.url)), m[1]).toBe(true);
+    }
+  });
+
+  it('biome también revisa los .mjs (scripts/, qa/)', () => {
+    const biome = JSON.parse(readFileSync(new URL('../biome.json', import.meta.url), 'utf8')) as {
+      files: { includes: string[] };
+    };
+    expect(biome.files.includes).toContain('**/*.mjs');
+  });
+});
