@@ -77,6 +77,8 @@ const MIN_GAP_MS = 1_100;
 /** Un envío no puede reintentarse para siempre: un endpoint muerto congelaría todos los chats. */
 const SEND_MAX_ATTEMPTS = 4;
 const SEND_MAX_TOTAL_MS = 90_000;
+/** Upper bound for stop(): grammY's final getUpdates has no timeout of its own. */
+const STOP_MAX_MS = 10_000;
 
 /**
  * Cadencia por defecto del borrador. Editar más a menudo que esto multiplica las
@@ -1430,10 +1432,16 @@ export class TelegramChannel implements ChannelAdapter {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;
     }
-    await this.#bot.stop().catch((error: unknown) => {
-      if (strict)
-        throw new Error('No se pudo confirmar el cierre de polling Telegram.', { cause: error });
-    });
+    // grammY's bot.stop() ends with one last getUpdates (to confirm the offset)
+    // that has no time limit of its own: with Telegram unreachable it could hold
+    // the whole shutdown. Bounded: past STOP_MAX_MS we stop waiting; strict
+    // callers hear it as an unconfirmed close, everyone else moves on.
+    await withTimeout(this.#bot.stop(), STOP_MAX_MS, 'bot.stop timed out').catch(
+      (error: unknown) => {
+        if (strict)
+          throw new Error('No se pudo confirmar el cierre de polling Telegram.', { cause: error });
+      },
+    );
   }
 
   /**
