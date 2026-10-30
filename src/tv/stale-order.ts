@@ -12,19 +12,24 @@
 export const STALE_TV_ORDER_MS = 2 * 60_000;
 
 /**
- * Aviso si el mensaje que pide la orden es viejo; null si es reciente o si no
- * se sabe cuándo se envió (panel, voz, rutinas: siempre en vivo).
+ * Aviso si el mensaje que pide la orden llegó tarde; null si llegó a tiempo o si
+ * no se sabe cuándo se envió (panel, voz, rutinas: siempre en vivo).
+ *
+ * Cuenta lo que tardó en LLEGAR (receivedAt - sentAt), no lo que lleva esperando
+ * en la cola del chat: un «pausa» recibido al momento detrás de un turno largo
+ * sigue siendo una orden en vivo.
  */
 export function staleTvOrderNotice(
   sentAt: string | undefined,
-  now: number = Date.now(),
+  receivedAt: string | number = Date.now(),
 ): string | null {
   if (!sentAt) return null;
   const sent = Date.parse(sentAt);
-  if (!Number.isFinite(sent)) return null;
-  const age = now - sent;
+  const received = typeof receivedAt === 'number' ? receivedAt : Date.parse(receivedAt);
+  if (!Number.isFinite(sent) || !Number.isFinite(received)) return null;
+  const age = received - sent;
   if (age <= STALE_TV_ORDER_MS) return null;
   const min = Math.round(age / 60_000);
   const when = min >= 60 ? `hace ${Math.round(min / 60)} h` : `hace ${min} min`;
-  return `No he tocado la tele: esa orden es de un mensaje de ${when} que me llegó tarde (Asistenta estaba apagada). Si aún la quieres, repítela.`;
+  return `No he tocado la tele: esa orden es de un mensaje de ${when} que me llegó tarde (Asistenta estaba apagada o sin conexión). Si aún la quieres, repítela.`;
 }

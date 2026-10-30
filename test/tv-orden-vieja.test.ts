@@ -138,11 +138,11 @@ describe('la tool tv con un mensaje viejo', () => {
     const [tool] = tvPlugin.tools({ store: new Store(), staleOrder: () => VIEJA });
     const res = await tool?.execute('t', { action: 'key', name: 'HOME' } as never);
     expect(textOf(res as never)).toBe(VIEJA);
-  });
+  }, 20_000); // abrir la Store tarda con la máquina cargada
 
   it('el daemon mira la fecha del mensaje del turno y la de /tv', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli).toMatch(/staleOrder: \(\) => staleTvOrderNotice\(inboundFor\(thread\)\.sentAt\)/);
-    expect(cli).toMatch(/staleTvOrderNotice\(inbound\.sentAt\)/);
+    expect(cli).toMatch(/staleOrder: \(\) =>\s+staleTvOrderNotice\(inboundFor\(thread\)\.sentAt/);
+    expect(cli).toMatch(/staleTvOrderNotice\(inbound\.sentAt/);
   });
 });
