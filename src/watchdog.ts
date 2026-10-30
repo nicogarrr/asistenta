@@ -480,11 +480,10 @@ export class Watchdog {
    */
   #prune(now: number): void {
     const cutoff = now - this.#opts.windowMs;
-    for (;;) {
-      const oldest = this.#window[0];
-      if (oldest === undefined || oldest >= cutoff) break;
-      this.#window.shift();
-    }
+    // Un reinicio fechado por delante del reloj (hora corregida hacia atrás al volver
+    // de suspender/hibernar) no caducaba hasta que el reloj lo alcanzara: con el cupo
+    // lleno, el vigilante dejaba de reiniciar durante horas. Fuera también esos.
+    this.#window = this.#window.filter((t) => t >= cutoff && t <= now + FUTURE_BEAT_TOLERANCE_MS);
   }
 
   stats(): WatchdogStats {
