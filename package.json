@@ -18,6 +18,7 @@
     "lint:check": "biome check --error-on-warnings .",
     "test": "node scripts/run-tests.mjs",
     "test:watch": "vitest",
+    "test:e2e": "vitest run test/e2e-scenarios.test.ts test/e2e-agent-loop.test.ts test/e2e-memory-scopes.test.ts",
     "start": "node dist/cli.js",
     "dev": "node --experimental-strip-types src/cli.ts"
   },
