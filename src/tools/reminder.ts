@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
 import type { Routine, Store } from '../db.js';
-import { validateSchedule } from '../routines.js';
+import { nextScheduleRun, validateSchedule } from '../routines.js';
 
 /**
  * Reminders as a tool: "recuérdame dentro de 3 horas que apague el horno",
@@ -419,4 +419,104 @@ export function readDroppedReminders(file: string, now = Date.now(), days = 7, m
     }
   }
   return out.slice(-max);
+}
+
+// ---------------------------------------------------------------------------
+// /recordatorios: ver y borrar recordatorios desde Telegram sin pasar por el modelo.
+
+const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+
+/** «vie 31/10 09:00», en hora local. */
+export function fechaCortaEs(d: Date): string {
+  return `${DIAS[d.getDay()]} ${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** «en 5 min», «en 3 h 10 min», «en 2 d». */
+export function dentroDeEs(ms: number): string {
+  if (!(ms >= 60_000)) return 'en menos de 1 min';
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `en ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return min % 60 ? `en ${h} h ${min % 60} min` : `en ${h} h`;
+  return `en ${Math.round(h / 24)} d`;
+}
+
+export interface ReminderRow {
+  routine: Routine;
+  next: Date | null;
+}
+
+/**
+ * Recordatorios del ámbito ordenados por la próxima vez que suenan (los que no
+ * tienen próxima ejecución, al final). El número de /recordatorios es la
+ * posición en esta lista.
+ */
+export function reminderRows(
+  routines: Routine[],
+  nextOf: (r: Routine) => Date | null = (r) => (r.schedule ? nextScheduleRun(r.schedule) : null),
+): ReminderRow[] {
+  return routines
+    .filter(isReminder)
+    .map((routine) => ({ routine, next: nextOf(routine) }))
+    .sort((a, b) => {
+      if (a.next && b.next) return a.next.getTime() - b.next.getTime();
+      if (a.next) return -1;
+      if (b.next) return 1;
+      return reminderText(a.routine).localeCompare(reminderText(b.routine));
+    });
+}
+
+export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()): string {
+  if (rows.length === 0) {
+    return 'No tienes recordatorios. Pídemelos en lenguaje normal: «recuérdame mañana a las 9 llamar al dentista».';
+  }
+  const lines = rows.map(({ routine, next }, i) => {
+    const when = next
+      ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime())})`
+      : 'sin próxima vez';
+    const kind = isOneShotReminder(routine) ? '' : ` · se repite (${routine.schedule})`;
+    return `${i + 1}. ${reminderText(routine)} — ${when}${kind}`;
+  });
+  return [
+    `Recordatorios: ${rows.length}`,
+    ...lines,
+    '',
+    'Para borrar uno: /recordatorios borrar <número o palabra>',
+  ].join('\n');
+}
+
+/**
+ * Qué recordatorio quiere borrar el usuario: un número de la lista o una
+ * palabra que aparezca en un solo recordatorio. Nunca borra si hay duda.
+ */
+export function pickReminder(
+  rows: ReminderRow[],
+  ref: string,
+): { ok: true; routine: Routine } | { ok: false; error: string } {
+  const want = ref.trim();
+  if (!want) return { ok: false, error: 'Dime cuál: /recordatorios borrar <número o palabra>' };
+  if (/^\d+$/.test(want)) {
+    const row = rows[Number(want) - 1];
+    if (!row) {
+      return {
+        ok: false,
+        error: rows.length
+          ? `No hay recordatorio ${want}: elige entre 1 y ${rows.length}.`
+          : 'No tienes recordatorios.',
+      };
+    }
+    return { ok: true, routine: row.routine };
+  }
+  const needle = want.toLowerCase();
+  const hits = rows.filter((r) => reminderText(r.routine).toLowerCase().includes(needle));
+  if (hits.length === 0)
+    return { ok: false, error: `No encuentro ningún recordatorio con «${want}».` };
+  if (hits.length > 1) {
+    const options = hits.map((h) => `${rows.indexOf(h) + 1}. ${reminderText(h.routine)}`);
+    return {
+      ok: false,
+      error: [`Hay ${hits.length} con «${want}». Bórralo por número:`, ...options].join('\n'),
+    };
+  }
+  return { ok: true, routine: (hits[0] as ReminderRow).routine };
 }

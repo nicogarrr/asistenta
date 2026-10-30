@@ -117,6 +117,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Ver los recordatorios pendientes',
   },
   {
+    command: 'recordatorios',
+    description: 'Ver tus recordatorios y borrar uno',
+  },
+  {
     command: 'resolver',
     description: 'Marcar un pendiente como resuelto',
   },

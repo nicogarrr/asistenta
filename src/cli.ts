@@ -248,11 +248,14 @@ import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import {
   createReminderTool,
   deliverMissedReminders,
+  formatReminderRows,
   isOneShotReminder,
   isReminder,
   oneShotStillPending,
+  pickReminder,
   readDroppedReminders,
   recordDroppedReminder,
+  reminderRows,
   reminderText,
   settleOneShot,
 } from './tools/reminder.js';
@@ -4299,6 +4302,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const startedAt = Date.now();
 
+  /** /recordatorios [borrar <n|palabra>]: ver y quitar recordatorios sin pasar por el modelo. */
+  const cmdRecordatorios = async (inbound: Inbound, args: string): Promise<void> => {
+    const thread = await resolveThread(inbound);
+    const scope = thread.key;
+    const rows = () => reminderRows(store.listRoutines(scope));
+    const m = /^(borrar|cancelar|quitar|del)\b\s*(.*)$/i.exec(args.trim());
+    if (!m) {
+      if (args.trim()) {
+        await say(inbound, 'Uso: /recordatorios ⬦ /recordatorios borrar <número o palabra>', {
+          quote: true,
+        });
+        return;
+      }
+      await say(inbound, formatReminderRows(rows()), { quote: true });
+      return;
+    }
+    const pick = pickReminder(rows(), m[2] ?? '');
+    if (!pick.ok) {
+      await say(inbound, pick.error, { quote: true });
+      return;
+    }
+    store.deleteRoutine(scope, pick.routine.name);
+    routineRunner.sync();
+    await say(inbound, `Borrado: ${reminderText(pick.routine)}.`, { quote: true });
+  };
+
   /** /consumo [hoy|semana|mes|N]: tokens y coste estimado por día y modelo (solo lectura). */
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
@@ -5061,6 +5090,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/memory - lo que recuerdo de ti',
         '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
         '/pendientes - lo que te tengo que recordar',
+        '/recordatorios [borrar <n>] - tus recordatorios con la próxima vez que suenan; borrar uno sin gastar tokens',
         '/deshacer - repone el fichero que escribí por última vez como estaba antes',
         '/resolver <id> - marca un pendiente como resuelto',
         '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
@@ -6323,6 +6353,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdEvolucion(inbound, command.args);
               case 'estado':
                 return cmdEstado(inbound);
+              case 'recordatorios':
+              case 'reminders':
+                return cmdRecordatorios(inbound, command.args);
               case 'consumo':
               case 'uso':
                 return cmdConsumo(inbound, command.args);
