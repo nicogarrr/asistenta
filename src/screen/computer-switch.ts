@@ -42,6 +42,26 @@ export interface ComputerSwitchDeps {
   set: (on: boolean) => void;
   /** Saves the choice across restarts; absent = in memory only (old behaviour). */
   save?: (on: boolean) => void;
+  /** True when an «off» is saved on disk; absent = /ordenador estado says nothing about it. */
+  offSaved?: () => boolean;
+}
+
+/** Second line of /ordenador estado: whether the state survives a restart. */
+function savedNote(deps: ComputerSwitchDeps, enabled: boolean): string {
+  if (!deps.offSaved) return '';
+  let saved: boolean;
+  try {
+    saved = deps.offSaved();
+  } catch {
+    return '\nNo he podido mirar si el apagado está guardado.';
+  }
+  if (saved && !enabled)
+    return '\nEl apagado está guardado: sigue apagado aunque se reinicie el asistente.';
+  if (saved && enabled) {
+    return '\nOjo: queda un apagado guardado; si el asistente se reinicia, arrancará con el control apagado.';
+  }
+  if (!enabled) return '\nEl apagado no está guardado: al reiniciar vuelve a lo que diga el .env.';
+  return '';
 }
 
 /** Runs `deps.save`; false when it threw (the in-memory flip still applies). */
@@ -66,9 +86,11 @@ export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): s
   }
   const word = args.trim().toLowerCase();
   if (word === '' || word === 'estado') {
-    return deps.enabled()
+    const enabled = deps.enabled();
+    const head = enabled
       ? `🖥️ Control del ordenador: ACTIVADO. Apágalo con /ordenador off.`
       : `🛑 Control del ordenador: DESACTIVADO. Enciéndelo con /ordenador on.`;
+    return `${head}${savedNote(deps, enabled)}`;
   }
   if (OFF.has(word)) {
     deps.set(false);
