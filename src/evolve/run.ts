@@ -171,7 +171,9 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
     };
   }
   try {
-    const battery = gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run);
+    // Los casos heavy rotan por semana ISO: base y candidato corren la misma selección.
+    const cycle = Number(isoWeek().split('W')[1]) || 0;
+    const battery = { ...gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run), cycle };
     const report = await runWeek({
       stateDir: i.stateDir,
       root: i.root,

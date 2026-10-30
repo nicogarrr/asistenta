@@ -29,6 +29,8 @@ export interface BatteryGate {
   run: BatteryRunner;
   /** Repeticiones por caso; pasa por mayoría. */
   repeats?: number;
+  /** Ciclo para rotar los casos heavy (ver selectCases); sin él corren todos. */
+  cycle?: number;
   now?: () => Date;
 }
 
@@ -40,8 +42,43 @@ export interface BatteryRun {
 /** Un caso puntúa solo si está activo, lo juzga la máquina y tiene criterios verificables. */
 export function scorable(c: BatteryCase): boolean {
   if (c.enabled === false) return false;
-  if (c.judge === 'qa' || c.judge === 'review') return false;
+  if (c.judge === 'qa') return false;
   return Object.keys(c.machine ?? {}).length > 0;
+}
+
+/**
+ * Qué casos corre el ciclo `cycleIndex` (rotando 0,1,2): todos los cheap y medium, los
+ * heavy 'always' y los heavy cuya rotation == ciclo. Base y candidato usan la misma
+ * selección, así que la comparación sigue siendo justa y los heavy cuestan un tercio.
+ */
+export function selectCases(
+  b: Pick<Battery, 'cases'>,
+  cycleIndex: number,
+  quarantined: Set<string> = new Set(),
+): BatteryCase[] {
+  const slot = ((cycleIndex % 3) + 3) % 3;
+  return b.cases.filter((c) => {
+    if (!scorable(c) || quarantined.has(c.id)) return false;
+    if (c.cost !== 'heavy') return true;
+    if (c.rotation === 'always') return true;
+    const r = c.rotation === undefined ? 0 : Number(c.rotation);
+    return Number.isInteger(r) && r === slot;
+  });
+}
+
+/** Casos que no puntúan y por qué, para el informe a Nico. */
+export function unscored(
+  b: Pick<Battery, 'cases'>,
+  quarantined: Set<string> = new Set(),
+): { id: string; why: string }[] {
+  return b.cases.flatMap((c) => {
+    if (c.enabled === false)
+      return [{ id: c.id, why: `desactivado: ${c.enableWhen ?? 'sin motivo'}` }];
+    if (quarantined.has(c.id))
+      return [{ id: c.id, why: 'servicio externo roto 3 ciclos seguidos: revision manual' }];
+    if (!scorable(c)) return [{ id: c.id, why: 'sin criterio verificable por maquina: revision' }];
+    return [];
+  });
 }
 
 export function gateFromFile(path: string, run: BatteryRunner, repeats?: number): BatteryGate {
@@ -53,7 +90,8 @@ export function gateFromFile(path: string, run: BatteryRunner, repeats?: number)
 export async function measureBattery(g: BatteryGate, cwd: string): Promise<BatteryRun> {
   const repeats = Math.max(1, Math.floor(g.repeats ?? 3));
   const results: CaseResult[] = [];
-  for (const c of g.cases.filter(scorable)) {
+  const chosen = g.cycle === undefined ? g.cases.filter(scorable) : selectCases(g, g.cycle);
+  for (const c of chosen) {
     const verdicts: Verdict[] = [];
     for (let i = 0; i < repeats; i++) {
       try {
