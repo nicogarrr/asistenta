@@ -149,7 +149,22 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       try {
         sandbox = createSandbox(root, kernel, id, join(opts.stateDir, 'evolve', `w${id}`));
       } catch (err) {
-        say(`No se pudo aislar el intento: ${(err as Error).message}`);
+        // Sin aislamiento no se mide nada: es fallo de la máquina, no de la idea. Queda
+        // archivado con veredicto (sin medir) y la semana para aquí, como con el proponente.
+        const reason = `no se pudo aislar el intento: ${String((err as Error)?.message ?? err).slice(0, 200)}`;
+        archive.add({
+          week,
+          kind: 'verdict',
+          hypothesis,
+          verdict: 'discard',
+          reason,
+          unmeasured: true,
+          kernel,
+          tries: attempt,
+        });
+        report.attempts.push({ hypothesis, try: attempt, verdict: 'discard', delta: 0, reason });
+        say(reason);
+        proposerDown = true;
         break;
       }
 
