@@ -134,21 +134,58 @@ export function productIdentity(html: string): ProductIdentity {
 }
 
 function normTokens(s: string): string[] {
-  return s
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length >= 3);
+  return (
+    s
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase()
+      // "128 GB" y "128GB" son la misma capacidad.
+      .replace(/(\d)\s+(gb|tb|mb|mah|hz|mp)\b/g, '$1$2')
+      .split(/[^a-z0-9]+/)
+      // Las cifras cuentan aunque sean cortas: "15" frente a "14" es otro modelo.
+      .filter((t) => t.length >= 3 || /\d/.test(t))
+  );
 }
 
 const STOP = new Set(['para', 'con', 'sin', 'los', 'las', 'una', 'del', 'nuevo', 'nueva']);
 
-/** Solape de tokens significativos semilla -> título de la tarjeta (0-1). */
+/** Palabras de accesorio: una funda del producto no es el producto. */
+const ACCESSORY = new Set([
+  'funda',
+  'carcasa',
+  'protector',
+  'cristal',
+  'templado',
+  'cargador',
+  'cable',
+  'soporte',
+  'adaptador',
+  'correa',
+  'recambio',
+  'mando',
+  'estuche',
+  'case',
+  'cover',
+]);
+
+/** La tarjeta es un accesorio y la semilla no (comparten modelo, no producto). */
+function accessoryOf(seedTitle: string, cardTitle: string): boolean {
+  const seed = new Set(normTokens(seedTitle));
+  return normTokens(cardTitle).some((t) => ACCESSORY.has(t) && !seed.has(t));
+}
+
+/**
+ * Solape de tokens significativos semilla -> título de la tarjeta (0-1).
+ * Los tokens con cifras (generación, capacidad, modelo) tienen que estar TODOS:
+ * "iPhone 15 128GB" no es "iPhone 14 128GB" ni "iPhone 15 256GB". Y una tarjeta de
+ * accesorio ("Funda para iPhone 15") nunca es el producto, aunque contenga su título.
+ */
 export function titleOverlap(seedTitle: string, cardTitle: string): number {
   const seed = normTokens(seedTitle).filter((t) => !STOP.has(t));
   const card = new Set(normTokens(cardTitle));
   if (seed.length === 0) return 0;
+  if (accessoryOf(seedTitle, cardTitle)) return 0;
+  if (seed.some((t) => /\d/.test(t) && !card.has(t))) return 0;
   const hit = seed.filter((t) => card.has(t)).length;
   return hit / seed.length;
 }
@@ -159,7 +196,9 @@ export function pickMatch(
   identity: ProductIdentity,
 ): { card: Card; match: MatchKind } | null {
   if (identity.model) {
-    const byModel = cards.find((c) => modelKey(c.title) === identity.model);
+    const byModel = cards.find(
+      (c) => modelKey(c.title) === identity.model && !accessoryOf(identity.title, c.title),
+    );
     if (byModel) return { card: byModel, match: 'modelo' };
   }
   let best: { card: Card; score: number } | null = null;
