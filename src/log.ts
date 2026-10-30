@@ -59,6 +59,14 @@ export const log = {
 };
 
 const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
+/**
+ * Nombres que contienen esas letras sin ser credenciales: se tapaban y el registro
+ * perdía diagnóstico (teclado de Telegram, tokens consumidos, «discard»). Lista cerrada
+ * y por nombre completo: `token`, `apiKey`, `accessTokens`, `cardNumber`… siguen tapados.
+ */
+const INNOCENT_KEY =
+  /^(?:keyboards?|discard(?:ed|s)?|cardinality|(?:input|output|total|max|prompt|completion|cached|reasoning|context)[_-]?tokens|tokens?[_-]?(?:count|used|total|limit))$/i;
+const isSecretKey = (key: string): boolean => SECRET_KEY.test(key) && !INNOCENT_KEY.test(key);
 /** Recognizable credential formats only; arbitrary unlabelled secrets cannot be inferred. */
 export function scrubLogText(text: string): string {
   return (
@@ -87,7 +95,7 @@ export function scrubLogText(text: string): string {
 export function redact(fields: Record<string, unknown>): Record<string, unknown> {
   const seen = new WeakSet<object>();
   const visit = (value: unknown, key = '', depth = 0): unknown => {
-    if (SECRET_KEY.test(key)) return '[redacted]';
+    if (isSecretKey(key)) return '[redacted]';
     if (typeof value === 'string') return scrubLogText(value);
     if (typeof value !== 'object' || value === null) return value;
     if (seen.has(value)) return '[circular]';
