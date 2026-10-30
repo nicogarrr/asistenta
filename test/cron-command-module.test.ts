@@ -14,6 +14,7 @@ describe('cron-command module', () => {
       [cli.uniqueRoutineName, cron.uniqueRoutineName],
       [cli.commandRoutineTag, cron.commandRoutineTag],
       [cli.nextRunLabel, cron.nextRunLabel],
+      [cli.scheduledAgendaText, cron.scheduledAgendaText],
     ] as const;
     for (const [fromCli, fromModule] of pairs) {
       expect(typeof fromModule).toBe('function');
