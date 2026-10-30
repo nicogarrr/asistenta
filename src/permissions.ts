@@ -84,6 +84,15 @@ export interface Decision {
 export type Approver = (call: ToolCall, reason: string) => boolean | Promise<boolean>;
 
 export interface GateOptions {
+  /**
+   * Taint gate (F2): after a call that reads outside content (web, fetch, browser,
+   * downloads, documents, OCR, MCP) every later call that is not provably a read
+   * loses the memo, scopes, fullControl and the grant window, and asks naming the
+   * source. Default on; `PA_TAINT_GATE=off` disables it. Only ever stricter.
+   */
+  taintGate?: boolean;
+  /** How long a taint lasts without a new owner message (ms). Default 30 min. */
+  taintTtlMs?: number;
   /** Tools that never need approval. */
   allow?: string[];
   /**
@@ -382,6 +391,10 @@ export class Gate {
    * gestion stops forcing on its own.
    */
   readonly #forcedAsk = new Map<string, (call: ToolCall) => string | null>();
+  /** sessionId -> last outside content read in this session (taint gate). */
+  readonly #taint = new Map<string, { source: string; at: number }>();
+  #taintGate = true;
+  #taintTtlMs = 30 * 60_000;
   readonly #audit: Array<{
     ts: string;
     actor: string;
@@ -391,6 +404,11 @@ export class Gate {
   }> = [];
 
   constructor(options: GateOptions = {}) {
+    this.#taintGate =
+      options.taintGate ?? process.env.PA_TAINT_GATE?.trim().toLowerCase() !== 'off';
+    if (options.taintTtlMs !== undefined && Number.isFinite(options.taintTtlMs)) {
+      this.#taintTtlMs = Math.max(0, options.taintTtlMs);
+    }
     // The gate's own database is a secret wherever it lives (custom dbPath
     // included), sidecars too: a written approvals.db(-wal) is a self-granted
     // standing approval.
@@ -800,6 +818,45 @@ export class Gate {
    */
   #isGestionEjecutar(c: ToolCall): boolean {
     return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
+  }
+
+  /**
+   * Taint gate: the outside source this session read last, while still live
+   * (null when clean, expired or the gate is off).
+   */
+  taintOf(sessionId: string, now: number = Date.now()): string | null {
+    if (!this.#taintGate) return null;
+    const t = this.#taint.get(sessionId);
+    if (!t) return null;
+    if (now - t.at > this.#taintTtlMs) {
+      this.#taint.delete(sessionId);
+      return null;
+    }
+    return t.source;
+  }
+
+  /** Marks the session as having read outside content (also used by subagents' parents). */
+  markTainted(sessionId: string, source: string, now: number = Date.now()): void {
+    if (!this.#taintGate) return;
+    this.#taint.set(sessionId, { source: source || 'contenido externo', at: now });
+  }
+
+  /** A new message from the owner starts clean: the taint ends with the turn that read it. */
+  clearTaint(sessionId: string): void {
+    this.#taint.delete(sessionId);
+  }
+
+  /**
+   * Reason to drop every standing allowance for this call because the session
+   * read outside content: any call that is not provably a read, and is not
+   * itself another outside read, must be approved now, naming the source.
+   */
+  #taintReason(sessionId: string, call: ToolCall): string | null {
+    const source = this.taintOf(sessionId);
+    if (!source) return null;
+    if (externalReadSource(call) !== null) return null;
+    if (this.classifyEffect(call) === 'lee') return null;
+    return `Tras leer contenido externo (${source}), esta acción necesita tu aprobación expresa`;
   }
 
   /**
@@ -1227,6 +1284,15 @@ export class Gate {
   }
 
   async check(sessionId: string, call: ToolCall): Promise<Decision> {
+    const decision = await this.#check(sessionId, call);
+    if (decision.verdict === 'allow') {
+      const source = externalReadSource(call);
+      if (source !== null) this.markTainted(sessionId, source);
+    }
+    return decision;
+  }
+
+  async #check(sessionId: string, call: ToolCall): Promise<Decision> {
     this.registerSession(sessionId);
     const approved = this.#approved.get(sessionId);
     if (!approved) throw new Error(`gate session was not registered: ${sessionId}`);
@@ -1243,6 +1309,10 @@ export class Gate {
     // The gestor's per-step effect guard: a reason string here forces the ask
     // path below, past every automatic allowance. Deny rules still win.
     const forced = this.#forcedAsk.get(sessionId)?.(call) ?? null;
+    // Taint gate: after reading outside content, no standing allowance (memo,
+    // scope, fullControl, grant window) covers a call that is not a read.
+    const tainted = forced ? null : this.#taintReason(sessionId, call);
+    const noStanding = forced ?? tainted;
 
     const fp = this.#fingerprint(call);
     if (
@@ -1252,7 +1322,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
-      !forced
+      !noStanding
     ) {
       this.#markStarted(sessionId, fp, false);
       return this.#record(call, {
@@ -1310,7 +1380,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
-      !forced
+      !noStanding
     ) {
       // `#scopeLevelForCall` filtra ANTES las acciones que nunca admiten un
       // permiso reutilizable (shell, clic/teclado, cámara, rutas protegidas),
@@ -1344,7 +1414,7 @@ export class Gate {
         !factoryInstall &&
         !goalActivate &&
         !gestionEjecutar &&
-        !forced
+        !noStanding
       ) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
       }
@@ -1355,7 +1425,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
-      !forced &&
+      !noStanding &&
       this.#withinGrantWindow(sessionId, call)
     ) {
       return this.#record(call, { verdict: 'allow', reason: 'within the approval window' });
@@ -1379,6 +1449,7 @@ export class Gate {
           reason: 'not on the allow list',
           match: () => true,
         });
+    const askReason = tainted ? `${tainted}: ${askRule.reason}` : askRule.reason;
 
     for (const rule of this.#rules) {
       if (
@@ -1405,7 +1476,7 @@ export class Gate {
 
     let ok = false;
     try {
-      ok = await this.#approver(call, askRule.reason);
+      ok = await this.#approver(call, askReason);
     } catch (err) {
       log.error('approver threw, failing closed', { tool: call.tool, ...redact({ err }) });
       ok = false;
@@ -1842,4 +1913,39 @@ export function runPermisosCommand(
       : `No había un permiso "siempre" para ${target}. Los activos: ${tools.join(', ')}.`;
   revokeOne(found);
   return `Permiso "siempre" de ${found} quitado. Te volveré a pedir permiso la próxima vez que haga falta.`;
+}
+
+/**
+ * Taint gate: the outside source a call reads, or null when it reads nothing
+ * from outside. Web search, page fetches, the browser, downloads, documents,
+ * OCR and MCP tools bring text the owner did not write.
+ */
+export function externalReadSource(call: ToolCall): string | null {
+  const tool = call.tool;
+  const url = argString(call.args, 'url') || argString(call.args, 'href');
+  let host = '';
+  if (url) {
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      host = '';
+    }
+  }
+  const label = (name: string) => (host ? `${name} ${host}` : name);
+  switch (tool) {
+    case 'web':
+      return 'búsqueda web';
+    case 'fetch':
+      return label('página');
+    case 'browser':
+      return label('navegador');
+    case 'download':
+      return label('descarga');
+    case 'documents':
+      return 'documento';
+    case 'ocr':
+      return 'documento escaneado';
+    default:
+      return tool.startsWith('mcp') ? `herramienta MCP ${tool}` : null;
+  }
 }
