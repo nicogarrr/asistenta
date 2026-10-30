@@ -365,6 +365,7 @@ import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { tvRequest } from './tv/lgtv.js';
+import { staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
   TV_BUTTONS_TITLE,
@@ -2115,7 +2116,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // en paralelo con una captura del escritorio. El estado de la ultima mirada
     // se guarda en la tabla kv de la Store, para que el agente sepa que habia en
     // pantalla sin volver a despertar la tele.
-    all.push(...tvPlugin.tools({ store }));
+    // Un mensaje de Telegram viejo (Asistenta apagada) no mueve la tele: src/tv/stale-order.ts.
+    all.push(
+      ...tvPlugin.tools({ store, staleOrder: () => staleTvOrderNotice(inboundFor(thread).sentAt) }),
+    );
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
     // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
@@ -4853,6 +4857,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
     const isOwner = isOwnerDm(inbound, vigilanteOwnerId);
+    const stale = args.trim() ? staleTvOrderNotice(inbound.sentAt) : null;
+    if (stale) {
+      await say(inbound, stale, { quote: true });
+      return;
+    }
     // /tv a secas, del dueño en privado: el mando con botones.
     if (!args.trim() && isOwner) {
       await say(inbound, TV_BUTTONS_TITLE, { quote: true, buttons: tvButtons() });

@@ -395,6 +395,7 @@ export class TelegramChannel implements ChannelAdapter {
       isGroup,
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
+      sentAt: msg.date ? new Date(msg.date * 1000).toISOString() : undefined,
       replyToMessageId: msg.reply_to_message
         ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
         : undefined,

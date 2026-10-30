@@ -53,6 +53,11 @@ export interface TvToolDeps {
   /** Glasshouse GET /api/stats, optional for older installations. */
   stats?: () => Promise<unknown>;
   launch: (id: string) => Promise<void>;
+  /**
+   * Aviso si el mensaje que originó este turno es viejo (src/tv/stale-order.ts):
+   * entonces nada que mueva la tele se ejecuta. Ausente = siempre en vivo.
+   */
+  staleOrder?: () => string | null;
   key: (name: string) => Promise<void>;
   toast: (message: string) => Promise<void>;
   /**
@@ -269,6 +274,11 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
     // screen state that no longer exists, same reason as the ocr tool.
     executionMode: 'sequential',
     execute: async (_id, args) => {
+      const stale = TV_READ_ONLY.has(args.action) ? null : (deps.staleOrder?.() ?? null);
+      if (stale) {
+        log.info('tv: orden de un mensaje viejo, no se ejecuta', { action: args.action });
+        return { content: [{ type: 'text', text: stale }], details: { skipped: 'stale' } };
+      }
       try {
         return await runTvAction(deps, args);
       } catch (err) {
@@ -279,6 +289,15 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
 }
 
 type TvArgs = Static<typeof Params>;
+
+/** Acciones que solo miran la tele: un mensaje viejo puede seguir pidiéndolas. */
+const TV_READ_ONLY: ReadonlySet<string> = new Set([
+  'screenshot',
+  'state',
+  'status',
+  'apps',
+  'inspect',
+]);
 
 /**
  * Los errores de transporte llegan tecnicos ("No se pudo conectar... (no
