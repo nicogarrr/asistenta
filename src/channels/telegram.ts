@@ -1194,12 +1194,16 @@ export class TelegramChannel implements ChannelAdapter {
     bytes: Buffer,
     durationSeconds: number,
     caption: string,
+    threadId?: string,
   ): Promise<void> {
+    // Mismo tema que el resto de envíos (foto, documento, voz): sin message_thread_id
+    // el vídeo de un tema de un grupo con temas caía en «General».
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendVideo(chatId, new InputFile(bytes), {
           caption: fitCaption(`${caption} (${Math.round(durationSeconds)}s)`),
           supports_streaming: true,
+          message_thread_id: threadId ? Number(threadId) : undefined,
         }),
         120_000,
         'sendVideo timed out',
