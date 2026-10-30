@@ -241,7 +241,7 @@ import {
   parseAltavozArgs,
   stopReplyText,
 } from './audio/altavoz.js';
-import { audioTeleEnabled, tvCasterFromVault } from './audio/tv-cast.js';
+import { audioTeleEnabled, tvCasterFromVault, tvStopperFromVault } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import {
@@ -1527,6 +1527,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     },
     castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+    // /stop también para en la tele una nota mandada hace menos de 2 min (y nada más).
+    stopTv: audioTeleEnabled() ? tvStopperFromVault(vaultGet, tvRequest) : undefined,
     remove: (file) => rmSync(file, { force: true }),
     onError: (err) => log.warn('altavoz: no pude soltar la nota de voz', { err: String(err) }),
   });

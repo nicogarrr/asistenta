@@ -100,6 +100,16 @@ export interface AltavozPlayerDeps {
    * (una vez por sesión) de que suele ser el firewall de Windows. Por defecto 15 s.
    */
   noFetchMs?: number;
+  /**
+   * /stop en modo tele: para lo que suena en la tele (ssap media.controls/stop). Solo se
+   * usa si esta cola mandó algo a la tele hace poco (`teleStopWindowMs`): una tele que
+   * está con Netflix no se toca. Ausente si la tele está apagada.
+   */
+  stopTv?: () => Promise<unknown>;
+  /** Cuánto tiempo tras mandar una nota a la tele /stop todavía la para. Por defecto 2 min. */
+  teleStopWindowMs?: number;
+  /** Reloj (para pruebas). */
+  now?: () => number;
   /** Borra la copia temporal del PC. */
   remove(file: string): void;
   onError?: (err: unknown) => void;
@@ -122,7 +132,9 @@ export interface AltavozPlayer {
   ): boolean;
   /**
    * /stop: descarta las notas en cola de ese chat (o de todos sin `key`) y corta la que
-   * suena en el PC. Devuelve cuántas notas paró. Las descartadas no avisan de fallo.
+   * suena en el PC. Si ese chat mandó una nota a la tele hace menos de
+   * `teleStopWindowMs`, también la para en la tele. Devuelve cuántas notas paró. Las
+   * descartadas no avisan de fallo.
    */
   clear(key?: string): number;
   /** Promesa de la cola actual (para pruebas y para /stop). */
@@ -139,6 +151,9 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   let waiting = 0;
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
+  const now = deps.now ?? Date.now;
+  /** Última nota mandada a la tele por chat (la tele se queda con ella y sigue sonando). */
+  const lastTele = new Map<string | undefined, number>();
   /**
    * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
    * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
@@ -165,7 +180,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   const playOne = async (
     mode: 'pc' | 'tele',
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
-    item: { dropped: boolean; abort?: AbortController },
+    item: { key?: string; dropped: boolean; abort?: AbortController },
     onNotice?: (text: string) => void,
   ): Promise<void> => {
     if (item.dropped) return;
@@ -184,6 +199,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);
+      lastTele.set(item.key, now());
       watchFetch(r.hits, onNotice);
       return;
     }
@@ -197,6 +213,26 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     } finally {
       deps.remove(file);
     }
+  };
+  /** Para en la tele la nota de ese chat (o de cualquiera sin `key`) si es reciente. */
+  const stopRecentTele = (key?: string): number => {
+    const { stopTv } = deps;
+    if (!stopTv) return 0;
+    const window = deps.teleStopWindowMs ?? 120_000;
+    const t = now();
+    let recent = false;
+    for (const [k, at] of lastTele) {
+      if (key !== undefined && k !== key) continue;
+      lastTele.delete(k);
+      if (t - at <= window) recent = true;
+    }
+    if (!recent) return 0;
+    try {
+      void Promise.resolve(stopTv()).catch((err) => deps.onError?.(err));
+    } catch (err) {
+      deps.onError?.(err);
+    }
+    return 1;
   };
   return {
     enqueue(mode, load, onFail, key, onNotice) {
@@ -232,6 +268,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
         item.abort?.abort();
         stopped++;
       }
+      stopped += stopRecentTele(key);
       return stopped;
     },
     idle: () => chain,
