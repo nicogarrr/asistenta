@@ -20,7 +20,6 @@ const INTERNAL = new Set([
   'PA_SPK_FILE',
   'PA_EVOLVE_ATTEMPT', // evolve/run.ts → proponente
   'PA_EVOLVE_HYPOTHESIS',
-  'PA_EVOLVE_PROPOSER_PASS',
   'PA_SECRET_TELEGRAM_BOTTOKEN', // nombre de secreto del almacén, no se configura aquí
 ]);
 
