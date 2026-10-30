@@ -219,7 +219,7 @@ Add-Type -AssemblyName System.Windows.Forms
     // Base64 the payload across the process boundary: emoji and quotes survive
     // intact, and nothing needs escaping in the generated script.
     const payload = Buffer.from(text, 'utf8').toString('base64');
-    await this.#ps(pasteScript(payload, pasteSettleMs()));
+    await this.#ps(pasteScript(payload, pasteSettleMs(), pasteNoHistory()));
   }
 
   async key(key: string): Promise<void> {
@@ -432,7 +432,31 @@ export function pasteSettleMs(env: NodeJS.ProcessEnv = process.env): number {
  *    something new there meanwhile, it is left alone.
  * An empty clipboard is emptied again; one that could not be read is left as is.
  */
-export function pasteScript(payloadB64: string, settleMs: number): string {
+/** How the paste puts our text on the clipboard (unchanged default). */
+const PLAIN_SET = 'Pa-Retry { [System.Windows.Forms.Clipboard]::SetText($text) } | Out-Null';
+
+/**
+ * Same text, plus the formats Windows reads to keep an item out of Win+V history,
+ * out of cloud clipboard sync and away from clipboard monitors (DWORD 0 / any).
+ */
+const NO_HISTORY_SET = `$zero = { New-Object System.IO.MemoryStream(,[byte[]](0,0,0,0)) }
+$do = New-Object System.Windows.Forms.DataObject
+$do.SetText($text)
+$do.SetData('CanIncludeInClipboardHistory', (& $zero))
+$do.SetData('CanUploadToCloudClipboard', (& $zero))
+$do.SetData('ExcludeClipboardContentFromMonitorProcessing', (& $zero))
+Pa-Retry { [System.Windows.Forms.Clipboard]::SetDataObject($do, $true) } | Out-Null`;
+
+/**
+ * `PA_COMPUTER_PASTE_NO_HISTORY=1` keeps text Computer Use pastes (emoji, braces,
+ * accented runs) out of Nico's Win+V clipboard history and cloud sync. Off by
+ * default: the plain paste is what has been proven on his PC.
+ */
+export function pasteNoHistory(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.PA_COMPUTER_PASTE_NO_HISTORY === '1';
+}
+
+export function pasteScript(payloadB64: string, settleMs: number, noHistory = false): string {
   return `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -457,7 +481,7 @@ try {
   }
 } catch {}
 $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payloadB64}'))
-Pa-Retry { [System.Windows.Forms.Clipboard]::SetText($text) } | Out-Null
+${noHistory ? NO_HISTORY_SET : PLAIN_SET}
 Start-Sleep -Milliseconds 120
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 try {
