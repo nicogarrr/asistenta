@@ -90,6 +90,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'resultado de la última comprobación de pa iniciar (lo enseña pa autostart status)',
     backup: 'file',
   },
+  {
+    name: 'ordenador-off.json',
+    what: '/ordenador off guardado (control del PC apagado tras reiniciar)',
+    backup: 'file',
+  },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },
   { name: 'alerts-seen.json', what: 'alertas ya entregadas (evita repetidas)', backup: 'file' },
   {
