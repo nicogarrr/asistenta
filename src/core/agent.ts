@@ -395,6 +395,37 @@ export function capToolResultText<T extends { type: string; text?: string }>(
   });
 }
 
+/** User text for a retry whose earlier attempt left work in the transcript. */
+export const RETRY_CONTINUE = 'Continua con mi peticion anterior desde donde quedo.';
+
+function isDeadAssistant(message: AgentMessage | undefined): boolean {
+  const m = message as { role?: unknown; stopReason?: unknown } | undefined;
+  return m?.role === 'assistant' && (m.stopReason === 'error' || m.stopReason === 'aborted');
+}
+
+/**
+ * Undo what a failed attempt left in the transcript before it is retried.
+ *
+ * pi appends the user message and then an empty errored assistant message on a
+ * provider failure. Retrying with `prompt()` again used to leave the first copy
+ * in place, so every retry added one more copy of the user's message (and of its
+ * images) to that request and to every later one. Trailing errored/aborted
+ * assistant messages are dropped (providers skip them anyway); if nothing else
+ * of the attempt survives besides its own user message, that message goes too.
+ * Work the attempt did (tool calls and their results) is kept: it happened, and
+ * the retry must see it. Pure: returns a new array, never mutates the input.
+ */
+export function rewindFailedAttempt(messages: AgentMessage[], start: number): AgentMessage[] {
+  const from = Math.max(0, Math.min(start, messages.length));
+  let end = messages.length;
+  while (end > from && isDeadAssistant(messages[end - 1])) end--;
+  const attempt = messages.slice(from, end);
+  const onlyItsPrompt =
+    attempt.length === 0 ||
+    (attempt.length === 1 && (attempt[0] as { role?: unknown }).role === 'user');
+  return onlyItsPrompt ? messages.slice(0, from) : messages.slice(0, end);
+}
+
 /** A hung model must not hold the turn: the summary gives up and the history stays. */
 const SUMMARY_TIMEOUT_MS = 40_000;
 const SUMMARY_COOLDOWN_TURNS = 3;
@@ -844,8 +875,11 @@ export class PersonalAgent {
    *
    * The iteration budget is refilled by `beginRun()` and only spans this turn: three
    * attempts must not mean three times the tool budget, and a loop straddling two
-   * attempts is still a loop. (Known limitation, documented: a retry re-sends the
-   * same prompt, so it lands in the transcript as a repeated user message.)
+   * attempts is still a loop. Before each retry the failed attempt is rewound
+   * (`rewindFailedAttempt`): an attempt that produced nothing leaves no trace and
+   * the prompt is re-sent once; an attempt whose tools ran keeps its work and the
+   * retry only adds a continuation note, so the user's message (and its images)
+   * never lands twice in the transcript.
    */
   async run(
     prompt: string,
@@ -901,7 +935,23 @@ export class PersonalAgent {
         if (added.length) log.info('tools loaded for this message', { added });
         this.#agent.state.tools = this.#loadout.active();
       }
+      // Where this run's messages begin: a retry rewinds only its own attempt.
+      const runStart = this.#agent.state.messages.length;
+      let attemptStart = runStart;
       let result = await this.#attempt(prompt, images, hooks, shared);
+      const retryInput = (): {
+        text: string;
+        images: typeof images;
+      } => {
+        const rewound = rewindFailedAttempt(this.#agent.state.messages, attemptStart);
+        this.#agent.state.messages = rewound;
+        attemptStart = rewound.length;
+        // Work from an earlier attempt is still in the transcript (the prompt with
+        // it): only a continuation note goes in. Otherwise the prompt goes once.
+        return rewound.length > runStart
+          ? { text: RETRY_CONTINUE + retryRecoveryNote(shared.steps), images: undefined }
+          : { text: prompt + retryRecoveryNote(shared.steps), images };
+      };
 
       while (
         attempt < this.#config.retry.attempts &&
@@ -926,12 +976,8 @@ export class PersonalAgent {
         });
         await sleep(delay, this.#runAbort.signal);
         if (this.#externalAbort || this.#runAbort.signal.aborted) break;
-        result = await this.#attempt(
-          prompt + retryRecoveryNote(shared.steps),
-          images,
-          hooks,
-          shared,
-        );
+        const next = retryInput();
+        result = await this.#attempt(next.text, next.images, hooks, shared);
       }
 
       // Desbordamiento de contexto: no es un fallo terminal. Se compacta una vez y
@@ -942,8 +988,12 @@ export class PersonalAgent {
         log.warn('context overflow: compactando y reintentando', {
           error: result.error.slice(0, 160),
         });
+        // Rewind before compacting so the summary never sees the dead attempt,
+        // and the retry does not add a second copy of the prompt.
+        const next = retryInput();
         await this.#compact();
-        result = await this.#attempt(prompt, images, hooks, shared);
+        attemptStart = this.#agent.state.messages.length;
+        result = await this.#attempt(next.text, next.images, hooks, shared);
       }
 
       return { ...result, attempts: attempt + 1 };
