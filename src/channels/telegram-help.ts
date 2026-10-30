@@ -224,14 +224,18 @@ export function helpCommands(): string[] {
   return HELP_SECTIONS.flatMap((section) => section.entries.map((entry) => entry.command));
 }
 
-/** /help: secciones con título y una línea por comando. */
-export function helpText(): string {
+/**
+ * /help: secciones con título y una línea por comando. Con `bold`, los títulos van
+ * entre `**` para enviarse con format 'marks' (negrita real en Telegram); el resto
+ * no lleva marcas, así que nada más cambia de aspecto.
+ */
+export function helpText(opts: { bold?: boolean } = {}): string {
   const blocks = HELP_SECTIONS.map((section) => {
     const lines = section.entries.map((entry) => {
       const usage = entry.args ? `/${entry.command} ${entry.args}` : `/${entry.command}`;
       return `${usage} — ${entry.description}`;
     });
-    return [section.title, ...lines].join('\n');
+    return [opts.bold ? `**${section.title}**` : section.title, ...lines].join('\n');
   });
   return [
     'Háblame normal: entiendo frases como «recuérdame mañana a las 9 llamar al médico» o «apaga la tele». Los comandos son atajos.',

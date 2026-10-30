@@ -5518,7 +5518,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const cmdHelp = async (inbound: Inbound): Promise<void> => {
-    await say(inbound, helpText(), { quote: true });
+    await say(inbound, helpText({ bold: true }), { quote: true, format: 'marks' });
   };
 
   const cmdStart = async (inbound: Inbound): Promise<void> => {
