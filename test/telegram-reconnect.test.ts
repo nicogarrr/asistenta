@@ -18,6 +18,8 @@ const harness = vi.hoisted(() => {
   const state = {
     startCalls: 0,
     stopFails: false,
+    /** stop() never settles, like grammY's last getUpdates with Telegram unreachable. */
+    stopHangs: false,
     /** getUpdates failures still to throw, each AFTER onStart like grammY. */
     failTimes: 0,
     /** Delay onStart by one macrotask, to test a late onStart after stop(). */
@@ -85,6 +87,7 @@ const harness = vi.hoisted(() => {
     }
     async stop(): Promise<void> {
       if (state.stopFails) throw new Error('fixture stop failed');
+      if (state.stopHangs) return new Promise<void>(() => {});
       state.resolveStop?.();
     }
   }
@@ -135,6 +138,7 @@ describe('telegram reconnect', () => {
     vi.useFakeTimers();
     harness.state.startCalls = 0;
     harness.state.stopFails = false;
+    harness.state.stopHangs = false;
     harness.state.failTimes = 0;
     harness.state.deferOnStart = false;
     harness.state.resolveStop = undefined;
@@ -238,5 +242,32 @@ describe('telegram reconnect', () => {
     harness.state.stopFails = true;
     await expect(channel.stop(true)).rejects.toThrow('cierre de polling');
     await expect(channel.stop()).resolves.toBeUndefined();
+  });
+
+  it('stop() no espera para siempre la última llamada de red de grammY', async () => {
+    const channel = new TelegramChannel({ token: 't', allowedUserIds: [1] });
+    await channel.start(makeHandlers({ lost: [], recovered: [] }));
+    harness.state.stopHangs = true;
+    let done = false;
+    void channel.stop().then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    expect(channel.isReady()).toBe(false);
+  });
+
+  it('strict stop con grammY colgado avisa de cierre no confirmado en ≤10 s', async () => {
+    const channel = new TelegramChannel({ token: 't', allowedUserIds: [1] });
+    await channel.start(makeHandlers({ lost: [], recovered: [] }));
+    harness.state.stopHangs = true;
+    let error: unknown;
+    void channel.stop(true).catch((e: unknown) => {
+      error = e;
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(String(error)).toContain('cierre de polling');
   });
 });
