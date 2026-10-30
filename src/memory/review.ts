@@ -248,3 +248,37 @@ export function clear(path: string): number {
   writeAtomic(path, []);
   return removed;
 }
+
+/** Cuántas parejas enseña `/memoria revisar` (el mensaje de Telegram es corto). */
+const REVIEW_SHOWN = 10;
+
+/**
+ * `/memoria revisar`: parejas de entradas vigentes que parecen decir lo
+ * contrario («vive en Madrid» / «no vive en Madrid»). Solo lectura: no borra
+ * ni elige; el dueño decide con `/memoria olvidar <id>`.
+ */
+export function findContradictions<T extends { id: string; text: string }>(
+  entries: readonly T[],
+): Array<[T, T]> {
+  const pairs: Array<[T, T]> = [];
+  for (let a = 0; a < entries.length; a++) {
+    for (let b = a + 1; b < entries.length; b++) {
+      const left = entries[a];
+      const right = entries[b];
+      if (left && right && isContradiction(left.text, right.text)) pairs.push([left, right]);
+    }
+  }
+  return pairs;
+}
+
+export function contradictionsReply(entries: ReadonlyArray<{ id: string; text: string }>): string {
+  const pairs = findContradictions(entries);
+  if (!pairs.length) return 'No veo contradicciones en la memoria de este chat.';
+  const lines = [`Posibles contradicciones (${pairs.length}):`];
+  pairs.slice(0, REVIEW_SHOWN).forEach(([a, b], i) => {
+    lines.push(`${i + 1}. [${a.id}] ${a.text}`, `   [${b.id}] ${b.text}`);
+  });
+  if (pairs.length > REVIEW_SHOWN) lines.push(`… y ${pairs.length - REVIEW_SHOWN} más`);
+  lines.push('Si una ya no vale: /memoria olvidar <id>. Yo no borro nada por mi cuenta.');
+  return lines.join('\n');
+}
