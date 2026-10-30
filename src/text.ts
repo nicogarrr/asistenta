@@ -19,3 +19,16 @@ export function foldAccents(value: string): string {
 export function normalizeHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/\.+$/, '');
 }
+
+/**
+ * Host comparable de una URL (`normalizeHostname` sobre `new URL(url).hostname`),
+ * o `null` si el texto no es una URL. Única fuente para los `hostOf` del navegador,
+ * las descargas y las vigilancias de precio.
+ */
+export function urlHostname(url: string): string | null {
+  try {
+    return normalizeHostname(new URL(url).hostname);
+  } catch {
+    return null;
+  }
+}
