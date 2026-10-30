@@ -14,6 +14,7 @@ import { buildContextNote, createDaemonGate } from '../../src/cli.js';
 import type { Config } from '../../src/config.js';
 import { PersonalAgent } from '../../src/core/agent.js';
 import { createGoalTickExecute, type ThreadTickDeps } from '../../src/daemon/goal-tick.js';
+import { queueThreadTurn } from '../../src/daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from '../../src/daemon/routine-fire.js';
 import { createRoutineTask } from '../../src/daemon/routine-task.js';
 import { Store } from '../../src/db.js';
@@ -355,26 +356,33 @@ export class Core {
       tail: Promise.resolve(),
       generation: 0,
       active: false,
+      // La MISMA cola por hilo que el daemon (src/daemon/inbound.ts): en orden, y /stop
+      // (generation) descarta lo que aún no empezó.
       user: async (text: string) => {
-        const sid = this.sessions.begin(key, text.slice(0, 80));
-        this.sessions.addTurn(sid, 'user', text);
-        agent.attachContext(
-          buildContextNote(
-            { key, name },
-            this.store,
-            this.memory,
-            undefined,
-            this.workstreams,
-            undefined,
-            this.sessions,
-          ),
-        );
-        const r = await agent.run(text);
-        gate.clearSession(key);
-        this.sessions.addTurn(sid, 'assistant', (r.text ?? '').slice(0, 500));
-        this.sessions.end(sid, (r.text ?? '').slice(0, 200));
+        const r = await queueThreadTurn(t, () => runUserTurn(text));
+        if (r === undefined) throw new Error('turno descartado: /stop subió la generación');
         return r;
       },
+    };
+    const runUserTurn = async (text: string) => {
+      const sid = this.sessions.begin(key, text.slice(0, 80));
+      this.sessions.addTurn(sid, 'user', text);
+      agent.attachContext(
+        buildContextNote(
+          { key, name },
+          this.store,
+          this.memory,
+          undefined,
+          this.workstreams,
+          undefined,
+          this.sessions,
+        ),
+      );
+      const r = await agent.run(text);
+      gate.clearSession(key);
+      this.sessions.addTurn(sid, 'assistant', (r.text ?? '').slice(0, 500));
+      this.sessions.end(sid, (r.text ?? '').slice(0, 200));
+      return r;
     };
     this.threads.set(key, t);
     return t;
