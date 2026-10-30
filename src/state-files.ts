@@ -53,7 +53,6 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'pricewatch.sqlite', what: 'historial de precios vigilados', backup: 'db' },
   // Ficheros sueltos (backup.ts además copia cualquier otro *.json de la raíz).
   { name: 'pricewatch.json', what: 'tus alertas de precio', backup: 'file' },
-  { name: 'correo-canal.json', what: 'cursor del correo como canal', backup: 'file' },
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },

@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { stateEntry } from './state-files.js';
 
 /**
  * Restaurar una copia de `runBackup` (`<copias>/<AAAA-MM-DD>/`) sobre el estado.
@@ -21,9 +22,23 @@ export function listBackups(root: string): string[] {
     .reverse();
 }
 
+/**
+ * Lo que una copia puede devolver al estado: lo que el registro (state-files.ts) dice
+ * que va en la copia, o un *.json / *.db / *.sqlite suelto de la raíz que el registro no
+ * nombra (backup.ts los copia por patrón). Lo excluido a propósito (vault.enc,
+ * agent.pid, browser/, control/…) o desconocido no se restaura aunque esté en la copia.
+ */
+export function restorable(name: string): boolean {
+  const entry = stateEntry(name);
+  if (entry) return entry.backup !== false;
+  return /\.(json|db|sqlite)$/.test(name);
+}
+
 export interface RestoreResult {
   from: string;
   restored: string[];
+  /** Lo que estaba en la copia pero no se restaura (ver `restorable`). */
+  skipped: string[];
   /** Donde quedó lo que había antes (vacío si no había nada que apartar). */
   savedDir: string;
 }
@@ -46,6 +61,7 @@ export function restoreBackup(opts: {
   const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
   const savedDir = join(root, `antes-de-restaurar-${stamp}`);
   const restored: string[] = [];
+  const skipped: string[] = [];
   const setAside = (name: string): void => {
     const target = join(opts.stateDir, name);
     if (!existsSync(target)) return;
@@ -54,6 +70,10 @@ export function restoreBackup(opts: {
   };
   for (const name of readdirSync(from)) {
     if (name === 'backups') continue;
+    if (!restorable(name)) {
+      skipped.push(name);
+      continue;
+    }
     setAside(name);
     if (/\.(db|sqlite)$/.test(name)) {
       setAside(`${name}-wal`);
@@ -62,7 +82,7 @@ export function restoreBackup(opts: {
     cpSync(join(from, name), join(opts.stateDir, name), { recursive: true });
     restored.push(name);
   }
-  return { from, restored, savedDir: existsSync(savedDir) ? savedDir : '' };
+  return { from, restored, skipped, savedDir: existsSync(savedDir) ? savedDir : '' };
 }
 
 /** `pa backup` (lista) y `pa backup restaurar <AAAA-MM-DD|ultima>`. */
@@ -96,6 +116,7 @@ export async function backupCommand(args: string[]): Promise<number> {
     const r = restoreBackup({ stateDir: paths.state, date });
     process.stdout.write(
       `Restaurada la copia ${r.from}: ${r.restored.join(', ')}.\n` +
+        (r.skipped.length ? `No restaurado (no va en la copia): ${r.skipped.join(', ')}.\n` : '') +
         (r.savedDir ? `Lo que había antes está en ${r.savedDir}.\n` : ''),
     );
     return 0;
