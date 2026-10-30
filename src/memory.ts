@@ -453,6 +453,22 @@ export function memoryScopesFor(scope: string): MemoryScopes {
   return { write, read: write === scope ? [write] : [write, scope] };
 }
 
+/**
+ * Lo que enseña la pestaña Memoria del panel. Sin ámbito elegido muestra el chat
+ * privado del dueño (`telegram:dm:<id>#main`, donde escriben Telegram y el chat del
+ * panel desde #473), no un ámbito `local` que en el día a día está vacío; con un
+ * hilo elegido lee como /memoria: el chat principal más ese hilo.
+ */
+export function panelMemoryEntries(
+  memory: MemoryStore,
+  scope: string | undefined,
+  ownerId: string | number | undefined,
+): MemoryEntry[] {
+  const chosen = scope?.trim();
+  const fallback = ownerId === undefined ? 'local' : `telegram:dm:${String(ownerId)}#main`;
+  return memory.allIn(memoryScopesFor(chosen ? chosen : fallback).read);
+}
+
 export class MemoryStore {
   readonly dir: string;
 
