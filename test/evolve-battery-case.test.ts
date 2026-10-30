@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFauxCore, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
@@ -168,6 +176,30 @@ describe('PA_EVOLVE_BATTERY por defecto', () => {
       encoding: 'utf8',
       timeout: 60_000,
     });
+    expect(r.stderr).toContain('no es un caso válido');
+    expect(r.status).toBe(2);
+  });
+
+  it('el script valida el caso ANTES de cargar el asistente (un caso inválido responde rápido aunque la máquina vaya cargada)', () => {
+    // Copia mínima: el asistente (battery-case.ts) revienta si se carga; solo está el lector del caso.
+    const repo = process.cwd();
+    const cwd = mkdtempSync(join(tmpdir(), 'pa-battery-cwd-'));
+    mkdirSync(join(cwd, 'src', 'evolve'), { recursive: true });
+    writeFileSync(join(cwd, 'package.json'), '{"type":"module"}');
+    writeFileSync(
+      join(cwd, 'src', 'evolve', 'battery-case.ts'),
+      "throw new Error('asistente cargado antes de validar el caso');\n",
+    );
+    const env = join(repo, 'src', 'evolve', 'battery-case-env.ts');
+    if (existsSync(env)) copyFileSync(env, join(cwd, 'src', 'evolve', 'battery-case-env.ts'));
+    const home = mkdtempSync(join(tmpdir(), 'pa-battery-home-'));
+    const r = spawnSync(process.execPath, [join(repo, 'scripts', 'evolve-battery-case.mjs')], {
+      cwd,
+      env: { PATH: process.env.PATH, HOME: home, PA_BATTERY_CASE: '{}' },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    expect(r.stderr).not.toContain('asistente cargado');
     expect(r.stderr).toContain('no es un caso válido');
     expect(r.status).toBe(2);
   });
