@@ -7,6 +7,7 @@ import {
   type TargetResult,
   type WaitResult,
 } from '../browser/service.js';
+import { UNREADABLE_TARGET } from '../browser/target.js';
 import { normalizeDomain, parseSiteKey, siteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
@@ -433,6 +434,12 @@ export async function challengeNote(
 /** Separator the approval text knows: element description, then the text of its card. */
 export const CONTEXT_MARK = '\nCONTEXTO DEL ELEMENTO:\n';
 
+/**
+ * Pasado este tiempo entre la lectura del elemento para la pregunta (gateHint) y la
+ * ejecución, hubo una espera humana: se vuelve a leer el elemento antes de actuar.
+ */
+export const TARGET_RECHECK_AFTER_MS = 2_000;
+
 export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
@@ -440,6 +447,35 @@ export function createBrowserTool(
 ): AgentTool<typeof BrowserParams> & {
   gateHint: (args: Record<string, unknown>) => Promise<string>;
 } {
+  // Lo que leyó gateHint de cada elemento justo antes de preguntar, para comparar
+  // al ejecutar (ver targetDrift).
+  const hinted = new Map<string, { base: string; at: number }>();
+  const hintKey = (scope: string, action: string, selector: string) =>
+    `${scope}\u0000${action}\u0000${selector}`;
+  const targetDrift = async (
+    scope: string,
+    record: Record<string, unknown>,
+  ): Promise<string | null> => {
+    const action = String(record.action ?? '');
+    const selector = typeof record.selector === 'string' ? record.selector : '';
+    if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return null;
+    const key = hintKey(scope, action, selector);
+    const seen = hinted.get(key);
+    hinted.delete(key);
+    // Sin lectura previa, o ejecutado al instante (no hubo espera de aprobación):
+    // nada que comparar.
+    if (!seen || Date.now() - seen.at < TARGET_RECHECK_AFTER_MS) return null;
+    if (seen.base === UNREADABLE_TARGET) return null;
+    const now = await service.describeTarget(scope, selector).catch(() => UNREADABLE_TARGET);
+    if (now === seen.base) return null;
+    const short = (s: string) => s.split('\n')[0]?.slice(0, 160) ?? '';
+    return (
+      `No he hecho ${action === 'click' ? 'clic' : 'la acción'}: el elemento aprobado ` +
+      `(«${short(seen.base)}») cambió mientras esperaba la aprobación; ahora el mismo ` +
+      `selector apunta a «${short(now)}». Vuelve a mirar la página (snapshot) y pide ` +
+      'aprobación otra vez si sigue siendo lo que hay que hacer.'
+    );
+  };
   return {
     name: 'browser',
     label: 'Browser',
@@ -542,6 +578,7 @@ export function createBrowserTool(
       const selector = typeof args.selector === 'string' ? args.selector : '';
       if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
       const base = await service.describeTarget(scopeOf(), selector);
+      hinted.set(hintKey(scopeOf(), action, selector), { base, at: Date.now() });
       // A selection (store, product, option) is judged by the card it belongs to, not by
       // the button's own label: show that card's text next to the element.
       const ctx =
@@ -557,6 +594,16 @@ export function createBrowserTool(
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;
+      // El elemento que Nico aprobó tiene que ser el que recibe la acción. Si entre
+      // la pregunta y la respuesta (una aprobación lenta) la página cambió y el mismo
+      // selector apunta ahora a otro elemento, no se actúa: se avisa y se vuelve a mirar.
+      const drift = await targetDrift(scope, record);
+      if (drift) {
+        return {
+          content: [{ type: 'text', text: drift }],
+          details: { action: String(record.action ?? ''), targetChanged: true },
+        };
+      }
       if (
         selectionLocked.has(scope) &&
         ['click', 'choose', 'fill', 'press'].includes(String(args.action))
