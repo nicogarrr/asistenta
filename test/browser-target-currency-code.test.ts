@@ -1,10 +1,11 @@
 import { type Browser, chromium, type Page } from 'playwright';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { describeLocator } from '../src/browser/target.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 const MARK = '[importe en el formulario]';
 
-describe('describeLocator: importe con el código de moneda delante', () => {
+describeBrowser('describeLocator: importe con el código de moneda delante', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {

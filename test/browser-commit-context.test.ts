@@ -1,7 +1,8 @@
 import { type Browser, chromium, type Page } from 'playwright';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { describeTarget } from '../src/browser/target.js';
 import { BROWSER_FREE_ACTIONS, Gate } from '../src/permissions.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // SYNTHETIC pages. The control's own wording is neutral on purpose: what the gate must
 // react to is the structure (a submit control in a form that shows an amount), not words.
@@ -25,7 +26,7 @@ const ask = async (page: Page, sel: string) => {
   return log.length > 0;
 };
 
-describe('submit control in a form that shows an amount asks', () => {
+describeBrowser('submit control in a form that shows an amount asks', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {
@@ -67,7 +68,7 @@ describe('submit control in a form that shows an amount asks', () => {
 // SYNTHETIC fixtures, not real sites. Controls other than a plain submit button, inside a
 // form or dialog that shows an amount, also ask (a SPA commits with type=button, role=button
 // or a link). Everything outside a priced form/dialog, and one-character controls, stays free.
-describe('any acting control inside a priced form or dialog asks', () => {
+describeBrowser('any acting control inside a priced form or dialog asks', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {
@@ -128,7 +129,7 @@ describe('any acting control inside a priced form or dialog asks', () => {
   });
 });
 
-describe('regression: submit/image controls keep asking whatever their length', () => {
+describeBrowser('regression: submit/image controls keep asking whatever their length', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {

@@ -11,6 +11,7 @@ import {
   similarity,
 } from '../src/browser/service.js';
 import { createBrowserTool } from '../src/tools/browser.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 /**
  * The browser against real pages that break in the ways real pages break.
@@ -147,7 +148,7 @@ function startServer(): Promise<{ server: Server; base: string }> {
   });
 }
 
-describe('browser: fiabilidad en páginas reales', () => {
+describeBrowser('browser: fiabilidad en páginas reales', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-reliable-'));
   const service = new BrowserService({
     policy: {

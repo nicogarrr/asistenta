@@ -11,6 +11,7 @@ import {
 } from '../src/browser/service.js';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
 import { challengeNote } from '../src/tools/browser.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 describe('classifyChallenge', () => {
   const base = {
@@ -126,7 +127,7 @@ describe('isMissingBrowserError', () => {
   });
 });
 
-describe('BrowserService: challenge detection and installed-browser fallback (live)', () => {
+describeBrowser('BrowserService: challenge detection and installed-browser fallback (live)', () => {
   let server: Server;
   let base = '';
   const root = mkdtempSync(join(tmpdir(), 'pa-antibot-'));
