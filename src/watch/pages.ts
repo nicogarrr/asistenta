@@ -691,6 +691,22 @@ const fmtDayTime = new Intl.DateTimeFormat('es-ES', {
   minute: '2-digit',
 });
 
+/**
+ * Último valor guardado, legible: un precio tal cual; el resumen interno de texto o de
+ * feed (un hash) no le dice nada al usuario.
+ */
+export function watchValueText(v: string): string {
+  if (!v) return 'pendiente';
+  if (v === 'presente') return 'la palabra aparece';
+  if (v === 'ausente') return 'la palabra no aparece';
+  if (v.startsWith('texto:')) return 'texto sin precio claro';
+  if (v.startsWith('feed:')) {
+    const n = v.slice('feed:'.length).split(',').filter(Boolean).length;
+    return n === 1 ? 'feed con 1 entrada' : `feed con ${n} entradas`;
+  }
+  return v;
+}
+
 /** Ficha de una vigilancia para /precio: último valor, histórico y avisos configurados. */
 export function describeWatch(
   w: PageWatch,
@@ -699,7 +715,7 @@ export function describeWatch(
 ): string {
   const lines = [`${w.label || w.url} (id ${w.id})`, w.url];
   if (!s) {
-    lines.push(`Aún no tengo lecturas de precio; último valor: ${w.lastValue || 'pendiente'}.`);
+    lines.push(`Aún no tengo lecturas de precio; último valor: ${watchValueText(w.lastValue)}.`);
   } else {
     lines.push(
       `Último: ${eur(s.lastCents)} (${fmtDayTime.format(s.lastAt)}${s.lastInStock === null ? '' : s.lastInStock ? ', en stock' : ', consta agotado'})`,
