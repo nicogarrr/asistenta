@@ -34,7 +34,8 @@ describe('modo noche', () => {
     const steps = TV_SCENES.noche?.build({}) ?? [];
     expect(steps).toEqual([
       { action: 'volume', level: NOCHE_DEFAULT_LEVEL },
-      { action: 'toast', message: 'Modo noche: volumen bajo.' },
+      { action: 'picture', mode: 'eco' },
+      { action: 'toast', message: 'Modo noche: volumen bajo e imagen oscura.' },
     ]);
     expect(NOCHE_DEFAULT_LEVEL).toBe(8);
     expect(steps.some((s) => s.action === 'power')).toBe(false);
@@ -45,14 +46,14 @@ describe('modo noche', () => {
     const r = runner(async () => false);
     const res = await runScene(TV_SCENES.noche?.build({}) ?? [], r.deps);
     expect(r.done).toEqual([]);
-    expect(res.map((x) => x.status)).toEqual(['omitido', 'omitido']);
+    expect(res.map((x) => x.status)).toEqual(['omitido', 'omitido', 'omitido']);
     expect(res[0]?.text).toBe('la tele esta apagada');
   });
 
   it('con la tele encendida ejecuta los pasos', async () => {
     const r = runner(async () => true);
     await runScene(TV_SCENES.noche?.build({}) ?? [], r.deps);
-    expect(r.done.map((s) => s.action)).toEqual(['volume', 'toast']);
+    expect(r.done.map((s) => s.action)).toEqual(['volume', 'picture', 'toast']);
   });
 
   it('si el estado falla, actua (como antes)', async () => {
@@ -60,7 +61,7 @@ describe('modo noche', () => {
       throw new Error('sin respuesta');
     });
     await runScene(TV_SCENES.noche?.build({}) ?? [], r.deps);
-    expect(r.done.map((s) => s.action)).toEqual(['volume', 'toast']);
+    expect(r.done.map((s) => s.action)).toEqual(['volume', 'picture', 'toast']);
   });
 });
 
@@ -71,6 +72,7 @@ describe('apagar todo', () => {
     const res = await runScene(steps, r.deps);
     expect(r.done).toEqual([
       { action: 'toast', message: 'Apagando. Buenas noches.' },
+      { action: 'closeForeground' },
       { action: 'power', on: false },
     ]);
     expect(summarizeScene('apagado', res, steps.length)).toContain('apagar la tele: hecho');
@@ -80,13 +82,13 @@ describe('apagar todo', () => {
     const r = runner(async () => false);
     const res = await runScene(TV_SCENES['apagar-todo']?.build({}) ?? [], r.deps);
     expect(r.done).toEqual([]);
-    expect(res[1]?.text).toBe('ya estaba apagada');
+    expect(res[2]?.text).toBe('ya estaba apagada');
   });
 
   it('sin status se apaga igualmente', async () => {
     const r = runner(undefined);
     await runScene(TV_SCENES['apagar-todo']?.build({}) ?? [], r.deps);
-    expect(r.done.map((s) => s.action)).toEqual(['toast', 'power']);
+    expect(r.done.map((s) => s.action)).toEqual(['toast', 'closeForeground', 'power']);
   });
 });
 

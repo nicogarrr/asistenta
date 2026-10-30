@@ -62,8 +62,9 @@ Doble toque: si se pulsa el mismo botón del mando dos veces en menos de 1 s (o 
 
 ## Extras de Glasshouse en las rutinas (decidido 30-oct-2026)
 
-Nico pidió «elige las opciones con más lógica». Decisión:
-- «apagar todo» NO cierra la app antes de apagar: apagar ya para la reproducción, y un `closeApp` previo solo añade un paso más que puede fallar.
-- «modo noche» NO cambia la imagen (brillo, ahorro de energía): son ajustes persistentes de la tele y se quedarían oscuros al día siguiente, sin forma fiable de restaurar el valor anterior. Solo baja el volumen.
-- Ninguna rutina programa el temporizador de apagado: podría cortar una peli a medias.
-
+Nico pidió «elige las opciones con más lógica»:
+- «apagar todo» cierra antes la app que esté abierta (la de primer plano; la pantalla de inicio no) y luego apaga.
+- «modo noche» baja el volumen y pone la imagen oscura (modo de imagen «eco», el más oscuro de LG).
+- Los dos extras son opcionales: sin Glasshouse se omiten y, si la tele los rechaza, se ignoran (apagar todo apaga igual).
+- Volver a la imagen de antes: «pon la imagen en estándar» (la tool `tv` con `action=picture pictureMode=standard`, o cine, vivid…) o desde el menú de la tele. El modo cine no toca la imagen.
+- Ninguna rutina programa el temporizador de apagado.
