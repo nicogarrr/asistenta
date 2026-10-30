@@ -68,7 +68,14 @@ export interface PageWatch {
 export type CheckOutcome =
   | { kind: 'baseline'; value: string }
   | { kind: 'unchanged'; value: string }
-  | { kind: 'changed'; from: string; to: string; inStock?: boolean | null }
+  | {
+      kind: 'changed';
+      from: string;
+      to: string;
+      inStock?: boolean | null;
+      /** Feed RSS/Atom: entradas que no estaban en la lectura anterior (las más nuevas primero). */
+      newItems?: FeedItem[];
+    }
   | {
       kind: 'target';
       cents: number;
@@ -153,7 +160,9 @@ export function extractPrice(text: string): string | null {
 export function sameWatchValue(a: string, b: string): boolean {
   if (a === b) return true;
   const canon = (v: string): string =>
-    v.startsWith('texto:') || v === 'presente' || v === 'ausente' ? v : (extractPrice(v) ?? v);
+    v.startsWith('texto:') || v.startsWith('feed:') || v === 'presente' || v === 'ausente'
+      ? v
+      : (extractPrice(v) ?? v);
   return canon(a) === canon(b);
 }
 
@@ -164,9 +173,72 @@ const fold = (t: string): string =>
     .replace(/\s+/g, ' ')
     .toLowerCase();
 
+export interface FeedItem {
+  title: string;
+  link: string;
+  id: string;
+}
+
+/** Cuántas entradas del feed se recuerdan entre lecturas. */
+const FEED_ITEMS_KEPT = 30;
+
+const xmlText = (raw: string): string =>
+  raw
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const tagText = (block: string, tag: string): string => {
+  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i').exec(block);
+  return m?.[1] ? xmlText(m[1]) : '';
+};
+
+function atomLink(block: string): string {
+  const links = [...block.matchAll(/<link\b([^>]*)\/?>/gi)].map((m) => m[1] ?? '');
+  const href = (attrs: string): string => /\bhref\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ?? '';
+  const alt = links.find((a) => !/\brel\s*=/i.test(a) || /\brel\s*=\s*["']alternate["']/i.test(a));
+  return xmlText(href(alt ?? links[0] ?? ''));
+}
+
+/** Entradas de un feed RSS/Atom (en el orden del feed), o null si el texto no es un feed. */
+export function parseFeedItems(text: string): FeedItem[] | null {
+  const head = text.slice(0, 2000);
+  const isAtom = /<feed[\s>]/i.test(head);
+  if (!isAtom && !/<rss[\s>]|<rdf:RDF[\s>]/i.test(head)) return null;
+  const tag = isAtom ? 'entry' : 'item';
+  const blocks = [...text.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi'))];
+  return blocks.slice(0, FEED_ITEMS_KEPT).map((m) => {
+    const b = m[1] ?? '';
+    const title = tagText(b, 'title');
+    const link = isAtom ? atomLink(b) || tagText(b, 'link') : tagText(b, 'link');
+    const id = tagText(b, isAtom ? 'id' : 'guid') || link || title;
+    return { title, link, id };
+  });
+}
+
+const feedKey = (it: FeedItem): string =>
+  createHash('sha256').update(it.id).digest('hex').slice(0, 10);
+
+function feedValue(items: FeedItem[]): string {
+  return `feed:${items.map(feedKey).join(',')}`;
+}
+
+function feedKeys(value: string): Set<string> {
+  return new Set(value.slice('feed:'.length).split(',').filter(Boolean));
+}
+
 /** Valor que se compara entre lecturas. Con palabra: solo si aparece o no (sin mayúsculas ni tildes). */
 export function watchValue(text: string, keyword = ''): string {
   if (keyword) return fold(text).includes(fold(keyword)) ? 'presente' : 'ausente';
+  // Un feed nunca se lee como precio: un «19,99 €» en un post daría un «Cambio de precio» falso.
+  const feed = parseFeedItems(text);
+  if (feed) return feedValue(feed);
   const price = extractPrice(text);
   if (price) return price;
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -535,6 +607,15 @@ export class PageWatchStore {
       )
       .run(value, this.now(), w.id);
     if (!w.lastValue) return { kind: 'baseline', value };
+    if (value.startsWith('feed:')) {
+      // Feed: solo cuentan las entradas nuevas; una que sale del final no es un cambio.
+      // Una lectura anterior que no era de feed (versión vieja) es solo la nueva referencia.
+      if (!w.lastValue.startsWith('feed:')) return { kind: 'baseline', value };
+      const seen = feedKeys(w.lastValue);
+      const newItems = (parseFeedItems(text) ?? []).filter((it) => !seen.has(feedKey(it)));
+      if (newItems.length === 0) return { kind: 'unchanged', value };
+      return { kind: 'changed', from: w.lastValue, to: value, newItems };
+    }
     if (sameWatchValue(value, w.lastValue)) return { kind: 'unchanged', value };
     return { kind: 'changed', from: w.lastValue, to: value };
   }
@@ -564,6 +645,16 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
     return o.to === 'presente'
       ? `Ahora aparece "${w.keyword}" en ${name}\n${w.url}`
       : `Ya no veo "${w.keyword}" en el texto que leo de ${name} (puede cargarse con JavaScript o estar bloqueado, compruébalo)\n${w.url}`;
+  }
+  if (o.kind === 'changed' && o.to.startsWith('feed:')) {
+    const items = o.newItems ?? [];
+    if (items.length === 0) return `Hay entradas nuevas en ${name}\n${w.url}`;
+    const shown = items
+      .slice(0, 5)
+      .map((it) => `• ${it.title || '(sin título)'}${it.link ? `\n  ${it.link}` : ''}`);
+    const more = items.length > 5 ? `\n…y ${items.length - 5} más` : '';
+    const n = items.length === 1 ? '1 entrada nueva' : `${items.length} entradas nuevas`;
+    return `${n} en ${name}:\n${shown.join('\n')}${more}`;
   }
   if (o.kind === 'changed') {
     const textual = o.to.startsWith('texto:') || o.from.startsWith('texto:');
