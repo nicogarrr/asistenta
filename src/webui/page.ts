@@ -197,6 +197,7 @@ export function renderPage(): string {
     .turno button { margin-top: 6px; }
     .rejilla {
       display: grid;
+      align-items: start;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
       max-width: 1240px;
@@ -449,7 +450,7 @@ export function renderPage(): string {
           <h2 id="titulo-objetivos">Objetivos</h2>
           <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
         </header>
-        <div id="panel-objetivos" class="tarjeta-cuerpo" aria-live="polite">
+        <div id="panel-objetivos" class="tarjeta-cuerpo sin-tope" aria-live="polite">
           <p class="muted">Cargando…</p>
         </div>
       </article>

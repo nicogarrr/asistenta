@@ -17,6 +17,14 @@ describe('panel: las aprobaciones pendientes se ven sin buscarlas', () => {
     expect(renderPage()).toContain('.tarjeta-cuerpo.sin-tope { max-height: none; }');
   });
 
+  it('los objetivos tampoco se recortan y las tarjetas no se estiran vacías', () => {
+    const html = renderPage();
+    // Un objetivo bloqueado quedaba cortado a media frase dentro de un scroll interno.
+    expect(html).toMatch(/id="panel-objetivos" class="tarjeta-cuerpo sin-tope"/);
+    // Sin esto, «Estado» se estiraba hasta la altura de «Objetivos» con media tarjeta vacía.
+    expect(html).toMatch(/\.rejilla \{[^}]*align-items: start;/);
+  });
+
   it('cuenta las pendientes en la cabecera y en el título de la pestaña', () => {
     const html = renderPage();
     expect(html).toContain('id="contador-aprobaciones"');
