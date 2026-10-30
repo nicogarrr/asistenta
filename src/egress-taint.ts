@@ -30,6 +30,46 @@ export const NON_TAINTING_TOOLS: ReadonlySet<string> = new Set([
   'edit',
 ]);
 
+/**
+ * Webs donde el navegador (con el perfil de Nico, sesión iniciada) enseña contenido
+ * privado: correo, documentos, mensajería, calendario, nube. `browser` sigue sin
+ * contaminar para el resto de páginas, pero abrir una de estas sí cuenta como
+ * lectura privada. Solo endurece.
+ */
+const PRIVATE_WEB_HOSTS: readonly string[] = [
+  'mail.google.com',
+  'docs.google.com',
+  'drive.google.com',
+  'calendar.google.com',
+  'contacts.google.com',
+  'photos.google.com',
+  'keep.google.com',
+  'outlook.live.com',
+  'outlook.office.com',
+  'outlook.office365.com',
+  'mail.yahoo.com',
+  'mail.proton.me',
+  'icloud.com',
+  'web.whatsapp.com',
+  'web.telegram.org',
+  'messages.google.com',
+  'onedrive.live.com',
+  'dropbox.com',
+  'notion.so',
+  'github.com',
+];
+
+function privateWebHost(url: unknown): string | null {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  let host: string;
+  try {
+    host = new URL(url.trim()).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    return null;
+  }
+  return PRIVATE_WEB_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? host : null;
+}
+
 /** Acciones concretas que no leen nada privado aunque la herramienta pueda hacerlo. */
 const NON_TAINTING_ACTIONS: ReadonlySet<string> = new Set([
   'computer:move',
@@ -69,6 +109,10 @@ const LABELS: Record<string, string> = {
  * herramienta nueva o de MCP cuenta como privada hasta que se demuestre lo contrario.
  */
 export function taintSourceOf(tool: string, args: Record<string, unknown>): string | null {
+  if (tool === 'browser') {
+    const host = privateWebHost(args.url);
+    if (host) return `una web con tu sesión iniciada (${host})`;
+  }
   if (NON_TAINTING_TOOLS.has(tool)) return null;
   const action = typeof args.action === 'string' ? args.action : '';
   if (action && NON_TAINTING_ACTIONS.has(`${tool}:${action}`)) return null;
