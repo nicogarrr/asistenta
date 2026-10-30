@@ -33,6 +33,10 @@ const harness = vi.hoisted(() => {
   /** Mirrors gramY's InlineKeyboard: one row by default, text() fills the last row. */
   class FakeInlineKeyboard {
     inline_keyboard: Array<Array<{ text: string; callback_data: string }>> = [[]];
+    row(): FakeInlineKeyboard {
+      this.inline_keyboard.push([]);
+      return this;
+    }
     text(label: string, callbackData: string): FakeInlineKeyboard {
       this.inline_keyboard[this.inline_keyboard.length - 1]?.push({
         text: label,
@@ -240,11 +244,16 @@ describe('offerApproval con askScope', () => {
       expect(harness.sent.find((m) => m.text === '¿Permito shell?')).toBeDefined();
     });
     const message = harness.sent.find((m) => m.text === '¿Permito shell?');
-    expect(message?.keyboard[0]).toEqual([
-      { text: 'Una vez', callback_data: 'approve:once:req-1' },
-      { text: 'Esta sesión', callback_data: 'approve:session:req-1' },
-      { text: 'Siempre', callback_data: 'approve:always:req-1' },
-      { text: 'Denegar', callback_data: 'deny:req-1' },
+    // Dos filas de dos: en una sola fila los cuatro se truncaban en el móvil.
+    expect(message?.keyboard).toEqual([
+      [
+        { text: '✅ Una vez', callback_data: 'approve:once:req-1' },
+        { text: '🕒 Esta sesión', callback_data: 'approve:session:req-1' },
+      ],
+      [
+        { text: '♾️ Siempre', callback_data: 'approve:always:req-1' },
+        { text: '❌ Denegar', callback_data: 'deny:req-1' },
+      ],
     ]);
     channel.cancelApprovals();
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
@@ -297,9 +306,11 @@ describe('offerApproval sin askScope', () => {
       expect(harness.sent.find((m) => m.text === '¿Permito shell?')).toBeDefined();
     });
     const message = harness.sent.find((m) => m.text === '¿Permito shell?');
-    expect(message?.keyboard[0]).toEqual([
-      { text: 'Permitir', callback_data: 'approve:req-1' },
-      { text: 'Denegar', callback_data: 'deny:req-1' },
+    expect(message?.keyboard).toEqual([
+      [
+        { text: '✅ Permitir', callback_data: 'approve:req-1' },
+        { text: '❌ Denegar', callback_data: 'deny:req-1' },
+      ],
     ]);
     channel.cancelApprovals();
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
@@ -321,7 +332,7 @@ describe('offerApproval sin askScope', () => {
     press('approve:req-1');
     press('approve:req-1');
     await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
-    expect(harness.answers).toContain('That request is no longer pending.');
+    expect(harness.answers).toContain('Esta solicitud ya no está pendiente.');
   });
 });
 
@@ -360,7 +371,7 @@ describe('aprobación ligada a su chat', () => {
     const pending = channel.offerApproval('req-x', '42', '¿Permito x?', { askScope: true });
     press('approve:always:req-x', 7, 999);
     expect(await stateOf(pending)).toBe('pending');
-    expect(harness.answers).toContain('That request is no longer pending.');
+    expect(harness.answers).toContain('Esta solicitud ya no está pendiente.');
     // El botón legítimo en su chat sigue funcionando.
     press('approve:once:req-x', 7, 42);
     await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
