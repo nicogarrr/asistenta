@@ -143,6 +143,12 @@ export interface AltavozPlayer {
    * descartadas no avisan de fallo.
    */
   clear(key?: string): number;
+  /**
+   * Apunta una nota que llegó a la tele por otro camino («reprodúcelo en la tele»), para
+   * que /stop en ese chat la pare igual que una de /altavoz tele: solo dentro de
+   * `teleStopWindowMs` y con el `stop` del propio cast (si no hay, el genérico).
+   */
+  noteTele(key: string | undefined, stop?: () => Promise<unknown>): void;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
   pending(): number;
@@ -280,6 +286,9 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       stopped += stopRecentTele(key);
       return stopped;
+    },
+    noteTele(key, stop) {
+      lastTele.set(key, { at: now(), stop });
     },
     idle: () => chain,
     pending: () => waiting,

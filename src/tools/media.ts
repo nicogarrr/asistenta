@@ -111,7 +111,18 @@ export interface MediaToolDeps {
    * Plays an already-playable MP3 on the TV. Takes ownership of the file (deletes it
    * when done). Absent when the TV target is off (PA_AUDIO_TELE) or no TV is paired.
    */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  castToTv?: (file: string) => Promise<{
+    ok: boolean;
+    message: string;
+    hits?: () => number;
+    /** Para ESTA nota en la tele (cierra el navegador/Glasshouse solo si lo abrió este cast). */
+    stop?: () => Promise<unknown>;
+  }>;
+  /**
+   * La tele aceptó el audio: quien lleva /stop apunta el «parar» de este cast para que
+   * /stop en este chat lo pare (mismo plazo y mismas reglas que /altavoz tele).
+   */
+  onTeleCast?: (stop?: () => Promise<unknown>) => void;
   /**
    * Aviso al chat cuando la tele aceptó el audio pero no lo ha descargado en
    * `teleNoFetchMs` (15 s): suele ser el firewall de Windows. Una vez por sesión.
@@ -364,7 +375,10 @@ async function playReceived(
       const file = playable;
       playable = null;
       const res = await deps.castToTv(file);
-      if (res.ok) watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
+      if (res.ok) {
+        watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
+        deps.onTeleCast?.(res.stop);
+      }
       return ok(res.message, { played: res.ok, target, audioAt: audio.at });
     }
     deps.beforePlayback?.();
