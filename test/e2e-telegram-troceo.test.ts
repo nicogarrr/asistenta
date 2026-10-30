@@ -196,15 +196,15 @@ describe('e2e troceo de respuestas largas en Telegram', () => {
     }
   });
 
-  it('los botones (aprobar/denegar) van solo en el primer trozo', async () => {
+  it('los botones (aprobar/denegar) van solo en el último trozo', async () => {
     await send(longAnswer(40), {
       buttons: [
         { label: 'Sí', action: 'approve:1' },
         { label: 'No', action: 'deny:1' },
       ],
     });
-    expect(state.sent[0]?.markup).toBeDefined();
-    for (const m of state.sent.slice(1)) expect(m.markup).toBeUndefined();
+    expect(state.sent.at(-1)?.markup).toBeDefined();
+    for (const m of state.sent.slice(0, -1)) expect(m.markup).toBeUndefined();
   });
 
   it('si Telegram rechaza el HTML de un trozo, ESE trozo sale en texto plano y los demás en HTML', async () => {
