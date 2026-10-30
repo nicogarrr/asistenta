@@ -1,5 +1,11 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import {
+  type DeferredSpec,
+  deferredSpecs,
+  LOADER_TOOL_NAME,
+  threadAllowToolNames,
+} from './capabilities.js';
 
 /**
  * Conditional tool loading (P8).
@@ -14,34 +20,16 @@ import { Type } from 'typebox';
  * - once loaded, a tool stays loaded for the rest of the chat;
  * - the loader's description lists what each deferred tool is for.
  */
-export interface DeferredSpec {
-  pattern: RegExp;
-  /** One line for the loader: what the tool is for. */
-  purpose: string;
-}
+export type { DeferredSpec };
 
-export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = {
-  browser: {
-    pattern:
-      /https?:\/\/|www\.|\b[\w-]+\.(com|es|org|net|io|eu|gob|cat)\b|web|p[áa]gina|navega|internet|google|youtube|amazon|booking|airbnb|wikipedia|busca en|mira en|reserva|compra|login|inicia(r)? sesi[óo]n|formulario|captcha|renfe|tren|vuelo|hotel|billete|cita|rellena|descarga/i,
-    purpose: 'navegar por webs, rellenar formularios, elegir fechas y autocompletados',
-  },
-  delegate: {
-    pattern: /delega|subagente|sub-agente|en paralelo|multi-?agente|varios agentes/i,
-    purpose: 'delegar lectura/busqueda/planes a un subagente aislado (solo lectura)',
-  },
-  media: {
-    pattern:
-      /audio|voz|foto|imagen|v[íi]deo|c[áa]mara|micr[óo]fono|graba|sonido|m[úu]sica|nota de voz|en vivo|live|sube el volumen|reproduce/i,
-    purpose: 'audio, voz, fotos, vídeo, cámara y micrófono',
-  },
-};
+/** Derivado del catálogo de capacidades (core/capabilities.ts). */
+export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = deferredSpecs();
 
 const LoaderParams = Type.Object({
   nombre: Type.String({ description: 'Nombre de la herramienta a cargar.' }),
 });
 
-export const LOADER_TOOL_NAME = 'cargar_herramienta';
+export { LOADER_TOOL_NAME };
 
 /**
  * Tools every Telegram thread may call without asking. The loader is here because it
@@ -49,27 +37,7 @@ export const LOADER_TOOL_NAME = 'cargar_herramienta';
  * the gate on its own. Without it the safety net asks the user (or is denied when
  * nobody can approve) exactly when the keyword list missed.
  */
-export const THREAD_ALLOW_TOOLS = [
-  'read',
-  'list',
-  'fetch',
-  'done',
-  'preguntar',
-  'memory',
-  'reminder',
-  'agenda',
-  'opengym',
-  'book',
-  // Long-haul goals: propose/list/pause/resume/cancel/avance are freely
-  // callable; `activar` is hardcoded as always-ask in the Gate itself.
-  'objetivo',
-  // Universal errands: preparar/paso/completar/cancelar/listar/estado are
-  // freely callable; `ejecutar` is hardcoded as always-ask in the Gate itself.
-  'gestion',
-  // Subagentes de solo lectura: el hijo tiene su propia Gate sin approver.
-  'delegate',
-  LOADER_TOOL_NAME,
-];
+export const THREAD_ALLOW_TOOLS: string[] = threadAllowToolNames();
 
 export class ToolLoadout {
   readonly #base: AgentTool[];

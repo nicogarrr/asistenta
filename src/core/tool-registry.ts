@@ -7,6 +7,7 @@ import { createFetchTool } from '../tools/fetch.js';
 import { fsTools } from '../tools/fs.js';
 import { createShellTool } from '../tools/shell.js';
 import { createWebTool } from '../tools/web.js';
+import { machineToolNames } from './capabilities.js';
 
 /**
  * Registro de herramientas del núcleo (paso P0 del plan de cohesión).
@@ -24,16 +25,10 @@ import { createWebTool } from '../tools/web.js';
 /**
  * Herramientas que mueven la máquina (ratón, teclado, ficheros, navegador, cobros,
  * audio). En el daemon solo estas pasan por el mutex de la máquina; las de solo
- * lectura van en paralelo entre conversaciones.
+ * lectura van en paralelo entre conversaciones. Se deriva del catálogo
+ * (`core/capabilities.ts`, campo `machine`).
  */
-export const MACHINE_TOOLS: ReadonlySet<string> = new Set([
-  'computer',
-  'shell',
-  'browser',
-  'checkout',
-  'write',
-  'media',
-]);
+export const MACHINE_TOOLS: ReadonlySet<string> = new Set(machineToolNames());
 
 export interface BaseToolDeps {
   config: Config;
