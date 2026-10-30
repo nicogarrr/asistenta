@@ -67,7 +67,11 @@ export async function decodeForWhisper(input: Buffer, mimeType?: string): Promis
   try {
     return { ...(await decodeOggOpusToPcm(input)), capped: false };
   } catch (err) {
-    if (!(err instanceof Error) || !err.message.includes('no opus frames')) throw err;
+    // Cualquier fallo del decodificador opus pasa a ffmpeg, no solo «no opus
+    // frames»: un .ogg con Vorbis (audio/ogg, muy común en grabadoras Android)
+    // lanzaba «does not support this codec vorbis» y se rechazaba sin probar
+    // ffmpeg, que sí lo lee. Sin ffmpeg queda el error original.
+    if (!ffmpegDecoderAvailable()) throw err;
     return await decodeAudioWithFfmpeg(input);
   }
 }
