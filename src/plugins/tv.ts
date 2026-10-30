@@ -183,6 +183,9 @@ export function tvToolDeps(store: Store): TvToolDeps {
             {},
             {
               allowPlaintext: p.allowPlaintext,
+              // Cada sondeo tras el WoL: con la tele aun dormida no hay que
+              // esperar 5 s por intento; 2 s basta en la red de casa.
+              connectTimeoutMs: 2_000,
               onNewClientKey: saveNewKey,
               commandTimeoutMs: 3_000,
               connectRetries: 0,
