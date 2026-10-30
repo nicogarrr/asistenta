@@ -10,6 +10,16 @@ import { parseAllowedHosts } from './webui/server.js';
 
 const MIN_TOKEN = 24;
 
+/**
+ * El token del panel tal como lo usa el daemon: sin espacios ni `\r` sueltos.
+ * Un .env editado en Windows deja `PA_WEB_TOKEN=abc\r` o un espacio final; el
+ * doctor ya lo recortaba y decía «bien», pero el daemon exigía el token con el
+ * espacio y el panel rechazaba siempre el token correcto.
+ */
+export function panelTokenFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PA_WEB_TOKEN?.trim() ?? '';
+}
+
 export function panelDoctorLines(env: NodeJS.ProcessEnv = process.env): string[] {
   const rawPort = env.PA_WEB_PORT?.trim();
   if (!rawPort) return ['panel web       off (PA_WEB_PORT y PA_WEB_TOKEN para activarlo)'];
@@ -17,7 +27,7 @@ export function panelDoctorLines(env: NodeJS.ProcessEnv = process.env): string[]
   if (!/^\d+$/.test(rawPort) || !Number.isInteger(port) || port < 1 || port > 65_535) {
     return [`panel web       NO ARRANCA: PA_WEB_PORT=${rawPort} no es un puerto válido`];
   }
-  const token = env.PA_WEB_TOKEN?.trim() ?? '';
+  const token = panelTokenFromEnv(env);
   if (!token) return ['panel web       NO ARRANCA: falta PA_WEB_TOKEN'];
   const lines = [`panel web       http://127.0.0.1:${port} (solo este PC)`];
   if (token.length < MIN_TOKEN) {
