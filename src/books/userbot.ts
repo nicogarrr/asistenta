@@ -7,10 +7,19 @@
  * local. Sesion StringSession persistida en disco con 0600.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import { Api, TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
+import { uniqueTmpPath } from '../fs-tmp.js';
 
 export interface UserbotConfig {
   apiId: number;
@@ -40,7 +49,17 @@ function loadSession(path: string): StringSession {
 
 function saveSession(path: string, session: StringSession): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, session.save(), { mode: 0o600 });
+  // Atómico: un corte a medias dejaba la sesión truncada y había que volver a
+  // entrar con código de Telegram (y 2FA) desde la página de setup.
+  const tmp = uniqueTmpPath(path);
+  try {
+    writeFileSync(tmp, session.save(), { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
   chmodSync(path, 0o600);
 }
 
