@@ -262,6 +262,13 @@ async function handleRequest(
   const pathname = url.pathname;
   const apiPath = pathname === '/api' || pathname.startsWith('/api/');
 
+  if (!hostAllowed(req.headers.host)) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (apiPath) sendJson(res, 403, { error: 'Host no permitido' });
+    else send(res, 403, 'Host no permitido', 'text/plain; charset=utf-8');
+    return;
+  }
+
   if (apiPath) {
     res.setHeader('Cache-Control', 'no-store');
     const route = matchApiRoute(pathname);
@@ -305,6 +312,29 @@ async function handleRequest(
     default:
       send(res, 404, 'No encontrado', 'text/plain; charset=utf-8');
   }
+}
+
+/**
+ * Nombres válidos en la cabecera Host. El panel solo escucha en loopback, pero
+ * una web cualquiera puede apuntar su propio dominio a 127.0.0.1 (DNS rebinding)
+ * y hacer que el navegador le hable al panel como si fuera ella. Rechazar los
+ * Host ajenos corta eso de raíz; misma defensa que usa Kanvas en su servidor.
+ */
+const LOCAL_HOST_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Nombre de la cabecera Host sin puerto, en minúsculas y sin punto final. */
+export function hostHeaderName(header: string | undefined): string {
+  const host = (header ?? '').trim().toLowerCase();
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? '' : host.slice(0, end + 1);
+  }
+  return host.replace(/:\d*$/, '').replace(/\.$/, '');
+}
+
+export function hostAllowed(header: string | undefined): boolean {
+  const name = hostHeaderName(header);
+  return LOCAL_HOST_NAMES.has(name) || /^127(\.\d{1,3}){3}$/.test(name);
 }
 
 function assertLoopbackHost(host: string): void {
