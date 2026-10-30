@@ -416,6 +416,35 @@ export function listAlwaysGrants(dbPath: string | undefined): string[] {
   }
 }
 
+/** Un «Siempre» con el chat donde vale (para que /permisos diga dónde). */
+export interface AlwaysGrantWithChat {
+  tool: string;
+  chat: string;
+}
+
+/**
+ * Como `listAlwaysGrants`, pero cada fila trae su chat: un «Siempre» solo vale
+ * en el chat donde se dio, y /permisos tiene que poder decirlo. Ordenado por
+ * herramienta y chat; las filas antiguas sin chat no valen y no salen.
+ */
+export function listAlwaysGrantsWithChat(dbPath: string | undefined): AlwaysGrantWithChat[] {
+  if (!dbPath) return [];
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    ensureScopeTable(db);
+    return db
+      .prepare(
+        `SELECT DISTINCT tool, chat_key FROM approval_scopes
+          WHERE level = 'always' AND chat_key IS NOT NULL ORDER BY tool, chat_key`,
+      )
+      .all()
+      .map((row) => ({ tool: String(row.tool), chat: String(row.chat_key) }));
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Delete one standing grant from the shared database. Idempotent; returns
  * whether a row existed. Live gates ALSO keep a memory copy - deleting here
@@ -1519,6 +1548,15 @@ export class Gate {
     return [...new Set([...listAlwaysGrants(this.#dbPath), ...memory])].sort();
   }
 
+  /** Lo mismo que `listPersistedAlways`, con el chat de cada «Siempre». */
+  listPersistedAlwaysWithChat(): AlwaysGrantWithChat[] {
+    const memory = [...this.#alwaysAllow].map((key) => ({
+      tool: parseActionScopeKey(key)?.tool ?? key,
+      chat: this.#approvalChat,
+    }));
+    return [...listAlwaysGrantsWithChat(this.#dbPath), ...memory];
+  }
+
   /**
    * Take back a standing `always` grant: out of this process's memory AND out
    * of the shared database, so gates built later never see it. Every live
@@ -2240,6 +2278,11 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
+/** Nombre legible del chat de un «Siempre» en /permisos. */
+function permisosChatLabel(chat: string): string {
+  return chat === 'local' ? 'local (consola)' : chat;
+}
+
 /**
  * `/permisos`: the standing "siempre" grants, listed and taken back.
  *
@@ -2268,11 +2311,29 @@ export function runPermisosCommand(
       ...gates.flatMap((gate) => gate.listPersistedAlways()),
     ]),
   ].sort();
+  // En qué chat vale cada «Siempre» (vale solo allí): DB + memoria de cada gate.
+  const chatsOf = new Map<string, Set<string>>();
+  for (const row of [
+    ...listAlwaysGrantsWithChat(dbPath),
+    ...gates.flatMap((gate) => gate.listPersistedAlwaysWithChat()),
+  ]) {
+    const chats = chatsOf.get(row.tool) ?? new Set<string>();
+    chats.add(row.chat);
+    chatsOf.set(row.tool, chats);
+  }
+  const withChats = (tool: string): string => {
+    const chats = [...(chatsOf.get(tool) ?? [])].sort().map(permisosChatLabel);
+    if (chats.length === 0) return tool;
+    return chats.length === 1
+      ? `${tool} (chat ${chats[0]})`
+      : `${tool} (chats ${chats.join(', ')})`;
+  };
   if (sub === '' || sub === 'estado') {
     if (tools.length === 0)
       return 'No me has dado ningún permiso "siempre". Los de "esta sesión" o "una vez" no salen aquí: mueren solos al terminar su tarea.';
     return (
-      `Permisos "siempre" activos (${tools.length}): ${tools.join(', ')}. ` +
+      `Permisos "siempre" activos (${tools.length}): ${tools.map(withChats).join(', ')}. ` +
+      'Cada uno vale solo en el chat donde lo diste. ' +
       'Quita uno con /permisos revocar <herramienta> o todos con /permisos revocar todo. ' +
       'Dinero, credenciales y activaciones te preguntan siempre, haya o no un "siempre".'
     );
