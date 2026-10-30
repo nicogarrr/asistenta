@@ -484,20 +484,45 @@ export class TelegramChannel implements ChannelAdapter {
       await ctx.answerCallbackQuery({ text: TV_BUTTON_STALE }).catch(() => {});
       return;
     }
-    let text: string;
-    try {
-      text = await handlers.onTvButton({
+    const run = handlers
+      .onTvButton({
         channel: 'telegram',
         chatId: String(chatId),
         userId: String(userId),
         data: data.slice(0, 64),
+      })
+      .catch(() => {
+        handlers.log('warn', 'tv button failed', { data: data.slice(0, 64) });
+        return 'No he podido mandar la orden a la tele.';
       });
-    } catch {
-      handlers.log('warn', 'tv button failed', { data: data.slice(0, 64) });
-      text = 'No he podido mandar la orden a la tele.';
+    // Telegram solo acepta el aviso del botón durante unos segundos («query is too
+    // old»), y una orden lenta (encender por WoL, PA_TV_CMD_TIMEOUT_MS hasta 60 s)
+    // lo perdería. Si la orden no acaba enseguida, se avisa ya y el resultado va
+    // como mensaje al mismo chat.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const quick = await Promise.race([
+      run,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), TV_BUTTON_ACK_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (quick !== null) {
+      const short = quick.length > 190 ? `${quick.slice(0, 189)}…` : quick;
+      await ctx.answerCallbackQuery({ text: short, show_alert: quick.length > 60 }).catch(() => {});
+      return;
     }
-    const short = text.length > 190 ? `${text.slice(0, 189)}…` : text;
-    await ctx.answerCallbackQuery({ text: short, show_alert: text.length > 60 }).catch(() => {});
+    await ctx.answerCallbackQuery({ text: TV_BUTTON_SENDING }).catch(() => {});
+    const text = await run;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendMessage(chatId, text.slice(0, 4000)),
+        20_000,
+        'sendMessage timed out',
+      ),
+    ).catch(() => {
+      handlers.log('warn', 'tv button result not sent', { data: data.slice(0, 64) });
+    });
   }
 
   /**
@@ -1582,6 +1607,9 @@ export function fitCaption(text: string, max = CAPTION_MAX): string {
 /** Prefijo del callback de «📖 Ver todo»; nunca empieza como approve:/deny:. */
 export const MORE_CALLBACK_PREFIX = 'more:';
 
+/** Tiempo que se espera a la orden antes de contestar «Enviando…» al botón. */
+const TV_BUTTON_ACK_MS = 2500;
+const TV_BUTTON_SENDING = 'Enviando a la tele…';
 const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
