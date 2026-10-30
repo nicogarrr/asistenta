@@ -11,6 +11,7 @@ interface Fake {
   setAttribute(k: string, v: string): void;
   appendChild(c: Fake): void;
   replaceChildren(...c: Fake[]): void;
+  addEventListener(tipo: string, f: () => void): void;
 }
 function el(tag: string, className: string | null = null, texto = ''): Fake {
   return {
@@ -28,6 +29,7 @@ function el(tag: string, className: string | null = null, texto = ''): Fake {
     replaceChildren(...c) {
       this.children = c;
     },
+    addEventListener() {},
   };
 }
 const areas = [
