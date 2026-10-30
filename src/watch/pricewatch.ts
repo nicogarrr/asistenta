@@ -95,9 +95,14 @@ export function toUrl(store: StoreId, ref: string): string | null {
 
 /** "1.299,50 €" / "12,34€" -> céntimos. Formato español estricto; otro formato da null. */
 export function parseEuroCents(raw: string): number | null {
-  const m = raw.match(/(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s?€/);
+  // Miles con punto o con espacio (normal, duro U+00A0, estrecho U+202F o fino
+  // U+2009, como `Intl.NumberFormat('fr-FR')` y algunas tiendas): «1 299,00 €»
+  // son 1299 €, no 299 €. Igual que PRICE_RE de checkout (#389).
+  const m = raw.match(
+    /(?<![\d.,\u00a0\u202f\u2009])(\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,(\d{1,2}))?\s?€/,
+  );
   if (!m?.[1]) return null;
-  const euros = Number(m[1].replace(/\./g, ''));
+  const euros = Number(m[1].replace(/[.\u00a0\u202f\u2009 ]/g, ''));
   const cents = m[2] ? Number(m[2].padEnd(2, '0')) : 0;
   return euros * 100 + cents;
 }
