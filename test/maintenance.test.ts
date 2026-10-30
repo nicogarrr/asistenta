@@ -2,20 +2,12 @@
  * Retención y borrado por scope sobre estado temporal. Nada toca el directorio
  * real del agente: cada prueba crea su propio directorio y sus propias bases.
  */
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { eraseScope, pruneDocuments, pruneSessions } from '../src/maintenance.js';
+import { eraseScope, pruneSessions } from '../src/maintenance.js';
 import { SessionStore } from '../src/memory/sessions.js';
 import { memoryFile } from '../src/memory.js';
 
@@ -108,40 +100,6 @@ describe('pruneSessions', () => {
     );
 
     expect(pruneSessions(db, 7 * DAY, NOW)).toBe(0);
-  });
-});
-
-describe('pruneDocuments', () => {
-  it('borra solo los .txt más viejos por mtime y deja el resto', () => {
-    const dir = tempDir('pa-docs-');
-    const viejo = join(dir, 'viejo.txt');
-    const nuevo = join(dir, 'nuevo.txt');
-    const nota = join(dir, 'nota.md');
-    const subdir = join(dir, 'sub');
-    const dentro = join(subdir, 'viejo.txt');
-    writeFileSync(viejo, 'antiguo');
-    writeFileSync(nuevo, 'reciente');
-    writeFileSync(nota, 'no es un mirror');
-    mkdirSync(subdir);
-    writeFileSync(dentro, 'tampoco se mira');
-    const viejoSeg = (NOW - 10 * DAY) / 1000;
-    const nuevoSeg = (NOW - DAY) / 1000;
-    utimesSync(viejo, viejoSeg, viejoSeg);
-    utimesSync(nuevo, nuevoSeg, nuevoSeg);
-    utimesSync(nota, viejoSeg, viejoSeg);
-    utimesSync(dentro, viejoSeg, viejoSeg);
-
-    expect(pruneDocuments(dir, 7 * DAY, NOW)).toBe(1);
-
-    expect(existsSync(viejo)).toBe(false);
-    expect(readFileSync(nuevo, 'utf8')).toBe('reciente');
-    expect(readFileSync(nota, 'utf8')).toBe('no es un mirror');
-    expect(readFileSync(dentro, 'utf8')).toBe('tampoco se mira');
-  });
-
-  it('un directorio ausente devuelve cero en vez de lanzar', () => {
-    const dir = tempDir('pa-docs-ausente-');
-    expect(pruneDocuments(join(dir, 'no-existe'), DAY, NOW)).toBe(0);
   });
 });
 

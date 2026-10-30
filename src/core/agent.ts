@@ -21,11 +21,9 @@ import {
 import { buildSystemPrompt } from './prompt.js';
 import { createProviderHandle } from './provider.js';
 import {
-  DEFAULT_RETRY,
   isContextOverflow,
   isQuotaError,
   isTransientProviderError,
-  type RetryPolicy,
   retryDelay,
   retryRecoveryNote,
   sleep,
@@ -481,7 +479,6 @@ export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
   readonly #stream: boolean;
-  readonly #retry: RetryPolicy;
   readonly #sessionId: string;
   /** True while the run is parked waiting for a human approval. */
   #awaitingApproval = false;
@@ -508,7 +505,6 @@ export class PersonalAgent {
     agent: Agent,
     config: Config,
     stream: boolean,
-    retry: RetryPolicy,
     sessionId: string,
     budget: IterationBudget,
     sharedBudget: boolean,
@@ -517,7 +513,6 @@ export class PersonalAgent {
     this.#agent = agent;
     this.#config = config;
     this.#stream = stream;
-    this.#retry = retry;
     this.#sessionId = sessionId;
     this.#budget = budget;
     this.#runToolCallCeiling = config.maxToolCalls;
@@ -694,7 +689,6 @@ export class PersonalAgent {
       agent,
       config,
       stream,
-      DEFAULT_RETRY,
       sessionId,
       budget,
       sharedBudget,

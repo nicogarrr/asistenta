@@ -6,7 +6,7 @@
  * de más: solo se toca lo que el filtro nombra, y un fallo de una parte no debe
  * impedir limpiar las demás.
  */
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { memoryFile } from './memory.js';
@@ -110,43 +110,6 @@ export function retentionIfDue(deps: RetentionDeps): {
   const documents = docDays > 0 && deps.pruneDocs ? deps.pruneDocs(docDays * DAY_MS) : 0;
   deps.markRun(now.getTime());
   return { ran: true, sessions, documents };
-}
-
-/**
- * Borra del mirror de documentos los `*.txt` cuya fecha de modificación es más
- * antigua que `now - olderThanMs`. Es plano y no recursivo a propósito: el
- * mirror real guarda un fichero por documento en la raíz.
- *
- * El índice SQLite (`docs.sqlite`) NO se toca aquí. Si existe, hay que limpiar
- * aparte sus filas para que no queden documentos indexados cuyo texto ya no
- * está en el mirror; este módulo no conoce el esquema de esa base.
- *
- * Devuelve cuántos ficheros se borraron. Un directorio ausente es cero, no un
- * error: el mirror puede no haberse creado todavía.
- */
-export function pruneDocuments(dir: string, olderThanMs: number, now = Date.now()): number {
-  const cutoff = now - Math.max(0, olderThanMs);
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return 0;
-  }
-  let removed = 0;
-  for (const name of names) {
-    if (!name.toLowerCase().endsWith('.txt')) continue;
-    const file = join(dir, name);
-    try {
-      const info = statSync(file);
-      if (!info.isFile() || info.mtimeMs >= cutoff) continue;
-      rmSync(file, { force: true });
-      removed++;
-    } catch {
-      // Un fichero que desaparece entre readdir y stat, o que no se puede
-      // borrar, no debe impedir limpiar el resto del mirror.
-    }
-  }
-  return removed;
 }
 
 /** Borra un fichero solo si existe; nunca propaga el error. */
