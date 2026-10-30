@@ -493,3 +493,43 @@ describe('objetivos: final y cupo diario', () => {
     expect(core.telegram.sent).toHaveLength(0);
   });
 });
+
+describe('«Siempre» sobrevive a un reinicio, salvo donde nunca vale', () => {
+  it('«Siempre» para la tele no vuelve a preguntar tras reiniciar; «Siempre» al activar un objetivo no cubre el siguiente', async () => {
+    const dir = freshDir();
+    const core = boot(dir);
+    const model = new ScriptedModel();
+    const scope = threadKey();
+    const mk = (title: string) =>
+      core.goals.propose({
+        scope,
+        title,
+        verbatim: title,
+        plan: [{ text: 'x', done: false }],
+        cadence: '0 * * * *',
+      });
+    const a = mk('A');
+    const b = mk('B');
+    core.telegram.answers.push({ approved: true, scope: 'always' });
+    model.script(call('tv', { action: 'power', on: false }), say('ok'));
+    await (await core.thread()).user('apaga la tele');
+    core.telegram.answers.push({ approved: true, scope: 'always' });
+    model.script(call('objetivo', { action: 'activar', id: a.id }), say('ok'));
+    await (await core.thread()).user('activa A');
+    expect(core.goals.read(a.id)?.status).toBe('active');
+    core.stop();
+
+    const core2 = boot(dir);
+    const model2 = new ScriptedModel();
+    model2.script(call('tv', { action: 'power', on: true }), say('ok'));
+    await (await core2.thread()).user('enciende la tele');
+    expect(core2.tv.calls).toEqual(['power:true']);
+    expect(core2.telegram.approvals).toHaveLength(0);
+
+    // Activar un objetivo es «siempre pregunta»: el «Siempre» anterior no vale.
+    model2.script(call('objetivo', { action: 'activar', id: b.id }), say('ok'));
+    await (await core2.thread()).user('activa B');
+    expect(core2.telegram.approvals).toHaveLength(1);
+    expect(core2.goals.read(b.id)?.status).toBe('proposed');
+  });
+});
