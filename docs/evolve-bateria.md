@@ -39,5 +39,7 @@ Sin batería configurada no se promueve nada.
 - Cada caso activo que juzga la máquina se repite 3 veces y pasa por mayoría; si el comando falla,
   cuenta como fallo. Los fallos de entorno declarados (`envError`) no cuentan.
 - Los casos `heavy` rotan por semana ISO (un tercio cada semana, salvo los `always`); base y
-  candidato corren la misma selección.
+  candidato corren la misma selección. El turno cuenta semanas seguidas, no el número de semana
+  del año, así que en Año Nuevo no se repite ninguno. `/evolucion` dice cada semana qué heavy
+  rotan: «Casos pesados que rotan esta semana (turno N de 3): …».
 - Los casos desactivados, `qa` o sin criterio de máquina no puntúan (`unscored()` los explica).
