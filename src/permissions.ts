@@ -2189,7 +2189,17 @@ const CREDENTIAL_PATH =
  */
 export function lexicalNormalize(path: string): string {
   const parts: string[] = [];
-  for (const part of path.toLowerCase().replace(/\//g, '\\').split('\\')) {
+  let raw = path.toLowerCase().replace(/\//g, '\\');
+  // Prefijos de dispositivo de Win32 (\\?\C:\…, \\.\C:\…, \\?\UNC\srv\…): el mismo
+  // fichero con otra grafía.
+  raw = raw.replace(/^\\\\[?.]\\unc\\/, '\\\\').replace(/^\\\\[?.]\\(?=[a-z]:)/, '');
+  for (let part of raw.split('\\')) {
+    if (part !== '.' && part !== '..') {
+      // Windows ignora los puntos y espacios finales de cada nombre, y «fichero:flujo» /
+      // «fichero::$DATA» escribe en ese mismo fichero: se comparan como el fichero.
+      if (parts.length > 0 || !/^[a-z]:$/.test(part)) part = part.replace(/:.*$/, '');
+      part = part.replace(/[. ]+$/, '');
+    }
     if (part === '' || part === '.') continue;
     if (part === '..') {
       parts.pop();
