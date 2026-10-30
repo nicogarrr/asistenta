@@ -8,7 +8,7 @@
 // tests fijan la misma defensa en los demas bloques, siempre en el render: lo
 // almacenado no se reescribe.
 // biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que paths.ts lo capture
-import { FACTORY_TEST_STATE_DIR } from './factory-test-env.js';
+import './factory-test-env.js';
 import { mkdtempSync } from 'node:fs';
 import { Store } from '../src/db.js';
 import { tmpdir } from 'node:os';
