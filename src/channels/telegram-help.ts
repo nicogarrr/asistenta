@@ -119,6 +119,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: '[volumen]',
         description: 'suena en el PC el último audio que me mandaste',
       },
+      {
+        command: 'altavoz',
+        args: '[pc|tele|off]',
+        description: 'tus notas de voz suenan solas al llegar',
+      },
       { command: 'deshacer', description: 'repone el último fichero que escribí' },
     ],
   },

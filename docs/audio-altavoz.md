@@ -21,3 +21,18 @@ con su visor multimedia (`media.viewer/open`); si su webOS no lo tiene, con el n
 (`system.launcher/open`). Siempre pide aprobación.
 
 No probado todavía en la tele real: si ninguna de las dos APIs funciona, el bot lo dice.
+
+## Modo altavoz: `/altavoz`
+- `/altavoz pc` — cada nota de voz que me mandes suena sola en el PC al llegar (sin cambiar el
+  volumen del sistema). Siguen procesándose como siempre (transcripción y respuesta).
+- `/altavoz tele` — igual, pero en la tele (necesita `PA_AUDIO_TELE=1`).
+- `/altavoz off` — apagado (por defecto). `/altavoz` sin nada te dice el estado.
+
+Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el control del PC
+activo. Las notas suenan en orden, una detrás de otra; si se acumulan más de 5, las nuevas no se
+sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se duplica.
+
+## ¿Y «llamar al bot»?
+Telegram no deja que los bots reciban llamadas. `/altavoz` es lo más cercano: grabas, sueltas y
+suena en 1–3 segundos. Las alternativas (chat de voz con una cuenta de usuario, o «hablar» en
+directo desde el panel web) se estudian aparte.

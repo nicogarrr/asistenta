@@ -123,6 +123,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Reproducir el último audio en el PC',
   },
   {
+    command: 'altavoz',
+    description: 'Tus notas de voz suenan solas en el PC o la tele',
+  },
+  {
     command: 'ojo',
     description: 'Ver, activar o parar avisos proactivos',
   },
