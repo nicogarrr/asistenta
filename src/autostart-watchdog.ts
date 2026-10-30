@@ -154,8 +154,19 @@ export function describeDecision(d: WatchdogDecision | { action: 'start-failed' 
 
 function writeJson(path: string, value: unknown): void {
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value));
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, JSON.stringify(value));
+    renameSync(tmp, path);
+  } catch (error) {
+    // En Windows el rename falla si alguien tiene el fichero abierto: sin esto, cada
+    // revisión del vigilante dejaría otro .tmp en la carpeta de estado.
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // Ni el .tmp se puede quitar: no hay nada más que hacer.
+    }
+    throw error;
+  }
 }
 
 function readAt(path: string): number | undefined {
