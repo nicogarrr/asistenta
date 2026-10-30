@@ -69,6 +69,7 @@ import {
   pendingDownloads,
 } from './ojo-downloads.js';
 import {
+  burnNotices,
   confirmNotices,
   dropStaleReservations,
   initIgnoreStore,
@@ -643,23 +644,28 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       parts.push(agenda.notes.map((note) => note.replace(/\s+/g, ' ').slice(0, 600)).join('\n'));
 
     let sent = false;
+    let unknown = false;
     try {
-      // Vencido el plazo cuenta como no enviado: los números se sueltan y el
-      // aviso se reintenta en el próximo barrido. Si el envío lento llegara a
-      // entregarse, el peor caso es un aviso repetido, nunca uno perdido ni un
-      // daemon que no cierra.
+      // Vencido el plazo cuenta como no enviado: el aviso se reintenta en el próximo
+      // barrido. Si el envío lento llegara a entregarse, el peor caso es un aviso
+      // repetido, nunca uno perdido ni un daemon que no cierra.
       sent = await withTimeout(
         deps.send(parts.join('\n\n')),
         Math.max(1, deps.sendTimeoutMs ?? SEND_TIMEOUT_MS),
         'vigilante: envío del aviso',
       );
     } catch (err) {
+      unknown = true;
       log.warn('vigilante: envío fallido, se reintenta en el próximo barrido', {
         err: String(err),
       });
     }
     if (!sent) {
-      releaseNotices(deps.db, reserved);
+      // Solo un «no enviado» explícito suelta los números para reutilizarlos. Si el
+      // resultado es desconocido (plazo vencido o error) se queman: un aviso entregado
+      // tarde con sus [#N] no debe acabar nombrando otro aviso en /ignora N.
+      if (unknown) burnNotices(deps.db, reserved);
+      else releaseNotices(deps.db, reserved);
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
     }
 
