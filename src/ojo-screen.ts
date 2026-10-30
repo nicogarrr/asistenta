@@ -102,7 +102,7 @@ const HIDDEN = '[oculto]';
 // without any of the words («válido para un solo uso», «your one-time 4829»,
 // «autenticación en dos pasos: 731942») count too.
 const OTP_HINT =
-  /(?:^|[^\p{L}\p{N}])(c[oó]digo|code|otp|pin|clave|contrase[ñn]a|password|passcode|token|2fa|cvv|cvc|verificaci[oó]n|verification|un solo uso|one[- ]?time|single[- ]use|dos pasos|doble factor|two[- ]?factor|two[- ]?step|2[- ]step|autenticaci[oó]n|authentication)(?!\p{L})/iu;
+  /(?:^|[^\p{L}\p{N}])(?:tu|su|mi|your|my)?(c[oó]digo|code|otp|pin|clave|contrase[ñn]a|password|passcode|token|2fa|cvv|cvc|verificaci[oó]n|verification|un solo uso|one[- ]?time|single[- ]use|dos pasos|doble factor|two[- ]?factor|two[- ]?step|2[- ]step|autenticaci[oó]n|authentication)(?!\p{L})/iu;
 
 /** Quita control, formato (bidi, ZW...), sin asignar y privado; colapsa espacios. */
 function clean(s: string): string {
@@ -121,8 +121,10 @@ export function redact(input: string): string {
   let s = clean(input);
   // Línea con palabra de secreto: se oculta lo que sigue. Detrás de la palabra
   // basta con que no siga una letra: con `\b`, «PIN1234» (código pegado) se escapaba.
+  // Delante se admite un posesivo pegado («tucódigo123», «sucontraseña:», «yourcode»):
+  // con solo `\b` delante, la palabra no casaba y el código quedaba a la vista.
   s = s.replace(
-    /\b(contrase[ñn]a|password|passwd|pwd|token|secret[oa]?|api[ -]?key|clave|pin|cvv|cvc|c[oó]digo|code|otp|2fa|passcode|nacimiento|birth)(?![A-Za-z_])\s*[:=]?\s*\S.*$/gi,
+    /\b((?:tu|su|mi|your|my)?(?:contrase[ñn]a|password|passwd|pwd|token|secret[oa]?|api[ -]?key|clave|pin|cvv|cvc|c[oó]digo|code|otp|2fa|passcode|nacimiento|birth))(?![A-Za-z_])\s*[:=]?\s*\S.*$/gi,
     (_m, k: string) => `${k} ${HIDDEN}`,
   );
   // Emails.
