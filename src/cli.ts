@@ -301,7 +301,7 @@ import { seedBuiltinSkills, skillsForContext } from './skills/builtin.js';
 import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons, skillsIndex } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
-import { formatStatus, summarizeLog } from './status.js';
+import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
@@ -4631,7 +4631,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     } catch {
       logSummary = null;
     }
+    // Proyecto y modelo de esta conversación: solo el dueño en su chat privado.
+    let conversation: string[] | undefined;
+    if (isOwnerDm(inbound, vigilanteOwnerId)) {
+      const thread = await resolveThread(inbound);
+      conversation = conversationStatus({
+        projectDir: projectContexts.get(thread.key),
+        project: projectContexts.load(thread.key),
+        model: thread.agent.modelId,
+        primaryModel: thread.agent.availableModels[0] ?? config.model,
+      });
+    }
     const text = formatStatus({
+      conversation,
       version: process.env.npm_package_version ?? 'dev',
       node: process.version,
       uptimeMs: Date.now() - startedAt,

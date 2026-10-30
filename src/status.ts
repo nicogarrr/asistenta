@@ -1,3 +1,4 @@
+import type { ProjectContext } from './project-context.js';
 /**
  * Datos para /estado: que Nico vea desde Telegram si algo falla, sin abrir el PC.
  *
@@ -58,6 +59,28 @@ export interface StatusInfo {
   pageWatches: number;
   /** Recordatorios puntuales que no pude entregar y descarté (texto ya legible). */
   droppedReminders?: string[];
+  /** Solo en el chat privado del dueño: proyecto y modelo de esta conversación. */
+  conversation?: string[];
+}
+
+/**
+ * Líneas de «Esta conversación» en /estado: la carpeta de /proyecto (y qué
+ * fichero cargo) y el modelo de /modelo. Solo para el dueño en privado: la
+ * ruta de una carpeta local no se enseña en un grupo.
+ */
+export function conversationStatus(c: {
+  projectDir?: string;
+  project?: ProjectContext | null;
+  model: string;
+  primaryModel: string;
+}): string[] {
+  const project = !c.projectDir
+    ? 'Proyecto: ninguno (/proyecto <carpeta> para ligar uno).'
+    : c.project?.ok
+      ? `Proyecto: ${c.project.dir} (cargo ${c.project.name}, ${c.project.bytes} bytes).`
+      : `Proyecto: ${c.projectDir}, ahora no cargo nada: ${c.project?.ok === false ? c.project.reason : 'sin fichero'}.`;
+  const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (elegido con /modelo)'}.`;
+  return [project, model];
 }
 
 export function formatStatus(s: StatusInfo): string {
@@ -77,5 +100,9 @@ export function formatStatus(s: StatusInfo): string {
   }
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);
   for (const d of s.droppedReminders ?? []) lines.push(`No pude avisarte de: ${d}`);
+  if (s.conversation?.length) {
+    lines.push('', 'Esta conversación:');
+    for (const l of s.conversation) lines.push(`- ${l}`);
+  }
   return lines.join('\n');
 }
