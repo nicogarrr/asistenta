@@ -12,8 +12,9 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { uniqueTmpPath } from '../fs-tmp.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
 const ENV_PATH = process.env.BOOKS_ENV_PATH ?? '.env';
@@ -84,17 +85,45 @@ input,button{font-size:1rem;padding:.5rem;margin:.25rem 0;width:100%}</style></h
 <p>MSG</p>
 </body></html>`;
 
-function saveCredsToEnv(apiId: string, apiHash: string): void {
-  const lines = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8').split('\n') : [];
+/**
+ * Escribe las dos claves en el .env de Nico, que guarda TODAS sus claves.
+ * - Atómico (temporal + rename): un corte a medias (disco lleno, cierre) dejaba
+ *   el .env truncado y se perdían todas las claves, no solo estas dos.
+ * - Respeta el resto del fichero: líneas en blanco, CRLF de Windows y BOM.
+ * - Sustituye todas las apariciones de la clave (también `export CLAVE=`), para
+ *   que una línea repetida más abajo no siga mandando con el valor viejo.
+ */
+export function saveCredsToEnv(apiId: string, apiHash: string, envPath = ENV_PATH): void {
+  const raw = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const lines = raw === '' ? [] : raw.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   const set = (key: string, value: string) => {
-    const i = lines.findIndex((l) => l.startsWith(`${key}=`));
-    if (i >= 0) lines[i] = `${key}=${value}`;
-    else lines.push(`${key}=${value}`);
+    const isKey = (l: string) => {
+      const t = l.replace(/^\uFEFF/, '').trimStart();
+      return t.startsWith(`${key}=`) || t.startsWith(`export ${key}=`);
+    };
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (!isKey(lines[i] as string)) continue;
+      const bom = (lines[i] as string).startsWith('\uFEFF') ? '\uFEFF' : '';
+      lines[i] = found ? '' : `${bom}${key}=${value}`;
+      found = true;
+    }
+    if (!found) lines.push(`${key}=${value}`);
   };
   set('BOOKS_TG_API_ID', apiId);
   set('BOOKS_TG_API_HASH', apiHash);
-  writeFileSync(ENV_PATH, `${lines.filter((l) => l.trim()).join('\n')}\n`, { mode: 0o600 });
-  chmodSync(ENV_PATH, 0o600);
+  const tmp = uniqueTmpPath(envPath);
+  try {
+    writeFileSync(tmp, `${lines.join(eol)}${eol}`, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, envPath);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+  chmodSync(envPath, 0o600);
 }
 
 export interface SetupDeps {
