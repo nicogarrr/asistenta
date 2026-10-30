@@ -91,15 +91,38 @@ export interface MeasureOptions {
   timeoutMs?: number;
 }
 
-/** Parse vitest's summary line, e.g. `Tests  12 passed | 1 failed (13)`. */
+/**
+ * Parse vitest's summary, e.g. `Tests  12 passed | 1 failed (13)`.
+ *
+ * The `Tests` line alone is not the verdict. A test file that cannot even load (a
+ * syntax error, a broken import) contributes no tests, so vitest prints
+ * `Test Files  1 failed | 3 passed` above an all-green `Tests  30 passed`, and an
+ * unhandled rejection is reported on its own `Errors  1 error` line; both make the
+ * run fail. Reading only the `Tests` line scored such a candidate as 0 failures, so
+ * a change that broke a whole test file looked as good as one that broke nothing.
+ */
+/** Colour escapes, in case a runner forces colour into a pipe. */
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+
 export function parseSuite(output: string): { passed: number; failed: number } {
-  const line = output
-    .split('\n')
-    .reverse()
-    .find((l) => /Tests\s+.*\d+ (passed|failed)/.test(l) || /Test Files.*\d+ failed/.test(l));
-  if (!line) return { passed: 0, failed: 0 };
-  const passed = [...line.matchAll(/(\d+)\s+passed/g)].reduce((n, m) => n + Number(m[1]), 0);
-  const failed = [...line.matchAll(/(\d+)\s+failed/g)].reduce((n, m) => n + Number(m[1]), 0);
+  const lines = output.split('\n').map((l) => l.replace(ANSI, ''));
+  const last = (re: RegExp) => [...lines].reverse().find((l) => re.test(l));
+  const count = (line: string | undefined, word: string) =>
+    line
+      ? [...line.matchAll(new RegExp(`(\\d+)\\s+${word}`, 'g'))].reduce(
+          (n, m) => n + Number(m[1]),
+          0,
+        )
+      : 0;
+  const tests = last(/^\s*Tests\s+.*\d+ (passed|failed)/);
+  const files = last(/^\s*Test Files\s+.*\d+ (passed|failed)/);
+  const errors = last(/^\s*Errors\s+\d+ errors?/);
+  if (!tests && !files) return { passed: 0, failed: 0 };
+  const passed = count(tests, 'passed');
+  // A failed file holds at least one failing test or failed to load, so the file
+  // count is a floor for the failures.
+  const failed =
+    Math.max(count(tests, 'failed'), count(files, 'failed')) + count(errors, 'errors?');
   return { passed, failed };
 }
 
