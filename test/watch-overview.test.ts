@@ -43,6 +43,7 @@ describe('vista única de vigilancias: lectores puros', () => {
       dropPct: null,
       lastAlertAt: 0,
       lastAlertCents: null,
+      mutedUntil: 0,
     };
     const e = fromPageWatches([
       {

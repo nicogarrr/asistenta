@@ -434,9 +434,11 @@ import {
 } from './watch/compare.js';
 import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
+  type CheckOutcome,
   describeChange,
   describeWatch,
   eur,
+  PAGE_MUTE_MS,
   type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
@@ -3961,6 +3963,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!hit) return void (await say(inbound, COMPARE_WATCH_STALE, { quote: true }));
       args = vigilaArgsFromCompare(hit);
     }
+    const silence = vigilaSilenceArgs(rawArgs);
+    if (silence) {
+      const w =
+        silence.action === 'silenciar'
+          ? pageWatches.mute(inbound.chatId, silence.id, PAGE_MUTE_MS)
+          : pageWatches.unmute(inbound.chatId, silence.id);
+      const text = !w
+        ? 'No encuentro esa vigilancia en este chat. Mira /vigilando.'
+        : silence.action === 'silenciar'
+          ? `🔕 Silenciada 1 día: ${w.label || w.url}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`
+          : `🔔 Vuelvo a avisarte de ${w.label || w.url}.`;
+      return void (await say(inbound, text, { quote: true }));
+    }
     let parsed: ReturnType<typeof parseVigilaArgs>;
     try {
       parsed = parseVigilaArgs(args);
@@ -4213,7 +4228,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const w = pageWatches.get(id);
     if (!w?.active) return;
     const outcome = await pageWatches.check(w, fetchPageText, fetchPageHtml);
-    const msg = describeChange(w, outcome);
+    const notice = pageNotice(w, outcome, Date.now());
     if (outcome.kind === 'changed') {
       actions.record({
         actor: 'asistenta',
@@ -4222,9 +4237,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         result: 'ok',
       });
     }
-    if (msg) {
+    if (notice) {
       await telegram
-        .send({ channel: 'telegram', account: telegram.account, chatId: w.scope, text: msg })
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: w.scope,
+          text: notice.text,
+          ...(notice.buttons.length ? { buttons: notice.buttons } : {}),
+        })
         .catch((err: unknown) => log.warn('page watch notice failed', { err }));
     }
   };
@@ -7491,6 +7512,46 @@ export function compareTargetButton(
 ): [] | [{ id: string; cents: number }] {
   const cents = suggestedTargetCents(report);
   return cents === undefined ? [] : [{ id: remember(cents), cents }];
+}
+
+/** Hora corta de Madrid para «no te aviso hasta …». */
+function fmtMuteUntil(ms: number): string {
+  return new Intl.DateTimeFormat('es-ES', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(ms);
+}
+
+/** `/vigila silenciar <id>` (botón «🔕 Silenciar 1 día») y `/vigila avisar <id>`. */
+export function vigilaSilenceArgs(
+  raw: string,
+): { action: 'silenciar' | 'avisar'; id: string } | null {
+  const m = /^(silenciar|avisar) ([A-Za-z0-9_-]{1,40})$/.exec(raw.trim());
+  if (!m?.[1] || !m[2]) return null;
+  return { action: m[1] as 'silenciar' | 'avisar', id: m[2] };
+}
+
+const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);
+
+/**
+ * Aviso de una página vigilada, o null si no hay nada que decir o está silenciada
+ * («🔕 Silenciar 1 día»). Los avisos de precio llevan ese botón: no borra nada, solo
+ * calla esta página 24 h (y /vigila avisar <id> lo deshace).
+ */
+export function pageNotice(
+  w: PageWatch,
+  outcome: CheckOutcome,
+  now: number,
+): { text: string; buttons: Array<{ label: string; action: string }> } | null {
+  const text = describeChange(w, outcome);
+  if (!text || w.mutedUntil > now) return null;
+  const mute = PAGE_ALERT_KINDS.has(outcome.kind)
+    ? commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar')
+    : undefined;
+  return { text, buttons: mute ? [mute] : [] };
 }
 
 /** Lo que equivale a escribir: «/vigila <enlace>» o «/vigila <enlace> objetivo=12,34€». */
