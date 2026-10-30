@@ -80,7 +80,12 @@ export function approvalReasonSpanish(reason: string): string {
   return Object.hasOwn(reasons, reason) ? (reasons[reason] ?? reason) : reason;
 }
 
-export function formatApproval(call: ToolCall, reason: string): ApprovalText {
+export function formatApproval(
+  call: ToolCall,
+  reason: string,
+  opts: { showArgs?: boolean } = {},
+): ApprovalText {
+  const showArgs = opts.showArgs ?? true;
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
   if (call.tool === 'browser' && target) {
@@ -89,11 +94,19 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     const context = ctxParts.join('\n').trim();
     const summary = rest.join('\n').trim();
     const shown = element.split(' | ').filter(Boolean).slice(0, 6).join(' · ').slice(0, 300);
+    // Lo que el clic o el relleno VA A HACER (acción, texto a escribir, opción,
+    // clave del vault) también se enseña: sin esto, aprobar «rellenar IBAN» no
+    // decía qué IBAN se escribía.
+    const params = showArgs ? describeArgs(call.args, ['_target']) : '';
+    if (params && (redactSecrets(params) !== params || hasInvisible(params))) {
+      return deniedAltered('browser');
+    }
     const raw = [
       `¿Permito esta acción en el navegador?`,
       `Elemento: ${shown}`,
       context ? `Parte de: ${context.slice(0, 300)}` : '',
       summary ? `Datos de la página:\n${summary.slice(0, 700)}` : '',
+      params ? `Parámetros:\n${params}` : '',
       `Motivo: ${reason}`,
     ]
       .filter(Boolean)
@@ -108,6 +121,9 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     // The mask is a change-detector here: if it would alter the command, the
     // masked rendering is not the command, and approving it is approving blind.
     if (command && redactSecrets(command) !== command) return deniedAltered('shell');
+    // Un carácter invisible o de control bidi hace que el texto que se lee no sea
+    // el comando que se ejecuta (U+202E invierte lo que sigue en pantalla).
+    if (hasInvisible(command)) return deniedInvisible('shell');
     const question = [
       '¿Permito shell?',
       command ? `Comando:\n${command}` : 'Comando: (vacío)',
@@ -119,6 +135,7 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     if (call.args.action === 'batch' && Array.isArray(call.args.actions)) {
       const steps = call.args.actions as Array<Record<string, unknown>>;
       if (steps.some((s) => s.action === 'type' && s.secret === true)) return deniedSecretType();
+      if (hasInvisible(JSON.stringify(steps))) return deniedInvisible('computer');
       const rawSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, IDENTITY)}`);
       const shownSteps = steps.map(
         (s, i) => `  ${i + 1}. ${describeComputerAction(s, redactSecrets)}`,
@@ -139,6 +156,7 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
       return withinBudget(raw, question, 'computer');
     }
     if (call.args.action === 'type' && call.args.secret === true) return deniedSecretType();
+    if (hasInvisible(JSON.stringify(call.args))) return deniedInvisible('computer');
     const rawAction = describeComputerAction(call.args, IDENTITY);
     const shownAction = describeComputerAction(call.args, redactSecrets);
     if (rawAction !== shownAction) return deniedAltered('computer');
@@ -181,8 +199,46 @@ export function formatApproval(call: ToolCall, reason: string): ApprovalText {
     ].join('\n');
     return { question, complete: true };
   }
-  const raw = `¿Permito ${call.tool}?\n${reason}`;
-  return withinBudget(raw, `¿Permito ${call.tool}?\n${redactSecrets(reason)}`, call.tool);
+  // Cualquier otra herramienta (descargas, servicios, objetivos, checkout, MCP...)
+  // enseña TODOS sus parámetros: antes la pregunta era solo «¿Permito download?» y
+  // se aprobaba sin ver la URL, la ruta ni el importe.
+  const params = showArgs ? describeArgs(call.args, []) : '';
+  if (params && (redactSecrets(params) !== params || hasInvisible(params))) {
+    return deniedAltered(call.tool);
+  }
+  const tail = params ? `\nParámetros:\n${params}` : '';
+  const raw = `¿Permito ${call.tool}?\n${reason}${tail}`;
+  return withinBudget(raw, `¿Permito ${call.tool}?\n${redactSecrets(reason)}${tail}`, call.tool);
+}
+
+/** Format, bidi and zero-width characters: what is read is not what runs. */
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}]/u;
+
+function hasInvisible(text: string): boolean {
+  return INVISIBLE.test(text);
+}
+
+/**
+ * One line per parameter, sorted, the value as JSON (control characters escaped).
+ * Nothing is cut: the caller's budget decides whether the whole thing fits.
+ */
+function describeArgs(args: Record<string, unknown>, skip: string[]): string {
+  return Object.keys(args)
+    .filter((k) => !skip.includes(k) && args[k] !== undefined)
+    .sort()
+    .map((k) => `  ${k}: ${JSON.stringify(args[k]) ?? String(args[k])}`)
+    .join('\n');
+}
+
+function deniedInvisible(tool: string): ApprovalText {
+  return {
+    question:
+      `¿Permito ${tool}?\n` +
+      'La acción contiene caracteres invisibles o de control de dirección (bidi), ' +
+      'que hacen que lo que se lee no sea lo que se ejecuta: queda DENEGADA. ' +
+      'Reescríbela sin esos caracteres.',
+    complete: false,
+  };
 }
 
 /** Back-compat: same text as before for callers that only need the question. */
@@ -198,7 +254,9 @@ export function formatApprovalQuestion(call: ToolCall, reason: string): string {
  * o null si la acción sí se puede aprobar con una pregunta.
  */
 export function unapprovableOperation(call: ToolCall): string | null {
-  const text = formatApproval(call, '');
+  // Sin los parámetros genéricos: que un `memory` o un `delegate` libres lleven un
+  // texto largo no los vuelve inaprobables; eso solo se decide al preguntar.
+  const text = formatApproval(call, '', { showArgs: false });
   return text.complete ? null : text.question;
 }
 
