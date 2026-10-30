@@ -1,6 +1,7 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
+import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
@@ -1762,6 +1763,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const threads = new Map<string, Thread>();
+  const eraseConfirm = new EraseConfirm();
   /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
   // --- Integraciones opcionales del daemon -----------------------------------
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
@@ -4507,6 +4509,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const startedAt = Date.now();
 
   /** /recordatorios [borrar <n|palabra>]: ver y quitar recordatorios sin pasar por el modelo. */
+  // /borrar_chat: borrado irreversible, solo el dueño en privado y con «BORRAR» después.
+  const cmdBorrarChat = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    eraseConfirm.request(chatKey(inbound));
+    await say(inbound, ERASE_PROMPT, { quote: true });
+  };
+  const cmdBorrarChatConfirmado = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) return;
+    const ck = chatKey(inbound);
+    const live = [...threads.values()].filter((t) => t.chatKey === ck);
+    if (live.some((t) => t.active)) {
+      await say(
+        inbound,
+        'Hay una tarea en marcha en este chat. Usa /stop y vuelve a pedir /borrar_chat. No he borrado nada.',
+        { quote: true },
+      );
+      return;
+    }
+    const result = eraseChat({
+      stateDir: paths.state,
+      chatKey: ck,
+      liveScopes: live.map((t) => t.key),
+      db: memoryDb,
+    });
+    for (const t of live) threads.delete(t.key);
+    await say(inbound, eraseSummary(result), { quote: true });
+  };
   // F13: liga una carpeta de proyecto (su ASISTENTA.md/AGENTS.md entra en el contexto).
   const cmdProyecto = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -6691,6 +6725,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
           if (/^responde(?:r)? a ese\s*\n/i.test(inbound.text))
             return cmdCorreo(inbound, inbound.text);
+          const erase = eraseConfirm.consume(chatKey_, inbound.text);
+          if (erase === 'confirmed') return cmdBorrarChatConfirmado(inbound);
+          if (erase === 'cancelled')
+            await say(inbound, 'Cancelado: no he borrado nada.', { quote: true });
           const command = parseCommand(inbound.text);
           if (command) {
             // Commands bypass the agent entirely: they are the user's hands on the
@@ -6781,6 +6819,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdProyecto(inbound, command.args);
               case 'altavoz':
                 return cmdAltavoz(inbound, command.args);
+              case 'borrar_chat':
+                return cmdBorrarChat(inbound);
               case 'recordatorios':
               case 'reminders':
                 return cmdRecordatorios(inbound, command.args);
