@@ -7,9 +7,9 @@
 // web, shell, ficheros, compras, PC) existen con su nombre pero no hacen nada: devuelven
 // «no disponible» y quedan apuntadas en la traza. Toda petición de aprobación se cuenta y
 // se DENIEGA: una prueba nunca ejecuta nada que necesite el «sí» de Nico.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
@@ -22,19 +22,22 @@ import { createMemoryTool } from '../tools/memory.js';
 import { createReminderTool } from '../tools/reminder.js';
 import type { BatteryCase, Scheduled, ToolCall, Trace } from './battery-judge.js';
 
-/** Herramientas que en la batería existen pero no tocan nada fuera de la carpeta temporal. */
+/**
+ * Herramientas reales del asistente (mismos nombres) que en la batería existen pero no tocan
+ * nada: sin red, sin cuentas, sin PC. El modelo las ve igual que en producción.
+ */
 export const INERT_TOOLS = [
-  'mail',
-  'browser',
+  'web',
   'fetch',
-  'web_search',
   'download',
+  'browser',
   'shell',
-  'fs',
-  'calendar',
-  'renfe',
   'computer',
+  'renfe',
 ] as const;
+
+/** read/write/list de verdad, pero encerradas en el espacio de trabajo de la carpeta temporal. */
+export const WORKSPACE_TOOLS = ['read', 'write', 'list'] as const;
 
 const INERT_TEXT = 'No disponible en la batería de pruebas: aquí no hay cuentas, red ni PC reales.';
 
@@ -73,6 +76,71 @@ function inertTool(name: string): AgentTool {
   } as unknown as AgentTool;
 }
 
+/** Una ruta del modelo dentro del espacio de trabajo, o error claro si se sale. */
+function inside(root: string, raw: string): string {
+  const p = resolve(root, raw.replace(/^~(?=$|[\\/])/, root));
+  const rel = relative(root, p);
+  if (rel.startsWith('..') || isAbsolute(rel))
+    throw new Error(`la ruta se sale del espacio de trabajo: ${raw}`);
+  return p;
+}
+
+const text = (t: string) => ({ content: [{ type: 'text', text: t }], details: {} });
+
+/**
+ * read/write/list con los nombres y parámetros de las reales (tools/fs.ts), pero sobre
+ * <carpeta temporal>/espacio: el caso puede crear y leer ficheros sin tocar el código medido.
+ */
+export function workspaceTools(root: string): AgentTool[] {
+  mkdirSync(root, { recursive: true });
+  const read = {
+    name: 'read',
+    label: 'Read',
+    description: 'Lee un fichero de texto del espacio de trabajo.',
+    parameters: Type.Object({
+      path: Type.String(),
+      offset: Type.Optional(Type.Number()),
+      limit: Type.Optional(Type.Number()),
+    }),
+    execute: async (_id: string, a: { path: string; offset?: number; limit?: number }) => {
+      const lines = readFileSync(inside(root, a.path), 'utf8').split('\n');
+      const from = Math.max(1, Math.floor(a.offset ?? 1));
+      const to = a.limit ? from - 1 + Math.floor(a.limit) : lines.length;
+      return text(
+        lines
+          .slice(from - 1, to)
+          .join('\n')
+          .slice(0, 22_000),
+      );
+    },
+  };
+  const write = {
+    name: 'write',
+    label: 'Write',
+    description: 'Escribe un fichero de texto en el espacio de trabajo (crea las carpetas).',
+    parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+    execute: async (_id: string, a: { path: string; content: string }) => {
+      const p = inside(root, a.path);
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, a.content, 'utf8');
+      return text(`Wrote ${a.content.length} bytes to ${a.path}`);
+    },
+  };
+  const list = {
+    name: 'list',
+    label: 'List',
+    description: 'Lista una carpeta del espacio de trabajo.',
+    parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+    execute: async (_id: string, a: { path?: string }) => {
+      const items = readdirSync(inside(root, a.path ?? '.'), { withFileTypes: true })
+        .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
+        .sort();
+      return text(items.join('\n') || '(empty)');
+    },
+  };
+  return [read, write, list] as unknown as AgentTool[];
+}
+
 /** Envuelve una herramienta para apuntar cada ejecución (nombre, argumentos, si fue bien). */
 function recorded(tool: AgentTool, calls: ToolCall[]): AgentTool {
   const execute = tool.execute.bind(tool);
@@ -101,7 +169,8 @@ class TracingGate extends Gate {
     super({
       dbPath,
       grantWindowMs: 0,
-      allow: ['memory', 'reminder'],
+      // read/write/list solo ven la carpeta temporal (workspaceTools): no hay nada que aprobar.
+      allow: ['memory', 'reminder', ...WORKSPACE_TOOLS],
       approver: () => {
         asked.n++;
         return false;
@@ -164,6 +233,7 @@ export async function runBatteryCase(c: BatteryCase, deps: CaseRunDeps): Promise
         sync: () => {},
         now,
       }) as unknown as AgentTool,
+      ...workspaceTools(join(dir, 'espacio')),
       ...INERT_TOOLS.map(inertTool),
     ].map((t) => recorded(t, calls));
     const gate = new TracingGate(join(dir, 'approvals.db'), calls, asked);

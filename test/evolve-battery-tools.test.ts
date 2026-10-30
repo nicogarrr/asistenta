@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { INERT_TOOLS, WORKSPACE_TOOLS } from '../src/evolve/battery-case.js';
 
 /**
  * Los casos de la batería exigen o prohíben llamadas por nombre (`herramienta` o
@@ -25,7 +26,10 @@ function tsFiles(dir: string): string[] {
 
 /** Nombres que puede registrar el evaluador: `tool` y `tool.accion` por cada acción declarada. */
 function agentCallNames(): Set<string> {
-  const files = tsFiles(join(ROOT, 'src')).map((f) => readFileSync(f, 'utf8'));
+  // src/evolve/ es el evaluador, no el asistente: sus herramientas de prueba no cuentan.
+  const files = tsFiles(join(ROOT, 'src'))
+    .filter((f) => !f.replace(/\\/g, '/').includes('/src/evolve/'))
+    .map((f) => readFileSync(f, 'utf8'));
   const consts = new Map<string, string>();
   for (const src of files)
     for (const m of src.matchAll(/export const (\w+_TOOL_NAME) = '([\w.-]+)'/g))
@@ -100,5 +104,25 @@ describe('batería: nombres de herramienta reales', () => {
       })
       .map(({ id, field, pattern }) => `${id} ${field} /${pattern}/`);
     expect(missing).toEqual([]);
+  });
+
+  it('cada herramienta que ofrece el evaluador existe en el asistente con ese nombre', () => {
+    const runner = [...INERT_TOOLS, ...WORKSPACE_TOOLS, 'memory', 'reminder'];
+    expect(runner.filter((n) => !names.has(n))).toEqual([]);
+  });
+
+  it('el texto qa (para humanos) cita herramientas que existen, no nombres viejos', () => {
+    const battery = JSON.parse(readFileSync(join(ROOT, 'evolve/battery.json'), 'utf8')) as {
+      cases: { id: string; qa?: { requireCall?: string[]; forbidCall?: string[] } }[];
+    };
+    const bad: string[] = [];
+    for (const c of battery.cases)
+      for (const t of [...(c.qa?.requireCall ?? []), ...(c.qa?.forbidCall ?? [])]) {
+        for (const m of t.matchAll(/(?<![\w@.-])([a-z_]+\.[a-z_]+)(?![\w@.-])/g))
+          if (!names.has(m[1] as string)) bad.push(`${c.id}: ${m[1]}`);
+        for (const m of t.matchAll(/\b(mail|fs|calendar|cron|web_search)\b/g))
+          bad.push(`${c.id}: ${m[1]}`);
+      }
+    expect(bad).toEqual([]);
   });
 });
