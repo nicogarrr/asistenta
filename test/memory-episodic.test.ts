@@ -3,8 +3,9 @@
 // touching the agent's real state dir, and every assertion below is about
 // behaviour that a crash or a late write could otherwise corrupt.
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DECAY_MIN_INTERVAL_MS,
   type Instinct,
   InstinctStore,
   MATURE_THRESHOLD,
@@ -246,11 +247,26 @@ describe('InstinctStore', () => {
     expect(matureHit(store, old)?.confidence).toBe(RULE_THRESHOLD - 1);
     expect(matureHit(store, fresh)?.confidence).toBe(RULE_THRESHOLD);
 
-    // 9 → 0 y borrado: diez sweeps en total sobre el patrón caducado.
-    for (let i = 0; i < 9; i++) store.decay(90);
-    expect(countInstincts(old)).toBe(0);
-    expect(store.suggest().map((i) => i.pattern)).toEqual([fresh]);
+    // Un segundo sweep el mismo día no cuenta (DECAY_MIN_INTERVAL_MS).
     expect(store.decay(90)).toBe(0);
+    expect(matureHit(store, old)?.confidence).toBe(RULE_THRESHOLD - 1);
+
+    // 9 → 0 y borrado: diez sweeps en total, uno por día, sobre el patrón caducado.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      let t = Date.now();
+      for (let i = 0; i < 9; i++) {
+        t += DECAY_MIN_INTERVAL_MS;
+        vi.setSystemTime(t);
+        store.decay(90);
+      }
+      expect(countInstincts(old)).toBe(0);
+      expect(store.suggest().map((i) => i.pattern)).toEqual([fresh]);
+      vi.setSystemTime(t + DECAY_MIN_INTERVAL_MS);
+      expect(store.decay(90)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('promote fuerza la confianza hasta RULE_THRESHOLD', () => {
