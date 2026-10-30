@@ -262,7 +262,13 @@ import {
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 
-import { cacheFullReply, isMoreRequest, moreButton, takeFullReply } from './channels/telegram.js';
+import {
+  cacheFullReply,
+  commandButton,
+  isMoreRequest,
+  moreButton,
+  takeFullReply,
+} from './channels/telegram.js';
 import { helpText, startText } from './channels/telegram-help.js';
 import {
   approvalCode,
@@ -3864,8 +3870,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const cmdVigilando = async (inbound: Inbound): Promise<void> => {
-    const text = formatWatchList(pageWatches.list(inbound.chatId));
-    await say(inbound, marksWithTitles(text, isWatchListTitle), { quote: true, format: 'marks' });
+    const list = pageWatches.list(inbound.chatId);
+    const text = formatWatchList(list);
+    await say(inbound, marksWithTitles(text, isWatchListTitle), {
+      quote: true,
+      format: 'marks',
+      buttons: watchStopButtons(list),
+    });
   };
 
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
@@ -7389,6 +7400,20 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
  * /vigilando: las páginas vigiladas del chat, con cabecera «Páginas vigiladas: N»
  * (en negrita en Telegram vía isWatchListTitle; el resto es texto del usuario).
  */
+/**
+ * /vigilando: un botón «🗑 Dejar de vigilar …» por página (hasta 8), que equivale a
+ * escribir /dejar_de_vigilar <id>. Sin páginas, sin botones.
+ */
+export function watchStopButtons(
+  list: ReadonlyArray<{ id: string; label: string; url: string }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = list
+    .slice(0, 8)
+    .map((w) => commandButton(`🗑 Dejar de vigilar ${w.label || w.url}`, 'dejar_de_vigilar', w.id))
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
 export function formatWatchList(list: readonly PageWatch[]): string {
   if (!list.length) return 'No vigilo ninguna página. Prueba /vigila <enlace>.';
   return [

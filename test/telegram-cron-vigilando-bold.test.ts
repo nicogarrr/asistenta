@@ -66,10 +66,10 @@ describe('/vigilando con cabecera en negrita', () => {
   it('cmdVigilando manda la lista con marksWithTitles(…, isWatchListTitle) y formato marks', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('const cmdVigilando = async')).slice(0, 600);
-    expect(body).toContain('formatWatchList(pageWatches.list(inbound.chatId))');
-    expect(body).toContain(
-      "marksWithTitles(text, isWatchListTitle), { quote: true, format: 'marks' }",
-    );
+    expect(body).toContain('pageWatches.list(inbound.chatId)');
+    expect(body).toContain('formatWatchList(list)');
+    expect(body).toContain('marksWithTitles(text, isWatchListTitle), {');
+    expect(body).toContain("format: 'marks'");
   });
 });
 
