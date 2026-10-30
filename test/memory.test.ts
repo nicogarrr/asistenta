@@ -233,6 +233,45 @@ describe('MemoryStore', () => {
     expect(text).not.toContain('fact 0 ');
   });
 
+  it('drops hand-written notes before evicting live facts at the cap', () => {
+    const file = store.fileFor('s');
+    const bigNotes = Array.from({ length: 900 }, (_, i) => `nota ${i} ${'x'.repeat(80)}`);
+    writeFileSync(
+      file,
+      serializeMemory({
+        scope: 's',
+        entries: Array.from({ length: 5 }, (_, i) => ({
+          id: `k${i}`,
+          date: '2026-10-01',
+          tags: [],
+          supersedes: [],
+          supersededBy: null,
+          text: `hecho vigente ${i}`,
+        })),
+        notes: bigNotes,
+      }),
+      'utf8',
+    );
+    store.remember('s', 'hecho nuevo');
+    const ids = store.all('s').map((e) => e.id);
+    // Los cinco hechos vigentes y el nuevo sobreviven; lo que cae son las notas.
+    expect(ids).toEqual(expect.arrayContaining(['k0', 'k1', 'k2', 'k3', 'k4']));
+    expect(ids).toHaveLength(6);
+    expect(store.read('s')).not.toContain('nota 0 ');
+  });
+
+  it('evicts corrected (superseded) facts before live ones at the cap', () => {
+    for (let i = 0; i < 44; i++) store.remember('s', `fact ${i} ${'padding '.repeat(180)}`);
+    const first = store.remember('s', `vivo en Madrid ${'p'.repeat(1500)}`);
+    store.supersede('s', first.id, `vivo en Valencia ${'p'.repeat(1500)}`);
+    store.remember('s', `fact final ${'padding '.repeat(180)}`);
+    const all = store.all('s');
+    expect(Buffer.byteLength(store.read('s'), 'utf8')).toBeLessThanOrEqual(MAX_MEMORY_BYTES);
+    // El hecho corregido (oculto en recall) se va antes que el hecho vigente más antiguo.
+    expect(all.some((e) => e.id === first.id)).toBe(false);
+    expect(all.some((e) => e.text.startsWith('vivo en Valencia'))).toBe(true);
+  });
+
   it('leaves no tmp file behind after writing', () => {
     for (let i = 0; i < 5; i++) store.remember('s', `fact ${i}`);
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
