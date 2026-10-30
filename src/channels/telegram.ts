@@ -1272,16 +1272,90 @@ function buildKeyboard(buttons: Array<{ label: string; action: string }>): Inlin
 }
 
 /**
- * Telegram caps a message at 4096 chars, so longer text is split. Split on code
- * points, not UTF-16 units: slicing mid-emoji produces a lone surrogate and a
- * replacement character in the user's chat.
+ * Telegram caps a message at 4096 chars, so longer text is split.
+ *
+ * Antes se cortaba cada `size` puntos de código a ciegas: una respuesta larga llegaba
+ * partida a mitad de palabra («recordator» / «io») o dentro de un bloque de código, y el
+ * segundo mensaje empezaba con medio término. Ahora cada corte busca, por orden, el último
+ * salto de párrafo, de línea, final de frase o espacio dentro de la ventana (siempre que
+ * deje al menos media ventana de texto, para no generar trozos ridículos) y solo corta a
+ * ciegas cuando no hay ninguno. Un bloque ``` abierto en el corte se cierra en ese mensaje
+ * y se reabre en el siguiente, así ningún mensaje queda con el código a medio formatear.
+ *
+ * Se cuenta en puntos de código, no en unidades UTF-16: cortar a mitad de un emoji deja un
+ * surrogate suelto y un carácter de reemplazo en el chat.
  */
 export function chunkText(text: string, size: number): string[] {
-  const points = Array.from(text);
-  if (points.length <= size) return [text];
+  if (Array.from(text).length <= size) return [text];
   const out: string[] = [];
-  for (let i = 0; i < points.length; i += size) out.push(points.slice(i, i + size).join(''));
+  let rest = text;
+  let reopen = false;
+  while (rest.length > 0) {
+    const prefix: string = reopen ? FENCE_OPEN : '';
+    if (Array.from(prefix + rest).length <= size) {
+      out.push(prefix + rest);
+      break;
+    }
+    const budget = Math.max(1, size - Array.from(prefix).length);
+    let piece = splitAt(rest, budget);
+    let body: string = prefix + piece.head;
+    reopen = countFences(body) % 2 === 1;
+    if (reopen && Array.from(prefix).length + FENCE_CLOSE.length < size) {
+      // Hace falta cerrar el bloque: vuelve a cortar dejando sitio para el cierre.
+      piece = splitAt(rest, Math.max(1, budget - FENCE_CLOSE.length));
+      body = prefix + piece.head;
+      reopen = countFences(body) % 2 === 1;
+      if (reopen) body += FENCE_CLOSE;
+    } else {
+      reopen = false;
+    }
+    if (body.trim()) out.push(body);
+    rest = piece.rest;
+  }
   return out;
+}
+
+const FENCE_OPEN = '```\n';
+const FENCE_CLOSE = '\n```';
+
+function countFences(text: string): number {
+  return (text.match(/^```/gmu) ?? []).length;
+}
+
+/**
+ * Corta `text` en un trozo de como mucho `budget` puntos de código y el resto.
+ *
+ * Prefiere, por orden, salto de párrafo, salto de línea, fin de frase y espacio, siempre
+ * que el trozo conserve al menos media ventana; si no hay ninguno, corta a ciegas.
+ */
+function splitAt(text: string, budget: number): { head: string; rest: string } {
+  const points = Array.from(text);
+  const window = points.slice(0, budget + 1).join('');
+  const minimum = Math.floor(budget / 2);
+  const rules: Array<{ pattern: RegExp; after: boolean }> = [
+    { pattern: /\n[ \t]*\n/gu, after: false },
+    { pattern: /\n/gu, after: false },
+    { pattern: /[.!?…:;](?=\s)/gu, after: true },
+    { pattern: /\s/gu, after: false },
+  ];
+  let cut = budget;
+  for (const { pattern, after } of rules) {
+    let best = -1;
+    for (const match of window.matchAll(pattern)) {
+      const at = Array.from(window.slice(0, match.index ?? 0)).length + (after ? 1 : 0);
+      if (at <= budget && at >= minimum && at > 0) best = at;
+    }
+    if (best > 0) {
+      cut = best;
+      break;
+    }
+  }
+  const head = points.slice(0, cut).join('').replace(/\s+$/u, '');
+  const tail = points.slice(cut).join('');
+  // El separador se queda en el corte: sin líneas en blanco ni espacio inicial en el
+  // siguiente mensaje, pero conservando la sangría de la primera línea real.
+  const rest = tail.replace(/^(?:[ \t]*\r?\n)+/u, '').replace(/^ (?=\S)/u, '');
+  return { head: head || points.slice(0, cut).join(''), rest };
 }
 
 const AUDIO_FILE_NAME = /\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|amr|wma)$/i;
