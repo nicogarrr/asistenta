@@ -10,6 +10,7 @@ import {
   type SecretTgClient,
   sniffsAsEpub,
 } from '../src/books/secret.js';
+import { localDay } from '../src/datecontext.js';
 import { createBookTool } from '../src/tools/book.js';
 
 const EPUB = Buffer.from(
@@ -264,7 +265,9 @@ describe('anti-flood', () => {
     writeFileSync(sessionPath, 'SESSION');
     writeFileSync(
       usagePath,
-      JSON.stringify({ day: new Date().toISOString().slice(0, 10), count: 2 }),
+      // El contador usa el día local (localDay), no el UTC: entre 00:00 y 01:00 de
+      // Madrid el día UTC aún es el de ayer y el test fallaba.
+      JSON.stringify({ day: localDay(new Date()), count: 2 }),
     );
     const { client, sent } = fakeClient({});
     const lib = mk({
