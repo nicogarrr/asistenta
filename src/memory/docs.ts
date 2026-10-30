@@ -481,6 +481,34 @@ export class DocMemory {
   }
 
   /** What the shelf holds for a scope: how many sources and how many are only partly indexed. */
+  /** search over several scopes (memoryScopesFor): merged by FTS rank, best first. */
+  searchIn(scopes: readonly string[], query: string, limit = DEFAULT_SEARCH_LIMIT): DocSearchHit[] {
+    const unique = [...new Set(scopes)];
+    if (unique.length === 1) return this.search(unique[0] as string, query, limit);
+    return unique
+      .flatMap((scope) => this.search(scope, query, limit))
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, limit);
+  }
+
+  listIn(scopes: readonly string[], limit = 20): IndexedDocument[] {
+    return [...new Set(scopes)].flatMap((scope) => this.list(scope, limit)).slice(0, limit);
+  }
+
+  statsIn(scopes: readonly string[]): { docs: number; partial: number } {
+    return [...new Set(scopes)]
+      .map((scope) => this.stats(scope))
+      .reduce((a, b) => ({ docs: a.docs + b.docs, partial: a.partial + b.partial }), {
+        docs: 0,
+        partial: 0,
+      });
+  }
+
+  removeIn(scopes: readonly string[], docId: string): boolean {
+    for (const scope of new Set(scopes)) if (this.remove(scope, docId)) return true;
+    return false;
+  }
+
   stats(scope: string): { docs: number; partial: number } {
     const r = this.#db
       .prepare(
