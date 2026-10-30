@@ -24,12 +24,20 @@ function done(p: ChildProcess): Promise<void> {
     );
   });
 }
+function stopped(p: ChildProcess): Promise<void> {
+  if (p.exitCode !== null || p.signalCode !== null) return Promise.resolve();
+  return new Promise((yes) => {
+    p.once('exit', () => yes());
+    p.kill('SIGKILL');
+  });
+}
 it('all init/set/setMany/rm writers in distinct processes share one effective external secrets-file lock', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pa-vault-concurrent-'));
   const file = join(dir, 'shared.json');
   const vault = pathToFileURL(resolve('dist/vault.js')).href;
+  const processes: ChildProcess[] = [];
   try {
-    const processes = Array.from({ length: 12 }, (_, i) => {
+    for (let i = 0; i < 12; i++) {
       const state = join(dir, `state-${i}`);
       mkdirSync(state, { mode: 0o700 });
       const env = {
@@ -38,11 +46,13 @@ it('all init/set/setMany/rm writers in distinct processes share one effective ex
         PA_STATE_DIR: state,
         PA_SECRETS_FILE: file,
       };
-      return child(
-        `import {initVault,vaultSet,vaultSetMany,vaultDelete} from ${JSON.stringify(vault)};await initVault();await vaultSet('single-${i}','synthetic');await vaultSetMany({'batch-${i}':'synthetic','delete-${i}':'synthetic'});await vaultDelete('delete-${i}');`,
-        env,
+      processes.push(
+        child(
+          `import {initVault,vaultSet,vaultSetMany,vaultDelete} from ${JSON.stringify(vault)};await initVault();await vaultSet('single-${i}','synthetic');await vaultSetMany({'batch-${i}':'synthetic','delete-${i}':'synthetic'});await vaultDelete('delete-${i}');`,
+          env,
+        ),
       );
-    });
+    }
     await Promise.all(processes.map(done));
     const actual = JSON.parse(readFileSync(file, 'utf8'));
     expect(Object.keys(actual).sort()).toEqual(
@@ -51,6 +61,9 @@ it('all init/set/setMany/rm writers in distinct processes share one effective ex
         .sort(),
     );
   } finally {
+    // When one writer fails, the others are still writing into dir; removing it
+    // under them threw ENOTEMPTY and hid the writer's real error. Stop them first.
+    await Promise.all(processes.map(stopped));
     rmSync(dir, { recursive: true, force: true });
   }
 }, 20000);
