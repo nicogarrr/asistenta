@@ -255,6 +255,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WebUiDeps,
+  allowedHosts: readonly string[] = [],
 ): Promise<void> {
   setBaseHeaders(res);
   const method = req.method ?? 'GET';
@@ -262,7 +263,7 @@ async function handleRequest(
   const pathname = url.pathname;
   const apiPath = pathname === '/api' || pathname.startsWith('/api/');
 
-  if (!hostAllowed(req.headers.host)) {
+  if (!hostAllowed(req.headers.host, allowedHosts)) {
     res.setHeader('Cache-Control', 'no-store');
     if (apiPath) sendJson(res, 403, { error: 'Host no permitido' });
     else send(res, 403, 'Host no permitido', 'text/plain; charset=utf-8');
@@ -332,9 +333,22 @@ export function hostHeaderName(header: string | undefined): string {
   return host.replace(/:\d*$/, '').replace(/\.$/, '');
 }
 
-export function hostAllowed(header: string | undefined): boolean {
+export function hostAllowed(header: string | undefined, extra: readonly string[] = []): boolean {
   const name = hostHeaderName(header);
-  return LOCAL_HOST_NAMES.has(name) || /^127(\.\d{1,3}){3}$/.test(name);
+  if (LOCAL_HOST_NAMES.has(name) || /^127(\.\d{1,3}){3}$/.test(name)) return true;
+  return name !== '' && extra.some((h) => hostHeaderName(h) === name);
+}
+
+/**
+ * Nombres extra que el dueño autoriza a mano (p. ej. el de Tailscale si sirve el
+ * panel con `tailscale serve`). Lista separada por comas en PA_WEB_ALLOWED_HOSTS;
+ * nunca comodines: cada nombre es exacto.
+ */
+export function parseAllowedHosts(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((h) => hostHeaderName(h))
+    .filter((h) => h !== '' && !h.includes('*'));
 }
 
 function assertLoopbackHost(host: string): void {
@@ -364,7 +378,7 @@ function listen(
 
 export async function startWebUi(
   deps: WebUiDeps,
-  opts?: { port?: number; host?: string },
+  opts?: { port?: number; host?: string; allowedHosts?: readonly string[] },
 ): Promise<{ url: string; close(): Promise<void> }> {
   if (deps.token.trim().length === 0) {
     throw new Error('startWebUi: falta el token del panel');
@@ -375,9 +389,10 @@ export async function startWebUi(
   }
   const host = opts?.host?.trim() || DEFAULT_HOST;
   assertLoopbackHost(host);
+  const allowedHosts = (opts?.allowedHosts ?? []).map((h) => hostHeaderName(h)).filter(Boolean);
 
   const server = createServer((req, res) => {
-    void handleRequest(req, res, deps).catch((error: unknown) => {
+    void handleRequest(req, res, deps, allowedHosts).catch((error: unknown) => {
       log.warn('webui: error no controlado', { error: describeError(error) });
       if (res.headersSent) {
         res.destroy();
