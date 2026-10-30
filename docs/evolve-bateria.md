@@ -22,11 +22,15 @@ Sin batería configurada no se promueve nada.
   código fuente de la copia que se mide, datos en una carpeta temporal que se borra y sin cuentas
   reales. Memoria y recordatorios funcionan de verdad (en esa carpeta); correo, navegador, web,
   shell, ficheros, Renfe y PC existen con su nombre pero no hacen nada y quedan en la traza. Toda
-  petición de aprobación se cuenta y se deniega. El modelo es el de tu configuración: pon en
-  `PA_EVOLVE_PROPOSER_PASS` las variables que necesita: `PA_PROVIDER,PA_MODEL,PA_BASE_URL,PA_PROVIDER_PRESET,PA_SECRET_PROVIDER_APIKEY`.
-  El evaluador no ve el almacén cifrado de Windows (sus datos están en una carpeta temporal), así que la
-  clave del modelo tiene que estar también en la variable `PA_SECRET_PROVIDER_APIKEY` (el evaluador usa
-  el almacén portátil, que la lee de ahí). No existe `PA_API_KEY`.
+  petición de aprobación se cuenta y se deniega. El modelo es el de tu configuración y no hay que
+  configurar nada: el asistente le pasa `PA_PROVIDER,PA_MODEL,PA_BASE_URL,PA_PROVIDER_PRESET` (si los
+  tienes) y lee de su almacén (el cifrado de Windows) **solo** la clave de ese modelo
+  (`provider:apiKey`; con OpenRouter `provider:openrouterKey`, con Gemini `provider:geminiKey`). Se
+  la da como variable de entorno (`PA_SECRET_PROVIDER_APIKEY`, la que lee el almacén portátil del
+  evaluador): nunca se escribe en disco ni en los registros, y ninguna otra clave sale del almacén.
+  Si defines tú `PA_SECRET_PROVIDER_APIKEY`, gana esa. Un endpoint propio (`PA_BASE_URL` que no es
+  OpenCode, OpenRouter ni Gemini) usa `PA_API_KEY`, que no está en el almacén: añádela a
+  `PA_EVOLVE_PROPOSER_PASS`. Un `PA_EVOLVE_BATTERY` propio no recibe ninguna clave del almacén.
 - `PA_EVOLVE_BATTERY=off` apaga el evaluador: entonces ningún cambio se aprueba.
 
 ## Cómo se puntúa

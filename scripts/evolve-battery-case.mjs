@@ -24,8 +24,9 @@ const dir = mkdtempSync(join(tmpdir(), 'pa-battery-'));
 process.env.PA_STATE_DIR = join(dir, 'state');
 process.env.HOME = dir;
 process.env.USERPROFILE = dir;
-// El almacén cifrado de Windows no está en esta carpeta: la clave del modelo solo puede llegar
-// como PA_SECRET_PROVIDER_APIKEY (en PA_EVOLVE_PROPOSER_PASS), que lee el almacén portátil.
+// El almacén cifrado de Windows no está en esta carpeta: el asistente lee de él solo la clave del
+// modelo y la pasa en el entorno (PA_SECRET_<CLAVE>, ver modelKeyEnv en src/evolve/run.ts), que es
+// de donde la lee el almacén portátil. Nunca se escribe en esta carpeta.
 process.env.PA_VAULT_BACKEND = 'portable';
 
 let code = 1;
