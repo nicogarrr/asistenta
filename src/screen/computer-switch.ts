@@ -3,14 +3,56 @@
  * at runtime from Telegram, without editing `.env` or restarting.
  *
  * Owner only, in his private chat — anyone else gets a refusal and nothing
- * changes. The flip lives in memory: a restart goes back to what `.env` says,
- * and the reply says so. `createComputerTool` reads `config.computerUse` on
- * every call, so «off» refuses the very next action (screenshots included).
+ * changes. `createComputerTool` reads `config.computerUse` on every call, so
+ * «off» refuses the very next action (screenshots included).
+ *
+ * «off» is saved (`ordenador-off.json` in the state dir) so a restart keeps it
+ * off; «on» removes the file and a restart goes back to what `.env` says.
+ * `PA_COMPUTER_USE=0` in `.env` always wins. Only stricter: a file that cannot
+ * be removed leaves the PC off after a restart, never the other way round.
  */
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { uniqueTmpPath } from '../fs-tmp.js';
+
+/** Name of the saved «off» inside the state dir (registered in src/state-files.ts). */
+export const COMPUTER_OFF_FILE = 'ordenador-off.json';
+
+/** True when a previous /ordenador off was saved: the daemon starts with Computer Use off. */
+export function computerOffSaved(stateDir: string): boolean {
+  return existsSync(join(stateDir, COMPUTER_OFF_FILE));
+}
+
+/** Saves «off» (atomic write) or removes it for «on». Throws if the disk refuses. */
+export function saveComputerSwitch(stateDir: string, on: boolean): void {
+  const file = join(stateDir, COMPUTER_OFF_FILE);
+  if (on) {
+    rmSync(file, { force: true });
+    return;
+  }
+  mkdirSync(stateDir, { recursive: true });
+  const tmp = uniqueTmpPath(file);
+  writeFileSync(tmp, `${JSON.stringify({ off: true, at: new Date().toISOString() })}\n`);
+  renameSync(tmp, file);
+}
+
 export interface ComputerSwitchDeps {
   isOwner: boolean;
   enabled: () => boolean;
   set: (on: boolean) => void;
+  /** Saves the choice across restarts; absent = in memory only (old behaviour). */
+  save?: (on: boolean) => void;
+}
+
+/** Runs `deps.save`; false when it threw (the in-memory flip still applies). */
+function trySave(deps: ComputerSwitchDeps, on: boolean): boolean | undefined {
+  if (!deps.save) return undefined;
+  try {
+    deps.save(on);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const OFF = new Set(['off', 'apagar', 'apaga', 'desactivar', 'desactiva', 'no', '0', 'stop']);
@@ -30,11 +72,24 @@ export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): s
   }
   if (OFF.has(word)) {
     deps.set(false);
-    return '🛑 Control del ordenador desactivado: no veo ni toco el escritorio (ni capturas) hasta /ordenador on. Al reiniciar vuelve a lo que diga el .env.';
+    const saved = trySave(deps, false);
+    const head =
+      '🛑 Control del ordenador desactivado: no veo ni toco el escritorio (ni capturas) hasta /ordenador on.';
+    if (saved === true) return `${head} Sigue apagado aunque se reinicie el asistente.`;
+    if (saved === false) {
+      return `${head} No he podido guardarlo en disco: si el asistente se reinicia, vuelve a lo que diga el .env.`;
+    }
+    return `${head} Al reiniciar vuelve a lo que diga el .env.`;
   }
   if (ON.has(word)) {
     deps.set(true);
-    return '✅ Control del ordenador activado: puedo volver a ver y usar el escritorio, siempre pidiendo permiso como hasta ahora. Al reiniciar vuelve a lo que diga el .env.';
+    const saved = trySave(deps, true);
+    const head =
+      '✅ Control del ordenador activado: puedo volver a ver y usar el escritorio, siempre pidiendo permiso como hasta ahora.';
+    if (saved === false) {
+      return `${head} No he podido borrar el apagado guardado: si el asistente se reinicia, arrancará con el control apagado.`;
+    }
+    return `${head} Al reiniciar vuelve a lo que diga el .env.`;
   }
   return COMPUTER_SWITCH_USAGE;
 }
