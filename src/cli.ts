@@ -1,8 +1,14 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
+import { resolveModelCaps } from './core/models.js';
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
-import { formatModelos, ModelChoiceStore, parseModelo } from './model-choice.js';
+import {
+  formatModelos,
+  ModelChoiceStore,
+  modelSwitchWarnings,
+  parseModelo,
+} from './model-choice.js';
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
@@ -4598,6 +4604,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await next;
   };
 
+  // /modelo: avisa si el modelo nuevo tiene mucha menos ventana o no ve imágenes.
+  // PA_CONTEXT_WINDOW describe solo PA_MODEL; los demás usan su ficha del catálogo.
+  const modeloWarningText = (prevId: string, nextId: string): string => {
+    const caps = (id: string) =>
+      resolveModelCaps({ ...config, model: id }, { envOverrides: id === config.model });
+    const warnings = modelSwitchWarnings(caps(prevId), caps(nextId));
+    return warnings.length ? `\n${warnings.join('\n')}` : '';
+  };
+
   // F7: /modelo ve o elige el modelo de esta conversación (solo el dueño, en privado).
   const cmdModelo = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -4620,6 +4635,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // En cola: no cambia el modelo a mitad de un turno de esta conversación.
     const next = queueThreadTurn(thread, async () => {
+      const prevModel = thread.agent.modelId;
       const r = thread.agent.chooseModel(action.id);
       if (r.ok)
         modelChoices.set(
@@ -4629,7 +4645,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(
         inbound,
         r.ok
-          ? `Listo: esta conversación usa ${r.model}${r.model === thread.agent.availableModels[0] ? ' (el principal)' : ''}.`
+          ? `Listo: esta conversación usa ${r.model}${r.model === thread.agent.availableModels[0] ? ' (el principal)' : ''}.${modeloWarningText(prevModel, r.model)}`
           : `No cambio el modelo: ${r.reason}.`,
         { quote: true },
       );

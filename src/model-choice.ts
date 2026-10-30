@@ -112,3 +112,31 @@ export class ModelChoiceStore {
     renameSync(tmp, this.#file);
   }
 }
+
+/** Lo que el aviso de /modelo necesita de la ficha de un modelo. */
+export interface ModelSwitchCaps {
+  contextWindow: number;
+  supportsImages: boolean;
+}
+
+function kTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/**
+ * Avisos al cambiar de modelo con /modelo: ventana de contexto de la mitad o
+ * menos que la del modelo anterior, o un modelo que no ve imágenes cuando el
+ * anterior sí. Vacío si no hay nada que avisar.
+ */
+export function modelSwitchWarnings(prev: ModelSwitchCaps, next: ModelSwitchCaps): string[] {
+  const out: string[] = [];
+  if (next.contextWindow > 0 && next.contextWindow * 2 <= prev.contextWindow) {
+    out.push(
+      `Ojo: su ventana de contexto es de ${kTokens(next.contextWindow)} tokens (antes ${kTokens(prev.contextWindow)}); en conversaciones largas resumirá antes y recordará menos.`,
+    );
+  }
+  if (prev.supportsImages && !next.supportsImages) {
+    out.push('Ojo: este modelo no ve imágenes; las fotos que me mandes no las podrá mirar.');
+  }
+  return out;
+}

@@ -12,3 +12,5 @@ vuelve al principal. Solo el dueño y desde su chat privado. Nunca acepta un
 modelo que no esté configurado, y el cambio se guarda (`modelos.json` en el estado) y se mantiene aunque el asistente reinicie; si ese modelo deja de estar configurado, la conversación vuelve al principal.
 
 Para tener más modelos entre los que elegir con `/modelo`, ponlos en `PA_MODELS` (separados por comas). Solo se usan si los eliges; el respaldo automático sigue siendo `PA_FALLBACK_MODEL`.
+
+Al cambiar con `/modelo`, si el modelo nuevo tiene la mitad o menos de ventana de contexto que el anterior, o no ve imágenes y el anterior sí, la respuesta lo avisa («Ojo: …»). El cambio se hace igual.
