@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { COMPUTER_GRANT_WINDOW_MS, unapprovableOperation } from './approval-text.js';
@@ -636,12 +636,8 @@ export class Gate {
     const dbFiles = options.dbPath
       ? [options.dbPath, `${options.dbPath}-wal`, `${options.dbPath}-shm`]
       : [];
-    this.#protected = [...(options.protectedPaths ?? []), ...dbFiles].map((p) =>
-      lexicalNormalize(absolutizePath(p)),
-    );
-    this.#secrets = [...(options.secretPaths ?? []), ...dbFiles].map((p) =>
-      lexicalNormalize(absolutizePath(p)),
-    );
+    this.#protected = [...(options.protectedPaths ?? []), ...dbFiles].flatMap(spellingsOf);
+    this.#secrets = [...(options.secretPaths ?? []), ...dbFiles].flatMap(spellingsOf);
     this.#maxAmountCents = options.maxAmountCents ?? 30_000;
     this.#approver = options.approver;
     this.#fullControl = options.fullControl ?? false;
@@ -810,30 +806,19 @@ export class Gate {
     // protected list is bypassed by spelling the same file relatively
     // (`write path='src/permissions.ts'`). Windows drive/UNC spellings count
     // as absolute on any host, since the daemon runs on Windows.
-    const lower = this.#resolvePath(path);
-    return (
-      isDotEnvFile(lower) || this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`))
+    return spellingsOf(path).some(
+      (lower) =>
+        isDotEnvFile(lower) ||
+        this.#protected.some((p) => lower === p || lower.startsWith(`${p}\\`)),
     );
   }
 
   #isSecret(path: string): boolean {
     if (!path) return false;
-    const lower = this.#resolvePath(path);
-    return (
-      isDotEnvFile(lower) || this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`))
+    return spellingsOf(path).some(
+      (lower) =>
+        isDotEnvFile(lower) || this.#secrets.some((p) => lower === p || lower.startsWith(`${p}\\`)),
     );
-  }
-
-  /**
-   * Resolve a tool-call path before comparing, with the same semantics the fs
-   * tools apply (src/tools/fs.ts guardPath): `~` is the home directory and a
-   * relative path resolves against the process cwd. Windows drive/UNC
-   * spellings count as absolute on any host, since the daemon runs on
-   * Windows. Lexical normalization at the end: `..`, mixed separators and
-   * case must not smuggle a protected path past a prefix check.
-   */
-  #resolvePath(path: string): string {
-    return lexicalNormalize(absolutizePath(path));
   }
 
   #isPaymentish(c: ToolCall): boolean {
@@ -2264,6 +2249,38 @@ export function protectedRepoPaths(root: string = MODULE_REPO_ROOT): string[] {
  * on Windows. Configuration entries (PA_STATE_DIR may be RELATIVE) must go
  * through this too, or a relative secret dir never matches a resolved call.
  */
+/**
+ * The on-disk spelling of an absolute path: realpath of its deepest existing
+ * ancestor plus the part that does not exist yet. Follows symlinks and junctions
+ * and, on Windows, expands 8.3 short names (PROGRA~1), which lexical checks cannot
+ * see. null when the path is not absolute on this host or nothing resolves.
+ */
+export function onDiskSpelling(abs: string): string | null {
+  if (!isAbsolute(abs)) return null;
+  const tail: string[] = [];
+  let cur = abs;
+  for (let i = 0; i < 256; i++) {
+    try {
+      return join(realpathSync.native(cur), ...tail.reverse());
+    } catch {
+      const parent = dirname(cur);
+      if (parent === cur) return null;
+      tail.push(basename(cur));
+      cur = parent;
+    }
+  }
+  return null;
+}
+
+/** Lexical spelling, plus the on-disk one when it differs: a match on either counts. */
+function spellingsOf(path: string): string[] {
+  const abs = absolutizePath(path);
+  const lexical = lexicalNormalize(abs);
+  const disk = onDiskSpelling(abs);
+  const real = disk === null ? lexical : lexicalNormalize(disk);
+  return real === lexical ? [lexical] : [lexical, real];
+}
+
 function absolutizePath(path: string): string {
   const expanded = path.replace(/^~(?=$|[\\/])/, homedir());
   return /^[a-zA-Z]:[\\/]/.test(expanded) || expanded.startsWith('\\\\') || isAbsolute(expanded)
