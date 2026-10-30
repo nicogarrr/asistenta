@@ -17,6 +17,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Ver herramientas y errores de hoy',
   },
   {
+    command: 'consumo',
+    description: 'Ver tokens y coste estimado de hoy, la semana o el mes',
+  },
+  {
     command: 'permisos',
     description: 'Ver o revocar permisos permanentes',
   },

@@ -298,3 +298,69 @@ export function dailyBudgetExceeded(limitEur?: number): boolean {
   if (limitEur === undefined || !Number.isFinite(limitEur) || limitEur <= 0) return false;
   return usageToday().costEur > limitEur;
 }
+
+/** Totales de un informe con la precision interna para no perder centimos al sumar. */
+export interface UsageReportTotals extends UsageTotals {
+  costMicros: number;
+}
+
+export interface UsageReport {
+  /** Dias del periodo, del mas reciente (hoy) al mas antiguo, con o sin consumo. */
+  days: { day: string; totals: UsageReportTotals }[];
+  /** Desglose por modelo del periodo, de mayor a menor coste (y tokens). */
+  byModel: { model: string; totals: UsageReportTotals }[];
+  total: UsageReportTotals;
+  today: UsageReportTotals;
+}
+
+/** Tope del periodo de un informe: un mes de ficheros diarios. */
+export const USAGE_REPORT_MAX_DAYS = 31;
+
+function reportTotals(records: UsageRecord[]): UsageReportTotals {
+  const base = aggregate(records);
+  let costMicros = 0;
+  for (const record of records) costMicros += record.costMicros;
+  return { ...base, costMicros };
+}
+
+/**
+ * Consumo de los ultimos `days` dias locales (hoy incluido), leido de los
+ * JSONL diarios. Solo lectura y tolerante: un fichero ausente o una linea rota
+ * cuentan como cero. `days` se acota a 1..USAGE_REPORT_MAX_DAYS.
+ */
+export function usageReport(days = 7, now: Date = new Date()): UsageReport {
+  const span = Math.min(
+    USAGE_REPORT_MAX_DAYS,
+    Math.max(1, Number.isFinite(days) ? Math.floor(days) : 7),
+  );
+  const perDay: { day: string; records: UsageRecord[] }[] = [];
+  for (let i = 0; i < span; i++) {
+    // Mediodia local: restar dias nunca cruza mal un cambio de hora.
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12);
+    const day = localDay(date);
+    perDay.push({ day, records: readRecords(usageFile(day)) });
+  }
+  const all = perDay.flatMap((d) => d.records);
+  const models = new Map<string, UsageRecord[]>();
+  for (const record of all) {
+    const key = record.model || 'desconocido';
+    const list = models.get(key);
+    if (list) list.push(record);
+    else models.set(key, [record]);
+  }
+  const byModel = [...models.entries()]
+    .map(([model, records]) => ({ model, totals: reportTotals(records) }))
+    .sort(
+      (a, b) =>
+        b.totals.costMicros - a.totals.costMicros ||
+        b.totals.totalTokens - a.totals.totalTokens ||
+        a.model.localeCompare(b.model),
+    );
+  const days_ = perDay.map((d) => ({ day: d.day, totals: reportTotals(d.records) }));
+  return {
+    days: days_,
+    byModel,
+    total: reportTotals(all),
+    today: days_[0]?.totals ?? reportTotals([]),
+  };
+}
