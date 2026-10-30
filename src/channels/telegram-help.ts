@@ -214,7 +214,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       { command: 'consumo', args: '[hoy|semana|mes]', description: 'tokens y coste estimado' },
       { command: 'servicios', description: 'herramientas externas adoptadas y su estado' },
-      { command: 'skills', args: 'instalar <url>', description: 'instala una skill' },
+      {
+        command: 'skills',
+        args: 'buscar <texto> | instalar <url>',
+        description: 'busca o instala una skill',
+      },
       { command: 'evolucion', args: '[idea <texto>|ahora]', description: 'la auto-mejora semanal' },
     ],
   },

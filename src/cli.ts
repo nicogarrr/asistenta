@@ -168,6 +168,7 @@ import {
 } from './research/wide-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { refineFromLessons } from './skills/refine.js';
+import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
 import {
   buildTriggerPrompt,
@@ -5149,6 +5150,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
     }
   };
+  const cmdSkillsSearch = async (inbound: Inbound, args: string): Promise<void> => {
+    await say(inbound, await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL), {
+      quote: true,
+    });
+  };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -6729,7 +6735,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (sub === 'instalar' || sub === 'importar' || sub === 'install') {
           return cmdSkillsImport(inbound, args.trim().split(/\s+/).slice(1).join(' '));
         }
-        return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+        if (sub === 'buscar' || sub === 'search') {
+          return cmdSkillsSearch(inbound, args.trim().split(/\s+/).slice(1).join(' '));
+        }
+        return say(inbound, 'Uso: /skills buscar <texto> · /skills instalar <url de SKILL.md>', {
+          quote: true,
+        });
       },
     },
     { names: ['agenda'], run: (inbound, args) => cmdAgenda(inbound, args) },
@@ -7523,6 +7534,28 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
         }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
     ),
   ].join('\n');
+}
+
+/**
+ * F15 `/skills buscar <texto>`: busca en el índice JSON de PA_SKILLS_INDEX_URL.
+ * Solo lista nombre + URL; instalar sigue siendo `/skills instalar <url>`.
+ */
+export async function skillsSearchReply(
+  query: string,
+  indexUrl: string | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<string> {
+  const q = query.trim();
+  if (!q) return 'Uso: /skills buscar <texto>';
+  if (!indexUrl?.trim()) {
+    return 'No hay índice de skills configurado. Pon PA_SKILLS_INDEX_URL=https://… (un JSON con [{ "name", "url", "description" }]) en .env.';
+  }
+  try {
+    const entries = await fetchSkillIndex(indexUrl.trim(), { fetchImpl });
+    return formatSkillSearch(q, searchSkillIndex(entries, q));
+  } catch (err) {
+    return `No he podido leer el índice de skills: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
 
 /**
