@@ -1111,6 +1111,7 @@ ${renderFormatScript()}
               : JSON.stringify(datos);
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+          if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
           avisoConexion(false);
         } catch (error) {
           if (error && error.sinConexion) avisoConexion(true, true);
@@ -1136,6 +1137,41 @@ ${renderFormatScript()}
         }
       }
 
+      // Archivos que devuelve un turno del panel (documentos, vídeo, nota de voz…):
+      // enlaces de descarga. Solo «data:» en base64 de tipos que no ejecutan nada
+      // (ni HTML ni SVG); el nombre va como texto, nunca como HTML.
+      var ARCHIVO_PROHIBIDO = ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'text/javascript', 'application/javascript'];
+      function archivoValido(url) {
+        if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return false;
+        var coma = url.indexOf(',');
+        var cabecera = coma > 5 ? url.slice(5, coma).toLowerCase() : '';
+        if (cabecera.slice(-7) !== ';base64') return false;
+        var tipo = cabecera.slice(0, -7);
+        var partes = tipo.split('/');
+        if (partes.length !== 2 || !partes.every(function (p) { return /^[a-z0-9.+-]+$/.test(p); })) return false;
+        if (ARCHIVO_PROHIBIDO.indexOf(tipo) !== -1) return false;
+        var datos = url.slice(coma + 1);
+        return datos.length > 0 && datos.split('/').every(function (p) { return /^[A-Za-z0-9+=]*$/.test(p); });
+      }
+      function pintarArchivos(turno, datos) {
+        var lista = datos && Array.isArray(datos.files) ? datos.files : [];
+        var validos = lista.filter(function (f) {
+          return f && typeof f.name === 'string' && f.name.trim() && archivoValido(f.url);
+        }).slice(0, 4);
+        if (!validos.length) return;
+        var caja = nodo('div', 'archivos');
+        caja.setAttribute('data-archivos', String(validos.length));
+        validos.forEach(function (f) {
+          var nombre = f.name.split('/').join('_').split('\\\\').join('_').slice(0, 120);
+          var enlace = nodo('a', 'archivo', '📎 ' + nombre);
+          enlace.href = f.url;
+          enlace.setAttribute('download', nombre);
+          enlace.setAttribute('rel', 'noopener');
+          caja.appendChild(enlace);
+        });
+        turno.appendChild(caja);
+      }
+
       async function repetirUltimo() {
         var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
         espera.setAttribute('data-reintento', 'true');
@@ -1145,6 +1181,7 @@ ${renderFormatScript()}
           var respuesta = datos && typeof datos.text === 'string' ? datos.text : '';
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+          if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
         } catch (error) {
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
