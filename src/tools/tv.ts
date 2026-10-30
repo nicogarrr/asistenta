@@ -1,7 +1,9 @@
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { type Static, Type } from 'typebox';
 import { log } from '../log.js';
+import { needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
+import { describeTvIntent, parseTvCommand } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
 
@@ -86,9 +88,15 @@ const Params = Type.Object({
     Type.Literal('media'),
     Type.Literal('adblock'),
     Type.Literal('adTracking'),
+    Type.Literal('volumeStep'),
+    Type.Literal('channel'),
+    Type.Literal('command'),
   ]),
   appId: Type.Optional(
-    Type.String({ description: 'Para launch: el id de la app (sacalo de action=apps).' }),
+    Type.String({
+      description:
+        'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado.',
+    }),
   ),
   name: Type.Optional(
     Type.String({
@@ -111,6 +119,21 @@ const Params = Type.Object({
   ),
   command: Type.Optional(
     Type.String({ description: 'Para media: play, pause, playPause, stop, rewind o fastForward.' }),
+  ),
+  steps: Type.Optional(
+    Type.Number({
+      description:
+        'Para volumeStep: pasos relativos del mando, entero -15..15 sin 0 ("sube un poco" = 3, "baja 5" = -5). Va por SSAP, no necesita Glasshouse.',
+    }),
+  ),
+  channel: Type.Optional(
+    Type.String({ description: 'Para channel: up, down o el numero del canal (1-9999).' }),
+  ),
+  text: Type.Optional(
+    Type.String({
+      description:
+        'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo").',
+    }),
   ),
   mode: Type.Optional(
     Type.String({
@@ -199,7 +222,10 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'Un dato no disponible NO significa cero, tele apagada ni lista de apps vacia.',
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
-      'action=power apaga o enciende.',
+      'action=power apaga o enciende (si esta apagada del todo y hay MAC guardada, por red).',
+      'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
+      'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
+      '"volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Si no la entiende, lo dice.',
       'Via Glasshouse (si esta configurado): action=volume con level (0-100, nivel absoluto - "sube el',
       'volumen a 13" es volume level=13), action=mute, action=input (hdmi1-4/tv), action=url (abrir web),',
       'action=closeApp, action=screen (panel negro con audio), action=media (play/pause/stop...),',
@@ -261,7 +287,10 @@ export function explainTvError(err: unknown): unknown {
   return err;
 }
 
-async function runTvAction(deps: TvToolDeps, args: TvArgs) {
+async function runTvAction(
+  deps: TvToolDeps,
+  args: TvArgs,
+): Promise<AgentToolResult<Record<string, unknown>>> {
   switch (args.action) {
     case 'screenshot': {
       // La captura entera va por la MISMA cola que las mutaciones: dos
@@ -358,12 +387,91 @@ async function runTvAction(deps: TvToolDeps, args: TvArgs) {
       return { content: [{ type: 'text' as const, text }], details: { count: list.length } };
     }
     case 'launch': {
-      const appId = (args.appId ?? '').trim();
-      if (!appId) throw new Error('action=launch necesita appId (miralos con action=apps).');
+      const asked = (args.appId ?? '').trim();
+      if (!asked) throw new Error('action=launch necesita appId (miralos con action=apps).');
+      // "Netflix", "youtube" o "RTVE Play" -> id real. Solo se pide la lista
+      // a la tele cuando hace falta (ni ids reales ni alias conocidos).
+      const installed = needsAppLookup(asked) ? await deps.apps().catch(() => null) : null;
+      const resolved = resolveAppId(asked, installed);
+      const appId = resolved.id;
       await enqueueTvMutation(() => deps.launch(appId));
+      const label = appId === asked ? appId : `${resolved.title ?? asked} (${appId})`;
       return {
-        content: [{ type: 'text' as const, text: `He lanzado ${appId} en la tele.` }],
-        details: { appId, verified: false },
+        content: [{ type: 'text' as const, text: `He lanzado ${label} en la tele.` }],
+        details: {
+          appId,
+          verified: false,
+          ...(appId !== asked ? { asked, resolvedBy: resolved.how } : {}),
+        },
+      };
+    }
+    case 'volumeStep': {
+      const steps = args.steps;
+      if (
+        typeof steps !== 'number' ||
+        !Number.isInteger(steps) ||
+        steps === 0 ||
+        Math.abs(steps) > 15
+      ) {
+        throw new Error('action=volumeStep necesita steps: entero entre -15 y 15, distinto de 0.');
+      }
+      const key = steps > 0 ? 'VOLUMEUP' : 'VOLUMEDOWN';
+      // Una sola entrada en la cola: nadie intercala teclas a mitad.
+      await enqueueTvMutation(async () => {
+        for (let i = 0; i < Math.abs(steps); i += 1) await deps.key(key);
+      });
+      const n = Math.abs(steps);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Volumen ${steps > 0 ? 'subido' : 'bajado'} ${n} paso${n === 1 ? '' : 's'} (sin confirmacion de la tele).`,
+          },
+        ],
+        details: { steps, verified: false },
+      };
+    }
+    case 'channel': {
+      const raw = (args.channel ?? '').trim().toLowerCase();
+      let keys: string[];
+      if (raw === 'up' || raw === 'arriba' || raw === 'siguiente') keys = ['CHANNELUP'];
+      else if (raw === 'down' || raw === 'abajo' || raw === 'anterior') keys = ['CHANNELDOWN'];
+      else if (/^\d{1,4}$/.test(raw) && Number(raw) > 0) keys = [...String(Number(raw)), 'ENTER'];
+      else
+        throw new Error('action=channel necesita channel: up, down o un numero de canal (1-9999).');
+      await enqueueTvMutation(async () => {
+        for (const k of keys) await deps.key(k);
+      });
+      const what =
+        keys[0] === 'CHANNELUP'
+          ? 'siguiente canal'
+          : keys[0] === 'CHANNELDOWN'
+            ? 'canal anterior'
+            : `canal ${Number(raw)}`;
+      return {
+        content: [
+          { type: 'text' as const, text: `He puesto el ${what} (sin confirmacion de la tele).` },
+        ],
+        details: { channel: raw, keys, verified: false },
+      };
+    }
+    case 'command': {
+      const text = (args.text ?? '').trim();
+      if (!text) throw new Error('action=command necesita text: la orden en castellano.');
+      const intent = parseTvCommand(text);
+      if (!intent) {
+        throw new Error(
+          `No he entendido "${text.slice(0, 80)}" como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Tambien puedes usar las acciones explicitas.`,
+        );
+      }
+      const res = await runTvAction(deps, intent as TvArgs);
+      return {
+        ...res,
+        content: [
+          { type: 'text' as const, text: `Entendido: ${describeTvIntent(intent)}.` },
+          ...res.content,
+        ],
+        details: { ...res.details, intent },
       };
     }
     case 'key': {
