@@ -448,7 +448,8 @@ function parseButton(value: unknown): 'left' | 'right' | 'middle' {
 /** Click count: a whole number 1-5 (the backend's own range); anything else is refused. */
 function parseClicks(value: unknown): number {
   if (value === undefined || value === null) return 1;
-  const n = Number(value);
+  // strictNumber: `true` or `[2]` (a batch item skips the schema) are not counts.
+  const n = strictNumber(value);
   if (!Number.isInteger(n) || n < 1 || n > 5) {
     throw new Error(`clicks debe ser un número entero de 1 a 5; recibido ${String(value)}`);
   }
