@@ -26,3 +26,12 @@ Sin `PA_MCP_HTTP=1` nada cambia: las entradas con `url` se ignoran como hasta ah
 ## Recursos y prompts
 
 Además de las tools, el cliente HTTP habla `resources/list`, `resources/read`, `prompts/list` y `prompts/get` con la misma forma que el cliente stdio (mismas comprobaciones y mensajes de error). Sigue apagado por defecto: solo se usa con `PA_MCP_HTTP=1`.
+
+### Que el asistente los use (`PA_MCP_RESOURCES=1`)
+
+Apagado por defecto. Con `PA_MCP_RESOURCES=1`, cada servidor MCP (stdio o HTTP) que responda al listado publica dos herramientas de solo lectura:
+
+- `mcp_<servidor>_leer_recurso`: sin `uri` lista los recursos; con `uri` lee uno. Solo acepta URIs que el propio servidor anuncia en `resources/list`.
+- `mcp_<servidor>_usar_prompt`: sin `nombre` lista los prompts; con `nombre` (y `argumentos`) devuelve su texto. Comprueba los argumentos obligatorios.
+
+Si el servidor tiene `allowedTools`, hay que añadir `"@recursos"` y/o `"@prompts"` a la lista para publicarlas. Lo que devuelven cuenta como contenido externo (como cualquier tool `mcp_*`), y el texto se recorta a 20 000 caracteres.
