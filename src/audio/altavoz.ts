@@ -150,7 +150,11 @@ export interface AltavozPlayer {
    * que /stop en ese chat la pare igual que una de /altavoz tele: solo dentro de
    * `teleStopWindowMs` y con el `stop` del propio cast (si no hay, el genérico).
    */
-  noteTele(key: string | undefined, stop?: () => Promise<unknown>): TeleCastHandle;
+  noteTele(
+    key: string | undefined,
+    stop?: () => Promise<unknown>,
+    close?: () => void,
+  ): TeleCastHandle;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
   pending(): number;
@@ -178,13 +182,17 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
    */
   const teleCasts = new Map<
     string | undefined,
-    Array<{ at: number; stop?: () => Promise<unknown>; stopped: boolean }>
+    Array<{ at: number; stop?: () => Promise<unknown>; close?: () => void; stopped: boolean }>
   >();
-  const noteTeleCast = (key: string | undefined, stop?: () => Promise<unknown>) => {
+  const noteTeleCast = (
+    key: string | undefined,
+    stop?: () => Promise<unknown>,
+    close?: () => void,
+  ) => {
     const window = deps.teleStopWindowMs ?? 120_000;
     const t = now();
     const kept = (teleCasts.get(key) ?? []).filter((e) => t - e.at <= window);
-    const entry = { at: t, stop, stopped: false };
+    const entry = { at: t, stop, close, stopped: false };
     kept.push(entry);
     teleCasts.set(key, kept);
     return entry;
@@ -250,7 +258,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
           .finally(() => r.close?.());
         return;
       }
-      const cast = noteTeleCast(item.key, r.stop);
+      const cast = noteTeleCast(item.key, r.stop, r.close);
       watchFetch(r.hits, onNotice, () => cast.stopped);
       return;
     }
@@ -270,7 +278,11 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     const { stopTv } = deps;
     const window = deps.teleStopWindowMs ?? 120_000;
     const t = now();
-    const stops = new Set<() => Promise<unknown>>();
+    // Cada «parar» con los servidores LAN de sus casts: se cierran cuando la tele ha
+    // contestado (o ha fallado). Antes /stop paraba la tele pero el servidor del audio
+    // seguía abierto, con el fichero, hasta el final de su ventana.
+    const stops = new Map<() => Promise<unknown>, Array<() => void>>();
+    const orphanCloses: Array<() => void> = [];
     for (const [k, list] of teleCasts) {
       if (key !== undefined && k !== key) continue;
       teleCasts.delete(k);
@@ -279,15 +291,32 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
         e.stopped = true;
         // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
         const stop = e.stop ?? stopTv;
-        if (stop) stops.add(stop);
+        if (stop) {
+          const closes = stops.get(stop) ?? [];
+          if (e.close) closes.push(e.close);
+          stops.set(stop, closes);
+        } else if (e.close) orphanCloses.push(e.close);
       }
     }
+    const closeAll = (closes: Array<() => void>): void => {
+      for (const close of closes) {
+        try {
+          close();
+        } catch (err) {
+          deps.onError?.(err);
+        }
+      }
+    };
+    closeAll(orphanCloses);
     if (!stops.size) return 0;
-    for (const stop of stops) {
+    for (const [stop, closes] of stops) {
       try {
-        void Promise.resolve(stop()).catch((err) => deps.onError?.(err));
+        void Promise.resolve(stop())
+          .catch((err) => deps.onError?.(err))
+          .finally(() => closeAll(closes));
       } catch (err) {
         deps.onError?.(err);
+        closeAll(closes);
       }
     }
     return 1;
@@ -329,8 +358,8 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       stopped += stopRecentTele(key);
       return stopped;
     },
-    noteTele(key, stop) {
-      const cast = noteTeleCast(key, stop);
+    noteTele(key, stop, close) {
+      const cast = noteTeleCast(key, stop, close);
       return { stopped: () => cast.stopped };
     },
     idle: () => chain,

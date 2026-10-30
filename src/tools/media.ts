@@ -138,7 +138,7 @@ export interface MediaToolDeps {
    * La tele aceptó el audio: quien lleva /stop apunta el «parar» de este cast para que
    * /stop en este chat lo pare (mismo plazo y mismas reglas que /altavoz tele).
    */
-  onTeleCast?: (stop?: () => Promise<unknown>) => unknown;
+  onTeleCast?: (stop?: () => Promise<unknown>, close?: () => void) => unknown;
   /**
    * Aviso al chat cuando la tele aceptó el audio pero no lo ha descargado en
    * `teleNoFetchMs` (15 s): suele ser el firewall de Windows. Una vez por sesión.
@@ -410,7 +410,7 @@ async function playReceived(
         return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
       }
       if (res.ok) {
-        const cast = deps.onTeleCast?.(res.stop);
+        const cast = deps.onTeleCast?.(res.stop, res.close);
         watchTeleFetch(
           res.hits,
           deps.notifyChat,

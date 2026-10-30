@@ -2265,7 +2265,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           void say(inboundFor(thread), text);
         },
         // /stop en este chat para también lo que «reprodúcelo en la tele» mandó (<2 min).
-        onTeleCast: (stop) => altavozPlayer.noteTele(thread.chatKey, stop),
+        onTeleCast: (stop, close) => altavozPlayer.noteTele(thread.chatKey, stop, close),
         beforePlayback: () => currentWake()?.suppress(PLAYBACK_SUPPRESS_MS),
         afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
       }),
