@@ -153,6 +153,20 @@ export function checkNames(output: string): { passing: string[]; failing: string
   return { passing, failing };
 }
 
+/**
+ * Why a probe run measured nothing trustworthy, or null when it finished. The probe ends
+ * with «FLUJO GENERICO OK» (exit 0) or «N PASO(S) FALLARON» (exit 1). A probe that crashed,
+ * was killed or stopped early printed only some checks: counting those as the result scored
+ * the steps it never reached as if they did not exist, so the run is reported as not
+ * measured instead of as a measurement.
+ */
+export function probeUnfinished(output: string, code: number | string | null): string | null {
+  const lines = output.split('\n').map((l) => l.replace(ANSI, '').replace(/\r$/, '').trim());
+  if (code === 0 && lines.includes('FLUJO GENERICO OK')) return null;
+  if (code === 1 && lines.some((l) => /^\d+ PASO\(S\) FALLARON$/.test(l))) return null;
+  return `la sonda de extremo a extremo no terminó (salida ${code ?? 'sin código'}, sin «FLUJO GENERICO OK»): no medido`;
+}
+
 export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const cwd = opts.cwd;
   const timeoutMs = opts.timeoutMs ?? 20 * 60_000;
@@ -220,10 +234,14 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     windowsHide: true,
     env: cleanEnv(process.env, home),
     maxBuffer: 8 * 1024 * 1024,
-  }).catch((err: { stdout?: string; stderr?: string }) => ({
-    stdout: err.stdout ?? '',
-    stderr: err.stderr ?? '',
-  }));
+  })
+    .then((r) => ({ ...r, code: 0 as number | string | null }))
+    .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
+      stdout: err.stdout ?? '',
+      stderr: err.stderr ?? '',
+      code: err.code ?? null,
+    }));
+  const probeError = probeUnfinished(`${probe.stdout}\n${probe.stderr}`, probe.code);
   const parsedChecks = parseChecks(`${probe.stdout}\n${probe.stderr}`);
   checks = parsedChecks.passed;
   checksFailed = parsedChecks.failed;
@@ -241,6 +259,16 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
       checksFailed,
       durationMs: Date.now() - started,
       error: 'falta el informe por test (o no coincide con el resumen): no comparable',
+    };
+  }
+  if (probeError) {
+    return {
+      passed,
+      failed,
+      checks,
+      checksFailed,
+      durationMs: Date.now() - started,
+      error: probeError,
     };
   }
   return {
