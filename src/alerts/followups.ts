@@ -252,6 +252,18 @@ export class FollowupTracker {
       .map((row) => rowToFollowup(row as Record<string, unknown>));
   }
 
+  /**
+   * /borrar_chat: quita las notas de seguimiento del chat y de todos sus temas
+   * (`<chatKey>#<tema>`), pendientes o hechas. Nunca toca un chat que solo comparte
+   * prefijo (`…:1` no arrastra a `…:12`). Devuelve cuántas quitó.
+   */
+  clearChat(chatKey: string): number {
+    const r = this.#db
+      .prepare(`DELETE FROM followups WHERE scope = ? OR (scope >= ? AND scope < ?)`)
+      .run(chatKey, `${chatKey}#`, `${chatKey}$`);
+    return Number(r.changes);
+  }
+
   resolve(id: string): void {
     this.#db.prepare(`UPDATE followups SET status = 'done' WHERE id = ?`).run(id);
   }

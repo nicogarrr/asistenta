@@ -12,7 +12,7 @@ export const ERASE_WORD = 'BORRAR';
 export const ERASE_TTL_MS = 120_000;
 
 export const ERASE_PROMPT =
-  '⚠️ Esto borra la memoria, el historial de conversaciones y el perfil de este chat (todos sus temas). No se puede deshacer.\n' +
+  '⚠️ Esto borra la memoria, el historial de conversaciones, el perfil y los seguimientos pendientes de este chat (todos sus temas). Los objetivos aprobados se quedan. No se puede deshacer.\n' +
   `Escribe ${ERASE_WORD} (en mayúsculas) en los próximos 2 minutos para confirmar. Cualquier otro mensaje lo cancela.`;
 
 export type EraseDecision = 'confirmed' | 'cancelled';
@@ -88,6 +88,8 @@ export function eraseChat(opts: {
   projects?: ChatSettingsStore;
   /** Modelo elegido con /modelo en los temas de este chat. */
   models?: ChatSettingsStore;
+  /** Notas de seguimiento del chat («llamar a Juan el lunes»). Los objetivos aprobados no se tocan. */
+  followups?: ChatSettingsStore;
 }): {
   scopes: number;
   sessions: number;
@@ -95,6 +97,7 @@ export function eraseChat(opts: {
   profile: boolean;
   projects: number;
   models: number;
+  followups: number;
 } {
   const scopes = scopesOfChat(opts.chatKey, opts.liveScopes, opts.db);
   let sessions = 0;
@@ -108,7 +111,8 @@ export function eraseChat(opts: {
   }
   const projects = opts.projects?.clearChat(opts.chatKey) ?? 0;
   const models = opts.models?.clearChat(opts.chatKey) ?? 0;
-  return { scopes: scopes.length, sessions, memoryFiles, profile, projects, models };
+  const followups = opts.followups?.clearChat(opts.chatKey) ?? 0;
+  return { scopes: scopes.length, sessions, memoryFiles, profile, projects, models, followups };
 }
 
 export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
@@ -116,6 +120,7 @@ export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
   if (r.profile) extras.push('tu perfil');
   if (r.projects > 0) extras.push('la carpeta de proyecto ligada');
   if (r.models > 0) extras.push('el modelo elegido con /modelo');
+  if (r.followups > 0) extras.push(`${r.followups} seguimiento(s)`);
   const tail = extras.length > 0 ? ` y ${extras.join(', ')}` : '';
   return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${tail}. Empezamos de cero.`;
 }

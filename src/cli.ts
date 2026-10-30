@@ -4426,6 +4426,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       db: memoryDb,
       projects: projectContexts,
       models: modelChoices,
+      followups,
     });
     for (const t of live) threads.delete(t.key);
     await say(inbound, eraseSummary(result), { quote: true });
