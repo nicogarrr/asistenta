@@ -21,7 +21,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { loadCalendar } from './agenda/ics.js';
 import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
-import { buildAgenda } from './agenda/unified.js';
+import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker } from './alerts/followups.js';
 import { formatApproval } from './approval-text.js';
@@ -2837,6 +2837,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
                 return res.text();
               },
+              // Los mismos 35 días que pide la agenda de abajo (sin esto, el calendario
+              // solo se leía 7 días y las caducidades a 30 días nunca llegaban de él).
+              days: calendarDaysFor(VIGILANTE_AGENDA_DAYS),
             });
             calendarReason = calendarSnapshot.reason;
             const events = calendarSnapshot.events;
@@ -2870,7 +2873,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           },
           followups: () => followups.list(undefined, 200),
           // 35 días: las caducidades avisan a 30 días; lo demás sigue en 7 (collectFindings).
-          days: 35,
+          days: VIGILANTE_AGENDA_DAYS,
         });
         if (calendarReason) agenda.notes.push(calendarReason);
         return agenda;
@@ -6693,6 +6696,9 @@ function foldAccents(value: string): string {
 const PREFERENCE_MARKERS = /\b(prefiero|me gusta\w*|siempre|nunca)\b/iu;
 
 const DAY_MS = 86_400_000;
+
+/** Ventana de la agenda del vigilante: las caducidades avisan a 30 días. */
+const VIGILANTE_AGENDA_DAYS = 35;
 
 /**
  * What this turn teaches the instinct store: a stated preference in the user's

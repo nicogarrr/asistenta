@@ -91,7 +91,8 @@ describe('read-only unified overview', () => {
       { status: 'cancelled', title: 'Cancelado', plan: [] },
     ];
     const text = await readAgendaOverview(d, 9999);
-    expect(d.calendar).toHaveBeenCalledWith(60);
+    // 60 agenda days after today = 61 calendar days from today (loadCalendar caps it).
+    expect(d.calendar).toHaveBeenCalledWith(61);
     expect(text).not.toContain('Objetivos abiertos');
   });
   it('exposes the same reader to the model without mutation actions', async () => {
