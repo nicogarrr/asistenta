@@ -3,6 +3,7 @@ import { BlockList, isIP } from 'node:net';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log, logHost } from '../log.js';
+import { normalizeHostname } from '../text.js';
 
 /**
  * Read a web page, or fetch a URL the user pasted in chat.
@@ -110,7 +111,9 @@ export function isFetchable(url: string): boolean {
     return false;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-  const host = parsed.hostname.toLowerCase();
+  // «localhost.» / «metadata.google.internal.» (FQDN con punto final) son el mismo host
+  // para DNS: se comparan sin ese punto para que no esquiven las reglas de abajo.
+  const host = normalizeHostname(parsed.hostname);
   // Hostname evasion forms: decimal/octal/hex IPv4, trailing dots, mapped IPv6.
   // Best-effort lexical check (DNS rebinding is out of scope for a lexical gate).
   const numeric = host.replace(/^\[(.*)\]$/, '$1');
