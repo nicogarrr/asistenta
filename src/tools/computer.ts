@@ -748,7 +748,7 @@ export function createComputerTool(
    *   anything move" into "did EACH action land where it should" without paying
    *   two captures per action.
    */
-  const runBatch = async (record: Record<string, unknown>) => {
+  const runBatch = async (record: Record<string, unknown>, signal?: AbortSignal) => {
     const list = asActionList(record.actions);
     if (!list || list.length === 0) {
       throw new Error('the batch action requires a non-empty actions array');
@@ -780,9 +780,18 @@ export function createComputerTool(
     let before: Screenshot | null = null;
     let cutAt = -1;
 
+    let cancelledAt = -1;
     for (let i = 0; i < list.length; i++) {
       const item = list[i] ?? {};
       const name = typeof item.action === 'string' ? item.action : 'unknown';
+
+      // Safe stop: /stop (or a run timeout) aborts the agent run, and the rest of a
+      // queued sequence must not keep clicking on the desktop after that. Checked
+      // before each item, so the action in flight finishes and nothing new starts.
+      if (signal?.aborted) {
+        cancelledAt = i;
+        break;
+      }
 
       // The exact call shape `beforeToolCall` sends to `Gate.check`, so batch
       // items are policed by the same rules as standalone actions rather than
@@ -815,6 +824,19 @@ export function createComputerTool(
         log.warn('batch action failed', { index: i, action: name, err });
         cutAt = i;
         break;
+      }
+    }
+
+    if (cancelledAt >= 0) {
+      log.info('batch cancelled', { at: cancelledAt, of: list.length });
+      for (let j = cancelledAt; j < list.length; j++) {
+        const item = list[j] ?? {};
+        results.push({
+          index: j,
+          action: typeof item.action === 'string' ? item.action : 'unknown',
+          ok: false,
+          error: 'skipped: run cancelled (parada solicitada)',
+        });
       }
     }
 
@@ -897,9 +919,13 @@ export function createComputerTool(
     // over the mouse, which produces a click on the wrong thing and is very hard to
     // diagnose afterwards.
     executionMode: 'sequential',
-    execute: async (_id, args) => {
+    execute: async (_id, args, signal) => {
       const record = args as unknown as Record<string, unknown>;
-      if (args.action === 'batch') return runBatch(record);
+      if (args.action === 'batch') return runBatch(record, signal);
+      if (signal?.aborted && args.action !== 'screenshot') {
+        // A queued call that arrives after /stop must not touch mouse or keyboard.
+        throw new Error('cancelled: the run was stopped before this action (parada solicitada)');
+      }
       const out = await runAction(record, { verifyResult: true });
       return { content: out.content, details: out.details };
     },
