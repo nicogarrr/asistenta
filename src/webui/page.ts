@@ -337,6 +337,8 @@ export function renderPage(): string {
     .texto { white-space: pre-wrap; word-break: break-word; }
     .archivos { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; max-width: 100%; }
     .archivo { display: inline-block; max-width: 100%; padding: 10px 0; overflow-wrap: anywhere; word-break: break-word; }
+    .funcion-titulo { color: var(--texto); font-size: 15px; }
+    .funcion-titulo h3 { display: inline; font-size: inherit; margin: 0; }
     .capturas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde, #ccc); }
     .nulo { color: var(--suave); font-style: italic; }
@@ -1388,6 +1390,10 @@ ${renderFormatScript()}
         return true;
       }
 
+      function pantallaPequena() {
+        return !!(window.matchMedia && window.matchMedia('(max-width: 780px)').matches);
+      }
+
       async function cargarFunciones() {
         var contenedor = document.getElementById('panel-funciones');
         pintarCarga(contenedor);
@@ -1396,9 +1402,15 @@ ${renderFormatScript()}
           if (!Array.isArray(areas)) throw new Error('Respuesta de funciones inválida');
           contenedor.replaceChildren(nodo('p', 'muted', 'Lo mismo que /funciones en Telegram: qué sé hacer, por áreas, con un ejemplo de cómo pedirlo.'));
           areas.forEach(function (area) {
-            var bloque = nodo('section', 'sesion funcion');
+            // Cada área se pliega (details/summary): en el móvil (≤ 780 px) empiezan
+            // cerradas para que la tarjeta no ocupe varias pantallas.
+            var bloque = document.createElement('details');
+            bloque.className = 'sesion funcion';
+            bloque.open = !pantallaPequena();
             bloque.setAttribute('data-funcion', area.id);
-            bloque.appendChild(nodo('h3', null, area.titulo));
+            var cabeza = nodo('summary', 'funcion-titulo');
+            cabeza.appendChild(nodo('h3', null, area.titulo));
+            bloque.appendChild(cabeza);
             bloque.appendChild(nodo('p', 'texto', area.resumen));
             bloque.appendChild(nodo('p', 'muted', 'Ejemplo: «' + area.ejemplo + '»'));
             var lista = nodo('ul', 'comandos');
