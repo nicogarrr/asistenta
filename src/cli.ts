@@ -1,5 +1,6 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
+import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -1543,6 +1544,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const decisionLedger = new DecisionLedger(memoryDb, workstreams);
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
+  const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
   const weeklyState = new WeeklyState(memoryDb);
   const voiceDb = new DatabaseSync(join(paths.state, 'voice.db'));
   const bargeStats = new BargeStats(voiceDb);
@@ -1760,6 +1762,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                     ownerProfile,
                     text,
                     isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+                    projectContexts,
                   ),
                 );
                 const r = await thread.agent.run(text);
@@ -2543,6 +2546,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ownerProfile,
         prompt,
         isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        projectContexts,
       ),
     safeRemember,
   };
@@ -4363,6 +4367,52 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const startedAt = Date.now();
 
   /** /recordatorios [borrar <n|palabra>]: ver y quitar recordatorios sin pasar por el modelo. */
+  // F13: liga una carpeta de proyecto (su ASISTENTA.md/AGENTS.md entra en el contexto).
+  const cmdProyecto = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(
+        inbound,
+        'Solo el dueño, en su chat privado, puede ligar una carpeta de proyecto.',
+        {
+          quote: true,
+        },
+      );
+      return;
+    }
+    const thread = await resolveThread(inbound);
+    const arg = cleanProjectPath(args);
+    const verb = arg.toLowerCase();
+    if (verb === 'quitar' || verb === 'off' || verb === 'desligar') {
+      const had = projectContexts.unlink(thread.key);
+      await say(inbound, had ? 'Carpeta de proyecto desligada.' : 'No había carpeta ligada.', {
+        quote: true,
+      });
+      return;
+    }
+    if (!arg || verb === 'estado') {
+      const dir = projectContexts.get(thread.key);
+      const ctx = projectContexts.load(thread.key);
+      const state = !dir
+        ? 'Sin carpeta de proyecto en esta conversación.'
+        : ctx?.ok
+          ? `Proyecto: ${ctx.dir} — cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno.`
+          : `Proyecto: ${dir} — ahora no cargo nada: ${ctx?.ok === false ? ctx.reason : 'sin fichero'}.`;
+      await say(inbound, `${state}\nUso: /proyecto <carpeta> · /proyecto quitar`, { quote: true });
+      return;
+    }
+    const ctx = projectContexts.link(thread.key, arg);
+    if (!ctx.ok) {
+      await say(inbound, `No la ligo: ${ctx.reason}.`, { quote: true });
+      return;
+    }
+    const first = ctx.text.trim().split('\n')[0]?.slice(0, 80) ?? '';
+    await say(
+      inbound,
+      `Ligada ${ctx.dir}. Cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno de esta conversación${first ? `: «${first}»` : ''}.`,
+      { quote: true },
+    );
+  };
+
   const cmdRecordatorios = async (inbound: Inbound, args: string): Promise<void> => {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
@@ -5478,6 +5528,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ownerProfile,
           prompt,
           isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+          projectContexts,
         ),
       );
 
@@ -6423,6 +6474,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdEvolucion(inbound, command.args);
               case 'estado':
                 return cmdEstado(inbound);
+              case 'proyecto':
+                return cmdProyecto(inbound, command.args);
               case 'recordatorios':
               case 'reminders':
                 return cmdRecordatorios(inbound, command.args);
@@ -7204,6 +7257,7 @@ export function buildContextNote(
   profile?: OwnerProfile,
   request?: string,
   ownerView = false,
+  projects?: ProjectContextStore,
 ): string {
   const parts: string[] = [];
   // El perfil del dueño (v2 y PERFIL.md legado) es suyo: solo entra en el prompt de
@@ -7303,6 +7357,16 @@ export function buildContextNote(
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
   parts.push(buildNowNote());
+  // F13: el ASISTENTA.md/AGENTS.md de la carpeta ligada con /proyecto. Es del
+  // dueño, así que como el perfil solo entra en su chat privado.
+  if (ownerView && projects) {
+    try {
+      const block = projects.render(thread.key);
+      if (block) parts.push(block);
+    } catch {
+      // un fichero ilegible no debe tumbar el turno
+    }
+  }
   return parts.join('\n');
 }
 
