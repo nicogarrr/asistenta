@@ -49,13 +49,22 @@ export class WindowsScreen implements ScreenBackend {
   constructor(runPowerShell?: (script: string) => Promise<{ stdout: string; stderr: string }>) {
     this.runPowerShell =
       runPowerShell ??
-      (async (script) =>
-        execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-          encoding: 'utf8',
-          maxBuffer: 16 * 1024 * 1024,
-          timeout: 30_000,
-          windowsHide: true,
-        }));
+      (async (script) => {
+        try {
+          return await execFileAsync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', script],
+            {
+              encoding: 'utf8',
+              maxBuffer: 16 * 1024 * 1024,
+              timeout: POWERSHELL_TIMEOUT_MS,
+              windowsHide: true,
+            },
+          );
+        } catch (err) {
+          throw powerShellError(err);
+        }
+      });
   }
   #tempDir: string | null = null;
   /**
@@ -407,4 +416,45 @@ if ($stillOurs) {
   }
 }
 `;
+}
+
+/** execFile timeout for one desktop PowerShell call (ms). */
+export const POWERSHELL_TIMEOUT_MS = 30_000;
+
+/**
+ * A short, script-free error for a failed PowerShell call.
+ *
+ * Node's execFile error message is `Command failed: powershell.exe … -Command
+ * <the whole script>` and PowerShell's own stderr quotes the failing line
+ * (`+ [System.Windows.Forms.SendKeys]::SendWait('…')`). Both put the text being
+ * typed — and kilobytes of Add-Type C# — into the tool result the model reads
+ * and that can reach the chat. Keep only PowerShell's error sentence; say
+ * plainly when it was the timeout.
+ */
+export function powerShellError(err: unknown): Error {
+  const e = (err ?? {}) as {
+    killed?: boolean;
+    signal?: string | null;
+    code?: unknown;
+    stderr?: unknown;
+  };
+  if (e.killed || e.signal === 'SIGTERM') {
+    return new Error(
+      `PowerShell no respondió en ${POWERSHELL_TIMEOUT_MS / 1000} s y se cortó (el PC va lento o la ventana no responde).`,
+    );
+  }
+  if (e.code === 'ENOENT') return new Error('No encuentro powershell.exe en este equipo.');
+  const stderr = typeof e.stderr === 'string' ? e.stderr : '';
+  const lines: string[] = [];
+  for (const raw of stderr.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^At line:\d+|^En línea: ?\d+|^Line \||^\+|^\d+ \||^#< CLIXML|^<Objs/i.test(line)) break;
+    if (line) lines.push(line);
+  }
+  const reason = lines.join(' ').replace(/\s+/g, ' ').trim();
+  const short = reason.length > 300 ? `${reason.slice(0, 297)}…` : reason;
+  const code = typeof e.code === 'number' ? ` (código ${e.code})` : '';
+  return new Error(
+    short ? `PowerShell falló${code}: ${short}` : `PowerShell falló${code} sin mensaje de error.`,
+  );
 }
