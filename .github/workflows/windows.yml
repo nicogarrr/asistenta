@@ -41,6 +41,22 @@ on:
       - 'tsconfig*.json'
       - 'vitest.config.ts'
       - '.github/workflows/windows.yml'
+      - 'src/books/setup-cli.ts'
+      - 'src/books/userbot.ts'
+      - 'src/core/filewrites.ts'
+      - 'src/memory/docs.ts'
+      - 'src/memory/images.ts'
+      - 'src/setup-ownership.ts'
+      - 'src/setup.ts'
+      - 'test/paths-repo-dir.test.ts'
+      - 'test/filewrites.test.ts'
+      - 'test/books-setup.test.ts'
+      - 'test/books-setup-cli.test.ts'
+      - 'test/books-userbot.test.ts'
+      - 'test/setup.test.ts'
+      - 'test/setup-ownership.test.ts'
+      - 'test/recorder-dpi.test.ts'
+      - 'test/memory-images.test.ts'
   push:
     branches: [main]
     paths-ignore:
@@ -85,6 +101,16 @@ jobs:
           test/envfile-no-override.test.ts
           test/status.test.ts
           test/daemon-status.test.ts
+          test/paths-repo-dir.test.ts
+          test/filewrites.test.ts
+          test/books-setup.test.ts
+          test/books-setup-cli.test.ts
+          test/books-userbot.test.ts
+          test/setup.test.ts
+          test/setup-ownership.test.ts
+          test/vault-stdin.test.ts
+          test/recorder-dpi.test.ts
+          test/memory-images.test.ts
         env:
           CI: '1'
           TZ: Europe/Madrid
