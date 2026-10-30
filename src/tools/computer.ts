@@ -109,6 +109,18 @@ export interface ScreenBackend {
 }
 
 /**
+ * A coordinate as a number, or NaN when the value is not one. `Number()` alone
+ * turns null, '', '  ', true and [5] into numbers, so an empty x/y (a leaked tool
+ * call or a batch item with no coordinates) used to become a click at 0,0. NaN
+ * is refused by `coords()` with a Spanish error before anything moves.
+ */
+function strictNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim() !== '') return Number(value);
+  return Number.NaN;
+}
+
+/**
  * Recover an action from text the model emitted outside the tool_calls channel.
  * Returns null when nothing parses, so the caller can re-ask rather than act on a
  * guess.
@@ -144,20 +156,20 @@ export function normalizeAction(text: string): Action | null {
     case 'click':
       return {
         action: 'click',
-        x: Number(o.x),
-        y: Number(o.y),
+        x: strictNumber(o.x),
+        y: strictNumber(o.y),
         button: String(o.button ?? 'left'),
         clicks: Number(o.clicks ?? 1),
       };
     case 'move':
-      return { action: 'move', x: Number(o.x), y: Number(o.y) };
+      return { action: 'move', x: strictNumber(o.x), y: strictNumber(o.y) };
     case 'drag':
       return {
         action: 'drag',
-        x: Number(o.x),
-        y: Number(o.y),
-        toX: Number(o.toX),
-        toY: Number(o.toY),
+        x: strictNumber(o.x),
+        y: strictNumber(o.y),
+        toX: strictNumber(o.toX),
+        toY: strictNumber(o.toY),
       };
     case 'type':
       return {
@@ -260,8 +272,8 @@ function coords(
   view: Screen,
   native: Screen,
 ): { x: number; y: number } {
-  const x = Number(args.x);
-  const y = Number(args.y);
+  const x = strictNumber(args.x);
+  const y = strictNumber(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     throw new Error('esta acción necesita x e y numéricas');
   }
@@ -336,10 +348,10 @@ function parseRegionField(value: unknown, label: string): Region | null {
     throw new Error(`${label} debe ser un objeto con x, y, width y height`);
   }
   const r = value as Record<string, unknown>;
-  const x = Number(r.x);
-  const y = Number(r.y);
-  const width = Number(r.width);
-  const height = Number(r.height);
+  const x = strictNumber(r.x);
+  const y = strictNumber(r.y);
+  const width = strictNumber(r.width);
+  const height = strictNumber(r.height);
   if (
     !Number.isFinite(x) ||
     !Number.isFinite(y) ||
@@ -381,8 +393,8 @@ function coordsInRoi(
   view: Screen,
   native: Screen,
 ): { x: number; y: number; viewX: number; viewY: number } {
-  const x = Number(args.x);
-  const y = Number(args.y);
+  const x = strictNumber(args.x);
+  const y = strictNumber(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     throw new Error('esta acción necesita x e y numéricas');
   }
