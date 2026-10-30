@@ -59,19 +59,6 @@ function candidate(filename: string, i: number): string {
   return `${base}-${i}${ext}`;
 }
 
-/** Primer nombre libre en `dir` (solo orientativo: la creación real es exclusiva). */
-export async function freeName(dir: string, filename: string): Promise<string> {
-  for (let i = 1; i < 1000; i++) {
-    const name = candidate(filename, i);
-    const exists = await stat(join(dir, name)).then(
-      () => true,
-      () => false,
-    );
-    if (!exists) return name;
-  }
-  return `${candidate(filename, 1000)}-${Date.now()}`;
-}
-
 /**
  * Publica `srcPath` en `dir/filename` SIN pisar nunca: `link` falla con EEXIST de forma
  * atómica si el destino existe (aunque lo haya creado otro proceso un instante antes) y

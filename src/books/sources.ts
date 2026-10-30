@@ -145,11 +145,6 @@ export async function searchArchive(
     .filter((h) => h.id);
 }
 
-/** The downloadable EPUB/PDF files of an Internet Archive item. */
-export async function resolveArchive(id: string, getJson: GetJson): Promise<BookFile[]> {
-  return (await resolveArchiveItem(id, getJson)).files;
-}
-
 export async function resolveArchiveItem(
   id: string,
   getJson: GetJson,

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EngineDeps } from '../src/ocrdoc/engine.js';
-import { freeName, OcrFolderWatcher, watchModeFromEnv } from '../src/ocrdoc/watcher.js';
+import { OcrFolderWatcher, watchModeFromEnv } from '../src/ocrdoc/watcher.js';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -105,12 +105,7 @@ describe('OcrFolderWatcher', () => {
     expect((await readdir(join(dir, 'salida'))).sort()).toEqual(['a-2.md', 'a.md']);
   });
 
-  it('freeName y modo', async () => {
-    const d = await mkdtemp(join(tmpdir(), 'pa-fn-'));
-    dirs.push(d);
-    await writeFile(join(d, 'x.md'), '1');
-    expect(await freeName(d, 'x.md')).toBe('x-2.md');
-    expect(await freeName(d, 'y.md')).toBe('y.md');
+  it('modo', () => {
     expect(watchModeFromEnv(undefined)).toBe('md');
     expect(watchModeFromEnv('TODO')).toBe('todo');
     expect(watchModeFromEnv('raro')).toBe('md');
