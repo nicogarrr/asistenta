@@ -526,7 +526,20 @@ export class RoutineRunner {
           // Re-read at fire time: the prompt or the schedule may have been
           // corrected since registration.
           const fresh = this.#store.getRoutine(routine.scope, routine.name);
-          void this.#runRoutine(fresh ?? routine);
+          // Deleted, paused or no longer a schedule since this timer was set:
+          // the stored row is the truth, not the copy captured at registration.
+          // Running the stale copy kept firing a routine Nico had already
+          // removed until the next sync() (another process, a missed sync, a
+          // race with the fire). Drop the timer instead.
+          if (!fresh || !fresh.enabled || fresh.kind !== 'schedule' || !fresh.schedule) {
+            log.warn('skipping a fire for a routine that is no longer live', {
+              scope: routine.scope,
+              name: routine.name,
+            });
+            this.sync();
+            return;
+          }
+          void this.#runRoutine(fresh);
         },
       );
     } catch (err) {
