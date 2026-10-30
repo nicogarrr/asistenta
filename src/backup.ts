@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { backedUp } from './state-files.js';
 
 /**
  * Copia de seguridad nocturna del estado de Asistenta (bases de datos y memoria).
@@ -15,12 +16,15 @@ import { DatabaseSync } from 'node:sqlite';
  * los .db y carpetas de la fecha elegida encima del directorio de estado.
  * Copia los *.db y *.sqlite de la raíz (VACUUM INTO, coherente aunque estén abiertas),
  * los *.json de la raíz (alertas de precio, entrega de rutinas), docs/ (docs.sqlite más
- * el mirror de texto), memory/, snapshot/, skills/, playbooks/, undo/, calendar/ (la
- * agenda local), profile/ (tu perfil) y services/.
+ * el mirror de texto) y las carpetas y ficheros que marca el registro único de estado
+ * (`state-files.ts`: memory/, calendar/, profile/, salidas/, audit/, actions.jsonl…).
  * No copia el navegador, los modelos ni las capturas (pesan y se regeneran) ni el vault:
  * un duplicado del vault con la misma máquina no protege nada y sí multiplica donde
  * viven los secretos.
  */
+
+/** Ficheros sueltos de la raíz que no son *.json pero son estado (p. ej. actions.jsonl). */
+const ROOT_FILES = new Set(backedUp('file'));
 
 const KEEP_DEFAULT = 7;
 const DAY_MS = 24 * 3_600_000;
@@ -86,7 +90,7 @@ export function runBackup(opts: {
       if (name.endsWith('.db') || name.endsWith('.sqlite')) {
         copyDb(from, join(tmp, name));
         databases.push(name);
-      } else if (name.endsWith('.json')) {
+      } else if (name.endsWith('.json') || ROOT_FILES.has(name)) {
         // Configuración que solo existe aquí: pricewatch.json (tus alertas de
         // precio), routine-delivery.json...
         cpSync(from, join(tmp, name));
@@ -94,16 +98,9 @@ export function runBackup(opts: {
     }
     // calendar/ (agenda local: lo que apuntas sin Google), profile/ (tu perfil) y
     // services/ no tienen otra copia y antes no entraban en la copia de seguridad.
-    for (const name of [
-      'memory',
-      'snapshot',
-      'skills',
-      'playbooks',
-      'undo',
-      'calendar',
-      'profile',
-      'services',
-    ]) {
+    // Las carpetas salen del registro único (state-files.ts): calendar/, profile/,
+    // salidas/, audit/… solo existen aquí.
+    for (const name of backedUp('dir')) {
       const from = join(opts.stateDir, name);
       if (!existsSync(from)) continue;
       cpSync(from, join(tmp, name), { recursive: true });
