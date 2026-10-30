@@ -188,10 +188,25 @@ export function ffmpegEnv(
   platform: NodeJS.Platform = process.platform,
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  if (platform !== 'win32') return base;
-  const current = (base.__COMPAT_LAYER ?? '').split(/\s+/).filter(Boolean);
-  if (current.includes('HighDpiAware')) return base;
-  return { ...base, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
+  // ffmpeg only needs the system variables; tokens and API keys of the daemon have
+  // no business in the environment of a child that records the desktop.
+  const secrets = Object.keys(base).filter(isSecretEnvName);
+  let env = base;
+  if (secrets.length > 0) {
+    env = { ...base };
+    for (const name of secrets) delete env[name];
+  }
+  if (platform !== 'win32') return env;
+  const current = (env.__COMPAT_LAYER ?? '').split(/\s+/).filter(Boolean);
+  if (current.includes('HighDpiAware')) return env;
+  return { ...env, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
+}
+
+/** Names that carry credentials (bot tokens, API keys, passwords), never system vars. */
+export function isSecretEnvName(name: string): boolean {
+  return /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|COOKIE)/i.test(
+    name,
+  );
 }
 
 function run(
