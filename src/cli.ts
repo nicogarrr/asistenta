@@ -6686,10 +6686,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             if (mode !== 'off' && desktop && isOwnerDm(inbound, vigilanteOwnerId)) {
               const fileId = inbound.audioFileId;
               const mimeType = inbound.audioMimeType ?? 'audio/ogg';
-              const queued = altavozPlayer.enqueue(mode, async () => {
-                const bytes = await telegram.downloadFile(fileId, 25_000_000).catch(() => null);
-                return bytes ? { bytes, mimeType } : null;
-              });
+              const queued = altavozPlayer.enqueue(
+                mode,
+                async () => {
+                  const bytes = await telegram.downloadFile(fileId, 25_000_000).catch(() => null);
+                  return bytes ? { bytes, mimeType } : null;
+                },
+                (err) => {
+                  const why = err instanceof Error ? err.message : String(err);
+                  void say(inbound, `🔇 No he podido soltarla en el altavoz: ${why}`, {
+                    quote: true,
+                  });
+                },
+              );
               if (!queued) {
                 void say(
                   inbound,

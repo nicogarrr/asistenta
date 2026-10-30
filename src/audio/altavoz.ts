@@ -92,6 +92,8 @@ export interface AltavozPlayer {
   enqueue(
     mode: Exclude<AltavozMode, 'off'>,
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
+    /** Aviso por nota: quien la mandó tiene que saber que no ha sonado. */
+    onFail?: (err: unknown) => void,
   ): boolean;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
@@ -128,12 +130,19 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     }
   };
   return {
-    enqueue(mode, load) {
+    enqueue(mode, load, onFail) {
       if (waiting >= ALTAVOZ_MAX_QUEUE) return false;
       waiting++;
       chain = chain
         .then(() => playOne(mode, load))
-        .catch((err) => deps.onError?.(err))
+        .catch((err) => {
+          deps.onError?.(err);
+          try {
+            onFail?.(err);
+          } catch {
+            // Un aviso que falla no puede parar la cola.
+          }
+        })
         .finally(() => {
           waiting--;
         });

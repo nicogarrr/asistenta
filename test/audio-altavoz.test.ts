@@ -158,6 +158,34 @@ describe('createAltavozPlayer', () => {
   });
 });
 
+describe('aviso por nota fallida', () => {
+  it('quien mandó la nota se entera de por qué no sonó; las demás siguen', async () => {
+    const onFail = vi.fn();
+    const played: string[] = [];
+    const p = createAltavozPlayer({
+      toPlayable: async (b) => b.toString(),
+      playOnPc: async (f) => {
+        if (f === 'mala') throw new Error('sin dispositivo de audio');
+        played.push(f);
+      },
+      remove: () => {},
+    });
+    p.enqueue('pc', async () => ({ bytes: Buffer.from('mala'), mimeType: 'audio/ogg' }), onFail);
+    p.enqueue(
+      'pc',
+      async () => ({ bytes: Buffer.from('buena'), mimeType: 'audio/ogg' }),
+      () => {
+        throw new Error('el aviso también falla');
+      },
+    );
+    p.enqueue('pc', async () => ({ bytes: Buffer.from('otra'), mimeType: 'audio/ogg' }));
+    await p.idle();
+    expect(onFail).toHaveBeenCalledTimes(1);
+    expect(String(onFail.mock.calls[0]?.[0])).toContain('sin dispositivo');
+    expect(played).toEqual(['buena', 'otra']);
+  });
+});
+
 describe('menú de Telegram', () => {
   it('incluye /altavoz', () => {
     expect(TELEGRAM_COMMANDS.some((c) => c.command === 'altavoz')).toBe(true);
