@@ -89,7 +89,7 @@ export function checkoutStageOf(call: Pick<ToolCall, 'tool' | 'args'>): Purchase
  * bank, so every ambiguity resolves towards refusal.
  */
 const PAYMENT_LABEL =
-  /\b(pagar|abonar|cobrar|charge|paying|checkout\s+now|complete\s+(payment|purchase|order)|confirmar?\s+(el\s+)?pago|confirmar?\s+pedido|realizar\s+(el\s+)?pago|pagar\s+(el\s+)?pedido|finalizar\s+(la\s+)?compra|place\s+order|pay\s+now|buy\s+now|submit\s+(payment|order))\b/i;
+  /\b(pagar|abonar|cobrar|charge|paying|checkout\s+now|complete\s+(payment|purchase|order)|confirmar?\s+(el\s+)?pago|confirmar?\s+pedido|realizar\s+(el\s+)?pago|pagar\s+(el\s+)?pedido|finalizar\s+(la\s+)?compra|place\s+order|pay\s+now|buy\s+now|submit\s+(payment|order)|book\s+now|reserve\s+now|complete\s+(booking|reservation)|confirm\s+(booking|reservation)|donate|adquirir|^\s*order\s*$|^\s*submit)\b/i;
 
 /**
  * Buttons that lead to the payment screen without paying. Removed from a label before
