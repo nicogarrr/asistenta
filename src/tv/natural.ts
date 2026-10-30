@@ -21,7 +21,7 @@ import { APP_ALIASES, normalizeTvText } from './apps.js';
 export type TvIntent =
   | { action: 'power'; on: boolean }
   | { action: 'volume'; level: number }
-  | { action: 'volumeStep'; steps: number }
+  | { action: 'volumeStep'; steps: number; requested?: number }
   | { action: 'volumeHalf' }
   | { action: 'mute'; on: boolean }
   | { action: 'channel'; channel: string }
@@ -29,7 +29,28 @@ export type TvIntent =
   | { action: 'media'; command: 'play' | 'pause' | 'stop' }
   | { action: 'input'; input: string }
   | { action: 'status' }
-  | { action: 'scene'; scene: string; appId?: string };
+  | { action: 'scene'; scene: string; appId?: string }
+  | { action: 'key'; name: 'BACK' }
+  | { action: 'picture'; pictureMode: string };
+
+/** Modos de imagen de LG que se pueden pedir con palabras («pon la imagen en estándar»). */
+const PICTURE_WORDS: ReadonlyArray<[RegExp, string]> = [
+  [/^(?:estandar|normal)$/, 'standard'],
+  [/^(?:oscura|eco|ahorro|ahorro de energia)$/, 'eco'],
+  [/^(?:cine|pelicula|peli)$/, 'cinema'],
+  [/^(?:viva|vivida|intensa|brillante)$/, 'vivid'],
+  [/^(?:juego|juegos|videojuegos)$/, 'game'],
+  [/^(?:deporte|deportes|futbol)$/, 'sports'],
+];
+
+const PICTURE_NAMES: Record<string, string> = {
+  standard: 'estándar',
+  eco: 'oscuro (eco)',
+  cinema: 'cine',
+  vivid: 'vivo',
+  game: 'juego',
+  sports: 'deportes',
+};
 
 const NUM_WORDS: Record<string, number> = {
   un: 1,
@@ -110,6 +131,26 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (!t) return null;
   if (DEFERRED.test(t)) return null;
   let m: RegExpExecArray | null;
+
+  // «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla BACK del mando.
+  if (
+    new RegExp(
+      `^(?:(?:vuelve|volver|ve|vete|dale(?: al?)?|pulsa|presiona|toca)(?: (?:hacia|para))? )?(?:(?:el )?boton (?:de )?)?atras(?: (?:en|de) ${TV})?$`,
+    ).test(t)
+  ) {
+    return { action: 'key', name: 'BACK' };
+  }
+  // Modo de imagen: «pon la imagen en estándar», «imagen oscura», «pon el modo de imagen juego».
+  // Va antes de las rutinas: «la imagen en modo cine» cambia la imagen, «modo cine» es la rutina.
+  m = new RegExp(
+    `^(?:(?:pon|poner|cambia|cambiar|deja|dejar)(?: (?:la|el))? )?(?:modo de imagen|imagen)(?: (?:en|a|al|de))?(?: modo)? ([a-z ]{2,30}?)(?: (?:en|de) ${TV})?$`,
+  ).exec(t);
+  if (m?.[1]) {
+    const word = m[1].trim();
+    const hit = PICTURE_WORDS.find(([re]) => re.test(word));
+    if (hit) return { action: 'picture', pictureMode: hit[1] };
+    return null;
+  }
 
   // Rutinas: "modo cine", "pon el modo cine con Netflix", "noche de peli".
   if (/\bmodo (?:cine|pelicula|peli)\b|\bnoche de (?:cine|peli|pelicula)\b/.test(t)) {
@@ -207,7 +248,11 @@ export function parseTvCommand(text: string): TvIntent | null {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
     if (n !== null && n > 0) {
       const steps = Math.min(MAX_VOLUME_STEP, n);
-      return { action: 'volumeStep', steps: m[1].startsWith('sube') ? steps : -steps };
+      const signed = m[1].startsWith('sube') ? steps : -steps;
+      // Se recorta a MAX_VOLUME_STEP por seguridad, pero se dice: «sube 20» no sube 15 en silencio.
+      return n > MAX_VOLUME_STEP
+        ? { action: 'volumeStep', steps: signed, requested: n }
+        : { action: 'volumeStep', steps: signed };
     }
   }
   if (/\bmas alto\b/.test(t)) return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
@@ -274,7 +319,9 @@ export function describeTvIntent(i: TvIntent): string {
     case 'volumeHalf':
       return 'bajar el volumen a la mitad';
     case 'volumeStep':
-      return i.steps > 0 ? `subir el volumen ${i.steps}` : `bajar el volumen ${-i.steps}`;
+      return `${i.steps > 0 ? `subir el volumen ${i.steps}` : `bajar el volumen ${-i.steps}`}${
+        i.requested ? ` (pediste ${i.requested}; el máximo de una vez es ${Math.abs(i.steps)})` : ''
+      }`;
     case 'mute':
       return i.on ? 'silenciar la tele' : 'quitar el silencio';
     case 'channel':
@@ -294,5 +341,23 @@ export function describeTvIntent(i: TvIntent): string {
     case 'scene':
       if (i.scene === 'apagar-todo') return 'apagarlo todo';
       return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
+    case 'key':
+      return 'volver atrás';
+    case 'picture':
+      return `poner la imagen en modo ${PICTURE_NAMES[i.pictureMode] ?? i.pictureMode}`;
   }
+}
+
+/**
+ * Aviso extra para la respuesta cuando la orden no se cumple tal cual se pidió
+ * (p. ej. «sube 20» se recorta a 15). null si no hay nada que avisar.
+ */
+export function tvIntentNotice(i: TvIntent): string | null {
+  if (i.action === 'volumeStep' && i.requested) {
+    const verbo = i.steps > 0 ? 'subir' : 'bajar';
+    const hecho = i.steps > 0 ? 'subido' : 'bajado';
+    const max = Math.abs(i.steps);
+    return `Pediste ${verbo} ${i.requested}, pero de una vez ${i.steps > 0 ? 'subo' : 'bajo'} como mucho ${max}: lo he ${hecho} ${max}.`;
+  }
+  return null;
 }

@@ -7,7 +7,7 @@
  * - Si no se entiende, NO se reenvia al modelo: se dice y se dan ejemplos.
  */
 
-import { describeTvIntent, parseTvCommand, tvOrderHasTime } from './natural.js';
+import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 
 export const TV_CHAT_EXAMPLES =
   '/tv apaga la tele · /tv abre Netflix · /tv volumen a 15 · /tv silencio · /tv modo cine · /tv estado';
@@ -39,7 +39,9 @@ export async function tvChatCommand(args: string, deps: TvChatCommandDeps): Prom
   }
   try {
     const out = (await deps.run(text)).trim();
-    return out || `Hecho: ${describeTvIntent(intent)}.`;
+    if (!out) return `Hecho: ${describeTvIntent(intent)}.`;
+    const notice = tvIntentNotice(intent);
+    return notice ? `${out}\n${notice}` : out;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return `No he podido ${describeTvIntent(intent)}: ${msg}`;
