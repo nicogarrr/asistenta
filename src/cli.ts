@@ -177,6 +177,17 @@ import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
+import {
+  agendaTodayLines,
+  composeDailyBriefing,
+  type DailyBriefingDeps,
+  fetchWeatherLine,
+  followupsDue,
+  pickImportantMail,
+  runDailyBriefingIfDue,
+  scheduledForToday,
+  weatherConfigFromEnv,
+} from './briefing-daily.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
@@ -4122,6 +4133,93 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       .catch((err: unknown) => log.warn('weekly summary failed', { err }));
   };
 
+  /**
+   * Resumen de la mañana (opt-in PA_BRIEFING=1): agenda de hoy, correo sin leer que
+   * importa, tiempo (si hay PA_BRIEFING_LAT/LON), rutinas, recordatorios y
+   * seguimientos. Solo al DM del dueño verificado; ritmo en src/briefing-daily.ts.
+   */
+  const ownerChatKey = (chatId: string): string | undefined =>
+    [...threads.values()]
+      .map((t) => t.chatKey)
+      .find((k) => k.split(':')[0] === 'telegram' && k.split(':')[2] === chatId);
+  const briefingOwner = (): string | null =>
+    resolveOwnerDmChatId(
+      [...threads.values()].map((t) => t.chatKey),
+      vigilanteOwnerId,
+    );
+  const briefingWeather = weatherConfigFromEnv();
+  const briefingDeps: DailyBriefingDeps = {
+    enabled: () => process.env.PA_BRIEFING === '1',
+    now: () => new Date(),
+    hour: Number.parseInt(process.env.PA_BRIEFING_HOUR ?? '', 10) || undefined,
+    lastSent: () => weeklyState.lastSent('briefing'),
+    markSent: (at) => weeklyState.markSent('briefing', at),
+    owner: briefingOwner,
+    send: (chatId, text) =>
+      telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId, text })
+        .then(() => true),
+    agenda: async () => {
+      const agenda = await buildAgenda({
+        calendar: async () =>
+          (
+            await loadCalendar({
+              readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
+              getUrl: () => vaultGet('calendar:icsUrl'),
+              fetchText: async (url) => {
+                const res = await fetch(url, {
+                  redirect: 'follow',
+                  signal: AbortSignal.timeout(15_000),
+                });
+                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
+                return res.text();
+              },
+              days: 1,
+            })
+          ).events,
+        days: 1,
+      });
+      return agendaTodayLines(agenda.today, localTimeZone());
+    },
+    mail: async () => {
+      const account = await loadMailAccount();
+      if (!account) return [];
+      const since = Date.now() - 24 * 3_600_000;
+      const messages = await searchMail(account, { since, unreadOnly: true }, 30, 15_000);
+      return pickImportantMail(messages, Date.now());
+    },
+    weather: briefingWeather ? () => fetchWeatherLine(briefingWeather) : undefined,
+    ...(() => {
+      const today = () => {
+        const owner = briefingOwner();
+        const key = owner ? ownerChatKey(owner) : undefined;
+        if (!key) return { routines: [], reminders: [] };
+        const live = new Map(
+          routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s.next]),
+        );
+        return scheduledForToday(
+          store
+            .listRoutines()
+            .filter((r) => r.kind === 'schedule' && inChatScope(r.scope, key))
+            .map((r) => ({
+              name: r.name,
+              prompt: r.prompt,
+              enabled: r.enabled,
+              next: live.get(`${r.scope}\u0000${r.name}`) ?? null,
+            })),
+          new Date(),
+          localTimeZone(),
+        );
+      };
+      return {
+        routines: () => today().routines,
+        reminders: () => today().reminders,
+      };
+    })(),
+    followups: () => followupsDue(followups.list(undefined, 200), new Date()),
+    warn: (msg, meta) => log.warn(msg, meta ?? {}),
+  };
+
   const cmdGym = async (inbound: Inbound, what: GymKind): Promise<void> => {
     await say(inbound, await gymAnswer(gymDeps, what), { quote: true });
   };
@@ -4237,7 +4335,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, describeLast(paths.state), { quote: true });
   };
 
-  const cmdResumen = async (inbound: Inbound): Promise<void> => {
+  const cmdResumen = async (inbound: Inbound, args = ''): Promise<void> => {
+    if (/^(hoy|dia|día|manana|mañana)$/i.test(args.trim())) {
+      // El resumen de la mañana bajo demanda: misma composición, sin tocar el ritmo.
+      if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+        await say(
+          inbound,
+          'El resumen del día solo está disponible en el chat privado del dueño.',
+          {
+            quote: true,
+          },
+        );
+        return;
+      }
+      const { text } = await composeDailyBriefing(briefingDeps);
+      await say(inbound, text, { quote: true });
+      return;
+    }
     await say(inbound, await weeklyText(inbound.chatId), { quote: true });
   };
 
@@ -4246,6 +4360,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     () => {
       for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
+      if (process.env.PA_BRIEFING === '1') void runDailyBriefingIfDue(briefingDeps);
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
@@ -5064,7 +5179,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '/deshacer - repone el fichero que escribí por última vez como estaba antes',
         '/resolver <id> - marca un pendiente como resuelto',
         '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
-        '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde)',
+        '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde); /resumen hoy - el resumen del día',
         '/evolucion - estado de la auto-mejora semanal; /evolucion idea <texto> ⬦ /evolucion ahora',
         '/estado - cómo estoy: herramientas, errores de hoy',
         '/consumo [hoy|semana|mes] - tokens y coste estimado por día y modelo, y el presupuesto diario',
@@ -6318,7 +6433,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'peso':
                 return cmdGym(inbound, 'peso');
               case 'resumen':
-                return cmdResumen(inbound);
+                return cmdResumen(inbound, command.args);
               case 'evolucion':
                 return cmdEvolucion(inbound, command.args);
               case 'estado':

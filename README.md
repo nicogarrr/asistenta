@@ -153,6 +153,7 @@ npm test
 El runner ejecuta una fase general y una fase serial para pruebas de recursos. Las pruebas de navegador/escritorio requieren sus dependencias; las pruebas Linux no sustituyen la verificación de Windows. Un test con un proceso simulado no prueba que un daemon real se haya detenido.
 
 - [`ROADMAP.md`](ROADMAP.md): contexto de trabajo y deudas; puede contener planes aún no implementados.
+- [`docs/resumen-diario.md`](docs/resumen-diario.md): resumen de la mañana (opt-in `PA_BRIEFING=1`) y `/resumen hoy`.
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
 - [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): parada Linux, pruebas y límites.
