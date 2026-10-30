@@ -82,6 +82,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Comparar un producto entre las 7 tiendas',
   },
   {
+    command: 'ocr',
+    description: 'PDF o foto con texto seleccionable (escríbelo en el pie)',
+  },
+  {
     command: 'cron',
     description: 'Programar, pausar, probar o borrar rutinas',
   },
