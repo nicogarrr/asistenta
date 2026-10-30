@@ -399,7 +399,32 @@ export function describeCompare(r: CompareReport): string {
       lines.push(`- ${store}: no se pudo comprobar (${row.note})`);
     }
   }
+  const verdict = compareVerdict(r);
+  if (verdict) lines.push(verdict);
   return lines.join('\n');
+}
+
+/**
+ * Última línea de /compara: si el enlace que mandaste ya es el mejor precio (o empata), o
+ * dónde y cuánto más barato está. Solo con precio fiable en la ficha Y en al menos otra
+ * tienda; sin con qué comparar, no presume de nada.
+ */
+export function compareVerdict(r: CompareReport): string | undefined {
+  const seed = r.rows.find((row) => row.store === r.seed.store);
+  if (!seed || seed.status !== 'ok' || seed.cents === null || seed.cents <= 0) return undefined;
+  const others = r.rows
+    .filter((row) => row !== seed && row.status === 'ok' && row.cents !== null && row.cents > 0)
+    .sort((a, b) => (a.cents ?? 0) - (b.cents ?? 0));
+  const next = others[0];
+  if (!next || next.cents === null) return undefined;
+  const nextName = STORES[next.store].name;
+  if (seed.cents < next.cents) {
+    return `✅ Tu enlace ya es el mejor precio: ${eur(next.cents - seed.cents)} menos que ${nextName}.`;
+  }
+  if (seed.cents === next.cents) {
+    return `✅ Tu enlace ya es el mejor precio (empata con ${nextName}).`;
+  }
+  return `💡 En ${nextName} está ${eur(seed.cents - next.cents)} más barato que en tu enlace.`;
 }
 
 /**
