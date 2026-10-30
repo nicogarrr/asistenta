@@ -26,7 +26,7 @@ export type TvIntent =
   | { action: 'mute'; on: boolean }
   | { action: 'channel'; channel: string }
   | { action: 'launch'; appId: string }
-  | { action: 'media'; command: 'play' | 'pause' | 'stop' }
+  | { action: 'media'; command: 'play' | 'pause' | 'stop' | 'rewind' | 'fastForward' }
   | { action: 'input'; input: string }
   | { action: 'status' }
   | { action: 'scene'; scene: string; appId?: string }
@@ -205,6 +205,14 @@ const ARROWS: Record<string, TvKeyName> = {
   derecha: 'RIGHT',
 };
 
+const MEDIA_NAMES = {
+  pause: 'pausar',
+  play: 'reanudar',
+  stop: 'parar',
+  rewind: 'rebobinar',
+  fastForward: 'avanzar rápido',
+} as const;
+
 const KEY_NAMES: Record<TvKeyName, string> = {
   BACK: 'volver atrás',
   HOME: 'ir a la pantalla de inicio',
@@ -254,7 +262,11 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (m?.[1] && ARROWS[m[1]]) {
     return { action: 'key', name: ARROWS[m[1]] as TvKeyName };
   }
-  if (new RegExp(`^(?:${PULSA}salir|sal|sal de (?:la )?(?:app|aplicacion))$`).test(t)) {
+  if (
+    new RegExp(
+      `^(?:${PULSA}salir|sal|sal de (?:la )?(?:app|aplicacion)|cierra (?:la|esta) (?:app|aplicacion))$`,
+    ).test(t)
+  ) {
     return { action: 'key', name: 'EXIT' };
   }
   // Modo de imagen: «pon la imagen en estándar», «imagen oscura», «pon el modo de imagen juego».
@@ -453,6 +465,15 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (m) return { action: 'input', input: `hdmi${m[1]}` };
 
   // Reproduccion.
+  // «adelanta», «avance rápido», «rebobina el vídeo», «retrocede»: una pulsación de avance o
+  // retroceso. Con segundos («adelanta 10 segundos») va al modelo: la tele no salta exacto.
+  const QUE = '(?: (?:la|el) (?:peli|pelicula|serie|cancion|video))?';
+  if (new RegExp(`^(?:adelanta|avanza|avance rapido|avanza rapido)${QUE}$`).test(t)) {
+    return { action: 'media', command: 'fastForward' };
+  }
+  if (new RegExp(`^(?:rebobina|retrocede|atrasa)${QUE}$`).test(t)) {
+    return { action: 'media', command: 'rewind' };
+  }
   if (
     /^(?:pausa|pausala|pausalo|para|pon(?:le)?(?: la)? pausa|(?:pausa|para) la (?:peli|pelicula|serie|cancion|video))$/.test(
       t,
@@ -506,7 +527,7 @@ export function describeTvIntent(i: TvIntent): string {
     case 'launch':
       return `abrir ${i.appId}`;
     case 'media':
-      return i.command === 'pause' ? 'pausar' : i.command === 'play' ? 'reanudar' : 'parar';
+      return MEDIA_NAMES[i.command];
     case 'input':
       return `cambiar a ${i.input.toUpperCase()}`;
     case 'status':
