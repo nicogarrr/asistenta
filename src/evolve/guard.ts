@@ -43,6 +43,9 @@ export const PROTECTED_PATHS: RegExp[] = [
   /^src\/vault\.ts$/,
   /^src\/selfimprove\//,
   /^src\/evolve\/guard\.ts$/, // este mismo fichero (antes vivia en src/selfimprove/)
+  // El control del propio bucle (decisión de Nico, 30 oct): quien propone, mide, puntúa y
+  // aísla los intentos. Ya caían bajo el prefijo src/evolve/; aquí quedan nombrados.
+  /^src\/evolve\/(loop|score|worktree|measure|run|receipt|archive)\.ts$/,
   /^selfimprove\//, // antigua carpeta de la bateria (se queda: solo mas estricto)
   /^evolve\//, // bateria (evolve/battery.json) y sondas: la regla de medir
   /^src\/evolve\/battery[^/]*$/, // como se corre y se puntua la bateria
@@ -58,7 +61,10 @@ export const PROTECTED_PATHS: RegExp[] = [
 
 /** ¿Toca el bucle una ruta intocable? */
 export function isProtectedPath(f: string): boolean {
-  return PROTECTED_PATHS.some((re) => re.test(f));
+  // En Windows y macOS «src/Evolve/Loop.ts» o «src\\evolve\\loop.ts» es el mismo fichero:
+  // se mira también en minúsculas, con «/» y en NFC (solo puede vetar más).
+  const alt = f.normalize('NFC').replace(/\\/g, '/').toLowerCase();
+  return PROTECTED_PATHS.some((re) => re.test(f) || re.test(alt));
 }
 
 export type Violation = { file: string; rule: string };
