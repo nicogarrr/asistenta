@@ -166,8 +166,10 @@ const DATE_TXT = new RegExp(
   `\\b(0?[1-9]|[12]\\d|3[01])\\s+de\\s+(${MONTHS})(?:\\s+de\\s+\\d{4})?\\b`,
   'i',
 );
+// clean() pasa NFKC + \s+ -> ' ', así que el espacio duro/estrecho/fino de «1 299,00» llega
+// como espacio normal: con el símbolo delante («€ 1 299,00», «EUR 1 299,00») también es importe.
 const AMOUNT =
-  /(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}\s?(?:€|eur\b|euros\b)|(?:€|eur\s)\s?\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,6}\s?(?:€|euros\b)/i;
+  /(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}\s?(?:€|eur\b|euros\b)|(?:€|eur\s)\s?\d{1,3}(?:[. ]\d{3})*,\d{2}|\d{1,6}\s?(?:€|euros\b)/i;
 
 export interface ScreenFinding {
   key: string;
