@@ -42,3 +42,34 @@ export async function tvChatCommand(args: string, deps: TvChatCommandDeps): Prom
     return `No he podido ${describeTvIntent(intent)}: ${msg}`;
   }
 }
+
+/**
+ * Mando en botones bajo `/tv` (sin argumentos). Cada botón es una orden fija
+ * que pasa por tvChatCommand: mismo parser, misma cola, misma comprobación de
+ * dueño en privado. El callback lleva solo el id (nunca texto libre).
+ */
+export const TV_CALLBACK_PREFIX = 'tv:';
+
+export const TV_BUTTONS: ReadonlyArray<{ id: string; label: string; order: string }> = [
+  { id: 'on', label: '🔌 Encender', order: 'enciende la tele' },
+  { id: 'off', label: '⏻ Apagar', order: 'apaga la tele' },
+  { id: 'vdown', label: '🔉 Vol −', order: 'baja el volumen' },
+  { id: 'vup', label: '🔊 Vol +', order: 'sube el volumen' },
+  { id: 'mute', label: '🔇 Silencio', order: 'silencio' },
+  { id: 'netflix', label: '🎬 Netflix', order: 'abre netflix' },
+];
+
+export const TV_BUTTONS_TITLE = 'Mando de la tele (o escribe /tv <orden>):';
+
+export function tvButtons(): Array<{ label: string; action: string }> {
+  return TV_BUTTONS.map((b) => ({ label: b.label, action: `${TV_CALLBACK_PREFIX}${b.id}` }));
+}
+
+/** Pulsación de un botón del mando: `data` es el callback completo («tv:<id>»). */
+export async function tvButtonCommand(data: string, deps: TvChatCommandDeps): Promise<string> {
+  if (!deps.isOwner) return 'Solo el dueño, en su chat privado, puede mandar órdenes a la tele.';
+  const id = data.startsWith(TV_CALLBACK_PREFIX) ? data.slice(TV_CALLBACK_PREFIX.length) : '';
+  const button = TV_BUTTONS.find((b) => b.id === id);
+  if (!button) return 'Ese botón ya no existe. Escribe /tv para sacar el mando otra vez.';
+  return tvChatCommand(button.order, deps);
+}

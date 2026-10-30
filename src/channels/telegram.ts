@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { log, redact } from '../log.js';
+import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
@@ -426,6 +427,13 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Mando de la tele (/tv sin orden): también por su propio camino, nunca
+    // toca aprobaciones. Dueño + chat privado lo comprueba quien ejecuta.
+    if (data.startsWith(TV_CALLBACK_PREFIX)) {
+      await this.#onTvPress(ctx, handlers, data, userId);
+      return;
+    }
+
     const parsed = parseApprovalCallback(data);
     const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
     if (!parsed || !entry || entry.expires < Date.now()) {
@@ -462,6 +470,34 @@ export class TelegramChannel implements ChannelAdapter {
       scope: choice.scope,
     });
     await this.#announceDecision(ctx, choice);
+  }
+
+  async #onTvPress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    const chatId = ctx.callbackQuery?.message?.chat?.id;
+    // Sin chat de origen no se puede comprobar «en privado»: no se ejecuta.
+    if (chatId === undefined || !handlers.onTvButton) {
+      await ctx.answerCallbackQuery({ text: TV_BUTTON_STALE }).catch(() => {});
+      return;
+    }
+    let text: string;
+    try {
+      text = await handlers.onTvButton({
+        channel: 'telegram',
+        chatId: String(chatId),
+        userId: String(userId),
+        data: data.slice(0, 64),
+      });
+    } catch {
+      handlers.log('warn', 'tv button failed', { data: data.slice(0, 64) });
+      text = 'No he podido mandar la orden a la tele.';
+    }
+    const short = text.length > 190 ? `${text.slice(0, 189)}…` : text;
+    await ctx.answerCallbackQuery({ text: short, show_alert: text.length > 60 }).catch(() => {});
   }
 
   /**
@@ -1516,6 +1552,8 @@ export function fitCaption(text: string, max = CAPTION_MAX): string {
 
 /** Prefijo del callback de «📖 Ver todo»; nunca empieza como approve:/deny:. */
 export const MORE_CALLBACK_PREFIX = 'more:';
+
+const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 

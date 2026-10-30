@@ -105,7 +105,11 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: '🖥️ Tu PC',
     entries: [
-      { command: 'tv', args: '<orden>', description: 'orden directa a la tele, sin gastar tokens' },
+      {
+        command: 'tv',
+        args: '[orden]',
+        description: 'orden directa a la tele, sin gastar tokens; sin orden, mando con botones',
+      },
       {
         command: 'ordenador',
         args: '[on|off]',
