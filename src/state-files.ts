@@ -75,6 +75,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'modelos.json', what: 'modelo elegido con /modelo en cada conversación', backup: 'file' },
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
+  {
+    name: 'iniciar-ultimo.json',
+    what: 'resultado de la última comprobación de pa iniciar (lo enseña pa autostart status)',
+    backup: 'file',
+  },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },
   { name: 'alerts-seen.json', what: 'alertas ya entregadas (evita repetidas)', backup: 'file' },
   {

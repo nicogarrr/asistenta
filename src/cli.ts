@@ -595,12 +595,14 @@ export async function main(argv: string[]): Promise<number> {
       return controlledDaemon(serveCommand);
     case 'iniciar': {
       const { iniciarCommand, realPreflightDeps } = await import('./iniciar.js');
+      const { STARTUP_RECORD_FILE } = await import('./startup-record.js');
       return iniciarCommand(rest, {
         deps: realPreflightDeps,
         serve: () => controlledDaemon(serveCommand),
         write: (text) => process.stdout.write(text),
         writeErr: (text) => process.stderr.write(text),
         color: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR,
+        recordPath: join(paths.state, STARTUP_RECORD_FILE),
       });
     }
     case 'stop': {

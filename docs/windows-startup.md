@@ -78,3 +78,5 @@ Si el daemon está Running, solicita cierre limpio y se niega a quitar tareas si
 CI Windows ejecuta el parser PS5 real, canarios con Scheduler/handles simulados, rutas con espacios/apóstrofos, registro repetido sin duplicados, WhatIf sin tareas reales, y los tests del launcher/cierre autenticado. La suite también prueba destinatario fijo/fail-closed y contrato de salud. Esto no equivale a haber reiniciado el Huawei de Nico, capturado su escritorio, accedido a su TV o validado Docker Desktop en su sesión.
 
 Rollback de instalación: si falla el segundo registro se restaura el primero desde su XML previo (o se quita si antes no existía). Una reversión que falle también es fallo visible. No se permite considerar la instalación completada con una excepción oculta.
+
+`pa autostart status` empieza con una línea sobre la última comprobación de `pa iniciar` (cuándo fue, si estaba todo en verde o qué falló). Se guarda en `<estado>/iniciar-ultimo.json` cada vez que corre `pa iniciar`.
