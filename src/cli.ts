@@ -92,7 +92,7 @@ import {
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
-import { voiceInbound } from './daemon/voice-turn.js';
+import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
@@ -6243,20 +6243,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.info('voz no enrolada rechazada en la conversación', { total: speakerRejected });
       },
       transcriber: (samples) => defaultTranscriber(samples),
-      onUtterance: async (heard) => {
-        const inbound = voiceInbound(telegram.account, chat, heard, ++wakeCount);
-        const thread = await getOrCreateThread(chat.key, 'main', 'principal');
-        messageThread.set(`${chat.key}:${inbound.messageId}`, thread.key);
-        log.info('voice session utterance', { chars: heard.length, chatId: chat.chatId });
-        // The turn goes through runTurn like any message: same gate, same mutex. An
-        // approval it needs is still asked with Telegram buttons; nothing spoken is read
-        // as a yes. Encolado en el hilo: la voz no puede solaparse con un turno vivo.
-        await enqueue(thread, () =>
-          runTurn(thread, inbound, inbound.text, {
-            spoken: (answer) => speakAloud(answer, created),
-          }),
-        );
-      },
+      onUtterance: (heard): Promise<void> =>
+        voiceUtteranceTurn(chat, heard, {
+          account: telegram.account,
+          nextN: () => ++wakeCount,
+          getThread: (key) => getOrCreateThread(key, 'main', 'principal'),
+          linkMessage: (dedupKey, threadKey) => messageThread.set(dedupKey, threadKey),
+          logUtterance: (fields) => log.info('voice session utterance', fields),
+          enqueue,
+          runTurn,
+          speak: (answer: string): Promise<void> => speakAloud(answer, created),
+        }),
       onClose: (reason, detail) => {
         if (session === created) {
           session = null;
