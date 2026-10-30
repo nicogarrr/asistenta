@@ -11,6 +11,7 @@ import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -476,6 +477,19 @@ export async function main(argv: string[]): Promise<number> {
         return 1;
       }
       return new Promise<number>(() => {});
+    case 'audio': {
+      const { audioCommand } = await import('./audio/prueba-tele.js');
+      return audioCommand(rest, {
+        copyToTemp: async (file) => {
+          const out = join(tmpdir(), `pa-prueba-tele-${process.pid}-${Date.now()}.mp3`);
+          copyFileSync(file, out);
+          return out;
+        },
+        cast: (file, only) => tvCasterFromVault(vaultGet, tvRequest, { only })(file),
+        print: (line) => console.log(line),
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      });
+    }
     case 'tv':
       return tvCommand(rest, {
         runOrder: async (text) => {
