@@ -31,7 +31,15 @@ export interface Attempt {
   tries?: number;
   /** Nota de la batería del candidato y del kernel, cuando se llegó a medir. */
   battery?: { passed: number; total: number; basePassed: number; baseTotal: number };
+  /**
+   * Descartado sin llegar a medir la idea: la suite no dio número comparable (tiempo agotado,
+   * máquina ocupada, informe por test que falta) o no había batería. No dice nada de la idea.
+   */
+  unmeasured?: boolean;
 }
+
+/** Descartes sin medir que hacen falta para dar una idea por muerta. */
+export const UNMEASURED_LIMIT = 2;
 
 export class Archive {
   readonly path: string;
@@ -86,10 +94,26 @@ export class Archive {
     return this.read().filter((a) => a.week === week);
   }
 
-  /** The hypotheses that already failed, so the loop does not retry them blindly. */
+  /**
+   * The hypotheses that already failed, so the loop does not retry them blindly. A discard
+   * that never measured the idea (`unmeasured`: a busy machine, a missing battery) does not
+   * kill it on its own; only the second one does, so an idea that always hangs the suite
+   * is not retried forever either.
+   */
   deadEnds(week?: string): string[] {
     const rows = week ? this.week(week) : this.read();
-    return rows.filter((a) => a.verdict === 'discard' && a.hypothesis).map((a) => a.hypothesis);
+    const unmeasured = new Map<string, number>();
+    const dead = new Set<string>();
+    for (const a of rows) {
+      if (a.verdict !== 'discard' || !a.hypothesis) continue;
+      if (a.unmeasured === true) {
+        const n = (unmeasured.get(a.hypothesis) ?? 0) + 1;
+        unmeasured.set(a.hypothesis, n);
+        if (n < UNMEASURED_LIMIT) continue;
+      }
+      dead.add(a.hypothesis);
+    }
+    return [...dead];
   }
 }
 
