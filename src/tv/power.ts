@@ -31,6 +31,8 @@ export interface TvPowerDeps {
   wakeWaitMs?: number;
   /** Cada cuanto preguntar (por defecto 2 s). */
   pollMs?: number;
+  /** Reloj (inyectable en tests); por defecto Date.now. */
+  now?: () => number;
   info?: (msg: string, data?: Record<string, unknown>) => void;
 }
 
@@ -74,7 +76,12 @@ export async function tvPower(on: boolean, deps: TvPowerDeps): Promise<TvPowerOu
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const budget = Math.max(0, deps.wakeWaitMs ?? 20_000);
   const step = Math.max(1, deps.pollMs ?? 2_000);
-  for (let waited = 0; waited < budget; waited += step) {
+  // El presupuesto cuenta TIEMPO REAL, no solo las esperas: cada sondeo a una
+  // tele que aun no responde puede tardar segundos (timeout de conexion), y
+  // contar solo los `sleep` convertia 20 s en mas de un minuto de espera.
+  const now = deps.now ?? Date.now;
+  const start = now();
+  for (let waited = 0; waited < budget && now() - start < budget; waited += step) {
     await sleep(step);
     if (await deps.probe().catch(() => false)) return { via: 'wol', verified: true };
   }
