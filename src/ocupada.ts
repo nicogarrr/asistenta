@@ -6,8 +6,9 @@
  * contador con busyBegin(). Se escribe un fichero pequeño que lee otro proceso (el que
  * actualiza). Fuera del daemon (tests, CLI) no se escribe nada.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeFileReplacing } from './fs-tmp.js';
 
 export const BUSY_DIR = 'autoupdate';
 export const BUSY_FILE = 'ocupada.json';
@@ -20,12 +21,10 @@ let target: string | undefined;
 function write(): void {
   if (!target) return;
   try {
-    const tmp = `${target}.${process.pid}.tmp`;
-    writeFileSync(
-      tmp,
+    writeFileReplacing(
+      target,
       JSON.stringify({ pid: process.pid, ...counts, at: new Date().toISOString() }),
     );
-    renameSync(tmp, target);
   } catch {
     // Sin fichero, la autoactualización lo lee como «no sé» y espera: nunca reinicia a ciegas.
   }

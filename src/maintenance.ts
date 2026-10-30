@@ -6,19 +6,11 @@
  * de más: solo se toca lo que el filtro nombra, y un fallo de una parte no debe
  * impedir limpiar las demás.
  */
-import {
-  type Dirent,
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { wallClock } from './datecontext.js';
+import { writeFileReplacing } from './fs-tmp.js';
 import { memoryFile } from './memory.js';
 import { capped, prunable } from './state-files.js';
 
@@ -157,9 +149,7 @@ export function capAppendFile(file: string, maxBytes: number): boolean {
       size += n;
     }
     keep.reverse();
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, keep.length ? `${keep.join('\n')}\n` : '');
-    renameSync(tmp, file);
+    writeFileReplacing(file, keep.length ? `${keep.join('\n')}\n` : '');
     return true;
   } catch {
     return false;

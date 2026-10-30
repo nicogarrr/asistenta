@@ -4,12 +4,11 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname } from 'node:path';
-import { uniqueTmpPath } from './fs-tmp.js';
+import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
 import { formatStartRecord, ownIdentity, sameProcessAsRecorded } from './process-identity.js';
@@ -260,10 +259,8 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   };
 
   const writeAtomic = (file: string, contents: string): void => {
-    const tmp = uniqueTmpPath(file);
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(tmp, contents, 'utf8');
-    renameSync(tmp, file); // atomic on NTFS
+    writeFileReplacing(file, contents); // atomic on NTFS; no .tmp left if the rename fails
   };
 
   const heartbeat = async (): Promise<void> => {
