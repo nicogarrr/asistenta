@@ -6,7 +6,28 @@ import { paths } from './paths.js';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-const threshold = LEVEL_ORDER[(process.env.PA_LOG_LEVEL as LogLevel) ?? 'info'] ?? 20;
+
+/**
+ * Lee PA_LOG_LEVEL sin exigir minúsculas exactas: un .env editado en Windows
+ * suele traer «WARN», «Debug» o espacios al final, y antes eso caía en `info`
+ * sin avisar. `warning` vale como `warn`. Vacío = `info`. Un valor desconocido
+ * también da `info`, pero `invalid` lo devuelve para avisar una vez.
+ */
+export function parseLogLevel(raw: string | undefined): { level: LogLevel; invalid?: string } {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '') return { level: 'info' };
+  if (v === 'warning') return { level: 'warn' };
+  if (Object.hasOwn(LEVEL_ORDER, v)) return { level: v as LogLevel };
+  return { level: 'info', invalid: raw };
+}
+
+const parsedLevel = parseLogLevel(process.env.PA_LOG_LEVEL);
+const threshold = LEVEL_ORDER[parsedLevel.level];
+if (parsedLevel.invalid !== undefined) {
+  process.stderr.write(
+    `PA_LOG_LEVEL=${JSON.stringify(parsedLevel.invalid)} no es válido (debug | info | warn | error); uso info.\n`,
+  );
+}
 
 /**
  * JSONL to stdout plus a daily file. A daemon that only logs to stderr and
