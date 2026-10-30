@@ -75,7 +75,7 @@ describe('retención de documentos', () => {
       env: { PA_SESSION_RETENTION_DAYS: '0', PA_DOCUMENT_RETENTION_DAYS: '90' },
     });
     expect(pruneDocs).toHaveBeenCalledWith(90 * DAY);
-    expect(r).toEqual({ ran: true, sessions: 0, documents: 4 });
+    expect(r).toEqual({ ran: true, sessions: 0, documents: 4, files: 0 });
     expect(markRun).toHaveBeenCalledOnce();
   });
 

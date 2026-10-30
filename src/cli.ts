@@ -4433,8 +4433,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         lastRunMs: weeklyState.lastSent('retencion'),
         markRun: (at) => weeklyState.markSent('retencion', at),
         pruneDocs: (ms) => docMemory.pruneOlderThan(ms),
+        stateDir: paths.state,
       });
-      if (r.ran) log.info('retention done', { sessions: r.sessions, documents: r.documents });
+      if (r.ran)
+        log.info('retention done', {
+          sessions: r.sessions,
+          documents: r.documents,
+          files: r.files,
+        });
     } catch (err) {
       log.warn('session retention failed', { err: String(err) });
     }

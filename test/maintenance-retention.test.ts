@@ -53,7 +53,7 @@ describe('retención de sesiones (pasada diaria del daemon)', () => {
       },
       env: {},
     });
-    expect(r).toEqual({ ran: true, sessions: 1, documents: 0 });
+    expect(r).toEqual({ ran: true, sessions: 1, documents: 0, files: 0 });
     expect(marked).toBe(now.getTime());
     expect(ids(db)).toEqual(['reciente', 'vieja-abierta']);
     const turns = db

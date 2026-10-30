@@ -6,10 +6,11 @@
  * de más: solo se toca lo que el filtro nombra, y un fallo de una parte no debe
  * impedir limpiar las demás.
  */
-import { existsSync, rmSync } from 'node:fs';
+import { type Dirent, existsSync, lstatSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { memoryFile } from './memory.js';
+import { prunable } from './state-files.js';
 
 /** Un nombre de perfil seguro: sin separadores, sin `..` y sin nombres de dispositivo. */
 const SAFE_OWNER = /^[A-Za-z0-9._-]+$/;
@@ -78,6 +79,52 @@ export function documentRetentionDays(env: NodeJS.ProcessEnv = process.env): num
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+/**
+ * Días de retención de ficheros sueltos que crecen sin límite (`PA_FILE_RETENTION_DAYS`):
+ * log/ diarios, screenshots/, capturas temporales de voice/ y media/received. Apagada
+ * por defecto (0); qué se poda lo dice el registro (src/state-files.ts, campo `prune`).
+ */
+export function fileRetentionDays(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.PA_FILE_RETENTION_DAYS?.trim() || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Borra los ficheros más antiguos que el plazo en los directorios que el registro
+ * marca como podables. Nunca borra directorios ni sigue enlaces; un fallo en un
+ * fichero no para la pasada. Devuelve cuántos ficheros borró.
+ */
+export function pruneStateFiles(stateDir: string, olderThanMs: number, now = Date.now()): number {
+  const cutoff = now - olderThanMs;
+  let removed = 0;
+  const walk = (dir: string, match?: RegExp): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p, match);
+        continue;
+      }
+      if (!e.isFile() || (match && !match.test(e.name))) continue;
+      try {
+        if (lstatSync(p).mtimeMs < cutoff) {
+          rmSync(p, { force: true });
+          removed++;
+        }
+      } catch {
+        // sigue con el resto
+      }
+    }
+  };
+  for (const p of prunable()) walk(join(stateDir, p.dir), p.match);
+  return removed;
+}
+
 export interface RetentionDeps {
   db: DatabaseSync;
   /** Olvida documentos (índice + mirror) más antiguos que el plazo; ver DocMemory.pruneOlderThan. */
@@ -87,6 +134,8 @@ export interface RetentionDeps {
   lastRunMs: number;
   markRun: (atMs: number) => void;
   env?: NodeJS.ProcessEnv;
+  /** Directorio de estado; sin él no se podan ficheros (PA_FILE_RETENTION_DAYS). */
+  stateDir?: string;
 }
 
 /**
@@ -98,18 +147,24 @@ export function retentionIfDue(deps: RetentionDeps): {
   ran: boolean;
   sessions: number;
   documents: number;
+  files: number;
 } {
   const days = sessionRetentionDays(deps.env);
   const docDays = deps.pruneDocs ? documentRetentionDays(deps.env) : 0;
-  const idle = { ran: false, sessions: 0, documents: 0 };
-  if (days === 0 && docDays === 0) return idle;
+  const fileDays = deps.stateDir ? fileRetentionDays(deps.env) : 0;
+  const idle = { ran: false, sessions: 0, documents: 0, files: 0 };
+  if (days === 0 && docDays === 0 && fileDays === 0) return idle;
   const now = deps.now;
   if (now.getHours() < RETENTION_HOUR) return idle;
   if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return idle;
   const sessions = days > 0 ? pruneSessions(deps.db, days * DAY_MS, now.getTime()) : 0;
   const documents = docDays > 0 && deps.pruneDocs ? deps.pruneDocs(docDays * DAY_MS) : 0;
+  const files =
+    fileDays > 0 && deps.stateDir
+      ? pruneStateFiles(deps.stateDir, fileDays * DAY_MS, now.getTime())
+      : 0;
   deps.markRun(now.getTime());
-  return { ran: true, sessions, documents };
+  return { ran: true, sessions, documents, files };
 }
 
 /** Borra un fichero solo si existe; nunca propaga el error. */
