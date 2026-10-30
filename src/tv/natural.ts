@@ -139,7 +139,7 @@ function num(s: string | undefined): number | null {
   return spanishNumber(s);
 }
 
-const TV = '(?:la )?(?:tele|tv|television|televisor|pantalla)';
+const TV = '(?:(?:la|el) )?(?:tele|tv|television|televisor|pantalla)';
 
 const CUANTOS =
   '(?:\\d{1,3}|un|una|uno|dos|tres|cuatro|cinco|diez|quince|veinte|treinta|cuarenta|media|un par de)';
@@ -273,7 +273,7 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'mute', on: false };
   }
   if (
-    /\b(?:silencia|silencio|mutea|mute|calla)\b|\b(?:apaga|quita) (?:el )?(?:sonido|audio|volumen)\b/.test(
+    /\b(?:silencia|silencio|mutea|mute|calla)\b|\b(?:apaga|quita|quitale|quitalo) (?:el )?(?:sonido|audio|volumen)\b/.test(
       t,
     )
   ) {
@@ -281,13 +281,15 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   if (
-    new RegExp(`\\b(?:apaga|apagar|apagame)\\b(?: ${TV})?$`).test(t) ||
+    new RegExp(`\\b(?:apaga|apagar|apagame|apagala|apagalo)\\b(?: ${TV})?$`).test(t) ||
     new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
   ) {
     return { action: 'power', on: false };
   }
   if (
-    new RegExp(`\\b(?:enciende|encender|enciendeme|prende|prender)\\b(?: ${TV})?$`).test(t) ||
+    new RegExp(
+      `\\b(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)\\b(?: ${TV})?$`,
+    ).test(t) ||
     new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
   ) {
     return { action: 'power', on: true };
@@ -334,7 +336,11 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
   m =
     new RegExp(`\\bvolumen (?:a|al|en) (\\d{1,3}|[a-z]+${Y_UNIT})\\b`).exec(t) ??
-    /^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\d{1,3})$/.exec(t);
+    /^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\d{1,3})$/.exec(t) ??
+    // «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20», «déjala a 12».
+    new RegExp(
+      `^(?:sube(?:le|lo|la)?|baja(?:le|lo|la)?|(?:pon(?:me)?|deja)(?:lo|la)?(?: ${TV})?) (?:a|al) (\\d{1,3}|[a-z]+${Y_UNIT})$`,
+    ).exec(t);
   if (m) {
     const level = num(m[1]);
     if (level !== null && level >= 0 && level <= 100) return { action: 'volume', level };
@@ -344,7 +350,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
   // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|subelo|baja|bajale|bajalo)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
+    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
   ).exec(t);
   if (m?.[1]) {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
@@ -356,6 +362,13 @@ export function parseTvCommand(text: string): TvIntent | null {
         ? { action: 'volumeStep', steps: signed, requested: n }
         : { action: 'volumeStep', steps: signed };
     }
+  }
+  // «más volumen», «un poco más de volumen», «volumen (para) arriba»; «menos volumen», «volumen abajo».
+  if (/^(?:(?:un poco )?mas (?:de )?volumen|volumen (?:para )?arriba)$/.test(t)) {
+    return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
+  }
+  if (/^(?:(?:un poco )?menos (?:de )?volumen|volumen (?:para )?abajo)$/.test(t)) {
+    return { action: 'volumeStep', steps: -DEFAULT_VOLUME_STEP };
   }
   // «más alto», «pon la tele más baja», «ponla más fuerte», «más bajito».
   if (/\bmas (?:alto|alta|fuerte)\b/.test(t)) {
@@ -389,7 +402,7 @@ export function parseTvCommand(text: string): TvIntent | null {
 
   // Reproduccion.
   if (
-    /^(?:pausa|pausala|pausalo|para|(?:pausa|para) la (?:peli|pelicula|serie|cancion|video))$/.test(
+    /^(?:pausa|pausala|pausalo|para|pon(?:le)?(?: la)? pausa|(?:pausa|para) la (?:peli|pelicula|serie|cancion|video))$/.test(
       t,
     )
   ) {

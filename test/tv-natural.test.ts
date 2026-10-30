@@ -8,7 +8,7 @@ describe('ordenes naturales en castellano', () => {
   const cases: Array<[string, unknown]> = [
     ['apaga la tele', { action: 'power', on: false }],
     ['Apaga la televisión, porfa', { action: 'power', on: false }],
-    ['apágala', null],
+    ['apágala', { action: 'power', on: false }],
     ['enciende la tele', { action: 'power', on: true }],
     ['enciende', { action: 'power', on: true }],
     ['volumen a 20', { action: 'volume', level: 20 }],
