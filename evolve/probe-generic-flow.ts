@@ -103,7 +103,7 @@ const service = new BrowserService({
 const scope = 'generic-flow';
 let failures = 0;
 const check = (label: string, ok: boolean, extra = '') => {
-  process.stdout.write(`${ok ? 'PASA' : 'FALLA'}  ${label}${extra ? ` â€” ${extra}` : ''}\n`);
+  process.stdout.write(`${ok ? 'PASA' : 'FALLA'}  ${label}${extra ? ` — ${extra}` : ''}\n`);
   if (!ok) failures++;
 };
 
@@ -173,7 +173,7 @@ try {
      });
      // The panel needs ~450 ms to paint. Poll until the first option exists.
      try { await page.locator('#so li').first().waitFor({ state: 'visible', timeout: 4000 }); }
-     catch (e) { return { error: 'el panel no apareciÃ³', r }; }
+     catch (e) { return { error: 'el panel no apareció', r }; }
      return await page.evaluate(() => {
        const list = document.getElementById('so');
        const opts = [...list.querySelectorAll('li')].map((li) => li.textContent);
@@ -184,7 +184,7 @@ try {
   );
   check(
     'las sugerencias tardias se leen y se eligen',
-    !from.text.includes('error') && !from.text.includes('el panel no apareciÃ³'),
+    !from.text.includes('error') && !from.text.includes('el panel no apareció'),
     from.text.slice(0, 120),
   );
 
@@ -212,7 +212,7 @@ try {
        input.dispatchEvent(new Event('input', { bubbles: true }));
      });
      try { await page.locator('#sd li').first().waitFor({ state: 'visible', timeout: 4000 }); }
-     catch (e) { return { error: 'panel destino no apareciÃ³' }; }
+     catch (e) { return { error: 'panel destino no apareció' }; }
      return await page.evaluate(() => {
        const list = document.getElementById('sd');
        const opts = [...list.querySelectorAll('li')].map((li) => li.textContent);
@@ -224,7 +224,7 @@ try {
   );
   check(
     'el segundo desplegable tambien funciona',
-    !dest.text.includes('error') && !dest.text.includes('no apareciÃ³'),
+    !dest.text.includes('error') && !dest.text.includes('no apareció'),
     dest.text.slice(0, 140),
   );
   check(
