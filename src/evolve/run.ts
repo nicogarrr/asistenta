@@ -126,6 +126,14 @@ export function batteryRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): Batt
   };
 }
 
+/** La última nota de la batería que se midió, en una línea. */
+function lastBattery(rows: ReturnType<Archive['read']>): string {
+  const last = [...rows].reverse().find((r) => r.battery);
+  if (!last?.battery) return 'Batería: todavía no se ha medido ningún candidato.';
+  const b = last.battery;
+  return `Última batería (${last.week}): ${b.passed}/${b.total} casos; el kernel tenía ${b.basePassed}/${b.baseTotal}.`;
+}
+
 /** What /evolucion says without running anything: the last week, in plain Spanish. */
 export function describeLast(stateDir: string): string {
   const archive = new Archive(join(stateDir, 'evolve', 'attempts.jsonl'));
@@ -145,6 +153,7 @@ export function describeLast(stateDir: string): string {
   return [
     head,
     `Ideas en cola: ${ideas.length}.`,
+    lastBattery(rows),
     ...lines,
     'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
   ].join('\n');
