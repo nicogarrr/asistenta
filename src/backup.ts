@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -13,8 +13,10 @@ import { DatabaseSync } from 'node:sqlite';
  * ADEMÁS una segunda copia completa (la local se cierra primero; si el espejo falla, el
  * error lo nombra y la copia local sigue buena). Para restaurar: parar Asistenta y copiar
  * los .db y carpetas de la fecha elegida encima del directorio de estado.
- * Copia los *.db de la raíz, docs/ (docs.sqlite con VACUUM INTO, coherente aunque esté
- * abierta, más el mirror de texto), memory/, snapshot/, skills/, playbooks/ y undo/.
+ * Copia los *.db y *.sqlite de la raíz (VACUUM INTO, coherente aunque estén abiertas),
+ * los *.json de la raíz (alertas de precio, entrega de rutinas), docs/ (docs.sqlite más
+ * el mirror de texto), memory/, snapshot/, skills/, playbooks/, undo/, calendar/ (la
+ * agenda local), profile/ (tu perfil) y services/.
  * No copia el navegador, los modelos ni las capturas (pesan y se regeneran) ni el vault:
  * un duplicado del vault con la misma máquina no protege nada y sí multiplica donde
  * viven los secretos.
@@ -78,11 +80,30 @@ export function runBackup(opts: {
   const copiedDirs: string[] = [];
   try {
     for (const name of readdirSync(opts.stateDir)) {
-      if (!name.endsWith('.db')) continue;
-      copyDb(join(opts.stateDir, name), join(tmp, name));
-      databases.push(name);
+      const from = join(opts.stateDir, name);
+      if (!statSync(from).isFile()) continue;
+      // pricewatch.sqlite no acababa en .db y se quedaba fuera de la copia.
+      if (name.endsWith('.db') || name.endsWith('.sqlite')) {
+        copyDb(from, join(tmp, name));
+        databases.push(name);
+      } else if (name.endsWith('.json')) {
+        // Configuración que solo existe aquí: pricewatch.json (tus alertas de
+        // precio), routine-delivery.json...
+        cpSync(from, join(tmp, name));
+      }
     }
-    for (const name of ['memory', 'snapshot', 'skills', 'playbooks', 'undo']) {
+    // calendar/ (agenda local: lo que apuntas sin Google), profile/ (tu perfil) y
+    // services/ no tienen otra copia y antes no entraban en la copia de seguridad.
+    for (const name of [
+      'memory',
+      'snapshot',
+      'skills',
+      'playbooks',
+      'undo',
+      'calendar',
+      'profile',
+      'services',
+    ]) {
       const from = join(opts.stateDir, name);
       if (!existsSync(from)) continue;
       cpSync(from, join(tmp, name), { recursive: true });

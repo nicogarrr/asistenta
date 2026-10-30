@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe('copia de seguridad', () => {
-  it('copia memoria, skills y la base, y deja fuera el perfil (limitación actual)', () => {
+  it('copia memoria, skills, la base y el perfil', () => {
     const stateDir = stateWithData();
     const result = runBackup({ stateDir, now: new Date(2026, 9, 26, 3, 5) });
 
@@ -98,10 +98,8 @@ describe('copia de seguridad', () => {
     );
     expect(readValue(join(result.dir, 'agent.db'))).toBe('Nico');
 
-    // `runBackup` no incluye `profile/`: el perfil sobrevive en el estado, pero
-    // no se recupera de una copia. Queda declarado como limitación, no oculto.
-    expect(existsSync(join(result.dir, 'profile'))).toBe(false);
-    expect(readFileSync(join(stateDir, 'profile', '1.json'), 'utf8')).toBe(PROFILE_TEXT);
+    // `profile/` ya entra en la copia (antes quedaba fuera: limitación cerrada).
+    expect(readFileSync(join(result.dir, 'profile', '1.json'), 'utf8')).toBe(PROFILE_TEXT);
   });
 });
 
@@ -126,8 +124,7 @@ describe('restauración (sin API: procedimiento documentado)', () => {
     expect(readFileSync(join(stateDir, 'memory', 'nota.md'), 'utf8')).toBe(MEMORY_TEXT);
     expect(readFileSync(join(stateDir, 'skills', 'reservar', 'SKILL.md'), 'utf8')).toBe(SKILL_TEXT);
     expect(readValue(join(stateDir, 'agent.db'))).toBe('Nico');
-    // El perfil no está en la copia: el procedimiento no lo restaura. Es la
-    // limitación que impide afirmar que la restauración es total.
-    expect(readFileSync(join(stateDir, 'profile', '1.json'), 'utf8')).toBe('perfil cambiado\n');
+    // El perfil también vuelve: la restauración ya es total para estos datos.
+    expect(readFileSync(join(stateDir, 'profile', '1.json'), 'utf8')).toBe(PROFILE_TEXT);
   });
 });
