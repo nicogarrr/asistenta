@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 
 const execFileAsync = promisify(execFile);
@@ -53,6 +54,7 @@ async function ps(
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       encoding: 'utf8',
+      env: childEnv(),
       timeout: timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
       // /stop: matar el PowerShell que reproduce corta el sonido (MCI vive en ese proceso).

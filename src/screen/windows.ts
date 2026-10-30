@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { childEnv } from '../child-env.js';
 import type { ScreenBackend } from '../tools/computer.js';
 import {
   escapeForSendKeys,
@@ -57,6 +58,7 @@ export class WindowsScreen implements ScreenBackend {
             ['-NoProfile', '-NonInteractive', '-Command', script],
             {
               encoding: 'utf8',
+              env: childEnv(),
               maxBuffer: 16 * 1024 * 1024,
               timeout: POWERSHELL_TIMEOUT_MS,
               windowsHide: true,
@@ -452,7 +454,7 @@ export async function hasInteractiveDesktop(): Promise<boolean> {
     const { stdout } = await execFileAsync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id $PID).SessionId'],
-      { encoding: 'utf8', timeout: 10_000 },
+      { encoding: 'utf8', env: childEnv(), timeout: 10_000 },
     );
     return Number(stdout.trim()) !== 0;
   } catch {

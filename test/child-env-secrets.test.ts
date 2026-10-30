@@ -92,6 +92,11 @@ describe('procesos hijos sin credenciales del daemon', () => {
       'src/media/download.ts',
       'src/books/convert.ts',
       'src/tools/ocr-local.ts',
+      'src/tools/system.ts',
+      'src/tools/windows.ts',
+      'src/screen/ocr.ts',
+      'src/screen/windows.ts',
+      'src/screen/media.ts',
     ];
     for (const f of files) {
       const src = readFileSync(f, 'utf8');
