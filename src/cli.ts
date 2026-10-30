@@ -425,6 +425,7 @@ import {
   type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
+  watchValueText,
 } from './watch/pages.js';
 import {
   PRICE_MUTE_MS,
@@ -7736,7 +7737,7 @@ export function formatWatchList(list: readonly PageWatch[]): string {
     `Páginas vigiladas: ${list.length}`,
     ...list.map(
       (w) =>
-        `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}` +
+        `${w.id} - ${w.label || w.url} - último valor: ${watchValueText(w.lastValue)}` +
         `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
         `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
     ),
