@@ -5,6 +5,7 @@ import { needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
 import { describeTvIntent, parseTvCommand } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
+import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
 
 /**
@@ -91,6 +92,7 @@ const Params = Type.Object({
     Type.Literal('volumeStep'),
     Type.Literal('channel'),
     Type.Literal('command'),
+    Type.Literal('scene'),
   ]),
   appId: Type.Optional(
     Type.String({
@@ -128,6 +130,12 @@ const Params = Type.Object({
   ),
   channel: Type.Optional(
     Type.String({ description: 'Para channel: up, down o el numero del canal (1-9999).' }),
+  ),
+  scene: Type.Optional(
+    Type.String({
+      description:
+        'Para scene: la rutina, hoy "cine" (enciende si hace falta, quita el silencio, volumen 20 o level, abre appId si se pide y muestra un aviso).',
+    }),
   ),
   text: Type.Optional(
     Type.String({
@@ -226,6 +234,8 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
       'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
       '"volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Si no la entiende, lo dice.',
+      'action=scene scene=cine es el "modo cine": encender si hace falta, quitar silencio, volumen (level, por defecto 20),',
+      'abrir la app que pidan (appId, p.ej. Netflix) y un aviso; devuelve el resultado de cada paso.',
       'Via Glasshouse (si esta configurado): action=volume con level (0-100, nivel absoluto - "sube el',
       'volumen a 13" es volume level=13), action=mute, action=input (hdmi1-4/tv), action=url (abrir web),',
       'action=closeApp, action=screen (panel negro con audio), action=media (play/pause/stop...),',
@@ -453,6 +463,44 @@ async function runTvAction(
           { type: 'text' as const, text: `He puesto el ${what} (sin confirmacion de la tele).` },
         ],
         details: { channel: raw, keys, verified: false },
+      };
+    }
+    case 'scene': {
+      const key = resolveScene(args.scene ?? args.name ?? '');
+      const def = key ? TV_SCENES[key] : undefined;
+      if (!def) {
+        throw new Error(`action=scene necesita scene: ${Object.keys(TV_SCENES).join(', ')}.`);
+      }
+      const level = args.level;
+      if (level !== undefined && (!Number.isInteger(level) || level < 0 || level > 100)) {
+        throw new Error('action=scene: level tiene que ser un entero 0-100.');
+      }
+      const appId = (args.appId ?? '').trim() || undefined;
+      const steps = def.build({ appId, level });
+      const results = await runScene(steps, {
+        hasGlasshouse: Boolean(deps.ghControl),
+        isOn: deps.status ? async () => (await deps.status?.())?.power === 'encendida' : undefined,
+        exec: async (step) => {
+          // Cada paso con su explicacion en castellano, como una accion suelta.
+          const res = await runTvAction(deps, step as TvArgs).catch((err: unknown) => {
+            throw explainTvError(err);
+          });
+          return res.content
+            .map((c) => (c.type === 'text' ? c.text : ''))
+            .join(' ')
+            .trim();
+        },
+      });
+      return {
+        content: [
+          { type: 'text' as const, text: summarizeScene(def.label, results, steps.length) },
+        ],
+        details: {
+          scene: key,
+          steps: results.map((r) => ({ action: r.step.action, status: r.status })),
+          complete: results.length === steps.length,
+          failed: results.filter((r) => r.status === 'fallo').length,
+        },
       };
     }
     case 'command': {

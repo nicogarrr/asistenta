@@ -14,6 +14,7 @@
  *   "pausa" / "dale al play"   -> media
  *   "pon el HDMI 2"            -> input hdmi2
  *   "que esta viendo" / "esta encendida" -> status
+ *   "modo cine (con Netflix)"  -> scene cine
  */
 import { APP_ALIASES, normalizeTvText } from './apps.js';
 
@@ -26,7 +27,8 @@ export type TvIntent =
   | { action: 'launch'; appId: string }
   | { action: 'media'; command: 'play' | 'pause' | 'stop' }
   | { action: 'input'; input: string }
-  | { action: 'status' };
+  | { action: 'status' }
+  | { action: 'scene'; scene: string; appId?: string };
 
 const NUM_WORDS: Record<string, number> = {
   un: 1,
@@ -64,6 +66,12 @@ export function parseTvCommand(text: string): TvIntent | null {
     .trim();
   if (!t) return null;
   let m: RegExpExecArray | null;
+
+  // Rutinas: "modo cine", "pon el modo cine con Netflix", "noche de peli".
+  if (/\bmodo (?:cine|pelicula|peli)\b|\bnoche de (?:cine|peli|pelicula)\b/.test(t)) {
+    m = /\bcon ([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
+    return { action: 'scene', scene: 'cine', ...(m?.[1] ? { appId: m[1].trim() } : {}) };
+  }
 
   // Estado: preguntas, no ordenes.
   if (
@@ -187,5 +195,7 @@ export function describeTvIntent(i: TvIntent): string {
       return `cambiar a ${i.input.toUpperCase()}`;
     case 'status':
       return 'mirar el estado de la tele';
+    case 'scene':
+      return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
   }
 }
