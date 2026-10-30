@@ -65,6 +65,7 @@ import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
+import { isDuplicateUpdate, queueThreadTurn } from './daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
@@ -4495,9 +4496,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       return;
     }
-    const gen = thread.generation;
-    const next = thread.tail.then(async () => {
-      if (thread.generation !== gen) return;
+    const next = queueThreadTurn(thread, async () => {
       const removed = rewindLastTurn(last, {
         agent: thread.agent,
         messages: thread.agent.messages,
@@ -4520,16 +4519,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         images: last.images,
       });
     });
-    thread.tail = next.catch(() => {});
     await next;
   };
 
   // F7: /compactar resume el historial ya, sin esperar al umbral.
   const cmdCompactar = async (inbound: Inbound): Promise<void> => {
     const thread = await resolveThread(inbound);
-    const gen = thread.generation;
-    const next = thread.tail.then(async () => {
-      if (thread.generation !== gen) return;
+    const next = queueThreadTurn(thread, async () => {
       try {
         const r = await thread.agent.compactNow();
         // Los índices del historial ya no valen: /reintentar no rebobina.
@@ -4546,7 +4542,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
       }
     });
-    thread.tail = next.catch(() => {});
     await next;
   };
 
@@ -6519,15 +6514,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Telegram delivers at-least-once; a redelivered update must not run the task
           // twice. Bounded by a one hour TTL, which comfortably outlives a redelivery.
           const dedupKey = `${chatKey_}:${inbound.messageId}`;
-          const seenAt = seenMessages.get(dedupKey);
-          if (seenAt !== undefined && Date.now() - seenAt < 3_600_000) {
+          if (isDuplicateUpdate(seenMessages, dedupKey)) {
             log.info('duplicate update ignored', { messageId: inbound.messageId });
             return;
-          }
-          seenMessages.set(dedupKey, Date.now());
-          if (seenMessages.size > 2000) {
-            const oldest = seenMessages.keys().next().value;
-            if (oldest !== undefined) seenMessages.delete(oldest);
           }
 
           // Disparador 'mensaje': texto normal (nunca un comando) cruza los
@@ -6755,9 +6744,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.
-          const gen = thread.generation;
-          const next = thread.tail.then(async () => {
-            if (thread.generation !== gen) return;
+          void queueThreadTurn(thread, async () => {
             lastTurns.remember(thread.key, {
               text: inbound.text,
               images: inbound.images,
@@ -6767,7 +6754,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             });
             await runTurn(thread, inbound, inbound.text, {});
           });
-          thread.tail = next.catch(() => {});
         },
         (message) => say(inbound, message, { quote: true }),
         (error) => log.error('inbound message failed', { error: startupFailureMessage(error) }),
