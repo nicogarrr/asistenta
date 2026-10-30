@@ -403,6 +403,24 @@ export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boo
   }
 }
 
+/** Longitud del trozo de contenido privado que, repetido en una URL, delata un eco. */
+const ECHO_GRAM_CHARS = 12;
+const ECHO_MIN_ALNUM = 6;
+const ECHO_MAX_TEXT = 64_000;
+const ECHO_MAX_GRAMS = 200_000;
+
+function normalizeEcho(text: string): string {
+  return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ');
+}
+
+function egressEchoReason(source: string, host: string): string {
+  return (
+    `Este turno ya ha leído contenido privado (${source}) y ahora quiere abrir una URL ` +
+    `de ${host} que lleva dentro un trozo literal de ese contenido. Revisa la URL completa: ` +
+    'si no la esperabas, puede ser una página intentando sacar tus datos.'
+  );
+}
+
 /**
  * Un atajo de teclado del sistema: cualquier acorde con la tecla Windows
  * (win/windows/meta/cmd/super), Ctrl+Alt (incluye AltGr+Ctrl), Alt+F4 y
@@ -1113,6 +1131,7 @@ export class Gate {
     this.#scopes.delete(sessionId);
     this.#privateTaint.delete(sessionId);
     this.#contactedHosts.delete(sessionId);
+    this.#privateGrams.delete(sessionId);
   }
 
   /**
@@ -1140,7 +1159,13 @@ export class Gate {
     const url = egressUrlOf(call.tool, call.args);
     if (!url) return null;
     const host = egressHost(url);
-    if (host && this.#contactedHosts.get(sessionId)?.has(host)) return null;
+    if (host && this.#contactedHosts.get(sessionId)?.has(host)) {
+      // Un dominio ya contactado no pregunta… salvo que la URL lleve, tal cual, un
+      // trozo del contenido privado leído (una página inyectada que vive en ese mismo
+      // dominio y pide «manda el código a este enlace»).
+      if (!this.#urlEchoesPrivate(sessionId, url)) return null;
+      return egressEchoReason(source, host);
+    }
     if (host && !urlCarriesData(url)) return null;
     return egressTaintReason(source, host ?? url);
   }
@@ -1157,6 +1182,52 @@ export class Gate {
       const source = taintSourceOf(call.tool, call.args);
       if (source) this.#privateTaint.set(sessionId, source);
     }
+  }
+
+  /**
+   * Trozos de ECHO_GRAM_CHARS caracteres del contenido privado leído en el turno
+   * (resultado de correo, ficheros, memoria…), para reconocerlo si vuelve a salir
+   * dentro de una URL. En memoria y por sesión; se borra con clearSession.
+   */
+  #privateGrams = new Map<string, Set<string>>();
+
+  #rememberPrivate(sessionId: string, text: string): void {
+    const set = this.#privateGrams.get(sessionId) ?? new Set<string>();
+    if (set.size >= ECHO_MAX_GRAMS) return;
+    const norm = normalizeEcho(text).slice(0, ECHO_MAX_TEXT);
+    for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length && set.size < ECHO_MAX_GRAMS; i++) {
+      const gram = norm.slice(i, i + ECHO_GRAM_CHARS);
+      // Solo trozos con letras o cifras suficientes: espacios y signos no identifican nada.
+      if ((gram.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= ECHO_MIN_ALNUM) set.add(gram);
+    }
+    this.#privateGrams.set(sessionId, set);
+  }
+
+  #urlEchoesPrivate(sessionId: string, url: string): boolean {
+    const set = this.#privateGrams.get(sessionId);
+    if (!set || set.size === 0) return false;
+    let data = url;
+    try {
+      const u = new URL(url);
+      data = `${u.pathname} ${u.search} ${u.hash} ${u.username} ${u.password}`;
+    } catch {
+      // URL ilegible: se mira entera.
+    }
+    let decoded = data.replace(/\+/g, ' ');
+    for (let i = 0; i < 3; i++) {
+      try {
+        const next = decodeURIComponent(decoded);
+        if (next === decoded) break;
+        decoded = next;
+      } catch {
+        break;
+      }
+    }
+    const norm = normalizeEcho(decoded);
+    for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length; i++) {
+      if (set.has(norm.slice(i, i + ECHO_GRAM_CHARS))) return true;
+    }
+    return false;
   }
 
   /**
@@ -1177,7 +1248,10 @@ export class Gate {
    * so a clean end of one concurrent run cannot unlock the memo while another
    * identical run is still going.
    */
-  settle(sessionId: string, call: ToolCall, isError: boolean): void {
+  settle(sessionId: string, call: ToolCall, isError: boolean, resultText?: string): void {
+    if (!isError && resultText && this.#egressTaint && taintSourceOf(call.tool, call.args)) {
+      this.#rememberPrivate(sessionId, resultText);
+    }
     const entry = this.#unsettled.get(sessionId)?.get(this.#fingerprint(call));
     if (!entry) return;
     entry.inflight = Math.max(0, entry.inflight - 1);
