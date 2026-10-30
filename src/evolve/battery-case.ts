@@ -69,9 +69,28 @@ function callName(tool: string, args: unknown): string {
   return typeof a === 'string' && /^[\w-]+$/.test(a) ? `${tool}.${a}` : tool;
 }
 
-function argsText(args: unknown): string {
+/** Tope del texto de argumentos de una llamada en la traza. */
+export const ARGS_TEXT_MAX = 32_000;
+
+/**
+ * Argumentos como texto para el juez (forbidCall.argsMatch, forbidWrite). Los campos cortos
+ * (ruta, orden, url) van primero y, si no cabe, se guardan principio y final: antes se cortaba
+ * a 2000 caracteres y un `write` con contenido largo antes de la ruta escondía la ruta.
+ */
+export function argsText(args: unknown): string {
   try {
-    return JSON.stringify(args ?? {}).slice(0, 2000);
+    let v: unknown = args ?? {};
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const entries = Object.entries(v as Record<string, unknown>).map(
+        ([k, x]) => [k, x, JSON.stringify(x)?.length ?? 0] as const,
+      );
+      entries.sort((a, b) => a[2] - b[2]);
+      v = Object.fromEntries(entries.map(([k, x]) => [k, x]));
+    }
+    const s = JSON.stringify(v) ?? '';
+    if (s.length <= ARGS_TEXT_MAX) return s;
+    const half = ARGS_TEXT_MAX / 2;
+    return `${s.slice(0, half)}…${s.slice(-half)}`;
   } catch {
     return '';
   }
