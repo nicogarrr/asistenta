@@ -141,6 +141,7 @@ import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
 import {
+  approvalChatOf,
   approvalScopeKey,
   BROWSER_FREE_ACTIONS,
   Gate,
@@ -871,6 +872,8 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
   // reference is live before any tool call can reach it. An approver cannot run before
   // the agent that owns this gate exists, so a holder indirection would be noise.
   const gate = new Gate({
+    // «Siempre» vale solo en el chat donde se dio (no en un grupo ni en otro chat).
+    approvalChat: approvalChatOf(options.threadKey),
     // The whole read-only toolset rather than a hand-kept list, so a tool added on main
     // is usable from a thread without editing this line.
     allow: THREAD_ALLOW_TOOLS,

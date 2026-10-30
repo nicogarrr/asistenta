@@ -217,6 +217,12 @@ export interface GateOptions {
    * Omitted means scopes live in memory only.
    */
   dbPath?: string;
+  /**
+   * Chat al que pertenecen los «Siempre» que guarda y lee este gate. Un permiso
+   * dado en un chat no vale en otro. Sin valor: `local` (consola), que no coincide
+   * con ningún chat de Telegram.
+   */
+  approvalChat?: string;
   approver?: Approver;
 }
 
@@ -246,6 +252,34 @@ const SCOPE_TABLE = `CREATE TABLE IF NOT EXISTS approval_scopes (
   level      TEXT,
   created_at INTEGER
 )`;
+
+/**
+ * Columnas añadidas después: `chat_key` (el chat donde se dio el «Siempre») y
+ * `grant_key` (la clave tal cual). Una fila antigua sin `chat_key` NO vale en
+ * ningún chat: antes un «Siempre» dado en el privado valía también en un grupo.
+ */
+function ensureScopeTable(db: DatabaseSync): void {
+  db.exec(SCOPE_TABLE);
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(approval_scopes)')
+      .all()
+      .map((row) => String(row.name)),
+  );
+  if (!cols.has('chat_key')) db.exec('ALTER TABLE approval_scopes ADD COLUMN chat_key TEXT');
+  if (!cols.has('grant_key')) db.exec('ALTER TABLE approval_scopes ADD COLUMN grant_key TEXT');
+}
+
+/** Clave única de fila: la misma acción aprobada en dos chats son dos filas. */
+function chatScopeRowKey(chatKey: string, key: string): string {
+  return `always:${key}\u0000chat:${chatKey}`;
+}
+
+/** Chat de una conversación `chatKey#hilo` (el último `#`: nunca une dos chats). */
+export function approvalChatOf(threadKey: string): string {
+  const i = threadKey.lastIndexOf('#');
+  return i > 0 ? threadKey.slice(0, i) : threadKey;
+}
 
 function argString(args: Record<string, unknown>, key: string): string {
   const v = args[key];
@@ -366,9 +400,12 @@ export function listAlwaysGrants(dbPath: string | undefined): string[] {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   try {
-    db.exec(SCOPE_TABLE);
+    ensureScopeTable(db);
     return db
-      .prepare(`SELECT tool FROM approval_scopes WHERE level = 'always' ORDER BY tool`)
+      .prepare(
+        `SELECT DISTINCT tool FROM approval_scopes
+          WHERE level = 'always' AND chat_key IS NOT NULL ORDER BY tool`,
+      )
       .all()
       .map((row) => String(row.tool));
   } finally {
@@ -387,16 +424,16 @@ export function deleteAlwaysGrant(dbPath: string | undefined, tool: string): boo
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   try {
-    db.exec(SCOPE_TABLE);
+    ensureScopeTable(db);
     // También las claves por acción (`always:tool:action:hash`), o revocar una
     // herramienta dejaría vivos permisos "siempre" sobre acciones suyas.
     const prefix = `always:${tool}:`;
     const res = db
       .prepare(
         `DELETE FROM approval_scopes
-          WHERE scope_key = ? OR substr(scope_key, 1, ?) = ?`,
+          WHERE tool = ? OR scope_key = ? OR substr(scope_key, 1, ?) = ?`,
       )
-      .run(`always:${tool}`, prefix.length, prefix);
+      .run(tool, `always:${tool}`, prefix.length, prefix);
     return Number(res.changes) > 0;
   } finally {
     db.close();
@@ -495,6 +532,7 @@ export class Gate {
   readonly #dbPath: string | undefined;
   /** Tools with a standing `always` grant. Persisted when `dbPath` is set. */
   readonly #alwaysAllow = new Set<string>();
+  readonly #approvalChat: string;
   /** sessionId -> tool -> declared non-always scope (see `setScope`). */
   readonly #scopes = new Map<string, Map<string, ScopeEntry>>();
   /** sessionId -> (tool+args) approved. Cleared per session. */
@@ -519,6 +557,7 @@ export class Gate {
   }> = [];
 
   constructor(options: GateOptions = {}) {
+    this.#approvalChat = options.approvalChat?.trim() || 'local';
     this.#taintGate =
       options.taintGate ?? process.env.PA_TAINT_GATE?.trim().toLowerCase() !== 'off';
     if (options.taintTtlMs !== undefined && Number.isFinite(options.taintTtlMs)) {
@@ -1473,7 +1512,7 @@ export class Gate {
     mkdirSync(dirname(this.#dbPath), { recursive: true });
     const db = new DatabaseSync(this.#dbPath);
     try {
-      db.exec(SCOPE_TABLE);
+      ensureScopeTable(db);
       return fn(db);
     } finally {
       db.close();
@@ -1492,8 +1531,11 @@ export class Gate {
     try {
       const found = this.#withScopeDb((db) => {
         const row = db
-          .prepare(`SELECT 1 AS hit FROM approval_scopes WHERE scope_key = ? AND level = 'always'`)
-          .get(`always:${tool}`);
+          .prepare(
+            `SELECT 1 AS hit FROM approval_scopes
+              WHERE scope_key = ? AND level = 'always' AND chat_key = ?`,
+          )
+          .get(chatScopeRowKey(this.#approvalChat, tool), this.#approvalChat);
         return row !== undefined;
       });
       if (found === undefined) return this.#alwaysAllow.has(tool);
@@ -1507,14 +1549,16 @@ export class Gate {
 
   #loadPersistedAlways(): void {
     this.#withScopeDb((db) => {
-      const rows = db.prepare(`SELECT scope_key FROM approval_scopes WHERE level = 'always'`).all();
+      const rows = db
+        .prepare(`SELECT grant_key FROM approval_scopes WHERE level = 'always' AND chat_key = ?`)
+        .all(this.#approvalChat);
       for (const row of rows) {
         // The tool column is only a display/revocation group. An action grant
         // must stay exact in the fallback cache, even before its first DB read.
         // Otherwise a disk failure after restart turns one action into all of them.
-        if (typeof row.scope_key === 'string' && row.scope_key.startsWith('always:')) {
-          const key = row.scope_key.slice('always:'.length);
-          if (key) this.#alwaysAllow.add(key);
+        // Solo las filas de ESTE chat: las de otro chat o sin chat no se cargan.
+        if (typeof row.grant_key === 'string' && row.grant_key) {
+          this.#alwaysAllow.add(row.grant_key);
         }
       }
     });
@@ -1528,22 +1572,42 @@ export class Gate {
   #persistAlways(key: string, tool: string = key): void {
     this.#withScopeDb((db) => {
       db.prepare(
-        'INSERT OR REPLACE INTO approval_scopes (scope_key, tool, level, created_at) VALUES (?, ?, ?, ?)',
-      ).run(`always:${key}`, tool, 'always', Date.now());
+        `INSERT OR REPLACE INTO approval_scopes
+          (scope_key, tool, level, created_at, chat_key, grant_key) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        chatScopeRowKey(this.#approvalChat, key),
+        tool,
+        'always',
+        Date.now(),
+        this.#approvalChat,
+        key,
+      );
     });
   }
 
   #dropPersistedAlways(key: string, withDescendants = false): void {
     this.#withScopeDb((db) => {
+      // Las filas antiguas sin chat ya no valen; se limpian igual.
       if (!withDescendants) {
-        db.prepare('DELETE FROM approval_scopes WHERE scope_key = ?').run(`always:${key}`);
+        db.prepare(
+          'DELETE FROM approval_scopes WHERE scope_key = ? OR (chat_key = ? AND grant_key = ?)',
+        ).run(`always:${key}`, this.#approvalChat, key);
         return;
       }
-      const prefix = `always:${key}:`;
+      const prefix = `${key}:`;
       db.prepare(
         `DELETE FROM approval_scopes
-          WHERE scope_key = ? OR substr(scope_key, 1, ?) = ?`,
-      ).run(`always:${key}`, prefix.length, prefix);
+          WHERE scope_key = ? OR substr(scope_key, 1, ?) = ?
+             OR (chat_key = ? AND (grant_key = ? OR substr(grant_key, 1, ?) = ?))`,
+      ).run(
+        `always:${key}`,
+        prefix.length + 7,
+        `always:${prefix}`,
+        this.#approvalChat,
+        key,
+        prefix.length,
+        prefix,
+      );
     });
   }
 
