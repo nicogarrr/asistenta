@@ -193,6 +193,7 @@ function secretStatePaths(): string[] {
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
+import { audioTeleEnabled, tvCasterFromVault } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import {
@@ -2127,6 +2128,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         withMicrophone,
         // The speakers are the microphone's other half. Quieten the listener before
         // the sound comes out or the agent answers its own playback.
+        // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
+        castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
         beforePlayback: () => currentWake()?.suppress(PLAYBACK_SUPPRESS_MS),
         afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
       }),

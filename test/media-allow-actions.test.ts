@@ -59,3 +59,16 @@ describe('media allowActions (P2-14)', () => {
     expect(asked).toBe(1); // ...but it was ASKED
   });
 });
+
+describe('media play en la tele (lane audio)', () => {
+  it('pregunta siempre, aunque media:play en el PC sea libre', async () => {
+    const gate = createDaemonGate({ threadKey: MAIN, dbPath: approvalsDbPath(dir), ask: channel });
+    const d = await gate.check(MAIN, {
+      tool: 'media',
+      args: { action: 'play', target: 'tele' },
+      actor: 'asistenta',
+    });
+    expect(asked).toBe(1);
+    expect(d.verdict).toBe('allow');
+  });
+});
