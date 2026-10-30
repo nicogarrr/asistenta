@@ -59,13 +59,35 @@ export function verificationChecklist(i: ReceiptInput): ChecklistItem[] {
       label: 'Medición válida y comparable con la base',
       detail: c.error ? `error: ${c.error}` : `${Math.round(c.durationMs / 1000)} s`,
     },
-    {
-      ok: c.failed <= b.failed,
-      label: 'Tests: no hay más fallos que en la base',
-      detail: `base ${b.passed} ok / ${b.failed} fallan → candidato ${c.passed} ok / ${c.failed} fallan`,
-    },
+    testsItem(b, c),
     checksItem(b, c),
   ];
+}
+
+/**
+ * Tests, con la misma regla que el juez: un test que pasaba en la base y ya no pasa (falla, o
+ * desapareció del informe) es una regresión aunque el total de fallos no suba, y sin informe
+ * por test en una de las dos mediciones el juez descarta. Antes solo se comparaba `failed`, y
+ * el receipt daba ✓ a un candidato que arreglaba un test y rompía otro.
+ */
+function testsItem(b: Measurement, c: Measurement): ChecklistItem {
+  const counts = `base ${b.passed} ok / ${b.failed} fallan → candidato ${c.passed} ok / ${c.failed} fallan`;
+  if (!b.passingTests || !c.passingTests) {
+    return {
+      ok: false,
+      label: 'Tests: ninguno que pasaba deja de pasar, y no hay más fallos que en la base',
+      detail: `${counts}; sin informe por test en la base o en el candidato`,
+    };
+  }
+  const now = new Set(c.passingTests);
+  const lost = b.passingTests.filter((n) => !now.has(n));
+  return {
+    ok: c.failed <= b.failed && lost.length === 0,
+    label: 'Tests: ninguno que pasaba deja de pasar, y no hay más fallos que en la base',
+    detail: lost.length
+      ? `${counts}; dejan de pasar: ${lost.slice(0, 3).join('; ')}${lost.length > 3 ? ` y ${lost.length - 3} más` : ''}`
+      : counts,
+  };
 }
 
 /**
