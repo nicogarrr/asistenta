@@ -220,6 +220,30 @@ function ago(ms: number, now: number): string {
   return `hace ${Math.round(h / 24)} días`;
 }
 
+/**
+ * Lo que toca enseñar en un chat de un canal (Telegram): lo de ese chat — las páginas
+ * guardan el id del chat tal cual; rutinas y disparadores, «canal:tipo:chat#hilo» — y lo
+ * global (ámbito vacío). Nada de otros chats ni de otros canales.
+ */
+export function forChat(
+  entries: readonly OverviewEntry[],
+  chatId: string,
+  channel: string,
+): OverviewEntry[] {
+  return entries.filter((e) => {
+    if (e.scope === '' || e.scope === chatId) return true;
+    if (!e.scope.startsWith(`${channel}:`)) return false;
+    return (e.scope.split('#')[0] ?? '').split(':')[2] === chatId;
+  });
+}
+
+/** Cabeceras de formatOverview: «Vigilancias: N (…)» y «<grupo> (N)». */
+export function isOverviewTitle(line: string): boolean {
+  if (/^Vigilancias: \d+ \(\d+ activas(?:, \d+ en pausa)?\)$/.test(line)) return true;
+  const m = /^(.+) \(\d+\)$/.exec(line);
+  return !!m && Object.values(KIND_TITLE).includes(m[1] ?? '');
+}
+
 /** Texto plano en español, agrupado por tipo; las pausadas se marcan. */
 export function formatOverview(
   entries: readonly OverviewEntry[],

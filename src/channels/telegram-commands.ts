@@ -74,6 +74,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Listar páginas vigiladas',
   },
   {
+    command: 'vigilancias',
+    description: 'Todo lo que vigilo: páginas, precios, rutinas y avisos',
+  },
+  {
     command: 'dejar_de_vigilar',
     description: 'Dejar de vigilar una página',
   },
