@@ -20,6 +20,7 @@ import type { Store } from '../db.js';
 import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
 import { goalRoutineName } from '../goals/runner.js';
 import { type Goal, type GoalStore, MAX_ACTIVE_GOALS, MAX_PROPOSED_GOALS } from '../goals/store.js';
+import { fechaCortaEs } from './reminder.js';
 
 /** Two ticks of one goal never land closer than this: autonomy, not a spin loop. */
 export const MIN_GOAL_TICK_MS = 60 * 60_000;
@@ -97,6 +98,23 @@ export function checkCadence(expr: string): string | null {
   return null;
 }
 
+/**
+ * Próximos ticks de una cadencia en la hora de pared de PA_TIMEZONE, en español
+ * («lun 09/11 09:00, mar 10/11 09:00»). Vacío si la cadencia no vale o no tiene
+ * ejecuciones futuras: la propuesta lo dice con su propio aviso.
+ */
+export function nextTicksEs(cadence: string, count = 3, from: Date = new Date()): string {
+  try {
+    const runs = new Cron(cadence.trim(), { paused: true, timezone: localTimeZone() }).nextRuns(
+      count,
+      from,
+    );
+    return runs.map((d) => fechaCortaEs(d)).join(', ');
+  } catch {
+    return '';
+  }
+}
+
 /** The plan Nico approves: Spanish, one piece, no JSON. */
 export function formatProposal(goal: Goal): string {
   const steps = goal.plan.map((s, i) => `${i + 1}. ${s.text}`).join('\n');
@@ -109,6 +127,10 @@ export function formatProposal(goal: Goal): string {
     steps,
     '',
     `Cadencia de trabajo: cada tick según "${goal.cadence}" (hora local), nunca más de uno por hora, máximo 12 al día.`,
+    ...(() => {
+      const next = goal.cadence ? nextTicksEs(goal.cadence) : '';
+      return next ? [`Próximos ticks: ${next}.`] : [];
+    })(),
     'Te aviso solo cuando haya una novedad o una decisión tuya. Dinero, credenciales, terceros y acciones destructivas te preguntan siempre.',
     '',
     `Para activarlo responde "sí". Para cambiar algo, dime qué. (id: ${goal.id})`,
