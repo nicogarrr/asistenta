@@ -278,7 +278,7 @@ export function tvCasterFromVault(
   } = {},
 ): (file: string) => Promise<TvCastResult> {
   const { saveClientKey, ...castExtra } = extra;
-  return async (file) => {
+  const castFrom = async (file: string): Promise<TvCastResult> => {
     const host = await vaultGet('tv:host');
     const storedKey = await vaultGet('tv:clientKey');
     if (!host || !storedKey) {
@@ -328,5 +328,16 @@ export function tvCasterFromVault(
       glasshouse,
       ...castExtra,
     });
+  };
+  return async (file) => {
+    try {
+      return await castFrom(file);
+    } catch (err) {
+      // Leer el emparejamiento puede fallar (almacén bloqueado, disco): el fichero ya
+      // es nuestro y castAudioToTv no llegó a recibirlo, así que se borra aquí. Antes
+      // se quedaba la copia del audio en disco. Si castAudioToTv ya lo tenía, ya lo borró.
+      rmSync(file, { force: true });
+      throw err;
+    }
   };
 }
