@@ -97,6 +97,11 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_RESTARTS = 3;
 const RESTART_DELAYS_MS = [250, 500, 1000] as const;
+/**
+ * Tras este rato sin reiniciar, el contador de reinicios vuelve a cero: el tope de
+ * MAX_RESTARTS frena un bucle de caídas seguidas, no tres caídas sueltas en días de uso.
+ */
+const RESTART_WINDOW_MS = 10 * 60 * 1000;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -374,6 +379,7 @@ export class McpClient {
   #ready = false;
   #closed = false;
   #restarts = 0;
+  #lastRestartAt = 0;
 
   constructor(config: McpServerConfig) {
     this.#config = config;
@@ -527,6 +533,9 @@ export class McpClient {
       throw new Error(`El cliente MCP "${this.#config.name}" ya esta cerrado.`);
     }
     if (this.#ready && this.#processAlive() && !this.#failure) return;
+    if (this.#restarts > 0 && Date.now() - this.#lastRestartAt >= RESTART_WINDOW_MS) {
+      this.#restarts = 0;
+    }
     if (this.#restarts >= MAX_RESTARTS) {
       throw new Error(
         `El servidor MCP "${this.#config.name}" no revive tras ${MAX_RESTARTS} reinicios.`,
@@ -534,6 +543,7 @@ export class McpClient {
     }
 
     this.#restarts += 1;
+    this.#lastRestartAt = Date.now();
     const attempt = this.#restarts;
     const delay = RESTART_DELAYS_MS[Math.min(attempt - 1, RESTART_DELAYS_MS.length - 1)] ?? 250;
     log.warn('Reiniciando servidor MCP', {
