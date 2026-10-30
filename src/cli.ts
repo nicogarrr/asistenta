@@ -1,6 +1,8 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
+
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
+import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -1545,6 +1547,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
+  const lastTurns = new LastTurns<unknown, NonNullable<Inbound['images']>[number]>();
   const weeklyState = new WeeklyState(memoryDb);
   const voiceDb = new DatabaseSync(join(paths.state, 'voice.db'));
   const bargeStats = new BargeStats(voiceDb);
@@ -4442,6 +4445,71 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
   };
 
+  // F7: /reintentar repite el último mensaje sin la respuesta anterior en el historial.
+  const cmdReintentar = async (inbound: Inbound): Promise<void> => {
+    const thread = await resolveThread(inbound);
+    const last = lastTurns.get(thread.key);
+    if (!last) {
+      await say(inbound, 'No tengo un mensaje tuyo reciente en esta conversación que repetir.', {
+        quote: true,
+      });
+      return;
+    }
+    const gen = thread.generation;
+    const next = thread.tail.then(async () => {
+      if (thread.generation !== gen) return;
+      const removed = rewindLastTurn(last, {
+        agent: thread.agent,
+        messages: thread.agent.messages,
+        compactions: thread.agent.compactions,
+      });
+      lastTurns.remember(thread.key, {
+        ...last,
+        agent: thread.agent,
+        mark: thread.agent.messages.length,
+        compactions: thread.agent.compactions,
+      });
+      await say(
+        inbound,
+        removed > 0
+          ? `Repito: «${last.text.slice(0, 80)}» (sin la respuesta anterior).`
+          : `Repito: «${last.text.slice(0, 80)}». El historial cambió desde entonces, así que la respuesta anterior se queda.`,
+        { quote: true },
+      );
+      await runTurn(thread, { ...inbound, text: last.text, images: last.images }, last.text, {
+        images: last.images,
+      });
+    });
+    thread.tail = next.catch(() => {});
+    await next;
+  };
+
+  // F7: /compactar resume el historial ya, sin esperar al umbral.
+  const cmdCompactar = async (inbound: Inbound): Promise<void> => {
+    const thread = await resolveThread(inbound);
+    const gen = thread.generation;
+    const next = thread.tail.then(async () => {
+      if (thread.generation !== gen) return;
+      try {
+        const r = await thread.agent.compactNow();
+        // Los índices del historial ya no valen: /reintentar no rebobina.
+        await say(
+          inbound,
+          r.compacted
+            ? `Historial resumido: ~${formatTokens(r.before)} → ~${formatTokens(r.after)} tokens.`
+            : `No lo resumo: ${r.reason ?? 'nada que resumir'} (~${formatTokens(r.before)} tokens).`,
+          { quote: true },
+        );
+      } catch (err) {
+        await say(inbound, `No pude resumir el historial: ${String(err).slice(0, 160)}`, {
+          quote: true,
+        });
+      }
+    });
+    thread.tail = next.catch(() => {});
+    await next;
+  };
+
   const cmdRecordatorios = async (inbound: Inbound, args: string): Promise<void> => {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
@@ -6503,6 +6571,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdEvolucion(inbound, command.args);
               case 'estado':
                 return cmdEstado(inbound);
+              case 'reintentar':
+                return cmdReintentar(inbound);
+              case 'compactar':
+                return cmdCompactar(inbound);
               case 'proyecto':
                 return cmdProyecto(inbound, command.args);
               case 'recordatorios':
@@ -6616,6 +6688,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const gen = thread.generation;
           const next = thread.tail.then(async () => {
             if (thread.generation !== gen) return;
+            lastTurns.remember(thread.key, {
+              text: inbound.text,
+              images: inbound.images,
+              agent: thread.agent,
+              mark: thread.agent.messages.length,
+              compactions: thread.agent.compactions,
+            });
             await runTurn(thread, inbound, inbound.text, {});
           });
           thread.tail = next.catch(() => {});
