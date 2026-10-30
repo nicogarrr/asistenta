@@ -100,6 +100,8 @@ export interface AltavozPlayerDeps {
     hits?: () => number;
     /** Para esa nota en la tele (el cast sabe si la abrió el visor, el navegador o Glasshouse). */
     stop?: () => Promise<unknown>;
+    /** Cierra el servidor LAN que sirve el audio a la tele y borra la copia. */
+    close?: () => void;
   }>;
   /**
    * Si la tele aceptó la orden pero no ha descargado el fichero en este tiempo, se avisa
@@ -211,6 +213,17 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);
+      if (item.dropped) {
+        // /stop llegó mientras la tele abría la nota (conectar puede tardar segundos):
+        // antes la nota sonaba igual y /stop ya no la encontraba. Se para ya y se cierra
+        // el servidor del audio, sin bloquear la cola si la tele tarda en contestar.
+        const stop = r.stop ?? deps.stopTv;
+        void Promise.resolve()
+          .then(() => stop?.())
+          .catch((err) => deps.onError?.(err))
+          .finally(() => r.close?.());
+        return;
+      }
       lastTele.set(item.key, { at: now(), stop: r.stop });
       watchFetch(r.hits, onNotice);
       return;
