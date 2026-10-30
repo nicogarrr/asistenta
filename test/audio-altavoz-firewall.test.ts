@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAltavozPlayer } from '../src/audio/altavoz.js';
-import { TV_FIREWALL_HINT } from '../src/audio/tv-cast.js';
+import { resetTeleFirewallWarning, TV_FIREWALL_HINT } from '../src/audio/tv-cast.js';
 
 /**
  * La tele acepta la orden pero nunca descarga el fichero (firewall de Windows):
@@ -18,6 +18,9 @@ function player(hits: () => number, noFetchMs = 15_000) {
   });
 }
 
+beforeEach(() => {
+  resetTeleFirewallWarning();
+});
 afterEach(() => {
   vi.useRealTimers();
 });

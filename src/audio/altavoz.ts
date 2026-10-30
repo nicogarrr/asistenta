@@ -1,6 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { TV_FIREWALL_HINT } from './tv-cast.js';
+import {
+  claimTeleFirewallWarning,
+  TV_FIREWALL_HINT,
+  teleFirewallAlreadyWarned,
+} from './tv-cast.js';
 
 /**
  * Modo altavoz: con `/altavoz pc` (o `tele`), cada nota de voz que manda el dueño
@@ -135,20 +139,21 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   let waiting = 0;
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
-  /** El aviso del firewall sale una sola vez por sesión: repetirlo en cada nota cansa. */
-  let firewallWarned = false;
+  /**
+   * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
+   * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
+   */
   const watchFetch = (hits: (() => number) | undefined, onNotice?: (text: string) => void) => {
-    if (!hits || !onNotice || firewallWarned) return;
+    if (!hits || !onNotice || teleFirewallAlreadyWarned()) return;
     const timer = setTimeout(() => {
-      if (firewallWarned) return;
+      if (teleFirewallAlreadyWarned()) return;
       let served = 1;
       try {
         served = hits();
       } catch {
         return;
       }
-      if (served > 0) return;
-      firewallWarned = true;
+      if (served > 0 || !claimTeleFirewallWarning()) return;
       try {
         onNotice(`📺 ${TV_FIREWALL_HINT}`);
       } catch {
