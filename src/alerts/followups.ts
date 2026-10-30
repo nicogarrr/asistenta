@@ -44,8 +44,7 @@ export interface FollowupTrackerOptions {
   /**
    * Injected clock. Without it the tracker stamps `Date.now()` on every write, and a
    * test that reasons about "three days ago" against a fixed date cannot express it:
-   * the row says *today* and the silence clock has not started. Same reasoning as
-   * `PromptCron`'s clock.
+   * the row says *today* and the silence clock has not started.
    */
   now?: () => number;
 }
