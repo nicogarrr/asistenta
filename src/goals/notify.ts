@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS goal_notifications (
 );
 `;
 
+/** Kinds that put the goal on hold waiting for Nico: each report is a new episode. */
+const REASKED_KINDS: ReadonlySet<string> = new Set(['bloqueo', 'decision']);
+
 export type NotifyOutcome = 'sent' | 'pending' | 'duplicate';
 
 /** Stable per (kind, reason): the same milestone found twice has the same key. */
@@ -158,7 +161,19 @@ export class GoalNotifier {
     const existing = this.#db
       .prepare('SELECT delivered FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
       .get(goal.id, key) as { delivered: number } | undefined;
-    if (existing && existing.delivered === 1) return 'duplicate';
+    if (existing && existing.delivered === 1) {
+      if (!REASKED_KINDS.has(kind)) return 'duplicate';
+      // A block or a decision is reported once per block EPISODE: the runner
+      // only reports it on the active -> blocked transition. The same question
+      // raised again after Nico resumed the goal is a new episode, and the copy
+      // delivered for the previous one must not silence it - a blocked goal gets
+      // no ticks, so a swallowed notice leaves it stuck without Nico knowing.
+      this.#db
+        .prepare(
+          'UPDATE goal_notifications SET delivered = 0, attempts = 0, delivered_at = NULL, text = ?, created_at = ? WHERE goal_id = ? AND nkey = ?',
+        )
+        .run(text, new Date(this.#now()).toISOString(), goal.id, key);
+    }
     if (!existing) {
       this.#db
         .prepare(
