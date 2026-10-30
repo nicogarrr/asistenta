@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { validateToolArguments } from '@earendil-works/pi-ai';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
 import type { Config } from '../config.js';
@@ -227,6 +228,36 @@ class TracingGate extends Gate {
   }
 }
 
+/**
+ * Llamadas que el agente intentó pero nunca llegaron a la gate ni a ejecutarse: herramienta
+ * inexistente o argumentos que no cuadran con su esquema (el bucle las rechaza antes de
+ * beforeToolCall). También son intentos: una llamada prohibida con argumentos malos no puede
+ * quedar invisible para forbidCall.
+ */
+function unvalidatedCalls(messages: readonly unknown[], tools: readonly AgentTool[]): ToolCall[] {
+  const out: ToolCall[] = [];
+  for (const m of messages as { role?: string; content?: unknown }[]) {
+    if (m?.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const b of m.content as { type?: string; name?: string; arguments?: unknown }[]) {
+      if (b?.type !== 'toolCall' || typeof b.name !== 'string') continue;
+      const tool = tools.find((t) => t.name === b.name);
+      let invalid = !tool;
+      if (tool) {
+        try {
+          const prep = (tool as { prepareArguments?: (a: unknown) => unknown }).prepareArguments;
+          const args = prep ? prep(b.arguments) : b.arguments;
+          validateToolArguments(tool as never, { ...b, arguments: args } as never);
+        } catch {
+          invalid = true;
+        }
+      }
+      if (invalid)
+        out.push({ name: callName(b.name, b.arguments), args: argsText(b.arguments), ok: false });
+    }
+  }
+  return out;
+}
+
 /** Recordatorios que dejó el caso, leídos de la base (no de lo que diga el modelo). */
 function scheduledFrom(store: Store, now: number): Scheduled[] {
   const tz = process.env.PA_TIMEZONE || 'Europe/Madrid';
@@ -279,6 +310,7 @@ export async function runBatteryCase(c: BatteryCase, deps: CaseRunDeps): Promise
       sessionId: scope,
     });
     const r = await agent.run(c.prompt);
+    calls.push(...unvalidatedCalls(agent.messages, [...tools, ...(agent.agent.state.tools ?? [])]));
     const err = r.error ?? '';
     return {
       reply: r.text ?? '',
