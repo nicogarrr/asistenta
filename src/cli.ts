@@ -397,6 +397,7 @@ import { startPricewatchLoop } from './watch/pricewatch-loop.js';
 import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
+import { panelNextUp } from './webui/next-up.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -1616,6 +1617,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             provider: config.provider,
             threads: threads.size,
             uptimeSeconds: Math.round(process.uptime()),
+            // Próximo recordatorio y rutina del dueño (las rutinas arrancan más abajo:
+            // antes de eso, o si algo falla, la tarjeta simplemente no los muestra).
+            ...(() => {
+              try {
+                return panelNextUp(
+                  routineRunner.status(),
+                  (scope: string, name: string) => store.getRoutine(scope, name),
+                  vigilanteOwnerId ?? undefined,
+                );
+              } catch {
+                return {};
+              }
+            })(),
           }),
           sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
           memory: (scope?: string) =>
