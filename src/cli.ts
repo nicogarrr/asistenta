@@ -131,7 +131,14 @@ import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
-import { correctionHint, learnCorrectionsEnabled, learnFromTurn } from './memory/learned-rules.js';
+import {
+  correctionHint,
+  forgetLearnedRule,
+  formatLearnedRules,
+  learnCorrectionsEnabled,
+  learnedRules,
+  learnFromTurn,
+} from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import type { SessionHit } from './memory/sessions.js';
@@ -7076,6 +7083,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     {
       names: ['memoria'],
       run: async (inbound, args) => cmdMemoria(await resolveThread(inbound), inbound, args),
+    },
+    {
+      // Reglas aprendidas de tus correcciones (PA_LEARN_CORRECTIONS): ver y borrar.
+      // /olvida es un comando escrito, nunca un botón de un toque.
+      names: ['aprendido', 'aprendidas'],
+      run: async (inbound) => {
+        const thread = await resolveThread(inbound);
+        const rules = learnedRules(memory, memoryScopesFor(thread.key).read);
+        await say(inbound, formatLearnedRules(rules), { quote: true });
+      },
+    },
+    {
+      names: ['olvida'],
+      run: async (inbound, args) => {
+        const thread = await resolveThread(inbound);
+        const reply = forgetLearnedRule(memory, memoryScopesFor(thread.key).read, args);
+        await say(inbound, reply, { quote: true });
+      },
     },
     {
       names: ['exportar'],
