@@ -6677,10 +6677,29 @@ export function trimForSpeech(text: string): string {
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/https?:\/\/\S+/g, '')
+    // Emojis y viñetas: la voz los lee como nombres («cara sonriente», «guion»).
+    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
+    .replace(/^[ \t]*[-•·][ \t]+/gm, '')
+    // Un salto de línea sin puntuación (listas) es una pausa, no una frase pegada.
+    .replace(/([^\s.!?…:;,])[ \t]*\n+/g, '$1. ')
     .replace(/[*_#>|]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return cleaned.length > 900 ? `${cleaned.slice(0, 900)}...` : cleaned;
+  if (cleaned.length <= 900) return cleaned;
+  // Cortar en el último fin de frase (o palabra) antes del tope: nunca a media palabra.
+  const head = cleaned.slice(0, 900);
+  const sentenceEnd = Math.max(
+    head.lastIndexOf('. '),
+    head.lastIndexOf('? '),
+    head.lastIndexOf('! '),
+  );
+  const cut =
+    sentenceEnd >= 450
+      ? sentenceEnd + 1
+      : head.lastIndexOf(' ') >= 450
+        ? head.lastIndexOf(' ')
+        : 900;
+  return `${cleaned.slice(0, cut).trimEnd()}...`;
 }
 
 /**
