@@ -854,19 +854,20 @@ export class TelegramChannel implements ChannelAdapter {
 
     let firstId: string | null = null;
 
-    // Buttons ride on the first chunk only: repeating them on every chunk of a long
-    // message would produce duplicate approvals for the same request.
-    let first = true;
+    // Buttons ride on ONE chunk only (repeating them would produce duplicate
+    // approvals for the same request): the LAST one, right under the end of the
+    // text, so a long message doesn't make the owner scroll up to approve.
     const chunks = outbound.text.trim()
       ? chunkText(outbound.text, 4000, { marks: outbound.format === 'marks' })
       : [];
-    for (const chunk of chunks) {
+    for (const [index, chunk] of chunks.entries()) {
+      const withButtons = index === chunks.length - 1;
       const options = (withThread: boolean, withReply: boolean) => ({
         message_thread_id: withThread && outbound.threadId ? Number(outbound.threadId) : undefined,
         reply_to_message_id:
           withReply && outbound.replyToMessageId ? Number(outbound.replyToMessageId) : undefined,
         reply_markup:
-          first && usableButtons(outbound.buttons ?? []).length
+          withButtons && usableButtons(outbound.buttons ?? []).length
             ? buildKeyboard(outbound.buttons ?? [])
             : undefined,
       });
@@ -919,7 +920,7 @@ export class TelegramChannel implements ChannelAdapter {
       }
       if (sent?.message_id) {
         const sentId = sent.message_id;
-        if (first) {
+        if (withButtons) {
           bindMoreButtons(outbound.buttons, String(chatId), () =>
             this.#clearKeyboard(chatId, sentId),
           );
@@ -927,7 +928,6 @@ export class TelegramChannel implements ChannelAdapter {
         onSent?.(String(sentId));
       }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
-      first = false;
     }
 
     for (const image of outbound.images ?? []) {
