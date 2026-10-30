@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest';
  * conéctalo al daemon/router, o añádelo aquí con una razón honesta.
  */
 const KNOWN_UNWIRED: Record<string, string> = {
-  'src/tools/ocr-local.ts': 'lo conecta src/plugins/ocr.ts (PR siguiente)',
   'src/evolve/battery-case.ts':
     'evaluador de la batería: lo carga scripts/evolve-battery-case.mjs en la copia que se mide',
   'src/evals/battery.ts': 'solo evals (scripts/run-evals.mjs), no es del daemon',

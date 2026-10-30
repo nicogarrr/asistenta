@@ -308,6 +308,7 @@ import { panelDoctorLines } from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
+import { ocrLocalPlugin } from './plugins/ocr.js';
 import { tvPlugin, tvToolDeps } from './plugins/tv.js';
 import { describeDelivery, parseDeliveryArgs, RoutineDeliveryStore } from './routine-delivery.js';
 import {
@@ -2226,6 +2227,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     all.push(...tvPlugin.tools({ store }));
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
+    // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
+    all.push(...ocrLocalPlugin.tools({}));
     if (mcpTools.length) all.push(...mcpTools);
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
