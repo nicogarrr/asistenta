@@ -19,6 +19,7 @@ import {
   type McpPromptResult,
   type McpResourceContent,
   type McpResourceInfo,
+  type McpResourceTemplateInfo,
   type McpServerConfig,
   type McpToolCallResult,
   type McpToolInfo,
@@ -38,6 +39,7 @@ interface McpToolClient {
   callTool(name: string, args?: Record<string, unknown>): Promise<McpToolCallResult>;
   close(): void;
   listResources(): Promise<McpResourceInfo[]>;
+  listResourceTemplates?(): Promise<McpResourceTemplateInfo[]>;
   readResource(uri: string): Promise<McpResourceContent[]>;
   listPrompts(): Promise<McpPromptInfo[]>;
   getPrompt(name: string, args?: Record<string, string>): Promise<McpPromptResult>;
@@ -50,11 +52,63 @@ export interface McpToolsOptions {
    * prompts. Apagado por defecto: solo con PA_MCP_RESOURCES=1.
    */
   resources?: boolean;
+  /**
+   * Además, plantillas de recursos (`resources/templates/list`) en leer_recurso.
+   * Apagado por defecto: solo con PA_MCP_RESOURCE_TEMPLATES=1 (y PA_MCP_RESOURCES=1).
+   */
+  templates?: boolean;
 }
 
 /** PA_MCP_RESOURCES=1 activa recursos y prompts MCP; cualquier otro valor los deja apagados. */
 export function mcpResourcesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.PA_MCP_RESOURCES ?? '').trim() === '1';
+}
+
+/** PA_MCP_RESOURCE_TEMPLATES=1 activa las plantillas de recursos; cualquier otro valor las deja apagadas. */
+export function mcpResourceTemplatesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.PA_MCP_RESOURCE_TEMPLATES ?? '').trim() === '1';
+}
+
+/** Tope de longitud de cada valor que rellena una plantilla. */
+const TEMPLATE_VALUE_MAX = 200;
+
+/**
+ * Rellena una plantilla RFC 6570 de nivel 1 (solo `{nombre}`). Cada valor se
+ * codifica entero (también `/`, `?`, `#`), así que no puede salirse del hueco de
+ * la plantilla; `.` y `..` se rechazan. Plantillas con operadores (`{+x}`,
+ * `{/x}`, `{?x}`…) o varias variables en una expresión no se admiten. Devuelve
+ * la URI o un error en castellano.
+ */
+export function expandUriTemplate(
+  template: string,
+  values: Record<string, unknown>,
+): { uri: string } | { error: string } {
+  const expressions = template.match(/\{[^{}]*\}/g) ?? [];
+  if (/[{}]/.test(template.replace(/\{[^{}]*\}/g, ''))) {
+    return { error: `La plantilla «${template}» está mal formada.` };
+  }
+  for (const expression of expressions) {
+    if (!/^\{[A-Za-z0-9_]+\}$/.test(expression)) {
+      return { error: `La plantilla «${template}» usa una forma no admitida (${expression}).` };
+    }
+  }
+  let failure: string | undefined;
+  const uri = template.replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name: string) => {
+    const value = values[name];
+    if (typeof value !== 'string' || !value.trim()) {
+      failure ??= `Falta el valor de «${name}».`;
+      return '';
+    }
+    if (value === '.' || value === '..' || value.length > TEMPLATE_VALUE_MAX) {
+      failure ??= `Valor no admitido para «${name}».`;
+      return '';
+    }
+    return encodeURIComponent(value).replace(
+      /[!'()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+  });
+  return failure ? { error: failure } : { uri };
 }
 
 /** Con `allowedTools`, estos nombres habilitan explícitamente recursos y prompts. */
@@ -76,6 +130,9 @@ export function mcpResourcesDoctorLines(env: NodeJS.ProcessEnv = process.env): s
   ];
   if (!servers.length) return [`${label}activado, pero sin servidores en PA_MCP_SERVERS`];
   const lines = [`${label}activado (PA_MCP_RESOURCES=1)`];
+  lines.push(
+    `  plantillas: ${mcpResourceTemplatesEnabled(env) ? 'activadas (PA_MCP_RESOURCE_TEMPLATES=1)' : 'apagadas (PA_MCP_RESOURCE_TEMPLATES=1 para activarlas)'}`,
+  );
   for (const server of servers) {
     const allowed = server.allowedTools;
     const res = allowed === undefined || allowed.includes(MCP_RESOURCES_ALLOW);
@@ -134,7 +191,10 @@ export function mcpToolName(server: string, tool: string): string {
 export async function createMcpTools(
   servers: McpServerConfig[],
   httpServers: McpHttpServerConfig[] = [],
-  options: McpToolsOptions = { resources: mcpResourcesEnabled() },
+  options: McpToolsOptions = {
+    resources: mcpResourcesEnabled(),
+    templates: mcpResourceTemplatesEnabled(),
+  },
 ): Promise<AgentTool[]> {
   const tools: AgentTool[] = [];
   const entries: Array<{ server: McpServerConfig | McpHttpServerConfig; client: McpToolClient }> = [
@@ -157,7 +217,7 @@ export async function createMcpTools(
       }
       if (options.resources) {
         const taken = new Set(tools.map((tool) => tool.name));
-        for (const extra of await createResourceTools(server, client)) {
+        for (const extra of await createResourceTools(server, client, options.templates === true)) {
           if (taken.has(extra.name)) {
             log.warn('MCP: nombre ya usado por una tool del servidor; se omite', {
               server: server.name,
@@ -242,6 +302,16 @@ function formatResourceList(server: string, list: McpResourceInfo[]): string {
   return `Recursos de "${server}":\n${lines.join('\n')}`;
 }
 
+function formatTemplateList(server: string, list: McpResourceTemplateInfo[]): string {
+  if (!list.length) return `El servidor MCP "${server}" no anuncia plantillas.`;
+  const lines = list.slice(0, LIST_MAX).map((item) => {
+    const label = [item.name, item.description].filter(Boolean).join(': ');
+    return `- ${item.uriTemplate}${label ? ` — ${label}` : ''}`;
+  });
+  if (list.length > LIST_MAX) lines.push(`… y ${list.length - LIST_MAX} más`);
+  return `Plantillas de "${server}" (usa plantilla + valores):\n${lines.join('\n')}`;
+}
+
 function formatResourceContents(contents: McpResourceContent[]): string {
   if (!contents.length) return '(recurso vacío)';
   return contents
@@ -305,26 +375,69 @@ function stringArgs(raw: unknown): Record<string, string> | string {
 async function createResourceTools(
   server: McpServerConfig | McpHttpServerConfig,
   client: McpToolClient,
+  templates = false,
 ): Promise<AgentTool[]> {
   const out: AgentTool[] = [];
   const allowed = server.allowedTools;
   const wantResources = allowed === undefined || allowed.includes(MCP_RESOURCES_ALLOW);
   const wantPrompts = allowed === undefined || allowed.includes(MCP_PROMPTS_ALLOW);
   if (wantResources && (await answers(server.name, 'recursos', () => client.listResources()))) {
+    // Plantillas: solo si están activadas y el servidor responde al listado.
+    const listTemplates = client.listResourceTemplates?.bind(client);
+    const useTemplates =
+      templates &&
+      listTemplates !== undefined &&
+      (await answers(server.name, 'plantillas', () => listTemplates()));
     out.push({
       name: mcpToolName(server.name, 'leer_recurso'),
       label: `MCP ${server.name}`,
-      description: `Lista los recursos del servidor MCP ${server.name} (sin uri) o lee uno (con la uri exacta del listado). Solo lectura. (MCP externo)`,
-      parameters: Type.Object({
-        uri: Type.Optional(Type.String({ description: 'URI exacta tomada del listado' })),
-      }),
+      description: useTemplates
+        ? `Lista los recursos y plantillas del servidor MCP ${server.name} (sin uri) o lee uno (con la uri exacta del listado, o con una plantilla del listado y sus valores). Solo lectura. (MCP externo)`
+        : `Lista los recursos del servidor MCP ${server.name} (sin uri) o lee uno (con la uri exacta del listado). Solo lectura. (MCP externo)`,
+      parameters: useTemplates
+        ? Type.Object({
+            uri: Type.Optional(Type.String({ description: 'URI exacta tomada del listado' })),
+            plantilla: Type.Optional(
+              Type.String({ description: 'Plantilla exacta tomada del listado' }),
+            ),
+            valores: Type.Optional(
+              Type.Record(Type.String(), Type.String(), {
+                description: 'Valor de cada {variable} de la plantilla',
+              }),
+            ),
+          })
+        : Type.Object({
+            uri: Type.Optional(Type.String({ description: 'URI exacta tomada del listado' })),
+          }),
       executionMode: 'parallel',
       execute: async (_toolCallId, rawArgs) => {
         try {
           const args = (rawArgs ?? {}) as Record<string, unknown>;
+          const plantilla =
+            useTemplates && typeof args.plantilla === 'string' ? args.plantilla.trim() : '';
+          if (plantilla && listTemplates) {
+            const known = await listTemplates();
+            if (!known.some((item) => item.uriTemplate === plantilla)) {
+              return textResult(
+                `La plantilla «${plantilla}» no está entre las plantillas que anuncia "${server.name}". Llama sin uri para ver el listado.`,
+                true,
+              );
+            }
+            const valores =
+              args.valores && typeof args.valores === 'object'
+                ? (args.valores as Record<string, unknown>)
+                : {};
+            const expanded = expandUriTemplate(plantilla, valores);
+            if ('error' in expanded) return textResult(expanded.error, true);
+            return textResult(formatResourceContents(await client.readResource(expanded.uri)));
+          }
           const uri = typeof args.uri === 'string' ? args.uri.trim() : '';
           const list = await client.listResources();
-          if (!uri) return textResult(formatResourceList(server.name, list));
+          if (!uri) {
+            const text = formatResourceList(server.name, list);
+            if (!useTemplates || !listTemplates) return textResult(text);
+            return textResult(`${text}\n${formatTemplateList(server.name, await listTemplates())}`);
+          }
           if (!list.some((item) => item.uri === uri)) {
             return textResult(
               `La URI «${uri}» no está entre los recursos que anuncia "${server.name}". Llama sin uri para ver el listado.`,

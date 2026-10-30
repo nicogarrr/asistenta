@@ -128,8 +128,22 @@ function handle(message) {
     return;
   }
 
+  if (method === 'resources/templates/list' && isRequest) {
+    reply(id, {
+      resourceTemplates: [
+        { uriTemplate: 'echo://nota/{nombre}', name: 'Nota', description: 'Nota por nombre' },
+        { uriTemplate: 'echo://raw{+ruta}', name: 'Raw' },
+      ],
+    });
+    return;
+  }
+
   if (method === 'resources/read' && isRequest) {
     const uri = params?.uri;
+    if (typeof uri === 'string' && uri.startsWith('echo://nota/')) {
+      reply(id, { contents: [{ uri, mimeType: 'text/plain', text: `leída ${uri}` }] });
+      return;
+    }
     const recurso = resources.find((item) => item.uri === uri);
     if (!recurso) {
       fail(id, -32002, `recurso desconocido: ${uri}`);
