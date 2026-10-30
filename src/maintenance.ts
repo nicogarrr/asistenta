@@ -6,11 +6,20 @@
  * de más: solo se toca lo que el filtro nombra, y un fallo de una parte no debe
  * impedir limpiar las demás.
  */
-import { type Dirent, existsSync, lstatSync, readdirSync, rmSync } from 'node:fs';
+import {
+  type Dirent,
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { memoryFile } from './memory.js';
-import { prunable } from './state-files.js';
+import { capped, prunable } from './state-files.js';
 
 /** Un nombre de perfil seguro: sin separadores, sin `..` y sin nombres de dispositivo. */
 const SAFE_OWNER = /^[A-Za-z0-9._-]+$/;
@@ -122,7 +131,38 @@ export function pruneStateFiles(stateDir: string, olderThanMs: number, now = Dat
     }
   };
   for (const p of prunable()) walk(join(stateDir, p.dir), p.match);
+  for (const c of capped()) {
+    if (capAppendFile(join(stateDir, c.file), c.maxBytes)) removed++;
+  }
   return removed;
+}
+
+/**
+ * Recorta un fichero de añadido (jsonl) que pasó de `maxBytes`: deja solo las líneas
+ * completas más recientes que caben en la mitad del tope, escribiendo a un temporal y
+ * renombrando. Devuelve si lo recortó; un fallo no propaga.
+ */
+export function capAppendFile(file: string, maxBytes: number): boolean {
+  try {
+    if (lstatSync(file).size <= maxBytes) return false;
+    const text = readFileSync(file, 'utf8');
+    const lines = text.split('\n').filter((l) => l.length > 0);
+    const keep: string[] = [];
+    let size = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const n = Buffer.byteLength(lines[i] as string, 'utf8') + 1;
+      if (size + n > maxBytes / 2) break;
+      keep.push(lines[i] as string);
+      size += n;
+    }
+    keep.reverse();
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, keep.length ? `${keep.join('\n')}\n` : '');
+    renameSync(tmp, file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface RetentionDeps {

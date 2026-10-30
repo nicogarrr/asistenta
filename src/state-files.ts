@@ -28,10 +28,19 @@ export type StateEntry = {
    * `match` se poda cualquier fichero (recursivo); nunca se borran directorios.
    */
   readonly prune?: { readonly sub?: string; readonly match?: RegExp };
+  /**
+   * Ficheros que solo crecen por añadido (jsonl): con PA_FILE_RETENTION_DAYS activo, si
+   * pasan de `maxBytes` se recortan dejando las líneas más recientes (≤ la mitad).
+   * `file` es relativo a la entrada.
+   */
+  readonly cap?: readonly { readonly file: string; readonly maxBytes: number }[];
 } & (
   | { readonly backup: 'db' | 'file' | 'dir' | 'docs' }
   | { readonly backup: false; readonly why: string }
 );
+
+/** Tope de log/web-metrics.jsonl (solo con PA_FILE_RETENTION_DAYS activo). */
+export const WEB_METRICS_MAX_BYTES = 5 * 1024 * 1024;
 
 export const STATE_ENTRIES: readonly StateEntry[] = [
   // Bases de datos de la raíz (backup.ts además copia cualquier otro *.db / *.sqlite).
@@ -117,6 +126,8 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
     // Solo los ficheros diarios (AAAA-MM-DD.jsonl y usage-AAAA-MM-DD.jsonl).
     prune: { match: /^(usage-)?\d{4}-\d{2}-\d{2}\.jsonl$/ },
+    // web-metrics.jsonl no es diario: un solo fichero que crece por añadido.
+    cap: [{ file: 'web-metrics.jsonl', maxBytes: WEB_METRICS_MAX_BYTES }],
   },
   {
     name: 'screenshots',
@@ -192,5 +203,12 @@ export function prunable(): Array<{ dir: string; match?: RegExp }> {
     e.prune
       ? [{ dir: e.prune.sub ? `${e.name}/${e.prune.sub}` : e.name, match: e.prune.match }]
       : [],
+  );
+}
+
+/** Ficheros de añadido con tope de tamaño (PA_FILE_RETENTION_DAYS). */
+export function capped(): Array<{ file: string; maxBytes: number }> {
+  return STATE_ENTRIES.flatMap((e) =>
+    (e.cap ?? []).map((c) => ({ file: `${e.name}/${c.file}`, maxBytes: c.maxBytes })),
   );
 }
