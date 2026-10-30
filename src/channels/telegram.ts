@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { log, redact } from '../log.js';
 import { Mutex, withTimeout } from '../utils.js';
-import { stripMarks, telegramHtml } from './formatters.js';
+import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
 
@@ -418,6 +419,13 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // «📖 Ver todo» va ANTES que las aprobaciones y por su propio camino: nunca
+    // resuelve, consume ni toca una aprobación pendiente.
+    if (data.startsWith(MORE_CALLBACK_PREFIX)) {
+      await this.#onMorePress(ctx, data.slice(MORE_CALLBACK_PREFIX.length));
+      return;
+    }
+
     const parsed = parseApprovalCallback(data);
     const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
     if (!parsed || !entry || entry.expires < Date.now()) {
@@ -454,6 +462,47 @@ export class TelegramChannel implements ChannelAdapter {
       scope: choice.scope,
     });
     await this.#announceDecision(ctx, choice);
+  }
+
+  /**
+   * Pulsación de «📖 Ver todo» bajo una respuesta recortada: quita el botón (sirve
+   * una vez, como «más») y manda la respuesta completa al mismo chat. Si ya no está
+   * (caducó, o se pidió antes con «más»), lo dice en el aviso del botón y no envía
+   * nada. Un botón pulsado desde otro chat no entrega el texto.
+   */
+  async #onMorePress(ctx: Context, token: string): Promise<void> {
+    const message = ctx.callbackQuery?.message;
+    const entry = takeMoreToken(token);
+    if (message) {
+      await this.#throttled(() =>
+        withTimeout(
+          this.#bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
+            reply_markup: { inline_keyboard: [] },
+          }),
+          20_000,
+          'editMessageReplyMarkup timed out',
+        ),
+      ).catch(() => {});
+    }
+    const pressedIn = message?.chat?.id;
+    const full =
+      entry && pressedIn !== undefined && entry.chatId === String(pressedIn)
+        ? takeFullReply(entry.threadKey)
+        : null;
+    if (!entry || !full) {
+      await ctx.answerCallbackQuery({ text: MORE_GONE }).catch(() => {});
+      return;
+    }
+    await ctx.answerCallbackQuery().catch(() => {});
+    await this.send({
+      channel: this.name,
+      account: this.account,
+      chatId: entry.chatId,
+      threadId: entry.threadId,
+      replyToMessageId: message ? String(message.message_id) : undefined,
+      text: cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }),
+      format: 'marks',
+    });
   }
 
   /**
@@ -1442,6 +1491,52 @@ export function isAudioDocument(doc: { mime_type?: string; file_name?: string })
   if (mime.startsWith('audio/') || mime === 'application/ogg') return true;
   if (mime && mime !== 'application/octet-stream') return false;
   return AUDIO_FILE_NAME.test(doc.file_name ?? '');
+}
+
+/** Prefijo del callback de «📖 Ver todo»; nunca empieza como approve:/deny:. */
+export const MORE_CALLBACK_PREFIX = 'more:';
+export const MORE_BUTTON_LABEL = '📖 Ver todo';
+const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
+
+interface MoreToken {
+  threadKey: string;
+  chatId: string;
+  threadId?: string;
+  expires: number;
+}
+
+/** Fichas cortas de botón → hilo: la clave del hilo no cabe (ni debe ir) en los 64 bytes del callback. */
+const moreTokens = new Map<string, MoreToken>();
+
+/**
+ * Botón «📖 Ver todo» para una respuesta recortada de `threadKey`. Caduca con la
+ * copia completa (mismo TTL y mismo tope) y solo vale en el chat donde se envió.
+ */
+export function moreButton(
+  threadKey: string,
+  chatId: string,
+  threadId?: string,
+): { label: string; action: string } {
+  const now = Date.now();
+  for (const [key, entry] of moreTokens) {
+    if (entry.expires <= now) moreTokens.delete(key);
+  }
+  const token = randomBytes(6).toString('base64url');
+  moreTokens.set(token, { threadKey, chatId, threadId, expires: now + FULL_REPLY_TTL_MS });
+  while (moreTokens.size > FULL_REPLY_MAX_ENTRIES) {
+    const oldest = moreTokens.keys().next();
+    if (oldest.done) break;
+    moreTokens.delete(oldest.value);
+  }
+  return { label: MORE_BUTTON_LABEL, action: `${MORE_CALLBACK_PREFIX}${token}` };
+}
+
+/** Retira la ficha (un solo uso); null si no existe o caducó. */
+function takeMoreToken(token: string): MoreToken | null {
+  const entry = moreTokens.get(token);
+  if (!entry) return null;
+  moreTokens.delete(token);
+  return entry.expires > Date.now() ? entry : null;
 }
 
 /** Respuestas completas recientes, para servir "Dime más" sin volver a ejecutar. */
