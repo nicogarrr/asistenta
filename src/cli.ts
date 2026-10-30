@@ -3463,13 +3463,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         );
         log.info('watch clip sent', { chatId: inbound.chatId, bytes: bytes.length });
       } catch (err) {
-        await say(
-          inbound,
-          `No he podido grabar: ${err instanceof Error ? err.message : String(err)}`,
-          {
-            quote: true,
-          },
-        );
+        await say(inbound, ownerFailNote('clip', err), {
+          quote: true,
+        });
       } finally {
         watching.delete(inbound.chatId);
       }
@@ -5368,11 +5364,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const fact = profile.add(restText, { source: 'user' });
         await say(inbound, `Guardado en tu perfil (${fact.id}).`, { quote: true });
       } catch (err) {
-        await say(
-          inbound,
-          `No lo he guardado: ${err instanceof Error ? err.message : String(err)}`,
-          { quote: true },
-        );
+        await say(inbound, ownerFailNote('perfil', err), { quote: true });
       }
       return;
     }
@@ -5484,11 +5476,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       await say(inbound, `Skill instalada: ${meta.name} (${meta.id}).`, { quote: true });
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido instalarla: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, ownerFailNote('skill', err), { quote: true });
     }
   };
   const cmdSkillsSearch = async (inbound: Inbound, args: string): Promise<void> => {
@@ -5595,7 +5583,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       first = await capture();
     } catch (err) {
-      const note = `No he podido abrir la vista en directo: ${err instanceof Error ? err.message : String(err)}`;
+      const note = ownerFailNote('directo', err);
       if (announce) await say(inbound, note, { quote: true });
       return note;
     }
@@ -5699,11 +5687,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           inbound.threadId,
         );
       } catch (err) {
-        await say(
-          inbound,
-          `No he podido grabar camara y microfono: ${err instanceof Error ? err.message : String(err)}`,
-          { quote: true },
-        );
+        await say(inbound, ownerFailNote('camaraMicro', err), { quote: true });
       }
       return;
     }
@@ -7712,6 +7696,20 @@ export function pricewatchMuteReply(
  * Respuesta de «no he podido …» para el chat: conserva un error ya en castellano, dice claro
  * si falta un programa en el PC y nunca pega salida técnica (ffmpeg, rutas, JSON, pilas).
  */
+/** Qué no se pudo hacer, por sitio de cli.ts que antes pegaba err.message crudo. */
+export const OWNER_FAIL_WHAT = {
+  clip: 'No he podido grabar el clip',
+  perfil: 'No lo he guardado',
+  skill: 'No he podido instalarla',
+  directo: 'No he podido abrir la vista en directo',
+  camaraMicro: 'No he podido grabar cámara y micrófono',
+} as const;
+
+/** Aviso al dueño en castellano: conserva motivos en castellano, oculta texto técnico. */
+export function ownerFailNote(kind: keyof typeof OWNER_FAIL_WHAT, err: unknown): string {
+  return failedReply(OWNER_FAIL_WHAT[kind], err);
+}
+
 export function failedReply(what: string, err: unknown): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   const missing = /\bspawn (\S+) ENOENT\b/.exec(raw)?.[1];
