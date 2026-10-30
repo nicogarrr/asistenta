@@ -7,6 +7,7 @@ import {
   clearStoppedOnPurpose,
   type DaemonRunState,
   describeDecision,
+  readDaemonStartedAt,
   readStoppedOnPurpose,
   readWatchdogLast,
   saveWatchdogLast,
@@ -69,6 +70,7 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
     stoppedAt: readStoppedOnPurpose(stateDir),
     updating: lockHeld(stateDir),
     bootAt: opts.bootAt ?? Date.now() - uptime() * 1000,
+    daemonStartedAt: readDaemonStartedAt(stateDir),
   });
   let text = describeDecision(decision);
   if (decision.action === 'start') {
