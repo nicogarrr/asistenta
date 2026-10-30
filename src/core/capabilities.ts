@@ -57,6 +57,11 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'memory', threadAllow: true },
   { name: 'reminder', threadAllow: true },
   { name: 'agenda', threadAllow: true },
+  {
+    name: 'cuentas',
+    threadAllow: true,
+    note: 'listar/buscar del gestor de contraseñas: nunca devuelve la contraseña.',
+  },
   { name: 'opengym', threadAllow: true },
   { name: 'book', threadAllow: true },
   {

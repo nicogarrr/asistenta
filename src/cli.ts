@@ -322,6 +322,7 @@ import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
+import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
@@ -1914,6 +1915,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
       createWeatherTool(() => weatherConfigFromEnv()),
+      createAccountsTool(),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,
