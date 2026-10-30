@@ -565,11 +565,24 @@ export function powerShellError(err: unknown, timeoutMs = POWERSHELL_TIMEOUT_MS)
 /** Max characters per SendKeys call (each call is one PowerShell process, 30 s timeout). */
 export const SENDKEYS_CHUNK = 200;
 
-/** Splits text into pieces of at most `size` code points (never inside an emoji). */
+/**
+ * Splits text into pieces of at most `size` code points (never inside an emoji,
+ * never between the `\r` and `\n` of a Windows line break: each half became its
+ * own {ENTER}, so a CRLF on the cut pressed Enter twice).
+ */
 export function chunkText(text: string, size: number): string[] {
   const chars = Array.from(text);
   if (chars.length <= size) return [text];
   const out: string[] = [];
-  for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(''));
+  let i = 0;
+  while (i < chars.length) {
+    let end = Math.min(i + size, chars.length);
+    if (end < chars.length && chars[end - 1] === '\r' && chars[end] === '\n') {
+      // Cut before the \r (keeps the size bound); a 1-char piece would be empty.
+      end = end - 1 > i ? end - 1 : end + 1;
+    }
+    out.push(chars.slice(i, end).join(''));
+    i = end;
+  }
   return out;
 }
