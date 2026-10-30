@@ -5,6 +5,7 @@
 // promueve si la batería no empeora y ningún caso que pasaba deja de pasar.
 // Sin batería configurada no se promueve nada (falla cerrado).
 import { type CaseResult, type Score, scoreRun } from './battery.js';
+import { weekNumber } from './battery-history.js';
 import {
   type Battery,
   type BatteryCase,
@@ -70,9 +71,13 @@ export function selectCases(
   });
 }
 
-/** Ciclo de rotación de una semana ISO («2026-W44» → 44); base y candidato usan el mismo. */
+/**
+ * Ciclo de rotación de una semana ISO: semanas seguidas desde la época (weekNumber), no el
+ * número dentro del año. Con «2026-W53» → 53 y «2027-W01» → 1 el turno se repetía en
+ * Año Nuevo y un tercio de los heavy esperaba 4 semanas. Base y candidato usan el mismo.
+ */
 export function cycleOfWeek(week: string): number {
-  return Number(week.split('W')[1]) || 0;
+  return /^\d{4}-W\d{2}$/.test(week) ? weekNumber(week) : 0;
 }
 
 /**
