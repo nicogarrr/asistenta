@@ -75,9 +75,9 @@ describe('panel goals read-only', () => {
     };
     const ui = await startWebUi(deps);
     try {
-      expect((await fetch(ui.url + '/api/goals')).status).toBe(401);
+      expect((await fetch(`${ui.url}/api/goals`)).status).toBe(401);
       expect(calls).toBe(0);
-      const res = await fetch(ui.url + '/api/goals?scope=foreign', {
+      const res = await fetch(`${ui.url}/api/goals?scope=foreign`, {
         headers: { Authorization: 'Bearer test-only' },
       });
       expect(res.status).toBe(200);
@@ -85,7 +85,7 @@ describe('panel goals read-only', () => {
       expect(await res.json()).toEqual([{ id: 'owned' }]);
       expect(
         (
-          await fetch(ui.url + '/api/goals', {
+          await fetch(`${ui.url}/api/goals`, {
             method: 'POST',
             headers: { Authorization: 'Bearer test-only' },
           })
@@ -116,7 +116,7 @@ describe('panel goals read-only', () => {
           : {}),
       });
       try {
-        const res = await fetch(ui.url + '/api/goals', {
+        const res = await fetch(`${ui.url}/api/goals`, {
           headers: { Authorization: 'Bearer test-only' },
         });
         expect(res.status).toBe(configured ? 500 : 503);

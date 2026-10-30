@@ -1682,7 +1682,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).
           chat: async (text: string) => {
             const thread = await getOrCreateThread(
-              'telegram:dm:' + String(vigilanteOwnerId ?? 'local'),
+              `telegram:dm:${String(vigilanteOwnerId ?? 'local')}`,
               'main',
               'principal',
             );
@@ -5295,6 +5295,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
+    // Taint gate (F2): a new message from the owner starts clean; what the
+    // previous turn read from outside no longer blocks standing approvals.
+    thread.gate.clearTaint(thread.key);
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
