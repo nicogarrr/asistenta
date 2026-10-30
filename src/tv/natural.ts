@@ -30,7 +30,7 @@ export type TvIntent =
   | { action: 'input'; input: string }
   | { action: 'status' }
   | { action: 'scene'; scene: string; appId?: string }
-  | { action: 'key'; name: 'BACK' | 'HOME' }
+  | { action: 'key'; name: TvKeyName }
   | { action: 'picture'; pictureMode: string };
 
 /** Modos de imagen de LG que se pueden pedir con palabras («pon la imagen en estándar»). */
@@ -168,6 +168,14 @@ const DEFERRED = new RegExp(
  * Muletillas y vocativo delante de la orden: «oye, sube el volumen», «tele, baja
  * el volumen», «oye tele, apágala». No cambian la orden; se quitan antes de leerla.
  */
+/** «cambia a la 2», «pon la tele en la 1», «ponla en la 5», «cámbiala a la tres». */
+const cambiaALa = (cap: string): RegExp =>
+  new RegExp(
+    `^(?:(?:cambia|cambiala|cambialo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? a|(?:pon|ponla|ponlo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? en) la (${cap})$`,
+  );
+const CAMBIA_A_LA_NUM = cambiaALa('\\d{1,2}');
+const CAMBIA_A_LA_PALABRA = cambiaALa('[a-z]+');
+
 const MULETILLA =
   /^(?:(?:oye|oiga|eh|ey|hey|venga|vale|ok|okay) )?(?:(?:tele|tv|television|televisor) )?/;
 
@@ -186,6 +194,27 @@ function normalizeOrder(text: string): string {
 export function tvOrderHasTime(text: string): boolean {
   return DEFERRED.test(normalizeOrder(text));
 }
+
+/** Teclas del mando que se piden por voz (todas están en la lista blanca de tools/tv.ts). */
+export type TvKeyName = 'BACK' | 'HOME' | 'ENTER' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'EXIT';
+
+const ARROWS: Record<string, TvKeyName> = {
+  arriba: 'UP',
+  abajo: 'DOWN',
+  izquierda: 'LEFT',
+  derecha: 'RIGHT',
+};
+
+const KEY_NAMES: Record<TvKeyName, string> = {
+  BACK: 'volver atrás',
+  HOME: 'ir a la pantalla de inicio',
+  ENTER: 'pulsar OK',
+  UP: 'pulsar arriba',
+  DOWN: 'pulsar abajo',
+  LEFT: 'pulsar izquierda',
+  RIGHT: 'pulsar derecha',
+  EXIT: 'salir de la app',
+};
 
 export function parseTvCommand(text: string): TvIntent | null {
   const t = normalizeOrder(text);
@@ -211,6 +240,22 @@ export function parseTvCommand(text: string): TvIntent | null {
     ).test(t)
   ) {
     return { action: 'key', name: 'HOME' };
+  }
+  // Mando: «ok», «pulsa ok», «aceptar» (ENTER); «arriba», «pulsa abajo», «flecha izquierda»,
+  // «muévete a la derecha» (flechas); «salir», «sal de la app» (EXIT).
+  const PULSA =
+    '(?:(?:pulsa|presiona|toca|dale(?: al?)?|da(?:le)? a) (?:(?:el )?boton(?: de)? )?)?';
+  if (new RegExp(`^${PULSA}(?:ok|okay|aceptar|enter)$`).test(t)) {
+    return { action: 'key', name: 'ENTER' };
+  }
+  m = new RegExp(
+    `^(?:${PULSA}(?:la )?(?:flecha (?:de )?)?|(?:muevete|ve|vete|baja|sube) (?:a la |hacia (?:la )?|para )?|a la |hacia (?:la )?)(arriba|abajo|izquierda|derecha)$`,
+  ).exec(t);
+  if (m?.[1] && ARROWS[m[1]]) {
+    return { action: 'key', name: ARROWS[m[1]] as TvKeyName };
+  }
+  if (new RegExp(`^(?:${PULSA}salir|sal|sal de (?:la )?(?:app|aplicacion))$`).test(t)) {
+    return { action: 'key', name: 'EXIT' };
   }
   // Modo de imagen: «pon la imagen en estándar», «imagen oscura», «pon el modo de imagen juego».
   // Va antes de las rutinas: «la imagen en modo cine» cambia la imagen, «modo cine» es la rutina.
@@ -379,6 +424,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   // Canales.
+  if (/^cambia (?:de|el) canal$/.test(t)) return { action: 'channel', channel: 'up' };
   if (
     /\b(?:siguiente canal|canal siguiente|sube (?:de |el )?canal|canal arriba|otro canal)\b/.test(t)
   ) {
@@ -387,10 +433,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (/\b(?:canal anterior|anterior canal|baja (?:de |el )?canal|canal abajo)\b/.test(t)) {
     return { action: 'channel', channel: 'down' };
   }
-  m = /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ?? /^(?:pon|ponme) la (\d{1,2})$/.exec(t);
+  m =
+    /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ??
+    /^(?:pon|ponme) la (\d{1,2})$/.exec(t) ??
+    CAMBIA_A_LA_NUM.exec(t);
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
   // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
-  m = /\bcanal (?:numero )?([a-z]+)$/.exec(t) ?? /^(?:pon|ponme) (?:la|el) ([a-z]+)$/.exec(t);
+  m =
+    /\bcanal (?:numero )?([a-z]+)$/.exec(t) ??
+    /^(?:pon|ponme) (?:la|el) ([a-z]+)$/.exec(t) ??
+    CAMBIA_A_LA_PALABRA.exec(t);
   const chWord = m?.[1] && /^[a-z]+$/.test(m[1]) ? spanishNumber(m[1]) : null;
   if (chWord !== null && chWord >= 1) {
     return { action: 'channel', channel: String(chWord) };
@@ -463,7 +515,7 @@ export function describeTvIntent(i: TvIntent): string {
       if (i.scene === 'apagar-todo') return 'apagarlo todo';
       return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
     case 'key':
-      return i.name === 'HOME' ? 'ir a la pantalla de inicio' : 'volver atrás';
+      return KEY_NAMES[i.name];
     case 'picture':
       return `poner la imagen en modo ${PICTURE_NAMES[i.pictureMode] ?? i.pictureMode}`;
   }
