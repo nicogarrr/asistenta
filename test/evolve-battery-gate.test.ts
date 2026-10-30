@@ -42,6 +42,23 @@ describe('batería: medir y aprobar', () => {
     expect(r.score.total).toBe(2);
   });
 
+  it('con ciclo, los heavy rotan: el de rotation 1 solo corre en el ciclo 1', async () => {
+    const heavy: BatteryCase = {
+      id: 'h',
+      prompt: 'p',
+      machine: { mustMention: ['x'] },
+      cost: 'heavy',
+      rotation: 1,
+    };
+    const g = (cycle: number): BatteryGate => ({
+      ...gate(() => 'x'),
+      cases: [...cases, heavy],
+      cycle,
+    });
+    expect((await measureBattery(g(0), '/x')).score.total).toBe(2);
+    expect((await measureBattery(g(1), '/x')).score.passing).toEqual(['h']);
+  });
+
   it('si el ejecutor falla, el caso cuenta como fallo', async () => {
     const g: BatteryGate = {
       cases,
