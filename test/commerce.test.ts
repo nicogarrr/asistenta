@@ -10,7 +10,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   fillPassengerForm,
-  hasPassenger,
   loadPassenger,
   missingPassengerFields,
   type Passenger,
@@ -333,7 +332,6 @@ describe('gate, autonomous up to the last click', () => {
 describe('loadPassenger', () => {
   it('returns null for an empty vault', async () => {
     expect(await loadPassenger(vaultOf({}))).toBeNull();
-    expect(await hasPassenger(vaultOf({}))).toBe(false);
   });
 
   it('returns null when every stored value is blank', async () => {
@@ -360,7 +358,6 @@ describe('loadPassenger', () => {
       phone: '',
     });
     expect(missingPassengerFields(passenger)).toEqual(['phone']);
-    expect(await hasPassenger(vault)).toBe(false);
   });
 
   it('is complete only when all four are there', async () => {
@@ -370,7 +367,6 @@ describe('loadPassenger', () => {
       'travel:email': 'marta@example.com',
       'travel:phone': '600112233',
     });
-    expect(await hasPassenger(full)).toBe(true);
     const state = passengerCompleteness(await loadPassenger(full));
     expect(state).toEqual({ known: true, complete: true, missing: [] });
   });

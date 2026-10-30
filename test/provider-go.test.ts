@@ -4,7 +4,6 @@ import {
   CLIENT_USER_AGENT,
   createProviderHandle,
   goHeaders,
-  isGoEndpoint,
   isOpenCodeEndpoint,
 } from '../src/core/provider.js';
 
@@ -31,13 +30,7 @@ describe('OpenCode Go client rules', () => {
     const c = loadConfig();
     expect(c.baseUrl).toBe('https://opencode.ai/zen/v1');
     expect(c.model).toBe('space-bunny-free');
-    expect(isGoEndpoint(c.baseUrl)).toBe(false);
     expect(isOpenCodeEndpoint(c.baseUrl)).toBe(true);
-  });
-
-  it('only treats the Go path as Go', () => {
-    expect(isGoEndpoint('https://opencode.ai/zen/v1')).toBe(false);
-    expect(isGoEndpoint('https://opencode.ai/zen/go')).toBe(true);
   });
 
   it('sends an own user agent and the session id', () => {
