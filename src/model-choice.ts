@@ -1,6 +1,6 @@
 /**
  * F7 /modelo: ver o elegir el modelo de una conversación entre los
- * configurados (PA_MODEL y PA_FALLBACK_MODEL). Solo texto y parseo; el cambio
+ * configurados (PA_MODEL, PA_FALLBACK_MODEL y PA_MODELS). Solo texto y parseo; el cambio
  * real lo hace PersonalAgent.chooseModel.
  */
 
@@ -44,7 +44,9 @@ export function formatModelos(available: readonly string[], current: string): st
   });
   lines.push('');
   if (available.length < 2) {
-    lines.push('Solo hay un modelo configurado. Pon PA_FALLBACK_MODEL en .env para tener otro.');
+    lines.push(
+      'Solo hay un modelo configurado. Pon PA_FALLBACK_MODEL o PA_MODELS en .env para tener otros.',
+    );
   } else {
     lines.push('Cambia con /modelo <número|nombre>; /modelo normal vuelve al principal.');
   }

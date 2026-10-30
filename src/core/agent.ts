@@ -528,9 +528,13 @@ export class PersonalAgent {
     this.#modelById = modelById;
   }
 
-  /** /modelo: los modelos configurados (PA_MODEL y PA_FALLBACK_MODEL), sin repetir. */
+  /** /modelo: los modelos configurados (PA_MODEL, PA_FALLBACK_MODEL y PA_MODELS), sin repetir. */
   get availableModels(): string[] {
-    const ids = [this.#config.model, this.#config.fallbackModel]
+    const ids = [
+      this.#config.model,
+      this.#config.fallbackModel,
+      ...(this.#config.extraModels ?? []),
+    ]
       .map((m) => m?.trim() ?? '')
       .filter((m) => m !== '');
     return [...new Set(ids)];

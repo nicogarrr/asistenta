@@ -22,6 +22,8 @@ export interface Config {
    * presets whose endpoint never registered a second model.
    */
   fallbackModel?: string;
+  /** PA_MODELS: otros modelos (separados por comas) que /modelo puede elegir. */
+  extraModels?: string[];
   baseUrl: string;
   variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
@@ -235,6 +237,7 @@ export function loadConfig(): Config {
       process.env.PA_FALLBACK_MODEL,
       str('PA_MODEL') ?? presetDefaults.model,
     ),
+    extraModels: parseModelList(process.env.PA_MODELS),
     baseUrl: str('PA_BASE_URL') ?? presetDefaults.baseUrl,
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     contextWindowTokens: num('PA_CONTEXT_WINDOW', 1_048_576),
@@ -309,4 +312,13 @@ export function loadConfig(): Config {
 
 export function resetConfigForTests(): void {
   cached = null;
+}
+
+/** PA_MODELS: lista separada por comas (o espacios), sin vacíos ni repetidos, máx. 8. */
+export function parseModelList(raw: string | undefined): string[] {
+  const ids = (raw ?? '')
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  return [...new Set(ids)].slice(0, 8);
 }
