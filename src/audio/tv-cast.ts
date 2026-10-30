@@ -178,6 +178,24 @@ type TvRequestFn = (
  * El "caster" que usa el daemon: lee el emparejamiento del vault igual que la tool
  * `tv` (tv:host / tv:clientKey / tv:secure) sin tocar su cableado.
  */
+/**
+ * /stop con /altavoz tele: para lo que la tele está reproduciendo (ssap
+ * media.controls/stop). Devuelve false sin tocar nada si la tele no está emparejada.
+ */
+export function tvStopperFromVault(
+  vaultGet: VaultGet,
+  request: TvRequestFn,
+): () => Promise<boolean> {
+  return async () => {
+    const host = await vaultGet('tv:host');
+    const clientKey = await vaultGet('tv:clientKey');
+    if (!host || !clientKey) return false;
+    const allowPlaintext = (await vaultGet('tv:secure')) === '0';
+    await request(host, clientKey, 'media.controls/stop', {}, { allowPlaintext });
+    return true;
+  };
+}
+
 export function tvCasterFromVault(
   vaultGet: VaultGet,
   request: TvRequestFn,

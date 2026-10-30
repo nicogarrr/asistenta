@@ -32,6 +32,10 @@ Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el c
 activo. Las notas suenan en orden, una detrás de otra; si se acumulan más de 5, las nuevas no se
 sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se duplica.
 
+`/stop` corta la nota que suena en el PC y vacía la cola de ese chat. En modo tele, si una nota
+tuya llegó a la tele hace menos de 2 minutos, `/stop` también la para allí; pasado ese tiempo la
+tele no se toca (puede que ya estés viendo otra cosa).
+
 ### La respuesta en voz alta (`PA_ALTAVOZ_VOZ=1`, apagado por defecto)
 Con el altavoz en `pc` o `tele`, la respuesta del asistente a tu nota de voz también se
 dice en el mismo sitio, detrás de la nota. El texto llega primero a Telegram y nunca
