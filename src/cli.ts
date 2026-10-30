@@ -4780,6 +4780,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.warn(`Computer Use ${on ? 'activado' : 'desactivado'} desde el chat (/ordenador)`);
       },
       save: (on) => saveComputerSwitch(paths.state, on),
+      offSaved: () => computerOffSaved(paths.state),
     });
     await say(inbound, reply, { quote: true });
   };
