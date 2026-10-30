@@ -64,7 +64,8 @@ export function readStartupRecord(path: string): StartupRecord | undefined {
   }
 }
 
-function ago(at: string, now: Date): string {
+/** «hace 5 min», «hace 3 h»… desde una fecha ISO. */
+export function ago(at: string, now: Date): string {
   const min = Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000));
   if (min < 1) return 'hace un momento';
   if (min < 60) return `hace ${min} min`;

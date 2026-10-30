@@ -12,7 +12,10 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { ago } from './startup-record.js';
 
+/** Estado del aviso en el directorio de estado (registrado en src/state-files.ts). */
+export const BOOT_NOTICE_FILE = 'boot-notice.json';
 export const BOOT_NOTICE_MIN_INTERVAL_MS = 10 * 60_000;
 
 /** Encendido salvo PA_BOOT_NOTICE=0/off/false/no. */
@@ -91,17 +94,84 @@ function lastSentAt(path: string): number {
   }
 }
 
-function recordSent(path: string, at: number): void {
+function readState(path: string): Record<string, unknown> {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Escribe `boot-notice.json` conservando los demás campos (lastSentAt y lastResult conviven). */
+function writeState(path: string, patch: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ lastSentAt: at }));
+  writeFileSync(tmp, JSON.stringify({ ...readState(path), ...patch }));
   renameSync(tmp, path);
 }
 
+function recordSent(path: string, at: number): void {
+  writeState(path, { lastSentAt: at });
+}
+
+const RESULTS: readonly BootNoticeResult[] = ['sent', 'off', 'no-owner', 'rate-limited', 'failed'];
+
+export interface BootNoticeRecord {
+  result: BootNoticeResult;
+  /** ISO de cuándo se decidió. */
+  at: string;
+}
+
+/** Último resultado del aviso de arranque, para `pa autostart status`. Nunca lanza. */
+export function readBootNoticeResult(path: string): BootNoticeRecord | undefined {
+  const state = readState(path);
+  const result = state.lastResult;
+  const at = state.lastResultAt;
+  if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) return undefined;
+  if (!RESULTS.includes(result as BootNoticeResult)) return undefined;
+  return { result: result as BootNoticeResult, at };
+}
+
+function rememberResult(path: string, result: BootNoticeResult, now: number): BootNoticeResult {
+  try {
+    writeState(path, { lastResult: result, lastResultAt: new Date(now).toISOString() });
+  } catch {
+    // Solo es un diagnóstico para `pa autostart status`.
+  }
+  return result;
+}
+
+const RESULT_TEXT: Record<BootNoticeResult, string> = {
+  sent: 'enviado a tu chat privado ✅',
+  off: 'apagado (PA_BOOT_NOTICE=0)',
+  'no-owner':
+    '❌ no enviado: no sé cuál es tu chat privado. Mira «pa iniciar --solo-comprobar» (línea «Dueño»)',
+  'rate-limited': 'no enviado: ya se había mandado hace menos de 10 min',
+  failed: '❌ falló al enviarlo por Telegram. Mira el log del daemon',
+};
+
+/** Una línea para `pa autostart status`. */
+export function formatBootNoticeResult(
+  rec: BootNoticeRecord | undefined,
+  now: Date = new Date(),
+): string {
+  const head = 'Aviso «Asistenta lista ✅» del último arranque';
+  if (!rec) return `${head}: ninguno registrado todavía.`;
+  return `${head}, ${ago(rec.at, now)}: ${RESULT_TEXT[rec.result]}.`;
+}
+
 export async function maybeSendBootNotice(deps: BootNoticeDeps): Promise<BootNoticeResult> {
+  const now = (deps.now ?? Date.now)();
+  const result = await decideAndSend(deps, now);
+  return rememberResult(deps.statePath, result, now);
+}
+
+async function decideAndSend(deps: BootNoticeDeps, now: number): Promise<BootNoticeResult> {
   if (!bootNoticeEnabled(deps.env)) return 'off';
   if (deps.ownerChatId == null) return 'no-owner';
-  const now = (deps.now ?? Date.now)();
   const last = lastSentAt(deps.statePath);
   // Un reloj que ha ido hacia atrás (last en el futuro) también cuenta como reciente.
   if (now - last < BOOT_NOTICE_MIN_INTERVAL_MS) return 'rate-limited';

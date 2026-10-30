@@ -46,7 +46,7 @@ import {
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
-import { bootBanner, maybeSendBootNotice } from './boot-notice.js';
+import { BOOT_NOTICE_FILE, bootBanner, maybeSendBootNotice } from './boot-notice.js';
 import { BrowserService } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
@@ -7009,7 +7009,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     };
     process.stdout.write(`${bootBanner(facts)}\n`);
     const result = await maybeSendBootNotice({
-      statePath: join(paths.state, 'boot-notice.json'),
+      statePath: join(paths.state, BOOT_NOTICE_FILE),
       ownerChatId: vigilanteOwnerId,
       facts,
       send: (chatId, text) =>
