@@ -342,7 +342,11 @@ export function renderPage(): string {
     }
     .aprobacion:last-child { margin-bottom: 0; }
     .aprobacion h3 { margin: 0; font-size: 14px; word-break: break-word; }
-    .aprobacion .botones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    /* Rejilla de columnas iguales: 2×2 en escritorio, una columna en el móvil; nunca un botón suelto en su fila. */
+    .aprobacion .botones {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+      gap: 6px; margin-top: 9px;
+    }
     .aprobacion .pregunta { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; word-break: break-word; }
     .aprobacion .meta { margin: 6px 0 0; color: var(--suave); font-size: 13px; word-break: break-word; }
     .aprobacion .caduca { margin: 6px 0 0; font-size: 13px; color: var(--texto); font-variant-numeric: tabular-nums; }
