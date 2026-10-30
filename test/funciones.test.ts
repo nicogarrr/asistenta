@@ -407,3 +407,18 @@ describe('registro de canales', () => {
     expect(view).toEqual({ text: 'fn:pc', buttons: [] });
   });
 });
+
+describe('/funciones: «⚙️ Sistema» lleva a la lista de pa iniciar y a /estado', () => {
+  it('el dueño ve qué hacer si no arranca', () => {
+    const text = funcionesText(OWNER, 'sistema');
+    expect(text).toContain('¿No arranca o va rara?');
+    expect(text).toContain('pa iniciar --solo-comprobar');
+    expect(text).toContain('pa autostart status');
+    expect(text).toContain('/estado');
+  });
+
+  it('las demás áreas y los otros chats no lo enseñan', () => {
+    expect(funcionesText(OWNER, 'tele')).not.toContain('pa iniciar');
+    expect(funcionesText(OTHER, 'sistema')).not.toContain('pa iniciar');
+  });
+});
