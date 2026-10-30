@@ -24,6 +24,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { localDay } from '../datecontext.js';
+import { normalizeHostname } from '../text.js';
 
 export const MIN_GAP_MS = 30_000;
 export const MIN_READINGS = 5;
@@ -69,7 +70,7 @@ export function isStoreId(s: string): s is StoreId {
 
 export function hostOf(url: string): string {
   try {
-    return new URL(url).hostname.toLowerCase();
+    return normalizeHostname(new URL(url).hostname);
   } catch {
     return '';
   }
