@@ -28,3 +28,33 @@ describe('docs/windows-startup.md: el vigilante', () => {
     expect(doc).toContain(describeDecision({ action: 'skip', reason: 'parado-a-proposito' }));
   });
 });
+
+const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+
+/** GitHub's heading anchor: lowercase, drop punctuation (keeps letters, digits, - and _), spaces → -. */
+function githubSlug(heading: string): string {
+  return heading
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-');
+}
+
+describe('README: arranque automático lleva a docs/windows-startup.md', () => {
+  const start = readme.indexOf('## Arranque automático');
+  const next = readme.indexOf('\n## ', start + 1);
+  const section = readme.slice(start, next < 0 ? undefined : next);
+
+  it('enlaza la guía de Windows y el apartado del vigilante con un ancla que existe', () => {
+    expect(section).toContain('](docs/windows-startup.md)');
+    const heading = doc.match(/^## (Vigilante.*)$/m)?.[1] ?? '';
+    expect(heading).not.toBe('');
+    expect(section).toContain(`](docs/windows-startup.md#${githubSlug(heading)})`);
+    expect(section).toContain(WATCHDOG_TASK_NAME);
+  });
+
+  it('dice qué hace pa stop con el vigilante', () => {
+    expect(section).toContain('pa stop');
+    expect(section).toContain('pa iniciar');
+  });
+});
