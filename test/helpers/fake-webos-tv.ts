@@ -5,7 +5,12 @@
  * responde a los requests segun `handlers`. Registra todo lo recibido para
  * poder fijar el comportamiento observable del cliente.
  */
-import type { TvSocket, TvSocketFactory } from '../../src/tv/lgtv.js';
+import type {
+  TvInputSocket,
+  TvInputSocketFactory,
+  TvSocket,
+  TvSocketFactory,
+} from '../../src/tv/lgtv.js';
 
 type Handler = (...args: unknown[]) => void;
 
@@ -18,6 +23,12 @@ export interface FakeTvOptions {
   failOpens?: number;
   /** Como falla la apertura: error inmediato o sin respuesta (timeout). */
   openFailure?: 'error' | 'hang' | 'close';
+  /**
+   * Socket de input de botones (tvKey): 'open' abre y acepta; 'hang' nunca
+   * abre; 'error' falla al abrir; 'close-early' cierra justo tras recibir la
+   * tecla (antes del margen de consumo).
+   */
+  inputMode?: 'open' | 'hang' | 'error' | 'close-early';
   /** Respuestas por uri (sin ssap://). Devuelve payload; lanzar = error SSAP. */
   handlers?: Record<
     string,
@@ -35,6 +46,10 @@ export class FakeWebOsTv {
   readonly requests: FakeTvRequest[] = [];
   readonly registers: Array<string | undefined> = [];
   sockets: FakeTvSocket[] = [];
+  /** Urls de los sockets de input pedidos y botones recibidos (en orden). */
+  readonly inputUrls: string[] = [];
+  readonly buttons: string[] = [];
+  inputSockets: FakeTvInputSocket[] = [];
   opts: Required<Omit<FakeTvOptions, 'handlers'>> & {
     handlers: NonNullable<FakeTvOptions['handlers']>;
   };
@@ -45,6 +60,7 @@ export class FakeWebOsTv {
       reachable: opts.reachable ?? true,
       failOpens: opts.failOpens ?? 0,
       openFailure: opts.openFailure ?? 'error',
+      inputMode: opts.inputMode ?? 'open',
       handlers: opts.handlers ?? {},
     };
   }
@@ -63,9 +79,22 @@ export class FakeWebOsTv {
     };
   }
 
+  /** Factory del socket de input de botones, para `deps.inputFactory`. */
+  get inputFactory(): TvInputSocketFactory {
+    return (url: string): TvInputSocket => {
+      this.inputUrls.push(url);
+      const s = new FakeTvInputSocket(this, this.opts.inputMode);
+      this.inputSockets.push(s);
+      return s;
+    };
+  }
+
   /** Todos los sockets abiertos terminaron cerrados (sin fugas). */
   allClosed(): boolean {
-    return this.sockets.every((s) => s.closed || s.terminated);
+    return (
+      this.sockets.every((s) => s.closed || s.terminated) &&
+      this.inputSockets.every((s) => s.closed)
+    );
   }
 
   handle(socket: FakeTvSocket, raw: string): void {
@@ -94,6 +123,15 @@ export class FakeWebOsTv {
       const payload = msg.payload ?? {};
       this.requests.push({ uri, payload });
       const h = this.opts.handlers[uri];
+      if (!h && uri === 'com.webos.service.networkinput/getPointerInputSocket') {
+        const host = new URL(this.urls[this.urls.length - 1] ?? 'wss://127.0.0.1:3001').hostname;
+        socket.reply({
+          type: 'response',
+          id: msg.id,
+          payload: { returnValue: true, socketPath: `wss://${host}:3001/resources/input` },
+        });
+        return;
+      }
       if (!h) {
         socket.reply({ type: 'response', id: msg.id, payload: { returnValue: true } });
         return;
@@ -163,5 +201,46 @@ export class FakeTvSocket implements TvSocket {
 
   terminate(): void {
     this.terminated = true;
+  }
+}
+
+export class FakeTvInputSocket implements TvInputSocket {
+  sent: string[] = [];
+  closed = false;
+  private listeners = new Map<string, Handler[]>();
+  private readonly tv: FakeWebOsTv;
+  private readonly mode: 'open' | 'hang' | 'error' | 'close-early';
+
+  constructor(tv: FakeWebOsTv, mode: 'open' | 'hang' | 'error' | 'close-early') {
+    this.tv = tv;
+    this.mode = mode;
+    queueMicrotask(() => {
+      if (mode === 'hang') return;
+      if (mode === 'error') this.emit('error', new Error('connect ECONNREFUSED'));
+      else this.emit('open');
+    });
+  }
+
+  private emit(event: string, ...args: unknown[]): void {
+    for (const cb of this.listeners.get(event) ?? []) cb(...args);
+  }
+
+  on(event: string, cb: Handler): void {
+    const list = this.listeners.get(event) ?? [];
+    list.push(cb);
+    this.listeners.set(event, list);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+    const m = /^type:button\nname:([A-Z0-9_]+)\n\n$/.exec(data);
+    if (m?.[1]) this.tv.buttons.push(m[1]);
+    if (this.mode === 'close-early') queueMicrotask(() => this.close());
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.emit('close');
   }
 }

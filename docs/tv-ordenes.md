@@ -39,3 +39,4 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 ## Conexión y errores
 - Si la tele rechaza la conexión al momento (recién despertada), se reintenta una vez; antes de conectar no se ha enviado nada, así que no se duplica ninguna orden. Un rechazo tras conectar nunca se repite.
 - Los errores explican qué significan en castellano («No llego a la tele…», «Hay que volver a emparejar: pa tv setup <ip>», «La orden salió pero la tele no contestó… no la repito») y conservan el detalle técnico.
+- Las teclas (tvKey) esperan 5 s como máximo a que abra el socket de botones y dan 800 ms de margen tras enviar. Si tu tele es lenta: `PA_TV_KEY_TIMEOUT_MS` (1000–30000) y `PA_TV_KEY_GRACE_MS` (50–5000).
