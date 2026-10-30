@@ -4023,7 +4023,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const { collectWatches, defaultSources } = await import('./watch/overview-cli.js');
     const { entries, errors } = collectWatches(defaultSources());
     const r = vigilanciasReply(entries, inbound.chatId);
-    const note = errors.length ? `\n\n(no he podido leer: ${errors.length})` : '';
+    const note = vigilanciasErrorNote(errors);
     await say(inbound, r.text + note, { quote: true, format: 'marks', buttons: r.buttons });
   };
 
@@ -7662,6 +7662,31 @@ export function watchListButtons(
  * lo global), con cabeceras en negrita y un «📈 Precio …» de solo lectura por página
  * vigilada (hasta 8; equivale a /precio <id>). Nada de borrar con un toque.
  */
+/** Nombre legible de cada lista de collectWatches (sus errores empiezan por «<lista>: »). */
+const OVERVIEW_SOURCE_NAMES: Record<string, string> = {
+  páginas: 'páginas vigiladas',
+  ojo: 'ojo de águila',
+  'pricewatch.json': 'vigilante de precios (pricewatch.json)',
+  rutinas: 'rutinas',
+};
+
+/**
+ * Nota de /vigilancias cuando alguna lista no se pudo leer: dice cuáles (sin el detalle
+ * del error, que puede llevar rutas del PC) para que se sepa qué falta en la vista.
+ */
+export function vigilanciasErrorNote(errors: readonly string[]): string {
+  if (!errors.length) return '';
+  const names = [
+    ...new Set(
+      errors.map((e) => {
+        const key = e.split(':')[0]?.trim() ?? '';
+        return OVERVIEW_SOURCE_NAMES[key] ?? (key || 'otra lista');
+      }),
+    ),
+  ];
+  return `\n\n⚠️ No he podido leer: ${names.join(', ')}. Lo que sale arriba puede estar incompleto; \`pa vigilancias\` en el PC da el detalle.`;
+}
+
 export function vigilanciasReply(
   entries: readonly OverviewEntry[],
   chatId: string,
