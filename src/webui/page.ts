@@ -8,6 +8,7 @@
  */
 
 import {
+  anuncioPendientes,
   etiquetaCampo,
   formatearCampo,
   mensajeDeError,
@@ -48,7 +49,9 @@ export function renderFormatScript(): string {
   var textoEspera = ${textoEspera.toString()};
   var tituloPestana = ${tituloPestana.toString()};
   var resumenSesion = ${resumenSesion.toString()};
+  var anuncioPendientes = ${anuncioPendientes.toString()};
   return {
+    anuncioPendientes: anuncioPendientes,
     resumenSesion: resumenSesion,
     tituloPestana: tituloPestana,
     textoEspera: textoEspera,
@@ -116,6 +119,10 @@ export function renderPage(): string {
       z-index: 20;
     }
     .skip:focus { left: 16px; top: 16px; }
+    .solo-lector {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
     .cabecera {
       display: flex;
       align-items: center;
@@ -398,6 +405,7 @@ export function renderPage(): string {
 
   <main id="contenido">
     <p id="aviso" class="aviso" role="alert" hidden></p>
+    <p id="anuncio" class="solo-lector" role="status" aria-live="polite"></p>
     <form id="form-token" class="aviso token" hidden>
       <label for="campo-token">Token del panel (PA_WEB_TOKEN)</label>
       <div class="token-fila">
@@ -415,7 +423,7 @@ export function renderPage(): string {
           <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
           <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
         </header>
-        <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope" aria-live="polite">
+        <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -450,7 +458,7 @@ export function renderPage(): string {
           <h2 id="titulo-objetivos">Objetivos</h2>
           <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
         </header>
-        <div id="panel-objetivos" class="tarjeta-cuerpo sin-tope" aria-live="polite">
+        <div id="panel-objetivos" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -460,7 +468,7 @@ export function renderPage(): string {
           <h2 id="titulo-estado">Estado</h2>
           <button class="mini" type="button" data-refrescar="estado">Refrescar</button>
         </header>
-        <div id="panel-estado" class="tarjeta-cuerpo" aria-live="polite">
+        <div id="panel-estado" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -476,7 +484,7 @@ export function renderPage(): string {
             <button class="mini" type="button" data-refrescar="sesiones">Refrescar</button>
           </div>
         </header>
-        <div id="panel-sesiones" class="tarjeta-cuerpo" aria-live="polite">
+        <div id="panel-sesiones" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -492,7 +500,7 @@ export function renderPage(): string {
             <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
           </div>
         </header>
-        <div id="panel-memoria" class="tarjeta-cuerpo" aria-live="polite">
+        <div id="panel-memoria" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -502,7 +510,7 @@ export function renderPage(): string {
           <h2 id="titulo-auditoria">Auditoría</h2>
           <button class="mini" type="button" data-refrescar="auditoria">Refrescar</button>
         </header>
-        <div id="panel-auditoria" class="tarjeta-cuerpo" aria-live="polite">
+        <div id="panel-auditoria" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -849,7 +857,19 @@ ${renderFormatScript()}
       window.setInterval(actualizarCaducidades, 1000);
 
       // Las aprobaciones esperando se ven sin buscarlas: contador en la tarjeta y en la pestaña.
+      // Las tarjetas se repintan enteras (y la cuenta atrás cambia cada segundo),
+      // así que no son regiones vivas: solo se anuncia lo nuevo, una vez.
+      var pendientesPrevios = null;
+      function anunciar(texto) {
+        if (!texto) return;
+        var region = document.getElementById('anuncio');
+        region.textContent = '';
+        window.setTimeout(function () { region.textContent = texto; }, 50);
+      }
+
       function marcarPendientes(n) {
+        anunciar(formato.anuncioPendientes(pendientesPrevios, n));
+        pendientesPrevios = n;
         var contador = document.getElementById('contador-aprobaciones');
         var tarjeta = document.getElementById('tarjeta-aprobaciones');
         contador.textContent = n > 0 ? String(n) : '';
