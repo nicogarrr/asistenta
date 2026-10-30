@@ -26,3 +26,7 @@ siendo el resumen semanal.
 ## Objetivos y precios
 
 El resumen incluye también tus **objetivos** activos (con el siguiente paso) y bloqueados (primero, con el motivo), y tus **vigilancias de precio** con objetivo o % de bajada (último precio leído; las que ya están por debajo del objetivo van primero). Un objetivo en marcha o un precio sin novedad no bastan para enviar el resumen; un objetivo bloqueado o un precio ya bajo el objetivo, sí.
+
+## Resumen en voz
+
+`PA_BRIEFING_VOZ=1` (apagado por defecto, solo en el PC con voz) manda además el resumen como nota de voz justo después del texto. La voz nunca retrasa el texto: tiene un tope de 20 s y, si falla, solo se pierde el audio.
