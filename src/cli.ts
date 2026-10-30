@@ -87,6 +87,7 @@ import {
   isMailReplyRequest,
   queueThreadTurn,
   resolveInboundThread,
+  threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
@@ -2264,24 +2265,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       quote?: boolean;
       format?: Outbound['format'];
       buttons?: Outbound['buttons'];
+      /** Cada id de mensaje enviado (todos los trozos), p. ej. para apuntar su hilo. */
+      onSent?: (messageId: string) => void;
     } = {},
   ): Promise<string | null> => {
     return telegram
-      .send({
-        channel: 'telegram',
-        account: telegram.account,
-        chatId: inbound.chatId,
-        threadId: inbound.threadId,
-        // The answer quotes the message it answers. Without this, three concurrent
-        // conversations in one chat are unreadable: you cannot tell which reply
-        // belongs to which request.
-        replyToMessageId: opts.quote === false ? undefined : inbound.messageId,
-        text,
-        format: opts.format,
-        images: opts.images,
-        audio: opts.audio,
-        buttons: opts.buttons,
-      })
+      .send(
+        {
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: inbound.chatId,
+          threadId: inbound.threadId,
+          // The answer quotes the message it answers. Without this, three concurrent
+          // conversations in one chat are unreadable: you cannot tell which reply
+          // belongs to which request.
+          replyToMessageId: opts.quote === false ? undefined : inbound.messageId,
+          text,
+          format: opts.format,
+          images: opts.images,
+          audio: opts.audio,
+          buttons: opts.buttons,
+        },
+        opts.onSent,
+      )
       .catch((err: unknown) => {
         log.warn('send failed', { err });
         return null;
@@ -2328,7 +2334,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       short.truncated && text.trim()
         ? [moreButton(thread.key, inbound.chatId, inbound.threadId)]
         : undefined;
-    const id = await say(inbound, short.text, { audio, format: 'marks', buttons });
+    // Todos los trozos apuntan al hilo (antes solo el primero): responder al segundo
+    // trozo de una respuesta larga sigue esta conversación.
+    const id = await say(inbound, short.text, {
+      audio,
+      format: 'marks',
+      buttons,
+      onSent: threadForSentIds(messageThread, chatKey(inbound), thread.key),
+    });
     if (id) messageThread.set(`${chatKey(inbound)}:${id}`, thread.key);
     // PA_ALTAVOZ_VOZ=1: la respuesta también suena donde sonó la nota (PC/tele), tras
     // el texto y sin esperarla. Reutiliza la voz ya hecha para Telegram si la hay.
@@ -6784,8 +6797,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const full = cachedFullReply(inbound, thread.key, { isMoreRequest, takeFullReply });
           if (full) {
             // Antes salía el markdown crudo del modelo (### y tablas con |).
+            // Cada trozo apunta al hilo: responder al texto completo sigue esta conversación.
             await say(inbound, cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }), {
               format: 'marks',
+              onSent: threadForSentIds(messageThread, chatKey(inbound), thread.key),
             });
             return;
           }
