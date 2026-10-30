@@ -76,7 +76,7 @@ import {
   voiceHeardText,
 } from './channels/telegram-receipts.js';
 import type { ChannelAudio, Inbound, Outbound } from './channels/types.js';
-import { chatKey } from './channels/types.js';
+import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
@@ -1660,7 +1660,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // Approval for a domain goes to the chat that asked for it, through the same
         // inline buttons as any other gated action.
         approve: async (scope, domain, reason) => {
-          const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
+          const chatId = chatIdOf(scope.split('#')[0] ?? '');
           log.info('browser domain approval requested', { domain, chatId });
           // "Siempre" is the right answer for a site the user has already named: the
           // domain is remembered across restarts, so the next visit is silent.
@@ -1909,7 +1909,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const inboundFor = (thread: Thread): Inbound => {
     const live = threadInbound.get(thread.key);
     if (live) return live;
-    const [channel, account, chatId, threadId] = thread.chatKey.split(':');
+    const { channel, account, chatId, threadId } = parseChatKey(thread.chatKey);
     return {
       channel: channel ?? 'telegram',
       account: account ?? telegram.account,
@@ -1952,9 +1952,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         screen,
         ctx,
         channelPhoto: async (bytes, opts) => {
-          const chatId = Number(thread.chatKey.split(':')[2]);
+          const chatId = chatNumberOf(thread.chatKey);
           const threadId = inboundFor(thread).threadId;
-          await telegram.action(thread.chatKey.split(':')[2] ?? '', 'upload_photo');
+          await telegram.action(chatIdOf(thread.chatKey), 'upload_photo');
           return telegram
             .sendPhotoBytes(chatId, bytes, threadId, opts)
             .then(() => true)
@@ -1967,7 +1967,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createBrowserTool(browserFor(thread.key), scope, (png) =>
         ctx.sendPhoto(png, () =>
           telegram
-            .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
+            .sendPhotoBytes(chatNumberOf(thread.chatKey), png, inboundFor(thread).threadId)
             .then(() => true),
         ),
       ),
@@ -2090,7 +2090,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ctx.sendFile({ bytes, name: filename }, () =>
             telegram
               .sendDocumentBytes(
-                Number(thread.chatKey.split(':')[2]),
+                chatNumberOf(thread.chatKey),
                 bytes,
                 filename,
                 caption,
@@ -2106,7 +2106,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           requireApproval: async (_action, summary) => {
             const choice = await telegram.offerApproval(
               randomUUID(),
-              thread.chatKey.split(':')[2] ?? '',
+              chatIdOf(thread.chatKey),
               `¿${summary}?`,
             );
             return choice.approved;
@@ -2126,7 +2126,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
             telegram
               .sendVideo(
-                Number(thread.chatKey.split(':')[2]),
+                chatNumberOf(thread.chatKey),
                 bytes,
                 seconds,
                 label,
@@ -2138,7 +2138,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ctx.sendFile({ bytes, name: filename }, () =>
             telegram
               .sendDocumentBytes(
-                Number(thread.chatKey.split(':')[2]),
+                chatNumberOf(thread.chatKey),
                 bytes,
                 filename,
                 caption,
@@ -2160,14 +2160,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         chatKey: thread.key,
         recall,
         downloadAudio: (fileId, limitBytes) => telegram.downloadFile(fileId, limitBytes),
-        chatId: thread.chatKey.split(':')[2] ?? '',
+        chatId: chatIdOf(thread.chatKey),
         maxEdge: config.screenshotMaxEdge,
         // Telegram's photo sender wants both dimensions together, and a caller that
         // knows neither has nothing useful to say about the size anyway.
         sendPhoto: (bytes, opts) =>
           ctx
             .sendPhoto(bytes, () => {
-              const chatId = Number(thread.chatKey.split(':')[2]);
+              const chatId = chatNumberOf(thread.chatKey);
               const threadId = inboundFor(thread).threadId;
               return opts?.width !== undefined && opts.height !== undefined
                 ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
@@ -2181,7 +2181,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
             telegram
               .sendVideo(
-                Number(thread.chatKey.split(':')[2]),
+                chatNumberOf(thread.chatKey),
                 bytes,
                 seconds,
                 label,
@@ -2193,7 +2193,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ctx.sendFile({ bytes, name: 'nota-de-voz.ogg' }, () =>
             telegram
               .sendVoiceBytes(
-                Number(thread.chatKey.split(':')[2]),
+                chatNumberOf(thread.chatKey),
                 bytes,
                 inboundFor(thread).threadId,
                 seconds,
@@ -2296,7 +2296,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // La confirmación de una compra (una pregunta por compra y turno): src/daemon/purchase-approvals.ts.
   /** Telegram question with no scope buttons: "always pay" is not a thing. */
   const askOncePerTurn = async (thread: Thread, summary: string): Promise<boolean> => {
-    const chatId = thread.chatKey.split(':')[2] ?? '';
+    const chatId = chatIdOf(thread.chatKey);
     thread.agent.setAwaitingApproval(true);
     try {
       const choice = await telegram.offerApproval(randomUUID(), chatId, summary);
@@ -2323,7 +2323,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return existing;
     }
     const holder: { agent: PersonalAgent | null } = { agent: null };
-    const gate = gateFor(key, chatKey_.split(':')[2] ?? '', holder);
+    const gate = gateFor(key, chatIdOf(chatKey_), holder);
     const thread: Thread = {
       key,
       chatKey: chatKey_,
