@@ -6,9 +6,10 @@
  * src/channels/email.ts; aqui solo se lee.
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { ImapFlow } from 'imapflow';
 import type { RawCommandMail } from '../channels/email.js';
+import { writeFileReplacing } from '../fs-tmp.js';
 import type { ReadMailAccount } from './idle.js';
 import { extractBodyText } from './mime.js';
 
@@ -69,9 +70,7 @@ export function loadCommandCursor(file: string): CommandCursor | null {
 }
 
 export function saveCommandCursor(file: string, cursor: CommandCursor): void {
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(cursor)}\n`);
-  renameSync(tmp, file);
+  writeFileReplacing(file, `${JSON.stringify(cursor)}\n`);
 }
 
 /** Una pasada real contra Gmail (solo lectura), con plazo. */

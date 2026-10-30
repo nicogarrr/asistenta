@@ -19,9 +19,10 @@
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
+import { writeFileReplacing } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { isPrivateRemote } from '../tv/button-listener.js';
 
@@ -148,13 +149,11 @@ function loadSeen(file: string | undefined, t: number): Map<string, number> {
   return seen;
 }
 
-function saveSeen(file: string | undefined, seen: Map<string, number>): void {
+export function saveSeen(file: string | undefined, seen: Map<string, number>): void {
   if (!file) return;
   try {
     mkdirSync(dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(seen)));
-    renameSync(tmp, file);
+    writeFileReplacing(file, JSON.stringify(Object.fromEntries(seen)));
   } catch (err) {
     log.warn('alert inbox: no se pudo guardar el deduplicado', { err });
   }

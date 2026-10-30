@@ -37,10 +37,11 @@ export function setAsideCorrupt(path: string): string {
  * otro programa tiene el destino abierto), borra el tmp antes de relanzar el error:
  * sin esto, cada intento fallido deja otro `.tmp` en la carpeta de estado.
  */
-export function writeFileReplacing(path: string, data: string): void {
+export function writeFileReplacing(path: string, data: string, options?: { mode?: number }): void {
   const tmp = uniqueTmpPath(path);
   try {
-    writeFileSync(tmp, data);
+    if (options?.mode === undefined) writeFileSync(tmp, data);
+    else writeFileSync(tmp, data, { mode: options.mode });
     renameSync(tmp, path);
   } catch (error) {
     try {
