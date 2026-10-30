@@ -109,7 +109,16 @@ async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
           own.length > 1;
         if (box && (submits || acts)) {
           const t = ((box as HTMLElement).innerText || '').slice(0, 4000);
-          if (/(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)/i.test(t)) {
+          // Amount before or after the currency, symbol or ISO code: «25,00 €», «€25»,
+          // and also «EUR 49,99» / «USD 5» / «CHF 10.00», which shops and payment
+          // pages print and which the old pattern missed (the code was only accepted
+          // after the number). The suffix form keeps no word boundary after «eur» on
+          // purpose: a false «importe» only asks once more, a missed one does not ask.
+          if (
+            /(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)|(\b(eur|usd|gbp|chf)\s?\d)/i.test(
+              t,
+            )
+          ) {
             places.push('[importe en el formulario]');
           }
         }
