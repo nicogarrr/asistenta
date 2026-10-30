@@ -23,6 +23,7 @@ vi.mock('../src/screen/media.js', () => ({
 
 const { AudioRecall } = await import('../src/media/recall.js');
 const { createMediaTool } = await import('../src/tools/media.js');
+const { playAudioFile } = await import('../src/tools/system.js');
 
 let dir = '';
 beforeEach(() => {
@@ -109,5 +110,29 @@ describe('«reprodúcelo en la tele»: /stop mientras la tele abre el audio', ()
     expect(onTeleCast).toHaveBeenCalledWith(stop);
     expect(stop).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
+  });
+
+  it('en el PC: /stop llega a la reproducción y se responde «Parado», no un fallo', async () => {
+    const mp3 = join(dir, 'p.mp3');
+    writeFileSync(mp3, 'x');
+    toPlayableAudio.mockResolvedValue(mp3);
+    const ac = new AbortController();
+    const play = vi.mocked(playAudioFile);
+    play.mockImplementation(async (_f, opts) => {
+      expect(opts?.signal).toBe(ac.signal);
+      ac.abort();
+      return {
+        ok: false,
+        seconds: 0,
+        volumeSet: 100,
+        volumeRestoredTo: 35,
+        restoreStatus: 'restored',
+        detail: 'parado con /stop',
+      };
+    });
+    const res = await tool({}).execute('c', { action: 'play' }, ac.signal);
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).toMatch(/^Parado/);
+    expect((res.details as { reason: string }).reason).toBe('stopped');
   });
 });
