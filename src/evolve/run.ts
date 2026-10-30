@@ -33,12 +33,18 @@ import { repoRoot } from './worktree.js';
 
 const exec = promisify(execFile);
 
-/** Sunday from 03:00 local, once every 6 days: the machine is idle and the owner is asleep. */
+/**
+ * Sunday from 03:00 local, once every 6 days: the machine is idle and the owner is asleep.
+ * A last run that is not a number, or lies in the future (the PC clock was wrong once and was
+ * fixed), does not count: otherwise the weekly cycle would silently stop until that date.
+ */
 export function isEvolveDue(now: Date, lastRunMs: number): boolean {
+  const since = now.getTime() - lastRunMs;
+  const stale = !Number.isFinite(since) || since < 0;
   return (
     wallClock(now).weekday === 0 &&
     wallClock(now).hour >= 3 &&
-    now.getTime() - lastRunMs > 6 * 24 * 3_600_000
+    (stale || since > 6 * 24 * 3_600_000)
   );
 }
 
