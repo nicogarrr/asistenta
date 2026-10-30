@@ -64,6 +64,7 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
+import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
 import { isDuplicateUpdate, queueThreadTurn } from './daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
@@ -74,7 +75,7 @@ import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve
 import { createFactorySync } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
-import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
+import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GOAL_ROUTINE_PREFIX, GoalRunner, goalIdOf, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { IphoneClient } from './iphone/client.js';
@@ -2554,33 +2555,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const goalNotifier = new GoalNotifier({
     db: goalsDb,
     resolveGoal: (id) => goalStore.read(id),
-    // A goal's messages go to the chat that owns the goal, and nowhere else.
-    send: async (goal, text) => {
-      // To the chat AND thread that own the goal: a forum topic gets threadId,
-      // a message-grown conversation gets the note as a reply to its first
-      // message, and the sent id is mapped so Nico's reply lands back in that
-      // same thread instead of floating into #main.
-      const target = goalNotifyTarget(goal.scope);
-      if (!target) return null;
-      try {
-        const sentId = await telegram.send({
-          channel: 'telegram',
-          account: telegram.account,
-          chatId: target.chatId,
-          text,
-          threadId: target.threadId,
-          replyToMessageId: target.replyToMessageId,
-        });
-        if (!sentId) return null;
-        // The sent id also lands in goal_notifications (sent_id): reply
-        // routing survives a daemon restart emptying messageThread.
-        messageThread.set(`${target.chatKey}:${sentId}`, goal.scope);
-        return sentId;
-      } catch (err) {
-        log.warn('goal notify failed', { goal: goal.id, err });
-        return null;
-      }
-    },
+    // A goal's messages go to the chat (and thread) that owns the goal, and nowhere else.
+    send: createGoalNotifySend({ telegram, messageThread, log }),
   });
   // The goal delivery engine: pending notifications (a decision Nico never
   // saw, a closing note) retry on their own clock, independent of any goal's
