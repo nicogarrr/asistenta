@@ -74,8 +74,9 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'routines', description: 'rutinas guardadas' },
       {
         command: 'cron',
-        args: '[add|del]',
-        description: 'programa, pausa, prueba o borra rutinas',
+        args: '[add|del|entrega]',
+        description:
+          'programa, pausa, prueba o borra rutinas; «entrega» decide si su salida va al chat, a un fichero o a ninguno',
       },
       {
         command: 'disparador',
