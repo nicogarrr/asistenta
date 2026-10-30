@@ -198,6 +198,8 @@ const PREGUNTA =
  * Delante del verbo de encender/apagar solo vale una muletilla: «la luz, apágala»
  * habla de otra cosa y no puede apagar la tele.
  */
+/** «apágala ya», «enciéndela ahora mismo»: no cambia la orden. */
+const YA = '(?: (?:ya|ahora)(?: mismo)?)?';
 const ANTES_DEL_VERBO = '^(?:(?:ya|venga|vale|bueno|pues|ahora|no|si|puedes|podrias) )*';
 
 /** La orden lleva hora, plazo o condicion: no es para ejecutarla ya. */
@@ -328,7 +330,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Estado: preguntas, no ordenes.
   if (
     new RegExp(
-      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV})\\b`,
+      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV})\\b`,
     ).test(t)
   ) {
     return { action: 'status' };
@@ -336,7 +338,7 @@ export function parseTvCommand(text: string): TvIntent | null {
 
   // Sonido antes que energia: "apaga el sonido" es silenciar, no apagar la tele.
   if (
-    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon) (?:el )?sonido\b|\bdesilencia/.test(
+    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon|vuelve a poner) (?:el )?sonido\b|\bdesilencia/.test(
       t,
     )
   ) {
@@ -351,14 +353,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   if (
-    new RegExp(`${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?: ${TV})?$`).test(t) ||
+    new RegExp(`${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?: ${TV})?${YA}$`).test(
+      t,
+    ) ||
     new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
   ) {
     return { action: 'power', on: false };
   }
   if (
     new RegExp(
-      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?: ${TV})?$`,
+      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?: ${TV})?${YA}$`,
     ).test(t) ||
     new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
   ) {

@@ -26,7 +26,7 @@ describe('parseTvCommand: preguntas y «apágala» de otra cosa', () => {
     ['apágalo', false],
     ['oye tele, apágala', false],
     ['no, apágala', false],
-    ['venga, apágala ya', null],
+    ['venga, apágala', false],
     ['apágame la tele', false],
     ['puedes apagar la tele', false],
     ['¿puedes apagar la tele?', false],
