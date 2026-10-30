@@ -10,7 +10,7 @@ import {
   tvScreenshot,
   tvToast,
 } from './lgtv.js';
-import { describeTvIntent, parseTvCommand } from './natural.js';
+import { describeTvIntent, parseTvCommand, tvOrderHasTime } from './natural.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { parseMac, sendWakeOnLan } from './wol.js';
 
@@ -82,6 +82,13 @@ export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<num
     return 2;
   }
   const intent = parseTvCommand(order);
+  if (!intent && tvOrderHasTime(order)) {
+    // Como /tv: una orden con hora o condición no se ejecuta al momento (ni se programa aquí).
+    err(
+      `«${order.slice(0, 80)}» lleva hora o condición y \`pa tv orden\` solo hace cosas al momento: no he tocado la tele. Pídemelo por Telegram para programarlo.\n`,
+    );
+    return 2;
+  }
   if (!intent) {
     err(
       `No he entendido «${order.slice(0, 80)}» como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 15", "silencio", "modo cine", "estado".\n`,
