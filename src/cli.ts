@@ -1314,10 +1314,7 @@ export function parseCommand(text: string): ParsedCommand | null {
  * says "pásame una captura" and gets a paragraph about why there was nothing to show.
  */
 export function wantsScreenshot(text: string): boolean {
-  const t = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+  const t = foldAccents(text);
   return (
     /\bcaptur|\bscreenshot|\bpantallazo|\bfoto\s+de\s+la\s+pantalla|\bque\s+se\s+ve\b|\bcomo\s+(?:se\s+ve|esta)\s+el\s+(?:pc|ordenador|portatil|monitor)\b/.test(
       t,

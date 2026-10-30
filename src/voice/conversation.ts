@@ -1,3 +1,4 @@
+import { foldAccents } from '../text.js';
 /**
  * Spoken conversation session (capability 6, V1).
  *
@@ -191,10 +192,7 @@ const CLOSERS = new Set([
 ]);
 
 export function normaliseSpeech(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+  return foldAccents(text)
     .replace(/[^a-z0-9ñ ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
