@@ -196,7 +196,7 @@ export function parseKeyChord(chord: string): string {
     // The bug this replaces: returning the raw string made SendKeys type it.
     throw new Error(
       `unrecognised key ${JSON.stringify(last)} in chord ${JSON.stringify(chord)}. ` +
-        `Use a named key (enter, tab, escape, f1-f16, arrows) or a single character.`,
+        `Use a named key (enter, tab, escape, f1-f24, arrows) or a single character.`,
     );
   }
 
