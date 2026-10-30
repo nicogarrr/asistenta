@@ -17,6 +17,7 @@
  *
  * This class never throws: a goal tick cannot be what takes the scheduler down.
  */
+import { localDay } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { log } from '../log.js';
 import type { GoalNotifier } from './notify.js';
@@ -119,19 +120,13 @@ export interface GoalRunnerDeps {
   workstreams?: GoalWorkstreamProjection;
 }
 
-const localDay = (): string => {
-  const d = new Date();
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
-
 export class GoalRunner {
   readonly #deps: GoalRunnerDeps;
   readonly #dayKey: () => string;
 
   constructor(deps: GoalRunnerDeps) {
     this.#deps = deps;
-    this.#dayKey = deps.dayKey ?? localDay;
+    this.#dayKey = deps.dayKey ?? (() => localDay());
   }
 
   /** Entry point from the RoutineRunner firing. Never throws. */

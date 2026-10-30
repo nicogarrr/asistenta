@@ -125,3 +125,36 @@ export function buildNowNote(at: Date = new Date(), timeZone: string = localTime
     '</now>',
   ].join('\n');
 }
+
+const WALL_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Fecha y hora de pared de `d` en la zona configurada (PA_TIMEZONE), no en la del
+ * proceso. Para todo lo que se enseña o se programa por hora local fuera de
+ * `applyConfiguredTimeZone` (tests, e2e, librería). weekday: 0 = domingo.
+ */
+export function wallClock(
+  d: Date,
+  timeZone: string = localTimeZone(),
+): { year: number; month: number; day: number; hour: number; minute: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    year: Number(get('year')),
+    month: Number(get('month')),
+    day: Number(get('day')),
+    hour: Number(get('hour')),
+    minute: Number(get('minute')),
+    weekday: WALL_WEEKDAYS.indexOf(get('weekday')),
+  };
+}

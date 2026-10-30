@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
-import { localTimeZone } from '../datecontext.js';
+import { localTimeZone, wallClock } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
@@ -88,28 +88,6 @@ export interface ReminderDeps {
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
-
-/** Wall-clock fields of `d` in the configured zone (PA_TIMEZONE), not the process TZ. */
-function wallClock(d: Date, timeZone: string = localTimeZone()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    hourCycle: 'h23',
-  }).formatToParts(d);
-  const get = (type: Intl.DateTimeFormatPartTypes): number =>
-    Number(parts.find((p) => p.type === type)?.value);
-  return {
-    year: get('year'),
-    month: get('month'),
-    day: get('day'),
-    hour: get('hour'),
-    minute: get('minute'),
-  };
-}
 
 function stamp(d: Date): string {
   const w = wallClock(d);
@@ -249,7 +227,7 @@ function pad2(n: number): string {
 export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
   const due = dueOfOneShot(r.name);
   const when = due
-    ? `${pad2(due.getDate())}/${pad2(due.getMonth() + 1)} ${pad2(due.getHours())}:${pad2(due.getMinutes())}`
+    ? ((w) => `${pad2(w.day)}/${pad2(w.month)} ${pad2(w.hour)}:${pad2(w.minute)}`)(wallClock(due))
     : 'una hora anterior';
   return `⏰ Recordatorio pendiente con retraso (era para el ${when}): ${reminderText(r)}`;
 }
@@ -430,7 +408,10 @@ export function recordDroppedReminder(file: string, routineName: string, now = D
     .trim()
     .slice(0, 120);
   const when = due
-    ? ` (era para el ${due.getDate()}/${due.getMonth() + 1} a las ${String(due.getHours()).padStart(2, '0')}:${String(due.getMinutes()).padStart(2, '0')})`
+    ? ((w) =>
+        ` (era para el ${w.day}/${w.month} a las ${String(w.hour).padStart(2, '0')}:${String(w.minute).padStart(2, '0')})`)(
+        wallClock(due),
+      )
     : '';
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -468,7 +449,8 @@ const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 
 /** «vie 31/10 09:00», en hora local. */
 export function fechaCortaEs(d: Date): string {
-  return `${DIAS[d.getDay()]} ${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const w = wallClock(d);
+  return `${DIAS[w.weekday]} ${pad(w.day)}/${pad(w.month)} ${pad(w.hour)}:${pad(w.minute)}`;
 }
 
 /** «en 5 min», «en 3 h 10 min», «en 2 d». */
