@@ -44,10 +44,9 @@ describe('«👀 Vigilar» en /compara', () => {
   it('el daemon pone el botón tras comparar y /vigila resuelve el id', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const compara = src.slice(src.indexOf('const cmdCompara = async')).slice(0, 1800);
-    expect(compara).toContain(
-      'buttons: compareWatchButtons(compareWatchLinks.remember(inbound.chatId, url))',
-    );
+    expect(compara).toContain('buttons: compareWatchButtons(');
+    expect(compara).toContain('compareWatchLinks.remember(inbound.chatId, url),');
     const vigila = src.slice(src.indexOf('const cmdVigila = async')).slice(0, 600);
-    expect(vigila).toContain('compareWatchLinks.take(');
+    expect(vigila).toContain('compareWatchLinks.takeEntry(');
   });
 });

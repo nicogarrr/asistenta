@@ -402,6 +402,20 @@ export function describeCompare(r: CompareReport): string {
   return lines.join('\n');
 }
 
+/**
+ * Objetivo que proponer al vigilar la ficha de /compara: el mejor precio hallado en OTRA
+ * tienda, si es más bajo que el de la propia ficha (si la ficha ya es la más barata, o no
+ * se sabe su precio, no hay objetivo que proponer).
+ */
+export function suggestedTargetCents(report: CompareReport): number | undefined {
+  const best = report.best;
+  if (!best || best.cents === null || best.cents <= 0) return undefined;
+  const seed = report.rows.find((r) => r.store === report.seed.store);
+  if (best.store === report.seed.store) return undefined;
+  if (!seed || seed.status !== 'ok' || seed.cents === null) return undefined;
+  return best.cents < seed.cents ? best.cents : undefined;
+}
+
 /** Cuánto vale el botón «👀 Vigilar» de /compara (24 h). */
 export const COMPARE_WATCH_MS = 24 * 3_600_000;
 /** Respuesta de un «👀 Vigilar» caducado, ya usado, de otro chat o de antes de reiniciar. */
@@ -415,20 +429,31 @@ export const COMPARE_WATCH_STALE =
  * sobrevive a un reinicio.
  */
 export class CompareWatchLinks {
-  readonly #ids: OneTapIds<{ chatId: string; url: string }>;
+  readonly #ids: OneTapIds<{ chatId: string; url: string; targetCents?: number }>;
 
   constructor(now: () => number = Date.now, max = 200, file?: string) {
     this.#ids = new OneTapIds({ ttlMs: COMPARE_WATCH_MS, now, max, file });
   }
 
   /** Apunta el enlace y devuelve su id. Tira los caducados y, si sobran, los más viejos. */
-  remember(chatId: string, url: string): string {
-    return this.#ids.remember({ chatId, url });
+  remember(chatId: string, url: string, targetCents?: number): string {
+    return this.#ids.remember(
+      targetCents === undefined ? { chatId, url } : { chatId, url, targetCents },
+    );
   }
 
   /** El enlace del id (y lo saca: vale una vez); otro chat o caducado → undefined. */
   take(id: string, chatId: string): string | undefined {
+    return this.takeEntry(id, chatId)?.url;
+  }
+
+  /** Como take, con el objetivo propuesto (céntimos) si el botón lo lleva. */
+  takeEntry(id: string, chatId: string): { url: string; targetCents?: number } | undefined {
     const v = this.#ids.take(id, (e) => e?.chatId === chatId && typeof e.url === 'string');
-    return v?.url;
+    if (!v) return undefined;
+    const t = v.targetCents;
+    return typeof t === 'number' && Number.isInteger(t) && t > 0
+      ? { url: v.url, targetCents: t }
+      : { url: v.url };
   }
 }
