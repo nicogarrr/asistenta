@@ -1,4 +1,5 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import { foldAccents } from '../text.js';
 
 /**
  * History summary (P6).
@@ -342,10 +343,7 @@ export function parseExtractedFacts(raw: string): string[] {
  * perder una corrección numérica en silencio.
  */
 export function normalizeFactText(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+  return foldAccents(text)
     .replaceAll('\u2212', '-') // menos tipográfico → ASCII
     .replace(/\s+/g, ' ')
     .trim()

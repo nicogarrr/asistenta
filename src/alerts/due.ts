@@ -1,4 +1,5 @@
 import { wallClock, zonedTime } from '../datecontext.js';
+import { foldAccents } from '../text.js';
 
 /**
  * When a promise the user made is due, read from the words around it.
@@ -56,13 +57,8 @@ export const DATE_SIGNALS = new RegExp(
 
 const DAY_MS = 86_400_000;
 
-/** Lowercase and strip accents, so "mañana" and "manana" match the same pattern. */
-export function foldAccents(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
+/** Lowercase and strip accents, so "mañana" and "manana" match the same pattern (shared helper in src/text.ts). */
+export { foldAccents };
 
 /**
  * "por la mañana" says when someone likes something, never when it is due. The phrase
