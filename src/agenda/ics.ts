@@ -152,8 +152,27 @@ function zoneOffsetMs(at: number, timeZone: string): number {
  */
 export function zonedDayStart(at: number, timeZone: string = localTimeZone()): number {
   const p = zonedParts(at, timeZone);
-  const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day);
+  return zonedMidnight(p.year, p.month, p.day, timeZone);
+}
+
+function zonedMidnight(year: number, month: number, day: number, timeZone: string): number {
+  // Date.UTC normalises an out-of-range day (31 + 1 is the 1st of the next month).
+  const wallAsUtc = Date.UTC(year, month - 1, day);
   return wallAsUtc - zoneOffsetMs(wallAsUtc - zoneOffsetMs(wallAsUtc, timeZone), timeZone);
+}
+
+/**
+ * Local midnight of the calendar day `days` after the day `at` falls in.
+ *
+ * Not `zonedDayStart(dayStart + days * 24 h)`: on the Sunday the clocks go back the
+ * day has 25 hours, so midnight + 24 h is 23:00 of the SAME day and "mañana" came
+ * out as today - the agenda's "Hoy" was empty and today's meetings were printed
+ * under "Mañana", and a 7-day window stopped a day short. Walking the calendar date
+ * instead is exact on both DST days.
+ */
+export function zonedAddDays(at: number, days: number, timeZone: string = localTimeZone()): number {
+  const p = zonedParts(at, timeZone);
+  return zonedMidnight(p.year, p.month, p.day + days, timeZone);
 }
 
 /**
@@ -257,9 +276,9 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
     source.remote ? parseIcs(source.remote, new Date(now)) : [],
   );
   const from = zonedDayStart(now, timeZone);
-  // Local midnight `days` from now, computed by walking to that calendar day and back
-  // to its midnight, so a DST change inside the window cannot shift the last day.
-  const horizon = zonedDayStart(zonedDayStart(now, timeZone) + days * DAY_MS, timeZone);
+  // Local midnight `days` calendar days from now, walked by date so a DST change
+  // inside the window cannot shift the last day.
+  const horizon = zonedAddDays(now, days, timeZone);
 
   const events = parsed
     .map(toAgendaEvent)
