@@ -4,6 +4,7 @@
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
+import { startWebhookServer, webhookConfig } from './webhook.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -6923,6 +6924,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     log: (level, msg, fields) => log[level](msg, fields ?? {}),
   });
+
+  // F3: webhook local para lanzar una rutina (apagado por defecto; docs/webhook.md).
+  const hookCfg = webhookConfig();
+  if (hookCfg && 'error' in hookCfg) {
+    log.warn('webhook not started', { reason: hookCfg.error });
+  } else if (hookCfg) {
+    try {
+      const hook = await startWebhookServer({
+        ...hookCfg,
+        trigger: async (name) => {
+          const matches = routineRunner.status().filter((st) => st.name === name);
+          const st = matches[0];
+          if (!st)
+            return { status: 404, message: `no hay ninguna rutina programada llamada "${name}"` };
+          if (matches.length > 1) {
+            return { status: 409, message: `hay varias rutinas "${name}" en chats distintos` };
+          }
+          const routine = store.getRoutine(st.scope, st.name);
+          if (!routine?.enabled)
+            return { status: 409, message: `la rutina "${name}" está en pausa` };
+          if (routineRunner.isRunning(st.scope, st.name)) {
+            return { status: 409, message: `la rutina "${name}" ya se está ejecutando` };
+          }
+          void routineRunner.fire(st.scope, st.name);
+          return { status: 202, message: `lanzada "${name}"` };
+        },
+        log: (msg, fields) => log.info(msg, fields ?? {}),
+      });
+      log.info('webhook listening', { host: '127.0.0.1', port: hook.port });
+    } catch (err) {
+      log.warn('webhook not started', { err: String(err) });
+    }
+  }
 
   log.info('daemon ready', { allowed, threads: threads.size });
 
