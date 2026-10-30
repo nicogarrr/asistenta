@@ -32,6 +32,12 @@ export interface UsageInput {
   /** Tokens de entrada servidos desde cache; se facturan a precio de entrada. */
   cacheReadTokens?: number;
   kind: UsageKind;
+  /**
+   * PA_PRICE_* describen PA_MODEL. Otro modelo (el de /modelo, el de respaldo o
+   * uno de PA_MODELS) se cobra con los precios de su ficha en el catálogo.
+   * Sin indicar: solo se aplican si `model` es PA_MODEL (o va vacío).
+   */
+  priceOverrides?: boolean;
 }
 
 /** Una linea del JSONL. `day` es la fecha local que decide el fichero. */
@@ -142,7 +148,14 @@ export function recordUsage(input: UsageInput): UsageRecord {
 
   let rawEur = 0;
   try {
-    rawEur = rawCost({ inputTokens, outputTokens, cacheReadTokens }, resolveModelCaps({ model }));
+    const envOverrides =
+      typeof input?.priceOverrides === 'boolean'
+        ? input.priceOverrides
+        : !model || model === (process.env.PA_MODEL?.trim() ?? '');
+    rawEur = rawCost(
+      { inputTokens, outputTokens, cacheReadTokens },
+      resolveModelCaps({ model }, { envOverrides }),
+    );
   } catch {
     // Un catalogo roto no puede impedir registrar los tokens.
     rawEur = 0;

@@ -5802,9 +5802,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Coste y continuidad del turno: tokens reales en el libro diario, la
       // respuesta completa cacheada para "Dime más", y aviso si el presupuesto
       // diario (PA_DAILY_BUDGET_EUR) está agotado.
+      // El modelo real de esta conversación (/modelo) y sus precios: PA_PRICE_*
+      // solo valen para PA_MODEL.
+      const usedModel = thread.agent.modelId;
       recordUsage({
         sessionId: thread.key,
-        model: config.model,
+        model: usedModel,
+        priceOverrides: usedModel === config.model,
         inputTokens: result.inputTokens ?? 0,
         outputTokens: result.outputTokens ?? 0,
         kind: 'turn',
