@@ -54,4 +54,6 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 
 `/tv` sin orden (solo el dueño, en su chat privado) saca un mando: 🔌 Encender, ⏻ Apagar, 🔉 Vol −, 🔊 Vol +, 🔇 Silencio y 🎬 Netflix. Cada botón es una orden fija que va por el mismo camino que `/tv <orden>` (sin modelo, misma cola de la tele). Pulsado por otro usuario o desde un grupo, no hace nada. La respuesta sale en el aviso del botón.
 
+Si la orden tarda más de 2,5 s (encender por WoL, tele lenta), el botón contesta al momento «Enviando a la tele…» y el resultado llega después como mensaje en el mismo chat: Telegram solo deja contestar al botón durante unos segundos.
+
 `/tv baja a la mitad` (o «volumen a la mitad») lee el volumen real y lo deja en la mitad; nunca lo sube y, si no puede leerlo, no toca nada.

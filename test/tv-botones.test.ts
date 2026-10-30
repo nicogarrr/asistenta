@@ -2,7 +2,7 @@
  * Mando de la tele en botones bajo /tv: mismas órdenes que /tv <orden>, solo el
  * dueño en privado, y nunca toca aprobaciones. gramY de mentira, sin red.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelegramChannel } from '../src/channels/telegram.js';
 import { parseTvCommand } from '../src/tv/natural.js';
 import {
@@ -274,5 +274,49 @@ describe('botones del mando: canal Telegram', () => {
     await makeChannel(async () => 'a'.repeat(400));
     await press('tv:mute');
     expect((harness.answers[0] ?? '').length).toBeLessThanOrEqual(190);
+  });
+});
+
+describe('botones del mando: orden lenta', () => {
+  beforeEach(() => {
+    harness.answers.length = 0;
+    harness.sent.length = 0;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('si tarda, contesta «Enviando…» al momento y manda el resultado como mensaje', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await makeChannel(
+      () => new Promise<string>((resolve) => setTimeout(() => resolve('Tele encendida.'), 12_000)),
+    );
+    const done = press('tv:on', 7, 7);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(harness.answers).toEqual(['Enviando a la tele…']);
+    expect(harness.sent).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await done;
+    expect(harness.answers).toHaveLength(1);
+    expect(harness.sent.map((m) => [m.chatId, m.text])).toEqual([[7, 'Tele encendida.']]);
+  });
+
+  it('si tarda y falla, el aviso de fallo llega como mensaje', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await makeChannel(
+      () => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('x')), 5_000)),
+    );
+    const done = press('tv:off', 7, 7);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await done;
+    expect(harness.answers).toEqual(['Enviando a la tele…']);
+    expect(harness.sent.map((m) => m.text)).toEqual(['No he podido mandar la orden a la tele.']);
+  });
+
+  it('si es rápida, solo el aviso del botón (sin mensaje)', async () => {
+    await makeChannel(async () => 'Silencio puesto.');
+    await press('tv:mute');
+    expect(harness.answers).toEqual(['Silencio puesto.']);
+    expect(harness.sent).toEqual([]);
   });
 });
