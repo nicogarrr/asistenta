@@ -189,6 +189,21 @@ export function parsePriceToCents(raw: string): number | null {
 }
 
 /**
+ * Whether the price the model declared ("1.299,00 €", "1299", "EUR 1 299,00") is the
+ * same amount as the page total's raw text. Compared as cents, not as strings: the
+ * page raw drops spaces but keeps dots ("1 299,00" -> "1299,00", "1.299,00" stays),
+ * so a string compare warned «Ojo» on identical amounts. Anything that does not
+ * parse is "not the same" - the warning is the safe side.
+ */
+export function samePrice(declared: string, totalRaw: string): boolean {
+  const d = parsePriceToCents(
+    declared.replace(/€|EUR|\$|£/gi, '').replace(/[\u00a0\u202f\u2009\s]/g, ''),
+  );
+  const t = parsePriceToCents(totalRaw);
+  return d !== null && t !== null && d === t;
+}
+
+/**
  * A total only counts when the page labels it - "total", "total a pagar",
  * "importe a pagar", "amount due", "grand total" - and the amount sits RIGHT
  * after the label, separated by nothing but spacing and `:`/`=`/`-`. There is
@@ -855,8 +870,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
           const total = findTotalPrice(visible);
           let mismatch = '';
           if (declared && total) {
-            const declaredRaw = declared.replace(/€|EUR|\$|£/gi, '').replace(/[\u00a0\s]/g, '');
-            if (declaredRaw && declaredRaw !== total.raw) {
+            if (!samePrice(declared, total.raw)) {
               mismatch = ` Ojo: tu lees ${declared} y la pagina marca un total de ${total.text}.`;
             }
           }
