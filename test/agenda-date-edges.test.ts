@@ -28,7 +28,8 @@ function at(subject: string): string | undefined {
 describe('fechas y horas del correo: «de 10:00», «esta tarde», «17.30 h»', () => {
   it('«el 4 de noviembre de 10:00 a 12:00» es a las 10, no el año 2010', () => {
     expect(at('Reunión el 4 de noviembre de 10:00 a 12:00')).toBe('2026-11-04 10:00');
-    expect(at('Reunión el 4 de noviembre de 10 a 12')).toBe('2026-11-04 09:00');
+    // A slot «de 10 a 12» starts at 10 (agenda-time-slots.test.ts).
+    expect(at('Reunión el 4 de noviembre de 10 a 12')).toBe('2026-11-04 10:00');
   });
 
   it('un año escrito sigue valiendo', () => {

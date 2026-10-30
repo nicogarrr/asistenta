@@ -756,6 +756,9 @@ const SPOKEN_TIME_RE =
  * "medianoche" was no time at all. Only clocks introduced by "a las" (or a qualifier)
  * are touched, so "12.50 €" is never a time.
  */
+const SLOT_RE =
+  /\b(?:de|desde|entre) (?:las )?(\d{1,2})(?:[:.](\d{2}))? (?:a|y|hasta) (?:las )?(\d{1,2})(?:[:.](\d{2}))?(?: ?(h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia)\b)?(?! ?(?:personas|plazas|asistentes|invitados|participantes|alumnos|ninos|adultos|euros|eur|dolares|dias|semanas|meses|anos|minutos|min|segundos|kg|km|metros|m2|unidades|anos|por ?ciento|%|\.\d|[:/.,-]?\d))/g;
+
 function spokenTimes(folded: string): string {
   // "esta tarde a las 5" is today at 17:00. Without this the sentence had no date at
   // all ("esta tarde" is not a day word) and the meeting never reached the agenda.
@@ -763,7 +766,30 @@ function spokenTimes(folded: string): string {
     /\besta (manana|tarde|noche),? (a las|a la) (\d{1,2}(?:[:.]\d{2})?)\b/g,
     (_w, part: string, lead: string, clock: string) => `hoy ${lead} ${clock} de la ${part}`,
   );
-  const out = today.replace(
+  // "de 10 a 12", "de 16 a 18 h", "entre las 10 y las 12": a slot whose start is
+  // the time of the meeting. Without this the date stayed untimed (and "de 10" next to
+  // a month could be read as a year). Counted things are not hours: "de 10 a 12
+  // personas" is left alone.
+  const ranges = today.replace(
+    SLOT_RE,
+    (
+      whole,
+      h1: string,
+      m1: string | undefined,
+      h2: string,
+      m2: string | undefined,
+      mark: string | undefined,
+      part: string | undefined,
+    ) => {
+      const start = Number(h1);
+      const end = Number(h2);
+      if (start > 23 || end > 24 || (end <= start && !part)) return whole;
+      const minute = m1 ? `:${m1}` : '';
+      const hasMark = mark || m2 ? ' h' : '';
+      return `a las ${h1}${minute}${minute ? '' : hasMark}${part ? ` ${part}` : ''} hasta ${h2}`;
+    },
+  );
+  const out = ranges.replace(
     SPOKEN_TIME_RE,
     (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
       let hour = Number(h);
