@@ -24,6 +24,8 @@ export const MAX_CHARGE_ALERTS = 3;
 const BASELINE_KEY = 'charges_baseline_at';
 /** Un cargo raro más viejo que esto ya no se avisa. */
 export const ALERT_MAX_AGE_MS = 7 * 86_400_000;
+/** Mismo comercio, importe y asunto dentro de esta ventana: posible pedido repetido. */
+export const REPEAT_WINDOW_MS = 48 * 3_600_000;
 
 const CHARGE_RE =
   /\b(cargo|cargos|hemos cobrado|te hemos cobrado|se ha cobrado|cobro|recibo|factura|importe|pago recibido|charged|payment received|receipt|invoice|billed)\b/;
@@ -127,6 +129,19 @@ export function senderKey(from: string): string | null {
   return domain;
 }
 
+/**
+ * Asunto comparable: sin tildes, sin mayúsculas y sin números (nº de pedido, importes),
+ * para que dos pedidos iguales coincidan y una confirmación y una factura no.
+ */
+export function subjectKey(subject: string): string | null {
+  const key = fold(subject.toLowerCase())
+    .replace(/[\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}]+/gu, ' ')
+    .trim()
+    .slice(0, 160);
+  return key.length >= 3 ? key : null;
+}
+
 export interface ParsedCharge {
   sender: string;
   cents: number;
@@ -160,6 +175,10 @@ export function initChargeStore(db: DatabaseSync): void {
       created_at INTEGER NOT NULL
     )
   `);
+  const cols = db.prepare('PRAGMA table_info(vigilante_charges)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'subject_key')) {
+    db.exec('ALTER TABLE vigilante_charges ADD COLUMN subject_key TEXT');
+  }
 }
 
 export function chargeBaseline(db: DatabaseSync): number | null {
@@ -206,7 +225,10 @@ export function ingestCharges(
     "SELECT cents FROM vigilante_charges WHERE (sender = ?1 OR substr(sender, -length(?1) - 1) = '.' || ?1) AND at <= ?2 AND msg_id <> ?3",
   );
   const ins = db.prepare(
-    'INSERT INTO vigilante_charges (msg_id, sender, cents, at, status, reason, median_cents, n_prior, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO vigilante_charges (msg_id, sender, cents, at, status, reason, median_cents, n_prior, created_at, subject_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  );
+  const repeatOf = db.prepare(
+    "SELECT 1 AS x FROM vigilante_charges WHERE (sender = ?1 OR substr(sender, -length(?1) - 1) = '.' || ?1) AND cents = ?2 AND subject_key = ?3 AND at <= ?4 AND at >= ?5 AND msg_id <> ?6 LIMIT 1",
   );
   const ordered = [...messages].sort((a, b) => a.at - b.at);
   for (const m of ordered) {
@@ -219,21 +241,50 @@ export function ingestCharges(
     const priors = (priorsOf.all(parsed.sender, m.at, m.id) as Array<{ cents: number }>).map(
       (r) => r.cents,
     );
+    const sk = subjectKey(m.subject ?? '');
     if (seedOnly || m.at < baseline) {
-      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'base', null, null, priors.length, now);
+      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'base', null, null, priors.length, now, sk);
       continue;
     }
     const med = priors.length > 0 ? median(priors) : null;
-    if (
+    const repeated =
+      sk !== null &&
+      repeatOf.get(parsed.sender, parsed.cents, sk, m.at, m.at - REPEAT_WINDOW_MS, m.id) !==
+        undefined;
+    if (repeated) {
+      ins.run(
+        m.id,
+        parsed.sender,
+        parsed.cents,
+        m.at,
+        'aviso',
+        'repetido',
+        med,
+        priors.length,
+        now,
+        sk,
+      );
+    } else if (
       priors.length >= MIN_HISTORY &&
       med !== null &&
       parsed.cents * SPIKE_FACTOR_DEN > med * SPIKE_FACTOR_NUM
     ) {
-      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'aviso', 'subida', med, priors.length, now);
+      ins.run(
+        m.id,
+        parsed.sender,
+        parsed.cents,
+        m.at,
+        'aviso',
+        'subida',
+        med,
+        priors.length,
+        now,
+        sk,
+      );
     } else if (priors.length === 0) {
-      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'aviso', 'nuevo', null, 0, now);
+      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'aviso', 'nuevo', null, 0, now, sk);
     } else {
-      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'ok', null, med, priors.length, now);
+      ins.run(m.id, parsed.sender, parsed.cents, m.at, 'ok', null, med, priors.length, now, sk);
     }
   }
 }
@@ -243,7 +294,7 @@ export interface ChargeAlert {
   sender: string;
   cents: number;
   at: number;
-  reason: 'subida' | 'nuevo';
+  reason: 'subida' | 'nuevo' | 'repetido';
   medianCents: number | null;
   nPrior: number;
 }
@@ -279,9 +330,11 @@ export function formatChargeAlerts(alerts: readonly ChargeAlert[], timeZone: str
       timeZone,
     }).format(new Date(a.at));
     const why =
-      a.reason === 'subida' && a.medianCents !== null
-        ? `más de 1,5 veces lo habitual (mediana ${eur(a.medianCents)} en ${a.nPrior} cargos)`
-        : 'primer cargo que veo de este remitente';
+      a.reason === 'repetido'
+        ? 'mismo importe y asunto que otro correo suyo de hace menos de 48 h: ¿pedido repetido?'
+        : a.reason === 'subida' && a.medianCents !== null
+          ? `más de 1,5 veces lo habitual (mediana ${eur(a.medianCents)} en ${a.nPrior} cargos)`
+          : 'primer cargo que veo de este remitente';
     return `• ${a.sender.slice(0, 60)}: ${eur(a.cents)}, ${why} — correo del ${day}`;
   });
   return `💳 Cargo raro (inferido del correo, puede no ser un cargo real): ${alerts.length === 1 ? '1 aviso' : `${alerts.length} avisos`}\n${lines.join('\n')}`;
