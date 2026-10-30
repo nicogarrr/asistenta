@@ -151,23 +151,39 @@ if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cur
   }
 
   async drag(x: number, y: number, toX: number, toY: number): Promise<void> {
-    await this.#physicalPs(`
+    const script = `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 ${ADD_TYPE_MOUSE}
 if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
 Start-Sleep -Milliseconds 80
 [M]::mouse_event(0x0002,0,0,0,[IntPtr]::Zero)
-$steps = 12
-for ($i=1; $i -le $steps; $i++) {
-  $t = $i / $steps
-  $nx = [int](${x} + (${toX} - ${x}) * $t)
-  $ny = [int](${y} + (${toY} - ${y}) * $t)
-  if (-not [PaDesktop]::SetCursorPos($nx, $ny)) { throw 'No se pudo arrastrar el cursor físico.' }
-  Start-Sleep -Milliseconds 25
+try {
+  $steps = 12
+  for ($i=1; $i -le $steps; $i++) {
+    $t = $i / $steps
+    $nx = [int](${x} + (${toX} - ${x}) * $t)
+    $ny = [int](${y} + (${toY} - ${y}) * $t)
+    if (-not [PaDesktop]::SetCursorPos($nx, $ny)) { throw 'No se pudo arrastrar el cursor físico.' }
+    Start-Sleep -Milliseconds 25
+  }
+} finally {
+  [M]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero)
 }
-[M]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero)
-`);
+`;
+    // The left button goes down before the loop: a SetCursorPos failure mid-drag
+    // threw past the left-up and left the button HELD on Nico's PC, turning every
+    // later move into a drag. The `finally` above covers a throw inside PowerShell;
+    // a PowerShell that never got there (killed on timeout, crashed) is covered by
+    // a separate release that only sends left-up if Windows still reports it down.
+    try {
+      await this.#physicalPs(script);
+    } catch (err) {
+      try {
+        await this.#ps(releaseLeftButtonScript());
+      } catch {}
+      throw err;
+    }
   }
 
   /**
@@ -279,6 +295,24 @@ public class M {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
 }
 '@`;
+
+/**
+ * Left-up only if Windows still reports the left button down (VK_LBUTTON), so a
+ * stray button-up is never sent over an app that did not see a button-down.
+ */
+export function releaseLeftButtonScript(): string {
+  return `
+$ErrorActionPreference='Stop'
+Add-Type @'
+using System;using System.Runtime.InteropServices;
+public class L {
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+}
+'@
+if (([L]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0) { [L]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero); Write-Output 'released:left' }
+`;
+}
 
 /** Modifier virtual keys `releaseModifiersScript` checks: Win L/R, Shift, Ctrl, Alt (generic + L/R). */
 export const MODIFIER_VKS: readonly number[] = [
