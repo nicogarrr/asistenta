@@ -130,22 +130,32 @@ function notApprovedNow(id: string, approvedSha: string): string | null {
 export function createFactorySync(
   register: (tool: AgentTool) => void,
   unregister: (name: string) => void,
+  load: () => Promise<AgentTool[]> = () => loadInstalledFactoryTools(),
 ): () => Promise<void> {
-  const registered = new Set<string>();
+  // name -> fingerprint of what the model sees. A re-install under the same
+  // name with a new description/parameters must replace the live wrapper, not
+  // keep the stale one until the next restart.
+  const registered = new Map<string, string>();
   return async function syncFactoryTools() {
-    const installed = await loadInstalledFactoryTools();
+    const installed = await load();
     const want = new Set(installed.map((t) => t.name));
     for (const t of installed) {
-      if (!registered.has(t.name)) {
-        register(t);
-        registered.add(t.name);
-      }
+      const fp = toolFingerprint(t);
+      const prev = registered.get(t.name);
+      if (prev === fp) continue;
+      if (prev !== undefined) unregister(t.name);
+      register(t);
+      registered.set(t.name, fp);
     }
-    for (const name of [...registered]) {
+    for (const name of [...registered.keys()]) {
       if (!want.has(name)) {
         unregister(name);
         registered.delete(name);
       }
     }
   };
+}
+
+function toolFingerprint(t: AgentTool): string {
+  return JSON.stringify([t.label, t.description, t.parameters]);
 }
