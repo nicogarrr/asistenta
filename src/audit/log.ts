@@ -137,7 +137,9 @@ export class ActionLog {
         (filter?.action === undefined || e.action === filter.action) &&
         (filter?.result === undefined || e.result === filter.result),
     );
-    return matched.slice(-Math.max(0, limit));
+    // `slice(-0)` is `slice(0)`: a limit of 0 used to return the whole log.
+    if (!(limit > 0)) return [];
+    return matched.slice(-Math.floor(limit));
   }
 
   /**

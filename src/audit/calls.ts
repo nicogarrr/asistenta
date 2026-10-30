@@ -73,6 +73,41 @@ export function hashArgs(args: unknown): string {
   return createHash('sha256').update(body).digest('hex').slice(0, 32);
 }
 
+/**
+ * The entry without its `undefined` fields. JSON.stringify drops them from the line on
+ * disk, but `canonicalJson` used to hash them as `null`: a caller passing
+ * `ms: undefined` (the agent does when a call finishes without a recorded start) wrote
+ * a line whose stored hash could never be reproduced, and the whole ledger then read
+ * as "corrupt" from that line on. Hash exactly what is written.
+ */
+function definedOnly(entry: CallAuditEntry): CallAuditEntry {
+  return Object.fromEntries(
+    Object.entries(entry).filter(([, value]) => value !== undefined),
+  ) as unknown as CallAuditEntry;
+}
+
+/** Optional fields a line written before the fix may have hashed as `null`. */
+const LEGACY_NULLABLE = ['reason', 'isError', 'ms'] as const;
+
+/**
+ * Lines appended before the fix hashed an absent optional field as `null`. Accept a
+ * line whose hash matches with some of its ABSENT optional fields put back as null:
+ * that is exactly what the old writer hashed, so an untouched old ledger verifies,
+ * while an edited field (a present value changed, a present field removed) still
+ * fails, because no combination of nulls reproduces the original value.
+ */
+function matchesLegacyHash(rest: Omit<CallAuditLine, 'h'>, h: string): boolean {
+  const absent = LEGACY_NULLABLE.filter((key) => !(key in rest));
+  for (let mask = 1; mask < 1 << absent.length; mask++) {
+    const candidate: Record<string, unknown> = { ...rest };
+    absent.forEach((key, i) => {
+      if (mask & (1 << i)) candidate[key] = null;
+    });
+    if (lineHash(candidate as Omit<CallAuditLine, 'h'>) === h) return true;
+  }
+  return false;
+}
+
 function lineHash(entry: Omit<CallAuditLine, 'h'>): string {
   return createHash('sha256')
     .update(`${entry.prev}\n${canonicalJson(entry)}`)
@@ -105,7 +140,7 @@ export function appendCallAudit(entry: CallAuditEntry, file = auditLedgerPath())
       v: 1,
       ts: new Date().toISOString(),
       prev: lastHash(file),
-      ...entry,
+      ...definedOnly(entry),
     };
     appendFileSync(file, `${JSON.stringify({ ...base, h: lineHash(base) })}\n`, { mode: 0o600 });
   } catch (err) {
@@ -147,7 +182,7 @@ export function verifyCallAudit(file = auditLedgerPath()): AuditVerifyResult {
       };
     }
     const { h, ...rest } = line;
-    if (h !== lineHash(rest)) {
+    if (h !== lineHash(rest) && !matchesLegacyHash(rest, h)) {
       return { ok: false, entries: i, brokenAt: i + 1, reason: 'hash no coincide (línea editada)' };
     }
     prev = h;
