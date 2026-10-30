@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { log } from '../log.js';
+import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 
 /** Decisiones que acepta una aprobacion del panel. */
@@ -65,6 +66,7 @@ const PAGE_CSP = [
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'routines' }
+  | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -148,6 +150,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'goals' };
     case '/api/routines':
       return { method: 'GET', kind: 'routines' };
+    case '/api/funciones':
+      return { method: 'GET', kind: 'funciones' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -211,6 +215,9 @@ async function respondApi(
         payload = deps.routines ? await deps.routines() : null;
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Rutinas aún no disponibles');
+        break;
+      case 'funciones':
+        payload = panelFunciones();
         break;
       case 'status':
         payload = await deps.status();
