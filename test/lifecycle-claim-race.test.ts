@@ -57,8 +57,13 @@ describe('installLifecycle: el cierre solo borra su propio fichero pid', () => {
   it('borra el suyo en un cierre limpio', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-lcr-'));
     const lc = installLifecycle({ name: 'own2', stateDir: dir, onShutdown: async () => {} });
+    // La identidad de arranque queda junto al pid (para no confundirlo con otro proceso).
+    expect(readFileSync(join(dir, 'own2.pid.start'), 'utf8')).toMatch(
+      new RegExp(`^${process.pid} (proc|ms):\\d+\n$`),
+    );
     lc.stop('test');
     await lc.done;
+    expect(existsSync(join(dir, 'own2.pid.start'))).toBe(false);
     expect(existsSync(join(dir, 'own2.pid'))).toBe(false);
     expect(existsSync(join(dir, 'own2.pid.stale'))).toBe(false);
   });

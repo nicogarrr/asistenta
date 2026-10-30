@@ -12,6 +12,7 @@ import { basename, dirname } from 'node:path';
 import { uniqueTmpPath } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
+import { formatStartRecord, ownIdentity, sameProcessAsRecorded } from './process-identity.js';
 
 /**
  * Daemon lifecycle for Windows.
@@ -49,6 +50,11 @@ function pidPath(stateDir: string, name: string): string {
   return `${stateDir}/${name}.pid`;
 }
 
+/** «<pid> <start identity>» written next to the pid file (see process-identity.ts). */
+function startPath(stateDir: string, name: string): string {
+  return `${stateDir}/${name}.pid.start`;
+}
+
 /**
  * Refuse to start if another live process owns this state dir. A second instance
  * racing a first one on the same channel credentials is the documented way to end
@@ -62,17 +68,28 @@ function pidPath(stateDir: string, name: string): string {
 export function assertNotRunning(
   stateDir: string,
   name: string,
-  opts: { imageOf?: (pid: number) => string | null } = {},
+  opts: {
+    imageOf?: (pid: number) => string | null;
+    identityOf?: (pid: number) => string | null;
+  } = {},
 ): void {
   const pidFile = pidPath(stateDir, name);
-  if (!existsSync(pidFile)) return;
+  const startFile = startPath(stateDir, name);
+  if (!existsSync(pidFile)) {
+    try {
+      unlinkSync(startFile);
+    } catch {}
+    return;
+  }
   const raw = readFileSync(pidFile, 'utf8').trim();
   const pid = Number(raw);
   if (!Number.isInteger(pid) || pid <= 0) {
     log.warn('pid file is unreadable; removing it', { raw: raw.slice(0, 32) });
-    try {
-      unlinkSync(pidFile);
-    } catch {}
+    for (const f of [pidFile, startFile]) {
+      try {
+        unlinkSync(f);
+      } catch {}
+    }
     return;
   }
   // In a container the daemon is always PID 1, so the pid file left in the volume by
@@ -80,7 +97,7 @@ export function assertNotRunning(
   // not written our own file yet), so it is a leftover: reclaim it.
   if (pid === process.pid) {
     log.warn('pid file names this very process (container restart); reclaiming it', { pid });
-    for (const f of [stalePath(stateDir, name), pidFile]) {
+    for (const f of [stalePath(stateDir, name), pidFile, startFile]) {
       try {
         unlinkSync(f);
       } catch {}
@@ -94,12 +111,22 @@ export function assertNotRunning(
     // image keeps refusing. The foreign process is never signalled.
     const image = (opts.imageOf ?? processImageName)(pid);
     if (image === null || isNodeImage(image)) {
-      throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+      // Another node program (or one we cannot name) may hold the reused pid.
+      // The start identity recorded at boot tells them apart: only a live
+      // process that provably started at another moment is a stranger.
+      const same = sameProcessAsRecorded(startFile, pid, opts.identityOf);
+      if (same !== 'different') {
+        throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+      }
+      log.warn('pid file names a process that started at another time (pid reused); ignoring it', {
+        pid,
+      });
+    } else {
+      log.warn('pid file names a process that is not Asistenta (pid reused); ignoring it', {
+        pid,
+        image: image.slice(0, 64),
+      });
     }
-    log.warn('pid file names a process that is not Asistenta (pid reused); ignoring it', {
-      pid,
-      image: image.slice(0, 64),
-    });
   }
   if (existsSync(stalePath(stateDir, name))) {
     log.warn('previous instance died without clean shutdown', { pid });
@@ -109,9 +136,11 @@ export function assertNotRunning(
   } else {
     log.warn('removing pid file from a dead process', { pid });
   }
-  try {
-    unlinkSync(pidFile);
-  } catch {}
+  for (const f of [pidFile, startFile]) {
+    try {
+      unlinkSync(f);
+    } catch {}
+  }
 }
 
 /** True for the node executable that runs Asistenta (node, node.exe, this execPath). */
@@ -189,6 +218,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
 
   const pidFile = pidPath(stateDir, deps.name);
   const stale = stalePath(stateDir, deps.name);
+  const startFile = startPath(stateDir, deps.name);
   const beatFile = `${stateDir}/${deps.name}.heartbeat`;
 
   let closing = false;
@@ -211,11 +241,21 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
       `could not claim ${pidFile} (another instance won the race): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  // Record who we are next to the pid, so a later start (or the watchdog) can
+  // tell this process from another one that inherits the pid after a crash.
+  // Best effort: without it the old, cautious behaviour applies.
+  const identity = ownIdentity();
+  if (identity !== null) {
+    try {
+      writeFileSync(startFile, formatStartRecord(process.pid, identity), 'utf8');
+    } catch {}
+  }
   // Only ever remove the pid file while it still names this process.
   const releasePidFile = (): void => {
     try {
       if (readFileSync(pidFile, 'utf8').trim() !== String(process.pid)) return;
       unlinkSync(pidFile);
+      unlinkSync(startFile);
     } catch {}
   };
 
