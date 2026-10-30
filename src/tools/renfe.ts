@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { chromium } from 'playwright';
+import { type Browser, chromium } from 'playwright';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 
@@ -251,18 +251,53 @@ const RenfeParams = Type.Object({
 
 class StepError extends Error {}
 
-export async function searchRenfe(args: {
-  origin: string;
-  destination: string;
-  date: string;
-  after?: string;
-  limit?: number;
-}): Promise<{ trains: RenfeTrain[]; total: number }> {
+/** Cómo se abre el navegador; inyectable para probar el recorrido con una página falsa. */
+export interface RenfeDeps {
+  launch?: () => Promise<Browser>;
+}
+
+/** El texto del usuario va dentro de una RegExp: «Madrid (Todas)» no debe ser un grupo. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** ¿Existe ese día en el calendario? 2026-02-30 pasa el formato pero no existe. */
+function isRealDate(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number);
+  const at = new Date(Date.UTC(y ?? 0, (m ?? 0) - 1, d ?? 0));
+  return at.getUTCFullYear() === y && at.getUTCMonth() + 1 === m && at.getUTCDate() === d;
+}
+
+export async function searchRenfe(
+  args: {
+    origin: string;
+    destination: string;
+    date: string;
+    after?: string;
+    limit?: number;
+  },
+  deps: RenfeDeps = {},
+): Promise<{ trains: RenfeTrain[]; total: number }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new StepError('fecha: usa YYYY-MM-DD');
+  if (!isRealDate(args.date)) throw new StepError(`fecha: el ${args.date} no existe`);
   if (args.date < madridDate(new Date())) throw new StepError(`la fecha ${args.date} ya pasó`);
   if (args.after && !/^\d{2}:\d{2}$/.test(args.after)) throw new StepError('after: usa HH:MM');
 
-  const browser = await chromium.launch({ headless: true });
+  const launch = deps.launch ?? (() => chromium.launch({ headless: true }));
+  let browser: Browser;
+  try {
+    browser = await launch();
+  } catch (err) {
+    // El error de Playwright sin navegador instalado es un recuadro de varias líneas;
+    // al modelo (y a Nico) le basta con el paso y el remedio.
+    const msg = err instanceof Error ? err.message : String(err);
+    const missing = /Executable doesn't exist|playwright install/i.test(msg);
+    throw new StepError(
+      missing
+        ? 'paso navegador: no hay Chromium instalado para Playwright (ejecuta `npx playwright install chromium`)'
+        : `paso navegador: no se pudo abrir el navegador (${msg.split('\n')[0]?.slice(0, 160)})`,
+    );
+  }
   try {
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 1000 },
@@ -285,14 +320,15 @@ export async function searchRenfe(args: {
       await input.fill('');
       await input.pressSequentially(text, { delay: 40 });
       const options = page.locator('li[role=option]:visible', {
-        hasText: new RegExp(text.slice(0, 20), 'i'),
+        hasText: new RegExp(escapeRegExp(text.slice(0, 20)), 'i'),
       });
       try {
         await options.first().waitFor({ state: 'visible', timeout: 8_000 });
       } catch {
         throw new StepError(`paso ${label}: Renfe no mostró sugerencias para "${text}"`);
       }
-      const all = page.locator('li[role=option]:visible', { hasText: /\(TODAS\)/i });
+      // Solo un «(TODAS)» de lo que coincide con lo tecleado, nunca el de otra ciudad.
+      const all = options.filter({ hasText: /\(TODAS\)/i });
       const wanted = (await all.count()) > 0 ? all.first() : options.first();
       await wanted.click();
       const value = (await input.inputValue()).trim();
@@ -496,7 +532,7 @@ export async function searchRenfe(args: {
   }
 }
 
-export function createRenfeTool(): AgentTool<typeof RenfeParams> {
+export function createRenfeTool(deps: RenfeDeps = {}): AgentTool<typeof RenfeParams> {
   return {
     name: 'renfe',
     label: 'Renfe',
@@ -510,7 +546,7 @@ export function createRenfeTool(): AgentTool<typeof RenfeParams> {
     executionMode: 'sequential',
     execute: async (_id, args) => {
       try {
-        const { trains, total } = await searchRenfe(args);
+        const { trains, total } = await searchRenfe(args, deps);
         const head = `Renfe ${args.origin} -> ${args.destination}, ${args.date}${args.after ? `, desde las ${args.after}` : ''}: ${trains.length} de ${total} trenes.`;
         const text = trains.length
           ? `${head}\n${formatTrains(trains)}`
