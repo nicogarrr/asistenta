@@ -6632,6 +6632,13 @@ export function trimForSpeech(text: string): string {
     // Emojis y viñetas: la voz los lee como nombres («cara sonriente», «guion»).
     .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
     .replace(/^[ \t]*[-•·][ \t]+/gm, '')
+    // Símbolos de texto que no son emoji: flechas, estrellas, marcas, cajas. SAPI
+    // los lee por su nombre («flecha a la derecha», «estrella negra») o se traba.
+    .replace(
+      /[ \t]*(?:[\u2190-\u21FF\u27F0-\u27FF\u2900-\u297F\u2B00-\u2B2F]|-{1,2}>|={1,2}>|<-{1,2})[ \t]*/g,
+      ', ',
+    )
+    .replace(/[\u2600-\u27BF\u25A0-\u25FF\u2700-\u27BF\u2022\u2023\u2043\u2219\u00B7]/g, ' ')
     // Un salto de línea sin puntuación (listas) es una pausa, no una frase pegada.
     .replace(/([^\s.!?…:;,])[ \t]*\n+/g, '$1. ')
     .replace(/[*_#>|]/g, ' ')
