@@ -135,6 +135,10 @@ const MUCHO = '(?:mucho|muchisimo|bastante|un monton|un mogollon)';
  */
 export const VOLUME_MINIMO = 1;
 
+/** «… y la luz», «… y también las luces», «… y el altavoz»: otro aparato en la misma orden. */
+const OTRO_APARATO =
+  /\by (?:tambien )?(?:(?:la|el|las|los) )?(?:luz|luces|lampara|lamparas|radio|ventilador|aire|calefaccion|persiana|persianas|musica|altavoz|altavoces|ordenador|pc|movil|consola|equipo)\b/;
+
 const COMPOUND =
   /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
 
@@ -246,6 +250,12 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Preguntas («¿cómo se apaga la tele?», «¿por qué se apaga?», «¿se puede apagar?»)
   // y quejas («la tele no se enciende»): no son órdenes, van al modelo.
   if (PREGUNTA.test(t)) return null;
+  // Dos ordenes encadenadas («enciende la tele y pon Netflix», «modo cine y sube»): el parser
+  // solo ejecuta una, asi que haria la mitad en silencio. Mejor null y que
+  // las atienda el modelo (o se pidan por separado). Va antes de modos y rutinas.
+  if (COMPOUND.test(t)) return null;
+  // La orden también va para otro aparato («apaga la tele y la luz»): la tele sola sería la mitad.
+  if (OTRO_APARATO.test(t)) return null;
   let m: RegExpExecArray | null;
 
   // «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla BACK del mando.
@@ -324,11 +334,6 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (/^(?:apaga|apagar|apagalo|apagamelo) todo[\s,.!]*$/.test(t)) {
     return { action: 'scene', scene: 'apagar-todo' };
   }
-
-  // Dos ordenes encadenadas («enciende la tele y pon Netflix»): el parser
-  // solo ejecuta una, asi que haria la mitad en silencio. Mejor null y que
-  // las atienda el modelo (o se pidan por separado).
-  if (COMPOUND.test(t)) return null;
 
   // Estado: preguntas, no ordenes.
   if (
