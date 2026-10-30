@@ -202,6 +202,14 @@ function tagName(xml: string, i: number): { name: string; closing: boolean; end:
 const PARA_END = new Set(['w:p', 'a:p', 'text:p', 'text:h', 'table:table-row']);
 const TAB = new Set(['w:tab', 'a:tab', 'text:tab']);
 const BREAK = new Set(['w:br', 'a:br', 'text:line-break']);
+/**
+ * Elements whose content is NOT the document's current text: text deleted with
+ * track changes (`w:delText`), the old copy of moved text (`w:moveFrom`), field
+ * codes such as `PAGE` or `HYPERLINK "https://…"` (`w:instrText`), and ODF's
+ * record of tracked changes. Reading them showed the model words the author had
+ * removed, moved text twice and field-code noise mid-sentence.
+ */
+const SKIP_CONTENT = new Set(['w:delText', 'w:moveFrom', 'w:instrText', 'text:tracked-changes']);
 
 /** Text of a WordprocessingML / DrawingML / ODF fragment: paragraph ends become newlines. */
 function xmlText(xml: string, b: Budget): string {
@@ -219,6 +227,12 @@ function xmlText(xml: string, b: Budget): string {
     if (!tag) break; // '<' without '>': the rest is not markup we can trust, drop it
     if (tag.closing) {
       if (PARA_END.has(tag.name)) out.push('\n');
+    } else if (SKIP_CONTENT.has(tag.name) && xml[tag.end - 1] !== '/') {
+      // Forward-only jump to its closing tag (they do not nest inside themselves).
+      const close = xml.indexOf(`</${tag.name}>`, tag.end + 1);
+      if (close < 0) break;
+      pos = close + tag.name.length + 3;
+      continue;
     } else if (TAB.has(tag.name)) out.push('\t');
     else if (BREAK.has(tag.name)) out.push('\n');
     pos = tag.end + 1;
