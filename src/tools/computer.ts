@@ -1061,29 +1061,67 @@ export function createComputerTool(
     // diagnose afterwards.
     executionMode: 'sequential',
     execute: async (_id, args, signal) => {
-      // Kill switch: refuse before ANY backend call (no capture, no input). Only an
-      // explicit `false` disables it, so a config without the field keeps working.
-      if (config.computerUse === false) {
-        throw new Error(
-          'Computer Use is disabled on this PC (PA_COMPUTER_USE=0): do not retry, tell the user. ' +
-            'El control del escritorio está desactivado (PA_COMPUTER_USE=0); para activarlo, quita esa línea del .env y reinicia.',
-        );
+      const startedAt = Date.now();
+      try {
+        const out = await (async () => {
+          // Kill switch: refuse before ANY backend call (no capture, no input). Only an
+          // explicit `false` disables it, so a config without the field keeps working.
+          if (config.computerUse === false) {
+            throw new Error(
+              'Computer Use is disabled on this PC (PA_COMPUTER_USE=0): do not retry, tell the user. ' +
+                'El control del escritorio está desactivado (PA_COMPUTER_USE=0); para activarlo, quita esa línea del .env y reinicia.',
+            );
+          }
+          const record = args as unknown as Record<string, unknown>;
+          lastAfter = null;
+          const wantsLook = record.look === true && args.action !== 'screenshot';
+          if (args.action === 'batch') {
+            const out = await runBatch(record, signal);
+            if (!wantsLook) return out;
+            return { ...out, content: [...out.content, ...(await lookAfter())] };
+          }
+          if (signal?.aborted && args.action !== 'screenshot') {
+            // A queued call that arrives after /stop must not touch mouse or keyboard.
+            throw new Error(
+              'cancelled: the run was stopped before this action (parada solicitada)',
+            );
+          }
+          const out = await runAction(record, { verifyResult: true });
+          if (!wantsLook) return { content: out.content, details: out.details };
+          return { content: [...out.content, ...(await lookAfter())], details: out.details };
+        })();
+        return withSlowNote(out, Date.now() - startedAt);
+      } catch (err) {
+        throw slowError(err, Date.now() - startedAt);
       }
-      const record = args as unknown as Record<string, unknown>;
-      lastAfter = null;
-      const wantsLook = record.look === true && args.action !== 'screenshot';
-      if (args.action === 'batch') {
-        const out = await runBatch(record, signal);
-        if (!wantsLook) return out;
-        return { ...out, content: [...out.content, ...(await lookAfter())] };
-      }
-      if (signal?.aborted && args.action !== 'screenshot') {
-        // A queued call that arrives after /stop must not touch mouse or keyboard.
-        throw new Error('cancelled: the run was stopped before this action (parada solicitada)');
-      }
-      const out = await runAction(record, { verifyResult: true });
-      if (!wantsLook) return { content: out.content, details: out.details };
-      return { content: [...out.content, ...(await lookAfter())], details: out.details };
     },
   };
+}
+
+/** A computer step slower than this gets a «paso lento» note in its result (ms). */
+export const SLOW_STEP_MS = 10_000;
+
+/**
+ * The line a slow step adds. Under load one step (size + capture + action +
+ * verification) can take ~90 s; without a word the model just waits and Nico
+ * sees nothing for minutes. Bilingual like the kill-switch message: the English
+ * half steers the model, the Spanish half is what it can pass on as-is.
+ */
+export function slowStepNote(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return (
+    `Slow step: this action took ${s} s (the PC is busy). If steps stay this slow, tell the user. ` +
+    `Paso lento: ${s} s; el PC va cargado.`
+  );
+}
+
+function withSlowNote<T extends { content: Array<{ type: string }> }>(out: T, ms: number): T {
+  if (ms <= SLOW_STEP_MS) return out;
+  return { ...out, content: [...out.content, { type: 'text' as const, text: slowStepNote(ms) }] };
+}
+
+function slowError(err: unknown, ms: number): unknown {
+  if (ms <= SLOW_STEP_MS || !(err instanceof Error)) return err;
+  err.message = `${err.message}\n${slowStepNote(ms)}`;
+  return err;
 }
