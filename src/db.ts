@@ -343,6 +343,12 @@ export class Store {
     const existing = this.getRoutine(r.scope, r.name);
     const id = r.id ?? existing?.id ?? crypto.randomUUID();
     if (existing) {
+      // La fila que existe es la de (scope, nombre): actualizar por SU id. Antes un
+      // r.id distinto apuntaba el UPDATE a un id que no existe y no se guardaba
+      // nada, sin error. Y sin `enabled` explícito se conserva el estado: volver a
+      // guardar una rutina en pausa (p. ej. el reintento de un recordatorio) la
+      // reactivaba en silencio.
+      const enabled = r.enabled ?? existing.enabled;
       this.#db
         .prepare(
           `UPDATE routines SET kind = ?, params = ?, steps = ?, prompt = ?, schedule = ?, enabled = ?, updated_at = ?
@@ -354,9 +360,9 @@ export class Store {
           r.steps ?? null,
           r.prompt ?? null,
           r.schedule ?? null,
-          (r.enabled ?? true) ? 1 : 0,
+          enabled ? 1 : 0,
           now,
-          id,
+          existing.id,
         );
       return {
         ...(existing as Routine),
@@ -365,7 +371,7 @@ export class Store {
         steps: r.steps ?? null,
         prompt: r.prompt ?? null,
         schedule: r.schedule ?? null,
-        enabled: r.enabled ?? true,
+        enabled,
         updatedAt: now,
       };
     }
