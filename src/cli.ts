@@ -41,6 +41,9 @@ import { setupEmailChannel } from './channels/email-setup.js';
 import {
   cleanForTelegram,
   friendlyError,
+  isAgendaTitle,
+  isReminderTitle,
+  marksWithTitles,
   progressNote,
   shorten,
   stripVoicePrefix,
@@ -3685,7 +3688,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       args.trim() === 'rutinas' || !isOwnerDm(inbound, vigilanteOwnerId)
         ? scheduledAgenda(inbound)
         : await personalAgenda(inbound);
-    await say(inbound, text, { quote: true });
+    await say(inbound, marksWithTitles(text, isAgendaTitle), { quote: true, format: 'marks' });
   };
 
   const cmdMemory = async (inbound: Inbound): Promise<void> => {
@@ -4600,7 +4603,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
         return;
       }
-      await say(inbound, formatReminderRows(rows()), { quote: true });
+      await say(inbound, marksWithTitles(formatReminderRows(rows()), isReminderTitle), {
+        quote: true,
+        format: 'marks',
+      });
       return;
     }
     const pick = pickReminder(rows(), m[2] ?? '');

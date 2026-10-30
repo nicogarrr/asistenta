@@ -115,6 +115,9 @@ describe('read-only unified overview', () => {
     expect(overview).toContain('await personalAgenda(inbound)');
     expect(overview).toContain("args.trim() === 'rutinas'");
     expect(overview).not.toMatch(/searchMail|loadMailAccount|sendMail/);
-    expect(cli).toContain('return cmdAgenda(inbound, command.args)');
+    // Despacho: switch antiguo o tabla de comandos (daemonx4).
+    expect(cli).toMatch(
+      /return cmdAgenda\(inbound, command\.args\)|names: \['agenda'\], run: \(inbound, args\) => cmdAgenda\(inbound, args\)/,
+    );
   });
 });
