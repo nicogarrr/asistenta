@@ -1,6 +1,12 @@
 import { request } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { hostAllowed, hostHeaderName, startWebUi, type WebUiDeps } from '../src/webui/server.js';
+import {
+  hostAllowed,
+  hostHeaderName,
+  parseAllowedHosts,
+  startWebUi,
+  type WebUiDeps,
+} from '../src/webui/server.js';
 
 const TOKEN = 'token-de-prueba-host';
 const deps: WebUiDeps = {
@@ -79,5 +85,34 @@ describe('panel web: cabecera Host (DNS rebinding)', () => {
     expect(hostAllowed('127.0.0.2:9')).toBe(true);
     expect(hostAllowed('127.0.0.1.nip.io')).toBe(false);
     expect(hostAllowed(undefined)).toBe(false);
+  });
+
+  it('PA_WEB_ALLOWED_HOSTS añade nombres exactos, sin comodines', async () => {
+    expect(parseAllowedHosts(' Mi-PC.tail1234.ts.net , *.ts.net,, otro.lan:8080 ')).toEqual([
+      'mi-pc.tail1234.ts.net',
+      'otro.lan',
+    ]);
+    expect(parseAllowedHosts(undefined)).toEqual([]);
+    const extra = await startWebUi(deps, { allowedHosts: ['mi-pc.tail1234.ts.net'] });
+    const url = new URL(extra.url);
+    const call = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request(
+          { hostname: url.hostname, port: url.port, path: '/', headers: { Host: host } },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+    try {
+      expect(await call('mi-pc.tail1234.ts.net')).toBe(200);
+      expect(await call('otro-pc.tail1234.ts.net')).toBe(403);
+      expect(await call('evil.example')).toBe(403);
+    } finally {
+      await extra.close();
+    }
   });
 });
