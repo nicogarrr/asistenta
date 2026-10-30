@@ -6,6 +6,7 @@ export const PROTECTED_PATHS: RegExp[] = [
   /^src\/permissions\.ts$/,
   /^src\/vault\.ts$/,
   /^src\/selfimprove\//,
+  /^src\/evolve\/guard\.ts$/, // este mismo fichero (antes vivia en src/selfimprove/)
   /^selfimprove\//, // bateria, criterios y politica
   /^src\/browser\/(ssrf|guard)[^/]*$/,
   /^src\/tools\/(approval|payment|checkout)[^/]*$/,

@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkPatch } from '../selfimprove/guard.js';
 import { Archive, isoWeek } from './archive.js';
+import { checkPatch } from './guard.js';
 import { measure as realMeasure } from './measure.js';
 import { checklistPasses, renderReceipt, verificationChecklist } from './receipt.js';
 import { comparable, judge, touchesForbidden } from './score.js';
