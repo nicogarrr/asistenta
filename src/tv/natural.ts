@@ -52,7 +52,9 @@ const PICTURE_NAMES: Record<string, string> = {
   sports: 'deportes',
 };
 
+/** Números en palabras (texto ya sin tildes), 0–100. */
 const NUM_WORDS: Record<string, number> = {
+  cero: 0,
   un: 1,
   uno: 1,
   una: 1,
@@ -65,10 +67,58 @@ const NUM_WORDS: Record<string, number> = {
   ocho: 8,
   nueve: 9,
   diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
   quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
   veinte: 20,
-  treinta: 30,
+  veintiun: 21,
+  veintiuno: 21,
+  veintiuna: 21,
+  veintidos: 22,
+  veintitres: 23,
+  veinticuatro: 24,
+  veinticinco: 25,
+  veintiseis: 26,
+  veintisiete: 27,
+  veintiocho: 28,
+  veintinueve: 29,
+  cien: 100,
 };
+const TENS: Record<string, number> = {
+  treinta: 30,
+  cuarenta: 40,
+  cincuenta: 50,
+  sesenta: 60,
+  setenta: 70,
+  ochenta: 80,
+  noventa: 90,
+};
+/** «y <unidad>» tras una decena: «treinta y cinco». */
+const Y_UNIT = '(?: y (?:un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve))?';
+
+/**
+ * Número en cifras o en palabras (0–100): «7», «doce», «veinticinco», «treinta y
+ * cinco», «cien». Cualquier otra cosa (incluido «veinte y cinco», que no es como
+ * se escribe) → null: mejor no entender que entender otro número.
+ */
+export function spanishNumber(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (/^\d{1,3}$/.test(s)) return Number(s);
+  if (s in NUM_WORDS) return NUM_WORDS[s] ?? null;
+  const m = /^([a-z]+)(?: y ([a-z]+))?$/.exec(s);
+  const tens = m?.[1] ? TENS[m[1]] : undefined;
+  if (tens === undefined) return null;
+  if (m?.[2] === undefined) return tens;
+  const unit = NUM_WORDS[m[2]];
+  return unit !== undefined && unit >= 1 && unit <= 9 ? tens + unit : null;
+}
 
 /** Paso por defecto de "sube/baja el volumen" sin numero. */
 export const DEFAULT_VOLUME_STEP = 3;
@@ -81,9 +131,7 @@ const COMPOUND =
   /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
 
 function num(s: string | undefined): number | null {
-  if (!s) return null;
-  if (/^\d+$/.test(s)) return Number(s);
-  return NUM_WORDS[s] ?? null;
+  return spanishNumber(s);
 }
 
 const TV = '(?:la )?(?:tele|tv|television|televisor|pantalla)';
@@ -233,17 +281,16 @@ export function parseTvCommand(text: string): TvIntent | null {
 
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
   m =
-    /\bvolumen (?:a|al|en) (\d{1,3}|[a-z]+)\b/.exec(t) ??
+    new RegExp(`\\bvolumen (?:a|al|en) (\\d{1,3}|[a-z]+${Y_UNIT})\\b`).exec(t) ??
     /^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\d{1,3})$/.exec(t);
   if (m) {
     const level = num(m[1]);
     if (level !== null && level >= 0 && level <= 100) return { action: 'volume', level };
   }
   // Volumen relativo: "sube el volumen", "baja 5", "sube un poco", "bajale dos".
-  m =
-    /^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco| un poquito| (\d{1,2}|[a-z]+)(?: puntos?| niveles?)?)?(?: (?:a|de) (?:la )?(?:tele|tv))?$/.exec(
-      t,
-    );
+  m = new RegExp(
+    `^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco(?: mas)?| un poquito(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?)?)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
+  ).exec(t);
   if (m?.[1]) {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
     if (n !== null && n > 0) {
@@ -271,8 +318,9 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
   // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
   m = /\bcanal (?:numero )?([a-z]+)$/.exec(t) ?? /^(?:pon|ponme) (?:la|el) ([a-z]+)$/.exec(t);
-  if (m?.[1] && /^[a-z]+$/.test(m[1]) && m[1] in NUM_WORDS) {
-    return { action: 'channel', channel: String(NUM_WORDS[m[1]]) };
+  const chWord = m?.[1] && /^[a-z]+$/.test(m[1]) ? spanishNumber(m[1]) : null;
+  if (chWord !== null && chWord >= 1) {
+    return { action: 'channel', channel: String(chWord) };
   }
 
   // Entradas.
