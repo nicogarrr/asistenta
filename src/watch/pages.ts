@@ -61,6 +61,8 @@ export interface PageWatch {
   lastAlertAt: number;
   /** Precio del último aviso por bajada %: un mínimo nuevo sí vuelve a avisar. */
   lastAlertCents: number | null;
+  /** «🔕 Silenciar»: hasta este instante no se manda ningún aviso de esta página (0 = no). */
+  mutedUntil: number;
 }
 
 export type CheckOutcome =
@@ -178,6 +180,8 @@ export const MAX_WATCHES_PER_SCOPE = 10;
 export const READINGS_RETENTION_MS = 366 * 24 * 3600 * 1000;
 /** Avisos por bajada %: como mucho uno al día salvo que haya un mínimo nuevo. */
 export const REALERT_MS = 24 * 3600 * 1000;
+/** Cuánto dura «🔕 Silenciar 1 día». */
+export const PAGE_MUTE_MS = 24 * 3600 * 1000;
 /** Lecturas que entran en la gráfica de /precio. */
 export const SPARKLINE_POINTS = 20;
 
@@ -218,6 +222,7 @@ function row(r: Record<string, unknown>): PageWatch {
     dropPct: r.drop_pct == null ? null : Number(r.drop_pct),
     lastAlertAt: Number(r.last_alert_at ?? 0),
     lastAlertCents: r.last_alert_cents == null ? null : Number(r.last_alert_cents),
+    mutedUntil: Number(r.muted_until ?? 0),
   };
 }
 
@@ -266,6 +271,9 @@ export class PageWatchStore {
     }
     if (!cols.some((c) => c.name === 'last_alert_cents')) {
       db.exec('ALTER TABLE page_watches ADD COLUMN last_alert_cents INTEGER');
+    }
+    if (!cols.some((c) => c.name === 'muted_until')) {
+      db.exec('ALTER TABLE page_watches ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0');
     }
     // Histórico propio por vigilancia: solo lecturas fiables (consenso del extractor).
     db.exec(`CREATE TABLE IF NOT EXISTS watch_readings (
@@ -342,6 +350,27 @@ export class PageWatchStore {
       .prepare('SELECT * FROM page_watches WHERE active = 1 AND last_checked_at <= ?')
       .all(this.now() - everyMs)
       .map((r) => row(r as Record<string, unknown>));
+  }
+
+  /**
+   * «🔕 Silenciar»: sin avisos de esta página durante `ms` (se sigue leyendo y guardando
+   * el histórico). Solo desde el chat dueño; no borra nada. null si no es suya o no existe.
+   */
+  mute(scope: string, id: string, ms: number): PageWatch | null {
+    const w = this.list(scope).find((x) => x.id === id);
+    if (!w) return null;
+    this.db
+      .prepare('UPDATE page_watches SET muted_until = ? WHERE id = ?')
+      .run(this.now() + ms, w.id);
+    return this.get(w.id);
+  }
+
+  /** Quita el silencio antes de tiempo (mismo chat). */
+  unmute(scope: string, id: string): PageWatch | null {
+    const w = this.list(scope).find((x) => x.id === id);
+    if (!w) return null;
+    this.db.prepare('UPDATE page_watches SET muted_until = 0 WHERE id = ?').run(w.id);
+    return this.get(w.id);
   }
 
   remove(scope: string, idOrPrefix: string): boolean {
@@ -572,7 +601,11 @@ const fmtDayTime = new Intl.DateTimeFormat('es-ES', {
 });
 
 /** Ficha de una vigilancia para /precio: último valor, histórico y avisos configurados. */
-export function describeWatch(w: PageWatch, s: WatchSummary | null): string {
+export function describeWatch(
+  w: PageWatch,
+  s: WatchSummary | null,
+  now: number = Date.now(),
+): string {
   const lines = [`${w.label || w.url} (id ${w.id})`, w.url];
   if (!s) {
     lines.push(`Aún no tengo lecturas de precio; último valor: ${w.lastValue || 'pendiente'}.`);
@@ -587,6 +620,11 @@ export function describeWatch(w: PageWatch, s: WatchSummary | null): string {
   }
   if (w.targetCents !== null) lines.push(`Objetivo: te aviso si baja de ${eur(w.targetCents)}.`);
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
+  if (w.mutedUntil > now) {
+    lines.push(
+      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)} (/vigila avisar ${w.id} para quitarlo).`,
+    );
+  }
   return lines.join('\n');
 }
 
