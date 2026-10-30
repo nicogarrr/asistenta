@@ -10,6 +10,8 @@
  * `PreflightDeps`, así que los tests no abren nada real.
  */
 
+import { resolveOwnerUserId } from './vigilante.js';
+
 export type CheckStatus = 'ok' | 'aviso' | 'fallo' | 'info';
 
 export interface PreflightCheck {
@@ -154,6 +156,34 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
           hint: 'pa vault set telegram:allowedUserIds <tu id de Telegram>',
         },
   );
+
+  // Dueño: el chat privado al que van avisos, vigilantes y «Asistenta lista ✅».
+  // Misma regla que el daemon (resolveOwnerUserId): el elegido si está autorizado,
+  // o el único usuario autorizado.
+  if (allowed?.length) {
+    const explicit = Number(await get('vigilante:ownerUserId'));
+    const configured = Number.isSafeInteger(explicit) && explicit > 0 ? explicit : null;
+    const owner = resolveOwnerUserId(allowed, configured);
+    if (owner != null) {
+      add({ id: 'dueno', label: 'Dueño (chat privado)', status: 'ok', detail: `${owner}` });
+    } else if (configured != null) {
+      add({
+        id: 'dueno',
+        label: 'Dueño (chat privado)',
+        status: 'aviso',
+        detail: `${configured} no está entre los usuarios autorizados: los avisos no saldrán`,
+        hint: `pa vault set telegram:allowedUserIds ${[...allowed, configured].join(',')}  (o cambia vigilante:ownerUserId)`,
+      });
+    } else {
+      add({
+        id: 'dueno',
+        label: 'Dueño (chat privado)',
+        status: 'aviso',
+        detail: 'no sé cuál es tu chat privado: los avisos y vigilantes no saldrán',
+        hint: 'pa vault set vigilante:ownerUserId <tu id de Telegram>',
+      });
+    }
+  }
 
   // Modelo: mismas claves que usa pa serve, sin ninguna llamada de pago.
   try {

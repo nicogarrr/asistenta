@@ -50,6 +50,7 @@ describe('runPreflight', () => {
       'vault',
       'telegram',
       'usuarios',
+      'dueno',
       'modelo',
       'tele',
       'pc',
