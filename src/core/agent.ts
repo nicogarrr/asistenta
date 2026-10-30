@@ -658,7 +658,17 @@ export class PersonalAgent {
         const started = calls.get(toolCall.id);
         if (started) {
           calls.delete(toolCall.id);
-          gate.settle(personal.sessionId, started, isError);
+          // El texto del resultado deja que el Gate reconozca contenido privado si
+          // luego vuelve a salir dentro de una URL (eco hacia un dominio ya visitado).
+          const content = (
+            result as { content?: Array<{ type?: string; text?: unknown }> } | undefined
+          )?.content;
+          const resultText = Array.isArray(content)
+            ? content
+                .map((c) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
+                .join('\n')
+            : '';
+          gate.settle(personal.sessionId, started, isError, resultText);
           const audit = callAudit.get(toolCall.id);
           callAudit.delete(toolCall.id);
           appendCallAudit({
