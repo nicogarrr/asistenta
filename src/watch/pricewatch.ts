@@ -90,18 +90,30 @@ export function toUrl(store: StoreId, ref: string): string | null {
   }
 }
 
+// Cifra en euros: miles con punto o con espacio, decimales con coma; o punto decimal
+// («1299.99 €», «12.5 €», «1,299.99 €»: el punto con 1-2 cifras detrás solo puede ser
+// decimal). Un número pegado con espacio normal delante («1 299.99 €») no se lee como
+// 299,99 €. EURO_RE no toma el espacio NORMAL como separador de miles.
+const EN_DECIMAL = String.raw`(?<!\d )(\d{1,3}(?:,\d{3})+|\d+)\.(\d{1,2})`;
+const EURO_RE = new RegExp(
+  String.raw`(?<![\d.,\u00a0\u202f\u2009]|\d )(?:(\d{1,3}(?:[.\u00a0\u202f\u2009]\d{3})+|\d+)(?:,(\d{1,2}))?|${EN_DECIMAL})\s?€`,
+);
+const EURO_PLAIN_SPACE_RE = new RegExp(
+  String.raw`(?<![\d.,\u00a0\u202f\u2009])(?:(\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,(\d{1,2}))?|${EN_DECIMAL})\s?€`,
+);
+
 /** "1.299,50 €" / "12,34€" / "1299.99 €" / "1,299.99 €" -> céntimos; un formato ambiguo da null. */
-export function parseEuroCents(raw: string): number | null {
-  // Miles con punto o con espacio (normal, duro U+00A0, estrecho U+202F o fino
-  // U+2009, como `Intl.NumberFormat('fr-FR')` y algunas tiendas): «1 299,00 €»
-  // son 1299 €, no 299 €. Igual que PRICE_RE de checkout (#389).
-  // Punto decimal sin coma («1299.99 €», «12.5 €») o miles con coma y punto decimal
-  // («1,299.99 €»): el punto con 1-2 cifras detrás solo puede ser decimal. «1.299 €»
-  // sigue siendo 1299 € y «1,299 €» (ambiguo) sigue dando null. Un número pegado con
-  // espacio normal delante («1 299.99 €») no se lee como 299,99 €.
-  const m = raw.match(
-    /(?<![\d.,\u00a0\u202f\u2009])(?:(\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,(\d{1,2}))?|(?<!\d )(\d{1,3}(?:,\d{3})+|\d+)\.(\d{1,2}))\s?€/,
-  );
+export function parseEuroCents(
+  raw: string,
+  opts: { plainSpaceThousands?: boolean } = {},
+): number | null {
+  // Miles con punto o con espacio duro U+00A0, estrecho U+202F o fino U+2009 (como
+  // `Intl.NumberFormat('fr-FR')` y algunas tiendas): «1 299,00 €» son 1299 €, no 299 €.
+  // Un espacio NORMAL solo separa miles con `plainSpaceThousands` (fuentes que solo
+  // llevan un precio, como el `a-offscreen` de Amazon): en texto libre «talla 42 199 €»
+  // no son 42199 €. Sin la opción, cifras separadas por espacio normal dan null (ni
+  // 42199 ni 199: «1 299 €» tampoco puede leerse como 299 €).
+  const m = raw.match(opts.plainSpaceThousands ? EURO_PLAIN_SPACE_RE : EURO_RE);
   if (!m) return null;
   const intPart = m[1] ?? m[3];
   const decPart = m[1] ? m[2] : m[4];
@@ -210,7 +222,7 @@ export function amazonSelectorCents(html: string): number | null {
   const at = html.search(AMAZON_BLOCK);
   if (at < 0) return null;
   const m = html.slice(at, at + 4000).match(/class="a-offscreen"[^>]*>\s*([^<]+?)\s*</);
-  return m?.[1] ? parseEuroCents(m[1]) : null;
+  return m?.[1] ? parseEuroCents(m[1], { plainSpaceThousands: true }) : null;
 }
 
 function amazonStock(html: string): boolean | null {
