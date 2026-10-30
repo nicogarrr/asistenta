@@ -55,6 +55,7 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 
 ## Desde Telegram sin gastar
 - Preguntas y quejas no son órdenes: «¿cómo se apaga la tele?», «¿por qué se apaga?», «la tele no se enciende» no tocan la tele (las contesta el modelo). Tampoco «la luz, apágala»: delante de «apágala» / «enciéndela» solo vale una muletilla («venga», «no», «puedes»…).
+- Órdenes combinadas con un modo («modo cine y sube») o con otro aparato («apaga la tele y la luz») también van al modelo: la tele sola sería la mitad.
 - También valen «apágala ya», «enciéndela ahora mismo», «vuelve a poner el sonido» (quita el silencio) y «¿qué hay en la tele?» / «¿qué estoy viendo?» (estado, solo lee).
 - `/tv <orden>` (solo tú, en tu chat privado): «/tv apaga la tele», «/tv abre Netflix», «/tv volumen a 15», «/tv modo cine», «/tv estado». Va directo a la tele, sin pasar por el modelo (0 tokens). Si no la entiende, lo dice y no hace nada.
 - Frases: «pon la uno» (canal en palabras), «sube a tope» / «volumen al máximo» / «súbela al máximo» / «pon la tele a tope» = volumen 100 (el máximo de la tele; decisión de Nico, 30-oct-2026; para menos, dilo con número: «volumen a 30»; «bájala a tope» / «baja el volumen al máximo» = volumen 1, nunca silencio), «quita el sonido» = silencio.
