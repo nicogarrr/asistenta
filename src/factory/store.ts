@@ -121,7 +121,9 @@ export function readFactoryTool(
   const mdPath = join(dir, 'TOOL.md');
   const jsPath = join(dir, 'tool.js');
   if (!existsSync(mdPath) || !existsSync(jsPath)) return null;
-  const md = readFileSync(mdPath, 'utf8');
+  // A TOOL.md touched on Windows (an editor, git autocrlf) has CRLF line ends; without
+  // this the tool read as corrupt and silently vanished from the list.
+  const md = readFileSync(mdPath, 'utf8').replace(/\r\n/g, '\n');
   const fm = md.match(/^---\n([\s\S]*?)\n---\n/);
   if (!fm) throw new Error(`TOOL.md corrupto en ${id}: falta frontmatter`);
   const kv = new Map<string, string>();
@@ -129,11 +131,18 @@ export function readFactoryTool(
     const m = line.match(/^([a-zA-Z0-9]+):\s?(.*)$/);
     if (m && m[1] !== undefined) kv.set(m[1], m[2] ?? '');
   }
+  // The folder is the tool's identity (loader, approvals, paths): a TOOL.md copied from
+  // another tool must not load under that other tool's id.
+  const fileId = kv.get('id');
+  if (fileId !== undefined && fileId !== id)
+    throw new Error(
+      `TOOL.md corrupto en ${id}: id ${JSON.stringify(fileId)} no es el de su carpeta`,
+    );
   const status = (kv.get('status') ?? 'built') as FactoryToolStatus;
   if (!STATUSES.includes(status)) throw new Error(`TOOL.md corrupto en ${id}: status ${status}`);
   const nullStr = (v: string | undefined) => (!v || v === 'null' ? null : v);
   const meta: FactoryToolMeta = {
-    id: kv.get('id') ?? id,
+    id,
     name: unq(kv.get('name') ?? '""'),
     description: unq(kv.get('description') ?? '""'),
     whenToUse: unq(kv.get('whenToUse') ?? '""'),
@@ -147,8 +156,11 @@ export function readFactoryTool(
     lastTestOk: kv.get('lastTestOk') === 'true',
     contract: parseContract(kv.get('contract')),
   };
-  const notesIdx = md.indexOf('## Notes');
-  const notes = notesIdx >= 0 ? md.slice(notesIdx + 8).trim() : '';
+  // Look for the heading only after the frontmatter: a description that mentions
+  // "## Notes" must not become the notes.
+  const body = md.slice(fm[0].length);
+  const notesIdx = body.indexOf('## Notes');
+  const notes = notesIdx >= 0 ? body.slice(notesIdx + 8).trim() : '';
   return { meta, code: readFileSync(jsPath, 'utf8'), notes };
 }
 
