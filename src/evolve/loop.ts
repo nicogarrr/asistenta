@@ -62,7 +62,7 @@ export interface EvolveOptions {
   /** Injected so the loop can run in tests without a real suite. */
   measure?: typeof realMeasure;
   /**
-   * La batería de comportamiento (selfimprove/battery.json). Un candidato solo se promueve
+   * La batería de comportamiento (evolve/battery.json). Un candidato solo se promueve
    * si la aprueba sin regresiones; sin batería no se promueve nada (falla cerrado).
    */
   battery?: BatteryGate;

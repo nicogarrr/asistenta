@@ -7,7 +7,10 @@ export const PROTECTED_PATHS: RegExp[] = [
   /^src\/vault\.ts$/,
   /^src\/selfimprove\//,
   /^src\/evolve\/guard\.ts$/, // este mismo fichero (antes vivia en src/selfimprove/)
-  /^selfimprove\//, // bateria, criterios y politica
+  /^selfimprove\//, // antigua carpeta de la bateria (se queda: solo mas estricto)
+  /^evolve\//, // bateria (evolve/battery.json) y sondas: la regla de medir
+  /^src\/evolve\/battery[^/]*$/, // como se corre y se puntua la bateria
+  /^scripts\/evolve-battery-case\.mjs$/, // el evaluador que corre cada caso en la copia medida
   /^src\/browser\/(ssrf|guard)[^/]*$/,
   /^src\/tools\/(approval|payment|checkout)[^/]*$/,
   /^test\/(permissions|approvals?-scope|browser-ssrf|vault|checkout)[^/]*$/,

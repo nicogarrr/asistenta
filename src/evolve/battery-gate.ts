@@ -1,6 +1,6 @@
 // Puerta de la batería: el examen que un cambio de la auto-mejora tiene que aprobar.
 // La suite de tests (measure.ts + score.ts) dice si el código mejora; la batería
-// (selfimprove/battery.json, 74 casos) dice si el ASISTENTE sigue comportándose
+// (evolve/battery.json, 74 casos) dice si el ASISTENTE sigue comportándose
 // bien: pide permiso cuando toca, no inventa, no filtra. Un candidato solo se
 // promueve si la batería no empeora y ningún caso que pasaba deja de pasar.
 // Sin batería configurada no se promueve nada (falla cerrado).
@@ -16,7 +16,7 @@ import {
 } from './battery-judge.js';
 
 /** Ruta de la batería dentro del repo. Protegida: el bucle no puede tocarla. */
-export const BATTERY_FILE = 'selfimprove/battery.json';
+export const BATTERY_FILE = 'evolve/battery.json';
 
 /**
  * Ejecuta un caso contra el código que hay en `cwd` y devuelve su traza. Inyectado:
