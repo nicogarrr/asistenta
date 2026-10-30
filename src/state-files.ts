@@ -22,6 +22,12 @@ export type StateEntry = {
   readonly what: string;
   /** Quién lo poda y con qué ajuste; ausente = crece sin poda. */
   readonly retention?: string;
+  /**
+   * Poda por antigüedad de ficheros sueltos (PA_FILE_RETENTION_DAYS, maintenance.ts):
+   * `sub` limita la poda a un subdirectorio y `match` a los nombres que casan. Sin
+   * `match` se poda cualquier fichero (recursivo); nunca se borran directorios.
+   */
+  readonly prune?: { readonly sub?: string; readonly match?: RegExp };
 } & (
   | { readonly backup: 'db' | 'file' | 'dir' | 'docs' }
   | { readonly backup: false; readonly why: string }
@@ -42,6 +48,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'pricewatch.sqlite', what: 'historial de precios vigilados', backup: 'db' },
   // Ficheros sueltos (backup.ts además copia cualquier otro *.json de la raíz).
   { name: 'pricewatch.json', what: 'tus alertas de precio', backup: 'file' },
+  { name: 'correo-canal.json', what: 'cursor del correo como canal', backup: 'file' },
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },
@@ -102,8 +109,18 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'registros y consumo',
     backup: false,
     why: 'diagnóstico; crece y se regenera',
+    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    // Solo los ficheros diarios (AAAA-MM-DD.jsonl y usage-AAAA-MM-DD.jsonl).
+    prune: { match: /^(usage-)?\d{4}-\d{2}-\d{2}\.jsonl$/ },
   },
-  { name: 'screenshots', what: 'capturas de pantalla', backup: false, why: 'pesan y se regeneran' },
+  {
+    name: 'screenshots',
+    what: 'capturas de pantalla',
+    backup: false,
+    why: 'pesan y se regeneran',
+    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    prune: {},
+  },
   {
     name: 'browser',
     what: 'perfil del navegador',
@@ -116,7 +133,15 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: false,
     why: 'pesan y se vuelven a descargar',
   },
-  { name: 'voice', what: 'temporales de voz y grabaciones', backup: false, why: 'temporales' },
+  {
+    name: 'voice',
+    what: 'temporales de voz y grabaciones',
+    backup: false,
+    why: 'temporales',
+    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    // Solo capturas con marca de tiempo; speaker-profiles.json y demás se quedan.
+    prune: { match: /^(ocr|rec|cam|camvid|camav|mic)-\d+\.[a-z0-9]+$/ },
+  },
   {
     name: 'sessions',
     what: 'temporales de sesión',
@@ -128,6 +153,8 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'audios recibidos (para «reprodúcelo»)',
     backup: false,
     why: 'pesan; el original sigue en el chat',
+    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    prune: { sub: 'received' },
   },
   {
     name: 'memory-consolidation',
@@ -152,4 +179,13 @@ export function backedUp(kind: 'db' | 'file' | 'dir' | 'docs'): string[] {
 
 export function stateEntry(name: string): StateEntry | undefined {
   return STATE_ENTRIES.find((e) => e.name === name);
+}
+
+/** Entradas con poda de ficheros por antigüedad (PA_FILE_RETENTION_DAYS). */
+export function prunable(): Array<{ dir: string; match?: RegExp }> {
+  return STATE_ENTRIES.flatMap((e) =>
+    e.prune
+      ? [{ dir: e.prune.sub ? `${e.name}/${e.prune.sub}` : e.name, match: e.prune.match }]
+      : [],
+  );
 }
