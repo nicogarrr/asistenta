@@ -422,6 +422,11 @@ export function renderPage(): string {
       .tarjeta-cuerpo { max-height: none; }
       .buscador input,
       .buscador select { width: 100%; }
+      /* iPhone amplía la página al tocar un campo con letra de menos de 16 px. */
+      .buscador input,
+      .buscador select,
+      .buscador textarea,
+      .token input { font-size: 16px; }
       .cabecera { align-items: flex-start; }
     }
     @media (prefers-reduced-motion: reduce) {
