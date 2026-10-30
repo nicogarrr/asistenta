@@ -183,12 +183,16 @@ export function saveLearnedRule(
   const tTag = topicTag(topic);
   const tags = tTag ? [LEARNED_TAG, tTag] : [LEARNED_TAG];
   const existing = learnedRules(memory, [scope]);
-  const match = existing.find(
+  const matches = existing.filter(
     (e) => (tTag !== null && e.tags.includes(tTag)) || similar(e.text, rule),
   );
   try {
-    if (match) {
-      const e = memory.remember(scope, rule, { id: match.id, tags });
+    if (matches.length) {
+      // Entra como nueva (fecha de hoy, primera en /aprendido) y sustituye a TODAS las que
+      // decían lo mismo: corregir en su sitio la dejaba con la fecha vieja, el tope la
+      // olvidaba antes que reglas más viejas y otra parecida se quedaba duplicada.
+      const e = memory.remember(scope, rule, { tags });
+      for (const m of matches) memory.forget(scope, m.id);
       return { status: 'updated', rule, id: e.id };
     }
     const e = memory.remember(scope, rule, { tags });
