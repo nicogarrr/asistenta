@@ -94,14 +94,17 @@ describe('shorten', () => {
 
   it('treats exactly maxChars as fitting', () => {
     expect(shorten('a'.repeat(300)).truncated).toBe(false);
-    expect(shorten('a'.repeat(301)).truncated).toBe(true);
+    // Holgura en prosa: hasta presupuesto × 1,5 llega entero (no compensa recortar).
+    expect(shorten('a'.repeat(450)).truncated).toBe(false);
+    expect(shorten('a'.repeat(451)).truncated).toBe(true);
   });
 
   it('cuts at a word boundary and offers the detail', () => {
-    const words = 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda';
+    const words =
+      'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma';
     const result = shorten(words, 60);
     expect(result.truncated).toBe(true);
-    expect(result.text).toBe('alpha beta gamma delta epsilon…\nDime "más" para el detalle.');
+    expect(result.text).toBe('alpha beta gamma delta…\nPulsa «📖 Ver todo» o dime «más».');
   });
 
   it('keeps the whole reply within the limit', () => {
@@ -109,7 +112,7 @@ describe('shorten', () => {
     const result = shorten(long);
     expect(result.truncated).toBe(true);
     expect(result.text.length).toBeLessThanOrEqual(300);
-    expect(result.text.endsWith('…\nDime "más" para el detalle.')).toBe(true);
+    expect(result.text.endsWith('…\nPulsa «📖 Ver todo» o dime «más».')).toBe(true);
     // The kept part is a whole-word prefix of the original, never a half word.
     const body = result.text.slice(0, result.text.indexOf('…'));
     expect(long.startsWith(body)).toBe(true);
@@ -122,7 +125,7 @@ describe('shorten', () => {
     const result = shorten(long);
     expect(result.truncated).toBe(true);
     expect(result.text.length).toBeLessThanOrEqual(300);
-    expect(result.text.endsWith('…\nDime "más" para el detalle.')).toBe(true);
+    expect(result.text.endsWith('…\nPulsa «📖 Ver todo» o dime «más».')).toBe(true);
     const body = result.text.slice(0, result.text.indexOf('…'));
     expect(long.startsWith(body)).toBe(true);
     expect(body).not.toMatch(/\s$/);
@@ -140,7 +143,7 @@ describe('shorten', () => {
     const tight = shorten(prose, { maxChars: 500, hardMaxChars: 1000 });
     expect(tight.truncated).toBe(true);
     expect(tight.text.length).toBeLessThanOrEqual(500);
-    expect(tight.text.endsWith('…\nDime "más" para el detalle.')).toBe(true);
+    expect(tight.text.endsWith('…\nPulsa «📖 Ver todo» o dime «más».')).toBe(true);
 
     // The very same reply only survives intact because of the generous ceiling, so
     // the ceiling and not the prose budget is what is deciding here.
@@ -193,7 +196,7 @@ describe('shorten with code', () => {
     expect(result.truncated).toBe(true);
     // At a paragraph break, before the fence: no dangling opening marker, and no
     // half a code block pretending to be one.
-    expect(result.text).toBe('Aquí va el bloque:…\nDime "más" para el detalle.');
+    expect(result.text).toBe('Aquí va el bloque:…\nPulsa «📖 Ver todo» o dime «más».');
     expect(result.text).not.toContain('```');
   });
 

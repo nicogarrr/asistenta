@@ -13,7 +13,7 @@
 import { log, scrubLogText } from '../log.js';
 
 /** Appended when a reply is cut short, so the user knows more is available. */
-const DETAIL_HINT = 'Dime "más" para el detalle.';
+const DETAIL_HINT = 'Pulsa «📖 Ver todo» o dime «más».';
 
 /**
  * What the truncation trailer costs: the ellipsis, the newline and the hint. The
@@ -387,8 +387,14 @@ export function shorten(
   maxChars?: number | ShortenOptions,
 ): { text: string; truncated: boolean } {
   const options = resolveShortenOptions(maxChars);
-  const budget = hasRichContent(text) ? options.hardMaxChars : options.maxChars;
-  if (text.length <= budget) return { text, truncated: false };
+  const rich = hasRichContent(text);
+  const budget = rich ? options.hardMaxChars : options.maxChars;
+  // Holgura en prosa: recortar 320 caracteres a 260 + aviso no ahorra lectura y
+  // obliga a pulsar «Ver todo» para 60 caracteres (p. ej. una lista de 7 opciones
+  // cortas). Solo se recorta si sobra al menos la mitad del presupuesto. El tope
+  // duro (código, enlaces) no tiene holgura: ya roza el límite de Telegram.
+  const allowed = rich ? budget : budget + Math.floor(budget / 2);
+  if (text.length <= allowed) return { text, truncated: false };
   return { text: cutWithHint(text, budget), truncated: true };
 }
 
@@ -427,7 +433,11 @@ function cutWithHint(text: string, budget: number): string {
     const straddled = tokens.find((span) => limit > span.start && limit < span.end);
     cut = straddled ? straddled.start : limit;
   }
-  return `${text.slice(0, cut).trimEnd()}…\n${DETAIL_HINT}`;
+  let body = text.slice(0, cut).trimEnd();
+  // Una negrita **… partida por el corte se cierra: si no, telegramHtml no la
+  // reconoce y el trozo visible pierde la negrita (o enseña los asteriscos).
+  if (((body.match(/\*\*/g) ?? []).length & 1) === 1) body = `${body.replace(/\s+$/, '')}**`;
+  return `${body}…\n${DETAIL_HINT}`;
 }
 
 /**
