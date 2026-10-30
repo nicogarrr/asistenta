@@ -7,7 +7,7 @@
  * - Si no se entiende, NO se reenvia al modelo: se dice y se dan ejemplos.
  */
 
-import { describeTvIntent, parseTvCommand } from './natural.js';
+import { describeTvIntent, parseTvCommand, tvOrderHasTime } from './natural.js';
 
 export const TV_CHAT_EXAMPLES =
   '/tv apaga la tele · /tv abre Netflix · /tv volumen a 15 · /tv silencio · /tv modo cine · /tv estado';
@@ -31,6 +31,9 @@ export async function tvChatCommand(args: string, deps: TvChatCommandDeps): Prom
     return `La orden es demasiado larga para /tv (máx. ${TV_CHAT_MAX_LEN} caracteres). Pídemelo sin /tv.`;
   }
   const intent = parseTvCommand(text);
+  if (!intent && tvOrderHasTime(text)) {
+    return `«${text.slice(0, 80)}» lleva hora o condición y /tv solo hace cosas al momento: no he tocado la tele. Pídemelo sin /tv.`;
+  }
   if (!intent) {
     return `No he entendido «${text.slice(0, 80)}» como orden para la tele. Ejemplos: ${TV_CHAT_EXAMPLES}. Para algo más complejo, pídemelo sin /tv.`;
   }
