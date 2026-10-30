@@ -106,7 +106,7 @@ export interface GoalTickResult {
 export interface GoalRunnerDeps {
   goals: GoalStore;
   notifier: GoalNotifier;
-  store: Pick<Store, 'getRoutine' | 'deleteRoutine' | 'markRoutineRun' | 'listRoutines'>;
+  store: Pick<Store, 'getRoutine' | 'deleteRoutine' | 'listRoutines'>;
   /** RoutineRunner.sync, so a finished goal's routine disappears live. */
   sync: () => void;
   /** Runs the tick prompt on the owning thread (gate live, tail serialized). Wired in cli.ts. */
@@ -205,7 +205,10 @@ export class GoalRunner {
     } catch (err) {
       result = { text: '', error: err instanceof Error ? err.message : String(err) };
     }
-    this.#deps.store.markRoutineRun(goal.scope, name);
+    // No markRoutineRun here: the RoutineRunner already records this firing
+    // when it starts it (routines.ts #runRoutine). A second write after the
+    // run moved last_run_at to the END of a long tick - every goal tick was
+    // recorded twice, and the catch-up's "last ran" read the later time.
 
     // Execution also yields. A late result must not mark a cancelled/paused
     // goal done (or emit a false closing note). Count the work that did run,
