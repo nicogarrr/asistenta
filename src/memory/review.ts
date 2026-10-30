@@ -13,7 +13,8 @@
  * - Tope de 100: al entrar una nueva sale la mas antigua. La cola es una
  *   bandeja de pendientes, no un archivo historico.
  * - `list` nunca lanza: un fichero ausente, vacio o corrupto se lee como cola
- *   vacia, igual que el resto de la memoria. La siguiente escritura lo repara.
+ *   vacia, igual que el resto de la memoria. La siguiente escritura aparta el
+ *   corrupto a `<cola>.corrupt-<fecha>` (no se pierde) y empieza una cola nueva.
  * - `resolve` elimina la entrada y deja en el log que hecho se decidio
  *   conservar; no toca memoria ni perfil por su cuenta (eso es del llamador).
  */
@@ -112,23 +113,68 @@ export function isContradiction(a: string, b: string): boolean {
   return tokenJaccard(left, right) >= CONTRADICTION_OVERLAP;
 }
 
+interface QueueRead {
+  items: ReviewItem[];
+  /** El fichero existe con contenido pero no es una lista JSON legible. */
+  corrupt: boolean;
+}
+
+function readQueue(path: string): QueueRead {
+  let raw: string;
+  try {
+    if (!existsSync(path)) return { items: [], corrupt: false };
+    raw = readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
+  } catch (err) {
+    log.warn('memory review: cola ilegible, se trata como vacia', { err: String(err) });
+    return { items: [], corrupt: false };
+  }
+  if (!raw.trim()) return { items: [], corrupt: false };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      log.warn('memory review: la cola no es una lista, se trata como vacia');
+      return { items: [], corrupt: true };
+    }
+    const items = parsed.map(parseItem).filter((item): item is ReviewItem => item !== null);
+    return { items: items.slice(-REVIEW_MAX_ITEMS), corrupt: false };
+  } catch (err) {
+    log.warn('memory review: cola ilegible, se trata como vacia', { err: String(err) });
+    return { items: [], corrupt: true };
+  }
+}
+
 /**
  * Lee la cola. Devuelve [] ante ausencia, JSON roto o entradas invalidas: una
  * contradiccion mal escrita no debe impedir ver las demas ni tumbar el turno.
  */
 export function list(path: string): ReviewItem[] {
-  try {
-    if (!existsSync(path)) return [];
-    const raw = readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
-    if (!raw.trim()) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const items = parsed.map(parseItem).filter((item): item is ReviewItem => item !== null);
-    return items.slice(-REVIEW_MAX_ITEMS);
-  } catch (err) {
-    log.warn('memory review: cola ilegible, se trata como vacia', { err: String(err) });
-    return [];
+  return readQueue(path).items;
+}
+
+/**
+ * Antes de escribir sobre una cola que no se pudo leer, se aparta a
+ * `<cola>.corrupt-<fecha>`: asi las contradicciones pendientes que contenia
+ * siguen en disco para recuperarlas a mano en vez de perderse con la
+ * siguiente escritura.
+ */
+function readForWrite(path: string): ReviewItem[] {
+  const { items, corrupt } = readQueue(path);
+  if (corrupt) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backup = `${path}.corrupt-${stamp}-${randomBytes(2).toString('hex')}`;
+    try {
+      renameSync(path, backup);
+      log.warn('memory review: cola corrupta apartada antes de escribir', { backup });
+    } catch (err) {
+      log.warn('memory review: no se pudo apartar la cola corrupta; no se escribe', {
+        err: String(err),
+      });
+      throw new Error(
+        'La cola de contradicciones esta corrupta y no se pudo apartar; no se sobrescribe',
+      );
+    }
   }
+  return items;
 }
 
 /**
@@ -168,7 +214,7 @@ export function append(path: string, item: ReviewItemInput): ReviewItem {
   if (aId) created.aId = aId;
   if (bId) created.bId = bId;
   if (note) created.note = note;
-  writeAtomic(path, [...list(path), created].slice(-REVIEW_MAX_ITEMS));
+  writeAtomic(path, [...readForWrite(path), created].slice(-REVIEW_MAX_ITEMS));
   return created;
 }
 
@@ -183,6 +229,7 @@ export function resolve(path: string, id: string, keepId: string): boolean {
   const items = list(path);
   const index = items.findIndex((item) => item.id === target);
   if (index < 0) return false;
+  readForWrite(path);
   const [removed] = items.splice(index, 1);
   writeAtomic(path, items);
   log.info('memory review: contradiccion resuelta', {
@@ -197,7 +244,7 @@ export function resolve(path: string, id: string, keepId: string): boolean {
 /** Vacia la cola conservando el fichero (escritura atomica). Devuelve cuantas salieron. */
 export function clear(path: string): number {
   if (!existsSync(path)) return 0;
-  const removed = list(path).length;
+  const removed = readForWrite(path).length;
   writeAtomic(path, []);
   return removed;
 }
