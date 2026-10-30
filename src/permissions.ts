@@ -10,6 +10,7 @@ import {
   egressHost,
   egressTaintReason,
   egressUrlOf,
+  searchQueryOf,
   taintSourceOf,
   taintSourceOfPage,
   urlCarriesData,
@@ -517,6 +518,10 @@ function decodedBlobs(text: string): string[] {
 
 function browserFillEchoReason(source: string): string {
   return `Vas a escribir en un formulario web un trozo literal de ${source} leído en este turno; al enviarlo saldría de tu PC.`;
+}
+
+function searchEchoReason(source: string): string {
+  return `Vas a enviar a un buscador o tienda externa una búsqueda con un trozo literal de ${source} leído en este turno; saldría de tu PC.`;
 }
 
 function egressEchoReason(source: string, host: string): string {
@@ -1304,6 +1309,11 @@ export class Gate {
       if (typed && this.#textEchoesPrivate(sessionId, typed)) return browserFillEchoReason(source);
       return null;
     }
+    // Una búsqueda (web, tienda, libros) envía su texto a un servicio externo: si
+    // repite un trozo literal del contenido privado leído, pregunta. Una búsqueda
+    // normal tras leer el correo no pregunta.
+    const query = searchQueryOf(call.tool, call.args);
+    if (query && this.#textEchoesPrivate(sessionId, query)) return searchEchoReason(source);
     const url = egressUrlOf(call.tool, call.args);
     if (!url) return null;
     const host = egressHost(url);
