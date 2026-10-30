@@ -10,13 +10,25 @@
 import type { Playback } from './speaker.js';
 
 const MAX_PHRASE = 240;
+
+/**
+ * Frases de un texto ya aplanado: solo se corta en `.`, `!`, `?` o `…` seguidos de
+ * espacio (o al final). Un punto pegado a lo siguiente no acaba frase: «1.500 €»,
+ * «las 10.30», «3.11» o «tab.bot» se dicen enteros, no «uno. quinientos».
+ */
+export function splitSentences(flat: string): string[] {
+  return flat
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 const MIN_PHRASE = 28;
 
 /** Sentences of at most MAX_PHRASE characters; tiny ones are merged into their neighbour. */
 export function splitPhrases(text: string): string[] {
   const flat = text.replace(/\s+/g, ' ').trim();
   if (!flat) return [];
-  const sentences = flat.match(/[^.!?…]+(?:[.!?…]+|$)\s*/g)?.map((x) => x.trim()) ?? [flat];
+  const sentences = splitSentences(flat);
   const pieces: string[] = [];
   for (const sentence of sentences) {
     let rest = sentence;

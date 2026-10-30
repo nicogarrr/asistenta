@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { encodeMp3, resampleLinear, wavToPcm } from './audio.js';
+import { splitSentences } from './phrases.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -250,10 +251,7 @@ export function splitSpeechChunks(text: string, chunkChars = CHUNK_CHARS): strin
   const max = Math.min(CHUNK_CHARS, Math.max(1, Math.floor(chunkChars)));
   const flat = text.replace(/\s+/g, ' ').trim();
   if (!flat) return [];
-  const sentences = flat
-    .match(/[^.!?…]+(?:[.!?…]+|$)\s*/g)
-    ?.map((sentence) => sentence.trim())
-    .filter(Boolean) ?? [flat];
+  const sentences = splitSentences(flat);
   const chunks: string[] = [];
   for (const sentence of sentences) {
     let rest = sentence;
