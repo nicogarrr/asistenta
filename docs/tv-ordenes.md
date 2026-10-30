@@ -16,6 +16,7 @@ Deterministas, sin modelo. Ejemplos:
 | «pausa», «pon pausa», «dale al play» | `media` |
 | «dale a pausa», «pulsa pausa», «detén (la peli)»; «pulsa play»; «stop», «pulsa stop» | `media` pausa / play / stop |
 | «súbele más», «baja más (el volumen)» | paso de volumen (3) |
+| «sube mucho», «bájale bastante», «sube un montón», «mucho más alto», «bastante menos volumen» | paso grande de volumen (10) |
 | «pon el 5», «ponme el 24» | canal (como «pon la 5») |
 | «adelanta», «avance rápido», «rebobina (el vídeo)», «retrocede» | `media` avance/retroceso (una pulsación; con segundos va al modelo) |
 | «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
