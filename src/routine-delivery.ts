@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { uniqueTmpPath } from './fs-tmp.js';
 
 /**
  * Entrega de las rutinas programadas (F6): a dónde va lo que produce una
@@ -107,7 +108,7 @@ export class RoutineDeliveryStore {
 
   #write(data: Record<string, StoredEntry>): void {
     mkdirSync(dirname(this.#file), { recursive: true, mode: 0o700 });
-    const tmp = `${this.#file}.tmp`;
+    const tmp = uniqueTmpPath(this.#file);
     writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
     renameSync(tmp, this.#file);
   }
