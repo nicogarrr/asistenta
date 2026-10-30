@@ -229,3 +229,5 @@ Propón cambios pequeños, explica el problema y añade una comprobación que lo
 `package.json` declara MIT. Este checkout no incluye un archivo `LICENSE`; antes de redistribuir código, confirma el texto y los avisos aplicables con el mantenedor. Esta documentación no añade ni cambia una licencia.
 
 `pa autostart install` también registra un vigilante (tarea «Asistenta-vigilante», al iniciar sesión y cada 5 min) que vuelve a arrancar Asistenta si no está en marcha; si la paras con `pa stop`, la deja apagada hasta reiniciar el PC o `pa iniciar`. `PA_WATCHDOG=0` lo desactiva y `pa autostart status` dice cómo está.
+
+Asistenta también se actualiza sola desde `main` (`PA_AUTOUPDATE=1` por defecto): espera a estar libre, hace fast-forward, compila, se reinicia y te avisa por Telegram con las novedades; si algo falla vuelve sola a la versión anterior. `pa autoupdate status|now|off|on`. Detalles en [docs/windows-startup.md](docs/windows-startup.md#autoactualización-desde-main).
