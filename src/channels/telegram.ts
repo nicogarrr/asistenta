@@ -56,6 +56,8 @@ interface DraftState {
   text: string;
   /** null hasta la primera edición, para no frenar la primera versión del borrador. */
   lastEditAt: number | null;
+  /** Topic del borrador, para mandar ahí el resto de una respuesta final larga. */
+  threadId?: number;
 }
 
 /** Entrada de la caché de respuestas completas, con su instante de caducidad. */
@@ -1112,7 +1114,13 @@ export class TelegramChannel implements ChannelAdapter {
         );
         if (!sent?.message_id) return null;
         const messageId = String(sent.message_id);
-        this.#drafts.set(key, { chatId, messageId, text, lastEditAt: null });
+        this.#drafts.set(key, {
+          chatId,
+          messageId,
+          text,
+          lastEditAt: null,
+          threadId: threadId ? Number(threadId) : undefined,
+        });
         return messageId;
       }
 
@@ -1152,23 +1160,40 @@ export class TelegramChannel implements ChannelAdapter {
     const ref = parseMessageRef(String(chatId), messageId);
     await this.#draftGate.run(async () => {
       let unchanged = false;
+      let threadId: number | undefined;
       for (const [key, draft] of this.#drafts) {
         if (draft.chatId === chatId && draft.messageId === messageId) {
           unchanged = draft.text === text;
+          threadId = draft.threadId;
           this.#drafts.delete(key);
           break;
         }
       }
       if (!ref || unchanged) return;
+      // Telegram rechaza más de 4096 caracteres: una respuesta final larga se
+      // quedaba en el borrador a medias (solo un log). Ahora el borrador recibe el
+      // primer trozo y el resto llega en mensajes nuevos.
+      const [first = text, ...rest] = chunkText(text, 4000);
       await this.#throttled(() =>
         withTimeout(
-          this.#bot.api.editMessageText(ref.chatId, ref.messageId, text),
+          this.#bot.api.editMessageText(ref.chatId, ref.messageId, first),
           20_000,
           'editMessageText timed out',
         ),
       ).catch((err: unknown) => {
         log.warn('draft final edit failed', { error: describeError(err) });
       });
+      for (const part of rest) {
+        await this.#throttled(() =>
+          withTimeout(
+            this.#bot.api.sendMessage(ref.chatId, part, { message_thread_id: threadId }),
+            20_000,
+            'sendMessage timed out',
+          ),
+        ).catch((err: unknown) => {
+          log.warn('draft final rest failed', { error: describeError(err) });
+        });
+      }
     });
   }
 
