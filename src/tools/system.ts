@@ -4,6 +4,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
+import { psErrorSummary } from './ps-error.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,7 +62,7 @@ async function ps(
       ...(signal ? { signal } : {}),
     },
   ).catch((err: unknown) => {
-    log.warn('system helper failed', { err });
+    log.warn('system helper failed', psErrorSummary(err));
     if (strict) throw err;
     return { stdout: '' };
   });
@@ -270,7 +271,7 @@ Write-Output ("played " + $elapsed)
             got: state.level,
           });
       } catch (err) {
-        log.warn('audio volume restore failed', { err });
+        log.warn('audio volume restore failed', psErrorSummary(err));
       }
     }
   }
