@@ -293,3 +293,18 @@ export function resumenSesion(item: unknown, indice: number, ahora: number): Res
   if (extracto.length > 220) extracto = `${extracto.slice(0, 217).trimEnd()}…`;
   return { titulo, meta: partes.join(' · '), extracto };
 }
+
+/**
+ * Qué decir al lector de pantalla cuando cambia el número de aprobaciones.
+ * Solo se anuncia lo que sube (o lo que ya había al abrir); nada si baja o no cambia,
+ * para que el sondeo de cada 15 s no repita la tarjeta entera.
+ */
+export function anuncioPendientes(antes: number | null, ahora: number): string {
+  const n = Math.max(0, Math.floor(Number(ahora) || 0));
+  const plural = (k: number): string =>
+    k === 1 ? '1 aprobación pendiente' : `${k} aprobaciones pendientes`;
+  if (antes === null || antes === undefined) return n > 0 ? `Tienes ${plural(n)}.` : '';
+  const nuevas = n - Math.max(0, Math.floor(Number(antes) || 0));
+  if (nuevas <= 0) return '';
+  return `${nuevas === 1 ? 'Nueva aprobación' : `${nuevas} aprobaciones nuevas`}: ${plural(n)}.`;
+}
