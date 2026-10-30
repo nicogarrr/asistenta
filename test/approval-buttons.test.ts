@@ -160,14 +160,15 @@ async function makeChannel(approvalTtlMs = 60_000): Promise<TelegramChannel> {
 }
 
 /** Feed one callback_query through the registered gramY handler; returns its message id. */
-function press(data: string, userId = 7, chatId = 42): number {
+function press(data: string, userId = 7, chatId: number | null = 42): number {
   const handler = harness.handlers.get('callback_query:data');
   if (!handler) throw new Error('the adapter did not register a callback handler');
   const messageId = nextMessageId++;
   handler({
     callbackQuery: {
       data,
-      message: { chat: { id: chatId }, message_id: messageId },
+      // null = Telegram no entrega el mensaje original (inaccesible).
+      message: chatId === null ? undefined : { chat: { id: chatId }, message_id: messageId },
     },
     from: { id: userId },
     answerCallbackQuery: async (args?: { text?: string }) => {
@@ -374,6 +375,16 @@ describe('aprobación ligada a su chat', () => {
     expect(harness.answers).toContain('Esta solicitud ya no está pendiente.');
     // El botón legítimo en su chat sigue funcionando.
     press('approve:once:req-x', 7, 42);
+    await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
+  });
+
+  it('un botón sin mensaje original (chat desconocido) no la resuelve ni la consume', async () => {
+    const channel = await makeChannel();
+    const pending = channel.offerApproval('req-y', '42', '¿Permito y?', { askScope: true });
+    press('approve:always:req-y', 7, null);
+    expect(await stateOf(pending)).toBe('pending');
+    expect(harness.answers).toContain('Esta solicitud ya no está pendiente.');
+    press('approve:once:req-y', 7, 42);
     await expect(pending).resolves.toEqual({ approved: true, scope: 'once' });
   });
 });
