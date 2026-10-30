@@ -202,6 +202,13 @@ Add-Type -AssemblyName System.Windows.Forms
             await this.#pasteText(piece);
           }
         } catch (err) {
+          // A SendKeys killed mid-way (capitals and symbols go with Shift) or a paste
+          // killed after its Ctrl+V can leave Shift/Ctrl held, and every later key on
+          // Nico's PC turns into a shortcut — same as key() (#546). Best effort; the
+          // original failure is what gets reported.
+          try {
+            await this.#ps(releaseModifiersScript());
+          } catch {}
           if (done === 0) throw err;
           const reason = err instanceof Error ? err.message : String(err);
           throw new Error(
