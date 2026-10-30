@@ -460,3 +460,22 @@ describe('streamDraft con texto largo', () => {
     expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
   });
 });
+
+describe('finishDraft con respuesta final larga', () => {
+  it('reparte en trozos de Telegram en vez de quedarse en el borrador', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+    await channel.streamDraft(42, '7', 'parcial');
+    const long = `${'a'.repeat(3990)} ${'b'.repeat(3000)}`;
+    const finish = channel.finishDraft(42, '100', long);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await finish;
+    expect(state.edits).toHaveLength(1);
+    expect(state.edits[0]?.text.length).toBeLessThanOrEqual(4096);
+    const rest = state.sent.slice(1);
+    expect(rest.length).toBeGreaterThanOrEqual(1);
+    expect(rest.every((m) => m.threadId === 7 && m.text.length <= 4096)).toBe(true);
+    const all = [state.edits[0]?.text ?? '', ...rest.map((m) => m.text)].join('');
+    expect(all.replace(/\s/g, '')).toBe(long.replace(/\s/g, ''));
+  });
+});
