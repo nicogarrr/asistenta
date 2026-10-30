@@ -5,6 +5,7 @@ import { appendCallAudit, hashArgs } from '../audit/calls.js';
 import { takePageAfterFailedCall } from '../browser/page-after-call.js';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
+import { busyBegin } from '../ocupada.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
 import { desktopEnabled } from '../platform.js';
 import { actionLabel, type RunStep } from '../skills/lessons.js';
@@ -485,6 +486,8 @@ export class PersonalAgent {
   readonly #sessionId: string;
   /** True while the run is parked waiting for a human approval. */
   #awaitingApproval = false;
+  /** Cierra la marca de «aprobación esperando» que lee la autoactualización. */
+  #approvalBusyEnd: (() => void) | undefined;
   /** Set when something outside the run (e.g. /stop) aborts it. */
   #externalAbort = false;
   /** Señal del run en curso: corta esperas (reintentos) en cuanto se aborta. */
@@ -570,6 +573,11 @@ export class PersonalAgent {
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
   setAwaitingApproval(waiting: boolean): void {
+    if (waiting && !this.#awaitingApproval) this.#approvalBusyEnd = busyBegin('aprobaciones');
+    if (!waiting) {
+      this.#approvalBusyEnd?.();
+      this.#approvalBusyEnd = undefined;
+    }
     this.#awaitingApproval = waiting;
   }
 
@@ -1031,6 +1039,20 @@ export class PersonalAgent {
    * never lands twice in the transcript.
    */
   async run(
+    prompt: string,
+    images?: Array<{ type: 'image'; mimeType: string; data: string }>,
+    hooks?: RunHooks,
+  ): Promise<AgentRunResult> {
+    // Mientras dura el turno, la autoactualización no reinicia el daemon.
+    const endBusy = busyBegin('turnos');
+    try {
+      return await this.#runTurn(prompt, images, hooks);
+    } finally {
+      endBusy();
+    }
+  }
+
+  async #runTurn(
     prompt: string,
     images?: Array<{ type: 'image'; mimeType: string; data: string }>,
     hooks?: RunHooks,
