@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
-import { localTimeZone, wallClock } from '../datecontext.js';
+import { localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
@@ -327,7 +327,17 @@ export class FiredReminders {
 }
 
 /**
- * `/recordatorios hecho|pospone <id>` (los botones del aviso). «Hecho» solo lo da por
+ * «Mañana a las 9» en la hora de pared de PA_TIMEZONE (cambios de hora incluidos). De
+ * madrugada (antes de las 5) «mañana» es hoy a las 9, como lo diría una persona.
+ */
+export function nextMorningAt9(now: number, timeZone: string = localTimeZone()): number {
+  const w = wallClock(new Date(now), timeZone);
+  return zonedTime(w.year, w.month, w.hour < 5 ? w.day : w.day + 1, 9, 0, timeZone);
+}
+
+/**
+ * `/recordatorios hecho|pospone|manana <id>` (los botones del aviso). «Mañana 9:00» es
+ * como «+1h» pero para mañana a las 9 (nextMorningAt9). «Hecho» solo lo da por
  * visto: no borra nada (un recordatorio que se repite sigue). «+1h» crea un recordatorio
  * puntual con el mismo texto dentro de una hora, en el mismo hilo. Devuelve la respuesta.
  */
@@ -338,7 +348,7 @@ export function reminderButtonCommand(
     sameChat: (scope: string) => boolean;
     now?: () => number;
   },
-  sub: 'hecho' | 'pospone',
+  sub: 'hecho' | 'pospone' | 'manana',
   id: string,
 ): string {
   const hit = deps.fired.take(id, deps.sameChat);
@@ -347,7 +357,8 @@ export function reminderButtonCommand(
   if (deps.store.listRoutines(hit.scope).filter(isReminder).length >= MAX_REMINDERS_PER_CHAT) {
     return `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`;
   }
-  const when = new Date((deps.now ?? Date.now)() + 3_600_000);
+  const t = (deps.now ?? Date.now)();
+  const when = new Date(sub === 'manana' ? nextMorningAt9(t) : t + 3_600_000);
   deps.store.saveRoutine({
     scope: hit.scope,
     name: nameFor(REMINDER_ONCE_PREFIX, hit.text, ` @${stamp(when)}`),
@@ -355,6 +366,12 @@ export function reminderButtonCommand(
     prompt: hit.text,
     schedule: onceCron(when),
   });
+  if (sub === 'manana') {
+    const w = stamp(when);
+    const day = `${w.slice(8, 10)}/${w.slice(5, 7)}`;
+    const label = w.slice(0, 10) === stamp(new Date(t)).slice(0, 10) ? 'hoy' : 'mañana';
+    return `🌅 Te lo vuelvo a recordar ${label} (${day}) a las ${w.slice(11)}: ${hit.text}`;
+  }
   return `⏰ Te lo vuelvo a recordar a las ${stamp(when).slice(11)}: ${hit.text}`;
 }
 
