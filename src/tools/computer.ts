@@ -270,13 +270,28 @@ function coords(
       `las coordenadas ${x},${y} quedan fuera de la imagen de ${view.width}x${view.height} que se te mostró`,
     );
   }
-  const real = toRealCoordinates(x, y, view, native);
+  const real = clampToLastPixel(toRealCoordinates(x, y, view, native), native);
   if (real.x < 0 || real.y < 0 || real.x >= native.width || real.y >= native.height) {
     throw new Error(
       `las coordenadas ${real.x},${real.y} quedan fuera de la pantalla de ${native.width}x${native.height}`,
     );
   }
   return real;
+}
+
+/**
+ * A point already proven inside the image can still round up to `native.width`
+ * (x=1279.7 on a 1280-wide view of a 1920 screen → 1919.55 → 1920): it is on the
+ * last pixel the model saw, so it lands on the last real pixel instead of being
+ * refused as «fuera de la pantalla». Only the upper edge moves, and only by the
+ * rounding; anything outside the image was refused before this runs.
+ */
+function clampToLastPixel<T extends { x: number; y: number }>(p: T, native: Screen): T {
+  return {
+    ...p,
+    x: p.x >= native.width && native.width > 0 ? native.width - 1 : p.x,
+    y: p.y >= native.height && native.height > 0 ? native.height - 1 : p.y,
+  };
 }
 
 /**
@@ -382,10 +397,21 @@ function coordsInRoi(
   // clicks.
   const viewX = roi.x + x;
   const viewY = roi.y + y;
-  const scaled = scaleRegion(
-    { x: viewX, y: viewY, width: 0, height: 0 },
-    { x: 0, y: 0, width: view.width, height: view.height },
-    { x: 0, y: 0, width: native.width, height: native.height },
+  // The roi itself is never checked against the image, so a point inside the
+  // roi can still lie outside the screenshot (a roi hanging off the edge, or a
+  // negative roi.x). Same check, same words as `coords()`.
+  if (viewX < 0 || viewY < 0 || viewX >= view.width || viewY >= view.height) {
+    throw new Error(
+      `las coordenadas ${viewX},${viewY} (roi + x/y) quedan fuera de la imagen de ${view.width}x${view.height} que se te mostró`,
+    );
+  }
+  const scaled = clampToLastPixel(
+    scaleRegion(
+      { x: viewX, y: viewY, width: 0, height: 0 },
+      { x: 0, y: 0, width: view.width, height: view.height },
+      { x: 0, y: 0, width: native.width, height: native.height },
+    ),
+    native,
   );
   if (scaled.x < 0 || scaled.y < 0 || scaled.x >= native.width || scaled.y >= native.height) {
     throw new Error(
