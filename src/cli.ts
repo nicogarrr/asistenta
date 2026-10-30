@@ -4365,6 +4365,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       chatKey: ck,
       liveScopes: live.map((t) => t.key),
       db: memoryDb,
+      projects: projectContexts,
+      models: modelChoices,
     });
     for (const t of live) threads.delete(t.key);
     await say(inbound, eraseSummary(result), { quote: true });
