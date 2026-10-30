@@ -330,10 +330,11 @@ import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats
 import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { splitPhrases } from './voice/phrases.js';
+import { createDefaultTts } from './voice/piper.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { transcribeVoiceNote } from './voice/stt.js';
-import { createSapiTts, REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
+import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { compareProduct, describeCompare } from './watch/compare.js';
@@ -1580,7 +1581,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   registry.register(telegram);
 
   const screen = new WindowsScreen();
-  const tts = createSapiTts();
+  const tts = createDefaultTts(process.env, {
+    onFallback: (err) => log.warn('tts fallback', { err }),
+  });
 
   /**
    * One mutex for everything that moves the machine. Reasoning runs outside it;

@@ -82,6 +82,29 @@ function truncate(text: string): string {
 }
 
 /**
+ * WAV de cualquier motor local -> el mp3 de 16 kHz que sale por Telegram. Compartido
+ * por SAPI y Piper para que las dos voces suenen y pesen igual.
+ */
+export function encodeSpeech(wav: Buffer, spoken: string, original: string): TtsAudio {
+  const decoded = wavToPcm(wav);
+  const durationSeconds = decoded.samples.length / decoded.sampleRate;
+  const pcm = resampleLinear(decoded.samples, decoded.sampleRate, MP3_SAMPLE_RATE);
+  return {
+    durationSeconds,
+    data: encodeMp3(pcm, MP3_SAMPLE_RATE, MP3_KBPS),
+    mimeType: 'audio/mpeg',
+    format: 'mp3',
+    text: spoken,
+    truncated: spoken.length < original.length,
+  };
+}
+
+/** Recorte a `MAX_CHARS` en límite de palabra, para cualquier motor. */
+export function truncateForSpeech(text: string): string {
+  return truncate(text);
+}
+
+/**
  * Build the PowerShell script as a file, and pass the text as a file too.
  *
  * Both details are load-bearing:
@@ -163,21 +186,7 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
           },
         );
 
-        const decoded = wavToPcm(readFileSync(wavFile));
-        const durationSeconds = decoded.samples.length / decoded.sampleRate;
-        // Resampled to 16k before mp3: SAPI writes 22.05kHz, and encoding that
-        // rate costs ~25% more bytes for no audible gain, since nothing above
-        // 8kHz matters for intelligibility of speech.
-        const pcm = resampleLinear(decoded.samples, decoded.sampleRate, MP3_SAMPLE_RATE);
-
-        return {
-          durationSeconds,
-          data: encodeMp3(pcm, MP3_SAMPLE_RATE, MP3_KBPS),
-          mimeType: 'audio/mpeg',
-          format: 'mp3',
-          text: spoken,
-          truncated: spoken.length < trimmed.length,
-        };
+        return encodeSpeech(readFileSync(wavFile), spoken, trimmed);
       } catch (err) {
         if (speakOpts.signal?.aborted) throw cancelled();
         const stderr =
