@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { localDay } from './datecontext.js';
 import { paths } from './paths.js';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -30,7 +31,7 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
   process.stdout.write(`${line}\n`);
   try {
     mkdirSync(paths.log, { recursive: true });
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     appendFileSync(join(paths.log, `${day}.jsonl`), `${line}\n`);
   } catch {
     // Never let logging be the reason a turn dies.

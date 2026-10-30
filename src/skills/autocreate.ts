@@ -16,6 +16,8 @@
  * "don't save": a missed skill is forgotten in a day, a bad skill is followed
  * forever.
  */
+
+import { localDay } from '../datecontext.js';
 import type { Skill, SkillDraft } from './types.js';
 
 /** How many different tool calls a task must have used before it is a recipe. */
@@ -259,7 +261,7 @@ function buildDraft(request: string, calls: ToolCallStep[]): SkillDraft {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 /**

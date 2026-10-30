@@ -49,7 +49,7 @@ import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
-import { applyConfiguredTimeZone, buildNowNote, localTimeZone } from './datecontext.js';
+import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
@@ -4321,7 +4321,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const curl = await findCurlImpersonate(config.curlImpersonatePath).catch(() => null);
     let logSummary: ReturnType<typeof summarizeLog> | null = null;
     try {
-      const day = new Date().toISOString().slice(0, 10);
+      const day = localDay();
       logSummary = summarizeLog(readFileSync(join(paths.log, `${day}.jsonl`), 'utf8'));
     } catch {
       logSummary = null;
@@ -5396,7 +5396,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.
-      const learnDay = new Date().toISOString().slice(0, 10);
+      const learnDay = localDay();
       const learned = recordLessons(skills, result.steps, learnDay);
       if (learned.length) log.info('lessons saved', { thread: thread.name, ids: learned });
       // Bucle Hermes: una lección reincidente mejora el skill afectado al
@@ -5427,7 +5427,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       if (result.text.trim()) cacheFullReply(thread.key, result.text.trim());
       if (config.dailyBudgetEur > 0 && dailyBudgetExceeded(config.dailyBudgetEur)) {
-        const budgetDay = new Date().toISOString().slice(0, 10);
+        const budgetDay = localDay();
         if (budgetWarnedDay !== budgetDay) {
           budgetWarnedDay = budgetDay;
           void say(inbound, 'Aviso: has alcanzado el presupuesto diario configurado.', {
@@ -5525,7 +5525,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // action=forget_profile. Antes del umbral se pregunta como siempre.
         let autosaved = false;
         try {
-          if (nudgeTracker.record(nudge.suggestion, new Date().toISOString().slice(0, 10))) {
+          if (nudgeTracker.record(nudge.suggestion, localDay())) {
             const first = nudge.suggestion.indexOf('"');
             const last = nudge.suggestion.lastIndexOf('"');
             const clause =
@@ -6647,7 +6647,7 @@ export function formatSessionHits(hits: readonly SessionHit[], query = ''): stri
       : 'No he encontrado nada en el historial de esta conversación.';
   }
   const lines = hits.map((h) => {
-    const day = new Date(h.at).toISOString().slice(0, 10);
+    const day = localDay(new Date(h.at));
     const snippet = h.snippet.replace(/\s+/g, ' ').trim();
     return `- ${h.title.trim() || 'sin título'} (${day}): ${snippet}`;
   });

@@ -6,6 +6,19 @@
  * día anterior y resolvía "mañana" como el día actual. Aquí todo se calcula en
  * la zona horaria del usuario y "hoy" y "mañana" se dan ya resueltos.
  */
+/**
+ * Día local `YYYY-MM-DD` (el día que ve el usuario), no el día UTC.
+ *
+ * `toISOString().slice(0, 10)` da la fecha UTC: entre las 00:00 y la 01:00 (02:00 en
+ * verano) de Madrid devuelve el día anterior. Lee la zona del proceso, que
+ * `applyConfiguredTimeZone` alinea con PA_TIMEZONE al arrancar. Úsalo para todo «hoy».
+ */
+export function localDay(date: Date | number = new Date()): string {
+  const d = typeof date === 'number' ? new Date(date) : date;
+  const pad2 = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 export function localTimeZone(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.PA_TIMEZONE?.trim();
   if (configured) {

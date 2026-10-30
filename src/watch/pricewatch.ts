@@ -23,6 +23,7 @@
  */
 
 import type { DatabaseSync } from 'node:sqlite';
+import { localDay } from '../datecontext.js';
 
 export const MIN_GAP_MS = 30_000;
 export const MIN_READINGS = 5;
@@ -582,8 +583,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
   const items = buildItems(d.products);
 
   const overCap = (host: string): boolean =>
-    d.dailyCap !== undefined &&
-    d.store.getMeta(`reqs:${host}:${new Date(d.now()).toISOString().slice(0, 10)}`) >= d.dailyCap;
+    d.dailyCap !== undefined && d.store.getMeta(`reqs:${host}:${localDay(d.now())}`) >= d.dailyCap;
 
   const throttle = async (host: string): Promise<void> => {
     const last = lastReq.get(host);
@@ -598,7 +598,7 @@ export async function runOnce(d: RunDeps): Promise<RunSummary> {
   ): Promise<{ status: number; html: string } | null> => {
     await throttle(host);
     if (d.dailyCap !== undefined && !d.managesRequestBudget) {
-      const k = `reqs:${host}:${new Date(d.now()).toISOString().slice(0, 10)}`;
+      const k = `reqs:${host}:${localDay(d.now())}`;
       d.store.setMeta(k, d.store.getMeta(k) + 1);
     }
     try {

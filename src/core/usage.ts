@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { localDay } from '../datecontext.js';
 import { paths } from '../paths.js';
 import { type ModelCaps, resolveModelCaps } from './models.js';
 
@@ -69,15 +70,13 @@ const ZERO_TOTALS: UsageTotals = {
   calls: 0,
 };
 
+/** Fecha local YYYY-MM-DD (vive en datecontext; se reexporta por compatibilidad). */
+export { localDay };
+
 const USAGE_FILE = /^usage-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
-}
-
-/** Fecha local en formato YYYY-MM-DD; el dia que ve el usuario, no UTC. */
-export function localDay(date: Date = new Date()): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function usageFile(day: string): string {

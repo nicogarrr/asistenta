@@ -17,6 +17,7 @@ import { pricewatchNotifier } from './pricewatch-notify.js';
 
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { localDay } from '../datecontext.js';
 import { logHost } from '../log.js';
 import { curlImpersonateFetch, findCurlImpersonate } from '../media/download.js';
 import {
@@ -104,9 +105,8 @@ export interface CycleResult {
   scan?: ScanSummary;
 }
 
-const dayNum = (ms: number): number =>
-  Number(new Date(ms).toISOString().slice(0, 10).replace(/-/g, ''));
-const dayStr = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+const dayNum = (ms: number): number => Number(localDay(ms).replace(/-/g, ''));
+const dayStr = (ms: number): string => localDay(ms);
 
 function bump(store: PriceStore, key: string, n: number): void {
   if (n > 0) store.setMeta(key, store.getMeta(key) + n);
