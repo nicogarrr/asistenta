@@ -23,6 +23,11 @@ export type StateEntry = {
   /** Quién lo poda y con qué ajuste; ausente = crece sin poda. */
   readonly retention?: string;
   /**
+   * Para lo que no se copia y nadie poda: por qué está bien que crezca (o que no crece).
+   * test/state-files-growth.test.ts exige que lo diga, para que nada crezca sin que se sepa.
+   */
+  readonly growth?: string;
+  /**
    * Poda por antigüedad de ficheros sueltos (PA_FILE_RETENTION_DAYS, maintenance.ts):
    * `sub` limita la poda a un subdirectorio y `match` a los nombres que casan. Sin
    * `match` se poda cualquier fichero (recursivo); nunca se borran directorios.
@@ -103,20 +108,35 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'secretos cifrados',
     backup: false,
     why: 'un duplicado en la misma máquina no protege nada y multiplica dónde viven los secretos',
+    growth: 'no crece: un solo fichero que se reescribe',
   },
-  { name: 'agent.pid', what: 'pid del daemon', backup: false, why: 'estado de ejecución' },
-  { name: 'agent.heartbeat', what: 'latido del daemon', backup: false, why: 'estado de ejecución' },
+  {
+    name: 'agent.pid',
+    what: 'pid del daemon',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada arranque',
+  },
+  {
+    name: 'agent.heartbeat',
+    what: 'latido del daemon',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada latido',
+  },
   {
     name: 'control',
     what: 'canal de control del daemon',
     backup: false,
     why: 'estado de ejecución',
+    growth: 'no crece: canal efímero del daemon',
   },
   {
     name: 'control-win',
     what: 'canal de control del daemon en Windows',
     backup: false,
     why: 'estado de ejecución',
+    growth: 'no crece: canal efímero del daemon',
   },
   {
     name: 'log',
@@ -142,12 +162,16 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'perfil del navegador',
     backup: false,
     why: 'pesa y lleva cookies de sesión',
+    growth:
+      'crece a propósito: es el perfil del navegador (cookies y sesiones); podarlo cerraría sesiones',
   },
   {
     name: 'models',
     what: 'modelos descargados',
     backup: false,
     why: 'pesan y se vuelven a descargar',
+    growth:
+      'crece a propósito: un fichero por modelo descargado; borrarlo obliga a descargarlo otra vez',
   },
   {
     name: 'voice',
@@ -163,6 +187,8 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'temporales de sesión',
     backup: false,
     why: 'las sesiones viven en agent.db',
+    growth:
+      'acotado: temporales de sesión; las sesiones de verdad viven en agent.db con su retención',
   },
   {
     name: 'media',
@@ -177,8 +203,15 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'copias previas a consolidar la memoria',
     backup: false,
     why: 'ya es una copia de seguridad',
+    growth: 'crece a propósito: copia previa a cada consolidación, para poder deshacerla',
   },
-  { name: 'qa', what: 'canal de pruebas QA', backup: false, why: 'solo pruebas' },
+  {
+    name: 'qa',
+    what: 'canal de pruebas QA',
+    backup: false,
+    why: 'solo pruebas',
+    growth: 'solo pruebas: en uso normal no se escribe',
+  },
   {
     name: 'backups',
     what: 'las propias copias de seguridad',
