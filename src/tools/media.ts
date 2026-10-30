@@ -54,10 +54,12 @@ function watchTeleFetch(
   hits: (() => number) | undefined,
   notify: ((text: string) => void) | undefined,
   ms = 15_000,
+  stopped?: () => boolean,
 ): void {
   if (!hits || !notify || teleFirewallAlreadyWarned()) return;
   const timer = setTimeout(() => {
-    if (teleFirewallAlreadyWarned()) return;
+    // /stop paró la nota antes de que la tele pidiera el fichero: no es el firewall.
+    if (stopped?.() || teleFirewallAlreadyWarned()) return;
     let served = 1;
     try {
       served = hits();
@@ -72,6 +74,18 @@ function watchTeleFetch(
     }
   }, ms);
   timer.unref?.();
+}
+
+/** `onTeleCast` puede devolver el asa del cast (altavoz.noteTele) para saber si /stop lo paró. */
+function castStopped(cast: unknown): boolean {
+  if (!cast || typeof cast !== 'object') return false;
+  const fn = (cast as { stopped?: unknown }).stopped;
+  if (typeof fn !== 'function') return false;
+  try {
+    return fn.call(cast) === true;
+  } catch {
+    return false;
+  }
 }
 
 export interface MediaToolDeps {
@@ -124,7 +138,7 @@ export interface MediaToolDeps {
    * La tele aceptó el audio: quien lleva /stop apunta el «parar» de este cast para que
    * /stop en este chat lo pare (mismo plazo y mismas reglas que /altavoz tele).
    */
-  onTeleCast?: (stop?: () => Promise<unknown>) => void;
+  onTeleCast?: (stop?: () => Promise<unknown>) => unknown;
   /**
    * Aviso al chat cuando la tele aceptó el audio pero no lo ha descargado en
    * `teleNoFetchMs` (15 s): suele ser el firewall de Windows. Una vez por sesión.
@@ -396,8 +410,13 @@ async function playReceived(
         return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
       }
       if (res.ok) {
-        watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
-        deps.onTeleCast?.(res.stop);
+        const cast = deps.onTeleCast?.(res.stop);
+        watchTeleFetch(
+          res.hits,
+          deps.notifyChat,
+          deps.teleNoFetchMs,
+          () => signal?.aborted === true || castStopped(cast),
+        );
       }
       return ok(res.message, { played: res.ok, target, audioAt: audio.at });
     }

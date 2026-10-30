@@ -150,10 +150,15 @@ export interface AltavozPlayer {
    * que /stop en ese chat la pare igual que una de /altavoz tele: solo dentro de
    * `teleStopWindowMs` y con el `stop` del propio cast (si no hay, el genérico).
    */
-  noteTele(key: string | undefined, stop?: () => Promise<unknown>): void;
+  noteTele(key: string | undefined, stop?: () => Promise<unknown>): TeleCastHandle;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
   pending(): number;
+}
+
+/** Lo que devuelve `noteTele`: si /stop ya paró ese cast (para no avisar del firewall). */
+export interface TeleCastHandle {
+  stopped(): boolean;
 }
 
 /**
@@ -173,23 +178,30 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
    */
   const teleCasts = new Map<
     string | undefined,
-    Array<{ at: number; stop?: () => Promise<unknown> }>
+    Array<{ at: number; stop?: () => Promise<unknown>; stopped: boolean }>
   >();
   const noteTeleCast = (key: string | undefined, stop?: () => Promise<unknown>) => {
     const window = deps.teleStopWindowMs ?? 120_000;
     const t = now();
     const kept = (teleCasts.get(key) ?? []).filter((e) => t - e.at <= window);
-    kept.push({ at: t, stop });
+    const entry = { at: t, stop, stopped: false };
+    kept.push(entry);
     teleCasts.set(key, kept);
+    return entry;
   };
   /**
    * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
    * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
    */
-  const watchFetch = (hits: (() => number) | undefined, onNotice?: (text: string) => void) => {
+  const watchFetch = (
+    hits: (() => number) | undefined,
+    onNotice?: (text: string) => void,
+    stopped?: () => boolean,
+  ) => {
     if (!hits || !onNotice || teleFirewallAlreadyWarned()) return;
     const timer = setTimeout(() => {
-      if (teleFirewallAlreadyWarned()) return;
+      // Parada con /stop antes de que la tele pidiera el fichero: no es el firewall.
+      if (stopped?.() || teleFirewallAlreadyWarned()) return;
       let served = 1;
       try {
         served = hits();
@@ -238,8 +250,8 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
           .finally(() => r.close?.());
         return;
       }
-      noteTeleCast(item.key, r.stop);
-      watchFetch(r.hits, onNotice);
+      const cast = noteTeleCast(item.key, r.stop);
+      watchFetch(r.hits, onNotice, () => cast.stopped);
       return;
     }
     const abort = new AbortController();
@@ -264,6 +276,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       teleCasts.delete(k);
       for (const e of list) {
         if (t - e.at > window) continue;
+        e.stopped = true;
         // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
         const stop = e.stop ?? stopTv;
         if (stop) stops.add(stop);
@@ -317,7 +330,8 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       return stopped;
     },
     noteTele(key, stop) {
-      noteTeleCast(key, stop);
+      const cast = noteTeleCast(key, stop);
+      return { stopped: () => cast.stopped };
     },
     idle: () => chain,
     pending: () => waiting,
