@@ -643,7 +643,9 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
     const text = view.text.slice(0, 4000);
-    const reply_markup = view.buttons.length ? buildKeyboard(view.buttons) : undefined;
+    const reply_markup = usableButtons(view.buttons).length
+      ? buildKeyboard(view.buttons)
+      : undefined;
     if (messageId !== undefined) {
       const edited = await this.#throttled(() =>
         withTimeout(
@@ -864,7 +866,9 @@ export class TelegramChannel implements ChannelAdapter {
         reply_to_message_id:
           withReply && outbound.replyToMessageId ? Number(outbound.replyToMessageId) : undefined,
         reply_markup:
-          first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
+          first && usableButtons(outbound.buttons ?? []).length
+            ? buildKeyboard(outbound.buttons ?? [])
+            : undefined,
       });
       const rich = outbound.format === 'marks';
       let html = rich;
@@ -1641,7 +1645,7 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
   // una aprobación en una sola fila se truncaban en el móvil («Esta se…», «Siem…») y
   // era fácil pulsar el vecino. El orden y el callback_data no cambian.
   const perRow = 2;
-  buttons.forEach((b, i) => {
+  usableButtons(buttons).forEach((b, i) => {
     if (i > 0 && i % perRow === 0) kb.row();
     kb.text(b.label, b.action);
   });
@@ -2036,4 +2040,16 @@ export function isMoreRequest(text: string): boolean {
   if (!MORE_REQUEST.test(plain)) return false;
   const words = plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   return words.length <= 6 && words.every((w) => MORE_FILLER.has(w));
+}
+
+/**
+ * Botones que Telegram acepta: texto visible y callback_data de 1 a 64 bytes. Un solo
+ * botón fuera de eso hacía que Telegram rechazara el mensaje entero (BUTTON_DATA_INVALID)
+ * y el dueño no recibía ni el texto; ahora ese botón se omite y el mensaje llega.
+ */
+export function usableButtons<T extends { label: string; action: string }>(buttons: T[]): T[] {
+  return buttons.filter((b) => {
+    const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
+    return Boolean(b.label?.trim()) && bytes >= 1 && bytes <= 64;
+  });
 }
