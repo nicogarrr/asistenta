@@ -141,8 +141,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     entries: [
       {
         command: 'investiga',
-        args: '<pregunta>',
-        description: 'informe a fondo con fuentes citadas',
+        args: '[amplio] <pregunta> [| a, b, c]',
+        description: 'informe a fondo con fuentes citadas; «amplio» = tabla por elemento',
       },
       { command: 'vigila', args: '<enlace> [nombre]', description: 'te aviso si cambia el precio' },
       { command: 'vigilando', description: 'lo que estoy vigilando' },

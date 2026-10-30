@@ -60,7 +60,13 @@ describe('queueThreadTurn (cola por hilo)', () => {
   it('/stop (generación nueva) descarta lo encolado que no ha empezado', async () => {
     const t = thread();
     let release!: () => void;
-    const first = queueThreadTurn(t, () => new Promise<void>((r) => (release = r)));
+    const first = queueThreadTurn(
+      t,
+      () =>
+        new Promise<void>((r) => {
+          release = r;
+        }),
+    );
     let ran = false;
     const second = queueThreadTurn(t, async () => {
       ran = true;

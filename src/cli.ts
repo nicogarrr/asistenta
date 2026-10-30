@@ -132,6 +132,13 @@ import {
   runPermisosCommand,
 } from './permissions.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
+import {
+  parseWideArgs,
+  renderWideReport,
+  WIDE_MAX_ITEMS,
+  wideResearch,
+  wideResearchEnabled,
+} from './research/wide-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { refineFromLessons } from './skills/refine.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
@@ -4006,6 +4013,46 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         'Uso: /investiga <pregunta>. Hago un plan de sub-preguntas, busco y leo varias fuentes con el enrutador web (gratis) y te mando un informe con cada afirmacion citada [n] a su fuente verbatim. Lo que no pueda verificar queda marcado como tal.',
         { quote: true },
       ));
+    }
+    const wide = /^amplio\b/i.test(question);
+    if (wide) {
+      // F8: «/investiga amplio <pregunta> | a, b, c» → una fila por elemento.
+      if (!wideResearchEnabled()) {
+        return void (await say(
+          inbound,
+          'La investigacion amplia esta desactivada (hace una consulta al modelo por elemento). Activala con PA_INVESTIGA_AMPLIO=1 y reinicia Asistenta.',
+          { quote: true },
+        ));
+      }
+      const parsed = parseWideArgs(question.replace(/^amplio\b/i, ''));
+      if (!parsed) {
+        return void (await say(
+          inbound,
+          `Uso: /investiga amplio <pregunta> | elemento1, elemento2, ... (hasta ${WIDE_MAX_ITEMS}). Ejemplo: /investiga amplio precio y garantia | iPhone 16, Pixel 9, Galaxy S25`,
+          { quote: true },
+        ));
+      }
+      await say(
+        inbound,
+        `Me pongo con ${parsed.items.length} elementos, 3 a la vez, cada uno con su fuente. Tardo 1-3 minutos.`,
+        { quote: true },
+      );
+      try {
+        const router = new WebRouter({
+          backends: await buildWebBackends(),
+          maxCostEur: config.webMaxCostEur,
+          metricsPath: paths.webMetrics,
+        });
+        const report = await wideResearch(parsed.question, parsed.items, {
+          search: async (q, max) => (await router.routeSearch(q, { maxResults: max })).result.items,
+          fetch: async (url, maxChars) => (await router.routeFetch(url, { maxChars })).result.text,
+          llm: await researchLlm(),
+        });
+        await say(inbound, renderWideReport(report), { quote: true });
+      } catch (err) {
+        await say(inbound, friendlyError(err), { quote: true });
+      }
+      return;
     }
     await say(
       inbound,
