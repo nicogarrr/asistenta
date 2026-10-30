@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { localTimeZone, wallClock } from '../datecontext.js';
 
 /**
  * Every attempt, kept forever.
@@ -118,8 +119,11 @@ export class Archive {
 }
 
 /** ISO week label, e.g. `2026-W15`. Weeks are the unit of the loop, so they are named. */
-export function isoWeek(now = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+export function isoWeek(now = new Date(), timeZone: string = localTimeZone()): string {
+  // The calendar day where the owner is, not in UTC: on Monday between 00:00 and 01:00/02:00
+  // in Madrid it is still Sunday in UTC, and a cycle run then was filed under last week.
+  const w = wallClock(now, timeZone);
+  const d = new Date(Date.UTC(w.year, w.month - 1, w.day));
   // Thursday of this week decides the year: the week containing 1 January is W01.
   const day = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - day);
