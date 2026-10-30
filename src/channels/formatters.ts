@@ -217,15 +217,39 @@ export function escapeTelegramHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** One prose line: `código` spans first (never bolded inside), then **negrita**. */
+/**
+ * Enlace markdown `[texto](url)` tal como lo escribe el modelo. Solo http/https (un
+ * `javascript:` o `tg:` se queda literal); la URL admite un nivel de paréntesis
+ * equilibrados, como las de Wikipedia («…/A_(b)»).
+ */
+const MD_LINK = /\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()<>"]|\([^\s()<>"]*\))+)\)/g;
+
+function boldToHtml(escaped: string): string {
+  return escaped.replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<b>$1</b>').replace(/\*\*/g, '');
+}
+
+/** Prosa sin código: enlaces → <a>, luego **negrita** (también alrededor o dentro del enlace). */
+function proseToHtml(part: string): string {
+  if (part.includes('\uE000')) return boldToHtml(escapeTelegramHtml(part));
+  const links: string[] = [];
+  const marked = part.replace(MD_LINK, (_m, label: string, url: string) => {
+    const href = escapeTelegramHtml(url).replace(/"/g, '&quot;');
+    links.push(`<a href="${href}">${boldToHtml(escapeTelegramHtml(label))}</a>`);
+    return `\uE000${links.length - 1}\uE001`;
+  });
+  return boldToHtml(escapeTelegramHtml(marked)).replace(
+    /\uE000(\d+)\uE001/g,
+    (_m, i: string) => links[Number(i)] ?? '',
+  );
+}
+
+/** One prose line: `código` spans first (never bolded inside), then links and **negrita**. */
 function inlineToHtml(line: string): string {
   return line
     .split(/(`[^`\n]+`)/)
     .map((part, i) => {
       if (i % 2 === 1) return `<code>${escapeTelegramHtml(part.slice(1, -1))}</code>`;
-      return escapeTelegramHtml(part)
-        .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '<b>$1</b>')
-        .replace(/\*\*/g, '');
+      return proseToHtml(part);
     })
     .join('');
 }
@@ -324,6 +348,7 @@ export function stripMarks(text: string): string {
       }
       if (inFence) return line;
       return line
+        .replace(MD_LINK, '$1 ($2)')
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/`([^`]+)`/g, '$1')
         .replace(/\*\*/g, '');
