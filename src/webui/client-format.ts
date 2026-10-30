@@ -121,6 +121,15 @@ export function formatearCampo(clave: string, valor: unknown, zona?: string): st
     if (/(Duration|Elapsed)Ms$|^(durationMs|elapsedMs)$/.test(clave)) return duracion(valor / 1000);
   }
   if (!/(At|_at)$|^(date|fecha|timestamp|ts|lastSeen)$/.test(clave)) return null;
+  // Una fecha sin hora («2026-10-25») es un día, no la medianoche UTC: se
+  // formatea en UTC para que no salga «0:00»/«2:00» ni el día anterior.
+  if (typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(valor)) {
+    const dia = Date.parse(`${valor}T00:00:00Z`);
+    if (!Number.isFinite(dia)) return null;
+    return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'UTC' }).format(
+      new Date(dia),
+    );
+  }
   let ms = Number.NaN;
   if (typeof valor === 'number' && Number.isFinite(valor)) {
     if (valor >= 1e12) ms = valor;
@@ -160,4 +169,61 @@ export function mensajeDeError(estado: number, cuerpo: unknown): string {
   }
   if (detalle) return `${detalle.replace(/\.$/, '')}.`;
   return `El panel respondió con el código ${estado}.`;
+}
+
+/** Una entrada de memoria lista para pintar. */
+export interface EntradaMemoria {
+  texto: string;
+  meta: string;
+}
+
+/**
+ * Separa la memoria vigente de la sustituida (que el almacén conserva para
+ * auditar) y prepara texto + «fecha · #etiquetas». Devuelve null si los datos
+ * no tienen forma de memoria, para que el panel caiga a la vista genérica.
+ */
+export function resumenMemoria(
+  datos: unknown,
+): { vigentes: EntradaMemoria[]; sustituidas: EntradaMemoria[] } | null {
+  let lista: unknown = datos;
+  if (lista && typeof lista === 'object' && !Array.isArray(lista)) {
+    const registro = lista as Record<string, unknown>;
+    lista = Array.isArray(registro.entries) ? registro.entries : registro.items;
+  }
+  if (!Array.isArray(lista)) return null;
+  const vigentes: EntradaMemoria[] = [];
+  const sustituidas: EntradaMemoria[] = [];
+  for (const item of lista) {
+    if (!item || typeof item !== 'object') return null;
+    const e = item as Record<string, unknown>;
+    const texto =
+      typeof e.text === 'string' ? e.text : typeof e.content === 'string' ? e.content : '';
+    if (!texto) return null;
+    const partes: string[] = [];
+    if (typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date)) {
+      const [a, m, d] = e.date.split('-');
+      partes.push(`${d}/${m}/${a}`);
+    }
+    if (Array.isArray(e.tags) && e.tags.length) {
+      partes.push(
+        e.tags
+          .filter((t) => typeof t === 'string' && t)
+          .map((t) => `#${t}`)
+          .join(' '),
+      );
+    }
+    const entrada = { texto, meta: partes.filter(Boolean).join(' · ') };
+    if (typeof e.supersededBy === 'string' && e.supersededBy) sustituidas.push(entrada);
+    else vigentes.push(entrada);
+  }
+  return { vigentes, sustituidas };
+}
+
+/** «2 de 3 pasos hechos», o '' si no hay plan. */
+export function progresoPlan(plan: unknown): string {
+  if (!Array.isArray(plan) || plan.length === 0) return '';
+  const hechos = plan.filter(
+    (p) => p && typeof p === 'object' && (p as { done?: unknown }).done === true,
+  ).length;
+  return `${hechos} de ${plan.length} ${plan.length === 1 ? 'paso hecho' : 'pasos hechos'}`;
 }
