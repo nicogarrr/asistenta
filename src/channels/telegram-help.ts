@@ -44,6 +44,10 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'reintentar', description: 'repite tu último mensaje sin la respuesta anterior' },
       { command: 'compactar', description: 'resume ya el historial de esta conversación' },
       {
+        command: 'borrar_chat',
+        description: 'borra memoria, historial y perfil de este chat (pide escribir BORRAR)',
+      },
+      {
         command: 'proyecto',
         args: '<carpeta>|quitar',
         description: 'liga una carpeta: su ASISTENTA.md entra en el contexto',
