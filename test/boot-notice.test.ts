@@ -63,7 +63,11 @@ describe('aviso de arranque', () => {
     expect(text).toContain('Tele: sí');
     expect(text).toContain('Correo: no');
     expect(text).toContain('/funciones');
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ lastSentAt: 1_000_000 });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      lastSentAt: 1_000_000,
+      lastResult: 'sent',
+      lastResultAt: new Date(1_000_000).toISOString(),
+    });
   });
 
   it('sin dueño conocido no manda nada (nunca al último chat ni a un grupo)', async () => {

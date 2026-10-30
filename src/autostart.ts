@@ -16,6 +16,7 @@ import {
   watchdogEnabled,
   watchdogTaskXml,
 } from './autostart-watchdog.js';
+import { BOOT_NOTICE_FILE, formatBootNoticeResult, readBootNoticeResult } from './boot-notice.js';
 import { daemonStatus } from './daemon-status.js';
 import { paths } from './paths.js';
 import { formatStartupRecord, readStartupRecord, STARTUP_RECORD_FILE } from './startup-record.js';
@@ -140,6 +141,8 @@ export async function autostartCommand(
   if (action === 'status') {
     const rec = readStartupRecord(join(stateDir, STARTUP_RECORD_FILE));
     process.stdout.write(`${formatStartupRecord(rec)}\n`);
+    const aviso = readBootNoticeResult(join(stateDir, BOOT_NOTICE_FILE));
+    process.stdout.write(`${formatBootNoticeResult(aviso)}\n`);
   }
   const repo = autostartRepo();
   const flags = [
