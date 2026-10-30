@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type ActionEntry, ActionLog } from './audit/log.js';
 import type { Config } from './config.js';
+import { wallHourMinute } from './datecontext.js';
 import { paths, REPO_DIR } from './paths.js';
 import { formatDurationMs, readHeartbeat } from './watchdog.js';
 
@@ -205,10 +206,9 @@ function asCount(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** Hora de pared en PA_TIMEZONE: el informe lo lee Nico, no la zona del equipo. */
 function hhmm(ts: string): string {
-  const at = new Date(ts);
-  if (Number.isNaN(at.getTime())) return '??:??';
-  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return wallHourMinute(new Date(ts));
 }
 
 function iso(at: number | null): string | null {
