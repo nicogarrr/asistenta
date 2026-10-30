@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { log } from '../log.js';
 import { GlasshouseClient } from '../tv/glasshouse.js';
 import { pickLanAddress, type ServedFile, serveFileToHost } from './lan-server.js';
 
@@ -171,7 +172,10 @@ type TvRequestFn = (
   clientKey: string,
   uri: string,
   payload: Record<string, unknown>,
-  deps?: { allowPlaintext?: boolean },
+  deps?: {
+    allowPlaintext?: boolean;
+    onNewClientKey?: (clientKey: string) => void | Promise<void>;
+  },
 ) => Promise<Record<string, unknown>>;
 
 /**
@@ -199,18 +203,27 @@ export function tvStopperFromVault(
 export function tvCasterFromVault(
   vaultGet: VaultGet,
   request: TvRequestFn,
-  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs' | 'only'>> = {},
+  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs' | 'only'>> & {
+    /**
+     * Guarda la client-key nueva (tv:clientKey) si la tele se re-empareja durante
+     * el cast, igual que la tool `tv`. Sin esto la clave se perdía y cada audio
+     * volvía a sacar el aviso de emparejamiento en la tele.
+     */
+    saveClientKey?: (clientKey: string) => Promise<void>;
+  } = {},
 ): (file: string) => Promise<TvCastResult> {
+  const { saveClientKey, ...castExtra } = extra;
   return async (file) => {
     const host = await vaultGet('tv:host');
-    const clientKey = await vaultGet('tv:clientKey');
-    if (!host || !clientKey) {
+    const storedKey = await vaultGet('tv:clientKey');
+    if (!host || !storedKey) {
       rmSync(file, { force: true });
       return {
         ok: false,
         message: 'La tele no está emparejada. Empareja una vez con: pa tv setup <ip-de-la-tele>',
       };
     }
+    let clientKey = storedKey;
     const allowPlaintext = (await vaultGet('tv:secure')) === '0';
     const ghUrl = (await vaultGet('tv:glasshouseUrl'))?.trim();
     const glasshouse = ghUrl
@@ -226,11 +239,29 @@ export function tvCasterFromVault(
           await client.control('url', url);
         }
       : undefined;
+    const onNewClientKey = saveClientKey
+      ? async (key: string): Promise<void> => {
+          // La siguiente vía de este mismo cast ya usa la clave nueva.
+          clientKey = key;
+          try {
+            await saveClientKey(key);
+            log.info('tv-cast: la tele se ha vuelto a emparejar; client-key nueva guardada');
+          } catch (err) {
+            log.warn('tv-cast: no he podido guardar la client-key nueva', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      : undefined;
     return castAudioToTv(file, {
       tvHost: host,
-      ssap: (uri, payload) => request(host, clientKey, uri, payload, { allowPlaintext }),
+      ssap: (uri, payload) =>
+        request(host, clientKey, uri, payload, {
+          allowPlaintext,
+          ...(onNewClientKey ? { onNewClientKey } : {}),
+        }),
       glasshouse,
-      ...extra,
+      ...castExtra,
     });
   };
 }

@@ -12,6 +12,8 @@ El PC sube el volumen del sistema al pedido (100 por defecto) y lo restaura al a
 ## En la tele (apagado por defecto)
 Actívalo con `PA_AUDIO_TELE=1` en `.env`. Requisitos: tele emparejada (`pa tv setup <ip>`),
 PC y tele en la misma subred, y el firewall de Windows permitiendo conexiones entrantes de
+Si la tele pide emparejar otra vez durante un audio y lo aceptas, la client-key nueva se
+guarda en el vault (`tv:clientKey`) igual que con `/tv`, así que el aviso no vuelve a salir.
 la red privada a Node (Windows lo pregunta la primera vez).
 
 Cómo funciona: el audio se convierte a MP3, se sirve desde un servidor efímero que solo
