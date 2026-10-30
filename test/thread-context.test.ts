@@ -107,9 +107,7 @@ describe('runPanelChat devuelve las imágenes del turno', () => {
 describe('cableado en cli.ts', () => {
   const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
   it('Computer Use y el navegador mandan capturas por el contexto del hilo', () => {
-    expect(src).toMatch(
-      /createComputerTool\(config, screen, ctx\.gate, \(bytes, opts\) =>\s*ctx\.sendPhoto\(/,
-    );
+    expect(src).toMatch(/\.\.\.computerPlugin\.tools\(\{\s*config,\s*screen,\s*ctx,/);
     expect(src).toMatch(
       /createBrowserTool\(browserFor\(thread\.key\), scope, \(png\) =>\s*ctx\.sendPhoto\(/,
     );

@@ -290,6 +290,7 @@ import {
 } from './notice-pace.js';
 import { panelDoctorLines } from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
+import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
 import { tvPlugin, tvToolDeps } from './plugins/tv.js';
 import { describeDelivery, parseDeliveryArgs, RoutineDeliveryStore } from './routine-delivery.js';
@@ -329,7 +330,7 @@ import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
 import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
-import { type ActionGate, createComputerTool } from './tools/computer.js';
+import type { ActionGate } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
@@ -1840,8 +1841,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // screenshot the user cannot see is a screenshot nobody sent.
       // Gate y envío de capturas salen del contexto del hilo: en un turno del panel la
       // captura va al panel (thread-context.ts); en Telegram, igual que siempre.
-      createComputerTool(config, screen, ctx.gate, (bytes, opts) =>
-        ctx.sendPhoto(bytes, async () => {
+      // Computer Use como plugin (src/plugins/computer.ts), mismo sitio en la lista.
+      ...computerPlugin.tools({
+        config,
+        screen,
+        ctx,
+        channelPhoto: async (bytes, opts) => {
           const chatId = Number(thread.chatKey.split(':')[2]);
           const threadId = inboundFor(thread).threadId;
           await telegram.action(thread.chatKey.split(':')[2] ?? '', 'upload_photo');
@@ -1852,8 +1857,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               log.warn('desktop screenshot send failed', { err });
               return false;
             });
-        }),
-      ),
+        },
+      }),
       createBrowserTool(browserFor(thread.key), scope, (png) =>
         ctx.sendPhoto(png, () =>
           telegram
