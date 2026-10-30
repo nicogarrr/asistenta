@@ -21,7 +21,9 @@ import {
 } from '../src/books/sources.js';
 import { createBookTool } from '../src/tools/book.js';
 
-const EPUB = Buffer.from('PK\x03\x04 fake epub');
+const EPUB = Buffer.from(
+  `PK\x03\x04${' '.repeat(26)}mimetypeapplication/epub+zip fake epub${'x'.repeat(64)}`,
+);
 const PDF = Buffer.from('%PDF-1.4 fake pdf');
 
 const gutendex = {
@@ -484,7 +486,8 @@ describe('castellano por defecto y fuentes nuevas', () => {
     expect(allowedBookHost('https://otro-sitio.example/x.epub')).toBe(false);
     // ...but sniff is the last word on what the bytes are, allow list or not.
     expect(sniff(Buffer.from('%PDF-1.7'))).toBe('pdf');
-    expect(sniff(Buffer.from('PK epub'))).toBe('epub');
+    expect(sniff(EPUB)).toBe('epub');
+    expect(sniff(Buffer.from('PK\x03\x04 un zip cualquiera'))).toBeNull();
     expect(sniff(Buffer.from('<html>no soy un libro</html>'))).toBeNull();
   });
 });
