@@ -107,7 +107,7 @@ describe('«reprodúcelo en la tele»: /stop mientras la tele abre el audio', ()
       { action: 'play', target: 'tele' },
       ac.signal,
     );
-    expect(onTeleCast).toHaveBeenCalledWith(stop);
+    expect(onTeleCast).toHaveBeenCalledWith(stop, close);
     expect(stop).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
   });
