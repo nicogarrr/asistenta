@@ -312,14 +312,18 @@ export class TelegramChannel implements ChannelAdapter {
 
     const text = (msg.text ?? msg.caption ?? '').trim();
 
+    const isGroup = ctx.chat?.type !== 'private';
+
     if (!this.#options.allowedUserIds.includes(user.id)) {
       handlers.log('warn', 'unauthorised sender', { userId: user.id, username: user.username });
-      await ctx.reply('Este asistente es privado.').catch(() => {});
+      // En un grupo, contestar a cada mensaje de cada miembro no permitido llenaba
+      // el chat de «Este asistente es privado.» y gastaba el cupo de envíos. Allí
+      // se calla; el aviso solo va por privado.
+      if (!isGroup) await ctx.reply('Este asistente es privado.').catch(() => {});
       return;
     }
 
-    const isGroup = ctx.chat?.type !== 'private';
-    if (isGroup && !isAddressedToBot(text, msg, ctx.me.username)) {
+    if (isGroup && !isAddressedToBot(text, msg, ctx.me.username, ctx.me.id)) {
       // Groups are read-only by default: the bot only acts when mentioned or
       // replied to. Otherwise every group message would burn a computer-use run,
       // and the reply would leak to members who are not allowlisted.
@@ -1157,15 +1161,25 @@ export function isStopCommand(text: string): boolean {
  * Whether a group message is addressed to the bot: an @mention of its username or
  * a reply to one of its messages. Anything else in a group is someone else's
  * conversation and must not start a run.
+ *
+ * The mention is matched as a whole username and case-insensitively (Telegram
+ * usernames are), so `@Asistenta_bot` counts and `@asistenta_bot2` does not. A
+ * reply only counts when it answers THIS bot (`botId`); a reply to any other bot
+ * in the group used to start a run.
  */
 export function isAddressedToBot(
   text: string,
   message: { reply_to_message?: unknown },
   botUsername: string,
+  botId?: number,
 ): boolean {
-  if (text.includes(`@${botUsername}`)) return true;
-  const reply = message.reply_to_message as { from?: { is_bot?: boolean } } | undefined;
-  return reply?.from?.is_bot === true;
+  const name = botUsername.replace(/[^A-Za-z0-9_]/g, '');
+  if (name && new RegExp(`(^|[^A-Za-z0-9_])@${name}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
+  const reply = message.reply_to_message as
+    | { from?: { is_bot?: boolean; id?: number } }
+    | undefined;
+  if (reply?.from?.is_bot !== true) return false;
+  return botId === undefined || reply.from.id === botId;
 }
 
 /**
