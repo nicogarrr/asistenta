@@ -235,3 +235,11 @@ export function textoEspera(ms: number): string {
   const resto = s % 60;
   return `Pensando… ${Math.floor(s / 60)} min ${resto < 10 ? '0' : ''}${resto} s`;
 }
+
+/** Título de la pestaña: «(2) Asistenta · Panel local» si hay aprobaciones esperando. */
+export function tituloPestana(pendientes: number): string {
+  const base = 'Asistenta · Panel local';
+  return typeof pendientes === 'number' && pendientes > 0
+    ? `(${Math.floor(pendientes)}) ${base}`
+    : base;
+}

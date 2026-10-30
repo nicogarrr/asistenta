@@ -16,6 +16,7 @@ import {
   resumenMemoria,
   textoEspera,
   tiempoRestante,
+  tituloPestana,
 } from './client-format.js';
 
 const ICON_SVG = [
@@ -44,7 +45,9 @@ export function renderFormatScript(): string {
   var resumenMemoria = ${resumenMemoria.toString()};
   var progresoPlan = ${progresoPlan.toString()};
   var textoEspera = ${textoEspera.toString()};
+  var tituloPestana = ${tituloPestana.toString()};
   return {
+    tituloPestana: tituloPestana,
     textoEspera: textoEspera,
     resumenMemoria: resumenMemoria,
     progresoPlan: progresoPlan,
@@ -339,6 +342,21 @@ export function renderPage(): string {
     .aprobacion .botones button.denegar { border-color: #5b2424; background: #241111; color: var(--mal); }
     .aprobacion .resultado { margin: 8px 0 0; font-size: 13px; }
     .aprobacion.caducada { opacity: 0.6; }
+    .aprobacion .botones button { white-space: nowrap; }
+    .tarjeta-cuerpo.sin-tope { max-height: none; }
+    .tarjeta.pendiente { border-color: #6b4f1d; box-shadow: 0 0 0 1px #6b4f1d55, 0 14px 40px #0004; }
+    .contador {
+      display: inline-block;
+      min-width: 20px;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: #fcd34d;
+      color: #1a1405;
+      font-size: 12px;
+      letter-spacing: normal;
+      text-align: center;
+    }
     details { margin-top: 8px; }
     summary { cursor: pointer; color: var(--suave); font-size: 12px; }
     summary:hover { color: var(--texto); }
@@ -386,6 +404,16 @@ export function renderPage(): string {
       <p class="aviso">Este panel necesita JavaScript para consultar el estado local.</p>
     </noscript>
     <div class="rejilla">
+      <article id="tarjeta-aprobaciones" class="tarjeta" aria-labelledby="titulo-aprobaciones">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
+          <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
+        </header>
+        <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope" aria-live="polite">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-chat">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-chat">Chat</h2>
@@ -417,16 +445,6 @@ export function renderPage(): string {
           <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
         </header>
         <div id="panel-objetivos" class="tarjeta-cuerpo" aria-live="polite">
-          <p class="muted">Cargando…</p>
-        </div>
-      </article>
-
-      <article class="tarjeta" aria-labelledby="titulo-aprobaciones">
-        <header class="tarjeta-cabecera">
-          <h2 id="titulo-aprobaciones">Aprobaciones</h2>
-          <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
-        </header>
-        <div id="panel-aprobaciones" class="tarjeta-cuerpo" aria-live="polite">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -835,6 +853,17 @@ ${renderFormatScript()}
       }
       window.setInterval(actualizarCaducidades, 1000);
 
+      // Las aprobaciones esperando se ven sin buscarlas: contador en la tarjeta y en la pestaña.
+      function marcarPendientes(n) {
+        var contador = document.getElementById('contador-aprobaciones');
+        var tarjeta = document.getElementById('tarjeta-aprobaciones');
+        contador.textContent = n > 0 ? String(n) : '';
+        contador.hidden = !(n > 0);
+        contador.setAttribute('aria-label', n === 1 ? '1 pendiente' : n + ' pendientes');
+        tarjeta.classList.toggle('pendiente', n > 0);
+        document.title = formato.tituloPestana(n);
+      }
+
       function pintarAprobaciones(contenedor, datos) {
         contenedor.replaceChildren();
         if (ultimaDecision) {
@@ -842,6 +871,7 @@ ${renderFormatScript()}
           ultimaDecision = '';
         }
         var lista = listaDeAprobaciones(datos);
+        marcarPendientes(lista ? lista.length : 0);
         if (!lista) {
           contenedor.appendChild(renderValor(datos, 0));
           return;
