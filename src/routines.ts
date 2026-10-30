@@ -320,6 +320,12 @@ function humanizeMs(ms: number): string {
  * message the model can read and fix. Returning instead of throwing also lets
  * the caller keep the daemon up.
  */
+/** Próxima ejecución de un horario cron (hora local), o null si no es válido o nunca dispara. */
+export function nextScheduleRun(expr: string): Date | null {
+  const parsed = parseSchedule(expr);
+  return parsed.ok ? parsed.next : null;
+}
+
 export function validateSchedule(
   expr: string,
 ): { ok: true; next: string } | { ok: false; error: string } {
