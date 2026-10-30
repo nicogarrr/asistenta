@@ -413,6 +413,33 @@ function normalizeEcho(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ');
 }
 
+/**
+ * Trozos de la URL que parecen base64 (también base64url) o hexadecimal, decodificados
+ * a texto cuando salen legibles: «manda el código en base64» no debe esquivar el eco.
+ */
+function decodedBlobs(text: string): string[] {
+  const out: string[] = [];
+  const readable = (s: string) => {
+    if (s.length < ECHO_GRAM_CHARS) return false;
+    for (const ch of s) {
+      const c = ch.codePointAt(0) ?? 0;
+      // Bytes de control o el carácter de reemplazo: no era texto, era binario.
+      if ((c < 32 && c !== 9 && c !== 10 && c !== 13) || c === 0xfffd) return false;
+    }
+    return true;
+  };
+  for (const m of text.match(/[A-Za-z0-9+/_-]{16,}={0,2}/g) ?? []) {
+    const b64 = m.replace(/-/g, '+').replace(/_/g, '/');
+    const s = Buffer.from(b64, 'base64').toString('utf8');
+    if (readable(s)) out.push(s);
+  }
+  for (const m of text.match(/(?:[0-9a-fA-F]{2}){12,}/g) ?? []) {
+    const s = Buffer.from(m, 'hex').toString('utf8');
+    if (readable(s)) out.push(s);
+  }
+  return out.slice(0, 32);
+}
+
 function egressEchoReason(source: string, host: string): string {
   return (
     `Este turno ya ha leído contenido privado (${source}) y ahora quiere abrir una URL ` +
@@ -1223,9 +1250,12 @@ export class Gate {
         break;
       }
     }
-    const norm = normalizeEcho(decoded);
-    for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length; i++) {
-      if (set.has(norm.slice(i, i + ECHO_GRAM_CHARS))) return true;
+    const candidates = [decoded, ...decodedBlobs(decoded)];
+    for (const candidate of candidates) {
+      const norm = normalizeEcho(candidate);
+      for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length; i++) {
+        if (set.has(norm.slice(i, i + ECHO_GRAM_CHARS))) return true;
+      }
     }
     return false;
   }
