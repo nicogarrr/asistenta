@@ -47,3 +47,4 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 
 ## Desde Telegram sin gastar
 - `/tv <orden>` (solo tú, en tu chat privado): «/tv apaga la tele», «/tv abre Netflix», «/tv volumen a 15», «/tv modo cine», «/tv estado». Va directo a la tele, sin pasar por el modelo (0 tokens). Si no la entiende, lo dice y no hace nada.
+- `pa tv orden "<texto>"` en la terminal del PC: la misma orden, igual de directa y sin modelo («pa tv orden "volumen a 15"»). Código 0 si se hizo, 2 si no se entiende (no toca la tele), 1 si la tele falla.
