@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { inspectTv } from '../tv/inspection.js';
+import type { TvPowerOutcome } from '../tv/power.js';
 
 /**
  * Herramienta de la tele LG (SSAP).
@@ -39,7 +40,12 @@ export interface TvToolDeps {
   launch: (id: string) => Promise<void>;
   key: (name: string) => Promise<void>;
   toast: (message: string) => Promise<void>;
-  power: (on: boolean) => Promise<void>;
+  /**
+   * Encender/apagar. Puede devolver como llego la orden (src/tv/power.ts): con
+   * Wake-on-LAN la tool dice si la tele ya responde; sin resultado, el texto de
+   * siempre (orden enviada, sin confirmar).
+   */
+  power: (on: boolean) => Promise<void | TvPowerOutcome>;
   /**
    * Control via Glasshouse (API HTTP :8080 de la tele rooteada): volumen
    * absoluto, inputs, url, picture, adblock y privacidad - lo que SSAP no
@@ -329,7 +335,24 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
             );
           }
           const on = args.on;
-          await enqueueTvMutation(() => deps.power(on));
+          const outcome = await enqueueTvMutation(() => deps.power(on));
+          if (outcome && outcome.via === 'wol') {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text:
+                    outcome.verified === true
+                      ? 'La tele estaba apagada del todo: la he encendido por red (Wake-on-LAN) y ya responde.'
+                      : outcome.verified === false
+                        ? 'La tele estaba apagada del todo: he enviado el encendido por red (Wake-on-LAN), pero aun no responde. ' +
+                          'Puede tardar unos segundos mas; si no enciende, revisa que "Encender con Wi-Fi" este activado en la tele.'
+                        : 'La tele estaba apagada del todo: he enviado el encendido por red (Wake-on-LAN), sin confirmar.',
+                },
+              ],
+              details: { on, verified: outcome.verified === true, via: 'wol' },
+            };
+          }
           return {
             content: [
               {

@@ -61,11 +61,22 @@ describe('caracterizacion SSAP (tele simulada)', () => {
   it('tele apagada: sin downgrade a ws por defecto y mensaje con la pista de red', async () => {
     const tv = new FakeWebOsTv({ reachable: false });
     await expect(
-      tvRequest(HOST, 'KEY123', 'system/turnOff', {}, { factory: tv.factory }),
+      tvRequest(
+        HOST,
+        'KEY123',
+        'system/turnOff',
+        {},
+        {
+          factory: tv.factory,
+          connectRetryDelayMs: 1,
+        },
+      ),
     ).rejects.toThrow(
       /No se pudo conectar con la TV en 192\.168\.1\.237 \(wss:\/\/3001\)\. ¿Encendida y en la misma red\?/,
     );
-    expect(tv.urls).toEqual([`wss://${HOST}:3001`]);
+    // Un rechazo inmediato se reintenta UNA vez (connectRetries=1, PR tv-2):
+    // antes del open no se envia nada, asi que no hay orden duplicada.
+    expect(tv.urls).toEqual([`wss://${HOST}:3001`, `wss://${HOST}:3001`]);
     expect(tv.requests).toEqual([]);
   });
 
@@ -77,7 +88,7 @@ describe('caracterizacion SSAP (tele simulada)', () => {
         'KEY123',
         'system/turnOff',
         {},
-        { factory: tv.factory, allowPlaintext: true },
+        { factory: tv.factory, allowPlaintext: true, connectRetries: 0 },
       ),
     ).rejects.toThrow(/wss:\/\/3001 y ws:\/\/3000/);
     expect(tv.urls).toEqual([`wss://${HOST}:3001`, `ws://${HOST}:3000`]);

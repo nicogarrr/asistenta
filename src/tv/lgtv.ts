@@ -49,6 +49,27 @@ export interface TvClientDeps {
   allowPlaintext?: boolean;
   /** Permite un hostname no-LAN explicito (por defecto solo IPv4 privada). */
   allowNonLanHost?: boolean;
+  /**
+   * Reintentos de CONEXION cuando la tele rechaza o corta el socket al momento
+   * (p.ej. recien despertada, el servidor SSAP aun arranca). Por defecto 1.
+   * Solo se reintenta la apertura: antes del open no se ha enviado nada, asi
+   * que no hay orden duplicada posible. Un timeout de apertura NO se reintenta
+   * (tele apagada: ya se esperaron 5s).
+   */
+  connectRetries?: number;
+  /** Espera entre reintentos de conexion (por defecto 600 ms). */
+  connectRetryDelayMs?: number;
+  /** Timeout de apertura del socket por intento (por defecto 5 s). */
+  connectTimeoutMs?: number;
+}
+
+/**
+ * La tele no acepto la conexion (apagada del todo, fuera de red o arrancando):
+ * no se envio NADA. Es el unico fallo SSAP ante el que tiene sentido otro
+ * camino (encendido por red), porque la orden no llego.
+ */
+export class TvUnreachableError extends Error {
+  override name = 'TvUnreachableError';
 }
 
 const defaultFactory: TvSocketFactory = (url) =>
@@ -114,8 +135,9 @@ interface OpenedSocket {
 async function openSocket(
   host: string,
   factory: TvSocketFactory,
-  opts: { allowPlaintext: boolean },
+  opts: { allowPlaintext: boolean; connectTimeoutMs?: number },
 ): Promise<OpenedSocket> {
+  const connectTimeout = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
   const candidates: { url: string; secure: boolean }[] = [
     { url: `wss://${host}:3001`, secure: true },
   ];
@@ -132,8 +154,8 @@ async function openSocket(
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          reject(new Error(`timeout abriendo el canal seguro`));
-        }, CONNECT_TIMEOUT_MS);
+          reject(new Error(TIMEOUT_OPEN_MSG));
+        }, connectTimeout);
         ws.once('open', () => {
           if (settled) return;
           settled = true;
@@ -172,10 +194,39 @@ async function openSocket(
       }
     }
   }
-  throw new Error(
+  throw new TvUnreachableError(
     `No se pudo conectar con la TV en ${host} (wss://3001${opts.allowPlaintext ? ' y ws://3000' : ''}). ` +
       `¿Encendida y en la misma red? (${sanitizeTvText(lastError instanceof Error ? lastError.message : String(lastError))})`,
   );
+}
+
+const TIMEOUT_OPEN_MSG = 'timeout abriendo el canal seguro';
+
+/**
+ * openSocket con reintento SOLO ante rechazos inmediatos (error o cierre antes
+ * del open): una tele recien despertada rechaza el primer intento mientras
+ * arranca su servidor SSAP. Un timeout de apertura no se repite.
+ */
+async function openSocketRetrying(
+  host: string,
+  factory: TvSocketFactory,
+  opts: { allowPlaintext: boolean },
+  deps: TvClientDeps,
+): Promise<OpenedSocket> {
+  const retries = Math.max(0, deps.connectRetries ?? 1);
+  const delay = Math.max(0, deps.connectRetryDelayMs ?? 600);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await openSocket(host, factory, {
+        ...opts,
+        connectTimeoutMs: deps.connectTimeoutMs,
+      });
+    } catch (err) {
+      const timedOut = err instanceof Error && err.message.includes(TIMEOUT_OPEN_MSG);
+      if (!(err instanceof TvUnreachableError) || timedOut || attempt >= retries) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
 }
 
 interface SsapMessage {
@@ -355,9 +406,12 @@ export async function tvRequest(
   deps: TvClientDeps = {},
 ): Promise<Record<string, unknown>> {
   const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
-  const opened = await openSocket(safeHost, deps.factory ?? defaultFactory, {
-    allowPlaintext: deps.allowPlaintext ?? false,
-  });
+  const opened = await openSocketRetrying(
+    safeHost,
+    deps.factory ?? defaultFactory,
+    { allowPlaintext: deps.allowPlaintext ?? false },
+    deps,
+  );
   const cmdTimeout = deps.commandTimeoutMs ?? CMD_TIMEOUT_MS;
   try {
     await register(opened.ws, clientKey, cmdTimeout);
