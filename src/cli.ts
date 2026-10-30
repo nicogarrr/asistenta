@@ -312,7 +312,7 @@ import { splitPhrases } from './voice/phrases.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { transcribeVoiceNote } from './voice/stt.js';
-import { createSapiTts } from './voice/tts.js';
+import { createSapiTts, REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { compareProduct, describeCompare } from './watch/compare.js';
@@ -2323,15 +2323,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const short = shorten(cleaned);
     let audio: ChannelAudio | undefined;
     if (desktop && wantsVoice && inbound.audioFileId && text.trim()) {
-      try {
-        const spoken = await tts.speak(trimForSpeech(text));
+      // Con tope: un SAPI lento o colgado no puede retener la respuesta escrita.
+      const spoken = await speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+        log.warn('tts failed, sending text only', { reason }),
+      );
+      if (spoken) {
         audio = {
           mimeType: spoken.mimeType,
           data: spoken.data.toString('base64'),
           durationSeconds: spoken.durationSeconds,
         };
-      } catch (err) {
-        log.warn('tts failed, sending text only', { err });
       }
     }
     const id = await say(inbound, short.text, { audio });

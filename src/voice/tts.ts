@@ -190,6 +190,46 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
   };
 }
 
+/** Lo que la respuesta escrita espera, como mucho, a que SAPI termine la voz. */
+export const REPLY_TTS_BUDGET_MS = 20_000;
+
+/**
+ * Sintetiza con un tope de espera para respuestas a notas de voz: si la voz no está
+ * lista en `budgetMs` (SAPI colgado, PC cargado) o falla, devuelve null y la síntesis
+ * se cancela, para que el texto salga ya en vez de esperar hasta 60 s o no salir.
+ */
+export async function speakWithin(
+  tts: Tts,
+  text: string,
+  budgetMs = REPLY_TTS_BUDGET_MS,
+  onSkip?: (reason: string) => void,
+): Promise<TtsAudio | null> {
+  const ctl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(
+      () => {
+        ctl.abort();
+        onSkip?.(`la voz no estuvo lista en ${Math.round(budgetMs / 1000)} s`);
+        resolve(null);
+      },
+      Math.max(0, budgetMs),
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([
+      tts.speak(text, { signal: ctl.signal }).catch((err: unknown) => {
+        if (!ctl.signal.aborted) onSkip?.(err instanceof Error ? err.message : String(err));
+        return null;
+      }),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Error de cancelación, con nombre estable aunque el runtime no sea un navegador. */
 function cancelled(): Error {
   const err = new Error('la sintesis de voz se cancelo');
