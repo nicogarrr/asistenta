@@ -466,6 +466,9 @@ import { booksSetupCommand } from './books/setup-cli.js';
 import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
 
+/** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
+const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
+
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
   // Todos los subcomandos (no solo `serve`) leen la hora en la zona de PA_TIMEZONE:
@@ -502,7 +505,8 @@ export async function main(argv: string[]): Promise<number> {
           copyFileSync(file, out);
           return out;
         },
-        cast: (file, only) => tvCasterFromVault(vaultGet, tvRequest, { only })(file),
+        cast: (file, only) =>
+          tvCasterFromVault(vaultGet, tvRequest, { only, saveClientKey: saveTvClientKey })(file),
         print: (line) => console.log(line),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
@@ -1513,7 +1517,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         currentWake()?.suppress(WAKE_TAIL_MS);
       }
     },
-    castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+    castToTv: audioTeleEnabled()
+      ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })
+      : undefined,
     remove: (file) => rmSync(file, { force: true }),
     onError: (err) => log.warn('altavoz: no pude soltar la nota de voz', { err: String(err) }),
   });
@@ -2060,7 +2066,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // The speakers are the microphone's other half. Quieten the listener before
         // the sound comes out or the agent answers its own playback.
         // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
-        castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+        castToTv: audioTeleEnabled()
+          ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })
+          : undefined,
         // Si la tele aceptó pero nunca bajó el fichero: aviso del firewall al chat.
         notifyChat: (text) => {
           void say(inboundFor(thread), text);
