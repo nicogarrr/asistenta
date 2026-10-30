@@ -36,7 +36,7 @@ import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
-import { EMAIL_CHANNEL, taintEmailTurn } from './channels/email.js';
+import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
 import {
   cleanForTelegram,
@@ -1448,8 +1448,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     loadSend: () => loadSendMailAccount(),
     send: (account, req) => sendMail(account, req),
     poll: (account, cursorFile) => pollGmailCommandMail(account, cursorFile),
-    audit: (e) =>
-      e.accepted ? log.info('correo canal: aceptado', e) : log.warn('correo canal: ignorado', e),
+    audit: (e) => {
+      if (e.accepted) {
+        log.info('correo canal: aceptado', e);
+        return;
+      }
+      log.warn('correo canal: ignorado', e);
+      actions.record(emailAuditRecord(e));
+    },
   });
   if (emailSetup.channel) registry.register(emailSetup.channel);
   else if (process.env.PA_CORREO_CANAL === '1')
