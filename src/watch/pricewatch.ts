@@ -739,7 +739,11 @@ export function parseConfig(raw: unknown): WatchConfig {
       }
       urls[s] = ref;
     }
-    products.push({ name: pr.name.trim(), urls });
+    if (pr.label !== undefined && typeof pr.label !== 'string')
+      throw new Error(`config: ${pr.name}: label debe ser texto`);
+    const label = typeof pr.label === 'string' ? pr.label.trim() : '';
+    // label es lo que dice la alerta (runOnce usa p.label ?? p.name); antes se perdía aquí.
+    products.push(label ? { name: pr.name.trim(), label, urls } : { name: pr.name.trim(), urls });
   }
   const t = c.telegram ?? {};
   if (typeof t !== 'object' || t === null || Array.isArray(t))

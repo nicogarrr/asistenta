@@ -4,7 +4,7 @@ import { pricewatchNotifier } from './pricewatch-notify.js';
 /**
  * Un ciclo completo del vigilante de precios: barrido de listados (capa A) + verificación en
  * ficha de los candidatos y de los productos fijos de la config (capa B). Lo usan el bucle
- * interno de Asistenta (pricewatch-loop.ts) y la CLI manual (pricewatch-cli.ts).
+ * interno de Asistenta (pricewatch-loop.ts) y la CLI manual (`pa precio`, pricewatch-cli.ts).
  *
  * Config (JSON, `<estado>/pricewatch.json` o PRICEWATCH_CONFIG), releída en cada ciclo:
  * { "enabled": true, "minDropPct": 70, "gapSeconds": 30,
