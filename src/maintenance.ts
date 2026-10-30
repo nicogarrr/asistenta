@@ -51,6 +51,49 @@ export function pruneSessions(db: DatabaseSync, olderThanMs: number, now = Date.
   }
 }
 
+/** Días que se guardan las conversaciones terminadas si no se configura otra cosa. */
+export const DEFAULT_SESSION_RETENTION_DAYS = 365;
+const DAY_MS = 24 * 3_600_000;
+/** Hora local a partir de la que corre la retención: después de la copia de las 03:00. */
+const RETENTION_HOUR = 4;
+
+/**
+ * Días de retención de sesiones según `PA_SESSION_RETENTION_DAYS`. `0` la apaga;
+ * un valor vacío, negativo o no numérico usa el valor por defecto (365).
+ */
+export function sessionRetentionDays(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PA_SESSION_RETENTION_DAYS?.trim();
+  if (!raw) return DEFAULT_SESSION_RETENTION_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_SESSION_RETENTION_DAYS;
+  return Math.floor(n);
+}
+
+export interface RetentionDeps {
+  db: DatabaseSync;
+  now: Date;
+  /** Última pasada que terminó bien (ms), 0 si nunca. */
+  lastRunMs: number;
+  markRun: (atMs: number) => void;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Pasada diaria de retención que llama el daemon en su tick de 10 min. Corre una vez
+ * al día a partir de las 04:00 locales (la copia de seguridad de las 03:00 ya tiene lo
+ * que se va a borrar). Solo marca la pasada como hecha si terminó bien.
+ */
+export function retentionIfDue(deps: RetentionDeps): { ran: boolean; sessions: number } {
+  const days = sessionRetentionDays(deps.env);
+  if (days === 0) return { ran: false, sessions: 0 };
+  const now = deps.now;
+  if (now.getHours() < RETENTION_HOUR) return { ran: false, sessions: 0 };
+  if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return { ran: false, sessions: 0 };
+  const sessions = pruneSessions(deps.db, days * DAY_MS, now.getTime());
+  deps.markRun(now.getTime());
+  return { ran: true, sessions };
+}
+
 /**
  * Borra del mirror de documentos los `*.txt` cuya fecha de modificación es más
  * antigua que `now - olderThanMs`. Es plano y no recursivo a propósito: el

@@ -379,6 +379,7 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
+import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
 
 export async function main(argv: string[]): Promise<number> {
@@ -4302,6 +4303,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * Retención de conversaciones (src/maintenance.ts): una vez al día, a partir de las
+   * 04:00, borra las sesiones TERMINADAS de hace más de PA_SESSION_RETENTION_DAYS días
+   * (365 por defecto; 0 la apaga). Sin esto la base de sesiones crecía sin límite.
+   */
+  const retentionTick = (): void => {
+    try {
+      const r = retentionIfDue({
+        db: memoryDb,
+        now: new Date(),
+        lastRunMs: weeklyState.lastSent('retencion'),
+        markRun: (at) => weeklyState.markSent('retencion', at),
+      });
+      if (r.ran) log.info('session retention done', { sessions: r.sessions });
+    } catch (err) {
+      log.warn('session retention failed', { err: String(err) });
+    }
+  };
+
   const cmdEvolucion = async (inbound: Inbound, args: string): Promise<void> => {
     const a = args.trim();
     if (/^idea\b/i.test(a)) {
@@ -4357,6 +4377,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
       if (process.env.PA_MEMORY_CONSOLIDATE === '1') void consolidateIfDue();
+      retentionTick();
     },
     10 * 60 * 1000,
   );
