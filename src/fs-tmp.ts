@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { renameSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
 
 /**
  * Ruta temporal única para «escribir en tmp + rename». Un `${path}.tmp` fijo lo
@@ -30,4 +30,24 @@ export function setAsideCorrupt(path: string): string {
     );
   }
   return backup;
+}
+
+/**
+ * Escribe `path` vía tmp único + rename. Si algo falla (en Windows el rename falla si
+ * otro programa tiene el destino abierto), borra el tmp antes de relanzar el error:
+ * sin esto, cada intento fallido deja otro `.tmp` en la carpeta de estado.
+ */
+export function writeFileReplacing(path: string, data: string): void {
+  const tmp = uniqueTmpPath(path);
+  try {
+    writeFileSync(tmp, data);
+    renameSync(tmp, path);
+  } catch (error) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // Ni el tmp se puede quitar: no hay nada más que hacer.
+    }
+    throw error;
+  }
 }

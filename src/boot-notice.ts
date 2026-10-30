@@ -10,8 +10,9 @@
  * deje la puerta abierta al siguiente arranque. Solo va al dueño, nunca a un grupo
  * ni al último chat. Probado en test/boot-notice.test.ts.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { writeFileReplacing } from './fs-tmp.js';
 import { ago } from './startup-record.js';
 
 /** Estado del aviso en el directorio de estado (registrado en src/state-files.ts). */
@@ -108,9 +109,7 @@ function readState(path: string): Record<string, unknown> {
 /** Escribe `boot-notice.json` conservando los demás campos (lastSentAt y lastResult conviven). */
 function writeState(path: string, patch: Record<string, unknown>): void {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ ...readState(path), ...patch }));
-  renameSync(tmp, path);
+  writeFileReplacing(path, JSON.stringify({ ...readState(path), ...patch }));
 }
 
 function recordSent(path: string, at: number): void {
