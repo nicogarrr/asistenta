@@ -779,6 +779,20 @@ export class BrowserService {
     }
   }
 
+  /**
+   * Pestañas y ventanas emergentes que abre la web (window.open, target=_blank, anuncios):
+   * el agente solo trabaja en `session.page`, así que nadie las miraba ni las cerraba y se
+   * acumulaban (memoria, audio, peticiones) hasta cerrar la sesión. Antes de cada paso se
+   * cierran las que sobran. Con ventana visible no se toca nada: esas pestañas son de Nico.
+   */
+  async #closeExtraPages(session: Session): Promise<void> {
+    if (session.visible || session.page.isClosed() !== false) return;
+    const extras = session.context.pages().filter((p) => p !== session.page);
+    if (extras.length === 0) return;
+    await Promise.all(extras.map((p) => p.close().catch(() => undefined)));
+    log.info('browser closed extra pages', { count: extras.length });
+  }
+
   async #openSession(scope: string, opts?: { visible?: boolean }): Promise<Session> {
     const wantVisible = opts?.visible ?? !this.#options.headless;
     const existing = this.#sessions.get(scope);
@@ -790,6 +804,7 @@ export class BrowserService {
         log.info('browser relaunching visible', { scope });
         await this.close(scope);
       } else {
+        await this.#closeExtraPages(existing);
         return existing;
       }
     }
