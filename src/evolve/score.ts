@@ -174,6 +174,7 @@ export const FORBIDDEN = [
   // edits them (adding tests inflates the count, deleting them hides a failure).
   'test/',
   'evolve/',
+  'scripts/evolve-battery-case.mjs',
   'vitest.config',
   'biome.json',
   'package.json',

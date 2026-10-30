@@ -6,7 +6,7 @@ sale como candidato (rama + parche + receipt, que luego es un PR que Nico aprueb
 1. no toca nada protegido (`guard.ts` + `FORBIDDEN` en `score.ts`: permisos, aprobaciones, pagos,
    vault, la propia batería, tests, deploy…);
 2. mejora la suite (tests, tsc, biome) y pasa la checklist de verificación;
-3. **aprueba la batería** (`selfimprove/battery.json`, 74 casos): ningún caso que pasaba en el
+3. **aprueba la batería** (`evolve/battery.json`, 74 casos): ningún caso que pasaba en el
    kernel deja de pasar y la nota no baja (`battery-gate.ts`).
 
 Sin batería configurada no se promueve nada.
