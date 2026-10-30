@@ -181,9 +181,24 @@ describe('pa autostart con el vigilante (todo simulado)', () => {
     expect(existsSync(join(d, STOPPED_ON_PURPOSE_FILE))).toBe(true);
   });
 
-  it('uninstall lo borra', async () => {
+  it('uninstall lo borra antes de que el instalador pare Asistenta', async () => {
     await autostartCommand(['uninstall'], { stateDir: tmp() });
-    expect(calls()[1]).toEqual(['schtasks.exe', ['/Delete', '/F', '/TN', WATCHDOG_TASK_NAME]]);
+    expect(calls()[0]).toEqual(['schtasks.exe', ['/Delete', '/F', '/TN', WATCHDOG_TASK_NAME]]);
+    expect(calls()[1]?.[0]).toBe('powershell.exe');
+    expect(calls()).toHaveLength(2);
+  });
+
+  it('--what-if dice que también registraría o quitaría el vigilante, sin tocarlo', async () => {
+    await autostartCommand(['install', '--what-if'], { stateDir: tmp() });
+    expect(out).toContain('Vigilante: también se registraría');
+    out = '';
+    await autostartCommand(['uninstall', '--what-if'], { stateDir: tmp() });
+    expect(out).toContain('Vigilante: también se quitaría.');
+    process.env.PA_WATCHDOG = '0';
+    out = '';
+    await autostartCommand(['install', '--what-if'], { stateDir: tmp() });
+    expect(out).not.toContain('Vigilante');
+    expect(calls().filter(([e]) => e === 'schtasks.exe')).toEqual([]);
   });
 
   it('status dice si está instalado y su última revisión', async () => {

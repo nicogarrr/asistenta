@@ -174,13 +174,19 @@ export async function autostartCommand(
   if (args.includes('--no-local-llm')) flags.push('-DisableLocalLlm');
   if (args.includes('--start')) flags.push('-Start');
   if (args.includes('--what-if')) flags.push('-WhatIf');
+  const whatIf = args.includes('--what-if');
+  if (action === 'uninstall' && !whatIf) {
+    // Primero el vigilante: si no, entre que el instalador para Asistenta y quita su
+    // tarea, el vigilante podría volver a arrancarla. Sin comprobar antes: si no
+    // existía, schtasks falla y no pasa nada.
+    await runExe(windowsExe('schtasks.exe'), schtasksArgs.remove());
+  }
   const r = await runExe(windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'), flags);
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.error) {
     process.stderr.write('Autoarranque no completado; revisa requisitos y permisos locales.\n');
     return 1;
   }
-  const whatIf = args.includes('--what-if');
   // --start la deja encendida a propósito: igual que `pa iniciar`, quita la marca de
   // `pa stop` para que el vigilante vuelva a levantarla si se cae antes de reiniciar.
   if (action === 'install' && !whatIf && args.includes('--start')) {
@@ -189,9 +195,13 @@ export async function autostartCommand(
   if (action === 'install' && !whatIf && watchdogEnabled()) {
     await installWatchdog(stateDir, opts.cliJs ?? join(repo, 'dist', 'cli.js'));
   }
-  if (action === 'uninstall' && !whatIf) {
-    // Sin comprobar antes: si no existía, schtasks falla y no pasa nada.
-    await runExe(windowsExe('schtasks.exe'), schtasksArgs.remove());
+  if (whatIf && action === 'install' && watchdogEnabled()) {
+    process.stdout.write(
+      `Vigilante: también se registraría (al iniciar sesión y cada ${WATCHDOG_INTERVAL_MIN} min).\n`,
+    );
+  }
+  if (whatIf && action === 'uninstall') {
+    process.stdout.write('Vigilante: también se quitaría.\n');
   }
   if (action === 'status') await watchdogStatus(stateDir);
   return 0;
