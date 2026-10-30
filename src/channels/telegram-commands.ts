@@ -56,6 +56,10 @@ export const TELEGRAM_COMMANDS = [
     command: 'help',
     description: 'Ver todos los comandos',
   },
+  {
+    command: 'funciones',
+    description: 'Todo lo que sé hacer, por áreas y con ejemplos',
+  },
   // Encargos: investigar, vigilar precios, rutinas.
   {
     command: 'investiga',

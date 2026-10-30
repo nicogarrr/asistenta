@@ -157,6 +157,17 @@ export interface ChannelHandlers {
     userId: string;
     data: string;
   }): Promise<string>;
+  /**
+   * Botón de un área de /funciones (callback `fn:<área>`, ver src/funciones.ts).
+   * Devuelve el texto del área y sus botones; el adaptador edita el mensaje.
+   * Va por su propio camino: nunca resuelve ni consume una aprobación.
+   */
+  onFuncionesButton?(press: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    data: string;
+  }): Promise<{ text: string; buttons: Array<{ label: string; action: string }> }>;
   log(
     level: 'debug' | 'info' | 'warn' | 'error',
     msg: string,

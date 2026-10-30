@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
+import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
 import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
@@ -465,6 +466,13 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Áreas de /funciones: solo cambian el texto del mensaje, nunca tocan
+    // aprobaciones. Quién ve qué lo decide el daemon (dueño en privado o no).
+    if (data.startsWith(FUNCIONES_CALLBACK_PREFIX)) {
+      await this.#onFuncionesPress(ctx, handlers, data, userId);
+      return;
+    }
+
     const parsed = parseApprovalCallback(data);
     const entry = parsed ? this.#approvals.get(parsed.id) : undefined;
     if (!parsed || !entry || entry.expires < Date.now()) {
@@ -556,6 +564,58 @@ export class TelegramChannel implements ChannelAdapter {
       ),
     ).catch(() => {
       handlers.log('warn', 'tv button result not sent', { data: data.slice(0, 64) });
+    });
+  }
+
+  /**
+   * Pulsación de un área de /funciones: edita el mensaje con el texto del área y
+   * sus botones. Si no se puede editar (mensaje viejo o borrado), lo manda nuevo.
+   */
+  async #onFuncionesPress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const chatId = ctx.callbackQuery?.message?.chat?.id;
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (chatId === undefined || !handlers.onFuncionesButton) return;
+    const view = await handlers
+      .onFuncionesButton({
+        channel: 'telegram',
+        chatId: String(chatId),
+        userId: String(userId),
+        data: data.slice(0, 64),
+      })
+      .catch(() => null);
+    if (!view) {
+      handlers.log('warn', 'funciones button failed', { data: data.slice(0, 64) });
+      return;
+    }
+    const text = view.text.slice(0, 4000);
+    const reply_markup = view.buttons.length ? buildKeyboard(view.buttons) : undefined;
+    if (messageId !== undefined) {
+      const edited = await this.#throttled(() =>
+        withTimeout(
+          this.#bot.api.editMessageText(chatId, messageId, text, { reply_markup }),
+          20_000,
+          'editMessageText timed out',
+        ),
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (edited) return;
+    }
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendMessage(chatId, text, { reply_markup }),
+        20_000,
+        'sendMessage timed out',
+      ),
+    ).catch(() => {
+      handlers.log('warn', 'funciones button result not sent', { data: data.slice(0, 64) });
     });
   }
 

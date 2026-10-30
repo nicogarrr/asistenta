@@ -38,6 +38,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'corrige lo que estoy haciendo sin pararlo',
       },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
+      {
+        command: 'funciones',
+        args: '[área]',
+        description: 'todo lo que sé hacer, por áreas y con ejemplos',
+      },
       { command: 'status', args: 'on|off', description: 'avisos de cómo voy mientras trabajo' },
       { command: 'topic', args: '<nombre>', description: 'abre o cambia de conversación' },
       { command: 'topics', description: 'conversaciones abiertas' },
@@ -262,6 +267,6 @@ export function startText(displayName?: string): string {
     '• «Mira el precio de esta tele y avísame si baja» + enlace',
     '• «Hazme una captura de la pantalla»',
     'Antes de hacer algo importante (enviar, comprar, borrar) te pido permiso con botones.',
-    'Toca el botón Menú o escribe /help para ver todos los comandos.',
+    'Escribe /funciones para ver lo que sé hacer por áreas, o /help para todos los comandos.',
   ].join('\n');
 }
