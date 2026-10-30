@@ -331,12 +331,26 @@ function parseRegionField(value: unknown, label: string): Region | null {
     !Number.isFinite(width) ||
     !Number.isFinite(height)
   ) {
-    throw new Error(`${label} must have finite x, y, width and height`);
+    throw new Error(`${label} necesita x, y, width y height numéricos y finitos`);
   }
   if (width < 0 || height < 0) {
-    throw new Error(`${label} cannot have negative width or height`);
+    throw new Error(`${label} no puede tener width ni height negativos`);
   }
   return { x, y, width, height };
+}
+
+/**
+ * `roi` only means something on screenshot and click. A move or drag carrying one
+ * used to ignore it silently and read x/y as full-screenshot pixels, so after a
+ * roi screenshot the pointer went somewhere else on the real desktop. Reject it
+ * before anything moves (a null/absent roi is fine).
+ */
+function rejectRoi(args: Record<string, unknown>, action: 'move' | 'drag'): void {
+  if (args.roi === undefined || args.roi === null) return;
+  throw new Error(
+    `roi solo vale con screenshot y click; en ${action} usa x/y de la captura completa (sin roi). ` +
+      'No he movido nada.',
+  );
 }
 
 /**
@@ -761,6 +775,7 @@ export function createComputerTool(
       }
 
       case 'move': {
+        rejectRoi(record, 'move');
         const native = await backend.screenSize();
         assertSameDesktop(native);
         const p = coords(record, view ?? native, native);
@@ -776,6 +791,7 @@ export function createComputerTool(
       }
 
       case 'drag': {
+        rejectRoi(record, 'drag');
         const native = await backend.screenSize();
         assertSameDesktop(native);
         const from = coords(record, view ?? native, native);
