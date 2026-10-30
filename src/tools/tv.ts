@@ -23,6 +23,9 @@ import { describeTvStatus, type TvStatus } from '../tv/status.js';
 /** Un frame de la tele casi vacio ronda los 9 kB; uno con contenido, 120-160 kB. */
 const SUSPECT_BLANK_BYTES = 24_000;
 
+/** «a la mitad» sin Glasshouse va por teclas: tope para no tener la cola ocupada medio minuto. */
+export const MAX_HALF_KEY_PRESSES = 25;
+
 export interface TvMemoryState {
   /** appId en primer plano en el momento de mirar. */
   appId: string;
@@ -90,6 +93,7 @@ const Params = Type.Object({
     Type.Literal('adblock'),
     Type.Literal('adTracking'),
     Type.Literal('volumeStep'),
+    Type.Literal('volumeHalf'),
     Type.Literal('channel'),
     Type.Literal('command'),
     Type.Literal('scene'),
@@ -231,6 +235,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
       'action=power apaga o enciende (si esta apagada del todo y hay MAC guardada, por red).',
+      'action=volumeHalf lee el volumen real y lo deja en la mitad (nunca sube; si no puede leerlo, no toca nada).',
       'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
       'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
       '"volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Si no la entiende, lo dice.',
@@ -441,6 +446,88 @@ async function runTvAction(
         ],
         details: { steps, verified: false },
       };
+    }
+    case 'volumeHalf': {
+      // Nunca sube: lee el volumen REAL y baja a floor(v/2). Sin lectura no
+      // se toca nada (bajar a ciegas podria dejarla muda o, peor, nada).
+      const readVolume = async (): Promise<number | null> => {
+        const st = await deps.status?.().catch(() => null);
+        const v = st?.volume;
+        return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null;
+      };
+      if (!deps.status) {
+        throw new Error(
+          'No puedo leer el volumen de la tele en esta instalacion, asi que no lo toco. Dime "volumen a N" o "baja N".',
+        );
+      }
+      return enqueueTvMutation(async () => {
+        const current = await readVolume();
+        if (current === null) {
+          throw new Error(
+            'No se a que volumen esta la tele (puede estar apagada o no responde), asi que no lo toco. Dime "volumen a N" o "baja N".',
+          );
+        }
+        const target = Math.floor(current / 2);
+        if (target >= current) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `El volumen ya esta en ${current}: no lo bajo mas.`,
+              },
+            ],
+            details: { from: current, to: current, verified: true },
+          };
+        }
+        let via: 'glasshouse' | 'keys' = 'keys';
+        let from = current;
+        if (deps.ghControl) {
+          try {
+            await deps.ghControl('volume', target);
+            via = 'glasshouse';
+          } catch {
+            // Glasshouse no contesto: puede que SI se aplicara. Se relee y
+            // solo se baja lo que falte con el mando (bajar nunca sube).
+            const again = await readVolume();
+            if (again !== null && again <= target) {
+              return {
+                content: [
+                  { type: 'text' as const, text: `Volumen bajado de ${current} a ${again}.` },
+                ],
+                details: { from: current, to: again, via: 'glasshouse', verified: true },
+              };
+            }
+            if (again !== null) from = again;
+          }
+        }
+        if (via === 'glasshouse') {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Volumen bajado a la mitad: de ${current} a ${target}.`,
+              },
+            ],
+            details: { from: current, to: target, via, verified: false },
+          };
+        }
+        const want = from - target;
+        const presses = Math.min(want, MAX_HALF_KEY_PRESSES);
+        for (let i = 0; i < presses; i += 1) await deps.key('VOLUMEDOWN');
+        const to = from - presses;
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                presses < want
+                  ? `Volumen bajado ${presses} pasos con el mando (de ${current} a unos ${to}); para seguir bajando dime "baja N" o "volumen a ${target}".`
+                  : `Volumen bajado a la mitad con el mando: de ${current} a ${target} (sin confirmacion de la tele).`,
+            },
+          ],
+          details: { from: current, to, via, presses, verified: false },
+        };
+      });
     }
     case 'channel': {
       const raw = (args.channel ?? '').trim().toLowerCase();
