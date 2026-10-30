@@ -7844,7 +7844,7 @@ export async function skillsSearchReply(
     const entries = await fetchSkillIndex(indexUrl.trim(), { fetchImpl });
     return formatSkillSearch(q, searchSkillIndex(entries, q));
   } catch (err) {
-    return `No he podido leer el índice de skills: ${err instanceof Error ? err.message : String(err)}`;
+    return failedReply('No he podido leer el índice de skills', err);
   }
 }
 
