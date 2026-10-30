@@ -21,7 +21,6 @@ const KNOWN_UNWIRED: Record<string, string> = {
     'herramienta usada solo por las evals; falta decidir si se ofrece al agente',
   'src/memory/review.ts':
     'cola de contradicciones; falta quien la llene (consolidación) y un comando para resolverla',
-  'src/skills/catalog.ts': 'catálogo de skills; falta comando /skills catalogo (descarga remota)',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
 };
 
