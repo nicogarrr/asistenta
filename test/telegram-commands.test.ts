@@ -5,7 +5,7 @@ import { helpText } from '../src/channels/telegram-help.js';
 
 describe('Telegram command discovery', () => {
   it('offers every canonical command without duplicates and within Telegram limits', () => {
-    expect(TELEGRAM_COMMANDS.length).toBe(55);
+    expect(TELEGRAM_COMMANDS.length).toBe(56);
     expect(new Set(TELEGRAM_COMMANDS.map((x) => x.command)).size).toBe(TELEGRAM_COMMANDS.length);
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     for (const { command, description } of TELEGRAM_COMMANDS) {
@@ -31,5 +31,11 @@ describe('Telegram command discovery', () => {
     expect(channel).not.toContain("label: 'Approve'");
     expect(channel).not.toContain("label: 'Deny'");
     expect(channel).toContain('Este asistente es privado.');
+  });
+});
+
+describe('/ocr en el menú', () => {
+  it('aparece en el menú de comandos (ya estaba en /help y en el despachador)', () => {
+    expect(TELEGRAM_COMMANDS.some((c) => c.command === 'ocr')).toBe(true);
   });
 });
