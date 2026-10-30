@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
+import { uniqueTmpPath } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
 
@@ -137,7 +138,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   });
 
   const writeAtomic = (file: string, contents: string): void => {
-    const tmp = `${file}.tmp`;
+    const tmp = uniqueTmpPath(file);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(tmp, contents, 'utf8');
     renameSync(tmp, file); // atomic on NTFS

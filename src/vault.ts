@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { uniqueTmpPath } from './fs-tmp.js';
 import { paths } from './paths.js';
 import { withPortableVaultLock } from './vault-file-lock.js';
 
@@ -169,7 +170,7 @@ $out = [System.Security.Cryptography.ProtectedData]::${mode}($b, $null, [System.
  */
 function writeVaultFile(payload: VaultFile): void {
   mkdirSync(dirname(paths.vault), { recursive: true });
-  const tmp = `${paths.vault}.tmp`;
+  const tmp = uniqueTmpPath(paths.vault);
   writeFileSync(tmp, JSON.stringify(payload), { encoding: 'utf8', mode: 0o600 });
   renameSync(tmp, paths.vault);
 }

@@ -17,6 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 
 /** Dias distintos que debe repetirse un hecho para autoguardarse. */
@@ -83,7 +84,7 @@ export class NudgeTracker {
       map.delete(oldest.value);
     }
     mkdirSync(join(this.#path, '..'), { recursive: true });
-    const tmp = `${this.#path}.tmp`;
+    const tmp = uniqueTmpPath(this.#path);
     writeFileSync(tmp, JSON.stringify(Object.fromEntries(map)), 'utf8');
     renameSync(tmp, this.#path);
   }
