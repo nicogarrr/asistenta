@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { type BrowserContext, chromium, type Locator, type Page } from 'playwright';
+import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { isFetchableResolved } from '../tools/fetch.js';
@@ -1019,7 +1020,7 @@ export class BrowserService {
       // Atomic replace: a half-written grants file would be parsed as corrupt and lose
       // every approval the user has given, which is the worst possible failure for the
       // file whose whole job is remembering approvals.
-      const tmp = `${this.#grantsFile()}.tmp`;
+      const tmp = uniqueTmpPath(this.#grantsFile());
       writeFileSync(tmp, JSON.stringify(all, null, 2));
       renameSync(tmp, this.#grantsFile());
     } catch (err) {
