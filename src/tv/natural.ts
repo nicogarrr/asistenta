@@ -6,6 +6,7 @@
  *
  *   "apaga la tele"            -> power on:false
  *   "enciende la tele"         -> power on:true
+ *   "pon la tele"              -> power on:true
  *   "volumen a 20"             -> volume level:20
  *   "sube el volumen" / "baja 5" -> volumeStep steps:+3 / -5
  *   "silencio" / "quita el silencio" -> mute
@@ -373,6 +374,16 @@ export function parseTvCommand(text: string): TvIntent | null {
       `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?:${YA} ${TV})?${YA}$`,
     ).test(t) ||
     new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
+  ) {
+    return { action: 'power', on: true };
+  }
+  // «pon la tele», «ponme la tv», «pon la tele ya»: encender (decisión de Nico,
+  // 30-oct-2026). Solo la frase sola: con destino («pon la tele en la 5», «… a 20»,
+  // «… más baja», «… en netflix») sigue con su regla o con el modelo.
+  if (
+    new RegExp(
+      `${ANTES_DEL_VERBO}(?:pon|ponme|ponnos)${YA} (?:(?:la|el) )?(?:tele|tv|television|televisor)${YA}$`,
+    ).test(t)
   ) {
     return { action: 'power', on: true };
   }
