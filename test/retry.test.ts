@@ -86,7 +86,7 @@ describe('config retry', () => {
     const previous = process.env.PA_RETRY_ATTEMPTS;
     process.env.PA_RETRY_ATTEMPTS = '0';
     try {
-      expect(() => loadConfig()).toThrow(/positive number/);
+      expect(() => loadConfig()).toThrow(/positive integer/);
     } finally {
       if (previous === undefined) delete process.env.PA_RETRY_ATTEMPTS;
       else process.env.PA_RETRY_ATTEMPTS = previous;

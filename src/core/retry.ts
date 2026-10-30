@@ -13,7 +13,9 @@
 const FLAKY_MARKERS = [
   /upstream request failed/i,
   /endpoint is unavailable/i,
-  /invalid request/i,
+  // «400 invalid_request» (con guion bajo) es el cuerpo real del fallo intermitente;
+  // antes solo casaba «invalid request» con espacio y ese 400 moría sin reintento.
+  /invalid[ _]request/i,
   /freed?tiererror/i,
   /model access is disabled/i,
   /overloaded/i,
