@@ -87,6 +87,7 @@ import {
   queueThreadTurn,
   resolveInboundThread,
 } from './daemon/inbound.js';
+import { runPanelChat } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
@@ -1650,39 +1651,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               'main',
               'principal',
             );
-            const generation = thread.generation;
-            const task = async () => {
-              if (thread.generation !== generation) return { text: '' };
-              thread.active = true;
-              try {
-                thread.agent.attachContext(
-                  buildContextNote(
-                    thread,
-                    store,
-                    memory,
-                    snapshot,
-                    workstreams,
-                    skills,
-                    sessions,
-                    ownerProfile,
-                    text,
-                    isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-                    projectContexts,
-                  ),
-                );
-                const r = await thread.agent.run(text);
-                return { text: r.text };
-              } finally {
-                thread.active = false;
-                thread.gate.clearSession(thread.key);
-              }
-            };
-            const next = thread.tail.then(task);
-            thread.tail = next.then(
-              () => undefined,
-              () => undefined,
+            return runPanelChat(thread, text, () =>
+              buildContextNote(
+                thread,
+                store,
+                memory,
+                snapshot,
+                workstreams,
+                skills,
+                sessions,
+                ownerProfile,
+                text,
+                isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+                projectContexts,
+              ),
             );
-            return next;
           },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
           approvals: () => approvals.list(),
