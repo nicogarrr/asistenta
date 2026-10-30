@@ -31,11 +31,14 @@ const FLAKY_MARKERS = [
 ];
 
 /** Reasons that must never be retried, whatever else the message says. */
+// Los códigos HTTP van con \b: sin límite de palabra, un id de petición o un
+// timestamp que contenga «401», «402» o «404» (p. ej. `gen-1730401234`) convertía
+// un 503 transitorio en permanente y el turno moría sin reintento ni fallback.
 const PERMANENT_MARKERS = [
   /context length|too many tokens|maximum context/i,
-  /invalid api key|unauthorized|401/i,
-  /insufficient funds|402/i,
-  /model not found|404/i,
+  /invalid api key|unauthorized|\b401\b/i,
+  /insufficient funds|\b402\b/i,
+  /model not found|\b404\b/i,
   /content filter/i,
 ];
 
