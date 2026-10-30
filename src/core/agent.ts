@@ -430,30 +430,43 @@ export function rewindFailedAttempt(messages: AgentMessage[], start: number): Ag
 }
 
 /**
- * Remove the guard's one-off instruction from the transcript once its report turn
- * is over. The report itself (the assistant's answer) stays: it is what the user
- * was told. A report turn that failed leaves nothing (see rewindFailedAttempt).
+ * Clean up after the guard's report turn: only the report itself survives.
+ *
+ * The report turn runs with no tools and a one-off instruction ("ya no tienes
+ * herramientas…"). Everything it leaves behind besides the answer is noise for
+ * later turns: the instruction (read as a standing order), pi's tool-change
+ * marker (an empty system message with `toolsRemoved`, which once the tools are
+ * restored makes pi add a second `toolsAdded` marker on the next request), any
+ * tool call the model still tried ("Tool … not found"), and the empty aborted
+ * assistant message the guard's own abort produced just before. pi derives the
+ * declared tools from the transcript on every request, so dropping the marker
+ * leaves the transcript declaring exactly the restored tools. A report turn that
+ * failed leaves nothing.
  */
 export function dropGuardPrompt(
   messages: AgentMessage[],
   at: number,
-  prompt: string,
+  _prompt: string,
 ): AgentMessage[] {
-  const rewound = rewindFailedAttempt(messages, at);
-  // pi may put its own markers (a tool-change system message) before the prompt,
-  // so the instruction is found by its text, never by position alone.
-  const i = rewound.findIndex((m, idx) => {
-    if (idx < at) return false;
-    const msg = m as { role?: unknown; content?: unknown };
-    if (msg.role !== 'user') return false;
-    const text = Array.isArray(msg.content)
-      ? msg.content
-          .map((b: { text?: unknown }) => (typeof b?.text === 'string' ? b.text : ''))
-          .join('')
-      : String(msg.content ?? '');
-    return text === prompt;
-  });
-  return i < 0 ? rewound : [...rewound.slice(0, i), ...rewound.slice(i + 1)];
+  const cut = Math.max(0, Math.min(at, messages.length));
+  let end = cut;
+  while (end > 0 && isDeadAssistant(messages[end - 1])) end--;
+  const head = messages.slice(0, end);
+  for (let i = messages.length - 1; i >= cut; i--) {
+    if (isCleanReport(messages[i])) return [...head, messages[i] as AgentMessage];
+  }
+  return head;
+}
+
+/** An assistant message with text and no tool calls that did not fail. */
+function isCleanReport(message: AgentMessage | undefined): boolean {
+  const m = message as { role?: unknown; content?: unknown } | undefined;
+  if (m?.role !== 'assistant' || isDeadAssistant(message)) return false;
+  if (typeof m.content === 'string') return m.content.trim() !== '';
+  if (!Array.isArray(m.content)) return false;
+  const blocks = m.content as Array<{ type?: unknown; text?: unknown }>;
+  if (blocks.some((b) => b?.type === 'toolCall')) return false;
+  return blocks.some((b) => typeof b?.text === 'string' && b.text.trim() !== '');
 }
 
 /** A hung model must not hold the turn: the summary gives up and the history stays. */

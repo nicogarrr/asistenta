@@ -185,13 +185,20 @@ describe('dropGuardPrompt (pura)', () => {
   it('quita la instrucción y deja el informe', () => {
     expect(d([user('p'), user('GUARD'), asst('informe')], 1)).toEqual([user('p'), asst('informe')]);
   });
-  it('encuentra la instrucción aunque pi meta antes su marcador de herramientas', () => {
-    const marker = { role: 'system', content: '' };
-    expect(d([user('p'), marker, user('GUARD'), asst('informe')], 1)).toEqual([
-      user('p'),
-      marker,
-      asst('informe'),
-    ]);
+  it('quita también el marcador de herramientas de pi y los intentos de llamar tools', () => {
+    const marker = { role: 'system', content: '', toolsRemoved: [{ name: 'lookup' }] };
+    const call = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'x' }],
+      stopReason: 'toolUse',
+    };
+    const notFound = { role: 'toolResult', toolCallId: 'x', content: 'Tool lookup not found' };
+    expect(
+      d(
+        [user('p'), asst('', 'aborted'), marker, user('GUARD'), call, notFound, asst('informe')],
+        2,
+      ),
+    ).toEqual([user('p'), asst('informe')]);
   });
   it('un informe fallido no deja rastro', () => {
     expect(d([user('p'), user('GUARD'), asst('', 'error')], 1)).toEqual([user('p')]);
