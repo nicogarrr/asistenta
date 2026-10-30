@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -154,4 +163,30 @@ export function ignoredFiles(dir: string): string[] {
     .split('\n')
     .map((f) => f.trim())
     .filter((f) => f && !f.startsWith('node_modules/'));
+}
+
+/**
+ * Huella del node_modules propio del sandbox: ruta, tamaño, fechas e inodo de cada entrada.
+ * commitAll y ignoredFiles dejan node_modules fuera a propósito, así que un intento que
+ * cambiara ahí una dependencia (por ejemplo el propio vitest) se mediría con ella sin que el
+ * guard lo viera (salvo la caché de vitest). ctime cambia con cualquier escritura o utimes, así que no se disimula.
+ */
+export function depsFingerprint(dir: string): string {
+  const base = join(dir, 'node_modules');
+  if (!existsSync(base)) return '';
+  const h = createHash('sha256');
+  const walk = (rel: string): void => {
+    const names = readdirSync(join(base, rel)).sort();
+    for (const n of names) {
+      // La caché de vitest (resultados para ordenar tests) cambia con solo pasar los tests.
+      if (!rel && (n === '.vite' || n === '.vitest')) continue;
+      const r = rel ? `${rel}/${n}` : n;
+      const st = lstatSync(join(base, r));
+      const link = st.isSymbolicLink() ? readlinkSync(join(base, r)) : '';
+      h.update(`${r}\0${st.size}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}\0${link}\n`);
+      if (st.isDirectory()) walk(r);
+    }
+  };
+  walk('');
+  return h.digest('hex');
 }
