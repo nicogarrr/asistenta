@@ -33,6 +33,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { wallClock } from '../datecontext.js';
 import { log } from '../log.js';
 import type { MemoryEntry, MemoryStore } from '../memory.js';
 import type { Embedder } from './semantic.js';
@@ -57,7 +58,7 @@ const POLARITY_OVERLAP = 0.6;
 const NEGATION_WORDS = new Set(['no', 'nunca', 'jamas']);
 
 export function isConsolidationDue(now: Date, lastRunMs: number): boolean {
-  return now.getHours() >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
+  return wallClock(now).hour >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
 }
 
 /** Inicio de la ventana diaria en hora local, no en UTC. */

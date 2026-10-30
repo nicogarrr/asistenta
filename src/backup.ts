@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { wallClock } from './datecontext.js';
 import { backedUp } from './state-files.js';
 
 /**
@@ -31,7 +32,7 @@ const DAY_MS = 24 * 3_600_000;
 
 /** Cada día a partir de las 03:00 locales, una vez cada 20 h. */
 export function isBackupDue(now: Date, lastRunMs: number): boolean {
-  return now.getHours() >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
+  return wallClock(now).hour >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
 }
 
 function dayStamp(d: Date): string {
