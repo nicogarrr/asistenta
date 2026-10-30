@@ -37,6 +37,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   { name: 'memory.db', what: 'memoria semántica', backup: 'db' },
   { name: 'goals.db', what: 'objetivos', backup: 'db' },
+  { name: 'correo-canal.json', what: 'cursor del canal de correo (correos ya leídos)', backup: 'file' },
   { name: 'voice.db', what: 'estado de voz', backup: 'db' },
   { name: 'approvals.db', what: 'aprobaciones guardadas', backup: 'db' },
   { name: 'pricewatch.sqlite', what: 'historial de precios vigilados', backup: 'db' },
