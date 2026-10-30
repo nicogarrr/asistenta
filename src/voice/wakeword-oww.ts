@@ -146,10 +146,23 @@ type FetchLike = typeof fetch;
  * never leaves a truncated model behind; a body too small to be a model (a
  * 404 page) is an error, not a file.
  */
+/**
+ * Plazo duro por modelo (1-2 MB): sin él un fetch colgado dejaba start() del
+ * oyente esperando para siempre, y stop() detrás del mismo cerrojo. Mismo
+ * criterio que la descarga de silero_vad.
+ */
+export const OWW_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+function isTimeout(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
 export async function ensureOwwModels(
   dir: string,
   wordModelFile: string,
   fetchImpl: FetchLike = fetch,
+  timeoutMs: number = OWW_DOWNLOAD_TIMEOUT_MS,
 ): Promise<OwwModelPaths> {
   if (!WORD_MODEL_RE.test(wordModelFile) || wordModelFile.includes('..')) {
     throw new Error(`wordModelFile debe ser un nombre .onnx simple; recibido: ${wordModelFile}`);
@@ -161,7 +174,18 @@ export async function ensureOwwModels(
     if (existsSync(target) && statSync(target).size >= MIN_MODEL_BYTES) continue;
     const url = `${OWW_RELEASE_BASE}/${file}`;
     log.info('oww model download', { url, target });
-    const res = await fetchImpl(url);
+    const timeoutError = () =>
+      new Error(
+        `descarga de modelo oww sin respuesta en ${Math.round(timeoutMs / 1000)} s: ${url}`,
+      );
+    // La señal cubre también la lectura del cuerpo (arrayBuffer) más abajo.
+    const signal = AbortSignal.timeout(timeoutMs);
+    let res: Response;
+    try {
+      res = await fetchImpl(url, { signal });
+    } catch (err) {
+      throw isTimeout(err) ? timeoutError() : err;
+    }
     if (!res.ok || !res.body) {
       throw new Error(`descarga de modelo oww falló (${res.status}): ${url}`);
     }
@@ -170,7 +194,13 @@ export async function ensureOwwModels(
       // res.body is a web stream; buffer it (models are 1-2MB) to keep the
       // download testable, then write with wx so a stale/symlinked temp
       // cannot be clobbered.
-      const buf = Buffer.from(await res.arrayBuffer());
+      let raw: ArrayBuffer;
+      try {
+        raw = await res.arrayBuffer();
+      } catch (err) {
+        throw isTimeout(err) ? timeoutError() : err;
+      }
+      const buf = Buffer.from(raw);
       if (buf.byteLength < MIN_MODEL_BYTES) {
         throw new Error(
           `descarga de modelo oww demasiado pequeña (${buf.byteLength} B, ¿404?): ${url}`,
