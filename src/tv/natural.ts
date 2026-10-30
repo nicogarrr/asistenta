@@ -72,6 +72,15 @@ export function parseTvCommand(text: string): TvIntent | null {
     m = /\bcon ([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
     return { action: 'scene', scene: 'cine', ...(m?.[1] ? { appId: m[1].trim() } : {}) };
   }
+  // "modo noche", "pon el modo nocturno": volumen bajo sin encender.
+  if (/\bmodo (?:noche|nocturno)\b/.test(t)) {
+    m = /\bcon ([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
+    return { action: 'scene', scene: 'noche', ...(m?.[1] ? { appId: m[1].trim() } : {}) };
+  }
+  // "apaga todo" / "apagalo todo": aviso y apagar la tele.
+  if (/^(?:apaga|apagar|apagalo|apagamelo) todo[\s,.!]*$/.test(t)) {
+    return { action: 'scene', scene: 'apagar-todo' };
+  }
 
   // Estado: preguntas, no ordenes.
   if (
@@ -196,6 +205,7 @@ export function describeTvIntent(i: TvIntent): string {
     case 'status':
       return 'mirar el estado de la tele';
     case 'scene':
+      if (i.scene === 'apagar-todo') return 'apagarlo todo';
       return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
   }
 }

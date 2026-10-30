@@ -9,10 +9,13 @@
  * - Un paso que necesita Glasshouse sin Glasshouse configurado se OMITE (no
  *   es un fallo de la rutina, la tele de Nico puede no tenerlo).
  * - Cualquier otro fallo se informa y la rutina sigue con el siguiente paso.
+ * - Si la tele consta APAGADA (status) y la rutina no la ha encendido, el
+ *   resto de pasos se omiten («la tele esta apagada»): el modo noche no
+ *   enciende una tele apagada, y apagar todo no la apaga dos veces.
  */
 
 export type SceneStep =
-  | { action: 'power'; on: true }
+  | { action: 'power'; on: boolean }
   | { action: 'mute'; on: false }
   | { action: 'volume'; level: number }
   | { action: 'launch'; appId: string }
@@ -32,6 +35,8 @@ export interface SceneDef {
 
 /** Volumen por defecto del modo cine: audible sin sobresaltos. */
 export const CINE_DEFAULT_LEVEL = 20;
+/** Volumen por defecto del modo noche: bajo, para no despertar a nadie. */
+export const NOCHE_DEFAULT_LEVEL = 8;
 
 export const TV_SCENES: Record<string, SceneDef> = {
   cine: {
@@ -44,6 +49,22 @@ export const TV_SCENES: Record<string, SceneDef> = {
       { action: 'toast', message: 'Modo cine activado. Disfruta de la peli.' },
     ],
   },
+  noche: {
+    label: 'modo noche',
+    // No enciende: es para bajar el volumen con la tele ya puesta.
+    build: ({ appId, level }) => [
+      { action: 'volume', level: level ?? NOCHE_DEFAULT_LEVEL },
+      ...(appId ? [{ action: 'launch' as const, appId }] : []),
+      { action: 'toast', message: 'Modo noche: volumen bajo.' },
+    ],
+  },
+  'apagar-todo': {
+    label: 'apagado',
+    build: () => [
+      { action: 'toast', message: 'Apagando. Buenas noches.' },
+      { action: 'power', on: false },
+    ],
+  },
 };
 
 const SCENE_ALIASES: Record<string, string> = {
@@ -52,6 +73,15 @@ const SCENE_ALIASES: Record<string, string> = {
   pelicula: 'cine',
   peli: 'cine',
   movie: 'cine',
+  noche: 'noche',
+  'modo noche': 'noche',
+  nocturno: 'noche',
+  'modo nocturno': 'noche',
+  night: 'noche',
+  'apagar-todo': 'apagar-todo',
+  'apagar todo': 'apagar-todo',
+  'apaga todo': 'apagar-todo',
+  apagado: 'apagar-todo',
 };
 
 export function resolveScene(name: string): string | null {
@@ -73,7 +103,7 @@ export interface SceneStepResult {
 export function describeStep(step: SceneStep): string {
   switch (step.action) {
     case 'power':
-      return 'encender la tele';
+      return step.on ? 'encender la tele' : 'apagar la tele';
     case 'mute':
       return 'quitar el silencio';
     case 'volume':
@@ -96,13 +126,29 @@ export interface RunSceneDeps {
 
 export async function runScene(steps: SceneStep[], deps: RunSceneDeps): Promise<SceneStepResult[]> {
   const out: SceneStepResult[] = [];
+  // Estado en vivo, leido una sola vez: true/false, o undefined si no se sabe
+  // (sin status o status fallido: se actua como antes, sin omitir nada).
+  let known: boolean | undefined;
+  let read = false;
+  const isOn = async (): Promise<boolean | undefined> => {
+    if (!read) {
+      read = true;
+      known = deps.isOn ? await deps.isOn().catch(() => undefined) : undefined;
+    }
+    return known;
+  };
+  let poweredOn = false;
   for (const step of steps) {
-    if (step.action === 'power') {
-      const on = deps.isOn ? await deps.isOn().catch(() => false) : false;
-      if (on) {
+    if (step.action === 'power' && step.on) {
+      if ((await isOn()) === true) {
         out.push({ step, status: 'omitido', text: 'ya estaba encendida' });
+        poweredOn = true;
         continue;
       }
+    } else if (!poweredOn && (await isOn()) === false) {
+      const text = step.action === 'power' ? 'ya estaba apagada' : 'la tele esta apagada';
+      out.push({ step, status: 'omitido', text });
+      continue;
     }
     if ((step.action === 'mute' || step.action === 'volume') && !deps.hasGlasshouse) {
       out.push({ step, status: 'omitido', text: 'sin Glasshouse configurado' });
@@ -110,11 +156,12 @@ export async function runScene(steps: SceneStep[], deps: RunSceneDeps): Promise<
     }
     try {
       out.push({ step, status: 'hecho', text: await deps.exec(step) });
+      if (step.action === 'power') poweredOn = step.on;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       out.push({ step, status: 'fallo', text: msg });
       // Sin tele encendida no tiene sentido seguir mandando ordenes.
-      if (step.action === 'power') break;
+      if (step.action === 'power' && step.on) break;
     }
   }
   return out;
