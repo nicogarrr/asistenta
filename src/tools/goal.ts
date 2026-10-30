@@ -347,8 +347,19 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
           return reply(`Objetivo "${goal.title}" cancelado. Ya no habrá más ticks.`);
         }
         case 'avance': {
-          const idx = (args.paso ?? 0) - 1;
-          if (idx < 0 || idx >= goal.plan.length) {
+          // A done or cancelled goal is closed: editing its plan would rewrite
+          // what Nico was already told (a late tick, a stale id in the chat).
+          if (goal.status === 'done' || goal.status === 'cancelled') {
+            return reply(
+              `"${goal.title}" está ${STATUS_LABEL[goal.status]}: no se registra avance en él.`,
+              true,
+            );
+          }
+          const paso = args.paso ?? 0;
+          const idx = paso - 1;
+          // A non-integer step (2.5) passed the range check, matched no step and
+          // still answered "marcado como hecho": a false success.
+          if (!Number.isInteger(paso) || idx < 0 || idx >= goal.plan.length) {
             return reply(`paso debe ser un número entre 1 y ${goal.plan.length}.`, true);
           }
           const plan = goal.plan.map((s, i) =>
