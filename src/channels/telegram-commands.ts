@@ -42,7 +42,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'tv',
-    description: 'Orden directa a la tele, sin gastar: /tv apaga la tele',
+    description: 'Mando de la tele: /tv solo abre el mando; /tv apaga la tele (sin gastar)',
   },
   {
     command: 'buscar',
@@ -59,7 +59,7 @@ export const TELEGRAM_COMMANDS = [
   // Encargos: investigar, vigilar precios, rutinas.
   {
     command: 'investiga',
-    description: 'Investigar a fondo y dar un informe con citas',
+    description: 'Informe a fondo con citas; /investiga amplio compara varios elementos',
   },
   {
     command: 'vigila',
