@@ -306,6 +306,14 @@ export class PageWatchStore {
       .map((r) => row(r as Record<string, unknown>));
   }
 
+  /** Todas las activas de todos los chats (vista única de vigilancias). */
+  listAll(): PageWatch[] {
+    return this.db
+      .prepare('SELECT * FROM page_watches WHERE active = 1 ORDER BY created_at')
+      .all()
+      .map((r) => row(r as Record<string, unknown>));
+  }
+
   /** Todas las activas, para el planificador. */
   due(everyMs: number): PageWatch[] {
     return this.db
