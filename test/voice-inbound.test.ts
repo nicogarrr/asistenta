@@ -21,9 +21,10 @@ describe('voz: lo dicho en voz alta entra como un Inbound más', () => {
     });
   });
 
-  it('cli.ts usa voiceInbound y no construye el Inbound de voz a mano', () => {
+  it('cli.ts no construye el Inbound de voz a mano (va por voiceUtteranceTurn → voiceInbound)', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
-    expect(cli).toMatch(/voiceInbound\(telegram\.account, chat, heard, \+\+wakeCount\)/);
+    expect(cli).toMatch(/voiceUtteranceTurn\(chat, heard, \{/);
+    expect(cli).toMatch(/nextN: \(\) => \+\+wakeCount/);
     expect(cli).not.toMatch(/displayName: 'conversación por voz'/);
   });
 });
