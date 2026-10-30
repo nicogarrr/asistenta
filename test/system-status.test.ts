@@ -129,3 +129,25 @@ describe('tool system: errores claros', () => {
     await expect(createSystemTool().execute('1', { action: 'play' })).rejects.toThrow(/path/);
   });
 });
+
+describe('setVolume: aviso cuando el dispositivo no aplica el nivel', () => {
+  it('avisa si la lectura de vuelta no coincide (antes nunca saltaba) y no avisa por redondeo', async () => {
+    const { log } = await import('../src/log.js');
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    try {
+      mock.calls = [];
+      mock.answers = ['set hr=0', '30|0'];
+      expect((await setVolume(70)).level).toBe(30);
+      expect(warn).toHaveBeenCalledWith(
+        'volume set did not take',
+        expect.objectContaining({ wanted: 70, got: 30 }),
+      );
+      warn.mockClear();
+      mock.answers = ['set hr=0', '69|0'];
+      await setVolume(70);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

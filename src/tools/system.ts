@@ -111,7 +111,10 @@ Write-Output ("set hr=$hr")`,
   // when the device refuses, and a set that silently did nothing is exactly the
   // failure this tool exists to avoid reporting as done.
   const state = await getVolume();
-  if (state.level !== v && !out.includes('hr=0')) {
+  // `out` always carries hr=0 here (a non-zero hr throws above), so the old
+  // `!out.includes('hr=0')` guard made this warning unreachable. Allow ±1 for
+  // the 0-65535 rounding on the way back.
+  if (Math.abs(state.level - v) > 1) {
     log.warn('volume set did not take', { wanted: v, got: state.level, out: out.trim() });
   }
   return state;
