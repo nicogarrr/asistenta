@@ -1083,12 +1083,15 @@ export class TelegramChannel implements ChannelAdapter {
   async streamDraft(
     chatId: number,
     threadId: string | undefined,
-    text: string,
+    rawText: string,
     opts?: { minIntervalMs?: number },
   ): Promise<string | null> {
     if (!Number.isFinite(chatId)) {
       throw new Error(`invalid telegram chat id: ${chatId}`);
     }
+    // Telegram rechaza (400) un mensaje o edición de más de 4096 caracteres: el
+    // borrador es solo una vista previa, así que se recorta en vez de romper el turno.
+    const text = clipDraftText(rawText);
     const minIntervalMs = Math.max(0, opts?.minIntervalMs ?? DRAFT_MIN_INTERVAL_MS);
 
     return this.#draftGate.run(async () => {
@@ -2052,4 +2055,19 @@ export function usableButtons<T extends { label: string; action: string }>(butto
     const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
     return Boolean(b.label?.trim()) && bytes >= 1 && bytes <= 64;
   });
+}
+
+/** Límite de Telegram para el texto de un mensaje (y de una edición). */
+const DRAFT_MAX_CHARS = 4096;
+
+/**
+ * Recorta el texto de un borrador al límite de Telegram, terminando en «…».
+ * No parte un par sustituto (emoji) por la mitad.
+ */
+export function clipDraftText(text: string): string {
+  if (text.length <= DRAFT_MAX_CHARS) return text;
+  let cut = DRAFT_MAX_CHARS - 1;
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return `${text.slice(0, cut)}…`;
 }

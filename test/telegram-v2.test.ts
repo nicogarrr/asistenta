@@ -438,3 +438,25 @@ describe('isMoreRequest', () => {
     }
   });
 });
+
+describe('streamDraft con texto largo', () => {
+  it('recorta el borrador a 4096 caracteres al enviarlo y al editarlo', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+
+    await channel.streamDraft(42, undefined, 'a'.repeat(5000));
+    expect(state.sent).toHaveLength(1);
+    expect(state.sent[0]?.text.length).toBeLessThanOrEqual(4096);
+    expect(state.sent[0]?.text.endsWith('…')).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1_200);
+    await channel.streamDraft(42, undefined, '😀'.repeat(2100));
+    expect(state.edits).toHaveLength(1);
+    const edited = state.edits[0]?.text ?? '';
+    expect(edited.length).toBeLessThanOrEqual(4096);
+    expect(edited.endsWith('…')).toBe(true);
+    // Sin medio emoji suelto antes del «…».
+    const last = edited.charCodeAt(edited.length - 2);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+});
