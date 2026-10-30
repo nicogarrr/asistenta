@@ -56,6 +56,9 @@ export const DEFAULT_VOLUME_STEP = 3;
 export const VOLUME_TOPE = 100;
 const MAX_VOLUME_STEP = 15;
 
+const COMPOUND =
+  /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
+
 function num(s: string | undefined): number | null {
   if (!s) return null;
   if (/^\d+$/.test(s)) return Number(s);
@@ -123,6 +126,11 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'scene', scene: 'apagar-todo' };
   }
 
+  // Dos ordenes encadenadas («enciende la tele y pon Netflix»): el parser
+  // solo ejecuta una, asi que haria la mitad en silencio. Mejor null y que
+  // las atienda el modelo (o se pidan por separado).
+  if (COMPOUND.test(t)) return null;
+
   // Estado: preguntas, no ordenes.
   if (
     new RegExp(
@@ -183,14 +191,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
-  m = /\bvolumen (?:a|al|en) (\d{1,3}|[a-z]+)\b/.exec(t);
+  m =
+    /\bvolumen (?:a|al|en) (\d{1,3}|[a-z]+)\b/.exec(t) ??
+    /^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\d{1,3})$/.exec(t);
   if (m) {
     const level = num(m[1]);
     if (level !== null && level >= 0 && level <= 100) return { action: 'volume', level };
   }
   // Volumen relativo: "sube el volumen", "baja 5", "sube un poco", "bajale dos".
   m =
-    /^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco| (\d{1,2}|[a-z]+)(?: puntos?| niveles?)?)?(?: (?:a|de) (?:la )?(?:tele|tv))?$/.exec(
+    /^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco| un poquito| (\d{1,2}|[a-z]+)(?: puntos?| niveles?)?)?(?: (?:a|de) (?:la )?(?:tele|tv))?$/.exec(
       t,
     );
   if (m?.[1]) {
@@ -225,10 +235,18 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (m) return { action: 'input', input: `hdmi${m[1]}` };
 
   // Reproduccion.
-  if (/^(?:pausa|pausala|pausalo|para|pausa la (?:peli|pelicula|serie|cancion|video))$/.test(t)) {
+  if (
+    /^(?:pausa|pausala|pausalo|para|(?:pausa|para) la (?:peli|pelicula|serie|cancion|video))$/.test(
+      t,
+    )
+  ) {
     return { action: 'media', command: 'pause' };
   }
-  if (/^(?:play|dale al play|reanuda|continua|sigue|quita la pausa)$/.test(t)) {
+  if (
+    /^(?:play|dale (?:al|a) play|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) la (?:peli|pelicula|serie|cancion|video))$/.test(
+      t,
+    )
+  ) {
     return { action: 'media', command: 'play' };
   }
 
