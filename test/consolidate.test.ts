@@ -220,6 +220,33 @@ describe('consolidateProfile', () => {
 });
 
 describe('runConsolidation', () => {
+  it('a second pass on the same day keeps the first original backup', async () => {
+    const snap = new MemorySnapshot({ dir: join(dir, 'snap2') });
+    const backupDir = join(dir, 'same-day');
+    store.remember('chat:1', 'prefiere el tren para viajes largos');
+    store.remember('chat:1', 'Prefiere el tren para viajes largos');
+    const pristine = readFileSync(store.fileFor('chat:1'), 'utf8');
+    const first = await runConsolidation({
+      store,
+      snapshot: snap,
+      backupDir,
+      now: new Date(2026, 9, 19, 3, 5),
+    });
+    store.remember('chat:1', 'vive en Valencia');
+    store.remember('chat:1', 'Vive en Valencia');
+    // 20 h después de las 03:05 sigue siendo el mismo día: otra pasada.
+    const second = await runConsolidation({
+      store,
+      snapshot: snap,
+      backupDir,
+      now: new Date(2026, 9, 19, 23, 10),
+    });
+    const firstCopy = first.backups[0] as string;
+    expect(readFileSync(firstCopy, 'utf8')).toBe(pristine);
+    expect(second.backups[0]).not.toBe(firstCopy);
+    expect(readFileSync(second.backups[0] as string, 'utf8')).toContain('Vive en Valencia');
+  });
+
   it('backs up every file before modifying it and reports what it did', async () => {
     const snapDir = join(dir, 'snap');
     const backupDir = join(dir, 'consol-backups');
