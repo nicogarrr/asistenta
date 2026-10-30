@@ -31,6 +31,35 @@ export function parseMac(raw: string): string {
   return mac;
 }
 
+const MAC_DONDE =
+  'La MAC real de la tele está en la tele en Ajustes > General > Acerca de este TV (o en la lista de dispositivos del router); con la tele encendida y emparejada, «pa tv mac auto» la lee sola.';
+
+/**
+ * MAC para guardar como la de la tele: `parseMac` y, además, rechaza las MAC
+ * multicast (bit 0 del primer byte: «69:e3:…» es el ID de una app IPTV, no
+ * una tarjeta de red) y avisa, sin rechazar, de las administradas localmente
+ * (bit 1: MAC aleatoria de wifi). El envío del paquete mágico no cambia.
+ */
+export function validateTvMac(raw: string): { mac: string; warning: string | null } {
+  let mac: string;
+  try {
+    mac = parseMac(raw);
+  } catch (err) {
+    throw new Error(`${err instanceof Error ? err.message : String(err)} ${MAC_DONDE}`);
+  }
+  const first = Number.parseInt(mac.slice(0, 2), 16);
+  if (first & 0x01) {
+    throw new Error(
+      `«${mac}» no puede ser la MAC de la tele: es una dirección multicast (el primer byte es impar), no la de una tarjeta de red. Seguramente es el ID de una app (p. ej. de IPTV), no la MAC real. ${MAC_DONDE}`,
+    );
+  }
+  const warning =
+    first & 0x02
+      ? `Ojo: «${mac}» es una MAC «administrada localmente» (suele ser aleatoria, de wifi). La guardo, pero si el encendido por red no funciona, compárala con Ajustes > General > Acerca de este TV.`
+      : null;
+  return { mac, warning };
+}
+
 /** Paquete magico: 6 x 0xFF + 16 repeticiones de la MAC (102 bytes). */
 export function magicPacket(mac: string): Buffer {
   const bytes = Buffer.from(
