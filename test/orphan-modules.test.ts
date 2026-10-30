@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
  * conéctalo al daemon/router, o añádelo aquí con una razón honesta.
  */
 const KNOWN_UNWIRED: Record<string, string> = {
+  'src/teach-demo.ts':
+    'F11 núcleo puro (PA_TEACH_DEMO, apagado); falta conectarlo al navegador con /learn web',
   'src/tools/ocr-local.ts': 'lo conecta src/plugins/ocr.ts (PR siguiente)',
   'src/evolve/battery-case.ts':
     'evaluador de la batería: lo carga scripts/evolve-battery-case.mjs en la copia que se mide',
