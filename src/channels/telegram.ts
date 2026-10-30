@@ -679,7 +679,10 @@ export class TelegramChannel implements ChannelAdapter {
     // Buttons ride on the first chunk only: repeating them on every chunk of a long
     // message would produce duplicate approvals for the same request.
     let first = true;
-    for (const chunk of outbound.text.trim() ? chunkText(outbound.text, 4000) : []) {
+    const chunks = outbound.text.trim()
+      ? chunkText(outbound.text, 4000, { marks: outbound.format === 'marks' })
+      : [];
+    for (const chunk of chunks) {
       const options = (withThread: boolean, withReply: boolean) => ({
         message_thread_id: withThread && outbound.threadId ? Number(outbound.threadId) : undefined,
         reply_to_message_id:
@@ -1440,13 +1443,14 @@ export function isEntityParseError(err: unknown): boolean {
   );
 }
 
-export function chunkText(text: string, size: number): string[] {
+export function chunkText(text: string, size: number, opts: { marks?: boolean } = {}): string[] {
   if (Array.from(text).length <= size) return [text];
   const out: string[] = [];
   let rest = text;
   let reopen = false;
+  let reopenBold = false;
   while (rest.length > 0) {
-    const prefix: string = reopen ? FENCE_OPEN : '';
+    const prefix: string = reopen ? FENCE_OPEN : reopenBold ? BOLD : '';
     if (Array.from(prefix + rest).length <= size) {
       out.push(prefix + rest);
       break;
@@ -1464,10 +1468,33 @@ export function chunkText(text: string, size: number): string[] {
     } else {
       reopen = false;
     }
+    // Con marcas (HTML), una **negrita** partida a mitad de línea se cierra al final
+    // de este trozo y se reabre en el siguiente; si no, cada trozo pierde la suya.
+    reopenBold = false;
+    if (opts.marks && !reopen && piece.midLine && boldOpen(body)) {
+      if (Array.from(body).length + BOLD.length > size) {
+        piece = splitAt(rest, Math.max(1, budget - BOLD.length));
+        body = prefix + piece.head;
+      }
+      if (piece.midLine && boldOpen(body) && countFences(body) % 2 === 0) {
+        body = body.endsWith(BOLD) ? body.slice(0, -BOLD.length) : body + BOLD;
+        reopenBold = true;
+      }
+    }
     if (body.trim()) out.push(body);
     rest = piece.rest;
   }
   return out;
+}
+
+const BOLD = '**';
+
+/** ¿Queda un `**` sin pareja en la última línea (fuera de bloques y de `código`)? */
+function boldOpen(text: string): boolean {
+  if (countFences(text) % 2 === 1) return false;
+  const last = text.slice(text.lastIndexOf('\n') + 1);
+  const marks = last.replace(/`[^`\n]+`/g, '').match(/\*\*/g) ?? [];
+  return marks.length % 2 === 1;
 }
 
 const FENCE_OPEN = '```\n';
@@ -1483,7 +1510,7 @@ function countFences(text: string): number {
  * Prefiere, por orden, salto de párrafo, salto de línea, fin de frase y espacio, siempre
  * que el trozo conserve al menos media ventana; si no hay ninguno, corta a ciegas.
  */
-function splitAt(text: string, budget: number): { head: string; rest: string } {
+function splitAt(text: string, budget: number): { head: string; rest: string; midLine: boolean } {
   const points = Array.from(text);
   const window = points.slice(0, budget + 1).join('');
   const minimum = Math.floor(budget / 2);
@@ -1510,7 +1537,9 @@ function splitAt(text: string, budget: number): { head: string; rest: string } {
   // El separador se queda en el corte: sin líneas en blanco ni espacio inicial en el
   // siguiente mensaje, pero conservando la sangría de la primera línea real.
   const rest = tail.replace(/^(?:[ \t]*\r?\n)+/u, '').replace(/^ (?=\S)/u, '');
-  return { head: head || points.slice(0, cut).join(''), rest };
+  // midLine: el corte no cae en un salto de línea (la línea sigue en el próximo trozo).
+  const midLine = cut < points.length && !/^[ \t]*\r?\n/u.test(tail);
+  return { head: head || points.slice(0, cut).join(''), rest, midLine };
 }
 
 const AUDIO_FILE_NAME = /\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|amr|wma)$/i;
