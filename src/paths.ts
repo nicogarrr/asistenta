@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Every mutable path the agent owns lives under the state dir, never in the repo.
@@ -11,9 +12,15 @@ import { join, resolve } from 'node:path';
  */
 export const STATE_DIR =
   process.env.PA_STATE_DIR || join(homedir(), '.local', 'share', 'personal-agent');
-export const REPO_DIR = resolve(
-  new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
-);
+/**
+ * Raíz del repo a partir de la URL del módulo. `URL.pathname` deja los caracteres
+ * codificados (`Mis%20proyectos`, `Nicol%C3%A1s`): con un espacio o una tilde en la
+ * ruta, `pa doctor` buscaba package.json en una carpeta que no existe.
+ */
+export function repoDirFrom(moduleUrl: string): string {
+  return fileURLToPath(new URL('..', moduleUrl)).replace(/[\\/]$/, '');
+}
+export const REPO_DIR = repoDirFrom(import.meta.url);
 
 export const paths = {
   state: STATE_DIR,
