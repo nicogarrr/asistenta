@@ -217,10 +217,27 @@ function daemon(core: InstanceType<typeof Core>) {
 
 const lastText = (): string => bot.sent.at(-1)?.text ?? '';
 
+/**
+ * El canal espacia los envíos ~1,1 s con setTimeout (y con Date congelado la espera
+ * es siempre entera): con reloj real el primer recorrido dormía ~4,4 s. Aquí el reloj
+ * es falso y se avanza a pasos de 100 ms solo hasta que la promesa termina, sin
+ * saltar a temporizadores lejanos (como la caducidad de una aprobación). Igual que #937.
+ */
+async function drive<T>(p: Promise<T>): Promise<T> {
+  let settled = false;
+  const done = p.finally(() => {
+    settled = true;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  for (let step = 0; !settled && step < 300; step++) await vi.advanceTimersByTimeAsync(100);
+  if (!settled) throw new Error('drive: no terminó tras 30 s de reloj falso');
+  return done;
+}
+
 describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
   it('/start → /funciones → /estado → recordatorio → «sube a tope» → /stop, y el recordatorio llega a su hora', async () => {
     const now = new Date(2026, 9, 30, 17, 0, 0);
-    vi.useFakeTimers({ toFake: ['Date'], now });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'], now });
     const dir = join(root, 'recorrido');
     const telegram = new HoldingTelegram();
     const tv = new GlasshouseTv();
@@ -230,18 +247,22 @@ describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
     const d = daemon(core);
 
     // /start: saludo por el nombre y la pista de /funciones.
-    await d.handle(inbound('/start'));
+    const t0 = performance.now();
+    await drive(d.handle(inbound('/start')));
     expect(lastText()).toContain('¡Hola, Nico!');
     expect(lastText()).toContain('/funciones');
 
     // /funciones: la vista por áreas; el dueño en su chat privado ve el área de la tele.
-    await d.handle(inbound('/funciones'));
+    await drive(d.handle(inbound('/funciones')));
     expect(lastText()).toContain('Esto es lo que sé hacer');
-    await d.handle(inbound('/funciones tele'));
+    await drive(d.handle(inbound('/funciones tele')));
     expect(lastText()).toContain('/tv');
 
     // /estado: versión y, solo para el dueño, el modelo de esta conversación.
-    await d.handle(inbound('/estado'));
+    await drive(d.handle(inbound('/estado')));
+    // Cuatro respuestas seguidas no esperan en tiempo real el hueco de ~1,1 s del canal
+    // (antes: ≥3,3 s solo aquí).
+    expect(performance.now() - t0).toBeLessThan(2_000);
     expect(lastText()).toContain('Asistenta e2e');
     expect(lastText()).toContain('Modelo: test-model (principal)');
     expect(d.unknown).toEqual([]);
@@ -255,7 +276,7 @@ describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
       call('reminder', { action: 'create', text: 'sacar la basura', at: localStamp(at) }),
       say('Hecho: a las 19:30 te recuerdo sacar la basura.'),
     );
-    const r1 = await d.handle(inbound('recuérdame sacar la basura a las 19:30'));
+    const r1 = await drive(d.handle(inbound('recuérdame sacar la basura a las 19:30')));
     expect(r1?.error).toBeNull();
     expect(telegram.approvals).toHaveLength(0);
     const job = core.routines.status().find((j) => j.name.startsWith('recordatorio-'));
@@ -265,7 +286,7 @@ describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
     // (decisión de Nico: «a tope es a tope»), tras el botón de permiso.
     telegram.answers.push(true);
     model.script(call('tv', { action: 'command', text: 'sube a tope' }), say('Volumen a tope.'));
-    const r2 = await d.handle(inbound('sube a tope la tele'));
+    const r2 = await drive(d.handle(inbound('sube a tope la tele')));
     expect(r2?.error).toBeNull();
     expect(telegram.approvals.at(-1)?.approved).toBe(true);
     expect(tv.calls).toContain('gh:volume:100');
@@ -287,7 +308,7 @@ describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
     const thread = [...core.threads.values()][0];
     if (thread) thread.active = true;
     const sentBefore = bot.sent.length;
-    await d.handle(inbound('/stop'));
+    await drive(d.handle(inbound('/stop')));
     expect(bot.sent.length).toBe(sentBefore + 1);
     expect(lastText()).toBe(stopReplyText(1, 0));
     telegram.hold = null;
