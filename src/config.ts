@@ -45,6 +45,11 @@ export interface Config {
    * that did nothing, followed by the same click again because nothing said otherwise.
    */
   verifyActions: boolean;
+  /**
+   * Kill switch for Computer Use (`PA_COMPUTER_USE=0`): every `computer` action,
+   * screenshots included, is refused before touching the desktop. On by default.
+   */
+  computerUse?: boolean;
   /** How long to wait after an action before comparing frames. Windows animations land in ~250ms. */
   verifySettleMs: number;
   /** Cron jobs from PA_CRON, newline separated `schedule<TAB>prompt`. */
@@ -241,6 +246,7 @@ export function loadConfig(): Config {
     // `flag` rather than `num` because this is a switch, and a value of 0 must mean
     // "off" instead of "invalid".
     verifyActions: flag('PA_VERIFY_ACTIONS', true),
+    computerUse: flag('PA_COMPUTER_USE', true),
     verifySettleMs: num('PA_VERIFY_SETTLE_MS', 350),
     cron,
     retry: {

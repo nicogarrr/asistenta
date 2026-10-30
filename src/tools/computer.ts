@@ -1061,6 +1061,14 @@ export function createComputerTool(
     // diagnose afterwards.
     executionMode: 'sequential',
     execute: async (_id, args, signal) => {
+      // Kill switch: refuse before ANY backend call (no capture, no input). Only an
+      // explicit `false` disables it, so a config without the field keeps working.
+      if (config.computerUse === false) {
+        throw new Error(
+          'Computer Use is disabled on this PC (PA_COMPUTER_USE=0): do not retry, tell the user. ' +
+            'El control del escritorio está desactivado (PA_COMPUTER_USE=0); para activarlo, quita esa línea del .env y reinicia.',
+        );
+      }
       const record = args as unknown as Record<string, unknown>;
       lastAfter = null;
       const wantsLook = record.look === true && args.action !== 'screenshot';
