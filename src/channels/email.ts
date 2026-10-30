@@ -20,6 +20,24 @@ import type { ChannelAdapter, ChannelHandlers, Inbound, Outbound } from './types
 export const EMAIL_CHANNEL = 'correo';
 export const EMAIL_SUBJECT_TAG = '[asistenta]';
 export const EMAIL_TAINT_SOURCE = 'correo';
+
+/** Lo mínimo del Gate que necesita un turno que entra por correo. */
+export interface EmailTurnGate {
+  markTainted(sessionId: string, source: string): void;
+  taintSessionPrivate(sessionId: string, source: string): void;
+}
+
+/**
+ * Marca un turno que entra por correo antes de correr el agente. El cuerpo del
+ * correo va al prompt sin pasar por una herramienta, así que hay que marcar las
+ * dos cosas a mano: es externo (lo escribe un tercero → lo que no sea lectura
+ * pregunta, F2) y es privado (es tu buzón → una salida a la red con datos
+ * pregunta, #376/#492). Solo endurece.
+ */
+export function taintEmailTurn(gate: EmailTurnGate, sessionId: string): void {
+  gate.markTainted(sessionId, EMAIL_TAINT_SOURCE);
+  gate.taintSessionPrivate(sessionId, 'el correo que inició este turno');
+}
 export const EMAIL_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_AUTHSERV = 'mx.google.com';
 const MAX_TEXT = 8_000;

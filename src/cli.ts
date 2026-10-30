@@ -36,7 +36,7 @@ import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import { BrowserService } from './browser/service.js';
-import { EMAIL_CHANNEL, EMAIL_TAINT_SOURCE } from './channels/email.js';
+import { EMAIL_CHANNEL, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
 import {
   cleanForTelegram,
@@ -5623,7 +5623,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // previous turn read from outside no longer blocks standing approvals.
     thread.gate.clearTaint(thread.key);
     // F10: un turno que entra por correo es contenido externo: lo que no sea lectura pregunta.
-    if (inbound.channel === EMAIL_CHANNEL) thread.gate.markTainted(thread.key, EMAIL_TAINT_SOURCE);
+    // También privado: el cuerpo del correo es de tu buzón y entra sin herramienta.
+    if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key);
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
