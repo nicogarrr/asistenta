@@ -454,12 +454,25 @@ $do.SetData('ExcludeClipboardContentFromMonitorProcessing', (& $zero))
 Pa-Retry { [System.Windows.Forms.Clipboard]::SetDataObject($do, $true) } | Out-Null`;
 
 /**
- * `PA_COMPUTER_PASTE_NO_HISTORY=1` keeps text Computer Use pastes (emoji, braces,
- * accented runs) out of Nico's Win+V clipboard history and cloud sync. Off by
- * default: the plain paste is what has been proven on his PC.
+ * Private set with a safe fallback: if Windows refuses the extra formats (or the
+ * DataObject path throws for any reason), the text goes on the clipboard exactly as
+ * the plain paste does today, so pasting never breaks.
+ */
+const NO_HISTORY_WITH_FALLBACK = `$privateSet = $false
+try {
+${NO_HISTORY_SET}
+$privateSet = $true
+} catch {}
+if (-not $privateSet) { ${PLAIN_SET} }`;
+
+/**
+ * Text Computer Use pastes (emoji, braces, accented runs) stays out of Nico's Win+V
+ * clipboard history and cloud sync. ON by default (Nico, 16:47: the most private
+ * option); if Windows does not accept that, the paste falls back to the plain one.
+ * `PA_COMPUTER_PASTE_NO_HISTORY=0` forces the plain paste.
  */
 export function pasteNoHistory(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.PA_COMPUTER_PASTE_NO_HISTORY === '1';
+  return env.PA_COMPUTER_PASTE_NO_HISTORY?.trim() !== '0';
 }
 
 export function pasteScript(payloadB64: string, settleMs: number, noHistory = false): string {
@@ -487,7 +500,7 @@ try {
   }
 } catch {}
 $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payloadB64}'))
-${noHistory ? NO_HISTORY_SET : PLAIN_SET}
+${noHistory ? NO_HISTORY_WITH_FALLBACK : PLAIN_SET}
 Start-Sleep -Milliseconds 120
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 try {
