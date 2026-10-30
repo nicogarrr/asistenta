@@ -270,6 +270,7 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
+import { panelDoctorLines } from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { iphonePlugin } from './plugins/iphone.js';
 import { tvPlugin, tvToolDeps } from './plugins/tv.js';
@@ -771,6 +772,7 @@ async function doctorCommand(): Promise<number> {
   }
 
   lines.push(...(await sandboxDoctorLines()));
+  lines.push(...panelDoctorLines());
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
