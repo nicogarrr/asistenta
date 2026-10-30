@@ -1,3 +1,4 @@
+// Tele webOS falsa para tests (opcion unknownKey para el re-emparejado).
 /**
  * Tele LG webOS simulada para tests: habla SSAP sobre la interfaz TvSocket
  * de src/tv/lgtv.ts (sin red, sin tele real). Cada socket abre (o falla, si
@@ -29,6 +30,12 @@ export interface FakeTvOptions {
    * tecla (antes del margen de consumo).
    */
   inputMode?: 'open' | 'hang' | 'error' | 'close-early';
+  /**
+   * Que hace la tele ante una client-key que no conoce: 'error' (por defecto,
+   * 401), 'prompt' (muestra el aviso de emparejamiento y nadie lo acepta) o
+   * 'prompt-accept' (muestra el aviso y Nico lo acepta: entrega SU clave).
+   */
+  unknownKey?: 'error' | 'prompt' | 'prompt-accept';
   /** Respuestas por uri (sin ssap://). Devuelve payload; lanzar = error SSAP. */
   handlers?: Record<
     string,
@@ -41,6 +48,7 @@ export interface FakeTvRequest {
   payload: Record<string, unknown>;
 }
 
+// unknownKey: ver FakeTvOptions (re-emparejado, lane tv7).
 export class FakeWebOsTv {
   readonly urls: string[] = [];
   readonly requests: FakeTvRequest[] = [];
@@ -61,6 +69,7 @@ export class FakeWebOsTv {
       failOpens: opts.failOpens ?? 0,
       openFailure: opts.openFailure ?? 'error',
       inputMode: opts.inputMode ?? 'open',
+      unknownKey: opts.unknownKey ?? 'error',
       handlers: opts.handlers ?? {},
     };
   }
@@ -108,7 +117,24 @@ export class FakeWebOsTv {
       const key = msg.payload?.['client-key'] as string | undefined;
       this.registers.push(key);
       if (key !== undefined && key !== this.opts.clientKey) {
-        socket.reply({ type: 'error', id: msg.id, error: '401 insufficient permissions' });
+        if (this.opts.unknownKey === 'error') {
+          socket.reply({ type: 'error', id: msg.id, error: '401 insufficient permissions' });
+          return;
+        }
+        // Tele real: la clave desconocida se trata como emparejamiento nuevo.
+        socket.reply({
+          type: 'response',
+          id: msg.id,
+          payload: { pairingType: 'PROMPT', returnValue: true },
+        });
+        if (this.opts.unknownKey === 'prompt') return;
+        queueMicrotask(() =>
+          socket.reply({
+            type: 'registered',
+            id: msg.id,
+            payload: { 'client-key': this.opts.clientKey },
+          }),
+        );
         return;
       }
       socket.reply({
