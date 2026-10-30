@@ -152,10 +152,10 @@ export interface PriceText {
  * no confirm (fail-closed).
  */
 const PRICE_RE =
-  /(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d))\s*(€|EUR|\$|£)(?![A-Za-z])|(€|EUR|\$|£)\s*(?<![\d.,\u00a0])((?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d))/;
+  /(?<![\d.,\u00a0\u202f\u2009])((?:\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d)|[\u00a0\u202f\u2009 ]\d)\s*(€|EUR|\$|£)(?![A-Za-z])|(€|EUR|\$|£)\s*(?<![\d.,\u00a0\u202f\u2009])((?:\d{1,3}(?:[.\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:,\d{2})?)(?![\d,]|\.(?=\d)|[\u00a0\u202f\u2009 ]\d)/;
 
 function toPriceText(match: RegExpMatchArray): PriceText | null {
-  const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0 ]/g, '');
+  const raw = (match[1] ?? match[4] ?? '').replace(/[\u00a0\u202f\u2009 ]/g, '');
   if (!raw) return null;
   const symbol =
     (match[2] ?? match[3] ?? '').toUpperCase() === 'EUR' ? '€' : (match[2] ?? match[3] ?? '');
@@ -182,7 +182,7 @@ export function extractPriceTexts(text: string, limit = 5): PriceText[] {
 
 /** A page price raw ("1.234,56", "45,20", "300") as cents, or null if it does not parse. */
 export function parsePriceToCents(raw: string): number | null {
-  const cleaned = raw.replace(/[.\u00a0 ]/g, '').replace(',', '.');
+  const cleaned = raw.replace(/[.\u00a0\u202f\u2009 ]/g, '').replace(',', '.');
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
   const cents = Math.round(Number.parseFloat(cleaned) * 100);
   return Number.isSafeInteger(cents) ? cents : null;
