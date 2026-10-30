@@ -33,7 +33,14 @@ describe('aviso de error repetido de un objetivo', () => {
     });
     const g = goals.read(goal.id);
     if (!g) throw new Error('goal');
-    return { notifier, g, sent, advance: (ms: number) => (now += ms) };
+    return {
+      notifier,
+      g,
+      sent,
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
   }
 
   it('el mismo error dentro del enfriamiento no se repite', async () => {

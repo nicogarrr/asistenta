@@ -220,7 +220,7 @@ describe('tamano exacto y presupuesto (script real en sh)', () => {
   };
   const withDir = (fn: (dir: string, root: string) => void) => {
     const dir = mkdtempSync(join(tmpdir(), 'icons-'));
-    const root = join(dir, 'apps') + '/';
+    const root = `${join(dir, 'apps')}/`;
     mkdirSync(root);
     try {
       fn(dir, root);
