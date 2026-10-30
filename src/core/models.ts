@@ -87,12 +87,6 @@ const OPENROUTER_CAPS: ModelCaps = {
 /** Defaults si el preset no existe o el catalogo esta incompleto. */
 export const DEFAULT_MODEL_CAPS: ModelCaps = { ...OPENCODE_CAPS, id: 'unknown' };
 
-export const MODEL_PRESETS: Readonly<Record<ModelPreset, ModelCaps>> = {
-  opencode: OPENCODE_CAPS,
-  'opencode-local': OPENCODE_LOCAL_CAPS,
-  openrouter: OPENROUTER_CAPS,
-};
-
 /**
  * Catalogo por endpoint y modelo. La clave '*' es el fallback del preset:
  * cualquier modelo no listado hereda esas capacidades.

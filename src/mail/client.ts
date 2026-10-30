@@ -209,41 +209,6 @@ export async function searchMail(
   );
 }
 
-export async function readMail(account: MailAccount, id: string): Promise<MailMessage | null> {
-  return withImap(account, 'INBOX', async (client) => {
-    const raw = await client.fetchOne(
-      id,
-      { uid: true, envelope: true, source: true, flags: true },
-      { uid: true },
-    );
-    return raw ? toMessage(raw as never, 'INBOX') : null;
-  });
-}
-
-export async function markSeen(account: MailAccount, id: string): Promise<void> {
-  await withImap(account, 'INBOX', async (client) => {
-    await client.messageFlagsAdd(id, ['\\Seen'], { uid: true });
-  });
-}
-
-export async function listFolders(account: MailAccount): Promise<string[]> {
-  const client = new ImapFlow({
-    host: account.imapHost,
-    port: account.imapPort,
-    secure: true,
-    auth: { user: account.address, pass: account.password },
-    logger: false,
-    socketTimeout: 30_000,
-  });
-  try {
-    await client.connect();
-    const list = await client.list();
-    return list.map((f) => f.path);
-  } finally {
-    await client.logout().catch(() => {});
-  }
-}
-
 /**
  * Send one message.
  *

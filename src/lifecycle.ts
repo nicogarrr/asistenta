@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -230,8 +229,4 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   })();
 
   return { done, heartbeat, stop, outcome: () => outcome };
-}
-
-export function newRequestId(): string {
-  return randomUUID();
 }

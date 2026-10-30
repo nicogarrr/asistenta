@@ -75,10 +75,6 @@ export { localDay };
 
 const USAGE_FILE = /^usage-(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
 function usageFile(day: string): string {
   return join(paths.log, `usage-${day}.jsonl`);
 }
