@@ -121,7 +121,7 @@ export function renderPage(): string {
       padding: 8px 12px;
       z-index: 20;
     }
-    .skip:focus { left: 16px; top: 16px; }
+    .skip:focus { left: 16px; top: 16px; color: var(--texto); }
     .solo-lector {
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -151,7 +151,7 @@ export function renderPage(): string {
       box-shadow: 0 8px 24px #0006;
     }
     h1 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
-    .subtitulo { margin: 1px 0 0; color: var(--suave); font-size: 12px; }
+    .subtitulo { margin: 1px 0 0; color: var(--suave); font-size: 13px; }
     .acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .actualizado {
       color: var(--suave);
@@ -169,7 +169,15 @@ export function renderPage(): string {
       transition: border-color 120ms ease, background 120ms ease;
     }
     button:hover { border-color: var(--acento); background: #213143; }
-    button:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+    /* Anillo claro con halo oscuro: se ve igual sobre botones oscuros, verdes, rojos o ámbar. */
+    button:focus-visible,
+    a:focus-visible,
+    summary:focus-visible {
+      outline: 2px solid var(--acento);
+      outline-offset: 2px;
+      box-shadow: 0 0 0 4px var(--fondo);
+    }
+    main:focus { outline: none; }
     button:disabled { opacity: 0.55; cursor: progress; }
     button.mini {
       padding: 4px 8px;
@@ -206,11 +214,11 @@ export function renderPage(): string {
     .recuerdos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     .recuerdo { border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
     .recuerdo p { margin: 0; }
-    .recuerdo .muted { font-size: 12px; margin-top: 3px; }
+    .recuerdo .muted { font-size: 13px; margin-top: 3px; }
     .meta-objetivo { margin: 6px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
     .turno { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--borde); }
     .turno p { margin: 0; white-space: pre-wrap; word-break: break-word; }
-    .turno .quien { font-size: 12px; color: var(--suave); margin-bottom: 2px; }
+    .turno .quien { font-size: 13px; color: var(--suave); margin-bottom: 2px; }
     .turno.yo { background: #13202c; border-color: #264357; margin-left: 12%; }
     .turno.asistente { background: var(--panel-2); margin-right: 12%; }
     .turno.esperando .texto { color: var(--suave); font-variant-numeric: tabular-nums; }
@@ -266,7 +274,7 @@ export function renderPage(): string {
       display: flex;
       flex-direction: column;
       gap: 3px;
-      font-size: 10px;
+      font-size: 11px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--suave);
@@ -284,7 +292,7 @@ export function renderPage(): string {
       letter-spacing: normal;
       text-transform: none;
     }
-    .buscador input::placeholder { color: #667486; }
+    .buscador input::placeholder { color: #8191a5; }
     .buscador input:focus-visible,
     .buscador select:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
     .buscador textarea {
@@ -301,7 +309,7 @@ export function renderPage(): string {
       letter-spacing: normal;
       text-transform: none;
     }
-    .buscador textarea::placeholder { color: #667486; }
+    .buscador textarea::placeholder { color: #8191a5; }
     .buscador textarea:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
     .chat-form { display: flex; flex-direction: column; gap: 9px; }
     .chat-acciones { display: flex; justify-content: flex-end; }
@@ -315,7 +323,7 @@ export function renderPage(): string {
     }
     .datos dt {
       color: var(--suave);
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
       padding-top: 2px;
@@ -373,7 +381,7 @@ export function renderPage(): string {
     .aprobacion .botones button.denegar { border-color: #5b2424; background: #241111; color: var(--mal); }
     .aprobacion .resultado { margin: 8px 0 0; font-size: 13px; }
     .aprobacion.caducada { opacity: 0.6; }
-    .sesion .muted { margin: 2px 0 0; font-size: 12px; }
+    .sesion .muted { margin: 2px 0 0; font-size: 13px; }
     .sesion .extracto { margin: 6px 0 0; font-size: 13px; line-height: 1.4; word-break: break-word; }
     .aprobacion .botones button { white-space: nowrap; }
     .tarjeta-cuerpo.sin-tope { max-height: none; }
@@ -391,7 +399,7 @@ export function renderPage(): string {
       text-align: center;
     }
     details { margin-top: 8px; }
-    summary { cursor: pointer; color: var(--suave); font-size: 12px; }
+    summary { cursor: pointer; color: var(--suave); font-size: 13px; }
     summary:hover { color: var(--texto); }
     .veredicto { margin-bottom: 10px; }
     [hidden] { display: none !important; }
@@ -424,7 +432,7 @@ export function renderPage(): string {
     </div>
   </header>
 
-  <main id="contenido">
+  <main id="contenido" tabindex="-1">
     <p id="aviso" class="aviso" role="alert" hidden></p>
     <p id="anuncio" class="solo-lector" role="status" aria-live="polite"></p>
     <form id="form-token" class="aviso token" hidden>
