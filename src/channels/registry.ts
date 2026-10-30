@@ -29,12 +29,17 @@ export class ChannelRegistry {
 
   async startAll(handlers: ChannelHandlers): Promise<void> {
     this.#handlers = handlers;
+    const onTvButton = handlers.onTvButton?.bind(handlers);
     for (const adapter of this.#adapters.values()) {
       await adapter.start({
         onMessage: (inbound) => handlers.onMessage(inbound),
         onApprovalNeeded: (req) => this.dispatchApproval(req),
         onPollingLost: (channel, message) => handlers.onPollingLost?.(channel, message),
         onPollingRecovered: (channel) => handlers.onPollingRecovered?.(channel),
+        // Los botones del mando de la tele (/tv) llegan por aquí. Antes este objeto
+        // no los pasaba y el adaptador veía `onTvButton` vacío: cada pulsación
+        // contestaba «Este botón ya no sirve» y no mandaba nada a la tele.
+        onTvButton,
         log: (level, msg, fields) => log[level](`[${adapter.name}] ${msg}`, fields ?? {}),
       });
       log.info('channel started', { channel: adapter.name });
