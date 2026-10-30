@@ -34,6 +34,9 @@ const HEAD_TAIL_BYTES = 6 * 1024;
  * line count is derived from the text actually retained, which is the number the
  * model can reason about ("~400 lines came out of here").
  */
+/** Por debajo de esto un comando de PowerShell ni siquiera arranca. */
+const MIN_TIMEOUT_MS = 1_000;
+
 export function headTail(head: string, tail: string, omitted: number): string {
   if (omitted <= 0) return head + tail;
   const headLines = head.split('\n').length;
@@ -111,9 +114,16 @@ export class OutputCollector {
   }
 
   text(): string {
-    const head = Buffer.concat(this.#head).toString('utf8');
-    const tail = this.#tail.length ? Buffer.concat(this.#tail).toString('utf8') : '';
-    return headTail(head, tail, this.omitted);
+    // Sin hueco, cabeza y cola son bytes contiguos: decodificarlas por separado partía
+    // una «ñ» o una «á» que cayera justo en el corte en dos caracteres basura.
+    if (this.omitted === 0) return Buffer.concat([...this.#head, ...this.#tail]).toString('utf8');
+    // Con hueco, ni la cabeza termina ni la cola empieza a mitad de carácter.
+    const head = new TextDecoder().decode(Buffer.concat(this.#head), { stream: true });
+    let tail = Buffer.concat(this.#tail);
+    let skip = 0;
+    while (skip < tail.length && skip < 3 && ((tail[skip] as number) & 0xc0) === 0x80) skip++;
+    tail = tail.subarray(skip);
+    return headTail(head, tail.toString('utf8'), this.omitted);
   }
 }
 export function resolveShell(): { file: string } {
@@ -165,7 +175,13 @@ export function createShellTool(
       // watchdog would be aborted mid-flight with no result, so the watchdog must
       // always be the outer bound, never the tool.
       const ceiling = Math.max(30_000, config.idleTimeoutMs - 60_000);
-      const timeoutMs = Math.min(args.timeoutMs ?? config.toolTimeoutMs, ceiling);
+      // 0, negativo o NaN no son «sin límite»: setTimeout los dispara al instante y el
+      // comando moría antes de empezar. Se usa el de por defecto, y nunca menos de 1 s.
+      const asked =
+        typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs) && args.timeoutMs > 0
+          ? args.timeoutMs
+          : config.toolTimeoutMs;
+      const timeoutMs = Math.min(Math.max(MIN_TIMEOUT_MS, asked), ceiling);
       const started = Date.now();
 
       const result = await new Promise<{
@@ -173,6 +189,7 @@ export function createShellTool(
         out: string;
         err: string;
         timedOut: boolean;
+        aborted: boolean;
       }>((done) => {
         const target = buildSandboxSpawn({
           mode: sandbox.mode,
@@ -190,27 +207,46 @@ export function createShellTool(
         const stdout = new OutputCollector();
         const stderr = new OutputCollector();
         let timedOut = false;
+        let aborted = false;
 
         child.stdout.on('data', (c: Buffer) => stdout.push(c));
         child.stderr.on('data', (c: Buffer) => stderr.push(c));
 
         // Windows has no signals, so the whole process tree dies via taskkill /T.
+        // Fuera de Windows no hay taskkill: un spawn de un binario ausente emite 'error'
+        // y, sin oyente, tumba el proceso entero.
         const kill = (): void => {
-          timedOut = true;
-          try {
-            spawnImpl('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], {
-              windowsHide: true,
-            });
-          } catch {}
+          if (process.platform === 'win32') {
+            try {
+              spawnImpl('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], {
+                windowsHide: true,
+              }).on('error', () => {});
+            } catch {}
+          } else {
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+          }
           // El contenedor no es hijo del CLI de docker: hay que matarlo por nombre.
           if (target.container) {
             try {
-              spawnImpl('docker', ['kill', target.container], { windowsHide: true });
+              spawnImpl('docker', ['kill', target.container], { windowsHide: true }).on(
+                'error',
+                () => {},
+              );
             } catch {}
           }
         };
-        const timer = setTimeout(kill, timeoutMs);
-        const onAbort = (): void => kill();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          kill();
+        }, timeoutMs);
+        // Un /stop no es un timeout: decir «timed out» hacía creer al modelo que el
+        // comando era lento y lo reintentaba con más tiempo.
+        const onAbort = (): void => {
+          if (!timedOut) aborted = true;
+          kill();
+        };
         signal?.addEventListener('abort', onAbort, { once: true });
 
         const finish = (value: {
@@ -218,6 +254,7 @@ export function createShellTool(
           out: string;
           err: string;
           timedOut: boolean;
+          aborted: boolean;
         }): void => {
           clearTimeout(timer);
           signal?.removeEventListener('abort', onAbort);
@@ -232,6 +269,7 @@ export function createShellTool(
             out: stdout.text(),
             err: stderr.text(),
             timedOut,
+            aborted,
           });
         });
         child.on('error', (e: Error) =>
@@ -240,6 +278,7 @@ export function createShellTool(
             out: '',
             err: sandboxSpawnError(sandbox.mode, e.message),
             timedOut: false,
+            aborted: false,
           }),
         );
       });
@@ -251,6 +290,7 @@ export function createShellTool(
       if (result.out.trim()) parts.push(result.out.trimEnd());
       if (result.err.trim()) parts.push(`[stderr]\n${result.err.trimEnd()}`);
       if (result.timedOut) parts.push(`[timed out after ${timeoutMs}ms]`);
+      if (result.aborted) parts.push('[cancelled before finishing; not a timeout]');
       parts.push(`[exit ${result.code} in ${wall}ms]`);
 
       return {
@@ -261,6 +301,7 @@ export function createShellTool(
           exitCode: result.code,
           wallMs: wall,
           timedOut: result.timedOut,
+          aborted: result.aborted,
           shell: shell.file,
         },
       };
