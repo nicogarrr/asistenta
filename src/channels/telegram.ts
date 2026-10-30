@@ -428,8 +428,11 @@ export class TelegramChannel implements ChannelAdapter {
 
     // La aprobación pertenece a UN chat: un botón pulsado desde otro chat (aunque
     // sea de un usuario permitido) no la resuelve ni la consume.
+    // Sin mensaje original (Telegram lo da como inaccesible, p. ej. muy antiguo o
+    // borrado) no se puede saber desde qué chat se pulsó: se rechaza en vez de
+    // saltarse la comprobación.
     const pressedIn = ctx.callbackQuery?.message?.chat?.id;
-    if (pressedIn !== undefined && entry.chatId !== String(pressedIn)) {
+    if (pressedIn === undefined || entry.chatId !== String(pressedIn)) {
       handlers.log('warn', 'approval pressed from another chat', { id: parsed.id });
       await ctx.answerCallbackQuery({ text: NOT_PENDING }).catch(() => {});
       return;
