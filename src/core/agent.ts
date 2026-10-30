@@ -28,6 +28,7 @@ import {
   isContextOverflow,
   isQuotaError,
   isTransientProviderError,
+  retryAfterMs,
   retryDelay,
   retryRecoveryNote,
   sleep,
@@ -1137,15 +1138,23 @@ export class PersonalAgent {
           isTransientProviderError(result.error)
         ) {
           attempt++;
-          if (!fellBack && this.#fallbackFor && isQuotaError(result.error)) {
+          // A la reserva (solo si ya está configurada): en cuanto el principal se
+          // queda sin cuota, o tras dos fallos seguidos del principal (caído).
+          const quota = isQuotaError(result.error);
+          if (!fellBack && this.#fallbackFor && (quota || attempt >= 2)) {
             fellBack = true;
             this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
-            log.warn('primary model quota exhausted: falling back for this run', {
-              from: this.#config.model,
-              to: this.#config.fallbackModel,
-            });
+            log.warn(
+              quota
+                ? 'primary model quota exhausted: falling back for this run'
+                : 'primary model keeps failing: falling back for this run',
+              { from: this.#config.model, to: this.#config.fallbackModel },
+            );
           }
-          const delay = retryDelay(attempt, this.#config.retry);
+          const delay = Math.max(
+            retryDelay(attempt, this.#config.retry),
+            Math.min(retryAfterMs(result.error) ?? 0, this.#config.retry.maxDelayMs),
+          );
           log.warn('retrying after a transient provider failure', {
             attempt,
             of: this.#config.retry.attempts,

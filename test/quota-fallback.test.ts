@@ -187,14 +187,16 @@ describe('quota fallback (P2-17)', () => {
     expect(JSON.stringify(at(1).parts)).toContain('primera peticion');
   }, 30_000);
 
-  it('a 5xx retries the primary, never the fallback', async () => {
+  // robustez-2: un 5xx reintenta primero el principal; si falla dos veces
+  // seguidas (caído, no un hipo), el último intento va a la reserva configurada.
+  it('a 5xx retries the primary first; after two primary failures the fallback gets the last try', async () => {
     plan = ['e500', 'e500', 'e500'];
     seen.length = 0;
     const agent = await makeAgent();
     const r = await agent.run('peticion con 500');
     expect(r.error).toBeTruthy();
     expect(r.attempts).toBe(3);
-    expect(seen.map((s) => s.modelID)).toEqual([PRIMARY, PRIMARY, PRIMARY]);
+    expect(seen.map((s) => s.modelID)).toEqual([PRIMARY, PRIMARY, FALLBACK]);
   }, 30_000);
 
   it('a permanent error does not retry at all', async () => {

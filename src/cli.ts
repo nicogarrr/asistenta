@@ -81,6 +81,7 @@ import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
+import { chatReplyText } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
@@ -6149,8 +6150,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       }
 
-      const text2 =
-        result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
+      // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
+      const text2 = chatReplyText(result);
       if (out) out.answer(text2);
       else await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
