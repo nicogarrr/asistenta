@@ -380,7 +380,11 @@ export function renderPage(): string {
     .aprobacion .botones button.siempre { border-color: #6b4f1d; color: #fcd34d; background: transparent; }
     .aprobacion .botones button.denegar { border-color: #5b2424; background: #241111; color: var(--mal); }
     .aprobacion .resultado { margin: 8px 0 0; font-size: 13px; }
-    .aprobacion.caducada { opacity: 0.6; }
+    /* Caducada: atenuada con color, no con opacidad, para que el texto siga legible (≥4,5:1). */
+    .aprobacion.caducada { border-style: dashed; background: var(--panel-2); }
+    .aprobacion.caducada .pregunta { color: var(--suave); }
+    .aprobacion.caducada .caduca { color: var(--mal); font-weight: 600; }
+    .aprobacion.caducada .botones button:disabled { opacity: 1; color: var(--suave); border-color: var(--borde); border-style: dashed; background: transparent; cursor: not-allowed; }
     .sesion .muted { margin: 2px 0 0; font-size: 13px; }
     .sesion .extracto { margin: 6px 0 0; font-size: 13px; line-height: 1.4; word-break: break-word; }
     .aprobacion .botones button { white-space: nowrap; }
@@ -1350,6 +1354,19 @@ ${renderFormatScript()}
       window.setInterval(function () {
         if (document.visibilityState === 'visible' && token) cargarAprobacionesEnSilencio();
       }, 15000);
+
+      // Al volver a la pestaña tras tenerla oculta, las aprobaciones se recargan ya (sin esperar hasta 15 s).
+      var ocultaDesde = 0;
+      function alCambiarVisibilidad() {
+        if (document.visibilityState !== 'visible') {
+          if (!ocultaDesde) ocultaDesde = Date.now();
+          return;
+        }
+        var volvio = ocultaDesde > 0;
+        ocultaDesde = 0;
+        if (volvio && token) cargarAprobacionesEnSilencio();
+      }
+      document.addEventListener('visibilitychange', alCambiarVisibilidad);
 
       refrescarTodo();
     })();
