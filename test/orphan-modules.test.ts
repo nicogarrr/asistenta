@@ -39,7 +39,9 @@ function walk(dir: string): string[] {
 }
 
 const posix = (p: string): string => p.split('\\').join('/');
-const SPEC = /(?:from\s+|import\s*\(\s*|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
+// Estáticos (`import … from`, `export … from`), dinámicos (`import('…')`) y de efecto (`import '…'`).
+const SPEC =
+  /(?:import|export)\s[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|import\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)|import\s+['"](\.{1,2}\/[^'"]+)['"]/g;
 
 function reachableFrom(entry: string, all: Set<string>): Set<string> {
   const seen = new Set<string>();
@@ -49,7 +51,7 @@ function reachableFrom(entry: string, all: Set<string>): Set<string> {
     if (seen.has(file)) continue;
     seen.add(file);
     for (const m of readFileSync(file, 'utf8').matchAll(SPEC)) {
-      const base = posix(normalize(join(dirname(file), m[1] as string)));
+      const base = posix(normalize(join(dirname(file), (m[1] ?? m[2] ?? m[3]) as string)));
       const target = [base.replace(/\.js$/, '.ts'), `${base}.ts`, `${base}/index.ts`].find((c) =>
         all.has(c),
       );
@@ -68,9 +70,25 @@ describe('módulos sueltos (no conectados a `pa`)', () => {
     expect(unwired.filter((f) => !(f in KNOWN_UNWIRED))).toEqual([]);
   });
 
-  it('el grafo encuentra los módulos cableados (briefing, mantenimiento, auditoría)', () => {
-    for (const f of ['src/maintenance.ts', 'src/audit/audit-cli.ts', 'src/audit/query.ts']) {
-      expect(reachable.has(f), f).toBe(true);
+  it('KNOWN_UNWIRED solo encoge: al cablear o borrar un módulo, quita su entrada', () => {
+    const stale = Object.keys(KNOWN_UNWIRED).filter((f) => !all.has(f) || reachable.has(f));
+    expect(stale, `entradas que sobran en KNOWN_UNWIRED: ${stale.join(', ')}`).toEqual([]);
+  });
+
+  it('el grafo llega al núcleo, a lo cableado y a lo que funciona (computer use, tele)', () => {
+    for (const f of [
+      'src/core/agent.ts',
+      'src/core/tool-registry.ts',
+      'src/permissions.ts',
+      'src/tools/computer.ts',
+      'src/screen/windows.ts',
+      'src/tools/tv.ts',
+      'src/tv/lgtv.ts',
+      'src/maintenance.ts',
+      'src/audit/audit-cli.ts',
+      'src/audit/query.ts',
+    ]) {
+      expect(reachable.has(f), `${f} debería estar cableado`).toBe(true);
     }
   });
 });
