@@ -210,35 +210,52 @@ async function probe(
  * only ever used for OpenCode endpoints, OpenRouter and Gemini have their own
  * vault keys, and custom endpoints require PA_API_KEY (fail-closed).
  */
+function keyNamesFor(kind: 'opencode' | 'openrouter' | 'google' | 'custom'): {
+  vaultKey?: string;
+  envNames: string[];
+} {
+  if (kind === 'openrouter')
+    return { vaultKey: 'provider:openrouterKey', envNames: ['OPENROUTER_API_KEY'] };
+  if (kind === 'google')
+    return { vaultKey: 'provider:geminiKey', envNames: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] };
+  if (kind === 'opencode')
+    return { vaultKey: 'provider:apiKey', envNames: ['OPENCODE_GO_API_KEY'] };
+  return { envNames: ['PA_API_KEY'] };
+}
+
 async function resolveKeyFor(
   kind: 'opencode' | 'openrouter' | 'google' | 'custom',
   deps: Required<HealthDeps>,
 ): Promise<string | undefined> {
-  const vaultKey =
-    kind === 'openrouter'
-      ? 'provider:openrouterKey'
-      : kind === 'google'
-        ? 'provider:geminiKey'
-        : kind === 'opencode'
-          ? 'provider:apiKey'
-          : undefined;
+  const { vaultKey, envNames } = keyNamesFor(kind);
   if (vaultKey) {
     const fromVault = await deps.getKey(vaultKey);
     if (fromVault) return fromVault;
   }
-  const envNames =
-    kind === 'openrouter'
-      ? ['OPENROUTER_API_KEY']
-      : kind === 'google'
-        ? ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
-        : kind === 'opencode'
-          ? ['OPENCODE_GO_API_KEY']
-          : ['PA_API_KEY'];
   for (const name of envNames) {
     const v = deps.env[name]?.trim();
     if (v) return v;
   }
   return undefined;
+}
+
+/**
+ * Dónde está la clave del modelo configurado (para `pa doctor`): la misma
+ * búsqueda que usa el proveedor según el endpoint, no siempre la de OpenCode.
+ * Sin clave, `hint` dice cómo ponerla.
+ */
+export async function providerKeySource(
+  baseUrl: string,
+  deps: Pick<HealthDeps, 'getKey' | 'env'> = {},
+): Promise<{ source: 'vault' | 'env' | 'unset'; hint: string }> {
+  const getKey = deps.getKey ?? ((k: string) => vaultGet(k));
+  const env = deps.env ?? process.env;
+  const { vaultKey, envNames } = keyNamesFor(endpointKind(baseUrl));
+  if (vaultKey && (await getKey(vaultKey).catch(() => undefined)))
+    return { source: 'vault', hint: '' };
+  if (envNames.some((n) => env[n]?.trim())) return { source: 'env', hint: '' };
+  const hint = vaultKey ? `pa vault set ${vaultKey} <clave>` : `${envNames[0]} en .env`;
+  return { source: 'unset', hint };
 }
 
 function endpointKind(baseUrl: string): 'opencode' | 'openrouter' | 'google' | 'custom' {
