@@ -160,6 +160,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     growth: 'no crece: se reescribe en cada arranque',
   },
   {
+    name: 'agent.pid.start',
+    what: 'cuándo arrancó el daemon (para no confundirlo con otro proceso que herede su pid)',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada arranque',
+  },
+  {
     name: 'agent.heartbeat',
     what: 'latido del daemon',
     backup: false,

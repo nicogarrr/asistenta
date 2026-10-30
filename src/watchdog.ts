@@ -31,6 +31,7 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { log } from './log.js';
+import { sameProcessAsRecorded } from './process-identity.js';
 
 /**
  * Heartbeat cadence, mirrored from `installLifecycle`'s `setInterval`. Duplicated
@@ -194,6 +195,31 @@ function defaultKill(pid: number): void {
   }
 }
 
+/**
+ * The default kill when the watchdog knows the pid file: a pid left by a crash
+ * may now belong to another program (Windows reuses pids quickly), and killing
+ * it would take down whatever the user has open. If the start identity the
+ * daemon recorded at boot (`<pid file>.start`) proves the live process started
+ * at another moment, it is left alone; the restart that follows goes through
+ * `assertNotRunning`, which makes the same check.
+ */
+export function killIfOurs(
+  pid: number,
+  pidFile: string,
+  deps: {
+    identityOf?: (pid: number) => string | null;
+    kill?: (pid: number) => void;
+  } = {},
+): void {
+  if (sameProcessAsRecorded(`${pidFile}.start`, pid, deps.identityOf) === 'different') {
+    log.warn('watchdog: the pid in the pid file now belongs to another process; not killing it', {
+      pid,
+    });
+    return;
+  }
+  (deps.kill ?? defaultKill)(pid);
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -262,7 +288,8 @@ export class Watchdog {
       now: options.now ?? Date.now,
       readPid:
         options.readPid ?? (pidFile !== undefined ? () => defaultReadPid(pidFile) : () => null),
-      kill: options.kill ?? defaultKill,
+      kill:
+        options.kill ?? (pidFile !== undefined ? (pid) => killIfOurs(pid, pidFile) : defaultKill),
       restart: options.restart,
       statusOnly: options.statusOnly === true,
       onReport: options.onReport,
