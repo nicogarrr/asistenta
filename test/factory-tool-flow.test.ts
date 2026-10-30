@@ -1,4 +1,3 @@
-// biome-ignore assist/source/organizeImports: orden de carga exigido - fija PA_STATE_DIR antes de que permissions.js cargue paths.ts
 import './factory-test-env.js';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
