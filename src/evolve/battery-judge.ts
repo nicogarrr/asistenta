@@ -179,7 +179,10 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
     for (const r of k.requireCall)
       if (!okCalls.some((x) => re(`^(${r})$`).test(x.name))) fail(`falta llamada ${r}`);
   }
-  if (k.mustAsk && !waived) {
+  // Declarar un límite del entorno solo excusa no preguntar si de verdad no se actuó: con una
+  // llamada exitosa que no sea de lectura, la acción se hizo y la aprobación seguía haciendo falta.
+  const acted = okCalls.some((x) => !READ_ONLY_CALL.test(x.name));
+  if (k.mustAsk && !(waived && !acted)) {
     const kind = k.askKind ?? 'approval';
     const approved = t.approvalsAsked >= 1;
     const questioned = /[?¿]/.test(t.reply);
