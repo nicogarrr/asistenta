@@ -158,7 +158,7 @@ export function renderPage(): string {
     .acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .actualizado {
       color: var(--suave);
-      font-size: 12px;
+      font-size: 13px;
       font-variant-numeric: tabular-nums;
     }
     button {
@@ -184,7 +184,7 @@ export function renderPage(): string {
     button:disabled { opacity: 0.55; cursor: progress; }
     button.mini {
       padding: 4px 8px;
-      font-size: 12px;
+      font-size: 13px;
       background: transparent;
       color: var(--suave);
     }
@@ -211,7 +211,7 @@ export function renderPage(): string {
     .token { display: grid; gap: 8px; border-color: #264357; background: var(--panel); color: var(--texto); }
     .token .token-fila { display: flex; gap: 8px; flex-wrap: wrap; }
     .token input { flex: 1 1 200px; min-width: 0; font: inherit; color: var(--texto); background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; }
-    .token p { margin: 0; font-size: 12px; }
+    .token p { margin: 0; font-size: 13px; }
     .error-bloque { display: grid; gap: 8px; justify-items: start; }
     .error-bloque p { margin: 0; }
     .recuerdos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -256,7 +256,7 @@ export function renderPage(): string {
     }
     .tarjeta-cabecera h2 {
       margin: 0;
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: 0.13em;
       text-transform: uppercase;
       color: var(--suave);
@@ -277,7 +277,7 @@ export function renderPage(): string {
       display: flex;
       flex-direction: column;
       gap: 3px;
-      font-size: 11px;
+      font-size: 13px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--suave);
@@ -326,7 +326,7 @@ export function renderPage(): string {
     }
     .datos dt {
       color: var(--suave);
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
       padding-top: 2px;
@@ -353,7 +353,7 @@ export function renderPage(): string {
       border: 1px solid #2a3a4d;
       border-radius: 999px;
       background: #16202b;
-      font-size: 12px;
+      font-size: 13px;
     }
     .chip.ok { color: var(--ok); border-color: #1d4f35; background: #0f241a; }
     .chip.mal { color: var(--mal); border-color: #5b2424; background: #241111; }
@@ -407,7 +407,7 @@ export function renderPage(): string {
       border-radius: 999px;
       background: #fcd34d;
       color: #1a1405;
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: normal;
       text-align: center;
     }
