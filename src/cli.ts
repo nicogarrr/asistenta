@@ -87,7 +87,7 @@ import {
   queueThreadTurn,
   resolveInboundThread,
 } from './daemon/inbound.js';
-import { runPanelChat } from './daemon/panel-chat.js';
+import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { voiceInbound } from './daemon/voice-turn.js';
@@ -1666,21 +1666,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               'main',
               'principal',
             );
-            return runPanelChat(thread, text, () =>
-              buildContextNote(
-                thread,
-                store,
-                memory,
-                snapshot,
-                workstreams,
-                skills,
-                sessions,
-                ownerProfile,
-                text,
-                isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-                projectContexts,
-              ),
-            );
+            // Paso 2 (ARCHITECTURE.md §5): el turno normal, con la salida al panel.
+            // Un mensaje del panel no trae adjuntos ni respuesta citada: solo el texto.
+            const base = inboundFor(thread);
+            const panelInbound: Inbound = {
+              channel: base.channel,
+              account: base.account,
+              chatId: base.chatId,
+              threadId: base.threadId,
+              userId: base.userId,
+              displayName: base.displayName,
+              isGroup: base.isGroup,
+              text,
+              authorised: true,
+              messageId: `${thread.key}#panel`,
+              receivedAt: new Date().toISOString(),
+            };
+            return runPanelChat(thread, text, {
+              remember: (t, said) =>
+                lastTurns.remember(t.key, {
+                  text: said,
+                  images: undefined,
+                  agent: t.agent,
+                  mark: t.agent.messages.length,
+                  compactions: t.agent.compactions,
+                }),
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
+            });
           },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
           approvals: () => approvals.list(),
@@ -5480,9 +5492,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     thread: Thread,
     inbound: Inbound,
     text: string,
-    opts: { images?: Inbound['images']; spoken?: (text: string) => Promise<void> },
+    opts: {
+      images?: Inbound['images'];
+      spoken?: (text: string) => Promise<void>;
+      /** Otro destino (el panel): nada del turno sale por Telegram, todo va aquí. */
+      out?: TurnOutput;
+    },
   ): Promise<void> => {
     const generation = thread.generation;
+    const out = opts.out;
+    /** Lo que el turno diría aparte: por Telegram, o al panel si el turno es suyo. */
+    const tell: typeof say = async (to, text, o) => {
+      if (!out) return say(to, text, o);
+      out.note(text);
+      return null;
+    };
     thread.active = true;
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
@@ -5538,7 +5562,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
      * screenshot actions) but it can no longer forget the first one, and the user gets
      * to see the machine while the agent is still working on it.
      */
-    if (wantsScreenshot(inbound.text)) {
+    if (!out && wantsScreenshot(inbound.text)) {
       void sendScreenShot(inbound, 'Así está el PC ahora mismo.', thread.key).catch(
         (err: unknown) => {
           log.warn('auto screenshot failed', { err });
@@ -5549,13 +5573,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
     // is alive. It says "working" without inventing a progress report.
     const typing = setInterval(() => {
-      if (finished) return;
+      if (finished || out) return;
       void telegram.action(inbound.chatId, 'typing');
     }, 4000);
     typing.unref();
 
     const status = setInterval(() => {
-      if (finished) return;
+      if (finished || out) return;
       // The progress note is opt-out per chat: some people want to be told how it is
       // going while it works, others want one message at the end and nothing between.
       if (statusOn.get(inbound.chatId) === false) return;
@@ -5731,7 +5755,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
         if (!bytes) {
           if (receipt.id) progressIds.push(receipt.id);
-          await say(inbound, 'No he podido descargar el audio.', { quote: true });
+          await tell(inbound, 'No he podido descargar el audio.', { quote: true });
           return;
         }
         recall.retain(chatKey(inbound), inbound.messageId, bytes);
@@ -5764,7 +5788,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
         } catch (err) {
           if (receipt.id) progressIds.push(receipt.id);
-          await say(
+          await tell(
             inbound,
             `No he entendido la nota de voz: ${err instanceof Error ? err.message : String(err)}`,
             { quote: true },
@@ -5777,7 +5801,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
-        await say(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });
+        await tell(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });
         return;
       }
 
@@ -5846,7 +5870,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const budgetDay = localDay();
         if (budgetWarnedDay !== budgetDay) {
           budgetWarnedDay = budgetDay;
-          void say(inbound, 'Aviso: has alcanzado el presupuesto diario configurado.', {
+          void tell(inbound, 'Aviso: has alcanzado el presupuesto diario configurado.', {
             quote: true,
           }).catch(() => {});
         }
@@ -5854,7 +5878,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       const text2 =
         result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
-      await answer(thread, inbound, text2);
+      if (out) out.answer(text2);
+      else await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
       // the chat copy, so a TTS failure never costs the text.
       if (opts.spoken && text2.trim()) {
@@ -5958,13 +5983,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
         if (autosaved) {
           log.info('profile autosaved', { thread: thread.name });
-          await say(
+          await tell(
             inbound,
             'Lo he apuntado en tu perfil (lo repites a menudo). Si no quieres que lo recuerde, dímelo y lo borro.',
             { quote: true },
           ).catch(() => {});
         } else {
-          await say(inbound, nudge.suggestion, { quote: true }).catch(() => {});
+          await tell(inbound, nudge.suggestion, { quote: true }).catch(() => {});
         }
       }
 
@@ -5978,7 +6003,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     } catch (err) {
       log.error('turn threw', { thread: thread.name, err });
-      await say(inbound, friendlyError(err, 'Algo falló: '), { quote: true });
+      await tell(inbound, friendlyError(err, 'Algo falló: '), { quote: true });
     } finally {
       finished = true;
       thread.active = false;
