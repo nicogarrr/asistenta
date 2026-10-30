@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
+import { localDay } from '../src/datecontext.js';
 import { scanOnce } from '../src/watch/listscan.js';
 import { PriceStore } from '../src/watch/pricewatch.js';
 import { realDeps } from '../src/watch/pricewatch-runner.js';
@@ -74,7 +75,8 @@ it('robots request itself consumes the final slot and no second request is issue
   const d = realDeps(cfg, dbPath, { info() {}, warn() {} });
   const db = new DatabaseSync(dbPath);
   const store = new PriceStore(db, d.now);
-  const key = `reqs:www.mediamarkt.es:${new Date(d.now()).toISOString().slice(0, 10)}`;
+  // Mismo día que usa el runner (localDay), no el UTC: fallaba de 00:00 a 01:00 en Madrid.
+  const key = `reqs:www.mediamarkt.es:${localDay(d.now())}`;
   store.setMeta(key, 9);
   const send = vi.fn(async () => new Response('User-agent: *', { status: 200 }));
   vi.stubGlobal('fetch', send);
