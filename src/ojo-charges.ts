@@ -100,11 +100,28 @@ export function amountsIn(text: string): number[] {
   return scanMoney(text).cents;
 }
 
-/** Remitente estable: dominio, o la dirección completa si es un correo gratuito. */
+/** Segundos niveles bajo un ccTLD que no son de nadie («amazon.co.uk», «bbva.com.mx»). */
+const SHARED_SECOND_LEVEL = /^(co|com|org|net|gov|gob|edu|ac|or|ne|go)$/;
+
+/**
+ * Dominio registrable: «email.amazon.es» y «amazon.es» son el mismo comercio. Sin
+ * esto, cada subdominio de envío (email., mail., info., notificaciones.) contaba
+ * como un remitente nuevo y daba un aviso «nuevo» falso.
+ */
+export function registrableDomain(domain: string): string {
+  const labels = domain.toLowerCase().replace(/\.+$/, '').split('.').filter(Boolean);
+  if (labels.length <= 2) return labels.join('.');
+  const tld = labels[labels.length - 1] ?? '';
+  const sld = labels[labels.length - 2] ?? '';
+  const take = tld.length === 2 && SHARED_SECOND_LEVEL.test(sld) ? 3 : 2;
+  return labels.slice(-take).join('.');
+}
+
+/** Remitente estable: dominio registrable, o la dirección completa si es un correo gratuito. */
 export function senderKey(from: string): string | null {
   const m = /([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/.exec(from);
   if (!m) return null;
-  const domain = (m[2] ?? '').toLowerCase();
+  const domain = registrableDomain(m[2] ?? '');
   if (FREEMAIL.test(domain)) return `${(m[1] ?? '').toLowerCase()}@${domain}`;
   return domain;
 }
@@ -183,7 +200,9 @@ export function ingestCharges(
   }
   const exists = db.prepare('SELECT 1 AS x FROM vigilante_charges WHERE msg_id = ?');
   const priorsOf = db.prepare(
-    'SELECT cents FROM vigilante_charges WHERE sender = ? AND at <= ? AND msg_id <> ?',
+    // Cobros guardados antes de agrupar subdominios llevan «email.amazon.es»: cuentan
+    // como historial de «amazon.es» para no dar un «nuevo» falso tras actualizar.
+    "SELECT cents FROM vigilante_charges WHERE (sender = ?1 OR substr(sender, -length(?1) - 1) = '.' || ?1) AND at <= ?2 AND msg_id <> ?3",
   );
   const ins = db.prepare(
     'INSERT INTO vigilante_charges (msg_id, sender, cents, at, status, reason, median_cents, n_prior, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',

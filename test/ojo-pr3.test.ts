@@ -195,7 +195,7 @@ describe('cargos raros: parseo', () => {
     expect(amountsIn('Total 1.234,56 € y 12,50 EUR')).toEqual([123456, 1250]);
     expect(amountsIn('€ 9.99')).toEqual([999]);
     expect(amountsIn('3 plazos de 100 euros')).toEqual([10000]);
-    expect(senderKey('Netflix <info@mail.netflix.com>')).toBe('mail.netflix.com');
+    expect(senderKey('Netflix <info@mail.netflix.com>')).toBe('netflix.com');
     expect(senderKey('Juan <juan@gmail.com>')).toBe('juan@gmail.com');
     expect(median([1, 5, 3])).toBe(3);
   });
