@@ -243,8 +243,11 @@ export function oneShotStillPending(
 
 export interface MissedDeliveryDeps {
   store: Pick<Store, 'listRoutines' | 'deleteRoutine'>;
-  /** Sends into the chat of the routine's scope; false when it could not be delivered. */
-  send: (scope: string, text: string) => Promise<boolean>;
+  /**
+   * Sends into the chat of the routine's scope; false when it could not be delivered.
+   * `reminder` is the reminder's own text (for the «✅ Hecho» / «⏰ +1h» buttons).
+   */
+  send: (scope: string, text: string, reminder: string) => Promise<boolean>;
   now?: number;
 }
 
@@ -263,7 +266,7 @@ export async function deliverMissedReminders(
   let delivered = 0;
   let failed = 0;
   for (const r of missed) {
-    const ok = await deps.send(r.scope, lateReminderText(r)).catch(() => false);
+    const ok = await deps.send(r.scope, lateReminderText(r), reminderText(r)).catch(() => false);
     if (ok) {
       deps.store.deleteRoutine(r.scope, r.name);
       delivered++;

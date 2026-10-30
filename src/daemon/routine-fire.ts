@@ -177,7 +177,19 @@ export function createRoutineFire(
 export interface BootReminderDeps {
   store: Store;
   /** Envía un mensaje al chat. Rechaza si el envío falla. */
-  send: (chatId: string, text: string) => Promise<unknown>;
+  send: (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => Promise<unknown>;
+  /**
+   * Botones del aviso tardío («✅ Hecho» / «⏰ +1h»), los mismos que a su hora, o
+   * undefined para mandarlo sin botones. Recibe el ámbito y el texto del recordatorio.
+   */
+  reminderButtons?: (
+    scope: string,
+    text: string,
+  ) => Array<{ label: string; action: string }> | undefined;
   /** Arranca el planificador; se llama siempre, haya ido bien o mal la recuperación. */
   start: () => void;
   /** Tope de cada envío al arrancar (20 s por defecto). */
@@ -194,7 +206,7 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
   const timeoutMs = deps.sendTimeoutMs ?? 20_000;
   return deliverMissedReminders({
     store: deps.store,
-    send: async (scope, text) => {
+    send: async (scope, text, reminder) => {
       const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
       if (!chatId) return false;
       // A hung send must not keep the scheduler from starting. A timeout counts as
@@ -203,8 +215,8 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
         const t = setTimeout(() => resolve(false), timeoutMs);
         t.unref?.();
       });
-      const sent = deps
-        .send(chatId, text)
+      const buttons = deps.reminderButtons?.(scope, reminder);
+      const sent = (buttons ? deps.send(chatId, text, buttons) : deps.send(chatId, text))
         .then(() => true)
         .catch((err: unknown) => {
           log.warn('missed reminder send failed', { err });
