@@ -133,6 +133,26 @@ export function parseChecks(output: string): { passed: number; failed: number } 
   return { passed, failed };
 }
 
+/**
+ * Names of the probe checks that passed and failed (the label, without the « — detalle»
+ * tail, which can carry timings or page text that change between runs). The judge uses them
+ * per check, like the per-test report: a check that passed in the kernel and no longer
+ * passes (it fails, or the probe stopped printing it) is a regression whatever the totals say.
+ */
+export function checkNames(output: string): { passing: string[]; failing: string[] } {
+  const passing: string[] = [];
+  const failing: string[] = [];
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(ANSI, '').replace(/\r$/, '');
+    const m = /^(PASA|FALLA) +(.+)$/.exec(line);
+    if (!m) continue;
+    const name = (m[2] as string).split(/ (?:—|â€”) /)[0]?.trim() ?? '';
+    if (!name) continue;
+    (m[1] === 'PASA' ? passing : failing).push(name);
+  }
+  return { passing, failing };
+}
+
 export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const cwd = opts.cwd;
   const timeoutMs = opts.timeoutMs ?? 20 * 60_000;
@@ -207,6 +227,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const parsedChecks = parseChecks(`${probe.stdout}\n${probe.stderr}`);
   checks = parsedChecks.passed;
   checksFailed = parsedChecks.failed;
+  const passingChecks = checkNames(`${probe.stdout}\n${probe.stderr}`).passing;
 
   rmSync(home, { recursive: true, force: true });
   rmSync(reportDir, { recursive: true, force: true });
@@ -230,5 +251,6 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     durationMs: Date.now() - started,
     passingTests: names.passing,
     failingTests: names.failing,
+    passingChecks,
   };
 }
