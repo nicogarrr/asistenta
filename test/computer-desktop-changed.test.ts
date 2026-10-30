@@ -51,11 +51,11 @@ describe('computer · la pantalla cambió desde la última captura', () => {
     await tool.execute('s', { action: 'screenshot' });
     setNative(2560, 1440);
     await expect(tool.execute('c', { action: 'click', x: 640, y: 360 })).rejects.toThrow(
-      /changed from 1920x1080 to 2560x1440.*new screenshot/,
+      /ha cambiado de 1920x1080 a 2560x1440.*captura nueva/,
     );
-    await expect(tool.execute('m', { action: 'move', x: 1, y: 1 })).rejects.toThrow(/changed/);
+    await expect(tool.execute('m', { action: 'move', x: 1, y: 1 })).rejects.toThrow(/ha cambiado/);
     await expect(tool.execute('d', { action: 'drag', x: 1, y: 1, toX: 2, toY: 2 })).rejects.toThrow(
-      /changed/,
+      /ha cambiado/,
     );
     expect(calls).toEqual([]);
   });
@@ -82,7 +82,7 @@ describe('computer · la pantalla cambió desde la última captura', () => {
     });
     expect(calls).toEqual([]);
     const text = r.content[0]?.type === 'text' ? r.content[0].text : '';
-    expect(text).toMatch(/\[0\] click: FAILED — the desktop changed/);
+    expect(text).toMatch(/\[0\] click: FALLÓ — la pantalla ha cambiado/);
   });
 
   it('misma pantalla: sin cambios respecto a hoy', async () => {

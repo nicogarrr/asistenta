@@ -263,17 +263,17 @@ function coords(
   const x = Number(args.x);
   const y = Number(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('this action requires numeric x and y');
+    throw new Error('esta acción necesita x e y numéricas');
   }
   if (x < 0 || y < 0 || x >= view.width || y >= view.height) {
     throw new Error(
-      `coordinates ${x},${y} fall outside the ${view.width}x${view.height} image you were shown`,
+      `las coordenadas ${x},${y} quedan fuera de la imagen de ${view.width}x${view.height} que se te mostró`,
     );
   }
   const real = toRealCoordinates(x, y, view, native);
   if (real.x < 0 || real.y < 0 || real.x >= native.width || real.y >= native.height) {
     throw new Error(
-      `coordinates ${real.x},${real.y} fall outside the ${native.width}x${native.height} screen`,
+      `las coordenadas ${real.x},${real.y} quedan fuera de la pantalla de ${native.width}x${native.height}`,
     );
   }
   return real;
@@ -318,7 +318,7 @@ export function toRealCoordinates(
 function parseRegionField(value: unknown, label: string): Region | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object with x, y, width and height`);
+    throw new Error(`${label} debe ser un objeto con x, y, width y height`);
   }
   const r = value as Record<string, unknown>;
   const x = Number(r.x);
@@ -355,11 +355,11 @@ function coordsInRoi(
   const x = Number(args.x);
   const y = Number(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('this action requires numeric x and y');
+    throw new Error('esta acción necesita x e y numéricas');
   }
   if (x < 0 || y < 0 || x >= roi.width || y >= roi.height) {
     throw new Error(
-      `coordinates ${x},${y} fall outside the roi ${roi.width}x${roi.height} they are relative to`,
+      `las coordenadas ${x},${y} quedan fuera de la roi de ${roi.width}x${roi.height} a la que se refieren`,
     );
   }
   // Offsetting by the roi lands the point in the full screenshot space first —
@@ -375,7 +375,7 @@ function coordsInRoi(
   );
   if (scaled.x < 0 || scaled.y < 0 || scaled.x >= native.width || scaled.y >= native.height) {
     throw new Error(
-      `coordinates ${scaled.x},${scaled.y} fall outside the ${native.width}x${native.height} screen`,
+      `las coordenadas ${scaled.x},${scaled.y} quedan fuera de la pantalla de ${native.width}x${native.height}`,
     );
   }
   return { x: scaled.x, y: scaled.y, viewX, viewY };
@@ -390,7 +390,7 @@ function parseButton(value: unknown): 'left' | 'right' | 'middle' {
   if (value === undefined || value === null || value === '') return 'left';
   const name = String(value).trim().toLowerCase();
   if (name === 'left' || name === 'right' || name === 'middle') return name;
-  throw new Error(`unknown mouse button "${String(value)}": use left, right or middle`);
+  throw new Error(`botón del ratón desconocido "${String(value)}": usa left, right o middle`);
 }
 
 /** Click count: a whole number 1-5 (the backend's own range); anything else is refused. */
@@ -398,7 +398,7 @@ function parseClicks(value: unknown): number {
   if (value === undefined || value === null) return 1;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > 5) {
-    throw new Error(`clicks must be a whole number from 1 to 5, got ${String(value)}`);
+    throw new Error(`clicks debe ser un número entero de 1 a 5; recibido ${String(value)}`);
   }
   return n;
 }
@@ -506,10 +506,9 @@ export function createComputerTool(
     if (!view || !viewNative) return;
     if (viewNative.width === native.width && viewNative.height === native.height) return;
     throw new Error(
-      `the desktop changed from ${viewNative.width}x${viewNative.height} to ` +
-        `${native.width}x${native.height} since your last screenshot (resolution, scaling or ` +
-        'monitor): take a new screenshot before using coordinates. ' +
-        'La pantalla ha cambiado desde la última captura: haz una captura nueva.',
+      `la pantalla ha cambiado de ${viewNative.width}x${viewNative.height} a ` +
+        `${native.width}x${native.height} desde tu última captura (resolución, escala o ` +
+        'monitor): haz una captura nueva antes de usar coordenadas.',
     );
   };
 
@@ -786,7 +785,7 @@ export function createComputerTool(
           content: [
             {
               type: 'text',
-              text: `Dragged ${from.x},${from.y} to ${to.x},${to.y}${
+              text: `Arrastre de ${from.x},${from.y} a ${to.x},${to.y}${
                 check ? `\n${check.verdict}` : ''
               }`,
             },
@@ -798,7 +797,7 @@ export function createComputerTool(
 
       case 'type': {
         const text = String(record.text ?? '');
-        if (!text) throw new Error('the type action requires text');
+        if (!text) throw new Error('la acción type necesita texto');
         const check = await act(() => backend.type(text));
         log.info('typed', { chars: text.length, changed: check?.changed ?? null });
         return {
@@ -815,7 +814,7 @@ export function createComputerTool(
 
       case 'key': {
         const key = String(record.key ?? '');
-        if (!key) throw new Error('the key action requires a key name');
+        if (!key) throw new Error('la acción key necesita el nombre de una tecla');
         const check = await act(() => backend.key(key));
         return {
           content: [
@@ -828,10 +827,10 @@ export function createComputerTool(
 
       case 'batch':
         // A nested batch would smuggle ungated actions past the loop below.
-        throw new Error('an action inside a batch cannot be another batch');
+        throw new Error('una acción dentro de un lote no puede ser otro lote');
 
       default:
-        throw new Error(`unknown action: ${String(record.action)}`);
+        throw new Error(`acción desconocida: ${String(record.action)}`);
     }
   };
 
@@ -858,7 +857,7 @@ export function createComputerTool(
   const runBatch = async (record: Record<string, unknown>, signal?: AbortSignal) => {
     const list = asActionList(record.actions);
     if (!list || list.length === 0) {
-      throw new Error('the batch action requires a non-empty actions array');
+      throw new Error('la acción batch necesita una lista actions no vacía');
     }
     // An unwired gate is a wiring bug, not a permission decision, so the batch is
     // refused before the first action rather than while running it: "blocked on
@@ -1016,7 +1015,7 @@ export function createComputerTool(
         const head = `[${r.index}] ${r.action}`;
         if (r.ok) return `${head}: ok`;
         if (r.error?.startsWith('omitida')) return `${head}: ${r.error}`;
-        return `${head}: FAILED — ${r.error ?? 'unknown error'}`;
+        return `${head}: FALLÓ — ${r.error ?? 'error desconocido'}`;
       }),
       verdict ? verdict.reason : '',
       uncompared
@@ -1072,8 +1071,8 @@ export function createComputerTool(
           // explicit `false` disables it, so a config without the field keeps working.
           if (config.computerUse === false) {
             throw new Error(
-              'Computer Use is disabled on this PC (PA_COMPUTER_USE=0): do not retry, tell the user. ' +
-                'El control del escritorio está desactivado (PA_COMPUTER_USE=0); para activarlo, quita esa línea del .env y reinicia.',
+              'El control del escritorio está desactivado en este PC (PA_COMPUTER_USE=0): no lo reintentes y díselo al usuario. ' +
+                'Para activarlo, quita esa línea del .env y reinicia.',
             );
           }
           const record = args as unknown as Record<string, unknown>;
