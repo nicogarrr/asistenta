@@ -409,6 +409,10 @@ import { tvCommand } from './tv/tv-cli.js';
 
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
+  // Todos los subcomandos (no solo `serve`) leen la hora en la zona de PA_TIMEZONE:
+  // `pa recordatorios`, `pa precio`… calculaban «hoy» y las próximas horas de croner en
+  // la zona del sistema. `serve` vuelve a llamarlo y avisa si la zona no es válida.
+  applyConfiguredTimeZone();
 
   switch (command) {
     case 'setup': {
