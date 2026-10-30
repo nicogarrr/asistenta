@@ -416,4 +416,19 @@ describe('isMoreRequest', () => {
       expect(isMoreRequest(text)).toBe(false);
     }
   });
+
+  it('una frase con «más» o «sigue» dentro es un encargo nuevo, no «el resto»', () => {
+    for (const text of [
+      'sigue buscando vuelos a Roma',
+      'pon la música más alta',
+      'quiero más café en la lista de la compra',
+      '¿cuál es más barato?',
+      'dame más detalles del vuelo de mañana',
+    ]) {
+      expect(isMoreRequest(text)).toBe(false);
+    }
+    for (const text of ['más, por favor', 'vale, sigue', 'dime el resto', 'sigue, porfa']) {
+      expect(isMoreRequest(text)).toBe(true);
+    }
+  });
 });

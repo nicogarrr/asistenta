@@ -1488,16 +1488,57 @@ export function takeFullReply(threadKey: string): string | null {
 const MORE_REQUEST = /\b(?:mas|detalles?|sigue|continua|el resto)\b/;
 
 /**
+ * Palabras que caben en una petición de «el resto» y nada más. Si el mensaje trae
+ * otra palabra («sigue BUSCANDO vuelos», «pon la música MÁS alta»), es un encargo
+ * nuevo y tiene que llegar al agente, no reenviar la respuesta anterior.
+ */
+const MORE_FILLER = new Set([
+  'mas',
+  'detalle',
+  'detalles',
+  'sigue',
+  'continua',
+  'el',
+  'resto',
+  'dime',
+  'dame',
+  'cuentame',
+  'quiero',
+  'por',
+  'favor',
+  'porfa',
+  'y',
+  'venga',
+  'vale',
+  'ok',
+  'todo',
+  'lo',
+  'la',
+  'respuesta',
+  'completa',
+  'entera',
+  'ver',
+  'manda',
+  'mandame',
+  'pasame',
+]);
+
+/**
  * ¿El mensaje pide el resto de una respuesta recortada?
  *
  * Se normaliza a minúsculas y sin diacríticos para que "más", "MAS" y "mas" sean la
  * misma petición. Las fronteras de palabra evitan que "demasiado" o "detallado"
- * disparen la caché por accidente.
+ * disparen la caché por accidente. Y el mensaje entero tiene que ser la petición
+ * (como mucho 6 palabras, todas de MORE_FILLER): antes bastaba con que apareciera
+ * «más» o «sigue» en cualquier frase, y «sigue buscando vuelos» reenviaba la
+ * respuesta anterior en vez de hacer el encargo.
  */
 export function isMoreRequest(text: string): boolean {
   const plain = text
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase();
-  return MORE_REQUEST.test(plain);
+  if (!MORE_REQUEST.test(plain)) return false;
+  const words = plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return words.length <= 6 && words.every((w) => MORE_FILLER.has(w));
 }
