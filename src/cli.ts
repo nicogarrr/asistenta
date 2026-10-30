@@ -100,6 +100,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
+import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
@@ -2224,22 +2225,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
     });
 
-  /**
-   * The human confirmation a purchase stops for.
-   *
-   * Two layers ask about the charge on purpose and neither is the other: the gate asks
-   * because money always asks, and the tool asks because it is the only layer that
-   * knows what is being bought and for how much. A gate that can be misconfigured is
-   * not a reason to leave the charge to chance.
-   *
-   * The consequence is that the same purchase would put two identical questions in the
-   * chat, and a prompt you answer twice by reflex is a prompt you stop reading. So the
-   * answer is remembered for the turn, keyed by thread and by the exact question: the
-   * second layer reuses the first answer rather than asking again. Keyed by question and
-   * not by tool, so two different purchases in one turn still ask twice - which is the
-   * case where a second question is worth the interruption.
-   */
-  const purchaseAnswers = new Map<string, boolean>();
+  // La confirmación de una compra (una pregunta por compra y turno): src/daemon/purchase-approvals.ts.
   /** Telegram question with no scope buttons: "always pay" is not a thing. */
   const askOncePerTurn = async (thread: Thread, summary: string): Promise<boolean> => {
     const chatId = thread.chatKey.split(':')[2] ?? '';
@@ -2251,15 +2237,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       thread.agent.setAwaitingApproval(false);
     }
   };
-  const askCheckout = async (thread: Thread, action: string, summary: string): Promise<boolean> => {
-    const key = `${thread.key}:${action}:${summary}`;
-    const remembered = purchaseAnswers.get(key);
-    if (remembered !== undefined) return remembered;
-    log.info('approval requested', { thread: thread.key, tool: action });
-    const approved = await askOncePerTurn(thread, summary);
-    purchaseAnswers.set(key, approved);
-    return approved;
-  };
+  const purchaseApprovals = createPurchaseApprovals();
+  const askCheckout = (thread: Thread, action: string, summary: string): Promise<boolean> =>
+    purchaseApprovals.ask(thread.key, action, summary, (q) => askOncePerTurn(thread, q));
 
   const getOrCreateThread = async (
     chatKey_: string,
@@ -6182,9 +6162,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Approval scope is one task: a memo or grant must never leak into the next
       // turn, where the user has new context that the approval did not cover.
       thread.gate.clearSession(thread.key);
-      for (const key of purchaseAnswers.keys()) {
-        if (key.startsWith(`${thread.key}:`)) purchaseAnswers.delete(key);
-      }
+      purchaseApprovals.forgetThread(thread.key);
       threadOutputs.release(thread.key, out);
     }
   };
