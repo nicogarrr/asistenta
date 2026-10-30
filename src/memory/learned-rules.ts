@@ -208,3 +208,37 @@ export function learnFromTurn(opts: {
   }
   return { text, line: null, outcome };
 }
+
+/** Texto de /aprendido. */
+export function formatLearnedRules(rules: readonly MemoryEntry[]): string {
+  if (!rules.length) {
+    return 'Todavía no he aprendido ninguna regla. Cuando me corrijas («no, así no», «prefiero…»), la guardo sola.';
+  }
+  const shown = rules.slice(0, 15);
+  const lines = shown.map((r, i) => `${i + 1}. ${r.text} (${r.date})`);
+  if (rules.length > shown.length) lines.push(`… y ${rules.length - shown.length} más.`);
+  return [
+    '📝 Reglas aprendidas (la más reciente primero):',
+    ...lines,
+    '',
+    'Para borrar una: /olvida <número>',
+  ].join('\n');
+}
+
+/** /olvida <n>: borra la n-ésima de /aprendido. */
+export function forgetLearnedRule(
+  memory: MemoryStore,
+  scopes: readonly string[],
+  arg: string,
+): string {
+  const n = Number.parseInt(arg.trim(), 10);
+  const rules = learnedRules(memory, scopes);
+  if (!/^\d+$/.test(arg.trim()) || n < 1 || n > Math.min(rules.length, 15)) {
+    return rules.length
+      ? `Uso: /olvida <número> (de 1 a ${Math.min(rules.length, 15)}, como salen en /aprendido)`
+      : 'No hay reglas aprendidas que borrar.';
+  }
+  const target = rules[n - 1] as MemoryEntry;
+  const ok = memory.forgetIn(scopes, target.id);
+  return ok ? `🗑️ Olvidada: ${target.text}` : 'No he podido borrarla; mira /aprendido.';
+}

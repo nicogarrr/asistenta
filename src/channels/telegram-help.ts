@@ -156,6 +156,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       { command: 'buscar', args: '<texto>', description: 'busca en conversaciones pasadas' },
       { command: 'perfil', args: '[guardar|olvidar]', description: 'tu perfil estructurado' },
+      { command: 'aprendido', description: 'lo aprendido de tus correcciones' },
+      { command: 'olvida', args: '<n>', description: 'borra una' },
       { command: 'exportar', description: 'esta conversación en JSON' },
     ],
   },
