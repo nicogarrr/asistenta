@@ -40,13 +40,13 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
   const ts = new Date().toISOString();
   let line: string;
   try {
-    const rec = { ...redact(fields), ts, level, msg: scrubLogText(msg) };
+    const rec = { ...redact(fields), ts, level, msg: scrubLogValue(msg) };
     line = scrubUrls(JSON.stringify(rec));
   } catch {
     line = JSON.stringify({
       ts,
       level,
-      msg: scrubLogText(msg),
+      msg: scrubLogValue(msg),
       note: 'fields were not serializable',
     });
   }
@@ -89,6 +89,18 @@ const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
 const INNOCENT_KEY =
   /^(?:keyboards?|discard(?:ed|s)?|cardinality|(?:input|output|total|max|prompt|completion|cached|reasoning|context)[_-]?tokens|tokens?[_-]?(?:count|used|total|limit))$/i;
 const isSecretKey = (key: string): boolean => SECRET_KEY.test(key) && !INNOCENT_KEY.test(key);
+/**
+ * Para un valor del registro (mensaje o campo): un error de execFile/exec copiado a texto
+ * o re-envuelto en otro Error ya no lleva `cmd`. Tras «Command failed:» va la orden (un
+ * script puede ocupar varias líneas) y luego stderr, que puede repetir el script: se omite
+ * todo hasta el final del valor. Solo en el registro; scrubLogText sigue igual para otros usos.
+ */
+export function scrubLogValue(text: string): string {
+  return scrubLogText(
+    text.replace(/\bCommand failed: [\s\S]*/g, 'Command failed: [orden omitida]'),
+  );
+}
+
 /** Recognizable credential formats only; arbitrary unlabelled secrets cannot be inferred. */
 export function scrubLogText(text: string): string {
   return (
@@ -120,7 +132,7 @@ export function redact(fields: Record<string, unknown>): Record<string, unknown>
   const seen = new WeakSet<object>();
   const visit = (value: unknown, key = '', depth = 0): unknown => {
     if (isSecretKey(key)) return '[redacted]';
-    if (typeof value === 'string') return scrubLogText(value);
+    if (typeof value === 'string') return scrubLogValue(value);
     if (typeof value !== 'object' || value === null) return value;
     if (seen.has(value)) return '[circular]';
     if (depth >= 20) return '[depth limit]';
@@ -141,7 +153,7 @@ export function redact(fields: Record<string, unknown>): Record<string, unknown>
             ...(stderr ? { stderr: scrubLogText(stderr) } : {}),
           };
         }
-        return { name: scrubLogText(value.name), message: scrubLogText(value.message) };
+        return { name: scrubLogText(value.name), message: scrubLogValue(value.message) };
       }
       if (Array.isArray(value)) return value.map((v) => visit(v, '', depth + 1));
       return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, visit(v, k, depth + 1)]));
