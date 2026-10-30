@@ -17,4 +17,4 @@ Un correo entra como turno solo si:
 Lo demás se ignora y queda en la auditoría con el motivo. Se quita la cita del correo anterior. La respuesta va con `In-Reply-To`/`References`.
 Las aprobaciones nunca van por correo: llegan por Telegram y el correo solo lo avisa. Un turno de correo cuenta como contenido externo para la puerta de permisos (fuente «correo»).
 
-Estado: el adaptador (`src/channels/email.ts`) está hecho y probado; conectarlo al daemon va en el siguiente PR.
+Requiere las cuentas de lectura (`mailRead:*`) y envío (`mailSend:*`) del vault. El daemon revisa el buzón cada minuto, en solo lectura, y solo lo llegado después de activarlo (cursor en `<estado>/correo-canal.json`). Sin lista o sin cuentas no arranca y lo dice en el log.
