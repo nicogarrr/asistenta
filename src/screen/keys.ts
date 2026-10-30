@@ -83,7 +83,8 @@ const NAMED_KEYS: Record<string, string> = {
  * brace. They are excluded here on purpose: bracing them produces `{{}y{}}`, which
  * is valid SendKeys but types a different character than intended. A literal brace
  * in typed text is a rare edge case, and silently emitting the wrong character is
- * worse than passing it through.
+ * worse than passing it through. `WindowsScreen.type` never sends them here anyway:
+ * `splitAsciiSegments` routes braces to the paste path.
  */
 const SENDKEYS_META = new Set(['+', '^', '%', '~', '(', ')', '[', ']', '#']);
 
@@ -178,6 +179,9 @@ export type TextSegment = { kind: 'ascii'; text: string } | { kind: 'unicode'; t
  * clipboard paste. A single emoji in "Hola ❤❤" must not force the whole string
  * down the paste path: the ASCII around it still types faster and more reliably.
  */
+/** ASCII that SendKeys cannot type literally; see `splitAsciiSegments`. */
+const PASTE_ONLY_ASCII = new Set(['{', '}']);
+
 export function splitAsciiSegments(text: string): TextSegment[] {
   const out: TextSegment[] = [];
   let current = '';
@@ -192,7 +196,12 @@ export function splitAsciiSegments(text: string): TextSegment[] {
   for (const ch of text) {
     // Astral code points (emoji) iterate as one `ch` under for..of, so the check
     // below sees the whole character rather than a lone surrogate.
-    const kind = (ch.codePointAt(0) as number) < 128 ? 'ascii' : 'unicode';
+    // Braces go through the paste path too: SendKeys reads `{...}` as a key name,
+    // so typed text like `{"a":1}` failed with an invalid-key error and text such
+    // as `{ENTER}` or `{DEL 50}` (from a page, a mail, a file) was PRESSED instead
+    // of typed. Pasted, they arrive as the literal characters.
+    const kind =
+      (ch.codePointAt(0) as number) < 128 && !PASTE_ONLY_ASCII.has(ch) ? 'ascii' : 'unicode';
     if (kind !== currentKind) {
       push();
       currentKind = kind;
