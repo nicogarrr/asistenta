@@ -47,8 +47,10 @@ import {
   cleanForTelegram,
   friendlyError,
   isAgendaTitle,
+  isCronTitle,
   isReminderTitle,
   isStatusTitle,
+  isWatchListTitle,
   marksWithTitles,
   progressNote,
   shorten,
@@ -400,6 +402,7 @@ import {
   describeChange,
   describeWatch,
   eur,
+  type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
 } from './watch/pages.js';
@@ -3655,8 +3658,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // La lógica vive en runCronCommand (exportada) para que los canarios del
     // comando — colisiones, aislamiento por chat, sync en vivo — corran
     // contra un Store y un RoutineRunner reales sin levantar el daemon.
-    await say(
-      inbound,
+    const text = marksWithTitles(
       runCronCommand(
         {
           store,
@@ -3671,8 +3673,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
         args,
       ),
-      { quote: true },
+      isCronTitle,
     );
+    await say(inbound, text, { quote: true, format: 'marks' });
   };
 
   /**
@@ -3820,18 +3823,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const cmdVigilando = async (inbound: Inbound): Promise<void> => {
-    const list = pageWatches.list(inbound.chatId);
-    const text = list.length
-      ? list
-          .map(
-            (w) =>
-              `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}` +
-              `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
-              `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
-          )
-          .join('\n')
-      : 'No vigilo ninguna página. Prueba /vigila <enlace>.';
-    await say(inbound, text, { quote: true });
+    const text = formatWatchList(pageWatches.list(inbound.chatId));
+    await say(inbound, marksWithTitles(text, isWatchListTitle), { quote: true, format: 'marks' });
   };
 
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
@@ -7274,6 +7267,23 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
   return [
     `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'pausado pero con ticks' : 'activo pero sin ticks'}.`,
     `Para eso dime «${action} el objetivo ${id}» (o pídeme la lista de objetivos).`,
+  ].join('\n');
+}
+
+/**
+ * /vigilando: las páginas vigiladas del chat, con cabecera «Páginas vigiladas: N»
+ * (en negrita en Telegram vía isWatchListTitle; el resto es texto del usuario).
+ */
+export function formatWatchList(list: readonly PageWatch[]): string {
+  if (!list.length) return 'No vigilo ninguna página. Prueba /vigila <enlace>.';
+  return [
+    `Páginas vigiladas: ${list.length}`,
+    ...list.map(
+      (w) =>
+        `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}` +
+        `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
+        `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
+    ),
   ].join('\n');
 }
 

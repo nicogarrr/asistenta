@@ -330,6 +330,16 @@ export function isStatusTitle(line: string): boolean {
   );
 }
 
+/** Cabecera de la lista de /cron (runCronCommand): «Rutinas programadas: N». */
+export function isCronTitle(line: string): boolean {
+  return /^Rutinas programadas: \d+$/.test(line);
+}
+
+/** Cabecera de /vigilando (formatWatchList): «Páginas vigiladas: N». */
+export function isWatchListTitle(line: string): boolean {
+  return /^Páginas vigiladas: \d+$/.test(line);
+}
+
 /** Cabeceras de /recordatorios (formatReminderRows). */
 export function isReminderTitle(line: string): boolean {
   return /^Recordatorios: \d+$/.test(line);
