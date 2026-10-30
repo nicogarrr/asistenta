@@ -334,6 +334,14 @@ export function funcionesButtons(
  * Texto de /funciones. Sin área: una línea por área con su ejemplo (cabe en un
  * mensaje). Con área: sus comandos con la descripción de /help.
  */
+/** Solo el dueño, en «⚙️ Sistema»: qué mirar si Asistenta no arranca en el PC. */
+const ARRANQUE_TIPS = [
+  '¿No arranca o va rara?',
+  '• En el PC: «pa iniciar --solo-comprobar» repasa todo en verde/rojo con el arreglo de cada fallo',
+  '• «pa autostart status»: cómo fue el último arranque y qué hizo el vigilante',
+  '• Desde aquí: /estado',
+];
+
 export function funcionesText(view: FuncionesView, areaQuery = ''): string {
   const areas = visibleAreas(view);
   const query = areaQuery.trim();
@@ -349,6 +357,7 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
     const out = [`${area.title}: ${area.summary}`, `Ejemplo: ${area.example}`];
     if (abilities.length > 0) out.push('', 'Pídemelo con tus palabras:', ...abilities);
     if (lines.length > 0) out.push('', 'Comandos:', ...lines);
+    if (area.id === 'sistema' && view.owner) out.push('', ...ARRANQUE_TIPS);
     return out.join('\n');
   }
   const blocks = areas.map((a) => `${a.title} — ${a.summary}\n   Ej.: ${a.example}`);

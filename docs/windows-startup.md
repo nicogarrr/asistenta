@@ -63,6 +63,17 @@ Tope persistente: 3 intentos por 15 min, también si el stop falló. Si al sigui
 
 Los avisos usan un proceso CLI separado, DPAPI y contenido fijo. Van solo al owner explícito allowlisted o al único usuario de la allowlist, nunca un grupo. Red/Telegram/owner no verificado: entrega fallida registrada localmente, no se afirma que llegó y no se reintenta en bucle. Un daemon caído no es necesario para ese aviso.
 
+## Vigilante: «Asistenta-vigilante»
+
+`pa autostart install` registra además una tercera tarea, `Asistenta-vigilante`, que corre al iniciar sesión y cada 5 min. Lanza PowerShell oculto con `node dist/cli.js autostart vigilar` y decide una sola cosa:
+
+- Si Asistenta está en marcha, no hace nada.
+- Si no está en marcha, arranca la tarea normal del daemon (`personal-agent-daemon`), la misma del inicio de sesión. Nunca abre una segunda copia.
+- Si no puede saber si corre: «no sé si corre: no toco nada».
+- Si la paraste con `pa stop`: «la paraste tú: sigue apagada hasta reiniciar el PC o pa iniciar».
+
+La última decisión se guarda en `<estado>/vigilante.json` y sale en `pa autostart status`. Con `PA_WATCHDOG=0` en `.env`, `pa autostart install` no registra el vigilante; si ya estaba registrado, sigue corriendo pero no hace nada («vigilante apagado (PA_WATCHDOG=0)»), y `pa autostart uninstall` lo quita. En los tests `schtasks` va simulado: no se crea ninguna tarea real.
+
 ## Parada y desinstalación
 
 `pa stop` conserva la parada limpia autenticada. Si fue una parada voluntaria con exit 0, el launcher no solicita reinicio.
