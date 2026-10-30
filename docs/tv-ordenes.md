@@ -21,6 +21,7 @@ Deterministas, sin modelo. Ejemplos:
 | «adelanta», «avance rápido», «rebobina (el vídeo)», «retrocede» | `media` avance/retroceso (una pulsación; con segundos va al modelo) |
 | «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
 | «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20» | volumen a ese número |
+| «súbele un par (de puntos)», «baja dos puntitos»; «cambia al 7», «cámbiala al 24»; «apaga ya la tele» | paso de volumen (2 / N); canal; apagar |
 | «pon el HDMI 2» | `input` |
 | «¿qué está viendo?», «¿está encendida?» | `status` |
 | «modo cine», «modo cine con Netflix» | rutina `scene=cine` |

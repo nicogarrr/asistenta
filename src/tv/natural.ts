@@ -356,16 +356,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
 
   if (
-    new RegExp(`${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?: ${TV})?${YA}$`).test(
-      t,
-    ) ||
+    new RegExp(
+      `${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?:${YA} ${TV})?${YA}$`,
+    ).test(t) ||
     new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
   ) {
     return { action: 'power', on: false };
   }
   if (
     new RegExp(
-      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?: ${TV})?${YA}$`,
+      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?:${YA} ${TV})?${YA}$`,
     ).test(t) ||
     new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
   ) {
@@ -450,10 +450,11 @@ export function parseTvCommand(text: string): TvIntent | null {
   // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
   // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| mas| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
+    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| mas| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| puntitos?| niveles?| veces| vez)?| (un par)(?: de (?:puntos?|puntitos?|niveles?|veces))?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
   ).exec(t);
   if (m?.[1]) {
-    const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
+    // «un par (de puntos)»: 2.
+    const n = m[3] !== undefined ? 2 : m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
     if (n !== null && n > 0) {
       const steps = Math.min(MAX_VOLUME_STEP, n);
       const signed = m[1].startsWith('sube') ? steps : -steps;
@@ -491,6 +492,8 @@ export function parseTvCommand(text: string): TvIntent | null {
   m =
     /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ??
     /^(?:pon|ponme) (?:la|el) (\d{1,2})$/.exec(t) ??
+    // «cambia al 7», «cámbiala al 24», «cambia la tele al 3».
+    new RegExp(`^(?:cambia|cambiala|cambialo)(?: ${TV})? al (\\d{1,2})$`).exec(t) ??
     CAMBIA_A_LA_NUM.exec(t);
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
   // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
