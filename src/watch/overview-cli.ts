@@ -6,10 +6,12 @@ import { paths } from '../paths.js';
 import {
   formatOverview,
   forScope,
+  fromOjo,
   fromPageWatches,
   fromPriceConfig,
   fromRoutines,
   fromTriggers,
+  type OjoState,
   type OverviewEntry,
 } from './overview.js';
 import { PageWatchStore } from './pages.js';
@@ -29,6 +31,29 @@ export function defaultSources(env: NodeJS.ProcessEnv = process.env): OverviewSo
   };
 }
 
+/**
+ * Interruptores del ojo leídos SIN escribir (los getters de vigilante/ojo-* crean tablas).
+ * Mismos valores por defecto: el general encendido salvo 'off'; pantalla y descargas solo con 'on'.
+ */
+export function readOjoState(db: DatabaseSync): OjoState {
+  const has = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vigilante_settings'")
+    .get();
+  const get = (key: string): string | undefined =>
+    has
+      ? (
+          db.prepare('SELECT value FROM vigilante_settings WHERE key = ?').get(key) as
+            | { value: string }
+            | undefined
+        )?.value
+      : undefined;
+  return {
+    attention: get('enabled') !== 'off',
+    screen: get('screen_enabled') === 'on',
+    downloads: get('downloads_enabled') === 'on',
+  };
+}
+
 /** Lee todas las listas. Una fuente que falla se informa y no tumba las demás. */
 export function collectWatches(src: OverviewSources): {
   entries: OverviewEntry[];
@@ -45,6 +70,13 @@ export function collectWatches(src: OverviewSources): {
       entries.push(...fromPageWatches(new PageWatchStore(db).listAll()));
     } catch (err) {
       errors.push(`páginas: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      if (db) {
+        entries.push(...fromOjo(readOjoState(db)));
+      }
+    } catch (err) {
+      errors.push(`ojo: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       db?.close();
     }
