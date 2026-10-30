@@ -52,6 +52,7 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
+import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
@@ -2651,94 +2652,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
-  const runRoutineFire = async (_prompt: string, ctx: RoutineRunContext) => {
-    // A goal tick EXECUTES; it never delivers its prompt as a message.
-    if (isGoalRoutine(ctx.routine)) {
-      await goalRunner.tickByRoutineName(ctx.routine.name);
-      return;
-    }
-    // A scheduled routine answers into the chat it was learned in. It reuses the
-    // thread of that scope when one exists, so the conversation that created the
-    // routine also receives its output.
-    const [chatPart] = ctx.scope.split('#');
-    const chatId = chatPart?.split(':')[2] ?? '';
-    if (!chatId) return;
-    // A one-time reminder deleted after this job was registered (delivered late at
-    // startup, cancelled) must not send again from a stale callback.
-    if (isOneShotReminder(ctx.routine) && !oneShotStillPending(store, ctx.routine)) return;
-    log.info('routine fired', { routine: ctx.routine.name, chatId });
-    const reminder = isReminder(ctx.routine);
-    // Un recordatorio solo avisa; una rutina TRABAJA. La tarea real se saca del
-    // prompt de la rutina (o de su procedimiento guardado) y se ejecuta aquí,
-    // como haría /routine a mano. `prompt` (los metadatos que pasa el runner) no
-    // se usa para trabajar.
-    const task = reminder
-      ? ''
-      : ctx.routine.kind === 'schedule' && ctx.routine.prompt
-        ? ctx.routine.prompt
-        : procedurePrompt(ctx.routine);
-    let body = '';
-    let plan: DeliveryPlan | null = null;
-    if (!reminder) {
-      let failed = false;
-      try {
-        body = await runRoutineTask(task, ctx);
-      } catch (err) {
-        failed = true;
-        log.warn('routine execution failed', { routine: ctx.routine.name, err });
-      }
-      if (!body.trim()) {
-        failed = true;
-        body = 'No devolvió respuesta.';
-      }
-      // F6: where the output goes (chat by default) and «solo si cambia».
-      const setting = routineDelivery.get(ctx.scope, ctx.routine.name);
-      plan = planDelivery(setting, setting.lastHash, body, failed);
-      if (plan.file) {
-        try {
-          writeRoutineOutput(join(paths.state, 'salidas'), ctx.routine.name, body);
-          if (!plan.chat) routineDelivery.commit(ctx.scope, ctx.routine.name, plan.hash);
-        } catch (err) {
-          log.warn('routine output file failed', { routine: ctx.routine.name, err });
-        }
-      }
-      if (!plan.chat) {
-        log.info('routine output not sent to chat', {
-          routine: ctx.routine.name,
-          reason: plan.skipped ?? 'fichero',
-        });
-        return;
-      }
-    }
-    const sent = await telegram
-      .send({
-        channel: 'telegram',
-        account: telegram.account,
-        chatId,
-        text: reminder
-          ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-          : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`,
-      })
-      .then(() => true)
-      .catch((err: unknown) => {
-        log.warn('routine send failed', { err });
-        return false;
-      });
-    if (sent && plan && !reminder) routineDelivery.commit(ctx.scope, ctx.routine.name, plan.hash);
-    // A one-time reminder is a cron pinned to a date: it would fire again next year.
-    // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
-    // instead of vanishing.
-    if (isOneShotReminder(ctx.routine)) {
-      const outcome = settleOneShot(store, ctx.routine, sent);
-      if (outcome === 'dropped') {
-        log.warn('one-time reminder dropped after an hour of failed delivery', {
-          routine: ctx.routine.name,
-        });
-        recordDroppedReminder(join(paths.state, 'dropped-reminders.jsonl'), ctx.routine.name);
-      }
-      routineRunner.sync();
-    }
-  };
+  const sendToChat = (chatId: string, text: string) =>
+    telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+  const runRoutineFire = createRoutineFire({
+    store,
+    tickGoal: (name) => goalRunner.tickByRoutineName(name),
+    runTask: runRoutineTask,
+    send: sendToChat,
+    delivery: routineDelivery,
+    outputDir: join(paths.state, 'salidas'),
+    sync: () => routineRunner.sync(),
+    droppedRemindersPath: join(paths.state, 'dropped-reminders.jsonl'),
+  });
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
   // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 lo desactiva.
@@ -2748,37 +2673,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     catchUp: process.env.PA_ROUTINE_CATCHUP !== '0',
   });
   // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
-  // so a job due this minute cannot also fire fresh. At least once, never "exactly
-  // once": see deliverMissedReminders.
-  void deliverMissedReminders({
-    store,
-    send: async (scope, text) => {
-      const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
-      if (!chatId) return false;
-      // A hung send must not keep the scheduler from starting. A timeout counts as
-      // failed, but the message may still arrive: delivery is at least once.
-      const timeout = new Promise<boolean>((resolve) => {
-        const t = setTimeout(() => resolve(false), 20_000);
-        t.unref?.();
-      });
-      const sent = telegram
-        .send({ channel: 'telegram', account: telegram.account, chatId, text })
-        .then(() => true)
-        .catch((err: unknown) => {
-          log.warn('missed reminder send failed', { err });
-          return false;
-        });
-      return Promise.race([sent, timeout]);
-    },
-  })
-    .catch((err: unknown) => {
-      log.warn('missed reminder catch-up failed', { err });
-      return null;
-    })
-    .then((r) => {
-      if (r && (r.delivered || r.failed || r.invalid)) log.info('missed reminders', r);
-    })
-    .finally(() => routineRunner.start());
+  // so a job due this minute cannot also fire fresh (see deliverMissedThenStart).
+  void deliverMissedThenStart({ store, send: sendToChat, start: () => routineRunner.start() });
 
   // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
   // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las
