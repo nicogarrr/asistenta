@@ -12,6 +12,7 @@ import {
   loadCalendarSources,
   mergeCalendarEvents,
 } from '../agenda/sources.js';
+import { localTimeZone, wallClock } from '../datecontext.js';
 import { log } from '../log.js';
 
 /**
@@ -99,34 +100,59 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
- * All grouping and rendering is done with local getters and hand-rolled names
- * rather than `Intl.DateTimeFormat`, for two reasons: the local zone is already
- * the zone the listing reports in, and hand-rolled formatting cannot be moved by
- * an ICU version's midnight convention ("24:00" vs "00:00").
+ * All grouping and rendering is done with hand-rolled names rather than
+ * `Intl.DateTimeFormat` output, so an ICU version's midnight convention ("24:00" vs
+ * "00:00") cannot move a line. Timed events are shown on the wall clock of the
+ * configured zone (PA_TIMEZONE, via `wallClock`), not the process zone: the CLI and
+ * any library caller that never ran `applyConfiguredTimeZone` would otherwise list a
+ * Madrid 09:00 meeting as "08:00 +00:00" on a UTC machine. All-day events keep the
+ * process-local calendar date, because node-ical builds a DATE value as local
+ * midnight in the process zone; reading that instant in another zone could shift it
+ * to the previous day.
  */
-function localZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local time';
+interface Wall {
+  year: number;
+  month: number; // 1-12
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: number; // 0 = Sunday
+}
+
+function wallOf(at: Date, allDay = false): Wall {
+  if (allDay) {
+    return {
+      year: at.getFullYear(),
+      month: at.getMonth() + 1,
+      day: at.getDate(),
+      hour: at.getHours(),
+      minute: at.getMinutes(),
+      weekday: at.getDay(),
+    };
+  }
+  return wallClock(at);
 }
 
 function offsetLabel(at: Date): string {
-  const minutes = -at.getTimezoneOffset();
+  const w = wallClock(at);
+  const minuteFloor = Math.floor(at.getTime() / 60_000) * 60_000;
+  const minutes = Math.round(
+    (Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute) - minuteFloor) / 60_000,
+  );
   const sign = minutes < 0 ? '-' : '+';
   const absolute = Math.abs(minutes);
   return `${sign}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
 }
 
-function dayHeader(at: Date): string {
-  const weekday = WEEKDAYS[at.getDay()] ?? '???';
-  const month = MONTHS[at.getMonth()] ?? '???';
-  return `${weekday} ${at.getDate()} ${month} ${at.getFullYear()}`;
+function dayHeader(at: Date, allDay = false): string {
+  const w = wallOf(at, allDay);
+  const weekday = WEEKDAYS[w.weekday] ?? '???';
+  const month = MONTHS[w.month - 1] ?? '???';
+  return `${weekday} ${w.day} ${month} ${w.year}`;
 }
 
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function isSameDay(a: Wall, b: Wall): boolean {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
 }
 
 function localDayCount(start: Date, end: Date): number {
@@ -150,12 +176,12 @@ function renderEvent(event: CalendarEvent): string {
         return days > 1 ? `all day (${days} days)` : 'all day';
       })()
     : (() => {
-        const range = `${pad2(event.start.getHours())}:${pad2(event.start.getMinutes())}-${pad2(
-          event.end.getHours(),
-        )}:${pad2(event.end.getMinutes())}`;
+        const from = wallClock(event.start);
+        const until = wallClock(event.end);
+        const range = `${pad2(from.hour)}:${pad2(from.minute)}-${pad2(until.hour)}:${pad2(until.minute)}`;
         // A timed event that runs past midnight would otherwise print "23:00-01:00"
         // with nothing to say that the end is on the following day.
-        const overnight = isSameDay(event.start, event.end) ? '' : ' (+1d)';
+        const overnight = isSameDay(from, until) ? '' : ' (+1d)';
         return `${range} ${offsetLabel(event.start)}${overnight}`;
       })();
 
@@ -316,7 +342,7 @@ export function summarizeForModel(events: CalendarEvent[], opts?: { maxChars?: n
 
   const ordered = [...events].sort((a, b) => a.start.getTime() - b.start.getTime());
   const anchor = ordered[0]?.start ?? new Date();
-  const header = `Agenda: ${ordered.length} event(s). Times are local to ${localZone()} (UTC${offsetLabel(
+  const header = `Agenda: ${ordered.length} event(s). Times are local to ${localTimeZone()} (UTC${offsetLabel(
     anchor,
   )}).`;
 
@@ -327,7 +353,7 @@ export function summarizeForModel(events: CalendarEvent[], opts?: { maxChars?: n
   let openDay = '';
 
   for (const event of ordered) {
-    const day = dayHeader(event.start);
+    const day = dayHeader(event.start, event.allDay);
     // Cut on an event boundary, never mid-line, so the listing stays parseable.
     const block = (day === openDay ? '' : `${day}\n`) + renderEvent(event);
     if (used + block.length + 1 > budget) break;
