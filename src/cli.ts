@@ -152,6 +152,7 @@ import {
   parseWideArgs,
   renderWideReport,
   WIDE_MAX_ITEMS,
+  wideCsvAttachment,
   wideResearch,
   wideResearchEnabled,
 } from './research/wide-research.js';
@@ -3879,6 +3880,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           llm: await researchLlm(),
         });
         await say(inbound, renderWideReport(report), { quote: true });
+        // La misma tabla como CSV adjunto, para abrirla en una hoja (solo Telegram).
+        const csv = inbound.channel === 'telegram' ? wideCsvAttachment(report) : null;
+        if (csv) {
+          await telegram
+            .sendDocumentBytes(
+              Number(inbound.chatId),
+              csv.bytes,
+              csv.filename,
+              csv.caption,
+              inbound.threadId,
+            )
+            .catch((err) => log.warn('investiga amplio: csv no enviado', { err: String(err) }));
+        }
       } catch (err) {
         await say(inbound, friendlyError(err), { quote: true });
       }

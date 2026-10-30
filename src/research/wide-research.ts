@@ -254,3 +254,33 @@ export function wideReportCsv(report: WideReport): string {
     '\n',
   );
 }
+
+/**
+ * La tabla como adjunto: CSV con BOM UTF-8 (Excel en Windows si no, rompe las
+ * tildes) y fin de línea CRLF (RFC 4180). null si no hay filas que mandar.
+ */
+export function wideCsvAttachment(
+  report: WideReport,
+): { bytes: Buffer; filename: string; caption: string } | null {
+  if (report.rows.length === 0) return null;
+  const esc = (s: string): string => `"${s.replace(/"/g, '""')}"`;
+  const csv = [
+    'elemento,resultado',
+    ...report.rows.map((r) => `${esc(r.item)},${esc(r.cell)}`),
+  ].join('\r\n');
+  const slug =
+    report.question
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40)
+      .replace(/-+$/, '') || 'tabla';
+  const n = report.rows.length;
+  return {
+    bytes: Buffer.from(`\uFEFF${csv}\r\n`, 'utf8'),
+    filename: `investigacion-${slug}.csv`,
+    caption: `La tabla en CSV (${n} ${n === 1 ? 'fila' : 'filas'}) para abrirla en Excel o Sheets.`,
+  };
+}
