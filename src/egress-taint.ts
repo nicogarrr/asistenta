@@ -143,6 +143,10 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   if (tool === 'browser' && (args.action === 'open' || args.action === undefined)) return url;
   // Una vigilancia hace peticiones periódicas a esa URL: misma salida que un fetch.
   if (tool === 'vigilar_precio' && args.action === 'add') return url;
+  // Otras herramientas que piden esa URL a la red: misma salida que un fetch.
+  if (tool === 'web' && args.action === 'fetch') return url;
+  if (tool === 'book' && args.action === 'get_url') return url;
+  if (tool === 'checkout' && args.action === 'search') return url;
   return null;
 }
 
