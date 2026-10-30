@@ -57,10 +57,17 @@ export interface AltavozReplyDeps extends Omit<AltavozInboundDeps, 'download'> {
 }
 
 /**
+ * Respuestas más largas que esto (unos 45 s de voz) no se dicen en la tele: un salón
+ * entero escuchando una lista larga cansa, y el texto ya está en el chat. En el PC sí.
+ */
+export const ALTAVOZ_VOZ_TELE_MAX_CHARS = 700;
+
+/**
  * Con PA_ALTAVOZ_VOZ=1, la respuesta a una nota que sonó en el altavoz se dice en el
  * mismo sitio (PC o tele), detrás de la nota en la cola. Se llama DESPUÉS de mandar el
  * texto y no espera a nada: la voz nunca retrasa la respuesta escrita. Un fallo de la
  * voz no avisa en el chat (el texto ya llegó); solo el aviso del firewall de la tele.
+ * En la tele, una respuesta de más de ALTAVOZ_VOZ_TELE_MAX_CHARS caracteres no se dice.
  */
 export function routeReplyToAltavoz(
   inbound: AltavozInbound,
@@ -70,6 +77,7 @@ export function routeReplyToAltavoz(
   if (!deps.enabled || !replyText.trim()) return 'skipped';
   const mode = altavozTarget(inbound, deps);
   if (!mode) return 'skipped';
+  if (mode === 'tele' && replyText.trim().length > ALTAVOZ_VOZ_TELE_MAX_CHARS) return 'skipped';
   const queued = deps.player.enqueue(
     mode,
     async () => {

@@ -38,6 +38,10 @@ dice en el mismo sitio, detrás de la nota. El texto llega primero a Telegram y 
 espera a la voz; si la voz falla, no hay aviso (ya tienes el texto). Solo tus notas, en
 tu chat privado.
 
+En la tele, una respuesta de más de 700 caracteres (unos 45 s de voz) no se dice: el texto ya
+está en el chat. En el PC se dice entera. `/stop` también tira la respuesta hablada que espera
+en la cola.
+
 ## ¿Y «llamar al bot»?
 Telegram no deja que los bots reciban llamadas. `/altavoz` es lo más cercano: grabas, sueltas y
 suena en 1–3 segundos. Las alternativas (chat de voz con una cuenta de usuario, o «hablar» en
