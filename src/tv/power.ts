@@ -40,6 +40,17 @@ export interface TvPowerOutcome {
   via: 'glasshouse' | 'ssap' | 'wol';
   /** true = comprobado que responde; false = comprobado que aun no; null = no se comprueba. */
   verified: boolean | null;
+  /** La tele contestó que la pantalla ya estaba encendida: no se ha cambiado nada. */
+  alreadyOn?: true;
+}
+
+/**
+ * LG contesta a turnOnScreen con la pantalla ya encendida con un rechazo
+ * («The current state is …», código -102). No es un fallo: ya está encendida.
+ */
+export function isTvAlreadyOnError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /turnOnScreen/.test(msg) && /\b(?:already|current (?:power )?state)\b/i.test(msg);
 }
 
 export const WOL_HINT =
@@ -65,6 +76,7 @@ export async function tvPower(on: boolean, deps: TvPowerDeps): Promise<TvPowerOu
     await deps.ssap('com.webos.service.tvpower/power/turnOnScreen', {});
     return { via: 'ssap', verified: null };
   } catch (err) {
+    if (isTvAlreadyOnError(err)) return { via: 'ssap', verified: true, alreadyOn: true };
     if (!(err instanceof TvUnreachableError)) throw err;
     if (!deps.wake) {
       throw new TvUnreachableError(`${err.message} ${WOL_HINT}`);

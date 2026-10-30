@@ -8,6 +8,7 @@ Deterministas, sin modelo. Ejemplos:
 | Dices | Hace |
 |---|---|
 | «apaga la tele» / «enciende la tele» / «apágala» / «enciéndela» / «apaga el televisor» | `power` (ver encendido por red) |
+| «pon la tele» / «pon la tv» / «ponme la tele» (solas, sin destino) | encender (decisión de Nico, 30-oct-2026); si ya estaba encendida contesta «La tele ya estaba encendida.» |
 | «volumen a 20» | volumen absoluto (necesita Glasshouse) |
 | «sube el volumen», «baja 5», «más alto» | pulsaciones del mando (`volumeStep`, sin Glasshouse) |
 | «silencio» / «apaga el sonido» / «quítale el sonido» / «quita el silencio» | `mute` |

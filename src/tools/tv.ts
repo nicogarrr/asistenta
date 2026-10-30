@@ -674,6 +674,12 @@ async function runTvAction(
       }
       const on = args.on;
       const outcome = await enqueueTvMutation(() => deps.power(on));
+      if (on && outcome?.alreadyOn) {
+        return {
+          content: [{ type: 'text' as const, text: 'La tele ya estaba encendida.' }],
+          details: { on, verified: true, alreadyOn: true },
+        };
+      }
       if (outcome && outcome.via === 'wol') {
         return {
           content: [

@@ -30,7 +30,8 @@ describe('natural.ts: frases de Nico', () => {
   });
 
   it.each([
-    ['pon la tele', null],
+    // Decisión de Nico (30-oct-2026): «pon la tele» es encenderla.
+    ['pon la tele', { action: 'power', on: true }],
     ['pon la cena', null],
     ['quita el sonido', { action: 'mute', on: true }],
     ['apaga el sonido', { action: 'mute', on: true }],
