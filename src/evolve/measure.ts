@@ -154,6 +154,19 @@ export function checkNames(output: string): { passing: string[]; failing: string
 }
 
 /**
+ * Why a test-suite run measured nothing trustworthy, or null when it finished. vitest ends
+ * with exit 0 (everything green) or 1 (failures). A suite that printed its summary and then
+ * crashed, hung until the timeout or was killed is not a finished run: its numbers are
+ * reported as not measured instead of as a measurement. Exit 0 with failures in the summary
+ * means the summary is not this run's.
+ */
+export function suiteUnfinished(code: number | string | null, failed: number): string | null {
+  if (code === 0 && failed === 0) return null;
+  if (code === 1) return null;
+  return `la suite de tests no terminó (salida ${code ?? 'sin código'}): no medido`;
+}
+
+/**
  * Why a probe run measured nothing trustworthy, or null when it finished. The probe ends
  * with «FLUJO GENERICO OK» (exit 0) or «N PASO(S) FALLARON» (exit 1). A probe that crashed,
  * was killed or stopped early printed only some checks: counting those as the result scored
@@ -183,6 +196,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const reportDir = mkdtempSync(join(tmpdir(), 'evolve-rep-'));
   const reportFile = join(reportDir, `r-${Math.random().toString(36).slice(2)}.json`);
   let names: { passing: string[]; failing: string[] } | null = null;
+  let suiteError: string | null = null;
   try {
     const suite = await exec(
       'npx',
@@ -194,10 +208,13 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
         env: cleanEnv(process.env, home),
         maxBuffer: 32 * 1024 * 1024,
       },
-    ).catch((err: { stdout?: string; stderr?: string }) => ({
-      stdout: err.stdout ?? '',
-      stderr: err.stderr ?? '',
-    }));
+    )
+      .then((r) => ({ ...r, code: 0 as number | string | null }))
+      .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+        code: err.code ?? null,
+      }));
     try {
       names = parseJsonReport(readFileSync(reportFile, 'utf8'));
     } catch {
@@ -213,6 +230,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     }
     passed = parsed.passed;
     failed = parsed.failed;
+    suiteError = suiteUnfinished(suite.code, parsed.failed);
   } catch (err) {
     rmSync(home, { recursive: true, force: true });
     rmSync(reportDir, { recursive: true, force: true });
@@ -249,6 +267,16 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
 
   rmSync(home, { recursive: true, force: true });
   rmSync(reportDir, { recursive: true, force: true });
+  if (suiteError) {
+    return {
+      passed,
+      failed,
+      checks,
+      checksFailed,
+      durationMs: Date.now() - started,
+      error: suiteError,
+    };
+  }
   if (!names) {
     // Fail closed: without a per-test report the regression check cannot run, and falling
     // back to counts would let a change that fixes two tests and breaks one through.
