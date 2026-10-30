@@ -24,7 +24,7 @@ export interface WebUiDeps {
   /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
   routines?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
-  chat?(text: string): Promise<{ text: string }>;
+  chat?(text: string): Promise<{ text: string; images?: string[] }>;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -246,7 +246,14 @@ async function respondApi(
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
-        payload = { text: answer.text };
+        // Capturas del turno del panel (#arch8): solo data: de imagen, nada más.
+        const images = Array.isArray(answer.images)
+          ? answer.images.filter(
+              (u): u is string =>
+                typeof u === 'string' && /^data:image\/(png|jpeg);base64,/.test(u),
+            )
+          : [];
+        payload = images.length > 0 ? { text: answer.text, images } : { text: answer.text };
         break;
       }
       case 'approval': {
