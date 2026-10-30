@@ -17,7 +17,7 @@ import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import { readTvStatus } from '../tv/status.js';
 import { sendWakeOnLan } from '../tv/wol.js';
-import { vaultGet } from '../vault.js';
+import { vaultGet, vaultSet } from '../vault.js';
 import type { CapabilityPlugin } from './types.js';
 
 /**
@@ -32,6 +32,12 @@ export function tvToolDeps(store: Store): TvToolDeps {
   const frameDir = join(paths.screenshots, 'tv');
   mkdirSync(frameDir, { recursive: true });
   const STATE_KEY = 'tv:lastLook';
+  // Si la tele olvido la client-key y Nico acepta el aviso de nuevo, la clave
+  // nueva se guarda: sin esto cada orden volveria a sacar el aviso.
+  const saveNewKey = async (key: string): Promise<void> => {
+    await vaultSet('tv:clientKey', key);
+    log.info('tv: la tele se ha vuelto a emparejar; client-key nueva guardada');
+  };
 
   const paired = async (): Promise<{
     host: string;
@@ -72,7 +78,10 @@ export function tvToolDeps(store: Store): TvToolDeps {
   return {
     shot: async () => {
       const { host, clientKey, allowPlaintext } = await paired();
-      const image = await tvScreenshot(host, clientKey, { allowPlaintext });
+      const image = await tvScreenshot(host, clientKey, {
+        allowPlaintext,
+        onNewClientKey: saveNewKey,
+      });
       // El mime/ext salen de la FIRMA real del frame: la tele decide el
       // formato, no el cliente (tvScreenshot acepta JPEG y PNG).
       const jpeg = image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
@@ -88,7 +97,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'com.webos.applicationManager/getForegroundAppInfo',
         {},
-        { allowPlaintext },
+        { allowPlaintext, onNewClientKey: saveNewKey },
       );
       const p = res as { appId?: string; appCategory?: string[] };
       return { appId: p.appId ?? 'desconocida', category: p.appCategory ?? [] };
@@ -100,7 +109,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'com.webos.applicationManager/listLaunchPoints',
         {},
-        { allowPlaintext },
+        { allowPlaintext, onNewClientKey: saveNewKey },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
       return points.map((p) => ({ id: p.id, title: p.title }));
@@ -120,11 +129,17 @@ export function tvToolDeps(store: Store): TvToolDeps {
         log.info('tv launch: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvRequest(host, clientKey, 'system.launcher/launch', { id }, { allowPlaintext });
+      await tvRequest(
+        host,
+        clientKey,
+        'system.launcher/launch',
+        { id },
+        { allowPlaintext, onNewClientKey: saveNewKey },
+      );
     },
     key: async (name) => {
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvKey(host, clientKey, name, { allowPlaintext });
+      await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey: saveNewKey });
     },
     toast: async (message) => {
       try {
@@ -139,7 +154,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         log.info('tv toast: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvToast(host, clientKey, message, { allowPlaintext });
+      await tvToast(host, clientKey, message, { allowPlaintext, onNewClientKey: saveNewKey });
     },
     power: async (on) => {
       // Cadena Glasshouse -> SSAP -> Wake-on-LAN en src/tv/power.ts (reglas del
@@ -153,7 +168,10 @@ export function tvToolDeps(store: Store): TvToolDeps {
         },
         ssap: async (uri, payload) => {
           const p = await paired();
-          return tvRequest(p.host, p.clientKey, uri, payload, { allowPlaintext: p.allowPlaintext });
+          return tvRequest(p.host, p.clientKey, uri, payload, {
+            allowPlaintext: p.allowPlaintext,
+            onNewClientKey: saveNewKey,
+          });
         },
         wake: mac ? () => sendWakeOnLan(mac, { host }) : undefined,
         probe: async () => {
@@ -165,6 +183,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
             {},
             {
               allowPlaintext: p.allowPlaintext,
+              onNewClientKey: saveNewKey,
               commandTimeoutMs: 3_000,
               connectRetries: 0,
             },
@@ -179,6 +198,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
       const ssap = (uri: string, payload: Record<string, unknown>) =>
         tvRequest(p.host, p.clientKey, uri, payload, {
           allowPlaintext: p.allowPlaintext,
+          onNewClientKey: saveNewKey,
           commandTimeoutMs: 4_000,
         });
       return readTvStatus({

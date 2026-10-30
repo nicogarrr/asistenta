@@ -1,3 +1,4 @@
+// Cliente SSAP de la tele LG (re-emparejado: ver register/onNewClientKey).
 /**
  * Cliente SSAP minimo para LG webOS TV: pairing PROMPT una vez (la tele
  * muestra un aviso y hay que aceptarlo con el mando) y requests con la
@@ -19,6 +20,8 @@ import { TV_MANIFEST } from './manifest.js';
 const PAIR_TIMEOUT_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const CMD_TIMEOUT_MS = 10_000;
+/** Espera para aceptar con el mando el aviso de re-emparejamiento (tele que olvido la clave). */
+const PROMPT_WAIT_MS = 60_000;
 const CLIENT_KEY_MAX = 512;
 
 /** Subconjunto de ws que usa el cliente (inyectable en tests). */
@@ -118,6 +121,15 @@ export interface TvClientDeps {
   connectRetryDelayMs?: number;
   /** Timeout de apertura del socket por intento (por defecto 5 s). */
   connectTimeoutMs?: number;
+  /**
+   * La tele ya no reconoce la client-key guardada (reinicio de fabrica, app
+   * borrada…) y ha mostrado el aviso de emparejamiento: si Nico lo acepta,
+   * la tele entrega una client-key NUEVA. Este callback la recibe para
+   * guardarla; sin el, cada orden volveria a sacar el aviso.
+   */
+  onNewClientKey?: (clientKey: string) => void | Promise<void>;
+  /** Espera tras el aviso de re-emparejamiento (por defecto 60 s). */
+  promptWaitMs?: number;
   /** Socket de input de botones (tvKey); por defecto ws real. Inyectable en tests. */
   inputFactory?: TvInputSocketFactory;
   /** Timeout total de envio de una tecla (por defecto 5 s; PA_TV_KEY_TIMEOUT_MS). */
@@ -314,6 +326,7 @@ function awaitPhase<T>(
   handle: (msg: SsapMessage) => PhaseOutcome<T>,
   secrets: Array<string | undefined> = [],
   kick?: () => void,
+  ctl?: { restart?: (ms: number) => void },
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -353,7 +366,15 @@ function awaitPhase<T>(
     const onClose = () => fail(new Error('La TV cerro la conexion.'));
     const onError = (err: unknown) =>
       fail(new Error(sanitizeTvText(err instanceof Error ? err.message : String(err), secrets)));
-    const timer = setTimeout(() => fail(timeoutError()), timeoutMs);
+    let timer = setTimeout(() => fail(timeoutError()), timeoutMs);
+    if (ctl) {
+      // Reinicia la espera (p.ej. la tele pide aceptar un aviso con el mando).
+      ctl.restart = (ms: number) => {
+        if (settled) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => fail(timeoutError()), ms);
+      };
+    }
     const cleanup = () => {
       clearTimeout(timer);
       ws.off?.('message', onMessage);
@@ -388,18 +409,37 @@ async function register(
   ws: TvSocket,
   clientKey: string | undefined,
   timeoutMs: number,
+  promptWaitMs = PROMPT_WAIT_MS,
 ): Promise<string> {
+  // Con client-key guardada, una respuesta PROMPT significa que la tele la ha
+  // olvidado y muestra el aviso de emparejamiento: se espera a que Nico lo
+  // acepte (con un mensaje claro si no lo hace) en vez de agotar el timeout
+  // de la orden con un «no respondio» enganoso.
+  let prompted = false;
+  const ctl: { restart?: (ms: number) => void } = {};
   const pending = awaitPhase<string>(
     ws,
     timeoutMs,
     () =>
       new Error(
-        clientKey
-          ? `La TV no respondio al registro en ${timeoutMs / 1000}s.`
-          : `La TV no respondio en ${timeoutMs / 1000}s: en el primer emparejamiento hay que ACEPTAR el aviso que sale en la tele con el mando.`,
+        prompted
+          ? 'La tele ya no reconoce el emparejamiento guardado y ha mostrado un aviso: aceptalo con el mando y repite la orden, o vuelve a emparejar con: pa tv setup <ip-de-la-television>'
+          : clientKey
+            ? `La TV no respondio al registro en ${timeoutMs / 1000}s.`
+            : `La TV no respondio en ${timeoutMs / 1000}s: en el primer emparejamiento hay que ACEPTAR el aviso que sale en la tele con el mando.`,
       ),
     (msg) => {
       if (msg.id !== 'register_0') return undefined;
+      if (
+        clientKey &&
+        !prompted &&
+        msg.type === 'response' &&
+        msg.payload?.pairingType === 'PROMPT'
+      ) {
+        prompted = true;
+        ctl.restart?.(promptWaitMs);
+        return undefined;
+      }
       if (msg.type === 'error') {
         return {
           ok: false,
@@ -436,6 +476,7 @@ async function register(
           },
         }),
       ),
+    ctl,
   );
   return pending;
 }
@@ -477,7 +518,21 @@ export async function tvRequest(
   );
   const cmdTimeout = deps.commandTimeoutMs ?? tvCommandTimeoutMs();
   try {
-    await register(opened.ws, clientKey, cmdTimeout);
+    const registeredKey = await register(
+      opened.ws,
+      clientKey,
+      cmdTimeout,
+      deps.promptWaitMs ?? PROMPT_WAIT_MS,
+    );
+    if (registeredKey !== clientKey && deps.onNewClientKey) {
+      // Re-emparejada: guardar la clave nueva. Si guardarla falla, la orden
+      // sigue (la sesion ya esta registrada); el siguiente uso volvera a pedir.
+      try {
+        await deps.onNewClientKey(registeredKey);
+      } catch {
+        // best-effort
+      }
+    }
     const id = `cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const pending = awaitPhase<Record<string, unknown>>(
       opened.ws,
