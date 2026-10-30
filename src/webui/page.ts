@@ -7,7 +7,12 @@
  * textContent, nunca con innerHTML.
  */
 
-import { resumenAprobacion, tiempoRestante } from './client-format.js';
+import {
+  etiquetaCampo,
+  formatearCampo,
+  resumenAprobacion,
+  tiempoRestante,
+} from './client-format.js';
 
 const ICON_SVG = [
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
@@ -29,7 +34,14 @@ export function renderFormatScript(): string {
   'use strict';
   var resumenAprobacion = ${resumenAprobacion.toString()};
   var tiempoRestante = ${tiempoRestante.toString()};
-  return { resumenAprobacion: resumenAprobacion, tiempoRestante: tiempoRestante };
+  var etiquetaCampo = ${etiquetaCampo.toString()};
+  var formatearCampo = ${formatearCampo.toString()};
+  return {
+    resumenAprobacion: resumenAprobacion,
+    tiempoRestante: tiempoRestante,
+    etiquetaCampo: etiquetaCampo,
+    formatearCampo: formatearCampo
+  };
 })();`;
 }
 
@@ -413,7 +425,7 @@ export function renderPage(): string {
           <div class="controles">
             <label class="buscador" for="ambito-memoria">
               Ámbito
-              <input id="ambito-memoria" type="text" placeholder="global" autocomplete="off" spellcheck="false" />
+              <input id="ambito-memoria" type="text" placeholder="local" autocomplete="off" spellcheck="false" />
             </label>
             <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
           </div>
@@ -485,31 +497,20 @@ ${renderFormatScript()}
       }
 
       function nombreCampo(clave) {
-        var mapa = {
-          id: 'ID',
-          chatId: 'Chat',
-          sessionId: 'Sesión',
-          createdAt: 'Creado',
-          updatedAt: 'Actualizado',
-          lastSeen: 'Visto por última vez',
-          status: 'Estado',
-          ok: 'Resultado',
-          valid: 'Válido',
-          verified: 'Verificado',
-          count: 'Total',
-          items: 'Elementos',
-          sessions: 'Sesiones',
-          scope: 'Ámbito',
-          error: 'Error'
-        };
-        if (mapa[clave]) return mapa[clave];
-        var limpio = clave.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
-        return limpio.charAt(0).toUpperCase() + limpio.slice(1);
+        return formato.etiquetaCampo(clave);
       }
 
-      function renderValor(valor, profundidad) {
+      function renderValor(valor, profundidad, clave) {
         var nivel = profundidad || 0;
         if (nivel > 6) return nodo('span', 'muted', '…');
+        if (clave) {
+          var formateado = formato.formatearCampo(clave, valor);
+          if (formateado !== null) {
+            var marca = nodo('span', 'texto', formateado);
+            marca.title = String(valor);
+            return marca;
+          }
+        }
         if (valor === undefined || valor === null) return nodo('span', 'nulo', 'Sin datos');
         if (Array.isArray(valor)) {
           if (valor.length === 0) return nodo('span', 'nulo', 'Lista vacía');
@@ -540,7 +541,7 @@ ${renderFormatScript()}
             var clave = claves[j];
             datos.appendChild(nodo('dt', null, nombreCampo(clave)));
             var definicion = document.createElement('dd');
-            definicion.appendChild(renderValor(valor[clave], nivel + 1));
+            definicion.appendChild(renderValor(valor[clave], nivel + 1, clave));
             datos.appendChild(definicion);
           }
           return datos;
@@ -951,7 +952,7 @@ ${renderFormatScript()}
             detalles.appendChild(lista);
             if (objetivo.blockedReason) detalles.appendChild(nodo('p', 'texto', 'Bloqueo: ' + objetivo.blockedReason));
             if (objetivo.lastOutcome) detalles.appendChild(nodo('p', 'texto', 'Último resultado: ' + objetivo.lastOutcome));
-            detalles.appendChild(nodo('p', 'muted', 'Actualizado: ' + objetivo.updatedAt));
+            detalles.appendChild(nodo('p', 'muted', 'Actualizado: ' + (formato.formatearCampo('updatedAt', objetivo.updatedAt) || objetivo.updatedAt)));
             tarjeta.appendChild(detalles);
             if (objetivo.panelChatAvailable) {
               var enlace = nodo('a', null, 'Ir al chat principal del panel');

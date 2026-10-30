@@ -56,3 +56,86 @@ export function tiempoRestante(caduca: number | null, ahora: number): string {
   if (minutos === 0) return `Caduca en ${resto} s`;
   return resto === 0 ? `Caduca en ${minutos} min` : `Caduca en ${minutos} min ${resto} s`;
 }
+
+/** Nombre legible en español para una clave de los datos del panel. */
+export function etiquetaCampo(clave: string): string {
+  const mapa: Record<string, string> = {
+    id: 'ID',
+    chatId: 'Chat',
+    threadId: 'Hilo',
+    thread: 'Hilo',
+    sessionId: 'Sesión',
+    createdAt: 'Creado',
+    updatedAt: 'Actualizado',
+    expiresAt: 'Caduca',
+    checkedAt: 'Comprobado',
+    lastSeen: 'Visto por última vez',
+    status: 'Estado',
+    ok: 'Resultado',
+    valid: 'Válido',
+    verified: 'Verificado',
+    count: 'Total',
+    entries: 'Entradas',
+    items: 'Elementos',
+    sessions: 'Sesiones',
+    messages: 'Mensajes',
+    scope: 'Ámbito',
+    error: 'Error',
+    model: 'Modelo',
+    provider: 'Proveedor',
+    threads: 'Conversaciones abiertas',
+    uptimeSeconds: 'Tiempo encendido',
+    tool: 'Herramienta',
+    reason: 'Motivo',
+    question: 'Pregunta',
+    title: 'Título',
+    text: 'Texto',
+    content: 'Contenido',
+    kind: 'Tipo',
+    tags: 'Etiquetas',
+    lastHash: 'Último hash',
+  };
+  if (mapa[clave]) return mapa[clave];
+  const limpio = clave.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+  return limpio.charAt(0).toUpperCase() + limpio.slice(1);
+}
+
+/**
+ * Formatea fechas y duraciones según la clave: un epoch o ISO en un campo
+ * «…At» sale como «30 oct 2026, 13:21» (hora local del equipo, o `zona`), y un
+ * «…Seconds» como «1 d 2 h 3 min». Devuelve null si no hay nada que formatear.
+ */
+export function formatearCampo(clave: string, valor: unknown, zona?: string): string | null {
+  const duracion = (segundosTotales: number): string => {
+    const s = Math.max(0, Math.round(segundosTotales));
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d > 0) return `${d} d ${h} h ${m} min`;
+    if (h > 0) return `${h} h ${m} min`;
+    if (m > 0) return `${m} min ${s % 60} s`;
+    return `${s} s`;
+  };
+  if (typeof valor === 'number' && Number.isFinite(valor)) {
+    if (/(Seconds|Secs)$/.test(clave)) return duracion(valor);
+    if (/(Duration|Elapsed)Ms$|^(durationMs|elapsedMs)$/.test(clave)) return duracion(valor / 1000);
+  }
+  if (!/(At|_at)$|^(date|fecha|timestamp|ts|lastSeen)$/.test(clave)) return null;
+  let ms = Number.NaN;
+  if (typeof valor === 'number' && Number.isFinite(valor)) {
+    if (valor >= 1e12) ms = valor;
+    else if (valor >= 1e9) ms = valor * 1000;
+  } else if (typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/.test(valor)) {
+    ms = Date.parse(valor);
+  }
+  if (!Number.isFinite(ms)) return null;
+  try {
+    return new Intl.DateTimeFormat('es-ES', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: zona,
+    }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
