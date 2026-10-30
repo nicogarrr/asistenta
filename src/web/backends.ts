@@ -222,7 +222,15 @@ export function parseDuckDuckGoHtml(html: string): WebSearchItem[] {
     if (!linkMatch) continue;
     const rawHref = linkMatch[1] ?? '';
     const uddg = /[?&]uddg=([^&]+)/.exec(rawHref);
-    const url = uddg?.[1] ? decodeURIComponent(uddg[1]) : rawHref;
+    let url = rawHref;
+    if (uddg?.[1]) {
+      // Un solo resultado con un % mal formado lanzaba URIError y tiraba la búsqueda entera.
+      try {
+        url = decodeURIComponent(uddg[1]);
+      } catch {
+        continue;
+      }
+    }
     if (!/^https?:\/\//i.test(url)) continue;
     const title = stripTags(linkMatch[2] ?? '');
     const snippetMatch = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/i.exec(
