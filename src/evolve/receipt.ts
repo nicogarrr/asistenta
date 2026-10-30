@@ -64,12 +64,27 @@ export function verificationChecklist(i: ReceiptInput): ChecklistItem[] {
       label: 'Tests: no hay más fallos que en la base',
       detail: `base ${b.passed} ok / ${b.failed} fallan → candidato ${c.passed} ok / ${c.failed} fallan`,
     },
-    {
-      ok: c.checksFailed <= b.checksFailed,
-      label: 'Checks e2e: no hay más fallos que en la base',
-      detail: `base ${b.checks} ok / ${b.checksFailed} fallan → candidato ${c.checks} ok / ${c.checksFailed} fallan`,
-    },
+    checksItem(b, c),
   ];
+}
+
+/**
+ * Checks e2e, con la misma regla que el juez (#856): un check que pasaba en la base y ya no
+ * pasa (falla, o la sonda dejó de imprimirlo) es una regresión aunque el total de fallos no
+ * suba; sin nombres, menos checks que pasan lo es. Antes solo se comparaba `checksFailed`, y
+ * el receipt daba ✓ a un candidato que el juez había descartado por regresión en las sondas.
+ */
+function checksItem(b: Measurement, c: Measurement): ChecklistItem {
+  const now = new Set(c.passingChecks ?? []);
+  const lost = b.passingChecks && c.passingChecks ? b.passingChecks.filter((n) => !now.has(n)) : [];
+  const counts = `base ${b.checks} ok / ${b.checksFailed} fallan → candidato ${c.checks} ok / ${c.checksFailed} fallan`;
+  return {
+    ok: c.checksFailed <= b.checksFailed && c.checks >= b.checks && lost.length === 0,
+    label: 'Checks e2e: ninguno que pasaba deja de pasar, y no hay más fallos que en la base',
+    detail: lost.length
+      ? `${counts}; dejan de pasar: ${lost.slice(0, 3).join('; ')}${lost.length > 3 ? ` y ${lost.length - 3} más` : ''}`
+      : counts,
+  };
 }
 
 export function checklistPasses(items: readonly ChecklistItem[]): boolean {
