@@ -142,7 +142,6 @@ import {
 import { detectMemoryWorthy } from './memory/nudges.js';
 import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
-import type { SessionHit } from './memory/sessions.js';
 import { SessionStore } from './memory/sessions.js';
 import { MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
@@ -538,6 +537,7 @@ import {
   runCronCommand,
   scheduledAgendaText,
 } from './daemon/cron-command.js';
+import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
 import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
@@ -554,6 +554,7 @@ export {
   scheduledAgendaText,
   uniqueRoutineName,
 } from './daemon/cron-command.js';
+export { formatSessionHits } from './daemon/session-hits.js';
 export { trimForSpeech } from './daemon/speech-text.js';
 
 /** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
@@ -7488,24 +7489,6 @@ export function followupFromMessage(
   const quoted = first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
   const subject = (quoted || text.trim()).replace(/\s+/g, ' ').slice(0, 160);
   return { subject, dueAt: estimateDueAt(text, now) };
-}
-
-/**
- * Search hits as a short Spanish list. The title says which conversation, the
- * snippet says why it matched; nothing else is worth the screen it takes.
- */
-export function formatSessionHits(hits: readonly SessionHit[], query = ''): string {
-  if (!hits.length) {
-    return query
-      ? `No he encontrado nada sobre "${query}" en el historial de esta conversación.`
-      : 'No he encontrado nada en el historial de esta conversación.';
-  }
-  const lines = hits.map((h) => {
-    const day = localDay(new Date(h.at));
-    const snippet = h.snippet.replace(/\s+/g, ' ').trim();
-    return `- ${h.title.trim() || 'sin título'} (${day}): ${snippet}`;
-  });
-  return [`Esto es lo que encontré (${hits.length}):`, ...lines].join('\n');
 }
 
 /**
