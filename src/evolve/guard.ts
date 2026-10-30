@@ -1,8 +1,44 @@
 // Lo que el bucle NO puede tocar. Se aplica al parche candidato ANTES de medirlo.
 // Mejorar relajando seguridad o cambiando la regla de medir no cuenta como mejora.
 
-/** Prefijos/archivos intocables para el bucle. */
+/**
+ * Lo que antes solo vetaba score.ts (touchesForbidden). Prefijos: casan al principio de la
+ * ruta o justo después de una «/» (igual que antes: `f.startsWith(p) || f.includes('/' + p)`).
+ */
+export const PROTECTED_PREFIXES: readonly string[] = [
+  'src/permissions.ts',
+  'src/cli.ts',
+  'src/tools/checkout.ts',
+  'src/tools/fetch.ts',
+  'src/books/net.ts',
+  'src/approval-text.ts',
+  'src/vault.ts',
+  'src/commerce/',
+  'src/evolve/',
+  'src/selfimprove/',
+  'selfimprove/',
+  // La regla de medir: los tests y las sondas puntúan al bucle, así que nunca los edita
+  // (añadir tests infla la cuenta; borrarlos esconde un fallo).
+  'test/',
+  'evolve/',
+  'scripts/evolve-battery-case.mjs',
+  'vitest.config',
+  'biome.json',
+  'package.json',
+  'package-lock.json',
+  'tsconfig',
+  '.github/',
+  'deploy/',
+];
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * La ÚNICA lista de rutas intocables para el bucle: la usan checkPatch y touchesForbidden
+ * (score.ts). Unir las dos listas solo puede vetar más, nunca menos.
+ */
 export const PROTECTED_PATHS: RegExp[] = [
+  ...PROTECTED_PREFIXES.map((p) => new RegExp(`(^|/)${escapeRe(p)}`)),
   /^src\/permissions\.ts$/,
   /^src\/vault\.ts$/,
   /^src\/selfimprove\//,
@@ -19,6 +55,11 @@ export const PROTECTED_PATHS: RegExp[] = [
   /^package(-lock)?\.json$/,
   /^\.github\//,
 ];
+
+/** ¿Toca el bucle una ruta intocable? */
+export function isProtectedPath(f: string): boolean {
+  return PROTECTED_PATHS.some((re) => re.test(f));
+}
 
 export type Violation = { file: string; rule: string };
 
@@ -62,7 +103,7 @@ export function checkPatch(diff: string): Violation[] {
   const v: Violation[] = [];
   for (const f of changedFiles(diff)) {
     if (f.includes('..') || f.startsWith('/')) v.push({ file: f, rule: 'ruta sospechosa' });
-    for (const re of PROTECTED_PATHS) if (re.test(f)) v.push({ file: f, rule: 'ruta protegida' });
+    if (isProtectedPath(f)) v.push({ file: f, rule: 'ruta protegida' });
   }
   for (const line of diff.split('\n')) {
     for (const [re, rule] of RELAX_PATTERNS)

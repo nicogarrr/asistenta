@@ -1,3 +1,5 @@
+import { isProtectedPath } from './guard.js';
+
 /**
  * Deciding whether a change is an improvement.
  *
@@ -158,34 +160,7 @@ export function judge(
  * before it is ever measured. This is the one place where the loop is not allowed to
  * argue with itself.
  */
-export const FORBIDDEN = [
-  'src/permissions.ts',
-  'src/cli.ts',
-  'src/tools/checkout.ts',
-  'src/tools/fetch.ts',
-  'src/books/net.ts',
-  'src/approval-text.ts',
-  'src/vault.ts',
-  'src/commerce/',
-  'src/evolve/',
-  'src/selfimprove/',
-  'selfimprove/',
-  // The rule of measuring: tests and probes are what the loop is scored with, so it never
-  // edits them (adding tests inflates the count, deleting them hides a failure).
-  'test/',
-  'evolve/',
-  'scripts/evolve-battery-case.mjs',
-  'vitest.config',
-  'biome.json',
-  'package.json',
-  'package-lock.json',
-  'tsconfig',
-  '.github/',
-  'deploy/',
-];
 
 export function touchesForbidden(files: readonly string[]): string[] {
-  return files.filter((f) =>
-    FORBIDDEN.some((bad) => f === bad || f.startsWith(bad) || f.includes(`/${bad}`)),
-  );
+  return files.filter(isProtectedPath);
 }
