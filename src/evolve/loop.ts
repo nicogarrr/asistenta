@@ -136,7 +136,9 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
     promoted: false,
   };
 
+  let proposerDown = false;
   for (const hypothesis of ideas) {
+    if (proposerDown) break;
     for (let attempt = 1; attempt <= maxTries; attempt++) {
       const id = archive.nextId();
       archive.add({ week, kind: 'hypothesis', hypothesis, tries: attempt });
@@ -150,7 +152,28 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       }
 
       try {
-        await opts.propose(sandbox.dir, hypothesis, attempt);
+        try {
+          await opts.propose(sandbox.dir, hypothesis, attempt);
+        } catch (err) {
+          // Un fallo del proponente (modelo caído, sin clave...) es de la máquina, no de la
+          // idea: queda archivado con veredicto y la semana para aquí, sin tumbar el ciclo.
+          const reason = `el proponente falló: ${String((err as Error)?.message ?? err).slice(0, 200)}`;
+          archive.add({
+            week,
+            kind: 'verdict',
+            hypothesis,
+            verdict: 'discard',
+            reason,
+            unmeasured: true,
+            kernel,
+            candidate: sandbox.branch,
+            tries: attempt,
+          });
+          report.attempts.push({ hypothesis, try: attempt, verdict: 'discard', delta: 0, reason });
+          say(reason);
+          proposerDown = true;
+          break;
+        }
 
         // What is checked is what is measured: commit the working tree first.
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
