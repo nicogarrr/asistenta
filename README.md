@@ -113,11 +113,19 @@ node --env-file=.env dist/cli.js diagnose
 node --env-file=.env dist/cli.js llm-health
 ```
 
-Cuando hayas comprobado el acceso y sus condiciones, arranca en primer plano:
+Antes de arrancar, comprueba que todo está en su sitio (lista verde/rojo con el arreglo de cada fallo; no gasta llamadas al modelo):
 
 ```sh
-node --env-file=.env dist/cli.js serve
+node --env-file=.env dist/cli.js iniciar --solo-comprobar
 ```
+
+Cuando hayas comprobado el acceso y sus condiciones, arranca en primer plano (`iniciar` sin opciones comprueba y arranca; `serve` arranca directamente):
+
+```sh
+node --env-file=.env dist/cli.js iniciar
+```
+
+En Windows, `levantar.bat` hace lo mismo con doble clic.
 
 Envía `/start` a tu bot desde el usuario autorizado. Un comando que responde no prueba que una petición al modelo funcione: prueba después una pregunta genérica, sin datos privados. Si faltan credenciales o el token es inválido, corrige la configuración; no abras el bot a todos los usuarios para resolverlo.
 

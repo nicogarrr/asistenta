@@ -1,6 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+rem UTF-8 para que la lista de pa iniciar (tildes y simbolos) se lea bien en la consola.
+chcp 65001 >nul
 
 rem Node 24 o superior es obligatorio y en este PC vive fuera del PATH.
 rem Preferir la ruta conocida; si no existe, probar con el node del PATH.
@@ -21,9 +23,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-"%NODE_EXE%" dist\cli.js serve
+rem pa iniciar comprueba todo (verde/rojo, con el arreglo al lado) y, si nada lo
+rem impide, arranca igual que pa serve. Si algo falla, la lista queda en pantalla.
+"%NODE_EXE%" dist\cli.js iniciar
 if errorlevel 1 (
-    echo [levantar] El servicio termino con error.
+    echo [levantar] No ha arrancado o termino con error: revisa la lista de arriba.
     pause
     exit /b 1
 )
