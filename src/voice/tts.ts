@@ -13,6 +13,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { childEnv } from '../child-env.js';
 import { encodeMp3, resampleLinear, wavToPcm } from './audio.js';
 import { splitSentences } from './phrases.js';
 
@@ -176,7 +177,7 @@ export function createSapiTts(opts: { rate?: number; volume?: number } = {}): Tt
             windowsHide: true,
             signal: speakOpts.signal,
             env: {
-              ...process.env,
+              ...childEnv(),
               PA_TTS_TEXT: textFile,
               PA_TTS_WAV: wavFile,
               ...(speakOpts.voice ? { PA_TTS_VOICE: speakOpts.voice } : {}),
@@ -368,7 +369,7 @@ export async function voices(): Promise<string[]> {
         '-Command',
         'Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }; $s.Dispose()',
       ],
-      { encoding: 'utf8', timeout: 15_000, windowsHide: true },
+      { encoding: 'utf8', timeout: 15_000, windowsHide: true, env: childEnv() },
     );
     return stdout
       .split(/\r?\n/)

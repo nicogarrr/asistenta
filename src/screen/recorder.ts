@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { isSecretEnvName } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 
@@ -202,12 +203,7 @@ export function ffmpegEnv(
   return { ...env, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
 }
 
-/** Names that carry credentials (bot tokens, API keys, passwords), never system vars. */
-export function isSecretEnvName(name: string): boolean {
-  return /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|COOKIE)/i.test(
-    name,
-  );
-}
+export { isSecretEnvName };
 
 function run(
   exe: string,

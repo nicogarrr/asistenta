@@ -46,6 +46,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { listCaptureDevices } from '../screen/media.js';
@@ -557,7 +558,7 @@ export class FfmpegMicCapture implements WakeCapture {
         's16le',
         '-',
       ],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() },
     );
     this.#child = child;
     this.#started = true;

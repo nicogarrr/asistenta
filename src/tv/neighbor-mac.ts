@@ -5,13 +5,17 @@
  * `arp -n <ip>` (macOS). Sin shell: argumentos fijos y la IP ya validada.
  */
 import { execFile } from 'node:child_process';
+import { childEnv } from '../child-env.js';
 
 export type RunCommand = (cmd: string, args: string[]) => Promise<string>;
 
 const defaultRun: RunCommand = (cmd, args) =>
   new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 4000, windowsHide: true, maxBuffer: 64 * 1024 }, (_e, stdout) =>
-      resolve(String(stdout ?? '')),
+    execFile(
+      cmd,
+      args,
+      { timeout: 4000, windowsHide: true, maxBuffer: 64 * 1024, env: childEnv() },
+      (_e, stdout) => resolve(String(stdout ?? '')),
     );
   });
 
