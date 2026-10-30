@@ -212,9 +212,7 @@ export class TelegramChannel implements ChannelAdapter {
 
     // Command menu in the Telegram UI, so the useful commands are discoverable
     // without remembering them. Telegram caps this at 100 and orders as given.
-    void this.#bot.api
-      .setMyCommands(TELEGRAM_COMMANDS.map((command) => ({ ...command })))
-      .catch(() => {});
+    void configureCommandMenu(this.#bot.api);
 
     // A terminal polling failure used to be the end: one log line and the
     // channel stayed dead until a daemon restart, with no word to the user
@@ -1322,6 +1320,30 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
  * Se cuenta en puntos de código, no en unidades UTF-16: cortar a mitad de un emoji deja un
  * surrogate suelto y un carácter de reemplazo en el chat.
  */
+/** Lo mínimo de la Bot API que necesita {@link configureCommandMenu}. */
+export interface CommandMenuApi {
+  setMyCommands(commands: Array<{ command: string; description: string }>): Promise<unknown>;
+  setChatMenuButton(opts: { menu_button: { type: 'commands' } }): Promise<unknown>;
+}
+
+/**
+ * Publica el menú de comandos (en el orden de TELEGRAM_COMMANDS, que va por uso) y
+ * fija el botón «Menú» junto al cuadro de texto para que abra ESA lista. Explícito:
+ * si alguna vez se configuró otro botón (una web app desde BotFather), el menú
+ * quedaba escondido aunque setMyCommands funcionara. Nunca lanza: un fallo aquí no
+ * puede impedir que el bot arranque.
+ */
+export async function configureCommandMenu(api: CommandMenuApi): Promise<boolean> {
+  try {
+    await api.setMyCommands(TELEGRAM_COMMANDS.map((command) => ({ ...command })));
+    await api.setChatMenuButton({ menu_button: { type: 'commands' } });
+    return true;
+  } catch (err) {
+    log.warn('telegram command menu not set', { error: describeError(err) });
+    return false;
+  }
+}
+
 /** Telegram's 400 for markup it cannot parse (HTML parse mode). */
 export function isEntityParseError(err: unknown): boolean {
   return (
