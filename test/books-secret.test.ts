@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_BOOK_BYTES } from '../src/books/net.js';
+import { localDay } from '../src/datecontext.js';
 import {
   SecretLibrary,
   type SecretMessage,
@@ -261,19 +262,23 @@ describe('anti-flood', () => {
   });
 
   it('tope diario persistido: al llegar al limite no se manda nada mas', async () => {
+    // 23:30 UTC = otro día en Madrid: el día guardado debe ser el local, no el UTC.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-30T23:30:00Z'));
     writeFileSync(sessionPath, 'SESSION');
-    writeFileSync(
-      usagePath,
-      JSON.stringify({ day: new Date().toISOString().slice(0, 10), count: 2 }),
-    );
+    writeFileSync(usagePath, JSON.stringify({ day: localDay(Date.now()), count: 2 }));
     const { client, sent } = fakeClient({});
     const lib = mk({
       getClient: async () => client,
       discover: async () => 'BS_bot',
       maxInteractionsPerDay: 2,
     });
-    await expect(lib.search('x')).rejects.toThrow(/tope diario/);
-    expect(sent).toEqual([]);
+    try {
+      await expect(lib.search('x')).rejects.toThrow(/tope diario/);
+      expect(sent).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('el contador del dia se guarda en disco (sobrevive a reinicios)', async () => {

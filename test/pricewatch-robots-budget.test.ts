@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
+import { localDay } from '../src/datecontext.js';
 import { scanOnce } from '../src/watch/listscan.js';
 import { PriceStore } from '../src/watch/pricewatch.js';
 import { realDeps } from '../src/watch/pricewatch-runner.js';
 
 const dirs: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -71,10 +73,13 @@ it('robots request itself consumes the final slot and no second request is issue
   const cfg = join(dir, 'config.json');
   const dbPath = join(dir, 'db.sqlite');
   writeFileSync(cfg, JSON.stringify({ enabled: true, scan: { dailyRequestsPerStore: 10 } }));
+  // 23:30 UTC = otro día en Madrid: el contador va por día local, no por día UTC.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-30T23:30:00Z'));
   const d = realDeps(cfg, dbPath, { info() {}, warn() {} });
   const db = new DatabaseSync(dbPath);
   const store = new PriceStore(db, d.now);
-  const key = `reqs:www.mediamarkt.es:${new Date(d.now()).toISOString().slice(0, 10)}`;
+  const key = `reqs:www.mediamarkt.es:${localDay(d.now())}`;
   store.setMeta(key, 9);
   const send = vi.fn(async () => new Response('User-agent: *', { status: 200 }));
   vi.stubGlobal('fetch', send);
