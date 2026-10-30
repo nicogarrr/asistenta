@@ -721,6 +721,8 @@ export function formatSnapshot(scan: PageScan): string {
 
 export class BrowserService {
   readonly #sessions = new Map<string, Session>();
+  /** Launches in flight, so concurrent callers for one scope share a single browser. */
+  readonly #opening = new Map<string, Promise<Session>>();
   readonly #options: Required<Omit<BrowserServiceOptions, 'policy'>> & { policy: BrowserPolicy };
 
   constructor(options: BrowserServiceOptions) {
@@ -760,6 +762,25 @@ export class BrowserService {
    * the sound with it.
    */
   async #session(scope: string, opts?: { visible?: boolean }): Promise<Session> {
+    // Two tool calls for the same chat arriving together would both miss the map and
+    // both launch on the same profile directory: the second launch dies on the profile
+    // lock, or worse, wins and leaves the first Chromium running with nobody to close it.
+    // Every caller for a scope waits on the one launch in flight.
+    for (;;) {
+      const pending = this.#opening.get(scope);
+      if (!pending) break;
+      await pending.catch(() => undefined);
+    }
+    const opening = this.#openSession(scope, opts);
+    this.#opening.set(scope, opening);
+    try {
+      return await opening;
+    } finally {
+      if (this.#opening.get(scope) === opening) this.#opening.delete(scope);
+    }
+  }
+
+  async #openSession(scope: string, opts?: { visible?: boolean }): Promise<Session> {
     const wantVisible = opts?.visible ?? !this.#options.headless;
     const existing = this.#sessions.get(scope);
     if (existing) {
@@ -797,13 +818,21 @@ export class BrowserService {
       timeout: this.#options.timeoutMs,
     };
     const { context, channel } = await this.#launch(scope, dir, launchOptions);
-    context.setDefaultTimeout(this.#options.timeoutMs);
-    context.setDefaultNavigationTimeout(this.#options.timeoutMs);
-
-    const page = context.pages()[0] ?? (await context.newPage());
-    // Page-side code is plain JS read at runtime, so it is installed rather than
-    // serialised out of this module, which the bundler would have renamed.
-    await installPageScan(page);
+    let page: Page;
+    try {
+      context.setDefaultTimeout(this.#options.timeoutMs);
+      context.setDefaultNavigationTimeout(this.#options.timeoutMs);
+      page = context.pages()[0] ?? (await context.newPage());
+      // Page-side code is plain JS read at runtime, so it is installed rather than
+      // serialised out of this module, which the bundler would have renamed.
+      await installPageScan(page);
+    } catch (err) {
+      // The context is not in the map yet, so nothing else would ever close it: the
+      // Chromium would hold the profile lock and every later launch for this chat would
+      // fail until the daemon restarts.
+      await context.close().catch(() => undefined);
+      throw err;
+    }
     const session: Session = {
       context,
       page,
