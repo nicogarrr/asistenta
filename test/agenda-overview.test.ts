@@ -115,6 +115,14 @@ describe('read-only unified overview', () => {
     expect(overview).toContain('await personalAgenda(inbound)');
     expect(overview).toContain("args.trim() === 'rutinas'");
     expect(overview).not.toMatch(/searchMail|loadMailAccount|sendMail/);
-    expect(cli).toContain('return cmdAgenda(inbound, command.args)');
+    // The command table moved out of the switch (src/daemon/commands.ts); accept
+    // either place, but the /agenda command must still reach cmdAgenda.
+    const commands = await readFile(
+      new URL('../src/daemon/commands.ts', import.meta.url),
+      'utf8',
+    ).catch(() => '');
+    expect(`${cli}\n${commands}`).toMatch(
+      /names: \['agenda'\], run: \(inbound, args\) => cmdAgenda\(inbound, args\)|return cmdAgenda\(inbound, command\.args\)/,
+    );
   });
 });
