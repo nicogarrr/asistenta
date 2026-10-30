@@ -153,6 +153,34 @@ export async function composeDailyBriefing(
 let inFlight = false;
 
 /** Un tick del daemon: manda el briefing si toca. Nunca lanza. */
+/**
+ * La voz va DESPUÉS del texto y sin esperarla: un TTS lento o roto nunca
+ * retrasa ni impide el resumen escrito, ni hace que se reenvíe.
+ */
+function speakAfterText(deps: DailyBriefingDeps, chatId: string, text: string): void {
+  if (!deps.speak) return;
+  void Promise.resolve()
+    .then(() => deps.speak?.(chatId, text))
+    .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }));
+}
+
+/**
+ * `/resumen hoy`: la misma composición que el de la mañana, sin tocar su ritmo
+ * (ni lastSent ni markSent). Con PA_BRIEFING_VOZ (deps.speak) también sale como
+ * nota de voz, con la misma regla: después del texto, solo si el texto salió, y
+ * sin esperarla.
+ */
+export async function answerBriefingOnDemand(
+  deps: DailyBriefingDeps,
+  chatId: string,
+  reply: (text: string) => Promise<unknown>,
+): Promise<string> {
+  const { text } = await composeDailyBriefing(deps);
+  await reply(text);
+  speakAfterText(deps, chatId, text);
+  return text;
+}
+
 export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<DailyBriefingResult> {
   if (!deps.enabled()) return { status: 'disabled' };
   const now = deps.now();
@@ -181,13 +209,7 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
     });
     if (!ok) return { status: 'send-failed', text };
     deps.markSent(now.getTime());
-    if (deps.speak) {
-      // La voz va DESPUÉS del texto y sin esperarla: un TTS lento o roto nunca
-      // retrasa ni impide el resumen escrito, ni hace que se reenvíe.
-      void Promise.resolve()
-        .then(() => deps.speak?.(chatId, text))
-        .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }));
-    }
+    speakAfterText(deps, chatId, text);
     return { status: 'sent', text };
   } finally {
     inFlight = false;
