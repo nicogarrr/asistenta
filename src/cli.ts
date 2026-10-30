@@ -4571,7 +4571,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           channel: 'telegram',
           account: telegram.account,
           chatId,
-          text: `No he podido hacer la copia de seguridad de hoy (${(err as Error).message}). Lo reintento en unos minutos.`,
+          text: backupFailedNotice(err),
         })
         .catch((e: unknown) => log.warn('backup notice failed', { e }));
     }
@@ -7720,6 +7720,23 @@ export function failedReply(what: string, err: unknown): string {
     return `${what} (error interno). Prueba otra vez; si se repite, mira /estado.`;
   }
   return `${what}. ${friendly}`;
+}
+
+/** Aviso al dueño cuando falla la copia de seguridad diaria: motivo en castellano, sin texto técnico. */
+export function backupFailedNotice(err: unknown): string {
+  const base = 'No he podido hacer la copia de seguridad de hoy';
+  const retry = 'Lo reintento en unos minutos.';
+  const code = (err as { code?: unknown } | null)?.code;
+  const probe = `${err instanceof Error ? err.message : String(err ?? '')} ${typeof code === 'string' ? code : ''}`;
+  if (/\bENOSPC\b/.test(probe))
+    return `${base}: el disco está lleno. Libera espacio; lo reintento en unos minutos.`;
+  if (/\b(?:EACCES|EPERM)\b/.test(probe)) {
+    return `${base}: no tengo permiso para escribir en la carpeta de copias. ${retry}`;
+  }
+  if (/\bEBUSY\b/.test(probe)) return `${base}: había un archivo en uso. ${retry}`;
+  const friendly = failedReply(base, err);
+  if (friendly.startsWith(`${base}: `)) return `${friendly.replace(/\.?$/, '.')} ${retry}`;
+  return `${base} (detalles en el registro). ${retry}`;
 }
 
 const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);
