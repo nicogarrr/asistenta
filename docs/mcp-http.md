@@ -22,3 +22,7 @@ Sin `PA_MCP_HTTP=1` nada cambia: las entradas con `url` se ignoran como hasta ah
 ## Comprobarlo con `pa doctor`
 
 `pa doctor` muestra una línea `mcp http` con el estado del transporte (apagado o activado) y, por cada entrada con `url` de `PA_MCP_SERVERS`, si está configurada (solo el origen de la URL y si el token `mcp:<nombre>:token` está guardado, nunca su valor) u omitida y por qué (transporte apagado, URL no permitida, nombre no válido o repetido). No conecta con ningún servidor.
+
+## Recursos y prompts
+
+Además de las tools, el cliente HTTP habla `resources/list`, `resources/read`, `prompts/list` y `prompts/get` con la misma forma que el cliente stdio (mismas comprobaciones y mensajes de error). Sigue apagado por defecto: solo se usa con `PA_MCP_HTTP=1`.
