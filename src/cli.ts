@@ -72,7 +72,13 @@ import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
-import { beginInbound, isMailReplyRequest, queueThreadTurn } from './daemon/inbound.js';
+import {
+  beginInbound,
+  cachedFullReply,
+  isMailReplyRequest,
+  queueThreadTurn,
+  resolveInboundThread,
+} from './daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
@@ -2232,45 +2238,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    *    main one is already occupied. That last rule is what lets several tasks be in
    *    flight at once without them mixing.
    */
-  const resolveThread = async (inbound: Inbound): Promise<Thread> => {
-    const chatKey_ = chatKey(inbound);
-    const explicit = activeTopic.get(chatKey_);
-    if (explicit) return getOrCreateThread(chatKey_, explicit, explicit);
-
-    if (inbound.replyToMessageId) {
-      const mapped = messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`);
-      const found = mapped ? threads.get(mapped) : undefined;
-      if (found) return found;
-      // Durable fallback: a goal notification's sent id lives in SQLite, so a
-      // reply to a pending decision finds its owning thread even after a
-      // daemon restart emptied messageThread.
-      const goalScope = goalNotifier.scopeBySentId(chatKey_, inbound.replyToMessageId);
-      if (goalScope) {
-        const { chatKey: goalChatKey_, thread: goalThread_ } = splitGoalScope(goalScope);
-        if (goalChatKey_ === chatKey_) {
-          messageThread.set(`${chatKey_}:${inbound.replyToMessageId}`, goalScope);
-          return getOrCreateThread(
-            goalChatKey_,
-            goalThread_,
-            goalThread_ === 'main' ? 'principal' : goalThread_,
-          );
-        }
-      }
-    }
-
-    if (inbound.threadId) {
-      return getOrCreateThread(chatKey_, `t${inbound.threadId}`, `hilo ${inbound.threadId}`);
-    }
-
-    const main = await defaultThread(chatKey_);
-    if (!main.active) return main;
-    if (looksLikeFollowUp(inbound.text)) return main;
-
-    // Its own conversation, named after the message that started it so the label is
-    // traceable. The label shown to the user is a trimmed version of the request.
-    const label = inbound.text.trim().slice(0, 40) || 'petición';
-    return getOrCreateThread(chatKey_, `m${inbound.messageId}`, label);
-  };
+  const resolveThread = (inbound: Inbound): Promise<Thread> =>
+    resolveInboundThread(inbound, chatKey(inbound), {
+      activeTopic,
+      messageThread,
+      threads,
+      goalScopeBySentId: (key, sentId) => goalNotifier.scopeBySentId(key, sentId),
+      splitGoalScope,
+      getOrCreateThread,
+      defaultThread,
+      looksLikeFollowUp,
+    });
 
   const say = async (
     inbound: Inbound,
@@ -6772,15 +6750,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
           // "Dime más"/"sigue": sirve la respuesta completa cacheada sin gastar un turno.
-          if (!inbound.images?.length && isMoreRequest(inbound.text)) {
-            const full = takeFullReply(thread.key);
-            if (full) {
-              // Antes salía el markdown crudo del modelo (### y tablas con |).
-              await say(inbound, cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }), {
-                format: 'marks',
-              });
-              return;
-            }
+          const full = cachedFullReply(inbound, thread.key, { isMoreRequest, takeFullReply });
+          if (full) {
+            // Antes salía el markdown crudo del modelo (### y tablas con |).
+            await say(inbound, cleanForTelegram(stripVoicePrefix(full), { keepMarks: true }), {
+              format: 'marks',
+            });
+            return;
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.

@@ -135,3 +135,90 @@ export function beginInbound(
 export function isMailReplyRequest(text: string): boolean {
   return /^responde(?:r)? a ese\s*\n/i.test(text);
 }
+
+/** Lo mínimo de un hilo que necesita resolveInboundThread. */
+export interface ThreadLike {
+  active: boolean;
+}
+
+export interface ResolveThreadDeps<T extends ThreadLike> {
+  /** /topic elegido en el chat (gana a todo). */
+  activeTopic: { get(chatKey: string): string | undefined };
+  /** `<chatKey>:<messageId>` → clave del hilo que lo envió. */
+  messageThread: {
+    get(key: string): string | undefined;
+    set(key: string, threadKey: string): unknown;
+  };
+  threads: { get(threadKey: string): T | undefined };
+  /** Respaldo durable: id de un aviso de objetivo ya enviado → su ámbito. */
+  goalScopeBySentId: (chatKey: string, sentId: string) => string | null | undefined;
+  splitGoalScope: (scope: string) => { chatKey: string; thread: string };
+  getOrCreateThread: (chatKey: string, name: string, label: string) => Promise<T>;
+  defaultThread: (chatKey: string) => Promise<T>;
+  looksLikeFollowUp: (text: string) => boolean;
+}
+
+/**
+ * ¿A qué hilo va un mensaje? En orden: /topic activo; respuesta a un mensaje
+ * de un hilo vivo (o, tras un reinicio, al aviso de un objetivo de este chat);
+ * tema del foro; el hilo principal si está libre o el texto sigue la
+ * conversación; si no, un hilo nuevo con el nombre del mensaje.
+ */
+export async function resolveInboundThread<T extends ThreadLike>(
+  inbound: Inbound,
+  chatKey: string,
+  deps: ResolveThreadDeps<T>,
+): Promise<T> {
+  const explicit = deps.activeTopic.get(chatKey);
+  if (explicit) return deps.getOrCreateThread(chatKey, explicit, explicit);
+
+  if (inbound.replyToMessageId) {
+    const mapped = deps.messageThread.get(`${chatKey}:${inbound.replyToMessageId}`);
+    const found = mapped ? deps.threads.get(mapped) : undefined;
+    if (found) return found;
+    // Durable fallback: a goal notification's sent id lives in SQLite, so a
+    // reply to a pending decision finds its owning thread even after a
+    // daemon restart emptied messageThread.
+    const goalScope = deps.goalScopeBySentId(chatKey, inbound.replyToMessageId);
+    if (goalScope) {
+      const { chatKey: goalChatKey, thread: goalThread } = deps.splitGoalScope(goalScope);
+      if (goalChatKey === chatKey) {
+        deps.messageThread.set(`${chatKey}:${inbound.replyToMessageId}`, goalScope);
+        return deps.getOrCreateThread(
+          goalChatKey,
+          goalThread,
+          goalThread === 'main' ? 'principal' : goalThread,
+        );
+      }
+    }
+  }
+
+  if (inbound.threadId) {
+    return deps.getOrCreateThread(chatKey, `t${inbound.threadId}`, `hilo ${inbound.threadId}`);
+  }
+
+  const main = await deps.defaultThread(chatKey);
+  if (!main.active) return main;
+  if (deps.looksLikeFollowUp(inbound.text)) return main;
+
+  // Its own conversation, named after the message that started it so the label is
+  // traceable. The label shown to the user is a trimmed version of the request.
+  const label = inbound.text.trim().slice(0, 40) || 'petición';
+  return deps.getOrCreateThread(chatKey, `m${inbound.messageId}`, label);
+}
+
+/**
+ * «Dime más» / «sigue» sin fotos: la respuesta completa que quedó guardada para
+ * este hilo (se consume), o `undefined` si no aplica y toca turno normal.
+ */
+export function cachedFullReply(
+  inbound: Pick<Inbound, 'text' | 'images'>,
+  threadKey: string,
+  more: {
+    isMoreRequest(text: string): boolean;
+    takeFullReply(threadKey: string): string | null | undefined;
+  },
+): string | null | undefined {
+  if (inbound.images?.length || !more.isMoreRequest(inbound.text)) return undefined;
+  return more.takeFullReply(threadKey);
+}
