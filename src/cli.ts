@@ -292,7 +292,7 @@ import {
   funcionesText,
 } from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
-import { mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
+import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
 import { buildMemoryPromptSection } from './memory/prompt.js';
@@ -846,6 +846,7 @@ async function doctorCommand(): Promise<number> {
 
   lines.push(...(await sandboxDoctorLines()));
   lines.push(...panelDoctorLines());
+  lines.push(...(await mcpHttpDoctorLines()));
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
