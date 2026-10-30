@@ -2,7 +2,11 @@ import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { loadConfig } from '../config.js';
+import { isGoogleEndpoint, isOpenCodeEndpoint, isOpenRouterEndpoint } from '../core/provider.js';
 import { wallClock } from '../datecontext.js';
+import { envSecretName, vaultGet } from '../vault.js';
+
 import { Archive, isoWeek } from './archive.js';
 import {
   BATTERY_FILE,
@@ -115,6 +119,54 @@ export function parseTrace(stdout: string): Trace {
   return t;
 }
 
+/**
+ * Qué secreto del almacén usa el modelo para ese endpoint (la misma elección que
+ * resolveApiKey en core/provider.ts). Un endpoint propio no lee el almacén (PA_API_KEY), así
+ * que no hay nada que pasar: null.
+ */
+export function modelKeyName(baseUrl: string): string | null {
+  if (isOpenRouterEndpoint(baseUrl)) return 'provider:openrouterKey';
+  if (isGoogleEndpoint(baseUrl)) return 'provider:geminiKey';
+  if (!isOpenCodeEndpoint(baseUrl)) return null;
+  return 'provider:apiKey';
+}
+
+/** Qué modelo usa el asistente: el evaluador mide con el mismo (no son secretos). */
+const MODEL_CONFIG_VARS = ['PA_PROVIDER_PRESET', 'PA_PROVIDER', 'PA_MODEL', 'PA_BASE_URL'];
+
+export interface ModelKeyDeps {
+  /** Lee un secreto del almacén real (por defecto vaultGet, en el proceso del asistente). */
+  readSecret?: (key: string) => Promise<string | undefined>;
+  /** El endpoint del modelo (por defecto el de la configuración del asistente). */
+  baseUrl?: () => string;
+}
+
+/**
+ * Lo que el evaluador por defecto necesita para hablar con el modelo, sin que Nico configure
+ * nada: la elección de modelo y UNA clave, la del modelo, leída aquí del almacén real y
+ * entregada al hijo como variable PA_SECRET_<CLAVE> (el almacén por variables que usa su
+ * carpeta temporal). Solo vive en memoria y en el entorno del hijo: nunca se escribe a disco
+ * ni se registra. Si PA_SECRET_<CLAVE> ya está definida, esa gana (anulación manual).
+ */
+export async function modelKeyEnv(
+  env: NodeJS.ProcessEnv,
+  deps: ModelKeyDeps = {},
+): Promise<NodeJS.ProcessEnv> {
+  const out: NodeJS.ProcessEnv = {};
+  for (const k of MODEL_CONFIG_VARS) if (env[k]?.trim()) out[k] = env[k];
+  let name: string | null;
+  try {
+    name = modelKeyName((deps.baseUrl ?? (() => loadConfig().baseUrl))());
+  } catch {
+    return out;
+  }
+  if (!name) return out;
+  const manual = env[envSecretName(name)];
+  const value = manual || (await (deps.readSecret ?? vaultGet)(name).catch(() => undefined));
+  if (value) out[envSecretName(name)] = value;
+  return out;
+}
+
 /** Evaluador por defecto: el script del propio código que se mide (scripts/evolve-battery-case.mjs). */
 export const DEFAULT_BATTERY_SCRIPT = join('scripts', 'evolve-battery-case.mjs');
 
@@ -125,18 +177,23 @@ export const DEFAULT_BATTERY_SCRIPT = join('scripts', 'evolve-battery-case.mjs')
  * Sin definir se usa el script del repo con este mismo Node (datos temporales, sin cuentas
  * reales); `off` o `0` lo apagan y entonces ningún cambio se aprueba.
  */
-export function batteryRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): BatteryRunner | null {
+export function batteryRunnerFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ModelKeyDeps = {},
+): BatteryRunner | null {
   const raw = env.PA_EVOLVE_BATTERY?.trim() ?? '';
   if (/^(off|0|no|false)$/i.test(raw)) return null;
   const [file, args] = raw ? [raw, [] as string[]] : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
   return async (c, cwd) => {
+    // Solo el evaluador del repo recibe la clave: es el que usa el almacén por variables.
+    const key = raw ? {} : await modelKeyEnv(env, deps);
     const { stdout } = await exec(file, args, {
       cwd,
       timeout: 10 * 60_000,
       windowsHide: true,
       shell: false,
       maxBuffer: 4 * 1024 * 1024,
-      env: { ...proposerEnv(env), PA_BATTERY_CASE: JSON.stringify(c) },
+      env: { ...proposerEnv(env), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
     });
     return parseTrace(String(stdout));
   };
