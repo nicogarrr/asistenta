@@ -60,6 +60,23 @@ export async function loadInstalledFactoryTools(
         ].join(' '),
         parameters: Type.Unsafe<Record<string, unknown>>(contract.parameters),
         execute: async (_id, args) => {
+          // The wrapper outlives the load (it stays registered across
+          // messages), so the approval is re-checked on every call: a tool.js
+          // edited, or a tool uninstalled, after the load must not run.
+          const refused = notApprovedNow(meta.id, realHash);
+          if (refused) {
+            log.error('factory tool rechazada al ejecutar', { id: meta.id, reason: refused });
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `No ejecuto ${meta.id}: ${refused}. Hay que volver a probarla y aprobarla.`,
+                },
+              ],
+              details: { factory: meta.id, version: meta.version },
+              isError: true,
+            };
+          }
           const result = await runFactoryToolSandboxed(meta.id, args, { timeoutMs });
           if (result.ok) {
             return {
@@ -84,6 +101,25 @@ export async function loadInstalledFactoryTools(
     }
   }
   return tools;
+}
+
+/** Null when the tool on disk is still the installed, approved artifact; else the reason (Spanish). */
+function notApprovedNow(id: string, approvedSha: string): string | null {
+  try {
+    const t = readFactoryTool(id);
+    if (!t) return 'ya no existe';
+    if (t.meta.status !== 'installed') return 'ya no está instalada';
+    if (
+      !t.meta.lastTestOk ||
+      t.meta.testedSha256 !== approvedSha ||
+      sha256(t.code) !== approvedSha
+    ) {
+      return 'su código ya no es el aprobado';
+    }
+    return null;
+  } catch {
+    return 'su TOOL.md no se puede leer';
+  }
 }
 
 /**
