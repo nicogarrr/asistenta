@@ -167,6 +167,16 @@ export class ProjectContextStore {
     return true;
   }
 
+  /** Quita las carpetas ligadas al chat y a sus temas (/borrar_chat). Devuelve cuántas. */
+  clearChat(chatKey: string): number {
+    const keys = Object.keys(this.links).filter(
+      (k) => k === chatKey || k.startsWith(`${chatKey}#`),
+    );
+    for (const k of keys) delete this.links[k];
+    if (keys.length > 0) this.save();
+    return keys.length;
+  }
+
   load(threadKey: string): ProjectContext | null {
     const dir = this.links[threadKey];
     return dir ? loadProjectContext(dir, this.roots()) : null;

@@ -50,9 +50,19 @@ export class EraseConfirm {
  * que tengan sesiones guardadas (`<chatKey>#<tema>`). Nunca devuelve scopes de
  * otro chat aunque compartan prefijo («123» no arrastra a «1234#main»).
  */
+/** ¿Es `key` el chat `chatKey` o uno de sus temas (`<chatKey>#<tema>`)? Nunca un chat que solo comparte prefijo. */
+export function isKeyOfChat(key: string, chatKey: string): boolean {
+  return key === chatKey || key.startsWith(`${chatKey}#`);
+}
+
+/** Ajustes por conversación que /borrar_chat también quita (carpeta de /proyecto, modelo de /modelo). */
+export interface ChatSettingsStore {
+  clearChat(chatKey: string): number;
+}
+
 export function scopesOfChat(chatKey: string, liveScopes: string[], db?: DatabaseSync): string[] {
   const scopes = new Set<string>([`${chatKey}#main`]);
-  for (const s of liveScopes) if (s === chatKey || s.startsWith(`${chatKey}#`)) scopes.add(s);
+  for (const s of liveScopes) if (isKeyOfChat(s, chatKey)) scopes.add(s);
   if (db) {
     try {
       const rows = db
@@ -74,7 +84,18 @@ export function eraseChat(opts: {
   chatKey: string;
   liveScopes: string[];
   db?: DatabaseSync;
-}): { scopes: number; sessions: number; memoryFiles: number; profile: boolean } {
+  /** Carpetas de proyecto ligadas a los temas de este chat (/proyecto). */
+  projects?: ChatSettingsStore;
+  /** Modelo elegido con /modelo en los temas de este chat. */
+  models?: ChatSettingsStore;
+}): {
+  scopes: number;
+  sessions: number;
+  memoryFiles: number;
+  profile: boolean;
+  projects: number;
+  models: number;
+} {
   const scopes = scopesOfChat(opts.chatKey, opts.liveScopes, opts.db);
   let sessions = 0;
   let memoryFiles = 0;
@@ -85,9 +106,16 @@ export function eraseChat(opts: {
     if (r.memoryFile) memoryFiles++;
     profile ||= r.profile;
   }
-  return { scopes: scopes.length, sessions, memoryFiles, profile };
+  const projects = opts.projects?.clearChat(opts.chatKey) ?? 0;
+  const models = opts.models?.clearChat(opts.chatKey) ?? 0;
+  return { scopes: scopes.length, sessions, memoryFiles, profile, projects, models };
 }
 
 export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
-  return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${r.profile ? ' y tu perfil' : ''}. Empezamos de cero.`;
+  const extras: string[] = [];
+  if (r.profile) extras.push('tu perfil');
+  if (r.projects > 0) extras.push('la carpeta de proyecto ligada');
+  if (r.models > 0) extras.push('el modelo elegido con /modelo');
+  const tail = extras.length > 0 ? ` y ${extras.join(', ')}` : '';
+  return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${tail}. Empezamos de cero.`;
 }

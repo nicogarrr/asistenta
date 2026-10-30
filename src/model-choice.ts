@@ -92,6 +92,20 @@ export class ModelChoiceStore {
     } else {
       all[threadKey] = modelId;
     }
+    this.#write(all);
+  }
+
+  /** Quita la elección del chat y de todos sus temas (/borrar_chat). Devuelve cuántas. */
+  clearChat(chatKey: string): number {
+    const all = this.#read();
+    const keys = Object.keys(all).filter((k) => k === chatKey || k.startsWith(`${chatKey}#`));
+    if (keys.length === 0) return 0;
+    for (const k of keys) delete all[k];
+    this.#write(all);
+    return keys.length;
+  }
+
+  #write(all: Record<string, string>): void {
     mkdirSync(dirname(this.#file), { recursive: true });
     const tmp = uniqueTmpPath(this.#file);
     writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
