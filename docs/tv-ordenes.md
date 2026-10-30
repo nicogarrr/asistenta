@@ -20,6 +20,7 @@ Deterministas, sin modelo. Ejemplos:
 | «pon el 5», «ponme el 24» | canal (como «pon la 5») |
 | «adelanta», «avance rápido», «rebobina (el vídeo)», «retrocede» | `media` avance/retroceso (una pulsación; con segundos va al modelo) |
 | «súbela» / «bájala (un poco)», «más volumen» / «menos volumen», «volumen arriba/abajo» | un paso de volumen |
+| «sube (el volumen) hasta 30», «volumen hasta 30»; «canal más/menos», «sintoniza el 5»; «pausa el partido/capítulo», «para la música», «dale play», «sigue reproduciendo»; «modo gaming» | volumen N; canal; pausa / play; imagen juego |
 | «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20» | volumen a ese número |
 | «súbele un par (de puntos)», «baja dos puntitos»; «cambia al 7», «cámbiala al 24»; «apaga ya la tele» | paso de volumen (2 / N); canal; apagar |
 | «volumen más/menos», «volumen máximo/mínimo»; «desmutea», «enciende el sonido»; «para / continúa el vídeo»; «pásate al 7»; «pulsa intro»; «ve a youtube» (solo apps conocidas) | paso de volumen; volumen 100 / 1; quitar silencio; pausa / play; canal; OK; abrir app |
