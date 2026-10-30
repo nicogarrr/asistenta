@@ -53,7 +53,7 @@ describe('recordatorio con retraso: botones', () => {
     ];
     expect(call[0]).toBe('42');
     expect(call[1]).toContain('con retraso');
-    expect(call[2]?.map((b) => b.label)).toEqual(['✅ Hecho', '⏰ +1h']);
+    expect(call[2]?.map((b) => b.label)).toEqual(['✅ Hecho', '⏰ +1h', '🌅 Mañana 9:00']);
     const cmds = call[2]?.map((b) => commandFromCallback(b.action)) ?? [];
     expect(cmds[0]).toMatch(/^\/recordatorios hecho [0-9a-f]{8}$/);
     expect(cmds[1]).toMatch(/^\/recordatorios pospone [0-9a-f]{8}$/);

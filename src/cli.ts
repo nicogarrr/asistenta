@@ -4764,7 +4764,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
     const rows = () => reminderRows(store.listRoutines(scope));
-    const b = /^(hecho|pospone) ([0-9a-f]{8})$/.exec(args.trim());
+    const b = /^(hecho|pospone|manana) ([0-9a-f]{8})$/.exec(args.trim());
     if (b?.[2]) {
       const reply = reminderButtonCommand(
         {
@@ -4772,10 +4772,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           store,
           sameChat: (s) => chatIdOfScope(s) === inbound.chatId,
         },
-        b[1] === 'hecho' ? 'hecho' : 'pospone',
+        b[1] === 'hecho' ? 'hecho' : b[1] === 'manana' ? 'manana' : 'pospone',
         b[2],
       );
-      if (b[1] === 'pospone') routineRunner.sync();
+      if (b[1] !== 'hecho') routineRunner.sync();
       await say(inbound, reply, { quote: true });
       return;
     }
@@ -7492,13 +7492,14 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
  * <nombre>. Borrar no tiene botón: sigue pidiendo escribirlo.
  */
 /**
- * Aviso de un recordatorio: «✅ Hecho» (lo da por visto) y «⏰ +1h» (otro igual dentro
- * de una hora). Ninguno borra nada. `id` es el de FiredReminders.
+ * Aviso de un recordatorio: «✅ Hecho» (lo da por visto), «⏰ +1h» (otro igual dentro
+ * de una hora) y «🌅 Mañana 9:00» (otro igual mañana a las 9). Ninguno borra nada. `id` es el de FiredReminders.
  */
 export function reminderButtons(id: string): Array<{ label: string; action: string }> | undefined {
   const buttons = [
     commandButton('✅ Hecho', 'recordatorios', id, 'hecho'),
     commandButton('⏰ +1h', 'recordatorios', id, 'pospone'),
+    commandButton('🌅 Mañana 9:00', 'recordatorios', id, 'manana'),
   ].filter((x): x is { label: string; action: string } => x !== undefined);
   return buttons.length ? buttons : undefined;
 }

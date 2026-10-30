@@ -32,10 +32,11 @@ const sameChat = (s: string) => s === SCOPE;
 describe('botones del aviso de un recordatorio', () => {
   it('son «✅ Hecho» y «⏰ +1h» y se leen como /recordatorios hecho|pospone <id>', () => {
     const b = reminderButtons('a1b2c3d4');
-    expect(b?.map((x) => x.label)).toEqual(['✅ Hecho', '⏰ +1h']);
+    expect(b?.map((x) => x.label)).toEqual(['✅ Hecho', '⏰ +1h', '🌅 Mañana 9:00']);
     expect(b?.map((x) => commandFromCallback(x.action))).toEqual([
       '/recordatorios hecho a1b2c3d4',
       '/recordatorios pospone a1b2c3d4',
+      '/recordatorios manana a1b2c3d4',
     ]);
     expect(commandFromCallback('cmd:recordatorios borrar a1b2c3d4')).toBeUndefined();
   });
@@ -133,7 +134,7 @@ describe('botones del aviso de un recordatorio', () => {
       'reminderButtons: (scope, text) => reminderButtons(firedReminders.remember(scope, text))',
     );
     const body = src.slice(src.indexOf('const cmdRecordatorios = async')).slice(0, 1200);
-    expect(body).toContain('/^(hecho|pospone) ([0-9a-f]{8})$/');
+    expect(body).toContain('/^(hecho|pospone|manana) ([0-9a-f]{8})$/');
     expect(body).toContain('sameChat: (s) => chatIdOfScope(s) === inbound.chatId');
   });
 });
