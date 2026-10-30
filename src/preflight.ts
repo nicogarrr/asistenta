@@ -40,11 +40,26 @@ export interface PreflightDeps {
   tvReachable(host: string): Promise<boolean>;
   desktopEnabled(): boolean;
   computerUseEnabled(): boolean;
+  /**
+   * True when a /ordenador off is saved on disk: the daemon will start with the PC
+   * control off even if `.env` allows it. Absent = not checked (old behaviour).
+   */
+  computerOffSaved?(): boolean;
   mailStatus(): Promise<{ read: string; send: string }>;
   /** Bytes libres en la carpeta de estado, o null si no se puede saber. */
   freeDiskBytes(): Promise<number | null>;
   /** Sin red: no se valida el token contra Telegram ni se mira la tele. */
   offline?: boolean;
+}
+
+/** false = no «off» saved (or not checked); true = saved; undefined = could not check. */
+function offSavedOrUnknown(deps: PreflightDeps): boolean | undefined {
+  if (!deps.computerOffSaved) return false;
+  try {
+    return deps.computerOffSaved();
+  } catch {
+    return undefined;
+  }
 }
 
 const GB = 1024 ** 3;
@@ -247,6 +262,17 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: 'apagado (PA_COMPUTER_USE=0)',
+      hint: 'Actívalo desde Telegram con /ordenador on.',
+    });
+  } else if (offSavedOrUnknown(deps) !== false) {
+    const unknown = offSavedOrUnknown(deps) === undefined;
+    add({
+      id: 'pc',
+      label: 'PC (Computer Use)',
+      status: 'aviso',
+      detail: unknown
+        ? 'no he podido mirar si hay un /ordenador off guardado'
+        : 'apagado con /ordenador off (guardado: arrancará apagado)',
       hint: 'Actívalo desde Telegram con /ordenador on.',
     });
   } else {
