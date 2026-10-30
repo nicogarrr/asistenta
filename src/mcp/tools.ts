@@ -170,6 +170,16 @@ const TOOL_NAME_MAX = 64;
  */
 const liveClients: McpToolClient[] = [];
 
+/** Servidor MCP vivo tal como lo ve `/mcp`: nombre, `allowedTools` y su cliente. */
+export interface McpLiveServer {
+  name: string;
+  allowedTools?: string[];
+  client: Pick<McpToolClient, 'listResources' | 'listPrompts'>;
+}
+
+/** Los servidores que arrancaron, para `/mcp` (solo lectura; no se cierran aquí). */
+const liveServers: McpLiveServer[] = [];
+
 /**
  * Convierte el par servidor/tool en un nombre valido para el proveedor:
  * minusculas, todo lo que no sea `[a-z0-9_]` pasa a `_` y se recorta a 64.
@@ -207,6 +217,7 @@ export async function createMcpTools(
       await client.start();
       const remoteTools = await client.listTools();
       liveClients.push(client);
+      liveServers.push({ name: server.name, allowedTools: server.allowedTools, client });
       const allowed = server.allowedTools;
       const selected =
         allowed === undefined
@@ -522,4 +533,100 @@ async function answers(
     });
     return false;
   }
+}
+
+/** Uso de `/mcp` en Telegram. */
+export const MCP_COMMAND_USAGE = 'Uso: /mcp recursos o /mcp prompts';
+const MCP_COMMAND_ITEMS = 20;
+const MCP_COMMAND_TEXT = 80;
+const MCP_COMMAND_TIMEOUT_MS = 10_000;
+
+/** Una línea de texto simple y corta: sin saltos ni caracteres de control. */
+function commandLine(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    out +=
+      code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029
+        ? ' '
+        : ch;
+  }
+  out = out.replace(/\s+/g, ' ').trim();
+  return out.length > MCP_COMMAND_TEXT ? `${out.slice(0, MCP_COMMAND_TEXT - 1)}…` : out;
+}
+
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('sin respuesta')), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * `/mcp recursos|prompts`: qué recursos o prompts ofrece cada servidor MCP en
+ * marcha. Solo lectura: lista, nunca lee un recurso ni usa un prompt. Respeta
+ * lo mismo que las herramientas: apagado sin PA_MCP_RESOURCES=1 y, con
+ * `allowedTools`, solo servidores que incluyan `@recursos` / `@prompts`.
+ * Cada servidor tiene un tope de tiempo; uno que no responde no bloquea al resto.
+ */
+export async function mcpCommandText(
+  rawArgs: string,
+  opts: { env?: NodeJS.ProcessEnv; servers?: readonly McpLiveServer[]; timeoutMs?: number } = {},
+): Promise<string> {
+  if (!mcpResourcesEnabled(opts.env ?? process.env)) {
+    return 'Los recursos y prompts MCP están apagados: pon PA_MCP_RESOURCES=1 en .env y reinicia.';
+  }
+  const arg = rawArgs.trim().toLowerCase();
+  const kind =
+    arg === 'recursos' || arg === 'resources' ? 'recursos' : arg === 'prompts' ? 'prompts' : null;
+  if (!kind) return MCP_COMMAND_USAGE;
+  const servers = opts.servers ?? liveServers;
+  if (!servers.length) return 'No hay ningún servidor MCP en marcha.';
+  const marker = kind === 'recursos' ? MCP_RESOURCES_ALLOW : MCP_PROMPTS_ALLOW;
+  const blocks = await Promise.all(
+    servers.map(async (server): Promise<string> => {
+      const name = commandLine(server.name);
+      if (server.allowedTools !== undefined && !server.allowedTools.includes(marker)) {
+        return `${name}: no publicado (falta ${marker} en allowedTools)`;
+      }
+      let items: string[];
+      try {
+        items =
+          kind === 'recursos'
+            ? (
+                await withTimeout(
+                  server.client.listResources(),
+                  opts.timeoutMs ?? MCP_COMMAND_TIMEOUT_MS,
+                )
+              ).map((r) =>
+                r.name ? `${commandLine(r.name)} (${commandLine(r.uri)})` : commandLine(r.uri),
+              )
+            : (
+                await withTimeout(
+                  server.client.listPrompts(),
+                  opts.timeoutMs ?? MCP_COMMAND_TIMEOUT_MS,
+                )
+              ).map((pr) =>
+                pr.description
+                  ? `${commandLine(pr.name)}: ${commandLine(pr.description)}`
+                  : commandLine(pr.name),
+              );
+      } catch {
+        return `${name}: no responde`;
+      }
+      if (!items.length) return `${name}: ninguno`;
+      const shown = items.slice(0, MCP_COMMAND_ITEMS).map((line) => `• ${line}`);
+      if (items.length > MCP_COMMAND_ITEMS)
+        shown.push(`… y ${items.length - MCP_COMMAND_ITEMS} más`);
+      return `${name}:\n${shown.join('\n')}`;
+    }),
+  );
+  return `${kind === 'recursos' ? 'Recursos' : 'Prompts'} MCP (solo lectura):\n\n${blocks.join('\n\n')}`;
 }

@@ -231,6 +231,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Herramientas externas adoptadas y su estado',
   },
   {
+    command: 'mcp',
+    description: 'Recursos y prompts de tus servidores MCP',
+  },
+  {
     command: 'evolucion',
     description: 'Ver la auto-mejora y proponer una idea',
   },

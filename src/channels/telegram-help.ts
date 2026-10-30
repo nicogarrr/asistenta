@@ -222,6 +222,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       { command: 'consumo', args: '[hoy|semana|mes]', description: 'tokens y coste estimado' },
       { command: 'servicios', description: 'herramientas externas adoptadas y su estado' },
+      { command: 'mcp', description: 'recursos MCP' },
       {
         command: 'skills',
         args: 'buscar <texto> | instalar <url>',
