@@ -107,6 +107,38 @@ const DEFAULT_HORIZON_DAYS = 180;
  */
 const NEAR_MS = 120;
 
+/**
+ * Short month names, only where a mail uses them: "15 nov", "Nov 15", "4 de sept".
+ * "mar" (also martes), "may" and "ago" (English "2 days ago") only count after "de".
+ */
+const MONTH_ABBR: Record<string, number> = {
+  ene: 1,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  abr: 4,
+  apr: 4,
+  jun: 6,
+  jul: 7,
+  ago: 8,
+  aug: 8,
+  sep: 9,
+  sept: 9,
+  oct: 10,
+  nov: 11,
+  dic: 12,
+  dec: 12,
+};
+const ABBR_NEEDS_DE = new Set(['mar', 'may', 'ago']);
+
+function monthOf(token: string | undefined, afterDe: boolean): number {
+  const name = token ?? '';
+  const full = MONTHS[name];
+  if (full !== undefined) return full;
+  if (!afterDe && ABBR_NEEDS_DE.has(name)) return Number.NaN;
+  return MONTH_ABBR[name] ?? Number.NaN;
+}
+
 const MONTHS: Record<string, number> = {
   enero: 1,
   febrero: 2,
@@ -274,13 +306,13 @@ const DATE_RULES: ReadonlyArray<{
     // The year is four digits, or two that are not the start of a clock or a span:
     // "el 4 de noviembre de 10:00 a 12:00" is 10 o'clock, not the year 2010 (which
     // put the meeting in the past and dropped it).
-    re: /\b(\d{1,2})(?:er|º|o)? de ([a-z]+?)(?: de (\d{4}|\d{2}(?![:.,h\d]| ?(?:a|al|hasta|y)\b)))?\b/,
+    re: /\b(\d{1,2})(?:er|º|o)?( de |-| )([a-z]+?)\.?(?: de (\d{4}|\d{2}(?![:.,h\d]| ?(?:a|al|hasta|y)\b)))?\b/,
     specificity: 95,
     rule: 'dia de mes',
     build: (m, ctx) =>
       calendarHit(
-        m[3] ? expandYear(Number(m[3])) : undefined,
-        MONTHS[m[2] ?? ''] ?? Number.NaN,
+        m[4] ? expandYear(Number(m[4])) : undefined,
+        monthOf(m[3], m[2] === ' de '),
         Number(m[1]),
         ctx,
         m,
@@ -295,13 +327,13 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 92, 'dd-mm-yyyy'),
   },
   {
-    re: /\b([a-z]+) (\d{1,2})(?:st|nd|rd|th)?(?:,? de (\d{4}))?\b/,
+    re: /\b([a-z]+)\.? (\d{1,2})(?:st|nd|rd|th)?(?:,? de (\d{4}))?\b/,
     specificity: 90,
     rule: 'mes dia',
     build: (m, ctx) =>
       calendarHit(
         m[3] ? expandYear(Number(m[3])) : undefined,
-        MONTHS[m[1] ?? ''] ?? Number.NaN,
+        monthOf(m[1], false),
         Number(m[2]),
         ctx,
         m,
