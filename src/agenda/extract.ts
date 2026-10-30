@@ -348,6 +348,15 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 88, 'dd/mm'),
   },
   {
+    // "el día 5" with no month: the next 5th - this month if it has not gone by, else
+    // the next month that has that day. With a month after it, 'dia de mes' reads it;
+    // "el día 5 de cada mes" is a routine, not a date.
+    re: /\b(?:el )?dia (\d{1,2})\b(?![:./h]\d| ?(?:de|del) [a-z])/,
+    specificity: 70,
+    rule: 'dia sin mes',
+    build: (m, ctx) => nextDayOfMonth(Number(m[1]), ctx, m),
+  },
+  {
     // A weekday, with or without "el" / "next". "Next Monday" said on a Monday is a
     // week away, which is what the word means; a bare "el lunes" said on a Monday is
     // today, which is what that means.
@@ -425,6 +434,22 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => relativeHit(m, ctx, 7, 'la semana que viene', 45),
   },
 ];
+
+/** The next calendar day numbered `day` from today (today included), in the user's zone. */
+function nextDayOfMonth(day: number, ctx: Context, match: RegExpExecArray): DateHit | undefined {
+  if (!Number.isInteger(day) || day < 1 || day > 31) return undefined;
+  const today = ymd(ctx.now, ctx.timeZone);
+  for (let k = 0; k < 13; k++) {
+    const month0 = today.month - 1 + k;
+    const year = today.year + Math.floor(month0 / 12);
+    const month = (month0 % 12) + 1;
+    if (day > daysInMonth(year, month) || (k === 0 && day < today.day)) continue;
+    const at = zonedTime({ year, month, day, hour: NOMINAL_HOUR }, ctx.timeZone);
+    if (Number.isNaN(at)) return undefined;
+    return { at, specificity: 70, index: match.index, rule: 'dia sin mes' };
+  }
+  return undefined;
+}
 
 function calendarHit(
   year: number | undefined,
