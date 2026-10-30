@@ -1323,16 +1323,18 @@ ${renderFormatScript()}
           var estados = { proposed: 'Propuesto', active: 'Activo', paused: 'Pausado', blocked: 'Bloqueado', done: 'Terminado', cancelled: 'Cancelado' };
           objetivos.forEach(function (objetivo) {
             var tarjeta = nodo('section', 'sesion');
-            tarjeta.appendChild(nodo('h3', null, objetivo.title));
+            // Un objetivo sin título o sin estado no debe dejar un encabezado vacío ni «undefined».
+            var titulo = typeof objetivo.title === 'string' && objetivo.title.trim() ? objetivo.title : '(sin título)';
+            tarjeta.appendChild(nodo('h3', null, titulo));
             var linea = nodo('p', 'meta-objetivo');
-            linea.appendChild(insignia(claseEstado[objetivo.status] || '', estados[objetivo.status] || objetivo.status));
+            linea.appendChild(insignia(claseEstado[objetivo.status] || '', estados[objetivo.status] || objetivo.status || 'Sin estado'));
             var progreso = formato.progresoPlan(objetivo.plan);
-            linea.appendChild(nodo('span', 'muted', (progreso ? ' ' + progreso + ' · ' : ' ') + 'Hilo: ' + objetivo.thread));
+            linea.appendChild(nodo('span', 'muted', (progreso ? ' ' + progreso + ' · ' : ' ') + 'Hilo: ' + (objetivo.thread || '—')));
             tarjeta.appendChild(linea);
             if (objetivo.status === 'blocked' && objetivo.blockedReason) tarjeta.appendChild(nodo('p', 'error', 'Bloqueado: ' + objetivo.blockedReason));
                         var detalles = document.createElement('details');
             detalles.appendChild(nodo('summary', null, 'Plan y contexto'));
-            detalles.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id + ' · Ámbito: ' + objetivo.scope));
+            detalles.appendChild(nodo('p', 'muted', 'ID: ' + (objetivo.id || '—') + ' · Ámbito: ' + (objetivo.scope || '—')));
             var lista = document.createElement('ul');
             // Un objetivo sin plan (o con un paso raro) no debe tumbar toda la tarjeta.
             var pasos = Array.isArray(objetivo.plan) ? objetivo.plan : [];
