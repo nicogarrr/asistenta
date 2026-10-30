@@ -1577,6 +1577,8 @@ export const STALE_BUTTON = 'Este botón ya no sirve. Escribe la orden a mano.';
  */
 const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['dejar_de_vigilar', new Set([''])],
+  // «👀 Vigilar» de /compara: el arg es un id corto en memoria, nunca el enlace.
+  ['vigila', new Set(['enlace'])],
   // Solo lectura: enseña la ficha de precio de una página vigilada.
   ['precio', new Set([''])],
   // Botones de un recordatorio que acaba de avisar: no borran nada (+1h crea otro).
