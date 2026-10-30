@@ -8,9 +8,13 @@ on:
 permissions:
   contents: read
 
+# En una PR, un push nuevo cancela la ejecución anterior (solo importa la última).
+# En main NO: con muchas PRs mergeándose seguidas, cancelar dejaba main sin ningún
+# resultado de CI terminado (todas las ejecuciones de main salían «cancelled»).
+# Sin cancelar, la ejecución en curso termina y solo queda en cola la más reciente.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
