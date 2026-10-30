@@ -42,6 +42,29 @@ export const TV_CAST_VIAS: readonly TvCastVia[] = ['media.viewer', 'launcher', '
 export const TV_FIREWALL_HINT =
   'La tele no ha podido descargar el audio. Suele ser el firewall de Windows: permite Node.js en redes privadas (Panel de control → Firewall de Windows Defender → Permitir una aplicación) y comprueba que la red Wi-Fi del PC está como «privada».';
 
+/**
+ * El aviso del firewall sale una sola vez por sesión del daemon, venga de donde venga
+ * (altavoz en la tele o «reprodúcelo en la tele»): la causa es la misma, repetirlo cansa.
+ */
+let teleFirewallWarned = false;
+
+/** ¿Ya se avisó del firewall en esta sesión? */
+export function teleFirewallAlreadyWarned(): boolean {
+  return teleFirewallWarned;
+}
+
+/** Marca el aviso como dado. Devuelve false si otro camino ya lo había dado. */
+export function claimTeleFirewallWarning(): boolean {
+  if (teleFirewallWarned) return false;
+  teleFirewallWarned = true;
+  return true;
+}
+
+/** Solo para pruebas: vuelve a permitir el aviso del firewall. */
+export function resetTeleFirewallWarning(): void {
+  teleFirewallWarned = false;
+}
+
 export interface TvCastResult {
   ok: boolean;
   /** Texto en español para el modelo/usuario. */

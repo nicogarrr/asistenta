@@ -1,7 +1,11 @@
 import { rmSync } from 'node:fs';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { TV_FIREWALL_HINT } from '../audio/tv-cast.js';
+import {
+  claimTeleFirewallWarning,
+  TV_FIREWALL_HINT,
+  teleFirewallAlreadyWarned,
+} from '../audio/tv-cast.js';
 import { log } from '../log.js';
 import { type AudioRecall, agoLabel } from '../media/recall.js';
 import {
@@ -39,13 +43,8 @@ import { playAudioFile, playbackRestoreText } from './system.js';
 const MAX_CLIP_SECONDS = 60;
 const MAX_PLAY_BYTES = 25_000_000;
 
-/** El aviso del firewall sale una sola vez por sesión del daemon. */
-let teleFirewallWarned = false;
-
-/** Solo para pruebas: vuelve a permitir el aviso del firewall. */
-export function resetTeleFirewallWarning(): void {
-  teleFirewallWarned = false;
-}
+/** Solo para pruebas: vuelve a permitir el aviso del firewall (compartido con /altavoz). */
+export { resetTeleFirewallWarning } from '../audio/tv-cast.js';
 
 /**
  * Tras una orden aceptada por la tele, espera (sin bloquear la respuesta) a que la tele
@@ -56,17 +55,16 @@ function watchTeleFetch(
   notify: ((text: string) => void) | undefined,
   ms = 15_000,
 ): void {
-  if (!hits || !notify || teleFirewallWarned) return;
+  if (!hits || !notify || teleFirewallAlreadyWarned()) return;
   const timer = setTimeout(() => {
-    if (teleFirewallWarned) return;
+    if (teleFirewallAlreadyWarned()) return;
     let served = 1;
     try {
       served = hits();
     } catch {
       return;
     }
-    if (served > 0) return;
-    teleFirewallWarned = true;
+    if (served > 0 || !claimTeleFirewallWarning()) return;
     try {
       notify(`📺 ${TV_FIREWALL_HINT}`);
     } catch {
