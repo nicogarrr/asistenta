@@ -11,7 +11,9 @@ import {
   etiquetaCampo,
   formatearCampo,
   mensajeDeError,
+  progresoPlan,
   resumenAprobacion,
+  resumenMemoria,
   tiempoRestante,
 } from './client-format.js';
 
@@ -38,7 +40,11 @@ export function renderFormatScript(): string {
   var etiquetaCampo = ${etiquetaCampo.toString()};
   var formatearCampo = ${formatearCampo.toString()};
   var mensajeDeError = ${mensajeDeError.toString()};
+  var resumenMemoria = ${resumenMemoria.toString()};
+  var progresoPlan = ${progresoPlan.toString()};
   return {
+    resumenMemoria: resumenMemoria,
+    progresoPlan: progresoPlan,
     mensajeDeError: mensajeDeError,
     resumenAprobacion: resumenAprobacion,
     tiempoRestante: tiempoRestante,
@@ -168,6 +174,11 @@ export function renderPage(): string {
     .token p { margin: 0; font-size: 12px; }
     .error-bloque { display: grid; gap: 8px; justify-items: start; }
     .error-bloque p { margin: 0; }
+    .recuerdos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .recuerdo { border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
+    .recuerdo p { margin: 0; }
+    .recuerdo .muted { font-size: 12px; margin-top: 3px; }
+    .meta-objetivo { margin: 6px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
     .rejilla {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -944,19 +955,24 @@ ${renderFormatScript()}
         try {
           var objetivos = await pedir('/api/goals');
           if (!Array.isArray(objetivos)) throw new Error('Respuesta de objetivos inválida');
-          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura. Estados reales del objetivo; no conceden permisos.'));
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para cambiar un objetivo, pídelo en el chat o en Telegram.'));
           if (!objetivos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay objetivos del propietario.'));
+          var claseEstado = { active: 'ok', done: 'ok', blocked: 'mal', cancelled: 'mal' };
           var estados = { proposed: 'Propuesto', active: 'Activo', paused: 'Pausado', blocked: 'Bloqueado', done: 'Terminado', cancelled: 'Cancelado' };
           objetivos.forEach(function (objetivo) {
             var tarjeta = nodo('section', 'sesion');
             tarjeta.appendChild(nodo('h3', null, objetivo.title));
-            tarjeta.appendChild(nodo('p', 'muted', (estados[objetivo.status] || objetivo.status) + ' · Hilo: ' + objetivo.thread));
-            tarjeta.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id));
-            var detalles = document.createElement('details');
+            var linea = nodo('p', 'meta-objetivo');
+            linea.appendChild(insignia(claseEstado[objetivo.status] || '', estados[objetivo.status] || objetivo.status));
+            var progreso = formato.progresoPlan(objetivo.plan);
+            linea.appendChild(nodo('span', 'muted', (progreso ? ' ' + progreso + ' · ' : ' ') + 'Hilo: ' + objetivo.thread));
+            tarjeta.appendChild(linea);
+            if (objetivo.status === 'blocked' && objetivo.blockedReason) tarjeta.appendChild(nodo('p', 'error', 'Bloqueado: ' + objetivo.blockedReason));
+                        var detalles = document.createElement('details');
             detalles.appendChild(nodo('summary', null, 'Plan y contexto'));
-            detalles.appendChild(nodo('p', 'muted', 'Ámbito: ' + objetivo.scope));
+            detalles.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id + ' · Ámbito: ' + objetivo.scope));
             var lista = document.createElement('ul');
-            objetivo.plan.forEach(function (paso) { lista.appendChild(nodo('li', null, (paso.done ? 'Hecho: ' : 'Pendiente: ') + paso.text)); });
+            objetivo.plan.forEach(function (paso) { lista.appendChild(nodo('li', null, (paso.done ? '✓ Hecho: ' : '○ Pendiente: ') + paso.text)); });
             detalles.appendChild(lista);
             if (objetivo.blockedReason) detalles.appendChild(nodo('p', 'texto', 'Bloqueo: ' + objetivo.blockedReason));
             if (objetivo.lastOutcome) detalles.appendChild(nodo('p', 'texto', 'Último resultado: ' + objetivo.lastOutcome));
@@ -998,13 +1014,50 @@ ${renderFormatScript()}
         return true;
       }
 
+      function pintarMemoria(contenedor, datos) {
+        var memoria = formato.resumenMemoria(datos);
+        if (!memoria) {
+          contenedor.replaceChildren(renderValor(datos, 0));
+          return;
+        }
+        contenedor.replaceChildren();
+        if (!memoria.vigentes.length) {
+          contenedor.appendChild(
+            nodo('p', 'muted', 'No hay recuerdos en este ámbito. Prueba otro (por ejemplo «local»).')
+          );
+        } else {
+          contenedor.appendChild(
+            nodo('p', 'muted', memoria.vigentes.length + (memoria.vigentes.length === 1 ? ' recuerdo' : ' recuerdos'))
+          );
+        }
+        function lista(entradas) {
+          var ul = nodo('ul', 'recuerdos');
+          entradas.forEach(function (entrada) {
+            var li = nodo('li', 'recuerdo');
+            li.appendChild(nodo('p', 'texto', entrada.texto));
+            if (entrada.meta) li.appendChild(nodo('p', 'muted', entrada.meta));
+            ul.appendChild(li);
+          });
+          return ul;
+        }
+        if (memoria.vigentes.length) contenedor.appendChild(lista(memoria.vigentes));
+        if (memoria.sustituidas.length) {
+          var historial = document.createElement('details');
+          historial.appendChild(
+            nodo('summary', null, 'Historial: ' + memoria.sustituidas.length + ' sustituidos')
+          );
+          historial.appendChild(lista(memoria.sustituidas));
+          contenedor.appendChild(historial);
+        }
+      }
+
       async function cargarMemoria() {
         var contenedor = document.getElementById('panel-memoria');
         var ambito = document.getElementById('ambito-memoria').value.trim();
         var ruta = '/api/memory' + (ambito ? '?scope=' + encodeURIComponent(ambito) : '');
         pintarCarga(contenedor);
         try {
-          contenedor.replaceChildren(renderValor(await pedir(ruta), 0));
+          pintarMemoria(contenedor, await pedir(ruta));
         } catch (error) {
           pintarError(contenedor, error, cargarMemoria); return false;
         }
