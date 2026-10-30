@@ -512,16 +512,28 @@ export class MemoryStore {
     let evicted = 0;
     let droppedNotes = false;
     let text = serializeMemory(doc);
-    while (Buffer.byteLength(text, 'utf8') > MAX_MEMORY_BYTES && doc.entries.length > 1) {
-      doc.entries.shift();
+    const over = (): boolean => Buffer.byteLength(text, 'utf8') > MAX_MEMORY_BYTES;
+    // Orden de sacrificio: primero los hechos ya corregidos (superseded: ocultos en
+    // recall, solo historia), después las notas a mano y solo al final los hechos
+    // vigentes más antiguos. Antes se vaciaban los hechos vigentes hasta dejar uno
+    // ANTES de mirar las notas: unas notas grandes se llevaban toda la memoria.
+    while (over()) {
+      const idx = doc.entries.findIndex((e) => e.supersededBy !== null);
+      if (idx < 0 || doc.entries.length <= 1) break;
+      doc.entries.splice(idx, 1);
       evicted++;
       text = serializeMemory(doc);
     }
-    if (Buffer.byteLength(text, 'utf8') > MAX_MEMORY_BYTES && doc.notes.length > 0) {
+    if (over() && doc.notes.length > 0) {
       // Prose the model wrote by hand is the first thing to go: the entries are
       // the part that has no other copy.
       doc.notes = [];
       droppedNotes = true;
+      text = serializeMemory(doc);
+    }
+    while (over() && doc.entries.length > 1) {
+      doc.entries.shift();
+      evicted++;
       text = serializeMemory(doc);
     }
     if (evicted > 0) {
