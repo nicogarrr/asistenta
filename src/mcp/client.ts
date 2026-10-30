@@ -51,6 +51,14 @@ export interface McpResourceInfo {
   mimeType?: string;
 }
 
+/** Plantilla de recurso anunciada en `resources/templates/list` (RFC 6570). */
+export interface McpResourceTemplateInfo {
+  uriTemplate: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+}
+
 /** Contenido devuelto por `resources/read`; el servidor manda `text` o `blob`. */
 export interface McpResourceContent {
   uri: string;
@@ -179,6 +187,29 @@ export function parseResourceList(server: string, result: unknown): McpResourceI
     resources.push(info);
   }
   return resources;
+}
+
+/** Normaliza la respuesta de `resources/templates/list` (stdio y HTTP). */
+export function parseResourceTemplateList(
+  server: string,
+  result: unknown,
+): McpResourceTemplateInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.resourceTemplates)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de plantillas invalida.`);
+  }
+  const templates: McpResourceTemplateInfo[] = [];
+  for (const item of result.resourceTemplates) {
+    if (!isRecord(item) || typeof item.uriTemplate !== 'string' || !item.uriTemplate.trim()) {
+      log.warn('Plantilla MCP ignorada: uriTemplate invalida', { server });
+      continue;
+    }
+    const info: McpResourceTemplateInfo = { uriTemplate: item.uriTemplate };
+    if (typeof item.name === 'string') info.name = item.name;
+    if (typeof item.description === 'string') info.description = item.description;
+    if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
+    templates.push(info);
+  }
+  return templates;
 }
 
 /** Normaliza la respuesta de `resources/read` (stdio y HTTP). */
@@ -420,6 +451,14 @@ export class McpClient {
   /** Lista los recursos anunciados por el servidor. */
   async listResources(): Promise<McpResourceInfo[]> {
     return parseResourceList(this.#config.name, await this.#request<unknown>('resources/list', {}));
+  }
+
+  /** Lista las plantillas de recursos (`resources/templates/list`). */
+  async listResourceTemplates(): Promise<McpResourceTemplateInfo[]> {
+    return parseResourceTemplateList(
+      this.#config.name,
+      await this.#request<unknown>('resources/templates/list', {}),
+    );
   }
 
   /** Lee un recurso y devuelve todos sus bloques de contenido. */

@@ -21,12 +21,14 @@ import {
   type McpPromptResult,
   type McpResourceContent,
   type McpResourceInfo,
+  type McpResourceTemplateInfo,
   type McpToolCallResult,
   type McpToolInfo,
   parsePromptGet,
   parsePromptList,
   parseResourceList,
   parseResourceRead,
+  parseResourceTemplateList,
   parseToolCall,
   parseToolList,
 } from './client.js';
@@ -267,6 +269,14 @@ export class McpHttpClient {
   /** Lista los recursos del servidor (`resources/list`). */
   async listResources(): Promise<McpResourceInfo[]> {
     return parseResourceList(this.#config.name, await this.#request('resources/list', {}));
+  }
+
+  /** Lista las plantillas de recursos (`resources/templates/list`). */
+  async listResourceTemplates(): Promise<McpResourceTemplateInfo[]> {
+    return parseResourceTemplateList(
+      this.#config.name,
+      await this.#request('resources/templates/list', {}),
+    );
   }
 
   /** Lee un recurso (`resources/read`) y devuelve sus bloques de contenido. */
