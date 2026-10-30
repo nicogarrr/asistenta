@@ -83,7 +83,8 @@ describe('panel: chat sin conexión', () => {
   });
 
   it('enviarChat avisa sin conexión solo si el fallo es de red, y lo quita cuando contesta', async () => {
-    const fuente = `${trozo(html, 'async function enviarChat(')}\nreturn enviarChat;`;
+    // chatOcupado (un mensaje cada vez) se declara junto a devolverFoco, fuera de este trozo.
+    const fuente = `var chatOcupado = false;\n${trozo(html, 'async function enviarChat(')}\nreturn enviarChat;`;
     const llamadas: unknown[][] = [];
     const montar = (enviar: () => Promise<unknown>) => {
       const campo = { value: '', focus() {} };
