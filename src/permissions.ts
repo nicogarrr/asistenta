@@ -2300,6 +2300,8 @@ export function runPermisosCommand(
   gates: readonly Gate[],
   dbPath: string | undefined,
   args: string,
+  /** Chat desde el que se pide /permisos: sus «Siempre» salen como «este chat». */
+  currentChat?: string,
 ): string {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   const sub = (parts[0] ?? '').toLowerCase();
@@ -2322,11 +2324,17 @@ export function runPermisosCommand(
     chatsOf.set(row.tool, chats);
   }
   const withChats = (tool: string): string => {
-    const chats = [...(chatsOf.get(tool) ?? [])].sort().map(permisosChatLabel);
-    if (chats.length === 0) return tool;
-    return chats.length === 1
-      ? `${tool} (chat ${chats[0]})`
-      : `${tool} (chats ${chats.join(', ')})`;
+    const raw = [...(chatsOf.get(tool) ?? [])].sort();
+    if (raw.length === 0) return tool;
+    // El chat desde el que se pregunta va primero y se nombra «este chat».
+    const here = currentChat !== undefined && raw.includes(currentChat);
+    const others = raw.filter((chat) => !here || chat !== currentChat).map(permisosChatLabel);
+    if (here && others.length === 0) return `${tool} (este chat)`;
+    if (here)
+      return `${tool} (este chat y ${others.length === 1 ? 'chat' : 'chats'} ${others.join(', ')})`;
+    return others.length === 1
+      ? `${tool} (chat ${others[0]})`
+      : `${tool} (chats ${others.join(', ')})`;
   };
   if (sub === '' || sub === 'estado') {
     if (tools.length === 0)

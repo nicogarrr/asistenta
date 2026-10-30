@@ -6742,7 +6742,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const gates = [...threads.values()].map((thread) => thread.gate);
-    await say(inbound, runPermisosCommand(gates, approvalsDb, args), { quote: true });
+    await say(inbound, runPermisosCommand(gates, approvalsDb, args, chatKey(inbound)), {
+      quote: true,
+    });
   };
 
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
