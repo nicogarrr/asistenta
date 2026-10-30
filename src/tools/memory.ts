@@ -169,7 +169,11 @@ function emptyMemoryText(store: MemoryStore, scope: string, query: string): stri
 export function createMemoryTool(
   store: MemoryStore,
   scopeOf: () => string,
-  snapshot?: MemorySnapshot,
+  /**
+   * El perfil. Una función se evalúa en cada llamada: así el cableado decide por
+   * chat (solo el DM del dueño ve y edita su perfil) sin reconstruir la herramienta.
+   */
+  snapshotOrGetter?: MemorySnapshot | (() => MemorySnapshot | undefined),
   semantic?: Embedder,
   sessions?: SessionStore,
 ): AgentTool<typeof MemoryParams> {
@@ -207,6 +211,8 @@ export function createMemoryTool(
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const scope = scopeOf();
+      const snapshot =
+        typeof snapshotOrGetter === 'function' ? snapshotOrGetter() : snapshotOrGetter;
 
       switch (args.action) {
         case 'remember': {

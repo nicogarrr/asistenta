@@ -1729,6 +1729,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                     sessions,
                     ownerProfile,
                     text,
+                    isOwnerDm(inboundFor(thread), vigilanteOwnerId),
                   ),
                 );
                 const r = await thread.agent.run(text);
@@ -1892,7 +1893,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // The durable memory plus the model's own procedural skills. The snapshot is
       // what makes the model stop asking who the user is; the skills are what make it
       // stop re-deriving a procedure it already worked out.
-      createMemoryTool(memory, scope, snapshot, semanticRecall, sessions),
+      // El perfil (PERFIL.md) es del dueño: save_profile/profile/forget_profile solo
+      // existen en su chat privado; en grupos y con otros usuarios no hay snapshot.
+      createMemoryTool(
+        memory,
+        scope,
+        () => (isOwnerDm(inboundFor(thread), vigilanteOwnerId) ? snapshot : undefined),
+        semanticRecall,
+        sessions,
+      ),
       createDocsTool(docMemory, scope),
       createDecisionTool({
         ledger: decisionLedger,
@@ -2527,6 +2536,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               sessions,
               ownerProfile,
               prompt,
+              isOwnerDm(inboundFor(thread), vigilanteOwnerId),
             ),
           );
           result = await thread.agent.run(prompt);
@@ -2599,6 +2609,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             sessions,
             ownerProfile,
             prompt,
+            isOwnerDm(inboundFor(thread), vigilanteOwnerId),
           ),
         );
         const result = await thread.agent.run(prompt);
@@ -4765,6 +4776,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
     const sub = (subRaw ?? '').toLowerCase();
     const restText = rest.join(' ').trim();
+    // El perfil es del dueño: listar, guardar, olvidar o exportar solo desde su
+    // chat privado. Antes cualquier usuario autorizado, o un grupo, lo leía y editaba.
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'El perfil solo está disponible en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
     const owner = (await vaultGet('telegram:ownerId').catch(() => null)) ?? 'local';
     const profile = new OwnerProfile(join(paths.state, 'profile', `${owner}.json`));
     if (!sub || sub === 'listar' || sub === 'lista') {
@@ -5540,6 +5559,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           sessions,
           ownerProfile,
           prompt,
+          isOwnerDm(inboundFor(thread), vigilanteOwnerId),
         ),
       );
 
@@ -5691,7 +5711,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             const last = nudge.suggestion.lastIndexOf('"');
             const clause =
               first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
-            if (clause && !looksLikeCredential(clause)) {
+            // Solo el dueño, en su chat privado, alimenta su perfil: una frase de
+            // otro usuario o de un grupo no puede acabar en el PERFIL.md de Nico.
+            if (clause && !looksLikeCredential(clause) && isOwnerDm(inbound, vigilanteOwnerId)) {
               const saved = snapshot.appendEntry(`[auto] ${clause}`);
               if (saved.ok) autosaved = true;
             }
@@ -7155,8 +7177,17 @@ export function buildContextNote(
   sessions?: SessionStore,
   profile?: OwnerProfile,
   request?: string,
+  ownerView = false,
 ): string {
   const parts: string[] = [];
+  // El perfil del dueño (v2 y PERFIL.md legado) es suyo: solo entra en el prompt de
+  // su chat privado. Antes iba a TODOS los chats, también a grupos y a otros usuarios
+  // autorizados. Por defecto NO entra: quien olvide pasar ownerView pierde el perfil,
+  // no lo filtra.
+  if (!ownerView) {
+    profile = undefined;
+    snapshot = undefined;
+  }
 
   // The frozen memory first: who the user is and what the agent has learned about
   // them, read from disk rather than rebuilt per turn. It is what stops "Groundhog
