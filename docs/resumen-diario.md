@@ -22,3 +22,7 @@ Ritmo, para que no sea spam (`src/briefing-daily.ts`):
 
 `/resumen hoy` lo pide al momento (solo en el chat privado del dueño). `/resumen` sigue
 siendo el resumen semanal.
+
+## Objetivos y precios
+
+El resumen incluye también tus **objetivos** activos (con el siguiente paso) y bloqueados (primero, con el motivo), y tus **vigilancias de precio** con objetivo o % de bajada (último precio leído; las que ya están por debajo del objetivo van primero). Un objetivo en marcha o un precio sin novedad no bastan para enviar el resumen; un objetivo bloqueado o un precio ya bajo el objetivo, sí.
