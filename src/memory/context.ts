@@ -24,6 +24,7 @@
  */
 import type { MemoryEntry } from '../memory.js';
 import { plainInline } from '../utils.js';
+import { LEARNED_TAG } from './learned-rules.js';
 
 /** Hard ceiling for the rendered memory section, header and tail included. */
 export const MEMORY_CONTEXT_CAP = 4000;
@@ -44,6 +45,14 @@ export interface MemoryContextRender {
   /** Entries that kept their full text; the rest show as index rows. */
   fullShown: number;
 }
+
+/**
+ * Las reglas aprendidas de las correcciones del dueño (#916) mandan en cada turno:
+ * van siempre con su texto completo y son las últimas en compactarse o caer por el
+ * tope. Antes, con cinco recuerdos más nuevos, una regla quedaba en un índice de
+ * 80 caracteres y el modelo dejaba de verla entera.
+ */
+const pinned = (entry: MemoryEntry) => entry.tags.includes(LEARNED_TAG);
 
 const snip = (text: string) =>
   text.length > MEMORY_CONTEXT_SNIPPET ? `${text.slice(0, MEMORY_CONTEXT_SNIPPET)}…` : text;
@@ -82,7 +91,7 @@ export function renderMemoryContext(entries: MemoryEntry[]): MemoryContextRender
     'activas: memory action=list.';
   const rows: Row[] = active.map((entry, i) => ({
     entry,
-    full: i >= active.length - MEMORY_CONTEXT_FULL_RECENT,
+    full: i >= active.length - MEMORY_CONTEXT_FULL_RECENT || pinned(entry),
   }));
   const tail = (k: number) => `- … y ${k} más (usa memory action=list)`;
   const build = (rs: Row[], hidden: number) =>
@@ -90,7 +99,7 @@ export function renderMemoryContext(entries: MemoryEntry[]): MemoryContextRender
   // Phase 1: compact the oldest full entries to index rows (never the newest).
   let fullShown = rows.filter((r) => r.full).length;
   while (fullShown > 1 && build(rows, 0).length > MEMORY_CONTEXT_CAP) {
-    const oldestFull = rows.find((r) => r.full);
+    const oldestFull = rows.find((r) => r.full && !pinned(r.entry)) ?? rows.find((r) => r.full);
     if (!oldestFull) break;
     oldestFull.full = false;
     fullShown--;
@@ -98,7 +107,8 @@ export function renderMemoryContext(entries: MemoryEntry[]): MemoryContextRender
   // Phase 2: only then drop the oldest rows entirely, counted in the tail.
   let hidden = 0;
   while (rows.length > 1 && build(rows, hidden).length > MEMORY_CONTEXT_CAP) {
-    rows.shift();
+    const drop = rows.findIndex((r) => !pinned(r.entry));
+    rows.splice(drop >= 0 ? drop : 0, 1);
     hidden++;
   }
   let body = build(rows, hidden);
