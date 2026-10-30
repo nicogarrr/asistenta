@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { checkPatch } from '../selfimprove/guard.js';
 import { Archive, isoWeek } from './archive.js';
 import { measure as realMeasure } from './measure.js';
+import { checklistPasses, renderReceipt, verificationChecklist } from './receipt.js';
 import { comparable, judge, touchesForbidden } from './score.js';
 import {
   changedFiles,
@@ -71,6 +72,8 @@ export interface WeekReport {
   /** Branch and patch of the promoted attempt: the material for a normal PR. */
   branch?: string;
   patchFile?: string;
+  /** Receipt de verificación (checklist) escrito junto al parche promovido. */
+  receiptFile?: string;
 }
 
 export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
@@ -168,7 +171,35 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         }
 
         const candidate = await measure({ cwd: sandbox.dir });
-        const verdict = judge(baseline, candidate, { minGainPct });
+        let verdict = judge(baseline, candidate, { minGainPct });
+        // «Listo» sin prueba verificable no cuenta: un promote solo sale con la
+        // checklist completa, y la checklist queda escrita como receipt.
+        const receiptInput = {
+          week,
+          hypothesis,
+          attempt,
+          kernel,
+          branch: sandbox.branch,
+          touched,
+          forbidden,
+          baseline,
+          candidate,
+          verdictReason: verdict.reason,
+          delta: verdict.delta,
+          minGainPct,
+        };
+        const checklist = verificationChecklist(receiptInput);
+        if (verdict.kind === 'promote' && !checklistPasses(checklist)) {
+          const missing = checklist
+            .filter((it) => !it.ok)
+            .map((it) => it.label)
+            .join('; ');
+          verdict = {
+            kind: 'discard',
+            delta: verdict.delta,
+            reason: `checklist de verificación incompleta (${missing})`,
+          };
+        }
         archive.add({
           week,
           kind: 'verdict',
@@ -201,11 +232,14 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           mkdirSync(dir, { recursive: true });
           const patchFile = join(dir, `promovido-${id}.patch`);
           writeFileSync(patchFile, patch, 'utf8');
+          const receiptFile = join(dir, `promovido-${id}.receipt.md`);
+          writeFileSync(receiptFile, renderReceipt(receiptInput, checklist), 'utf8');
           report.branch = sandbox.branch;
           report.patchFile = patchFile;
+          report.receiptFile = receiptFile;
           report.promoted = true;
           say(
-            `Candidato listo: rama ${sandbox.branch}, parche ${patchFile}. Va como PR con auditoría; no se ha mergeado nada.`,
+            `Candidato listo: rama ${sandbox.branch}, parche ${patchFile}, receipt ${receiptFile}. Va como PR con auditoría; no se ha mergeado nada.`,
           );
           break;
         }
@@ -232,7 +266,7 @@ export function summarize(report: WeekReport): string {
       `- ${a.hypothesis} (intento ${a.try}): ${a.verdict}, ${a.delta >= 0 ? '+' : ''}${a.delta}. ${a.reason}`,
   );
   const tail = report.promoted
-    ? `Hay un candidato (rama ${report.branch ?? '?'}): sale como PR y no entra sin auditoría.`
+    ? `Hay un candidato (rama ${report.branch ?? '?'}) con su receipt de verificación: sale como PR y no entra sin auditoría.`
     : 'Ningún candidato pasó la regla esta semana.';
   return [head, ...lines, tail].join('\n');
 }

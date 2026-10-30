@@ -52,7 +52,8 @@ const cycle = (propose: (dir: string) => void, measured: Measurement) =>
     stateDir: state,
     maxTries: 1,
     propose: async (dir) => propose(dir),
-    hypotheses: async () => ['idea'],
+    // Una spec real: la checklist de verificación exige hipótesis con contenido.
+    hypotheses: async () => ['subir a de 1 a 2 para cubrir el caso'],
     measure: async (o) => (o.cwd === root ? m() : measured),
   });
 
