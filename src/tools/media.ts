@@ -402,7 +402,15 @@ async function playReceived(
       return ok(res.message, { played: res.ok, target, audioAt: audio.at });
     }
     deps.beforePlayback?.();
-    const res = await playAudioFile(playable, { volume });
+    const res = await playAudioFile(playable, { volume, ...(signal ? { signal } : {}) });
+    if (!res.ok && signal?.aborted) {
+      // /stop: el sonido ya está cortado y el volumen restaurado; no es un fallo.
+      return ok(`Parado. ${playbackRestoreText(res)}`, {
+        played: false,
+        reason: 'stopped',
+        seconds: res.seconds,
+      });
+    }
     if (!res.ok) {
       return ok(
         `No he podido sacarlo por los altavoces: ${res.detail}. ${playbackRestoreText(res)}`,
