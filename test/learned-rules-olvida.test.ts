@@ -53,14 +53,16 @@ describe('«📝 Aprendido» dice cómo borrarla', () => {
     expect(forgetLearnedRule(memory, [SCOPE], String(n))).toBe('🗑️ Olvidada: Respuestas muy cortas');
   });
 
-  it('en el panel (sin /olvida) la línea sigue igual', () => {
+  it('sin los ámbitos de /aprendido la línea no lleva número', () => {
     expect(learn('formato', 'Respuestas cortas', false).line).toBe(
       '📝 Aprendido: Respuestas cortas',
     );
   });
 
-  it('cableado: solo fuera del panel se pasan los ámbitos de /aprendido', () => {
+  it('cableado: Telegram y el panel (que ya tiene /olvida) pasan los ámbitos de /aprendido', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(src).toContain('forgetScopes: opts.out ? undefined : memoryScopesFor(thread.key).read,');
+    expect(src).toMatch(
+      /forgetScopes:\s*opts\.out && opts\.panel !== true \? undefined : memoryScopesFor\(thread\.key\)\.read,/,
+    );
   });
 });
