@@ -13,6 +13,11 @@ export interface WebUiDeps {
   memory(scope?: string): unknown | Promise<unknown>;
   /** Ámbitos de memoria existentes, para el selector del panel. Si falta, la ruta responde 503. */
   memoryScopes?(): unknown | Promise<unknown>;
+  /**
+   * Ámbito que lee /api/memory sin `scope` (p. ej. el privado del dueño). Si está,
+   * /api/memory/scopes responde `{ ambitos, porDefecto }` en vez de la lista sola.
+   */
+  memoryDefaultScope?(): string | undefined;
   auditVerify(): unknown | Promise<unknown>;
   /** Read-only goals, filtered to the configured owner by the caller. */
   goals?(): unknown | Promise<unknown>;
@@ -219,6 +224,10 @@ async function respondApi(
       case 'memoryScopes':
         if (!deps.memoryScopes) throw new HttpError(503, 'Ámbitos de memoria no disponibles');
         payload = await deps.memoryScopes();
+        if (deps.memoryDefaultScope) {
+          const porDefecto = deps.memoryDefaultScope();
+          if (porDefecto) payload = { ambitos: payload, porDefecto };
+        }
         break;
       case 'audit':
         payload = await deps.auditVerify();

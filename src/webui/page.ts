@@ -10,6 +10,7 @@
 import {
   anuncioPendientes,
   etiquetaAmbito,
+  etiquetaAmbitoPorDefecto,
   etiquetaCampo,
   formatearCampo,
   mensajeDeError,
@@ -52,8 +53,10 @@ export function renderFormatScript(): string {
   var resumenSesion = ${resumenSesion.toString()};
   var anuncioPendientes = ${anuncioPendientes.toString()};
   var etiquetaAmbito = ${etiquetaAmbito.toString()};
+  var etiquetaAmbitoPorDefecto = ${etiquetaAmbitoPorDefecto.toString()};
   return {
     etiquetaAmbito: etiquetaAmbito,
+    etiquetaAmbitoPorDefecto: etiquetaAmbitoPorDefecto,
     anuncioPendientes: anuncioPendientes,
     resumenSesion: resumenSesion,
     tituloPestana: tituloPestana,
@@ -539,7 +542,7 @@ export function renderPage(): string {
           <div class="controles">
             <label class="buscador" for="ambito-memoria">
               Ámbito
-              <select id="ambito-memoria"><option value="">Local (este PC)</option></select>
+              <select id="ambito-memoria"><option value="">Por defecto</option></select>
             </label>
             <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
           </div>
@@ -1342,12 +1345,19 @@ ${renderFormatScript()}
         } catch (error) {
           return;
         }
+        // Sin ámbito, /api/memory lee el ámbito por defecto (el privado del dueño si
+        // está configurado): la primera opción lo dice en vez de «Local».
+        var porDefecto = '';
+        if (ambitos && !Array.isArray(ambitos) && typeof ambitos === 'object') {
+          porDefecto = typeof ambitos.porDefecto === 'string' ? ambitos.porDefecto : '';
+          ambitos = ambitos.ambitos;
+        }
         if (!Array.isArray(ambitos)) return;
         var elegido = lista.value;
-        var opciones = [nodo('option', null, formato.etiquetaAmbito(''))];
+        var opciones = [nodo('option', null, formato.etiquetaAmbitoPorDefecto(porDefecto))];
         opciones[0].value = '';
         ambitos.forEach(function (ambito) {
-          if (typeof ambito !== 'string' || !ambito || ambito === 'local') return;
+          if (typeof ambito !== 'string' || !ambito || ambito === 'local' || ambito === porDefecto) return;
           var opcion = nodo('option', null, formato.etiquetaAmbito(ambito));
           opcion.value = ambito;
           opciones.push(opcion);
