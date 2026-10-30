@@ -133,7 +133,7 @@ En Linux el nuevo controlador exige que el directorio de estado sea privado (700
 
 ## Panel web local
 
-Es opcional: configura `PA_WEB_PORT` y `PA_WEB_TOKEN` por un canal privado antes de arrancar. Sin token, el daemon no inicia el panel. Escucha por defecto en loopback y sus API exigen Bearer. No publiques el token, su URL inicial ni el almacenamiento del navegador. No expongas el puerto a Internet como si tuviera gestión de usuarios.
+Es opcional: configura `PA_WEB_PORT` y `PA_WEB_TOKEN` por un canal privado antes de arrancar. Sin token, el daemon no inicia el panel. Escucha por defecto en loopback, sus API exigen Bearer y solo responde a los nombres locales (`127.0.0.1`, `localhost`, `[::1]`): cualquier otra cabecera Host recibe 403, lo que corta el DNS rebinding. No publiques el token, su URL inicial ni el almacenamiento del navegador. No expongas el puerto a Internet como si tuviera gestión de usuarios.
 
 El panel y Telegram ven las mismas aprobaciones pendientes. La vista web no implica que todas las herramientas estén configuradas o que el daemon esté supervisado.
 
