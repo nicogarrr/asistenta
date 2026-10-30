@@ -243,3 +243,53 @@ export function tituloPestana(pendientes: number): string {
     ? `(${Math.floor(pendientes)}) ${base}`
     : base;
 }
+
+/** Lo que una fila de «Sesiones» enseña: título, cuándo/dónde y un extracto. */
+export interface ResumenSesion {
+  titulo: string;
+  meta: string;
+  extracto: string;
+}
+
+/**
+ * Acepta tanto `Session` (recent: id, scope, title, startedAt, endedAt, summary)
+ * como `SessionHit` (search: sessionId, title, summary, snippet, at).
+ */
+export function resumenSesion(item: unknown, indice: number, ahora: number): ResumenSesion {
+  if (typeof item === 'string') return { titulo: item, meta: '', extracto: '' };
+  const r =
+    item && typeof item === 'object'
+      ? (item as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const texto = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const titulo = texto(r.title) || texto(r.name) || `Conversación ${indice + 1}`;
+  const partes: string[] = [];
+  const cuando =
+    typeof r.startedAt === 'number' ? r.startedAt : typeof r.at === 'number' ? r.at : null;
+  if (cuando !== null && Number.isFinite(cuando) && cuando > 0) {
+    const d = new Date(cuando);
+    const hoy = new Date(ahora);
+    const ayer = new Date(ahora - 86_400_000);
+    const dos = (n: number): string => (n < 10 ? '0' : '') + n;
+    const hora = `${dos(d.getHours())}:${dos(d.getMinutes())}`;
+    const mismoDia = (a: Date, b: Date): boolean =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    if (mismoDia(d, hoy)) partes.push(`Hoy, ${hora}`);
+    else if (mismoDia(d, ayer)) partes.push(`Ayer, ${hora}`);
+    else
+      partes.push(
+        `${dos(d.getDate())}/${dos(d.getMonth() + 1)}${d.getFullYear() === hoy.getFullYear() ? '' : `/${d.getFullYear()}`}, ${hora}`,
+      );
+  }
+  if (r.endedAt === null && typeof r.startedAt === 'number') partes.push('en curso');
+  const ambito = texto(r.scope);
+  if (/^telegram:(group|grupo)/.test(ambito)) partes.push('Grupo de Telegram');
+  else if (ambito.startsWith('telegram:')) partes.push('Telegram');
+  else if (ambito.startsWith('panel') || ambito.startsWith('web')) partes.push('Panel');
+  else if (ambito.startsWith('cli')) partes.push('Terminal');
+  let extracto = texto(r.snippet) || texto(r.summary);
+  if (extracto.length > 220) extracto = `${extracto.slice(0, 217).trimEnd()}…`;
+  return { titulo, meta: partes.join(' · '), extracto };
+}

@@ -14,6 +14,7 @@ import {
   progresoPlan,
   resumenAprobacion,
   resumenMemoria,
+  resumenSesion,
   textoEspera,
   tiempoRestante,
   tituloPestana,
@@ -46,7 +47,9 @@ export function renderFormatScript(): string {
   var progresoPlan = ${progresoPlan.toString()};
   var textoEspera = ${textoEspera.toString()};
   var tituloPestana = ${tituloPestana.toString()};
+  var resumenSesion = ${resumenSesion.toString()};
   return {
+    resumenSesion: resumenSesion,
     tituloPestana: tituloPestana,
     textoEspera: textoEspera,
     resumenMemoria: resumenMemoria,
@@ -342,6 +345,8 @@ export function renderPage(): string {
     .aprobacion .botones button.denegar { border-color: #5b2424; background: #241111; color: var(--mal); }
     .aprobacion .resultado { margin: 8px 0 0; font-size: 13px; }
     .aprobacion.caducada { opacity: 0.6; }
+    .sesion .muted { margin: 2px 0 0; font-size: 12px; }
+    .sesion .extracto { margin: 6px 0 0; font-size: 13px; line-height: 1.4; word-break: break-word; }
     .aprobacion .botones button { white-space: nowrap; }
     .tarjeta-cuerpo.sin-tope { max-height: none; }
     .tarjeta.pendiente { border-color: #6b4f1d; box-shadow: 0 0 0 1px #6b4f1d55, 0 14px 40px #0004; }
@@ -690,20 +695,6 @@ ${renderFormatScript()}
         return null;
       }
 
-      function tituloSesion(sesion, indice) {
-        if (typeof sesion === 'string') return sesion;
-        if (sesion && typeof sesion === 'object') {
-          var claves = ['title', 'name', 'subject', 'label', 'chatId', 'sessionId', 'id'];
-          for (var i = 0; i < claves.length; i += 1) {
-            var valor = sesion[claves[i]];
-            if (valor !== undefined && valor !== null && String(valor) !== '') {
-              return String(valor);
-            }
-          }
-        }
-        return 'Sesión ' + (indice + 1);
-      }
-
       function pintarSesiones(contenedor, datos) {
         contenedor.replaceChildren();
         var sesiones = listaDeSesiones(datos);
@@ -726,10 +717,13 @@ ${renderFormatScript()}
           var sesion = sesiones[i];
           var tarjeta = document.createElement('article');
           tarjeta.className = 'sesion';
-          tarjeta.appendChild(nodo('h3', null, tituloSesion(sesion, i)));
+          var resumen = formato.resumenSesion(sesion, i, Date.now());
+          tarjeta.appendChild(nodo('h3', null, resumen.titulo));
+          if (resumen.meta) tarjeta.appendChild(nodo('p', 'muted', resumen.meta));
+          if (resumen.extracto) tarjeta.appendChild(nodo('p', 'extracto', resumen.extracto));
           if (sesion && typeof sesion === 'object') {
             var detalles = document.createElement('details');
-            detalles.appendChild(nodo('summary', null, 'Detalles'));
+            detalles.appendChild(nodo('summary', null, 'Detalles técnicos'));
             detalles.appendChild(renderValor(sesion, 1));
             tarjeta.appendChild(detalles);
           } else {
