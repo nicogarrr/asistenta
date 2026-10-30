@@ -11,6 +11,7 @@ Deterministas, sin modelo. Ejemplos:
 | «pon la tele» / «pon la tv» / «ponme la tele» (solas, sin destino) | encender (decisión de Nico, 30-oct-2026); si ya estaba encendida contesta «La tele ya estaba encendida.» |
 | «volumen a 20» | volumen absoluto (necesita Glasshouse) |
 | «sube el volumen», «baja 5», «más alto» | pulsaciones del mando (`volumeStep`, sin Glasshouse) |
+| «volumen +», «volumen -5», «vol −», «canal +», «canal -» | como los botones del mando: paso de volumen (3 / N); canal arriba/abajo |
 | «silencio» / «apaga el sonido» / «quítale el sonido» / «quita el silencio» | `mute` |
 | «canal 5», «pon la 1», «siguiente canal» | `channel` (dígitos + ENTER, CHANNELUP/DOWN) |
 | «abre Netflix», «pon YouTube», «quiero ver DAZN» | `launch` por nombre |

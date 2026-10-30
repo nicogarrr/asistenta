@@ -259,6 +259,24 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (OTRO_APARATO.test(t)) return null;
   let m: RegExpExecArray | null;
 
+  // «volumen +», «vol -», «volumen +5», «canal +»: como los botones del mando.
+  // La normalización convierte «+» en « plus » (Disney+), y «−»/«–» del móvil en
+  // espacio; se leen aquí antes de perderlos.
+  m = /^(?:(?:el|la) )?(volumen|vol|canal) ?(plus|-) ?(\d{1,2})?$/.exec(
+    normalizeOrder(text.replace(/[\u2212\u2013\u2014]/g, '-')),
+  );
+  if (m?.[1] && m[2]) {
+    const up = m[2] === 'plus';
+    if (m[1] === 'canal') return m[3] ? null : { action: 'channel', channel: up ? 'up' : 'down' };
+    const n = m[3] === undefined ? DEFAULT_VOLUME_STEP : Number(m[3]);
+    if (n > 0) {
+      const steps = Math.min(MAX_VOLUME_STEP, n) * (up ? 1 : -1);
+      return n > MAX_VOLUME_STEP
+        ? { action: 'volumeStep', steps, requested: n }
+        : { action: 'volumeStep', steps };
+    }
+  }
+
   // «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla BACK del mando.
   if (
     new RegExp(
