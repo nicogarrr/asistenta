@@ -440,6 +440,7 @@ Usage:
   pa stop                 Linux: cierre graceful autenticado, sin matar por PID
   pa restart              no disponible sin verificar supervisor
   pa doctor               check the environment
+  pa iniciar [--solo-comprobar] [--sin-red] [--json]  comprueba todo (verde/rojo) y arranca si está listo
   pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
 `;
 
@@ -571,6 +572,16 @@ export async function main(argv: string[]): Promise<number> {
       return controlledDaemon(chatCommand);
     case 'serve':
       return controlledDaemon(serveCommand);
+    case 'iniciar': {
+      const { iniciarCommand, realPreflightDeps } = await import('./iniciar.js');
+      return iniciarCommand(rest, {
+        deps: realPreflightDeps,
+        serve: () => controlledDaemon(serveCommand),
+        write: (text) => process.stdout.write(text),
+        writeErr: (text) => process.stderr.write(text),
+        color: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR,
+      });
+    }
     case 'stop': {
       if (rest.length) {
         process.stderr.write('uso: pa stop\n');

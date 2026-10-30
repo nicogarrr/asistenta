@@ -12,6 +12,18 @@ O directamente `powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windo
 
 Requisitos ya preparados: Node >=24, vault DPAPI configurado con Telegram y allowlist, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
 
+## Antes de instalar: `pa iniciar`
+
+```powershell
+node dist/cli.js iniciar --solo-comprobar
+```
+
+Repasa de una vez lo que necesita el daemon y lo pinta en verde/rojo con el arreglo de cada fallo: Node 24, vault, token de Telegram (lo valida contra Telegram), usuarios autorizados, claves del modelo (sin gastar llamadas), tele (solo abre y cierra una conexión a los puertos 3001/3000 de webOS, no manda órdenes), Computer Use, correo y espacio en disco. Tele, correo y Computer Use son opcionales: salen como aviso, no impiden arrancar.
+
+- Sin `--solo-comprobar`, si no hay ningún ❌ arranca el daemon igual que `pa serve`.
+- `--sin-red` no toca Telegram ni la tele; `--json` da la lista en JSON.
+- Código de salida: 0 listo (aunque haya avisos), 1 algo impide arrancar, 2 opción desconocida.
+
 ## Qué arranca
 
 Dos tareas AtLogOn en la carpeta del usuario: `browserd-sidecar` y `personal-agent-daemon`. Son Limited/Interactive, ocultas y `IgnoreNew`. Reinstalar reemplaza las definiciones, no añade copias ni mata una instancia activa. Si se cambia configuración con una instancia activa, tendrá efecto en su siguiente arranque. `--start` solo inicia tareas que no están Running.
