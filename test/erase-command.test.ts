@@ -107,7 +107,7 @@ describe('cableado', () => {
   });
   it('cli.ts: el dueño en privado, y la confirmación se mira antes que cualquier comando', () => {
     const src = readFileSync(join(__dirname, '../src/cli.ts'), 'utf8');
-    expect(src).toMatch(/case 'borrar_chat':\s*return cmdBorrarChat\(inbound\)/);
+    expect(src).toMatch(/names: \['borrar_chat'\],\s*run: \(inbound\) => cmdBorrarChat\(inbound\)/);
     const consume = src.indexOf('eraseConfirm.consume(');
     const parse = src.indexOf('parseCommand(inbound.text)');
     expect(consume).toBeGreaterThan(0);

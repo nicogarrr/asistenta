@@ -16,7 +16,9 @@ describe('/help del bot', () => {
 
   it('solo documenta comandos que el despachador atiende', () => {
     for (const command of helpCommands()) {
-      expect(cli, `/${command} sale en /help pero no hay case`).toContain(`case '${command}':`);
+      expect(cli, `/${command} sale en /help pero no está en commandTable`).toMatch(
+        new RegExp(`names: \\[[^\\]]*'${command}'`),
+      );
     }
   });
 
@@ -49,7 +51,7 @@ describe('/start', () => {
   });
 
   it('el despachador responde a /start con la bienvenida y a /help con la ayuda', () => {
-    expect(cli).toMatch(/case 'start':\s*return cmdStart\(inbound\);/);
-    expect(cli).toMatch(/case 'help':\s*return cmdHelp\(inbound\);/);
+    expect(cli).toMatch(/names: \['start'\],\s*run: \(inbound\) => cmdStart\(inbound\)/);
+    expect(cli).toMatch(/names: \['help'\],\s*run: \(inbound\) => cmdHelp\(inbound\)/);
   });
 });

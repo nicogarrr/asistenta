@@ -11,7 +11,7 @@ describe('Telegram command discovery', () => {
     for (const { command, description } of TELEGRAM_COMMANDS) {
       expect(command).toMatch(/^[a-z_]{1,32}$/);
       expect(description.length).toBeLessThanOrEqual(256);
-      expect(cli).toContain(`case '${command}':`);
+      expect(cli).toMatch(new RegExp(`names: \\[[^\\]]*'${command}'`));
     }
   });
   it('describes recording and live photos as different operations', () => {
