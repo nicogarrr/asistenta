@@ -249,6 +249,7 @@ import {
   summarizeRoutine,
   validateSchedule,
 } from './routines.js';
+import { computerSwitchCommand } from './screen/computer-switch.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -4587,6 +4588,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, reply, { quote: true });
   };
 
+  /** /ordenador [on|off]: interruptor de Computer Use en caliente (solo el dueño, en privado). */
+  const cmdOrdenador = async (inbound: Inbound, args: string): Promise<void> => {
+    const reply = computerSwitchCommand(args, {
+      isOwner: isOwnerDm(inbound, vigilanteOwnerId),
+      enabled: () => config.computerUse !== false,
+      set: (on) => {
+        config.computerUse = on;
+        log.warn(`Computer Use ${on ? 'activado' : 'desactivado'} desde el chat (/ordenador)`);
+      },
+    });
+    await say(inbound, reply, { quote: true });
+  };
+
   /** /consumo [hoy|semana|mes|N]: tokens y coste estimado por día y modelo (solo lectura). */
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
@@ -6639,6 +6653,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdRecordatorios(inbound, command.args);
               case 'tv':
                 return cmdTv(inbound, command.args);
+              case 'ordenador':
+                return cmdOrdenador(inbound, command.args);
               case 'consumo':
               case 'uso':
                 return cmdConsumo(inbound, command.args);
