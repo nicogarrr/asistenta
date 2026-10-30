@@ -6,6 +6,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { unapprovableOperation } from './approval-text.js';
 import { hashArgs } from './audit/calls.js';
+import {
+  egressHost,
+  egressTaintReason,
+  egressUrlOf,
+  taintSourceOf,
+  urlCarriesData,
+} from './egress-taint.js';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { stableStringify } from './utils.js';
@@ -123,6 +130,13 @@ export interface GateOptions {
    * those always ask.
    */
   grantWindowMs?: number;
+  /**
+   * Puerta de exfiltración tras contenido privado (src/egress-taint.ts). Activa por
+   * defecto: una vez que el turno ha leído algo privado, una petición con datos a un
+   * dominio que el turno aún no ha contactado pregunta, aunque `fetch` sea libre.
+   * `PA_TAINT_GATE=0` en el entorno la apaga (decisión explícita de Nico).
+   */
+  egressTaint?: boolean;
   /**
    * Skip every prompt and allow everything except the `deny` list.
    *
@@ -367,6 +381,11 @@ export class Gate {
   readonly #allowUntilPayment: boolean;
   readonly #stageResolver: ((call: ToolCall) => PurchaseStage | undefined) | undefined;
   readonly #grantWindowMs: number;
+  readonly #egressTaint: boolean;
+  /** sessionId -> fuente del primer contenido privado que entró en el turno. */
+  readonly #tainted = new Map<string, string>();
+  /** sessionId -> hosts que este turno ya ha contactado (antes o después del taint). */
+  readonly #contactedHosts = new Map<string, Set<string>>();
   /** SQLite file for `always` scopes; undefined means memory only. */
   readonly #dbPath: string | undefined;
   /** Tools with a standing `always` grant. Persisted when `dbPath` is set. */
@@ -410,6 +429,7 @@ export class Gate {
     this.#allowUntilPayment = options.allowUntilPayment ?? false;
     this.#stageResolver = options.stageOf;
     this.#grantWindowMs = options.grantWindowMs ?? 90_000;
+    this.#egressTaint = options.egressTaint ?? process.env.PA_TAINT_GATE !== '0';
     this.#dbPath = options.dbPath;
     // Standing grants from an earlier run are part of the policy, so they are
     // loaded before anything can be checked against them.
@@ -972,6 +992,52 @@ export class Gate {
     this.#unsettled.delete(sessionId);
     this.#grants.delete(sessionId);
     this.#scopes.delete(sessionId);
+    this.#tainted.delete(sessionId);
+    this.#contactedHosts.delete(sessionId);
+  }
+
+  /**
+   * Marca el turno como contaminado por contenido privado que no pasó por una
+   * herramienta (p. ej. un turno disparado por un correo entrante). Solo endurece.
+   */
+  taintSession(sessionId: string, source: string): void {
+    if (!this.#tainted.has(sessionId)) this.#tainted.set(sessionId, source);
+  }
+
+  /** La fuente del contenido privado de este turno, o null si aún está limpio. */
+  taintOf(sessionId: string): string | null {
+    return this.#tainted.get(sessionId) ?? null;
+  }
+
+  /**
+   * El motivo para preguntar por una petición saliente tras contenido privado, o
+   * null si la llamada no es una salida a la red, el turno está limpio, el host ya
+   * se contactó en este turno o la URL no lleva datos.
+   */
+  #egressTaintAsk(sessionId: string, call: ToolCall): string | null {
+    if (!this.#egressTaint) return null;
+    const source = this.#tainted.get(sessionId);
+    if (!source) return null;
+    const url = egressUrlOf(call.tool, call.args);
+    if (!url) return null;
+    const host = egressHost(url);
+    if (host && this.#contactedHosts.get(sessionId)?.has(host)) return null;
+    if (host && !urlCarriesData(url)) return null;
+    return egressTaintReason(source, host ?? url);
+  }
+
+  /** Lo que una llamada que SÍ se va a ejecutar deja en el estado del turno. */
+  #noteAllowed(sessionId: string, call: ToolCall): void {
+    const url = egressUrlOf(call.tool, call.args);
+    const host = url ? egressHost(url) : null;
+    if (host) {
+      if (!this.#contactedHosts.has(sessionId)) this.#contactedHosts.set(sessionId, new Set());
+      this.#contactedHosts.get(sessionId)?.add(host);
+    }
+    if (!this.#tainted.has(sessionId)) {
+      const source = taintSourceOf(call.tool, call.args);
+      if (source) this.#tainted.set(sessionId, source);
+    }
   }
 
   /**
@@ -1227,6 +1293,12 @@ export class Gate {
   }
 
   async check(sessionId: string, call: ToolCall): Promise<Decision> {
+    const decision = await this.#check(sessionId, call);
+    if (decision.verdict === 'allow') this.#noteAllowed(sessionId, call);
+    return decision;
+  }
+
+  async #check(sessionId: string, call: ToolCall): Promise<Decision> {
     this.registerSession(sessionId);
     const approved = this.#approved.get(sessionId);
     if (!approved) throw new Error(`gate session was not registered: ${sessionId}`);
@@ -1242,7 +1314,11 @@ export class Gate {
     const gestionEjecutar = this.#isGestionEjecutar(call);
     // The gestor's per-step effect guard: a reason string here forces the ask
     // path below, past every automatic allowance. Deny rules still win.
-    const forced = this.#forcedAsk.get(sessionId)?.(call) ?? null;
+    // La puerta de exfiltración entra por el mismo camino: una petición con datos a
+    // un dominio nuevo tras leer algo privado pregunta por encima de la lista libre,
+    // los «Siempre», fullControl y la ventana de 90 s.
+    const forced =
+      this.#forcedAsk.get(sessionId)?.(call) ?? this.#egressTaintAsk(sessionId, call) ?? null;
 
     const fp = this.#fingerprint(call);
     if (
