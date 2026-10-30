@@ -150,6 +150,18 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   return null;
 }
 
+/**
+ * El texto libre que una búsqueda envía a un servicio externo (buscador, tienda,
+ * catálogo de libros), o null. No es una URL, pero es otro canal de salida: solo se
+ * pregunta si repite un trozo literal del contenido privado leído en el turno.
+ */
+export function searchQueryOf(tool: string, args: Record<string, unknown>): string | null {
+  if (args.action !== 'search') return null;
+  if (tool !== 'web' && tool !== 'checkout' && tool !== 'book') return null;
+  const q = typeof args.query === 'string' ? args.query.trim() : '';
+  return q || null;
+}
+
 /** Hostname normalizado (minúsculas, sin punto final), o null si la URL no parsea. */
 export function egressHost(url: string): string | null {
   try {
