@@ -298,6 +298,15 @@ export function amountWithinCap(amountCents: number, cap: number): boolean {
 const COMPUTER_NEVER_SCOPED = new Set(['type', 'key', 'click', 'drag']);
 
 /** Acciones de `media` que abren cámara o micrófono: jamás un permiso reutilizable. */
+/** media play con target=tele: nunca libre ni cubierto por «siempre»/sesión. */
+function isMediaPlayOnTv(c: ToolCall): boolean {
+  return (
+    c.tool === 'media' &&
+    argString(c.args, 'action') === 'play' &&
+    argString(c.args, 'target') === 'tele'
+  );
+}
+
 const MEDIA_PRIVATE_ACTIONS = new Set([
   'camera_photo',
   'camera_clip',
@@ -494,7 +503,10 @@ export class Gate {
         verdict: 'allow',
         reason: 'tool:action is on the allow list',
         match: (c) =>
-          (options.allowActions ?? []).includes(`${c.tool}:${argString(c.args, 'action')}`),
+          (options.allowActions ?? []).includes(`${c.tool}:${argString(c.args, 'action')}`) &&
+          // «media:play» libre es para los altavoces del PC. En la tele abre un servidor en
+          // la red de casa y actúa sobre otro aparato: eso pregunta siempre.
+          !isMediaPlayOnTv(c),
       },
       {
         id: 'deny-write-protected',
@@ -714,6 +726,7 @@ export class Gate {
     ) {
       return true;
     }
+    if (isMediaPlayOnTv(c)) return true;
     if (
       c.tool === 'media' &&
       (MEDIA_PRIVATE_ACTIONS.has(action) ||

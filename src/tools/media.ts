@@ -71,6 +71,11 @@ export interface MediaToolDeps {
    * Wraps out-loud playback. The wake listener is listening on the same speakers the
    * audio comes out of, so without this the agent answers itself.
    */
+  /**
+   * Plays an already-playable MP3 on the TV. Takes ownership of the file (deletes it
+   * when done). Absent when the TV target is off (PA_AUDIO_TELE) or no TV is paired.
+   */
+  castToTv?: (file: string) => Promise<{ ok: boolean; message: string }>;
   beforePlayback?: () => void;
   afterPlayback?: () => void;
 }
@@ -88,6 +93,12 @@ const Params = Type.Object({
   ]),
   volume: Type.Optional(
     Type.Number({ description: 'For play: 0-100. Default 100 (as loud as asked).' }),
+  ),
+  target: Type.Optional(
+    Type.Union([Type.Literal('pc'), Type.Literal('tele')], {
+      description:
+        'For play: where it sounds. "pc" (default) = the PC speakers; "tele" = the LG TV ("en la tele").',
+    }),
   ),
   seconds: Type.Optional(Type.Number({ description: 'For the clip actions: 1-60. Default 10.' })),
   fps: Type.Optional(Type.Number({ description: 'For screen_clip: 1-15. Default 8.' })),
@@ -122,6 +133,8 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
       'path: the audio is already remembered per chat, so action=play alone plays the last one',
       'they sent, and volume=0-100 sets how loud (default 100). This is the action to use for',
       '"suéltalo", "reproduce ese audio", "sóname lo que te mandé", "ponlo a 40".',
+      'target=tele plays it on the TV instead ("reprodúcelo en la tele"); target=pc (default)',
+      'is the PC ("en el ordenador", "por los altavoces"). volume only applies to the PC.',
       'action=list_audio reports which audios are still remembered and when each arrived,',
       'with its transcript when it has one. Use it when the user says "el último" and you',
       'need to tell them which one you are about to play.',
@@ -146,7 +159,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
     execute: async (_id, args) => {
       switch (args.action) {
         case 'play':
-          return playReceived(deps, clamp(args.volume, 100, 0, 100));
+          return playReceived(deps, clamp(args.volume, 100, 0, 100), args.target ?? 'pc');
 
         case 'list_audio':
           return listAudio(deps);
@@ -249,7 +262,13 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
  * Playback is wrapped so the wake-word listener goes quiet first. The speakers are
  * the microphone's other half, and an agent that hears its own playback answers it.
  */
-async function playReceived(deps: MediaToolDeps, volume: number) {
+async function playReceived(deps: MediaToolDeps, volume: number, target: 'pc' | 'tele' = 'pc') {
+  if (target === 'tele' && !deps.castToTv) {
+    return ok(
+      'Reproducir en la tele está apagado o no hay tele emparejada. Se activa con PA_AUDIO_TELE=1 (y la tele emparejada con pa tv). Puedo sonarlo en el PC si quieres.',
+      { played: false, reason: 'tele off', target },
+    );
+  }
   const audio = deps.recall.last(deps.chatKey);
   if (!audio) {
     return ok('No me queda ningún audio tuyo que pueda reproducir. Mándame uno y te lo suelto.', {
@@ -272,6 +291,13 @@ async function playReceived(deps: MediaToolDeps, volume: number) {
   let playable: string | null = null;
   try {
     playable = await toPlayableAudio(bytes, audio.mimeType);
+    if (target === 'tele' && deps.castToTv) {
+      // El fichero pasa a la tele: castToTv lo borra cuando la tele ya lo ha bajado.
+      const file = playable;
+      playable = null;
+      const res = await deps.castToTv(file);
+      return ok(res.message, { played: res.ok, target, audioAt: audio.at });
+    }
     deps.beforePlayback?.();
     const res = await playAudioFile(playable, { volume });
     if (!res.ok) {
