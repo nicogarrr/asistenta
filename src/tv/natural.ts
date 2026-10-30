@@ -288,8 +288,10 @@ export function parseTvCommand(text: string): TvIntent | null {
     if (level !== null && level >= 0 && level <= 100) return { action: 'volume', level };
   }
   // Volumen relativo: "sube el volumen", "baja 5", "sube un poco", "bajale dos".
+  // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
+  // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco(?: mas)?| un poquito(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?)?)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
+    `^(sube|subele|baja|bajale)(?: el)?(?: volumen)?(?: un poco(?: mas)?| un poquito(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?)?)?(?: (?:el|al) volumen)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
   ).exec(t);
   if (m?.[1]) {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
