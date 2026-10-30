@@ -57,7 +57,12 @@ import { createFactorySync } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
-import { GoalRunner, type GoalTickResult, isGoalRoutine } from './goals/runner.js';
+import {
+  GOAL_ROUTINE_PREFIX,
+  GoalRunner,
+  type GoalTickResult,
+  isGoalRoutine,
+} from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { IphoneClient } from './iphone/client.js';
 import { LearnRecorder } from './learn.js';
@@ -6992,6 +6997,22 @@ export function runMemoryCommand(memory: MemoryStore, scope: string): string {
 }
 
 /**
+ * `objetivo:<id>` is the schedule a goal rides, not a loose routine. Deleting
+ * or pausing it through /cron left the goal `active` with no ticks, forever
+ * and silently (and /cron reanudar ticked a paused goal behind its back): the
+ * goal's state and its timer must move together, which only the goal actions
+ * do. So /cron refuses and says which words do it.
+ */
+function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanudar'): string {
+  const id = name.slice(GOAL_ROUTINE_PREFIX.length).trim();
+  const action = verb === 'borrar' ? 'cancela' : verb === 'pausar' ? 'pausa' : 'reanuda';
+  return [
+    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'pausado pero con ticks' : 'activo pero sin ticks'}.`,
+    `Para eso dime «${action} el objetivo ${id}» (o pídeme la lista de objetivos).`,
+  ].join('\n');
+}
+
+/**
  * The whole /cron command, free of I/O so its canaries run against a real
  * Store and RoutineRunner without a daemon (auditor #135 ronda 2). Returns
  * the exact reply text; the caller owns delivery.
@@ -7010,6 +7031,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     if (!routine || routine.kind !== 'schedule') {
       return `No tengo ninguna rutina programada llamada "${name}".`;
     }
+    if (isGoalRoutine(routine)) return goalRoutineCronRefusal(routine.name, 'borrar');
     deps.store.deleteRoutine(routine.scope, routine.name);
     // Live without restart: the runner drops the timer on this sync. An
     // execution already in flight is NOT cancelled (the runner awaits its
@@ -7028,6 +7050,9 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
     if (!routine || routine.kind !== 'schedule') {
       return `No tengo ninguna rutina programada llamada "${name}".`;
+    }
+    if (isGoalRoutine(routine)) {
+      return goalRoutineCronRefusal(routine.name, resuming ? 'reanudar' : 'pausar');
     }
     if (routine.enabled === resuming) {
       return resuming
