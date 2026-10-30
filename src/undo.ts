@@ -52,8 +52,8 @@ interface Meta {
 }
 
 /** Llamar justo antes de escribir. Nunca lanza: deshacer no puede romper una escritura. */
-export function recordBeforeWrite(path: string, now: Date = new Date()): void {
-  if (!undoDir) return;
+export function recordBeforeWrite(path: string, now: Date = new Date()): string | undefined {
+  if (!undoDir) return undefined;
   try {
     const existed = existsSync(path) && statSync(path).isFile();
     const tooBig = existed && statSync(path).size > MAX_FILE_BYTES;
@@ -68,16 +68,24 @@ export function recordBeforeWrite(path: string, now: Date = new Date()): void {
     for (const old of all.slice(0, Math.max(0, all.length - MAX_ENTRIES))) {
       rmSync(join(undoDir, old), { recursive: true, force: true });
     }
+    return dir;
   } catch {
     // Mejor una escritura sin copia que una escritura que falla por la copia.
+    return undefined;
   }
 }
 
-/** Llamar justo después de escribir: anota el hash de lo escrito para detectar cambios posteriores. */
-export function recordAfterWrite(content: string): void {
-  if (!undoDir || !lastDir) return;
+/**
+ * Llamar justo después de escribir: anota el hash de lo escrito para detectar
+ * cambios posteriores. `entry` es lo que devolvió `recordBeforeWrite` para ESTA
+ * escritura: con dos escrituras solapadas (otra herramienta, otro hilo) el
+ * global `lastDir` apunta a la última copia y el hash acababa en la entrada
+ * equivocada, dejando la primera escritura sin poder deshacerse.
+ */
+export function recordAfterWrite(content: string, entry: string | undefined = lastDir): void {
+  if (!undoDir || !entry) return;
   try {
-    const f = join(lastDir, 'meta.json');
+    const f = join(entry, 'meta.json');
     const meta = JSON.parse(readFileSync(f, 'utf8')) as Meta;
     meta.writtenSha = sha(content);
     writeFileSync(f, JSON.stringify(meta), 'utf8');
