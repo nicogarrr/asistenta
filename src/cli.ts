@@ -2648,7 +2648,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
-  const routineRunner = new RoutineRunner({ store, run: runRoutineFire });
+  // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
+  // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 lo desactiva.
+  const routineRunner = new RoutineRunner({
+    store,
+    run: runRoutineFire,
+    catchUp: process.env.PA_ROUTINE_CATCHUP !== '0',
+  });
   // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
   // so a job due this minute cannot also fire fresh. At least once, never "exactly
   // once": see deliverMissedReminders.
