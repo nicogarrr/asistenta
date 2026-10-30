@@ -98,6 +98,6 @@ describe('/cron (lista) con cabecera en negrita', () => {
     const body = src.slice(src.indexOf('const cmdCron = async')).slice(0, 1500);
     expect(body).toContain('marksWithTitles(\n      runCronCommand(');
     expect(body).toContain('isCronTitle,');
-    expect(body).toContain("await say(inbound, text, { quote: true, format: 'marks' });");
+    expect(body).toContain("await say(inbound, text, { quote: true, format: 'marks', buttons });");
   });
 });

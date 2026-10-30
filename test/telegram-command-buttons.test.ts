@@ -11,7 +11,7 @@ import {
   TelegramChannel,
 } from '../src/channels/telegram.js';
 import type { Inbound } from '../src/channels/types.js';
-import { watchStopButtons } from '../src/cli.js';
+import { cronListButtons, watchStopButtons } from '../src/cli.js';
 
 const harness = vi.hoisted(() => {
   const sent: Array<{
@@ -271,5 +271,44 @@ describe('/vigilando trae un botón por página', () => {
     expect(watchStopButtons([])).toBeUndefined();
     const many = Array.from({ length: 12 }, (_, i) => ({ id: `w${i}`, label: `P${i}`, url: 'u' }));
     expect(watchStopButtons(many)).toHaveLength(8);
+  });
+});
+
+describe('/cron: Pausar y Reanudar con un toque', () => {
+  it('pausa y reanudar se leen como la orden tecleada', () => {
+    const b = commandButton('⏸ Pausar resumen', 'cron', 'resumen', 'pausa');
+    expect(b?.action).toBe('cmd:cron pausa resumen');
+    expect(commandFromCallback('cmd:cron pausa resumen')).toBe('/cron pausa resumen');
+    expect(commandFromCallback('cmd:cron reanudar resumen')).toBe('/cron reanudar resumen');
+  });
+
+  it('borrar, add o comando nunca van en un botón', () => {
+    expect(commandButton('x', 'cron', 'resumen', 'borra')).toBeUndefined();
+    expect(commandButton('x', 'cron', 'resumen')).toBeUndefined();
+    expect(commandFromCallback('cmd:cron borra resumen')).toBeUndefined();
+    expect(commandFromCallback('cmd:cron del resumen')).toBeUndefined();
+    expect(commandFromCallback('cmd:cron comando ls')).toBeUndefined();
+    expect(commandFromCallback('cmd:cron resumen')).toBeUndefined();
+    expect(commandFromCallback('cmd:dejar_de_vigilar pausa a1')).toBeUndefined();
+  });
+
+  it('pulsar «Pausar» entra como /cron pausa <nombre>', async () => {
+    await makeChannel();
+    await press('cmd:cron pausa resumen');
+    expect(received[0]).toMatchObject({ text: '/cron pausa resumen', chatId: '42' });
+  });
+
+  it('la lista trae Pausar para las activas y Reanudar para las pausadas', () => {
+    const buttons = cronListButtons([
+      { name: 'resumen', kind: 'schedule', schedule: '0 8 * * *', enabled: true },
+      { name: 'backup', kind: 'schedule', schedule: '0 3 * * *', enabled: false },
+      { name: 'grabada', kind: 'learned', schedule: null, enabled: true },
+      { name: 'con espacios', kind: 'schedule', schedule: '0 9 * * *', enabled: true },
+    ]);
+    expect(buttons).toEqual([
+      { label: '⏸ Pausar resumen', action: 'cmd:cron pausa resumen' },
+      { label: '▶️ Reanudar backup', action: 'cmd:cron reanudar backup' },
+    ]);
+    expect(cronListButtons([])).toBeUndefined();
   });
 });

@@ -1564,36 +1564,50 @@ export const COMMAND_CALLBACK_PREFIX = 'cmd:';
 /** Aviso de un botón de orden que ya no se reconoce. */
 export const STALE_BUTTON = 'Este botón ya no sirve. Escribe la orden a mano.';
 /**
- * Órdenes que un botón puede lanzar. Lista cerrada: un callback_data inventado no
- * puede lanzar otra orden, y cada una pasa por el mismo camino (y permisos) que si
- * se tecleara.
+ * Órdenes que un botón puede lanzar, con las subórdenes permitidas ('' = sin
+ * suborden). Lista cerrada: un callback_data inventado no puede lanzar otra orden,
+ * y cada una pasa por el mismo camino (y permisos) que si se tecleara. Solo
+ * acciones que se deshacen con otro toque o que el usuario ve en su lista: borrar
+ * una rutina sigue pidiendo escribirlo.
  */
-const BUTTON_COMMANDS: ReadonlySet<string> = new Set(['dejar_de_vigilar']);
+const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['dejar_de_vigilar', new Set([''])],
+  ['cron', new Set(['pausa', 'reanudar'])],
+]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 
+function allowed(command: string, sub: string): boolean {
+  return BUTTON_COMMANDS.get(command)?.has(sub) ?? false;
+}
+
 /**
- * Botón en línea que equivale a escribir `/<orden> <arg>`. Devuelve undefined si la
- * orden no está en la lista o el argumento no es un id simple (o no cabe en los 64
- * bytes de callback_data de Telegram).
+ * Botón en línea que equivale a escribir `/<orden> [suborden] <arg>`. Devuelve
+ * undefined si la orden (o suborden) no está en la lista, si el argumento no es un
+ * nombre o id simple, o si no cabe en los 64 bytes de callback_data de Telegram.
  */
 export function commandButton(
   label: string,
   command: string,
   arg: string,
+  sub = '',
 ): { label: string; action: string } | undefined {
-  const action = `${COMMAND_CALLBACK_PREFIX}${command} ${arg}`;
-  if (!BUTTON_COMMANDS.has(command) || !BUTTON_ARG.test(arg) || action.length > 64)
-    return undefined;
+  const action = `${COMMAND_CALLBACK_PREFIX}${command} ${sub ? `${sub} ` : ''}${arg}`;
+  if (!allowed(command, sub) || !BUTTON_ARG.test(arg) || action.length > 64) return undefined;
   const short = label.length > 40 ? `${label.slice(0, 39)}…` : label;
   return { label: short, action };
 }
 
-/** El texto de orden (`/dejar_de_vigilar abc`) de un botón, o undefined si no vale. */
+/** El texto de orden (`/cron pausa resumen`) de un botón, o undefined si no vale. */
 export function commandFromCallback(data: string): string | undefined {
   if (!data.startsWith(COMMAND_CALLBACK_PREFIX)) return undefined;
-  const m = /^([a-z_]{1,32}) (\S+)$/.exec(data.slice(COMMAND_CALLBACK_PREFIX.length));
-  if (!m?.[1] || !m[2] || !BUTTON_COMMANDS.has(m[1]) || !BUTTON_ARG.test(m[2])) return undefined;
-  return `/${m[1]} ${m[2]}`;
+  const m = /^([a-z_]{1,32}) (?:([a-z]{1,16}) )?(\S+)$/.exec(
+    data.slice(COMMAND_CALLBACK_PREFIX.length),
+  );
+  const command = m?.[1];
+  const sub = m?.[2] ?? '';
+  const arg = m?.[3];
+  if (!command || !arg || !allowed(command, sub) || !BUTTON_ARG.test(arg)) return undefined;
+  return `/${command} ${sub ? `${sub} ` : ''}${arg}`;
 }
 
 export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
