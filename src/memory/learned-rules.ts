@@ -236,8 +236,8 @@ export function learnFromTurn(opts: {
     const n = opts.forgetScopes
       ? learnedRules(opts.memory, opts.forgetScopes).findIndex((e) => e.id === outcome.id) + 1
       : 0;
-    // Solo con un número que /olvida acepta (sale en /aprendido: del 1 al 15).
-    const how = n >= 1 && n <= 15 ? ` (/olvida ${n} para borrarla)` : '';
+    // Solo con un número que /olvida acepta (sale en /aprendido).
+    const how = n >= 1 && n <= MAX_LEARNED_RULES ? ` (/olvida ${n} para borrarla)` : '';
     return { text, line: `📝 Aprendido: ${outcome.rule}${how}`, outcome };
   }
   if (outcome.status === 'unsafe') {
@@ -255,7 +255,9 @@ export function formatLearnedRules(rules: readonly MemoryEntry[]): string {
   if (!rules.length) {
     return 'Todavía no he aprendido ninguna regla. Cuando me corrijas («no, así no», «prefiero…»), la guardo sola.';
   }
-  const shown = rules.slice(0, 15);
+  // Todas las que se guardan (el tope): antes salían 15 de 30 y las demás, que siguen
+  // entrando en los turnos, no se veían ni se podían borrar. Telegram trocea si es largo.
+  const shown = rules.slice(0, MAX_LEARNED_RULES);
   const lines = shown.map((r, i) => `${i + 1}. ${r.text} (${r.date})`);
   if (rules.length > shown.length) lines.push(`… y ${rules.length - shown.length} más.`);
   return [
@@ -274,9 +276,9 @@ export function forgetLearnedRule(
 ): string {
   const n = Number.parseInt(arg.trim(), 10);
   const rules = learnedRules(memory, scopes);
-  if (!/^\d+$/.test(arg.trim()) || n < 1 || n > Math.min(rules.length, 15)) {
+  if (!/^\d+$/.test(arg.trim()) || n < 1 || n > Math.min(rules.length, MAX_LEARNED_RULES)) {
     return rules.length
-      ? `Uso: /olvida <número> (de 1 a ${Math.min(rules.length, 15)}, como salen en /aprendido)`
+      ? `Uso: /olvida <número> (de 1 a ${Math.min(rules.length, MAX_LEARNED_RULES)}, como salen en /aprendido)`
       : 'No hay reglas aprendidas que borrar.';
   }
   const target = rules[n - 1] as MemoryEntry;
