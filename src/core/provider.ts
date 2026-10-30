@@ -71,6 +71,42 @@ export function goHeaders(sessionId: string | undefined): Record<string, string>
   return headers;
 }
 
+/**
+ * PA_MODELS (config.extraModels): ids que /modelo puede elegir además de
+ * PA_MODEL y PA_FALLBACK_MODEL, sin repetir esos dos. Mismo endpoint y auth;
+ * nunca se usan solos: solo si el dueño los elige.
+ */
+export function extraModelIds(
+  config: Pick<Config, 'model' | 'fallbackModel' | 'extraModels'>,
+): string[] {
+  const taken = new Set([config.model, config.fallbackModel ?? '']);
+  const out: string[] = [];
+  for (const raw of config.extraModels ?? []) {
+    const id = raw.trim();
+    if (id === '' || taken.has(id)) continue;
+    taken.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function extraModelDef(config: Config, id: string) {
+  const c = resolveModelCaps({ ...config, model: id }, { envOverrides: false });
+  return {
+    id,
+    name: id,
+    api: 'openai-completions' as const,
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    ...(isGoogleEndpoint(config.baseUrl) ? { compat: { supportsStore: false } } : {}),
+    input: (c.supportsImages ? ['text', 'image'] : ['text']) as Array<'text' | 'image'>,
+    reasoning: c.reasoning,
+    contextWindow: c.contextWindow,
+    maxTokens: c.maxOutput,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+}
+
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
   if (config.provider === 'opencode-local') {
     return createLocalHandle(config);
@@ -141,6 +177,8 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
             },
           ]
         : []),
+      // PA_MODELS: otros modelos para elegir con /modelo, cada uno con su ficha.
+      ...extraModelIds(config).map((id) => extraModelDef(config, id)),
     ],
     api: { 'openai-completions': openAICompletionsApi() },
   });
@@ -297,6 +335,8 @@ async function createLocalHandle(config: Config): Promise<ProviderHandle> {
             },
           ]
         : []),
+      // PA_MODELS: otros modelos para elegir con /modelo, cada uno con su ficha.
+      ...extraModelIds(config).map((id) => extraModelDef(config, id)),
     ],
     api: { 'openai-completions': openAICompletionsApi() },
   });

@@ -208,3 +208,19 @@ describe('/modelo: la ventana de contexto sigue al modelo elegido', () => {
     }
   });
 });
+
+describe('/modelo: PA_MODELS', () => {
+  it('los modelos extra se pueden elegir y el turno va a ellos', async () => {
+    const base = faux.getModel();
+    const extra = { ...base, id: 'extra-model', name: 'extra-model' };
+    const h = providerState.handle as { modelById: unknown };
+    h.modelById = (id: string) =>
+      id === 'extra-model' ? extra : id === 'test-model' ? base : undefined;
+    const agent = await makeAgent({ extraModels: ['extra-model', 'test-model'] });
+    expect(agent.availableModels).toEqual(['test-model', 'extra-model']);
+    expect(agent.chooseModel('extra-model')).toEqual({ ok: true, model: 'extra-model' });
+    faux.setResponses([fauxAssistantMessage('vale')]);
+    await agent.run('hola');
+    expect(seen.at(-1)).toBe('extra-model');
+  });
+});
