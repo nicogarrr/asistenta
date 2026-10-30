@@ -37,24 +37,28 @@ function fold(value: string): string {
 // Token numérico COMPLETO: toda la racha de dígitos, puntos y comas, sin frontera partida
 // (lookbehind: nada numérico delante, ni "1 " + espacio, que sería un separador de miles
 // no soportado). Si el token entero no es legible, se niega; nunca se busca un subimporte.
-const RUN = String.raw`(?<![\d.,])(?<!\d\s)(\d[\d.,]*)`;
+// Un espacio tipográfico (duro U+00A0, estrecho U+202F, fino U+2009) seguido de dígito
+// es separador de miles, como en el lector de precios compartido (#451): «1 299,00 €».
+// El espacio normal sigue sin soportarse («x2 299,00 €» sería ambiguo).
+const RUN = String.raw`(?<![\d.,])(?<!\d\s)(\d(?:[\d.,]|[\u00a0\u202f\u2009](?=\d))*)`;
 const SIGN = String.raw`([-\u2212(]\s?)?`;
 const TRAIL = String.raw`([-\u2212])?`;
 const TOKEN_AFTER = new RegExp(`${SIGN}${RUN}${TRAIL}\\s?(?:\u20ac|eur\\b|euros?\\b)`, 'gi');
 const TOKEN_BEFORE = new RegExp(`${SIGN}(?:\u20ac|eur\\b)\\s?${RUN}${TRAIL}`, 'gi');
 const FOREIGN_RE = /[$\u00a3]|\b(usd|gbp|dolares?|libras?)\b/i;
-const STRICT_THOUSANDS = /^(\d{1,3}(?:\.\d{3})+)(?:,(\d{2}))?$/;
+const STRICT_THOUSANDS =
+  /^(\d{1,3}(?:\.\d{3})+|\d{1,3}(?:[\u00a0\u202f\u2009]\d{3})+)(?:,(\d{2}))?$/;
 const STRICT_PLAIN = /^(\d+)(?:[,.](\d{2}))?$/;
 
 /**
- * Estricto: miles con punto y 0 o 2 decimales; cualquier otra forma es "no soportado".
+ * Estricto: miles con punto (o con un mismo espacio tipográfico) y 0 o 2 decimales; cualquier otra forma es "no soportado".
  * Sin limpieza: un token raro se niega, no se recorta hasta un número plausible. La única
  * excepción es UN punto o coma final de frase tras el importe (forma "EUR 12,50.").
  */
 function strictCents(token: string): number | null {
   const m = STRICT_THOUSANDS.exec(token) ?? STRICT_PLAIN.exec(token);
   if (!m) return null;
-  const whole = (m[1] ?? '').replace(/\./g, '');
+  const whole = (m[1] ?? '').replace(/[.\u00a0\u202f\u2009]/g, '');
   if (!/^\d{1,7}$/.test(whole)) return null;
   return Number(whole) * 100 + Number(m[2] ?? '0');
 }
