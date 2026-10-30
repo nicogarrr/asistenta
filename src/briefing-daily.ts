@@ -217,6 +217,28 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
   }
 }
 
+/**
+ * Cada cuánto se mira si toca el resumen diario. Antes solo se miraba en el reloj de
+ * 2 h de las vigilancias de páginas: el resumen de las 8 llegaba hasta 2 h tarde y,
+ * si el PC arrancaba después de las 10, la primera mirada caía pasadas las 12 y el
+ * resumen de ese día se saltaba entero. Comprobar es barato: no llama al modelo.
+ */
+export const BRIEFING_CHECK_EVERY_MS = 60_000;
+
+/** Arranca la comprobación periódica del resumen diario. Devuelve cómo pararla. */
+export function startDailyBriefingTimer(
+  deps: DailyBriefingDeps,
+  everyMs: number = BRIEFING_CHECK_EVERY_MS,
+): () => void {
+  const timer = setInterval(() => {
+    runDailyBriefingIfDue(deps).catch((err: unknown) => {
+      deps.warn?.('briefing: comprobación falló', { err: String(err) });
+    });
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /** Hora local `HH:MM` de un instante, en la zona dada (Europe/Madrid en el PC de Nico). */
 export function hhmm(at: number, timeZone?: string): string {
   return new Intl.DateTimeFormat('es-ES', {
