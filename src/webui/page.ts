@@ -1394,6 +1394,23 @@ ${renderFormatScript()}
         return !!(window.matchMedia && window.matchMedia('(max-width: 780px)').matches);
       }
 
+      // Qué áreas de Funciones dejó Nico abiertas o cerradas a mano: { id: true|false }.
+      // Solo se guarda al pulsar un título; sin elección guardada manda el ancho de pantalla.
+      var CLAVE_FUNCIONES = 'asistenta.webui.funciones';
+      function funcionesGuardadas() {
+        try {
+          var valor = JSON.parse(window.localStorage.getItem(CLAVE_FUNCIONES) || '{}');
+          return valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
+        } catch (error) { return {}; }
+      }
+      function guardarFuncion(id, abierta) {
+        try {
+          var valor = funcionesGuardadas();
+          valor[id] = abierta === true;
+          window.localStorage.setItem(CLAVE_FUNCIONES, JSON.stringify(valor));
+        } catch (error) { /* almacén bloqueado: no se recuerda, sin romper */ }
+      }
+
       async function cargarFunciones() {
         var contenedor = document.getElementById('panel-funciones');
         pintarCarga(contenedor);
@@ -1401,14 +1418,19 @@ ${renderFormatScript()}
           var areas = await pedir('/api/funciones');
           if (!Array.isArray(areas)) throw new Error('Respuesta de funciones inválida');
           contenedor.replaceChildren(nodo('p', 'muted', 'Lo mismo que /funciones en Telegram: qué sé hacer, por áreas, con un ejemplo de cómo pedirlo.'));
+          var guardadas = funcionesGuardadas();
           areas.forEach(function (area) {
             // Cada área se pliega (details/summary): en el móvil (≤ 780 px) empiezan
             // cerradas para que la tarjeta no ocupe varias pantallas.
             var bloque = document.createElement('details');
             bloque.className = 'sesion funcion';
-            bloque.open = !pantallaPequena();
+            var elegida = guardadas[area.id];
+            bloque.open = typeof elegida === 'boolean' ? elegida : !pantallaPequena();
             bloque.setAttribute('data-funcion', area.id);
             var cabeza = nodo('summary', 'funcion-titulo');
+            // «click» en el <summary> llega también con Enter/Espacio; corre antes de que
+            // el navegador cambie .open, así que se guarda lo contrario de lo que hay.
+            cabeza.addEventListener('click', function () { guardarFuncion(area.id, !bloque.open); });
             cabeza.appendChild(nodo('h3', null, area.titulo));
             bloque.appendChild(cabeza);
             bloque.appendChild(nodo('p', 'texto', area.resumen));
