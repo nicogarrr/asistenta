@@ -305,6 +305,33 @@ const VK_NAMED: Record<string, number> = {
 };
 
 /**
+ * F17–F24, alone or with Ctrl/Shift/Alt, as real key events. SendKeys stops at
+ * F16, so these chords were refused. Every other chord returns null and keeps
+ * going through SendKeys exactly as before; Windows-key chords are
+ * `winChordVirtualKeys`' job and are checked first by the caller.
+ */
+export function highFunctionKeyVirtualKeys(chord: string): number[] | null {
+  const parts = chord
+    .trim()
+    .split('+')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  const last = parts[parts.length - 1];
+  const f = last === undefined ? null : /^f(1[7-9]|2[0-4])$/.exec(last);
+  if (!f) return null;
+  const codes: number[] = [];
+  for (const m of parts.slice(0, -1)) {
+    const vk = VK_MODIFIERS[m];
+    if (vk === undefined) {
+      throw new Error(`unknown modifier ${JSON.stringify(m)} in chord ${JSON.stringify(chord)}`);
+    }
+    if (!codes.includes(vk)) codes.push(vk);
+  }
+  codes.push(0x70 + Number(f[1]) - 1);
+  return codes;
+}
+
+/**
  * Virtual-key codes for a chord that uses the Windows key, in press order
  * (modifiers first, then the key), or null when the chord has no Windows key.
  *
