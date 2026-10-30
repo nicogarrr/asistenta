@@ -22,7 +22,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { BUSY_DIR } from './ocupada.js';
+import type { DaemonRunState } from './autostart-watchdog.js';
+import { BUSY_DIR, type BusyState } from './ocupada.js';
 
 export const AUTOUPDATE_DIR = BUSY_DIR;
 export const AUTOUPDATE_STATE_FILE = 'estado.json';
@@ -152,4 +153,168 @@ export function successMessage(subjects: string[]): string {
 
 export function failureMessage(reason: string): string {
   return `⚠️ No he podido actualizarme: ${reason}. Sigo con la versión anterior.\nDetalle: pa autoupdate status`;
+}
+
+export interface CmdResult {
+  code: number;
+  out: string;
+}
+export interface AutoupdateDeps {
+  git(args: string[], timeoutMs?: number): Promise<CmdResult>;
+  npm(args: string[], timeoutMs?: number): Promise<CmdResult>;
+  daemonState(): DaemonRunState;
+  busy(): BusyState;
+  /** Cierre limpio del daemon, SIN marcarlo como parado a propósito. */
+  stopDaemon(): Promise<void>;
+  /** Arranca la tarea del daemon, igual que el vigilante. */
+  startDaemon(): Promise<boolean>;
+  backupDist(): void;
+  restoreDist(): void;
+  dropBackup(): void;
+  notify(text: string): Promise<void>;
+  sleep(ms: number): Promise<void>;
+  now(): number;
+  /** Salida del paso que falló, para el registro de esta revisión. */
+  log?(text: string): void;
+}
+
+const SKIPS: Record<string, string> = {
+  apagado: 'autoactualización apagada',
+  reciente: 'ya me actualicé hace menos de 30 min',
+  'en-curso': 'otra actualización está en curso',
+  'cambios-locales': 'hay cambios locales sin guardar en git: no toco nada',
+  divergida: 'main local y origin/main se han separado (no es fast-forward): no toco nada',
+  'no-en-marcha': 'Asistenta no está en marcha: espero a que vuelva',
+  ocupada: 'Asistenta está ocupada (un turno o una aprobación): lo dejo para luego',
+  desconocido: 'no sé si Asistenta está ocupada: lo dejo para luego',
+};
+
+/**
+ * Arranca la tarea del daemon y espera a que vuelva sana. Justo tras un cierre la tarea
+ * puede seguir «en ejecución» unos segundos y Windows ignora el arranque, así que mientras
+ * siga parada se vuelve a pedir cada 20 s.
+ */
+async function startAndWait(deps: AutoupdateDeps, timeoutMs: number): Promise<boolean> {
+  const deadline = deps.now() + timeoutMs;
+  let nextKick = deps.now();
+  while (deps.now() < deadline) {
+    if (deps.daemonState() === 'running') {
+      // Sigue viva un rato después: un arranque que se cae al momento no cuenta como sano.
+      await deps.sleep(10_000);
+      return deps.daemonState() === 'running';
+    }
+    if (deps.now() >= nextKick) {
+      await deps.startDaemon();
+      nextKick = deps.now() + 20_000;
+    }
+    await deps.sleep(2_000);
+  }
+  return false;
+}
+
+export async function runAutoupdate(
+  stateDir: string,
+  deps: AutoupdateDeps,
+  opts: { force?: boolean; env?: NodeJS.ProcessEnv; healthTimeoutMs?: number } = {},
+): Promise<Outcome> {
+  const state = readAutoupdateState(stateDir);
+  const prevCheck = state.lastCheckAt;
+  // Toda revisión cuenta para el intervalo, salvo «aplazada»: esa se reintenta en la
+  // siguiente pasada del vigilante (5 min), no dentro de 30.
+  state.lastCheckAt = new Date(deps.now()).toISOString();
+  const done = (kind: OutcomeKind, text: string): Outcome => {
+    const fresh = readAutoupdateState(stateDir);
+    writeAutoupdateState(stateDir, {
+      ...fresh,
+      lastCheckAt: kind === 'aplazada' ? prevCheck : state.lastCheckAt,
+      lastUpdateAt: state.lastUpdateAt,
+      last: { kind, text, at: new Date(deps.now()).toISOString() },
+    });
+    return { kind, text };
+  };
+  const skip = (reason: string, kind: OutcomeKind = 'omitida') =>
+    done(kind, SKIPS[reason] ?? reason);
+
+  if (!autoupdateEnabled(stateDir, opts.env)) return skip('apagado');
+  const lastUpdate = state.lastUpdateAt ? Date.parse(state.lastUpdateAt) : Number.NaN;
+  if (!opts.force && deps.now() - lastUpdate < MIN_GAP_MS) return skip('reciente');
+  if (!tryLock(stateDir, deps.now())) return { kind: 'omitida', text: SKIPS['en-curso'] ?? '' };
+  try {
+    const branch = (await deps.git(['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim();
+    if (branch !== 'main')
+      return skip(`estás en la rama «${branch || '?'}»: solo me actualizo en main`);
+    if ((await deps.git(['fetch', '--quiet', 'origin', 'main'], 120_000)).code !== 0) {
+      return skip('no pude consultar GitHub (git fetch falló)', 'error');
+    }
+    const old = (await deps.git(['rev-parse', 'HEAD'])).out.trim();
+    const remote = (await deps.git(['rev-parse', 'origin/main'])).out.trim();
+    if (!old || !remote) return skip('git no me dijo en qué commit estoy', 'error');
+    if (old === remote) return done('al-dia', `al día (${old.slice(0, 7)})`);
+    const status = await deps.git(['status', '--porcelain', '--untracked-files=no']);
+    if (status.code !== 0 || status.out.trim()) return skip('cambios-locales');
+    if ((await deps.git(['merge-base', '--is-ancestor', old, remote])).code !== 0) {
+      return skip('divergida');
+    }
+    if (deps.daemonState() !== 'running') return skip('no-en-marcha', 'aplazada');
+    const busy = deps.busy();
+    if (busy !== 'libre') return skip(busy, 'aplazada');
+
+    const log = await deps.git(['log', '--no-merges', '--format=%s', `${old}..${remote}`]);
+    const subjects = log.out.split('\n').filter((l) => l.trim());
+    const lockDiff = await deps.git([
+      'diff',
+      '--name-only',
+      old,
+      remote,
+      '--',
+      'package-lock.json',
+    ]);
+    const lockChanged = lockDiff.code !== 0 || lockDiff.out.trim() !== '';
+    const health = opts.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
+
+    deps.backupDist();
+    try {
+      await deps.stopDaemon();
+    } catch {
+      deps.dropBackup();
+      return skip('no pude parar Asistenta con un cierre limpio', 'error');
+    }
+
+    const rollback = async (reason: string, out = ''): Promise<Outcome> => {
+      if (out) deps.log?.(`${reason}\n${out.slice(-4000)}`);
+      const reset = await deps.git(['reset', '--keep', old]);
+      if (lockChanged) await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+      deps.restoreDist();
+      if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
+      const back = await startAndWait(deps, health);
+      const tail = [
+        reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
+        back ? '' : ' (y no he vuelto a arrancar sana: mira pa autostart status)',
+      ].join('');
+      await deps.notify(failureMessage(`${reason}${tail}`)).catch(() => {});
+      return done('revertida', `falló (${reason}); sigue en ${old.slice(0, 7)}${tail}`);
+    };
+
+    const merge = await deps.git(['merge', '--ff-only', '--quiet', remote]);
+    if (merge.code !== 0) return rollback('git merge --ff-only falló', merge.out);
+    if (lockChanged) {
+      const ci = await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+      if (ci.code !== 0) return rollback('npm ci falló', ci.out);
+    }
+    const build = await deps.npm(['run', 'build'], 10 * 60_000);
+    if (build.code !== 0) return rollback('la compilación (npm run build) falló', build.out);
+    if (!(await startAndWait(deps, health))) {
+      if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
+      return rollback(`no arrancó sana en ${Math.round(health / 1000)} s`);
+    }
+    deps.dropBackup();
+    state.lastUpdateAt = new Date(deps.now()).toISOString();
+    await deps.notify(successMessage(subjects)).catch(() => {});
+    return done(
+      'actualizada',
+      `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} cambios)`,
+    );
+  } finally {
+    unlock(stateDir);
+  }
 }
