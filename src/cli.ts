@@ -195,6 +195,13 @@ function secretStatePaths(): string[] {
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
+import {
+  ALTAVOZ_USAGE,
+  AltavozStore,
+  altavozStatusText,
+  createAltavozPlayer,
+  parseAltavozArgs,
+} from './audio/altavoz.js';
 import { audioTeleEnabled, tvCasterFromVault } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
@@ -1623,6 +1630,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Originals are kept in private state/media for the recall TTL and chat cap.
   // Handles and originals survive restart; no other chat can resolve them.
   const recall = new AudioRecall({ directory: join(paths.state, 'media', 'received') });
+  // Modo altavoz (/altavoz pc|tele|off): las notas de voz del dueño suenan solas al
+  // llegar, en serie y sin tocar el volumen del sistema (docs/audio-altavoz.md).
+  const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
+  const altavozPlayer = createAltavozPlayer({
+    toPlayable: (bytes, mimeType) => toPlayableAudio(bytes, mimeType),
+    playOnPc: async (file) => {
+      currentWake()?.suppress(PLAYBACK_SUPPRESS_MS);
+      try {
+        await createMciSpeaker().play(file).done;
+      } finally {
+        currentWake()?.suppress(WAKE_TAIL_MS);
+      }
+    },
+    castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+    remove: (file) => rmSync(file, { force: true }),
+    onError: (err) => log.warn('altavoz: no pude soltar la nota de voz', { err: String(err) }),
+  });
 
   /**
    * The most recent chat that spoke.
@@ -4546,6 +4570,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await next;
   };
 
+  /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
+  const cmdAltavoz = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'El altavoz solo se controla desde tu chat privado conmigo.', {
+        quote: true,
+      });
+      return;
+    }
+    if (!desktop) {
+      await say(inbound, DESKTOP_OFF_MESSAGE, { quote: true });
+      return;
+    }
+    const key = chatKey(inbound);
+    const parsed = parseAltavozArgs(args);
+    if (parsed.kind === 'error') {
+      await say(inbound, ALTAVOZ_USAGE, { quote: true });
+      return;
+    }
+    if (parsed.kind === 'set') {
+      if (parsed.mode === 'tele' && !audioTeleEnabled()) {
+        await say(
+          inbound,
+          'La tele no está activada para audio. Pon PA_AUDIO_TELE=1 en el .env y reinicia; mientras, /altavoz pc.',
+          { quote: true },
+        );
+        return;
+      }
+      altavoz.set(key, parsed.mode);
+    }
+    await say(inbound, altavozStatusText(altavoz.get(key)), { quote: true });
+  };
+
   const cmdRecordatorios = async (inbound: Inbound, args: string): Promise<void> => {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
@@ -6558,6 +6614,28 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             });
           }
 
+          // Altavoz: la nota suena sola en el PC/la tele, sin esperar al modelo.
+          if (inbound.audioFileId && !inbound.text.trim().startsWith('/')) {
+            const mode = altavoz.get(chatKey_);
+            if (mode !== 'off' && desktop && isOwnerDm(inbound, vigilanteOwnerId)) {
+              const fileId = inbound.audioFileId;
+              const mimeType = inbound.audioMimeType ?? 'audio/ogg';
+              const queued = altavozPlayer.enqueue(mode, async () => {
+                const bytes = await telegram.downloadFile(fileId, 25_000_000).catch(() => null);
+                return bytes ? { bytes, mimeType } : null;
+              });
+              if (!queued) {
+                void say(
+                  inbound,
+                  'Hay demasiadas notas en cola en el altavoz; esta no la suelto.',
+                  {
+                    quote: true,
+                  },
+                );
+              }
+            }
+          }
+
           if (/^responde(?:r)? a ese\s*\n/i.test(inbound.text))
             return cmdCorreo(inbound, inbound.text);
           const command = parseCommand(inbound.text);
@@ -6648,6 +6726,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 return cmdCompactar(inbound);
               case 'proyecto':
                 return cmdProyecto(inbound, command.args);
+              case 'altavoz':
+                return cmdAltavoz(inbound, command.args);
               case 'recordatorios':
               case 'reminders':
                 return cmdRecordatorios(inbound, command.args);
