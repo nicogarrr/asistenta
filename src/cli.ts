@@ -114,7 +114,7 @@ import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
-import { llmHealthCommand } from './llm-health.js';
+import { llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
@@ -833,9 +833,10 @@ async function doctorCommand(): Promise<number> {
   lines.push(`state dir       ${paths.state}`);
   lines.push(`vault           ${vaultExists() ? 'present' : 'MISSING (pa vault init)'}`);
 
-  const key = await vaultGet('provider:apiKey').catch(() => undefined);
-  const envKey = process.env.OPENCODE_GO_API_KEY ? 'set' : 'unset';
-  lines.push(`provider key    ${key ? 'vault' : envKey}`);
+  const keySrc = await providerKeySource(loadConfig().baseUrl);
+  lines.push(
+    `provider key    ${keySrc.source === 'unset' ? `unset (${keySrc.hint})` : keySrc.source}`,
+  );
   if (desktopEnabled()) {
     lines.push(
       `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
