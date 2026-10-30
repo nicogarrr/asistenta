@@ -156,6 +156,17 @@ export function releaseNotices(db: DatabaseSync, ns: readonly number[]): void {
 }
 
 /**
+ * Envío de resultado desconocido (vencido el plazo o lanzó un error): el mensaje quizá
+ * salió o salga tarde con sus [#N]. Se quitan las reservas SIN bajar la secuencia: esos
+ * números se queman y no se reutilizan, así /ignora N nunca nombra otro aviso.
+ */
+export function burnNotices(db: DatabaseSync, ns: readonly number[]): void {
+  if (ns.length === 0) return;
+  const del = db.prepare("DELETE FROM vigilante_notices WHERE n = ? AND status = 'reservado'");
+  for (const n of ns) del.run(n);
+}
+
+/**
  * Reservas huérfanas (el proceso murió con el envío en vuelo): se sueltan sin tocar la
  * secuencia, porque no se sabe si el mensaje llegó a salir y su número no debe reutilizarse.
  */
