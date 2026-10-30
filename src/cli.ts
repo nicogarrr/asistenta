@@ -365,6 +365,7 @@ Usage:
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
+  pa vigilancias [--json] qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
   pa tv toast <mensaje>   mostrar un aviso en la tele
   pa tv apps              listar apps instaladas (ids para pa tv launch)
@@ -463,6 +464,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'diagnose': {
       const { diagnoseCommand } = await import('./diagnose-cli.js');
       return diagnoseCommand(rest);
+    }
+    case 'vigilancias': {
+      const { vigilanciasCommand } = await import('./watch/overview-cli.js');
+      return vigilanciasCommand(rest);
     }
     case 'auditoria': {
       const { auditCommand } = await import('./audit/audit-cli.js');
