@@ -6,11 +6,15 @@
 
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { FollowupTracker } from '../alerts/followups.js';
+import { localTimeZone } from '../datecontext.js';
+import { Store } from '../db.js';
 import { GoalStore } from '../goals/store.js';
 import { scrubLogText } from '../log.js';
 import { SessionStore } from '../memory/sessions.js';
 import { MemoryStore } from '../memory.js';
 import { paths } from '../paths.js';
+import { nextScheduleRun } from '../routines.js';
 import { vaultGet } from '../vault.js';
 import { resolveOwnerUserId } from '../vigilante.js';
 import { serveMcpStdio } from './server.js';
@@ -48,6 +52,9 @@ export async function mcpCommand(args: string[]): Promise<number> {
   const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
   const sessions = new SessionStore({ db: memoryDb });
   const goals = new GoalStore({ db: goalsDb });
+  const followups = new FollowupTracker({ db: memoryDb });
+  const store = new Store();
+  const mine = (scope: string) => scope === chat || scope.startsWith(`${chat}#`);
   process.stderr.write(`Asistenta MCP (solo lectura) para ${chat}. Esperando por stdio…\n`);
   try {
     await serveMcpStdio(
@@ -55,6 +62,21 @@ export async function mcpCommand(args: string[]): Promise<number> {
         memorySearch: (q, limit) => memory.recall(main, q, limit),
         sessionSearch: (q, limit) => sessions.search(q, main, limit),
         goals: () => goals.list().filter((g) => g.scope.startsWith(`${chat}#`)),
+        agenda: () => ({
+          followups: followups
+            .forChat(chat)
+            .filter((f) => f.status === 'pending')
+            .map((f) => ({ subject: f.subject, dueAt: f.dueAt })),
+          routines: store
+            .listRoutines()
+            .filter((r) => r.kind === 'schedule' && mine(r.scope))
+            .map((r) => ({
+              name: r.name,
+              enabled: r.enabled,
+              next: r.schedule ? (nextScheduleRun(r.schedule)?.getTime() ?? null) : null,
+            })),
+        }),
+        timeZone: localTimeZone(),
         scrub: scrubLogText,
       },
       process.stdin,
