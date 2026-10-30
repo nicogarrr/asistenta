@@ -16,6 +16,7 @@ import {
   WATCHDOG_INTERVAL_MIN,
   watchdogDecide,
   watchdogEnabled,
+  watchdogLastLine,
   watchdogTaskXml,
 } from './autostart-watchdog.js';
 
@@ -123,10 +124,7 @@ async function watchdogStatus(stateDir: string): Promise<void> {
     ? `Vigilante: instalado, cada ${WATCHDOG_INTERVAL_MIN} min y al iniciar sesión${off}.`
     : 'Vigilante: no instalado (pa autostart install lo registra).';
   const last = readWatchdogLast(stateDir);
-  if (last) {
-    const min = Math.max(0, Math.round((Date.now() - last.at) / 60_000));
-    line += ` Última revisión hace ${min} min: ${last.text}.`;
-  }
+  if (last) line += watchdogLastLine(last, Date.now());
   process.stdout.write(`${line}\n${autoupdateStatusLine(stateDir)}\n`);
 }
 

@@ -72,12 +72,29 @@ export function readStartupRecord(path: string): StartupRecord | undefined {
 
 /** «hace 5 min», «hace 3 h»… desde una fecha ISO. */
 export function ago(at: string, now: Date): string {
-  const min = Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000));
+  const atMs = Date.parse(at);
+  if (Number.isNaN(atMs)) return 'en fecha desconocida';
+  const future = futureDated(atMs, now.getTime());
+  if (future) return future;
+  const min = Math.max(0, Math.round((now.getTime() - atMs) / 60_000));
   if (min < 1) return 'hace un momento';
-  if (min < 60) return `hace ${min} min`;
+  return `hace ${span(min)}`;
+}
+
+function span(min: number): string {
+  if (min < 60) return `${min} min`;
   const h = Math.round(min / 60);
-  if (h < 48) return `hace ${h} h`;
-  return `hace ${Math.round(h / 24)} días`;
+  if (h < 48) return `${h} h`;
+  return `${Math.round(h / 24)} días`;
+}
+
+/**
+ * Una fecha guardada más de 1 min por delante del reloj (el reloj se atrasó
+ * después: hora corregida, arranque dual) no es «hace un momento»: se dice.
+ */
+export function futureDated(atMs: number, nowMs: number): string | undefined {
+  const min = Math.round((atMs - nowMs) / 60_000);
+  return min >= 1 ? `con fecha futura (dentro de ${span(min)}; ¿se cambió el reloj?)` : undefined;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
