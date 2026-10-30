@@ -41,6 +41,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Captura o foto en directo: /screen live',
   },
   {
+    command: 'tv',
+    description: 'Orden directa a la tele, sin gastar: /tv apaga la tele',
+  },
+  {
     command: 'buscar',
     description: 'Buscar en conversaciones pasadas',
   },

@@ -44,3 +44,6 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 ## Más rutinas
 - «modo noche» / «modo nocturno (con YouTube)»: volumen a 8 (o el que digas) y aviso. No enciende una tele apagada.
 - «apaga todo»: aviso «Apagando. Buenas noches.» y apaga la tele; si ya está apagada no hace nada.
+
+## Desde Telegram sin gastar
+- `/tv <orden>` (solo tú, en tu chat privado): «/tv apaga la tele», «/tv abre Netflix», «/tv volumen a 15», «/tv modo cine», «/tv estado». Va directo a la tele, sin pasar por el modelo (0 tokens). Si no la entiende, lo dice y no hace nada.
