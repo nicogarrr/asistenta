@@ -428,6 +428,7 @@ import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import { compareProduct, describeCompare } from './watch/compare.js';
+import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
   describeChange,
   describeWatch,
@@ -3925,6 +3926,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   };
 
+  /** /vigilancias: todo lo que vigilo en este chat (páginas, precios, rutinas, ojo); solo lectura. */
+  const cmdVigilancias = async (inbound: Inbound): Promise<void> => {
+    const { collectWatches, defaultSources } = await import('./watch/overview-cli.js');
+    const { entries, errors } = collectWatches(defaultSources());
+    const r = vigilanciasReply(entries, inbound.chatId);
+    const note = errors.length ? `\n\n(no he podido leer: ${errors.length})` : '';
+    await say(inbound, r.text + note, { quote: true, format: 'marks', buttons: r.buttons });
+  };
+
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
@@ -6841,6 +6851,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     { names: ['vigila'], run: (inbound, args) => cmdVigila(inbound, args) },
     { names: ['vigilando'], run: (inbound) => cmdVigilando(inbound) },
+    { names: ['vigilancias'], run: (inbound) => cmdVigilancias(inbound) },
     { names: ['dejar_de_vigilar'], run: (inbound, args) => cmdDejarDeVigilar(inbound, args) },
     { names: ['precio'], run: (inbound, args) => cmdPrecio(inbound, args) },
     { names: ['compara'], run: (inbound, args) => cmdCompara(inbound, args) },
@@ -7526,6 +7537,28 @@ export function watchListButtons(
     return price ? [price, stop] : [stop];
   });
   return buttons.length ? buttons : undefined;
+}
+
+/**
+ * /vigilancias en Telegram: la vista única de `pa vigilancias` limitada a este chat (y
+ * lo global), con cabeceras en negrita y un «📈 Precio …» de solo lectura por página
+ * vigilada (hasta 8; equivale a /precio <id>). Nada de borrar con un toque.
+ */
+export function vigilanciasReply(
+  entries: readonly OverviewEntry[],
+  chatId: string,
+  now: number = Date.now(),
+): { text: string; buttons: Array<{ label: string; action: string }> | undefined } {
+  const shown = forChat(entries, chatId, 'telegram');
+  const buttons = shown
+    .filter((e) => e.kind === 'pagina')
+    .slice(0, 8)
+    .map((e) => commandButton(`📈 Precio ${e.label || e.target}`, 'precio', e.id))
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  return {
+    text: marksWithTitles(formatOverview(shown, now), isOverviewTitle),
+    buttons: buttons.length ? buttons : undefined,
+  };
 }
 
 export function formatWatchList(list: readonly PageWatch[]): string {
