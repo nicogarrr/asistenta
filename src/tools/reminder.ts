@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
+import { localTimeZone } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
@@ -121,7 +122,7 @@ export function checkRepeating(expr: string): string | null {
   if (fields.length !== 5) {
     return 'Un recordatorio repetido usa 5 campos (min hora día mes díaSemana), sin segundos.';
   }
-  const runs = new Cron(fields.join(' '), { paused: true }).nextRuns(8);
+  const runs = new Cron(fields.join(' '), { paused: true, timezone: localTimeZone() }).nextRuns(8);
   for (let i = 1; i < runs.length; i++) {
     const gap = (runs[i]?.getTime() ?? 0) - (runs[i - 1]?.getTime() ?? 0);
     if (gap < MIN_REPEAT_MS) {
