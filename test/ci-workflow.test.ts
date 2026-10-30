@@ -29,4 +29,17 @@ describe('CI workflow', () => {
     expect(workflow).toContain('scripts/coverage-summary.mjs');
     expect(workflow).toMatch(/name: coverage\n/);
   });
+
+  it('guarda Chromium de Playwright en caché por versión y sigue instalando las dependencias del sistema', () => {
+    expect(workflow).toMatch(/path: ~\/\.cache\/ms-playwright/);
+    expect(workflow).toMatch(
+      /key: playwright-\$\{\{ runner\.os \}\}-\$\{\{ steps\.playwright\.outputs\.version \}\}/,
+    );
+    expect(workflow).toMatch(
+      /cache-hit != 'true'\s*\n\s*run: npx playwright install --with-deps chromium/,
+    );
+    expect(workflow).toMatch(
+      /cache-hit == 'true'\s*\n\s*run: npx playwright install-deps chromium/,
+    );
+  });
 });

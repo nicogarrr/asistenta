@@ -31,7 +31,21 @@ jobs:
       - run: npm run lint:check
       - run: npm run build
       # Los tests de navegador real necesitan Chromium; sin él fallan por entorno, no por código.
-      - run: npx playwright install --with-deps chromium
+      # Chromium (~150 MB) en caché por versión de Playwright; las dependencias del
+      # sistema (apt) no se pueden cachear y se instalan siempre.
+      - name: Versión de Playwright
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Caché de navegadores de Playwright
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       # La cobertura se mide en la suite general (la fase de recursos lanza procesos hijos).
       - run: npm test -- --coverage
         env:
