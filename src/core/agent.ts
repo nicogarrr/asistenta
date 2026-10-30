@@ -2,6 +2,7 @@ import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import { Agent } from '@earendil-works/pi-agent-core';
 import type { Model } from '@earendil-works/pi-ai';
 import { appendCallAudit, hashArgs } from '../audit/calls.js';
+import { takePageAfterFailedCall } from '../browser/page-after-call.js';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
@@ -717,6 +718,9 @@ export class PersonalAgent {
             : '';
           // La página en la que quedó el navegador (src/tools/browser.ts la pone en
           // details.pageUrl) para que un clic que acaba en Gmail cuente como privado.
+          // Si la llamada LANZÓ, no hay details: la herramienta apuntó la página aparte.
+          const failedPage =
+            toolCall.name === 'browser' ? takePageAfterFailedCall(toolCall.id) : undefined;
           const pageUrl = (result as { details?: { pageUrl?: unknown } } | undefined)?.details
             ?.pageUrl;
           gate.settle(
@@ -724,7 +728,7 @@ export class PersonalAgent {
             started,
             isError,
             resultText,
-            typeof pageUrl === 'string' ? pageUrl : undefined,
+            typeof pageUrl === 'string' ? pageUrl : failedPage,
           );
           const audit = callAudit.get(toolCall.id);
           callAudit.delete(toolCall.id);

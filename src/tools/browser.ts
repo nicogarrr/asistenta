@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { notePageAfterFailedCall } from '../browser/page-after-call.js';
 import {
   type BrowserService,
   type ExecJsResult,
@@ -1010,9 +1011,33 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
     },
   };
   const run = tool.execute;
-  tool.execute = async (...a) =>
-    withPageUrl(service, scopeOf(), String(a[1]?.action ?? ''), await run(...a));
+  tool.execute = async (...a) => {
+    const action = String(a[1]?.action ?? '');
+    let result: Awaited<ReturnType<typeof run>>;
+    try {
+      result = await run(...a);
+    } catch (err) {
+      // Falló, pero puede que ya hubiera navegado (un clic que llega a Gmail y luego
+      // un timeout): el agente recoge esta página y el Gate la mira igual.
+      if (action !== 'close')
+        notePageAfterFailedCall(String(a[0] ?? ''), pageUrlOf(service, scopeOf()));
+      throw err;
+    }
+    return withPageUrl(service, scopeOf(), action, result);
+  };
   return tool;
+}
+
+/** URL en la que está ahora la sesión de navegador de `scope`, o undefined. */
+function pageUrlOf(service: BrowserService, scope: string): string | undefined {
+  try {
+    return (
+      (service as { currentUrl?: (s: string) => string | undefined }).currentUrl?.(scope) ||
+      undefined
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -1027,12 +1052,7 @@ function withPageUrl<T extends { details?: unknown }>(
   result: T,
 ): T {
   if (action === 'close') return result;
-  let pageUrl: string | undefined;
-  try {
-    pageUrl = (service as { currentUrl?: (s: string) => string | undefined }).currentUrl?.(scope);
-  } catch {
-    pageUrl = undefined;
-  }
+  const pageUrl = pageUrlOf(service, scope);
   if (!pageUrl) return result;
   const details =
     result.details && typeof result.details === 'object' ? (result.details as object) : {};
