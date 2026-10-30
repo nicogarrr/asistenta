@@ -135,6 +135,7 @@ import {
   formatLearnedRules,
   learnCorrectionsEnabled,
   learnedRules,
+  learnedRulesCommand,
   learnFromTurn,
 } from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
@@ -1664,6 +1665,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                   compactions: t.agent.compactions,
                 }),
               runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
+              // /aprendido y /olvida <n> como en Telegram (borrar sigue siendo escrito).
+              command: (t, said) => learnedRulesCommand(memory, memoryScopesFor(t.key).read, said),
             });
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
@@ -6058,8 +6061,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         reply: result.text,
         hinted: learnHint !== null,
         tainted: thread.gate.taintOf(thread.key) !== null,
-        // «(/olvida N para borrarla)» solo donde /olvida existe (Telegram, no el panel).
-        forgetScopes: opts.out ? undefined : memoryScopesFor(thread.key).read,
+        // «(/olvida N para borrarla)» solo donde /olvida existe (Telegram y el panel).
+        forgetScopes:
+          opts.out && opts.panel !== true ? undefined : memoryScopesFor(thread.key).read,
       });
       if (learnt.outcome)
         log.info('correction learned', { thread: thread.name, status: learnt.outcome.status });

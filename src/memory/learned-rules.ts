@@ -279,3 +279,19 @@ export function forgetLearnedRule(
   const ok = memory.forgetIn(scopes, target.id);
   return ok ? `🗑️ Olvidada: ${target.text}` : 'No he podido borrarla; mira /aprendido.';
 }
+
+/**
+ * /aprendido y /olvida <n> escritos en el chat del panel local (en Telegram son comandos):
+ * la respuesta, o null si el texto no es uno de ellos y va al modelo como siempre.
+ * Borrar sigue siendo escrito: no hay botón de un toque.
+ */
+export function learnedRulesCommand(
+  memory: MemoryStore,
+  scopes: readonly string[],
+  text: string,
+): string | null {
+  const m = /^\/(aprendido|aprendidas|olvida)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!m) return null;
+  if ((m[1] ?? '').toLowerCase() === 'olvida') return forgetLearnedRule(memory, scopes, m[2] ?? '');
+  return formatLearnedRules(learnedRules(memory, scopes));
+}

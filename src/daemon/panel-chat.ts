@@ -105,6 +105,11 @@ export interface PanelChatDeps<T extends PanelChatThread> {
   remember(thread: T, text: string): void;
   /** El turno normal del daemon, con la salida al panel en vez de a Telegram. */
   runTurn(thread: T, text: string, out: TurnOutput): Promise<void>;
+  /**
+   * Comando escrito que el panel contesta sin el modelo (/aprendido, /olvida <n>): su
+   * respuesta, o null para el turno normal. No se apunta para /reintentar.
+   */
+  command?(thread: T, text: string): string | null;
 }
 
 export async function runPanelChat<T extends PanelChatThread>(
@@ -118,6 +123,8 @@ export async function runPanelChat<T extends PanelChatThread>(
     const images: string[] = [];
     const files: PanelFileLink[] = [];
     let dropped = 0;
+    const direct = deps.command?.(thread, text) ?? null;
+    if (direct !== null) return { text: direct };
     deps.remember(thread, text);
     await deps.runTurn(thread, text, {
       answer: (t) => {
