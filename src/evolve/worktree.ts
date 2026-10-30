@@ -24,6 +24,9 @@ export interface Sandbox {
   kept: boolean;
 }
 
+/** Rutas tal cual (sin comillas ni escapes octales) y sin detección de renombrados. */
+const PLAIN_PATHS = ['-c', 'core.quotePath=false', '-c', 'diff.renames=false'];
+
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
     cwd,
@@ -89,11 +92,10 @@ export function dropSandbox(root: string, sandbox: Sandbox): void {
 
 /** Files an attempt changed, relative to the repo root. Used to refuse forbidden edits. */
 export function changedFiles(root: string, base: string, branch: string): string[] {
-  const out = git(root, ['diff', '--name-only', `${base}...${branch}`]);
-  return out
-    .split('\n')
-    .map((f) => f.trim())
-    .filter(Boolean);
+  // Sin -z git entrecomilla las rutas con tildes ("\"…\\303\\261…\""), y una ruta protegida así
+  // (.github/workflows/ñ.yml) no casaba. Con renombrados detectados solo salía el nombre nuevo.
+  const out = git(root, [...PLAIN_PATHS, 'diff', '--name-only', '-z', `${base}...${branch}`]);
+  return out.split('\0').filter(Boolean);
 }
 
 /** Whether the tree is clean enough to start from. A dirty kernel is not a baseline. */
@@ -133,7 +135,8 @@ export function commitAll(dir: string, message: string): void {
 
 /** The full unified diff of an attempt, for the guard's content rules and for the PR. */
 export function diffText(root: string, base: string, branch: string): string {
-  return execFileSync('git', ['diff', `${base}...${branch}`], {
+  // Un test renombrado fuera de test/ debe verse como borrado (deleted file), no como «rename».
+  return execFileSync('git', [...PLAIN_PATHS, 'diff', '--no-renames', `${base}...${branch}`], {
     cwd: root,
     encoding: 'utf8',
     windowsHide: true,
