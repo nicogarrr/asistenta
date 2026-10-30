@@ -529,6 +529,21 @@ function browserFillEchoReason(source: string): string {
   return `Vas a escribir en un formulario web un trozo literal de ${source} leído en este turno; al enviarlo saldría de tu PC.`;
 }
 
+function mcpEchoReason(source: string, tool: string): string {
+  return `Vas a enviar a la herramienta ${tool} un trozo literal de ${source} leído en este turno; su servidor puede estar fuera de tu PC.`;
+}
+
+/** Los textos de los argumentos de una llamada MCP (hasta 3 niveles), unidos. */
+function mcpArgText(args: unknown, depth = 0): string {
+  if (typeof args === 'string') return args;
+  if (depth >= 3 || typeof args !== 'object' || args === null) return '';
+  const values = Array.isArray(args) ? args : Object.values(args);
+  return values
+    .map((v) => mcpArgText(v, depth + 1))
+    .filter(Boolean)
+    .join(' ');
+}
+
 function searchEchoReason(source: string): string {
   return `Vas a enviar a un buscador o tienda externa una búsqueda con un trozo literal de ${source} leído en este turno; saldría de tu PC.`;
 }
@@ -1324,6 +1339,12 @@ export class Gate {
     // normal tras leer el correo no pregunta.
     const query = searchQueryOf(call.tool, call.args);
     if (query && this.#textEchoesPrivate(sessionId, query)) return searchEchoReason(source);
+    // Una herramienta MCP envía sus argumentos a un servidor que puede ser externo: si
+    // un texto repite un trozo literal de lo privado leído, pregunta (misma regla).
+    if (call.tool.startsWith('mcp_')) {
+      const text = mcpArgText(call.args);
+      if (text && this.#textEchoesPrivate(sessionId, text)) return mcpEchoReason(source, call.tool);
+    }
     const url = egressUrlOf(call.tool, call.args);
     if (!url) return null;
     const host = egressHost(url);
