@@ -220,7 +220,7 @@ import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import {
   agendaTodayLines,
-  composeDailyBriefing,
+  answerBriefingOnDemand,
   type DailyBriefingDeps,
   fetchWeatherLine,
   followupsDue,
@@ -4466,8 +4466,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         );
         return;
       }
-      const { text } = await composeDailyBriefing(briefingDeps);
-      await say(inbound, text, { quote: true });
+      await answerBriefingOnDemand(briefingDeps, inbound.chatId, (text) =>
+        say(inbound, text, { quote: true }),
+      );
       return;
     }
     await say(inbound, await weeklyText(inbound.chatId), { quote: true });
