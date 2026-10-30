@@ -5,6 +5,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
+import { buildSandboxSpawn, sandboxMode, sandboxSpawnError } from './shell-sandbox.js';
 
 /**
  * Shell execution.
@@ -137,7 +138,11 @@ const ShellParams = Type.Object({
   ),
 });
 
-export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
+export function createShellTool(
+  config: Config,
+  deps: { spawn?: typeof spawn; env?: NodeJS.ProcessEnv } = {},
+): AgentTool<typeof ShellParams> {
+  const spawnImpl = deps.spawn ?? spawn;
   return {
     name: 'shell',
     label: 'Shell',
@@ -146,7 +151,16 @@ export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
     parameters: ShellParams,
     executionMode: 'sequential',
     execute: async (toolCallId, args, signal) => {
-      const shell = resolveShell();
+      // F12: sandbox opcional. Un modo inválido o docker ausente RECHAZA; nunca
+      // cae al PC en silencio.
+      const sandbox = sandboxMode(deps.env ?? process.env);
+      if (!sandbox.ok) {
+        return {
+          content: [{ type: 'text', text: sandbox.error }],
+          details: { exitCode: -1, wallMs: 0, timedOut: false, shell: 'none' },
+        };
+      }
+      const shell = sandbox.mode === 'off' ? resolveShell() : { file: 'docker' };
       // Capped by the run's idle watchdog minus a margin: a tool that outlives the
       // watchdog would be aborted mid-flight with no result, so the watchdog must
       // always be the outer bound, never the tool.
@@ -160,15 +174,18 @@ export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
         err: string;
         timedOut: boolean;
       }>((done) => {
-        const child = spawn(
-          shell.file,
-          ['-NoProfile', '-NonInteractive', '-Command', args.command],
-          {
-            cwd: process.cwd(),
-            windowsHide: true,
-            env: { ...process.env, NO_COLOR: '1' },
-          },
-        );
+        const target = buildSandboxSpawn({
+          mode: sandbox.mode,
+          shellFile: shell.file,
+          command: args.command,
+          workspace: process.cwd(),
+          image: (deps.env ?? process.env).PA_SHELL_SANDBOX_IMAGE?.trim() || undefined,
+        });
+        const child = spawnImpl(target.file, target.args, {
+          cwd: process.cwd(),
+          windowsHide: true,
+          env: { ...process.env, NO_COLOR: '1' },
+        });
 
         const stdout = new OutputCollector();
         const stderr = new OutputCollector();
@@ -181,8 +198,16 @@ export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
         const kill = (): void => {
           timedOut = true;
           try {
-            spawn('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true });
+            spawnImpl('taskkill.exe', ['/F', '/T', '/PID', String(child.pid)], {
+              windowsHide: true,
+            });
           } catch {}
+          // El contenedor no es hijo del CLI de docker: hay que matarlo por nombre.
+          if (target.container) {
+            try {
+              spawnImpl('docker', ['kill', target.container], { windowsHide: true });
+            } catch {}
+          }
         };
         const timer = setTimeout(kill, timeoutMs);
         const onAbort = (): void => kill();
@@ -210,7 +235,12 @@ export function createShellTool(config: Config): AgentTool<typeof ShellParams> {
           });
         });
         child.on('error', (e: Error) =>
-          finish({ code: -1, out: '', err: e.message, timedOut: false }),
+          finish({
+            code: -1,
+            out: '',
+            err: sandboxSpawnError(sandbox.mode, e.message),
+            timedOut: false,
+          }),
         );
       });
 
