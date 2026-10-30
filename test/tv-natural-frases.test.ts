@@ -20,9 +20,9 @@ describe('natural.ts: frases de Nico', () => {
     'volumen al máximo',
     'pon el volumen al máximo',
     'sube a tope la tele',
-  ])('«%s» → volumen al tope seguro (no 100)', (text) => {
-    expect(parseTvCommand(text)).toEqual({ action: 'volume', level: VOLUME_TOPE });
-    expect(VOLUME_TOPE).toBeLessThan(100);
+  ])('«%s» → volumen a 100 («a tope es a tope», decisión de Nico)', (text) => {
+    expect(parseTvCommand(text)).toEqual({ action: 'volume', level: 100 });
+    expect(VOLUME_TOPE).toBe(100);
   });
 
   it('un número explícito manda sobre el tope', () => {

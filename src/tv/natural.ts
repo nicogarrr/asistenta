@@ -52,8 +52,8 @@ const NUM_WORDS: Record<string, number> = {
 /** Paso por defecto de "sube/baja el volumen" sin numero. */
 export const DEFAULT_VOLUME_STEP = 3;
 
-/** «a tope» / «al máximo» por voz: nivel seguro, no 100. */
-export const VOLUME_TOPE = 50;
+/** «a tope» / «al máximo» por voz: 100, el máximo de la tele (decisión de Nico, 30-oct-2026: «a tope es a tope»). */
+export const VOLUME_TOPE = 100;
 const MAX_VOLUME_STEP = 15;
 
 function num(s: string | undefined): number | null {
@@ -135,8 +135,8 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'volumeHalf' };
   }
 
-  // "sube a tope", "volumen al maximo": tope de seguridad, no 100 (una LG a
-  // 100 revienta los altavoces); quien quiera mas lo dice con numero.
+  // "sube a tope", "volumen al maximo": 100. Nico lo decidio el 30-oct-2026
+  // («a tope es a tope»); antes era un tope de seguridad de 50.
   if (
     /^(?:sube(?:le)?(?: el volumen)?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,

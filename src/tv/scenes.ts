@@ -12,6 +12,10 @@
  * - Si la tele consta APAGADA (status) y la rutina no la ha encendido, el
  *   resto de pasos se omiten («la tele esta apagada»): el modo noche no
  *   enciende una tele apagada, y apagar todo no la apaga dos veces.
+ * - Extras de Glasshouse (decision de Nico 30-oct-2026, «las opciones con mas
+ *   logica»): apagar todo NO cierra la app antes (apagar ya la para); modo
+ *   noche NO toca imagen/ahorro de energia (persisten al dia siguiente) ni el
+ *   temporizador de apagado. Ver docs/tv-ordenes.md.
  */
 
 export type SceneStep =
