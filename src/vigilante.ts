@@ -666,54 +666,65 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     // Una entrega CONFIRMADA se persiste siempre, también durante el cierre: el
     // drain de stop() espera a este barrido antes de que cli.ts cierre las bases
     // de datos. Marcarla evita que el mismo aviso reaparezca al reiniciar.
-    const insert = deps.db.prepare(
-      'INSERT OR IGNORE INTO vigilante_seen (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
-    );
-    const mark = deps.db.prepare(
-      'INSERT OR IGNORE INTO vigilante_stages (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
-    );
-    for (const [key, items, occs] of toSend) {
-      const first = items[0] as AgendaItem;
-      insert.run(key, first.kind, first.title, first.at ?? null, now());
-      // El aviso de descubrimiento cubre las etapas vigentes de las ocurrencias que dice.
-      for (const [ok, occ] of occs) {
-        for (const st of dueStages(occ, timeZone, nowMs)) {
-          mark.run(stageKey(ok, st), `etapa:${st}`, occ.title, occ.at ?? null, now());
+    // Todo o nada: un error de sqlite a mitad dejaba marcas a medias (visto pero sin
+    // etapas, o el cargo sin marcar) y el siguiente barrido repetía solo parte del aviso
+    // o se saltaba recordatorios. Si falla, no queda nada marcado y se reintenta entero.
+    const ownTx = !deps.db.isTransaction;
+    if (ownTx) deps.db.exec('BEGIN IMMEDIATE');
+    try {
+      const insert = deps.db.prepare(
+        'INSERT OR IGNORE INTO vigilante_seen (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
+      );
+      const mark = deps.db.prepare(
+        'INSERT OR IGNORE INTO vigilante_stages (key, kind, title, at, notified_at) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const [key, items, occs] of toSend) {
+        const first = items[0] as AgendaItem;
+        insert.run(key, first.kind, first.title, first.at ?? null, now());
+        // El aviso de descubrimiento cubre las etapas vigentes de las ocurrencias que dice.
+        for (const [ok, occ] of occs) {
+          for (const st of dueStages(occ, timeZone, nowMs)) {
+            mark.run(stageKey(ok, st), `etapa:${st}`, occ.title, occ.at ?? null, now());
+          }
+          if (isCritical(occ, nowMs)) {
+            mark.run(critKey(ok), 'etapa:crit', occ.title, occ.at ?? null, now());
+          }
         }
-        if (isCritical(occ, nowMs)) {
-          mark.run(critKey(ok), 'etapa:crit', occ.title, occ.at ?? null, now());
+      }
+      for (const r of remindersToSend) {
+        for (const st of r.covered) {
+          mark.run(stageKey(r.key, st), `etapa:${st}`, r.item.title, r.item.at ?? null, now());
+        }
+        if (isCritical(r.item, nowMs)) {
+          mark.run(critKey(r.key), 'etapa:crit', r.item.title, r.item.at ?? null, now());
         }
       }
-    }
-    for (const r of remindersToSend) {
-      for (const st of r.covered) {
-        mark.run(stageKey(r.key, st), `etapa:${st}`, r.item.title, r.item.at ?? null, now());
+      confirmNotices(deps.db, reserved);
+      markChargesNotified(
+        deps.db,
+        chargeAlerts.map((a) => a.msgId),
+      );
+      markDownloadsNotified(
+        deps.db,
+        downloads.map((d) => d.key),
+      );
+      markScreenNotified(
+        deps.db,
+        screenItems.map((i) => i.key),
+      );
+      if (lostInfo.lost > 0) markLostReported(deps.db, lostInfo.total);
+      trackItems(
+        deps.db,
+        toSend.flatMap(([, , occs]) => occs.map(([, o]) => o)),
+        now(),
+      );
+      for (const c of conflicts) {
+        mark.run(c.key, 'conflicto', `${c.a.title} / ${c.b.title}`, c.a.at ?? null, now());
       }
-      if (isCritical(r.item, nowMs)) {
-        mark.run(critKey(r.key), 'etapa:crit', r.item.title, r.item.at ?? null, now());
-      }
-    }
-    confirmNotices(deps.db, reserved);
-    markChargesNotified(
-      deps.db,
-      chargeAlerts.map((a) => a.msgId),
-    );
-    markDownloadsNotified(
-      deps.db,
-      downloads.map((d) => d.key),
-    );
-    markScreenNotified(
-      deps.db,
-      screenItems.map((i) => i.key),
-    );
-    if (lostInfo.lost > 0) markLostReported(deps.db, lostInfo.total);
-    trackItems(
-      deps.db,
-      toSend.flatMap(([, , occs]) => occs.map(([, o]) => o)),
-      now(),
-    );
-    for (const c of conflicts) {
-      mark.run(c.key, 'conflicto', `${c.a.title} / ${c.b.title}`, c.a.at ?? null, now());
+      if (ownTx) deps.db.exec('COMMIT');
+    } catch (err) {
+      if (ownTx && deps.db.isTransaction) deps.db.exec('ROLLBACK');
+      throw err;
     }
     log.info('vigilante: avisos notificados', {
       nuevos: toSend.length,
