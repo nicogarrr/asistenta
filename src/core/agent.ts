@@ -983,47 +983,61 @@ export class PersonalAgent {
           : { text: prompt + retryRecoveryNote(shared.steps), images };
       };
 
-      while (
-        attempt < this.#config.retry.attempts &&
-        !this.#externalAbort &&
-        isTransientProviderError(result.error)
-      ) {
-        attempt++;
-        if (!fellBack && this.#fallbackFor && isQuotaError(result.error)) {
-          fellBack = true;
-          this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
-          log.warn('primary model quota exhausted: falling back for this run', {
-            from: this.#config.model,
-            to: this.#config.fallbackModel,
+      // Un solo reintento por desbordamiento de contexto, pero ese reintento sigue
+      // teniendo derecho a los reintentos transitorios que queden: antes, un 503
+      // justo después de compactar mataba el turno sin volver a intentarlo.
+      let overflowRetried = false;
+      for (;;) {
+        while (
+          attempt < this.#config.retry.attempts &&
+          !this.#externalAbort &&
+          isTransientProviderError(result.error)
+        ) {
+          attempt++;
+          if (!fellBack && this.#fallbackFor && isQuotaError(result.error)) {
+            fellBack = true;
+            this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
+            log.warn('primary model quota exhausted: falling back for this run', {
+              from: this.#config.model,
+              to: this.#config.fallbackModel,
+            });
+          }
+          const delay = retryDelay(attempt, this.#config.retry);
+          log.warn('retrying after a transient provider failure', {
+            attempt,
+            of: this.#config.retry.attempts,
+            delayMs: delay,
+            error: result.error?.slice(0, 120),
           });
+          await sleep(delay, this.#runAbort.signal);
+          if (this.#externalAbort || this.#runAbort.signal.aborted) break;
+          const next = retryInput();
+          result = await this.#attempt(next.text, next.images, hooks, shared);
         }
-        const delay = retryDelay(attempt, this.#config.retry);
-        log.warn('retrying after a transient provider failure', {
-          attempt,
-          of: this.#config.retry.attempts,
-          delayMs: delay,
-          error: result.error?.slice(0, 120),
-        });
-        await sleep(delay, this.#runAbort.signal);
-        if (this.#externalAbort || this.#runAbort.signal.aborted) break;
-        const next = retryInput();
-        result = await this.#attempt(next.text, next.images, hooks, shared);
-      }
 
-      // Desbordamiento de contexto: no es un fallo terminal. Se compacta una vez y
-      // se reintenta; antes el error entraba en la lista de permanentes y el turno
-      // moría con la ventana llena. `#compact` ya respeta el "si falla el resumen,
-      // no toques la historia".
-      if (result.error && isContextOverflow(result.error) && !this.#externalAbort) {
-        log.warn('context overflow: compactando y reintentando', {
-          error: result.error.slice(0, 160),
-        });
-        // Rewind before compacting so the summary never sees the dead attempt,
-        // and the retry does not add a second copy of the prompt.
-        const next = retryInput();
-        await this.#compact();
-        attemptStart = this.#agent.state.messages.length;
-        result = await this.#attempt(next.text, next.images, hooks, shared);
+        // Desbordamiento de contexto: no es un fallo terminal. Se compacta una vez y
+        // se reintenta; antes el error entraba en la lista de permanentes y el turno
+        // moría con la ventana llena. `#compact` ya respeta el "si falla el resumen,
+        // no toques la historia".
+        if (
+          !overflowRetried &&
+          result.error &&
+          isContextOverflow(result.error) &&
+          !this.#externalAbort
+        ) {
+          overflowRetried = true;
+          log.warn('context overflow: compactando y reintentando', {
+            error: result.error.slice(0, 160),
+          });
+          // Rewind before compacting so the summary never sees the dead attempt,
+          // and the retry does not add a second copy of the prompt.
+          const next = retryInput();
+          await this.#compact();
+          attemptStart = this.#agent.state.messages.length;
+          result = await this.#attempt(next.text, next.images, hooks, shared);
+          continue;
+        }
+        break;
       }
 
       return { ...result, attempts: attempt + 1 };
