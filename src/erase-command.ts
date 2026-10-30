@@ -1,0 +1,93 @@
+import type { DatabaseSync } from 'node:sqlite';
+import { eraseScope } from './maintenance.js';
+
+/**
+ * /borrar_chat: borrar la memoria, el historial y el perfil de un chat es
+ * irreversible, así que nunca ocurre con un solo mensaje. El comando deja una
+ * petición pendiente y solo el mensaje siguiente con la palabra exacta
+ * {@link ERASE_WORD}, dentro de {@link ERASE_TTL_MS}, la ejecuta. Cualquier
+ * otro mensaje la cancela y, pasado el plazo, se olvida sin borrar nada.
+ */
+export const ERASE_WORD = 'BORRAR';
+export const ERASE_TTL_MS = 120_000;
+
+export const ERASE_PROMPT =
+  '⚠️ Esto borra la memoria, el historial de conversaciones y el perfil de este chat (todos sus temas). No se puede deshacer.\n' +
+  `Escribe ${ERASE_WORD} (en mayúsculas) en los próximos 2 minutos para confirmar. Cualquier otro mensaje lo cancela.`;
+
+export type EraseDecision = 'confirmed' | 'cancelled';
+
+export class EraseConfirm {
+  readonly #pending = new Map<string, number>();
+  readonly #ttlMs: number;
+  readonly #now: () => number;
+
+  constructor(ttlMs = ERASE_TTL_MS, now: () => number = Date.now) {
+    this.#ttlMs = ttlMs;
+    this.#now = now;
+  }
+
+  request(chatKey: string): void {
+    this.#pending.set(chatKey, this.#now() + this.#ttlMs);
+  }
+
+  /**
+   * Decide sobre el mensaje que llega tras /borrar_chat. `null` = no había nada
+   * pendiente (o caducó): el mensaje sigue su camino normal. La petición se
+   * consume siempre, así que una confirmación no se puede reutilizar.
+   */
+  consume(chatKey: string, text: string): EraseDecision | null {
+    const until = this.#pending.get(chatKey);
+    if (until === undefined) return null;
+    this.#pending.delete(chatKey);
+    if (this.#now() > until) return null;
+    return text.trim() === ERASE_WORD ? 'confirmed' : 'cancelled';
+  }
+}
+
+/**
+ * Todos los scopes de un chat: el principal, los temas vivos en memoria y los
+ * que tengan sesiones guardadas (`<chatKey>#<tema>`). Nunca devuelve scopes de
+ * otro chat aunque compartan prefijo («123» no arrastra a «1234#main»).
+ */
+export function scopesOfChat(chatKey: string, liveScopes: string[], db?: DatabaseSync): string[] {
+  const scopes = new Set<string>([`${chatKey}#main`]);
+  for (const s of liveScopes) if (s === chatKey || s.startsWith(`${chatKey}#`)) scopes.add(s);
+  if (db) {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT DISTINCT scope FROM sessions
+            WHERE scope = ? OR substr(scope, 1, ?) = ?`,
+        )
+        .all(chatKey, chatKey.length + 1, `${chatKey}#`) as Array<{ scope: string }>;
+      for (const r of rows) scopes.add(r.scope);
+    } catch {
+      // Base sin esquema o cerrada: se borra al menos lo que está en memoria.
+    }
+  }
+  return [...scopes];
+}
+
+export function eraseChat(opts: {
+  stateDir: string;
+  chatKey: string;
+  liveScopes: string[];
+  db?: DatabaseSync;
+}): { scopes: number; sessions: number; memoryFiles: number; profile: boolean } {
+  const scopes = scopesOfChat(opts.chatKey, opts.liveScopes, opts.db);
+  let sessions = 0;
+  let memoryFiles = 0;
+  let profile = false;
+  for (const scope of scopes) {
+    const r = eraseScope({ stateDir: opts.stateDir, scope, db: opts.db });
+    sessions += r.sessions;
+    if (r.memoryFile) memoryFiles++;
+    profile ||= r.profile;
+  }
+  return { scopes: scopes.length, sessions, memoryFiles, profile };
+}
+
+export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
+  return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${r.profile ? ' y tu perfil' : ''}. Empezamos de cero.`;
+}
