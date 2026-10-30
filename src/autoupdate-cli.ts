@@ -24,6 +24,7 @@ import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
 import { readBusy } from './ocupada.js';
 import { sameProcessAsRecorded } from './process-identity.js';
+import { futureDated } from './startup-record.js';
 import { unlock as unlockVault, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
 
@@ -191,8 +192,11 @@ export function autoupdateStatusLine(
     : `Autoactualización: apagada (${why}).`;
   if (state.last) {
     const at = Date.parse(state.last.at);
+    const future = Number.isNaN(at) ? undefined : futureDated(at, now);
     const min = Number.isNaN(at) ? '?' : Math.max(0, Math.round((now - at) / 60_000));
-    line += ` Última (hace ${min} min): ${state.last.text}.`;
+    line += future
+      ? ` Última (${future}): ${state.last.text}.`
+      : ` Última (hace ${min} min): ${state.last.text}.`;
   }
   return line;
 }
