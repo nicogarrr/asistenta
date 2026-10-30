@@ -13,6 +13,7 @@ import type { ApprovalChoice } from '../../src/channels/telegram.js';
 import { buildContextNote, createDaemonGate } from '../../src/cli.js';
 import type { Config } from '../../src/config.js';
 import { PersonalAgent } from '../../src/core/agent.js';
+import { createGoalNotifySend } from '../../src/daemon/goal-notify.js';
 import { createGoalTickExecute, type ThreadTickDeps } from '../../src/daemon/goal-tick.js';
 import { queueThreadTurn } from '../../src/daemon/inbound.js';
 import { createRoutineFire, deliverMissedThenStart } from '../../src/daemon/routine-fire.js';
@@ -20,7 +21,7 @@ import { createRoutineTask } from '../../src/daemon/routine-task.js';
 import { Store } from '../../src/db.js';
 import { GoalNotifier } from '../../src/goals/notify.js';
 import { GoalRunner } from '../../src/goals/runner.js';
-import { GoalStore, splitGoalScope } from '../../src/goals/store.js';
+import { GoalStore } from '../../src/goals/store.js';
 import { SessionStore } from '../../src/memory/sessions.js';
 import { WorkstreamStore } from '../../src/memory/workstreams.js';
 import { MemoryStore } from '../../src/memory.js';
@@ -208,6 +209,8 @@ export class Core {
   readonly sessions: SessionStore;
   readonly memory: MemoryStore;
   readonly notifier: GoalNotifier;
+  /** `<chatKey>:<sentId>` → scope, como el messageThread del daemon. */
+  readonly messageThread = new Map<string, string>();
   readonly routines: RoutineRunner;
   readonly goalRunner: GoalRunner;
   readonly threads = new Map<string, Thread>();
@@ -228,14 +231,12 @@ export class Core {
     this.notifier = new GoalNotifier({
       db: this.goalsDb,
       resolveGoal: (id) => this.goals.read(id),
-      send: async (goal, text) => {
-        const chatId = splitGoalScope(goal.scope).chatKey.split(':')[2] ?? '';
-        try {
-          return await this.telegram.send({ chatId, text });
-        } catch {
-          return null;
-        }
-      },
+      // El MISMO envío que el daemon (src/daemon/goal-notify.ts).
+      send: createGoalNotifySend({
+        telegram: this.telegram,
+        messageThread: this.messageThread,
+        log: { warn: () => {} },
+      }),
     });
     this.routines = new RoutineRunner({
       store: this.store,
