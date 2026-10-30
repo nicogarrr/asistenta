@@ -486,6 +486,7 @@ export function renderPage(): string {
               <button id="enviar-chat" type="submit">Enviar</button>
             </div>
           </form>
+          <p id="conexion-chat" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente: tu mensaje no se ha enviado. Pulsa Reintentar cuando vuelva.</p>
           <div id="panel-chat" class="chat-respuesta" role="log" aria-live="polite" aria-label="Conversación"></div>
         </div>
       </article>
@@ -725,7 +726,9 @@ ${renderFormatScript()}
             credentials: 'omit'
           });
         } catch (error) {
-          throw new Error('No se pudo conectar con el asistente. ¿Está encendido?');
+          var sinRed = new Error('No se pudo conectar con el asistente. ¿Está encendido?');
+          sinRed.sinConexion = true;
+          throw sinRed;
         }
         var datos = null;
         var esJson = true;
@@ -1043,12 +1046,19 @@ ${renderFormatScript()}
       }
 
       // Si el asistente deja de responder, la recarga automática lo dice y lo quita al volver.
-      function avisoConexion(caido) {
+      // desdeChat = true: un envío del chat no llegó; el aviso del chat se quita al volver la conexión.
+      function avisoConexion(caido, desdeChat) {
         var aviso = document.getElementById('conexion-aprobaciones');
-        if (!aviso || aviso.hidden === !caido) return;
-        aviso.hidden = !caido;
-        if (!caido) anunciar('Conexión con el asistente recuperada.');
+        if (aviso && aviso.hidden !== !caido) {
+          aviso.hidden = !caido;
+          if (!caido) anunciar('Conexión con el asistente recuperada.');
+        }
+        var avisoChat = document.getElementById('conexion-chat');
+        if (!avisoChat || avisoChat === aviso) return;
+        if (!caido) avisoChat.hidden = true;
+        else if (desdeChat) avisoChat.hidden = false;
       }
+
 
       // Conversación de esta pestaña: el panel no guarda historial en el servidor.
       var MAX_TURNOS_CHAT = 20;
@@ -1091,7 +1101,9 @@ ${renderFormatScript()}
               : JSON.stringify(datos);
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+          avisoConexion(false);
         } catch (error) {
+          if (error && error.sinConexion) avisoConexion(true, true);
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
           cuerpo.textContent =
