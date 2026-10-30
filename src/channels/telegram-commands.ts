@@ -135,6 +135,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Tus notas de voz suenan solas en el PC o la tele',
   },
   {
+    command: 'ordenador',
+    description: 'Apagar o encender el control del PC (/ordenador off lo para ya)',
+  },
+  {
     command: 'ojo',
     description: 'Ver, activar o parar avisos proactivos',
   },
