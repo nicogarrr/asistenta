@@ -16,13 +16,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonRunState } from './autostart-watchdog.js';
+import { writeFileReplacing } from './fs-tmp.js';
 import { BUSY_DIR, type BusyState } from './ocupada.js';
 
 export const AUTOUPDATE_DIR = BUSY_DIR;
@@ -73,8 +73,7 @@ export function writeAutoupdateState(stateDir: string, state: AutoupdateState): 
   try {
     mkdirSync(dir(stateDir), { recursive: true });
     const file = join(dir(stateDir), AUTOUPDATE_STATE_FILE);
-    writeFileSync(`${file}.${process.pid}.tmp`, JSON.stringify(state));
-    renameSync(`${file}.${process.pid}.tmp`, file);
+    writeFileReplacing(file, JSON.stringify(state));
   } catch {
     // Solo es diagnóstico y el interruptor on/off; sin él se usa el valor por defecto.
   }
