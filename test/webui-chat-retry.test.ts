@@ -64,7 +64,7 @@ describe('panel: «Reintentar» repite el último turno (POST /api/chat/retry)',
     expect(i).toBeGreaterThan(0);
     const bloque = src.slice(i, i + 1800);
     expect(bloque).toContain('lastTurns.get(thread.key)');
-    expect(bloque).toContain('last.images?.length) return null');
+    expect(bloque).toContain("last.images?.length) return 'con-fotos'");
     expect(bloque).toContain('rewindLastTurn(last');
     expect(bloque).toContain('runPanelChat(thread, last.text');
   });

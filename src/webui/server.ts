@@ -34,14 +34,19 @@ export interface WebUiDeps {
   ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
   /**
    * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
-   * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409).
+   * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409);
+   * `'con-fotos'` = el último mensaje llevaba fotos y solo se repite desde Telegram (409).
    * Si falta, la ruta responde 503.
    */
-  retry?(): Promise<{
-    text: string;
-    images?: string[];
-    files?: { name: string; url: string }[];
-  } | null>;
+  retry?(): Promise<
+    | {
+        text: string;
+        images?: string[];
+        files?: { name: string; url: string }[];
+      }
+    | null
+    | 'con-fotos'
+  >;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -279,6 +284,12 @@ async function respondApi(
         if (!deps.retry) throw new HttpError(503, 'Reintentar no disponible');
         const answer = await deps.retry();
         if (answer === null) throw new HttpError(409, 'No hay un mensaje reciente que repetir');
+        if (answer === 'con-fotos') {
+          throw new HttpError(
+            409,
+            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Repítelo en Telegram con /reintentar',
+          );
+        }
         if (!isRecord(answer) || typeof answer.text !== 'string')
           throw new Error('deps.retry devolvio una respuesta invalida');
         // Lo mismo que /api/chat: un turno repetido también trae sus capturas y archivos.
