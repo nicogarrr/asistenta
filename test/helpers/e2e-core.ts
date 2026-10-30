@@ -12,6 +12,11 @@ import type { ApprovalChoice } from '../../src/channels/telegram.js';
 import { buildContextNote, createDaemonGate } from '../../src/cli.js';
 import type { Config } from '../../src/config.js';
 import { PersonalAgent } from '../../src/core/agent.js';
+import {
+  chatIdOfScope,
+  createRoutineFire,
+  deliverMissedThenStart,
+} from '../../src/daemon/routine-fire.js';
 import { Store } from '../../src/db.js';
 import { GoalNotifier } from '../../src/goals/notify.js';
 import { GoalRunner, type GoalTickResult } from '../../src/goals/runner.js';
@@ -19,6 +24,7 @@ import { GoalStore, splitGoalScope } from '../../src/goals/store.js';
 import { SessionStore } from '../../src/memory/sessions.js';
 import { WorkstreamStore } from '../../src/memory/workstreams.js';
 import { MemoryStore } from '../../src/memory.js';
+import { RoutineDeliveryStore } from '../../src/routine-delivery.js';
 import { RoutineRunner } from '../../src/routines.js';
 import { createGoalTool } from '../../src/tools/goal.js';
 import { createMemoryTool } from '../../src/tools/memory.js';
@@ -238,7 +244,7 @@ export class Core {
     });
     this.routines = new RoutineRunner({
       store: this.store,
-      run: (_prompt, ctx) => this.#fire(ctx.scope, ctx.routine),
+      run: (prompt, ctx) => this.#fire(prompt, ctx),
       timeoutMs: 10_000,
     });
     this.goalRunner = new GoalRunner({
@@ -255,28 +261,34 @@ export class Core {
         return { text: r.text ?? '', error: r.error };
       },
     });
+    this.#fire = this.#createFire();
   }
 
   /**
-   * Lo que hace cli.ts (runRoutineFire) al dispararse una rutina, reducido a
-   * los recordatorios y los objetivos, que son lo que estos escenarios usan.
+   * El MISMO disparo de rutinas que usa el daemon (src/daemon/routine-fire.ts):
+   * tick de objetivo, recordatorio o rutina que trabaja en el hilo de su scope.
    */
-  async #fire(scope: string, routine: import('../../src/db.js').Routine): Promise<void> {
-    if (routine.name.startsWith('objetivo:')) {
-      await this.goalRunner.tickByRoutineName(routine.name);
-      return;
-    }
-    const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
-    if (!chatId || !isReminder(routine)) return;
-    if (isOneShotReminder(routine) && !oneShotStillPending(this.store, routine)) return;
-    const sent = await this.telegram
-      .send({ chatId, text: `⏰ Recordatorio: ${reminderText(routine)}` })
-      .then(() => true)
-      .catch(() => false);
-    if (isOneShotReminder(routine)) {
-      settleOneShot(this.store, routine, sent);
-      this.routines.sync();
-    }
+  readonly #fire: ReturnType<typeof createRoutineFire>;
+
+  #createFire(): ReturnType<typeof createRoutineFire> {
+    return createRoutineFire({
+      store: this.store,
+      tickGoal: (name) => this.goalRunner.tickByRoutineName(name),
+      runTask: async (task, ctx) => {
+        const [chatPart, threadName] = ctx.scope.split('#');
+        const t = await this.thread(chatIdOfScope(chatPart ?? ''), threadName || 'main');
+        try {
+          return (await t.agent.run(task)).text ?? '';
+        } finally {
+          t.gate.clearSession(t.key);
+        }
+      },
+      send: (chatId, text) => this.telegram.send({ chatId, text }),
+      delivery: new RoutineDeliveryStore(join(this.#stateDir, 'routine-delivery.json')),
+      outputDir: join(this.#stateDir, 'salidas'),
+      sync: () => this.routines.sync(),
+      droppedRemindersPath: join(this.#stateDir, 'dropped-reminders.jsonl'),
+    });
   }
 
   start(): this {
@@ -285,22 +297,17 @@ export class Core {
   }
 
   /**
-   * Arranque como el de cli.ts: primero los recordatorios puntuales vencidos
-   * (con el daemon apagado a su hora), después el planificador.
+   * Arranque como el del daemon (deliverMissedThenStart): primero los
+   * recordatorios puntuales vencidos (con el daemon apagado a su hora),
+   * después el planificador.
    */
   async startLikeDaemon(): Promise<this> {
-    await deliverMissedReminders({
+    await deliverMissedThenStart({
       store: this.store,
-      send: async (scope, text) => {
-        const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
-        if (!chatId) return false;
-        return this.telegram
-          .send({ chatId, text })
-          .then(() => true)
-          .catch(() => false);
-      },
+      send: (chatId, text) => this.telegram.send({ chatId, text }),
+      start: () => this.start(),
     });
-    return this.start();
+    return this;
   }
 
   async thread(chatId = CHAT_ID, name = 'main'): Promise<Thread> {
