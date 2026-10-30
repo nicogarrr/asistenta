@@ -68,3 +68,9 @@ Nico pidió «elige las opciones con más lógica»:
 - Los dos extras son opcionales: sin Glasshouse se omiten y, si la tele los rechaza, se ignoran (apagar todo apaga igual).
 - Volver a la imagen de antes: «pon la imagen en estándar» (la tool `tv` con `action=picture pictureMode=standard`, o cine, vivid…) o desde el menú de la tele. El modo cine no toca la imagen.
 - Ninguna rutina programa el temporizador de apagado.
+
+### Mando: atrás, imagen y límites
+
+- «vuelve atrás», «atrás», «pulsa el botón de atrás»: tecla ATRÁS del mando (BACK).
+- Modo de imagen por voz: «pon la imagen en estándar» (o «normal»), «imagen oscura» / «modo ahorro» (eco), «imagen en modo cine», «imagen viva», «modo de imagen juego», «imagen de deportes». Un modo que no conozco no se adivina. «modo cine» sin «imagen» sigue siendo la rutina de cine y no toca la imagen.
+- «sube 20» sube como mucho 15 de una vez (seguridad) y ahora lo dice: «Pediste subir 20, pero de una vez subo como mucho 15: lo he subido 15.». Para un valor exacto: «volumen a 40».

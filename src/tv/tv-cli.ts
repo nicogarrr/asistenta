@@ -10,7 +10,7 @@ import {
   tvScreenshot,
   tvToast,
 } from './lgtv.js';
-import { describeTvIntent, parseTvCommand, tvOrderHasTime } from './natural.js';
+import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { parseMac, sendWakeOnLan } from './wol.js';
 
@@ -101,7 +101,8 @@ export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<num
   }
   try {
     const res = (await deps.runOrder(order)).trim();
-    out(`${res || `Hecho: ${describeTvIntent(intent)}.`}\n`);
+    const notice = res ? tvIntentNotice(intent) : null;
+    out(`${res || `Hecho: ${describeTvIntent(intent)}.`}${notice ? `\n${notice}` : ''}\n`);
     return 0;
   } catch (e) {
     err(

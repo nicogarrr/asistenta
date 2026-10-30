@@ -19,7 +19,7 @@ describe('ordenes naturales en castellano', () => {
     ['sube un poco', { action: 'volumeStep', steps: 3 }],
     ['baja 5', { action: 'volumeStep', steps: -5 }],
     ['bájale dos', { action: 'volumeStep', steps: -2 }],
-    ['sube el volumen 40', { action: 'volumeStep', steps: 15 }],
+    ['sube el volumen 40', { action: 'volumeStep', steps: 15, requested: 40 }],
     ['más alto', { action: 'volumeStep', steps: 3 }],
     ['baja la persiana', null],
     ['silencio', { action: 'mute', on: true }],
