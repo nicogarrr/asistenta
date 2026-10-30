@@ -440,6 +440,10 @@ function decodedBlobs(text: string): string[] {
   return out.slice(0, 32);
 }
 
+function browserFillEchoReason(source: string): string {
+  return `Vas a escribir en un formulario web un trozo literal de ${source} leído en este turno; al enviarlo saldría de tu PC.`;
+}
+
 function egressEchoReason(source: string, host: string): string {
   return (
     `Este turno ya ha leído contenido privado (${source}) y ahora quiere abrir una URL ` +
@@ -1192,6 +1196,16 @@ export class Gate {
     if (!this.#egressTaint) return null;
     const source = this.#privateTaint.get(sessionId);
     if (!source) return null;
+    // Un formulario del navegador es otra salida: lo que se escribe en un campo
+    // viaja al enviar. Si el texto lleva un trozo literal del contenido privado
+    // leído en el turno, pregunta (la página puede ser la que lo ha pedido).
+    if (call.tool === 'browser' && (call.args.action === 'fill' || call.args.action === 'type')) {
+      const typed = [call.args.value, call.args.text]
+        .filter((v) => typeof v === 'string')
+        .join(' ');
+      if (typed && this.#textEchoesPrivate(sessionId, typed)) return browserFillEchoReason(source);
+      return null;
+    }
     const url = egressUrlOf(call.tool, call.args);
     if (!url) return null;
     const host = egressHost(url);
@@ -1259,7 +1273,14 @@ export class Gate {
         break;
       }
     }
-    const candidates = [decoded, ...decodedBlobs(decoded)];
+    return this.#textEchoesPrivate(sessionId, decoded);
+  }
+
+  /** True si el texto (o un base64/hex dentro) lleva un trozo literal del contenido privado. */
+  #textEchoesPrivate(sessionId: string, text: string): boolean {
+    const set = this.#privateGrams.get(sessionId);
+    if (!set || set.size === 0) return false;
+    const candidates = [text, ...decodedBlobs(text)];
     for (const candidate of candidates) {
       const norm = normalizeEcho(candidate);
       for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length; i++) {
