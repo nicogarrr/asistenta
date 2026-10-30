@@ -988,7 +988,20 @@ ${renderFormatScript()}
         document.title = formato.tituloPestana(n);
       }
 
+      // Al repintar (p. ej. la recarga silenciosa) el aviso «Permitido…» ya no se borra si
+      // el foco del teclado está en él, y si el foco estaba en la tarjeta no cae al principio.
       function pintarAprobaciones(contenedor, datos) {
+        var foco = document.activeElement;
+        var focoDentro = !!foco && foco !== contenedor && contenedor.contains(foco);
+        if (focoDentro && !ultimaDecision && foco.classList && foco.classList.contains('resultado')) ultimaDecision = foco.textContent;
+        pintarListaAprobaciones(contenedor, datos);
+        if (focoDentro && !contenedor.contains(document.activeElement)) {
+          var tarjetaAprobaciones = contenedor.closest ? contenedor.closest('.tarjeta') : null;
+          devolverFoco(contenedor.querySelector('.resultado.chip') || (tarjetaAprobaciones && tarjetaAprobaciones.querySelector('h2')) || contenedor);
+        }
+      }
+
+      function pintarListaAprobaciones(contenedor, datos) {
         contenedor.replaceChildren();
         if (ultimaDecision) {
           contenedor.appendChild(nodo('p', 'resultado chip ok', ultimaDecision));
