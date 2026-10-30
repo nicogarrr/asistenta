@@ -39,6 +39,13 @@ import {
 import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
+import {
+  InboundReceipt,
+  RECEIPT_READ_TEXT,
+  receiptKind,
+  receiptStartText,
+  voiceHeardText,
+} from './channels/telegram-receipts.js';
 import type { ChannelAudio, Inbound, Outbound } from './channels/types.js';
 import { chatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
@@ -5237,6 +5244,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }, 5000);
     status.unref();
 
+    // Acuse inmediato de voz/foto/documento («🎙️ Transcribiendo…»), editado al
+    // terminar. Respeta /estado off: quien no quiere notas de progreso tampoco este.
+    const receipt = new InboundReceipt({
+      send: (text) =>
+        telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: inbound.chatId,
+          threadId: inbound.threadId,
+          replyToMessageId: inbound.messageId,
+          text,
+        }),
+      edit: (id, text) => telegram.editMessageText(inbound.chatId, id, text),
+    });
+    const kind = receiptKind(inbound);
+    if (kind && statusOn.get(inbound.chatId) !== false) {
+      await receipt.start(receiptStartText(kind, inbound));
+    }
+    /** Acuse de foto/documento: ya leído, y se borra con las notas de progreso. */
+    const settleFileReceipt = async (): Promise<void> => {
+      if (!receipt.id || kind === 'voice') return;
+      await receipt.update(RECEIPT_READ_TEXT);
+      progressIds.push(receipt.id);
+    };
+
     try {
       let images = opts.images;
       let photoDownloadNote = '';
@@ -5352,10 +5384,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       }
 
+      await settleFileReceipt();
+
       let prompt = text;
       if (inbound.audioFileId) {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
         if (!bytes) {
+          if (receipt.id) progressIds.push(receipt.id);
           await say(inbound, 'No he podido descargar el audio.', { quote: true });
           return;
         }
@@ -5366,6 +5401,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
           prompt = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
+          // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
+          await receipt.update(voiceHeardText(heard.text));
           log.info('voice transcribed', {
             seconds: heard.durationSeconds,
             chars: heard.text.length,
@@ -5381,6 +5418,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             log.warn('transcript index failed', { err });
           }
         } catch (err) {
+          if (receipt.id) progressIds.push(receipt.id);
           await say(
             inbound,
             `No he entendido la nota de voz: ${err instanceof Error ? err.message : String(err)}`,
