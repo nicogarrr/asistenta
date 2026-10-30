@@ -50,7 +50,7 @@ describe('panel: fechas, duraciones y etiquetas legibles', () => {
     expect(ctx.asistentaFormato?.formatearCampo('uptimeSeconds', 93_784)).toBe('1 d 2 h 3 min');
     const html = renderPage();
     expect(html).toContain('formato.formatearCampo(clave, valor)');
-    expect(html).toContain('placeholder="local"');
+    expect(html).toContain('<option value="">Local (este PC)</option>');
     expect(html).not.toContain('placeholder="global"');
   });
 });

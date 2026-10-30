@@ -11,6 +11,8 @@ export interface WebUiDeps {
   status(): unknown | Promise<unknown>;
   sessions(query?: string): unknown | Promise<unknown>;
   memory(scope?: string): unknown | Promise<unknown>;
+  /** Ámbitos de memoria existentes, para el selector del panel. Si falta, la ruta responde 503. */
+  memoryScopes?(): unknown | Promise<unknown>;
   auditVerify(): unknown | Promise<unknown>;
   /** Read-only goals, filtered to the configured owner by the caller. */
   goals?(): unknown | Promise<unknown>;
@@ -58,6 +60,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
+  | { method: 'GET'; kind: 'memoryScopes' }
   | { method: 'GET'; kind: 'audit' }
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
@@ -141,6 +144,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'sessions' };
     case '/api/memory':
       return { method: 'GET', kind: 'memory' };
+    case '/api/memory/scopes':
+      return { method: 'GET', kind: 'memoryScopes' };
     case '/api/audit/verify':
       return { method: 'GET', kind: 'audit' };
     case '/api/approvals':
@@ -200,6 +205,10 @@ async function respondApi(
         break;
       case 'memory':
         payload = await deps.memory(queryParam(url, 'scope'));
+        break;
+      case 'memoryScopes':
+        if (!deps.memoryScopes) throw new HttpError(503, 'Ámbitos de memoria no disponibles');
+        payload = await deps.memoryScopes();
         break;
       case 'audit':
         payload = await deps.auditVerify();
