@@ -34,11 +34,31 @@ function norm(text: string): string {
 }
 
 const CORRECTION =
-  /(^|[\s,.!¡¿])(no,? asi no|asi no\b|eso no\b|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|prefiero|preferiria|la proxima vez|a partir de ahora|de ahora en adelante|desde ahora|no vuelvas a|deja de|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|esta mal|no me gusta que|quiero que siempre|siempre que te|te has (equivocado|confundido|colado)|te confundes|no es eso\b|no hace falta que|no necesito que|no quiero que (me )?(respondas|contestes|hables|escribas|pongas|digas|mandes|uses|llames|trates)|mejor no (me )?(pongas|uses|digas|mandes|hagas|escribas|respondas|contestes)|(recuerda|acuerdate de) que (siempre|nunca|prefiero)|cada vez que te (pida|diga|pregunte|escriba)|hablame de tu\b|tuteame|no me (hables|trates) de usted)/;
+  /(^|[\s,.!¡¿])(no,? asi no|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|prefiero|preferiria|a partir de ahora|de ahora en adelante|desde ahora|no vuelvas a|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|no me gusta que|quiero que siempre|siempre que te|te has (equivocado|confundido|colado)|te confundes|no es eso\b|no hace falta que|no necesito que|no quiero que (me )?(respondas|contestes|hables|escribas|pongas|digas|mandes|uses|llames|trates)|mejor no (me )?(pongas|uses|digas|mandes|hagas|escribas|respondas|contestes)|(recuerda|acuerdate de) que (siempre|nunca|prefiero)|cada vez que te (pida|diga|pregunte|escriba)|hablame de tu\b|tuteame|no me (hables|trates) de usted)/;
+
+/** Fin de frase: lo que sigue es nada o un signo (no «?»: «¿y eso no?» es una pregunta). */
+const END = String.raw`(?=\s*(?:$|[,.!;:]))`;
+/**
+ * Frases que también son corrientes («eso no lo sé», «mi madre está mal», «no deja de
+ * llover», «la próxima vez que vaya a Madrid»): solo cuentan en su forma de corrección.
+ */
+const LOOSE_CORRECTION = new RegExp(
+  [
+    String.raw`(^|[\s,.!¡¿])(eso|asi) no${END}`,
+    String.raw`(^|[\s,.!¡¿])(eso|asi) no (es|era) (lo que|asi|correcto|cierto|verdad)\b`,
+    String.raw`(^|[\s,.!¡¿])(eso|asi) no (lo|me) (quiero|queria|pedi|he pedido|gusta|sirve|vale)\b`,
+    String.raw`(^|[\s,.!¡¿])(eso|esto|asi|todo eso) esta mal\b`,
+    String.raw`^esta mal${END}`,
+    String.raw`(^|[\s,.!¡¿])esta mal (hecho|dicho|escrito|calculado|traducido|resumido)\b`,
+    String.raw`(^|[,.;!¡¿]\s*|\by |\bpor favor,? |\bporfa,? |\boye,? )deja de\b`,
+    String.raw`(^|[\s,.!¡¿])(para )?la proxima vez(,| no | (hazlo|haz|pon|ponme|usa|di|dime|pregunta|preguntame|avisame|mandame|escribe|escribeme|responde|contesta|intenta|recuerda|acuerdate|quiero|prefiero|mejor)\b| que (me |te )?(pida|diga|pregunte|preguntes|escriba|escribas|hables|respondas|contestes|hagas|pongas|mandes|busques)\b|${END})`,
+  ].join('|'),
+);
 
 /** ¿Parece el mensaje del dueño una corrección o una preferencia duradera? */
 export function looksLikeCorrection(text: string): boolean {
-  return CORRECTION.test(norm(text));
+  const n = norm(text);
+  return CORRECTION.test(n) || LOOSE_CORRECTION.test(n);
 }
 
 export const LEARN_HINT =
