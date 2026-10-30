@@ -1,3 +1,4 @@
+import { foldAccents } from '../text.js';
 /**
  * Turns how a person asks for a recurring job («resúmeme el día cada mañana a las 8»)
  * into a 5-field cron expression. A user who has to write `0 8 * * *` will simply not
@@ -58,12 +59,7 @@ export function parseCronAdd(
  * returns null, so a caller can fall back to asking rather than guessing at 3 a.m.
  */
 export function parseNatural(text: string): { schedule: string; prompt: string } | null {
-  const normalised = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalised = foldAccents(text).replace(/\s+/g, ' ').trim();
 
   // A time of day is the strongest signal. `a las 8`, `a las 8:30`, `a las 20h`.
   let hour = 0;

@@ -16,6 +16,7 @@
  * - Sin red en los tests: todas las dependencias van inyectadas.
  */
 
+import { foldAccents } from '../text.js';
 import type { WebSearchItem } from '../web/router.js';
 
 export interface ResearchSource {
@@ -57,7 +58,7 @@ const SEARCH_RESULTS_PER_QUESTION = 5;
 
 /** Minusculas y sin acentos, para emparejar terminos sin importar la grafia. */
 export function normalizeText(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return foldAccents(s);
 }
 
 /** Terminos buscables de una pregunta: palabras de 4+ letras, sin stopwords comunes. */
