@@ -1349,15 +1349,22 @@ ${renderFormatScript()}
         return true;
       }
 
+      // Búsqueda y ámbito: si llega tarde la respuesta de una consulta anterior (escribir
+      // rápido, cambiar de ámbito), no pinta encima de la última; solo cuenta la más nueva.
+      var consultaSesiones = 0;
       async function cargarSesiones() {
         var contenedor = document.getElementById('panel-sesiones');
         var consulta = document.getElementById('buscar-sesiones').value.trim();
         var ruta = '/api/sessions' + (consulta ? '?q=' + encodeURIComponent(consulta) : '');
+        var esta = ++consultaSesiones;
         pintarCarga(contenedor);
         try {
-          pintarSesiones(contenedor, await pedir(ruta));
+          var datos = await pedir(ruta);
+          if (esta !== consultaSesiones) return true;
+          pintarSesiones(contenedor, datos);
           finCarga(contenedor, true);
         } catch (error) {
+          if (esta !== consultaSesiones) return true;
           pintarError(contenedor, error, cargarSesiones); return false;
         }
         return true;
@@ -1400,15 +1407,20 @@ ${renderFormatScript()}
         }
       }
 
+      var consultaMemoria = 0;
       async function cargarMemoria() {
         var contenedor = document.getElementById('panel-memoria');
         var ambito = document.getElementById('ambito-memoria').value.trim();
         var ruta = '/api/memory' + (ambito ? '?scope=' + encodeURIComponent(ambito) : '');
+        var esta = ++consultaMemoria;
         pintarCarga(contenedor);
         try {
-          pintarMemoria(contenedor, await pedir(ruta));
+          var datos = await pedir(ruta);
+          if (esta !== consultaMemoria) return true;
+          pintarMemoria(contenedor, datos);
           finCarga(contenedor, true);
         } catch (error) {
+          if (esta !== consultaMemoria) return true;
           pintarError(contenedor, error, cargarMemoria); return false;
         }
         return true;
