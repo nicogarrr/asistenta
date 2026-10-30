@@ -382,15 +382,40 @@ export async function fetchWeatherLine(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 8_000,
 ): Promise<string | null> {
+  const days = await fetchWeatherDays(cfg, 1, fetchFn, timeoutMs);
+  const today = days[0];
+  if (!today) return null;
+  return `Tiempo${cfg.label ? ` en ${cfg.label}` : ''}: ${today.text}`;
+}
+
+export interface WeatherDay {
+  /** Fecha local YYYY-MM-DD del sitio configurado. */
+  date: string;
+  /** «8–17 °C, despejado» o «8–17 °C, lluvia (60 %)». */
+  text: string;
+}
+
+/**
+ * Previsión de 1 a 7 días con Open-Meteo (el mismo servicio gratis y sin clave del
+ * resumen diario). Los errores de red se propagan; días sin datos se omiten.
+ */
+export async function fetchWeatherDays(
+  cfg: WeatherConfig,
+  days: number,
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 8_000,
+): Promise<WeatherDay[]> {
+  const n = Math.min(7, Math.max(1, Math.round(days) || 1));
   const url =
     'https://api.open-meteo.com/v1/forecast' +
     `?latitude=${cfg.latitude}&longitude=${cfg.longitude}` +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-    '&timezone=auto&forecast_days=1';
+    `&timezone=auto&forecast_days=${n}`;
   const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`el servicio del tiempo ha respondido ${res.status}`);
   const body = (await res.json()) as {
     daily?: {
+      time?: string[];
       weather_code?: number[];
       temperature_2m_max?: number[];
       temperature_2m_min?: number[];
@@ -398,22 +423,26 @@ export async function fetchWeatherLine(
     };
   };
   const d = body.daily;
-  const max = d?.temperature_2m_max?.[0];
-  const min = d?.temperature_2m_min?.[0];
-  const code = d?.weather_code?.[0];
-  if (typeof max !== 'number' || typeof min !== 'number') return null;
-  const parts = [`${Math.round(min)}–${Math.round(max)} °C`];
-  const sky = typeof code === 'number' ? weatherCodeEs(code) : '';
-  const rain = d?.precipitation_probability_max?.[0];
-  const wet = sky === 'lluvia' || sky === 'llovizna' || sky === 'tormenta';
-  if (typeof rain === 'number' && rain >= 30) {
-    parts.push(
-      wet
-        ? `${sky} (${Math.round(rain)} %)`
-        : `${sky ? `${sky}, ` : ''}${Math.round(rain)} % de lluvia`,
-    );
-  } else if (sky) parts.push(sky);
-  return `Tiempo${cfg.label ? ` en ${cfg.label}` : ''}: ${parts.join(', ')}`;
+  const out: WeatherDay[] = [];
+  for (let i = 0; i < n; i++) {
+    const max = d?.temperature_2m_max?.[i];
+    const min = d?.temperature_2m_min?.[i];
+    if (typeof max !== 'number' || typeof min !== 'number') continue;
+    const code = d?.weather_code?.[i];
+    const parts = [`${Math.round(min)}–${Math.round(max)} °C`];
+    const sky = typeof code === 'number' ? weatherCodeEs(code) : '';
+    const rain = d?.precipitation_probability_max?.[i];
+    const wet = sky === 'lluvia' || sky === 'llovizna' || sky === 'tormenta';
+    if (typeof rain === 'number' && rain >= 30) {
+      parts.push(
+        wet
+          ? `${sky} (${Math.round(rain)} %)`
+          : `${sky ? `${sky}, ` : ''}${Math.round(rain)} % de lluvia`,
+      );
+    } else if (sky) parts.push(sky);
+    out.push({ date: String(d?.time?.[i] ?? ''), text: parts.join(', ') });
+  }
+  return out;
 }
 
 function sameLocalDay(a: Date, b: Date): boolean {
