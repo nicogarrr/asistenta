@@ -167,8 +167,9 @@ for ($i=1; $i -le $steps; $i++) {
    * SendKeys cannot emit emoji or most non-ASCII: it either drops them or types
    * garbage. So text is split into ASCII runs (typed as keystrokes) and non-ASCII
    * runs (pasted with Ctrl+V). The clipboard is saved and restored around each
-   * paste, best-effort: if the previous content was not plain text, there is
-   * nothing sensible to restore and it is left as the pasted text.
+   * paste: every format on it (text, an image, copied files, HTML…) is copied
+   * first and put back afterwards, and only once the target app has gone idle
+   * after Ctrl+V — never over something the app or Nico put there meanwhile.
    */
   async type(text: string): Promise<void> {
     for (const segment of splitAsciiSegments(text)) {
@@ -189,22 +190,7 @@ Add-Type -AssemblyName System.Windows.Forms
     // Base64 the payload across the process boundary: emoji and quotes survive
     // intact, and nothing needs escaping in the generated script.
     const payload = Buffer.from(text, 'utf8').toString('base64');
-    await this.#ps(`
-$ErrorActionPreference='Stop'
-Add-Type -AssemblyName System.Windows.Forms
-$previous = $null
-try { $previous = Get-Clipboard -Raw -ErrorAction Stop } catch {}
-$text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}'))
-Set-Clipboard -Value $text
-Start-Sleep -Milliseconds 120
-[System.Windows.Forms.SendKeys]::SendWait('^v')
-Start-Sleep -Milliseconds 200
-if ($null -ne $previous) {
-  try { Set-Clipboard -Value $previous } catch {}
-} else {
-  try { Set-Clipboard -Value '' } catch {}
-}
-`);
+    await this.#ps(pasteScript(payload, pasteSettleMs()));
   }
 
   async key(key: string): Promise<void> {
@@ -349,4 +335,76 @@ export async function hasInteractiveDesktop(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Default pause after Ctrl+V before the clipboard is restored (ms). */
+export const DEFAULT_PASTE_SETTLE_MS = 400;
+
+/**
+ * Pause after Ctrl+V before restoring the clipboard: `PA_COMPUTER_PASTE_SETTLE_MS`
+ * (100–5000), default 400. Slow apps (Electron, remote desktops) read the
+ * clipboard asynchronously; restoring too early pastes the OLD content.
+ */
+export function pasteSettleMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.PA_COMPUTER_PASTE_SETTLE_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PASTE_SETTLE_MS;
+  return Math.min(5000, Math.max(100, Math.round(raw)));
+}
+
+/**
+ * PowerShell for one clipboard paste. Exported for tests (no Windows here).
+ *
+ * 1. Snapshot EVERY format on the clipboard into a private DataObject — an image
+ *    or copied files survive, not only plain text (before, a non-text clipboard
+ *    was overwritten with '' and Nico's copied image was lost).
+ * 2. Put the text, Ctrl+V.
+ * 3. Wait for the foreground app to go input-idle (up to 2 s), then the settle.
+ * 4. Restore only if the clipboard still holds OUR text: if the app or Nico put
+ *    something new there meanwhile, it is left alone.
+ * An empty clipboard is emptied again; one that could not be read is left as is.
+ */
+export function pasteScript(payloadB64: string, settleMs: number): string {
+  return `
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class PaFg { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); }
+"@
+function Pa-Retry([scriptblock]$b) { for ($i=0; $i -lt 5; $i++) { try { return (& $b) } catch { Start-Sleep -Milliseconds 60 } }; return (& $b) }
+$saved = $null; $hadFormats = $false
+try {
+  $current = [System.Windows.Forms.Clipboard]::GetDataObject()
+  if ($null -ne $current) {
+    $formats = @($current.GetFormats($false))
+    if ($formats.Count -gt 0) {
+      $hadFormats = $true
+      $copy = New-Object System.Windows.Forms.DataObject
+      $kept = 0
+      foreach ($f in $formats) { try { $v = $current.GetData($f, $false); if ($null -ne $v) { $copy.SetData($f, $false, $v); $kept++ } } catch {} }
+      if ($kept -gt 0) { $saved = $copy }
+    }
+  }
+} catch {}
+$text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payloadB64}'))
+Pa-Retry { [System.Windows.Forms.Clipboard]::SetText($text) } | Out-Null
+Start-Sleep -Milliseconds 120
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+try {
+  $fgPid = [uint32]0
+  [void][PaFg]::GetWindowThreadProcessId([PaFg]::GetForegroundWindow(), [ref]$fgPid)
+  if ($fgPid -gt 0) { [void](Get-Process -Id $fgPid).WaitForInputIdle(2000) }
+} catch {}
+Start-Sleep -Milliseconds ${Math.round(settleMs)}
+$stillOurs = $false
+try { $stillOurs = ([System.Windows.Forms.Clipboard]::ContainsText() -and [System.Windows.Forms.Clipboard]::GetText() -ceq $text) } catch {}
+if ($stillOurs) {
+  if ($null -ne $saved) {
+    try { Pa-Retry { [System.Windows.Forms.Clipboard]::SetDataObject($saved, $true) } | Out-Null } catch {}
+  } elseif (-not $hadFormats) {
+    try { [System.Windows.Forms.Clipboard]::Clear() } catch {}
+  }
+}
+`;
 }
