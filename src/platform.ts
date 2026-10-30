@@ -1,3 +1,5 @@
+import { desktopOnlyToolNames } from './core/capabilities.js';
+
 /**
  * Modo escritorio.
  *
@@ -19,19 +21,7 @@ export function desktopEnabled(
 }
 
 /** Nombres de las herramientas que requieren el escritorio Windows. */
-export const DESKTOP_ONLY_TOOLS: ReadonlySet<string> = new Set([
-  'computer',
-  'windows',
-  'ocr',
-  'system',
-  'shell',
-  'media',
-  // LAN hardware only the desktop machine can reach: the LG TV (SSAP) and the
-  // ESP32 iPhone bridge. In server mode the daemon cannot dial them, so the
-  // model never sees the tools.
-  'tv',
-  'iphone',
-]);
+export const DESKTOP_ONLY_TOOLS: ReadonlySet<string> = new Set(desktopOnlyToolNames());
 
 /**
  * The tools a mode offers: everything on the desktop; server mode drops the

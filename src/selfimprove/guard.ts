@@ -47,7 +47,7 @@ const RELAX_PATTERNS: [RegExp, string][] = [
     'anade un interruptor para saltarse el gate',
   ],
   [
-    /^[+-].*\b(THREAD_ALLOW_TOOLS|BROWSER_FREE_ACTIONS|allowPayments|fullControl)\b/,
+    /^[+-].*\b(THREAD_ALLOW_TOOLS|threadAllow|BROWSER_FREE_ACTIONS|allowPayments|fullControl)\b/,
     'toca las listas de herramientas libres o el modo de control total',
   ],
   [/^-.*\b(requireApproval|offerApproval)\b/, 'elimina una peticion de aprobacion'],
