@@ -329,6 +329,7 @@ import { createServiceTool } from './tools/service.js';
 // report a booking it never made, which is the exact failure this project exists to
 // remove. The generic browser does the same job against any site.
 import { createShellTool } from './tools/shell.js';
+import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import type { TvMemoryState, TvToolDeps } from './tools/tv.js';
@@ -750,6 +751,8 @@ async function doctorCommand(): Promise<number> {
       'desktop         off (modo servidor, PA_DESKTOP=off): sin chequeos de escritorio Windows',
     );
   }
+
+  lines.push(...(await sandboxDoctorLines()));
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
