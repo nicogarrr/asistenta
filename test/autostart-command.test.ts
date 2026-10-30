@@ -65,7 +65,9 @@ describe('pa autostart', () => {
     expect(String(flags[flags.indexOf('-File') + 1])).toMatch(/install-all\.ps1$/);
     expect(flags).not.toContain('-Start');
     expect(opts).toMatchObject({ windowsHide: true, timeout: 120_000 });
-    expect(out).toMatch(/^Última comprobación de arranque \(pa iniciar\)[^\n]*\nTarea: OK\n$/);
+    expect(out).toMatch(
+      /^Última comprobación de arranque \(pa iniciar\)[^\n]*\nTarea: OK\nVigilante: [^\n]*\n$/,
+    );
   });
 
   it('las banderas se traducen a switches de PowerShell, una por una', async () => {

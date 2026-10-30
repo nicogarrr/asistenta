@@ -76,6 +76,16 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   {
+    name: 'parado-a-proposito.json',
+    what: 'cuándo se paró Asistenta con pa stop (el vigilante la deja apagada hasta reiniciar el PC o pa iniciar)',
+    backup: 'file',
+  },
+  {
+    name: 'vigilante.json',
+    what: 'última revisión del vigilante de autoarranque (pa autostart status)',
+    backup: 'file',
+  },
+  {
     name: 'iniciar-ultimo.json',
     what: 'resultado de la última comprobación de pa iniciar (lo enseña pa autostart status)',
     backup: 'file',
