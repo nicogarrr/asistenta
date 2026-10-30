@@ -97,8 +97,12 @@ export function isExcludedWindow(w: WindowLite): boolean {
 const HIDDEN = '[oculto]';
 
 /** A line that talks about a one-time code, PIN or key (see `redact`). */
+// A digit right after the word does not end the match: «PIN1234» or «código482913»
+// glue the code to the word and must still count. Phrases that name a one-time code
+// without any of the words («válido para un solo uso», «your one-time 4829»,
+// «autenticación en dos pasos: 731942») count too.
 const OTP_HINT =
-  /(?:^|[^\p{L}\p{N}])(c[oó]digo|code|otp|pin|clave|contrase[ñn]a|password|passcode|token|2fa|cvv|cvc|verificaci[oó]n|verification)(?![\p{L}\p{N}])/iu;
+  /(?:^|[^\p{L}\p{N}])(c[oó]digo|code|otp|pin|clave|contrase[ñn]a|password|passcode|token|2fa|cvv|cvc|verificaci[oó]n|verification|un solo uso|one[- ]?time|single[- ]use|dos pasos|doble factor|two[- ]?factor|two[- ]?step|2[- ]step|autenticaci[oó]n|authentication)(?!\p{L})/iu;
 
 /** Quita control, formato (bidi, ZW...), sin asignar y privado; colapsa espacios. */
 function clean(s: string): string {
@@ -115,9 +119,10 @@ function clean(s: string): string {
  */
 export function redact(input: string): string {
   let s = clean(input);
-  // Línea con palabra de secreto: se oculta lo que sigue.
+  // Línea con palabra de secreto: se oculta lo que sigue. Detrás de la palabra
+  // basta con que no siga una letra: con `\b`, «PIN1234» (código pegado) se escapaba.
   s = s.replace(
-    /\b(contrase[ñn]a|password|passwd|pwd|token|secret[oa]?|api[ -]?key|clave|pin|cvv|cvc|c[oó]digo|code|otp|2fa|passcode|nacimiento|birth)\b\s*[:=]?\s*\S.*$/gi,
+    /\b(contrase[ñn]a|password|passwd|pwd|token|secret[oa]?|api[ -]?key|clave|pin|cvv|cvc|c[oó]digo|code|otp|2fa|passcode|nacimiento|birth)(?![A-Za-z_])\s*[:=]?\s*\S.*$/gi,
     (_m, k: string) => `${k} ${HIDDEN}`,
   );
   // Emails.
