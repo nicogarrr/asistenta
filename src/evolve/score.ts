@@ -33,6 +33,8 @@ export interface Measurement {
   /** Keys of the tests that passed / failed, when the runner reported them per test. */
   passingTests?: string[];
   failingTests?: string[];
+  /** Labels of the end-to-end checks that passed, when the probe printed them. */
+  passingChecks?: string[];
   /** Set when the run could not produce a number at all. */
   error?: string;
 }
@@ -118,6 +120,27 @@ export function judge(
         kind: 'discard',
         delta,
         reason: `regresión por test: ${lost.length} test(s) que pasaban ya no pasan (${lost.slice(0, 3).join('; ')}). No entra al kernel.`,
+      };
+    }
+  }
+  // The same per check: a probe that crashes, or stops printing a check, drops it from
+  // both «checks» and «checksFailed», so the failure count does not see it and the lost
+  // points can be outweighed by tests fixed elsewhere. A check that passed and no longer
+  // passes is a regression; without names, fewer passing checks is one.
+  {
+    const lostChecks =
+      kernel.passingChecks && candidate.passingChecks
+        ? (() => {
+            const now = new Set(candidate.passingChecks);
+            return kernel.passingChecks.filter((c) => !now.has(c));
+          })()
+        : [];
+    if (lostChecks.length || candidate.checks < kernel.checks) {
+      const detail = lostChecks.length ? ` (${lostChecks.slice(0, 3).join('; ')})` : '';
+      return {
+        kind: 'discard',
+        delta,
+        reason: `regresión en las sondas: checks que pasaban ${kernel.checks}->${candidate.checks}${detail}. No entra al kernel.`,
       };
     }
   }
