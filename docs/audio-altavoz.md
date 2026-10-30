@@ -36,3 +36,11 @@ sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se
 Telegram no deja que los bots reciban llamadas. `/altavoz` es lo más cercano: grabas, sueltas y
 suena en 1–3 segundos. Las alternativas (chat de voz con una cuenta de usuario, o «hablar» en
 directo desde el panel web) se estudian aparte.
+
+## Probar la tele real: `pa audio prueba-tele`
+
+`pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]` manda el audio por la misma ruta que «reprodúcelo en la tele» y dice qué vía aceptó la tele (✗ por cada una que falló) y si llegó a descargar el fichero en 15 s. Código 0: la tele lo descargó; 1: no; 2: uso incorrecto.
+
+Orden de vías: `media.viewer/open`, luego `system.launcher/open` y, solo si `tv:glasshouseUrl` está en el vault, Glasshouse (`url`).
+
+Si la tele acepta pero nunca descarga el audio, casi siempre es el firewall de Windows: permite Node.js en redes privadas y comprueba que la Wi-Fi del PC está marcada como «privada».

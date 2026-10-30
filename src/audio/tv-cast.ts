@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { GlasshouseClient } from '../tv/glasshouse.js';
 import { pickLanAddress, type ServedFile, serveFileToHost } from './lan-server.js';
 
 /**
@@ -25,14 +26,32 @@ export interface TvCastDeps {
   pickAddress?: (tvHost: string) => string | null;
   serve?: typeof serveFileToHost;
   ttlMs?: number;
+  /**
+   * Tercera vía: Glasshouse (API de la tele rooteada) abre la URL. Solo existe si
+   * tv:glasshouseUrl está configurado.
+   */
+  glasshouse?: (url: string) => Promise<void>;
+  /** Probar solo una vía (pa audio prueba-tele --via …). */
+  only?: TvCastVia;
 }
+
+export type TvCastVia = 'media.viewer' | 'launcher' | 'glasshouse';
+export const TV_CAST_VIAS: readonly TvCastVia[] = ['media.viewer', 'launcher', 'glasshouse'];
+
+/** Aviso cuando la tele aceptó la orden pero nunca descargó el fichero. */
+export const TV_FIREWALL_HINT =
+  'La tele no ha podido descargar el audio. Suele ser el firewall de Windows: permite Node.js en redes privadas (Panel de control → Firewall de Windows Defender → Permitir una aplicación) y comprueba que la red Wi-Fi del PC está como «privada».';
 
 export interface TvCastResult {
   ok: boolean;
   /** Texto en español para el modelo/usuario. */
   message: string;
-  via?: 'media.viewer' | 'launcher';
+  via?: TvCastVia;
   url?: string;
+  /** Errores de las vías que fallaron antes, en orden. */
+  tried?: string[];
+  /** Cuántas veces ha descargado la tele el fichero (para avisar del firewall). */
+  hits?: () => number;
 }
 
 export function audioTeleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -73,34 +92,51 @@ export async function castAudioToTv(
     };
   }
   const errors: string[] = [];
-  try {
-    await deps.ssap('media.viewer/open', {
-      target: served.url,
-      title,
-      description: 'Audio desde Telegram',
-      mimeType: 'audio/mpeg',
-      loop: false,
-    });
-    return {
-      ok: true,
-      via: 'media.viewer',
-      url: served.url,
-      message: 'He mandado el audio a la tele; no puedo confirmar que se haya oído.',
-    };
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err));
+  const attempts: Array<[TvCastVia, () => Promise<unknown>, string]> = [
+    [
+      'media.viewer',
+      () =>
+        deps.ssap('media.viewer/open', {
+          target: served.url,
+          title,
+          description: 'Audio desde Telegram',
+          mimeType: 'audio/mpeg',
+          loop: false,
+        }),
+      'He mandado el audio a la tele; no puedo confirmar que se haya oído.',
+    ],
+    [
+      'launcher',
+      () => deps.ssap('system.launcher/open', { target: served.url }),
+      'La tele no tiene visor multimedia por API; lo he abierto con su navegador. No puedo confirmar que se haya oído.',
+    ],
+  ];
+  const gh = deps.glasshouse;
+  if (gh) {
+    attempts.push([
+      'glasshouse',
+      () => gh(served.url),
+      'La tele no aceptó el audio por webOS; lo he abierto con Glasshouse. No puedo confirmar que se haya oído.',
+    ]);
   }
-  try {
-    await deps.ssap('system.launcher/open', { target: served.url });
-    return {
-      ok: true,
-      via: 'launcher',
-      url: served.url,
-      message:
-        'La tele no tiene visor multimedia por API; lo he abierto con su navegador. No puedo confirmar que se haya oído.',
-    };
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err));
+  for (const [via, run, message] of attempts) {
+    if (deps.only && deps.only !== via) continue;
+    try {
+      await run();
+      return {
+        ok: true,
+        via,
+        url: served.url,
+        message,
+        tried: errors.length ? [...errors] : undefined,
+        hits: () => served.hits(),
+      };
+    } catch (err) {
+      errors.push(`${via}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (deps.only === 'glasshouse' && !gh) {
+    errors.push('glasshouse: no está configurado (tv:glasshouseUrl)');
   }
   served.close();
   return { ok: false, message: `La tele no ha aceptado el audio: ${errors.join(' / ')}` };
@@ -122,7 +158,7 @@ type TvRequestFn = (
 export function tvCasterFromVault(
   vaultGet: VaultGet,
   request: TvRequestFn,
-  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs'>> = {},
+  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs' | 'only'>> = {},
 ): (file: string) => Promise<TvCastResult> {
   return async (file) => {
     const host = await vaultGet('tv:host');
@@ -135,9 +171,24 @@ export function tvCasterFromVault(
       };
     }
     const allowPlaintext = (await vaultGet('tv:secure')) === '0';
+    const ghUrl = (await vaultGet('tv:glasshouseUrl'))?.trim();
+    const glasshouse = ghUrl
+      ? async (url: string): Promise<void> => {
+          const endpoints = ghUrl
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const client = new GlasshouseClient({
+            endpoints,
+            token: await vaultGet('tv:glasshouseToken'),
+          });
+          await client.control('url', url);
+        }
+      : undefined;
     return castAudioToTv(file, {
       tvHost: host,
       ssap: (uri, payload) => request(host, clientKey, uri, payload, { allowPlaintext }),
+      glasshouse,
       ...extra,
     });
   };
