@@ -14,6 +14,7 @@
  * se quedan sin ninguno no se enseñan.
  */
 import { HELP_SECTIONS, type HelpEntry } from './channels/telegram-help.js';
+import { threadAllowToolNames } from './core/capabilities.js';
 
 export type FuncionAreaId =
   | 'tele'
@@ -194,6 +195,77 @@ export function funcionCommands(): FuncionCommand[] {
   });
 }
 
+/**
+ * Lo que sé hacer sin comando, en palabras llanas: una línea por herramienta
+ * real del asistente (el nombre que ve el modelo). `null` = herramienta interna
+ * que no es una función para el usuario (terminar un turno, cargar otras…).
+ * `test/funciones-capacidades.test.ts` exige una entrada por cada herramienta de
+ * src/tools y del catálogo de capacidades, y ninguna de más.
+ */
+export const TOOL_ABILITIES: Readonly<
+  Record<string, { area: FuncionAreaId; text: string } | null>
+> = {
+  tv: {
+    area: 'tele',
+    text: 'enciendo, apago, cambio de canal, subo el volumen o abro apps de la tele',
+  },
+  computer: { area: 'pc', text: 'uso el ratón y el teclado de tu PC por ti, con tu permiso' },
+  windows: { area: 'pc', text: 'miro qué ventanas tienes abiertas y dónde pulsar' },
+  system: { area: 'pc', text: 'bloqueo, suspendo o ajusto el volumen y el brillo del PC' },
+  ocr: { area: 'pc', text: 'leo el texto que hay en la pantalla o en una imagen' },
+  shell: { area: 'pc', text: 'ejecuto comandos en tu PC, con tu permiso' },
+  read: { area: 'pc', text: 'leo ficheros de tu PC' },
+  list: { area: 'pc', text: 'te digo qué hay en una carpeta' },
+  write: { area: 'pc', text: 'creo o cambio ficheros, con tu permiso' },
+  iphone: { area: 'pc', text: 'hago cosas en tu iPhone a través del puente de casa' },
+  media: { area: 'audio', text: 'grabo y reproduzco audio, hago fotos y uso la cámara o el micro' },
+  download: { area: 'audio', text: 'descargo un vídeo, un PDF o solo el audio de un enlace' },
+  reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
+  agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
+  calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
+  objetivo: { area: 'agenda', text: 'persigo un objetivo varios días y te aviso de los avances' },
+  gestion: {
+    area: 'agenda',
+    text: 'llevo un trámite paso a paso y te pregunto antes de ejecutarlo',
+  },
+  web: { area: 'investigar', text: 'busco en internet' },
+  fetch: { area: 'investigar', text: 'leo la página que me pases' },
+  browser: { area: 'investigar', text: 'navego por webs y relleno formularios' },
+  delegate: { area: 'investigar', text: 'reparto búsquedas largas entre ayudantes que solo leen' },
+  book: { area: 'investigar', text: 'busco y descargo libros de dominio público' },
+  documents: { area: 'investigar', text: 'guardo tus documentos y busco dentro de ellos' },
+  renfe: { area: 'investigar', text: 'busco trenes de Renfe con horario y precio' },
+  vigilar_precio: { area: 'compras', text: 'vigilo el precio de un producto y te aviso si baja' },
+  checkout: { area: 'compras', text: 'preparo una compra y te pido permiso antes de pagar' },
+  memory: { area: 'memoria', text: 'recuerdo datos tuyos y los uso cuando hacen falta' },
+  decision: { area: 'memoria', text: 'apunto lo que decides en cada proyecto' },
+  opengym: { area: 'gimnasio', text: 'miro tu rutina, tu último entreno y tu peso' },
+  skills: { area: 'sistema', text: 'aprendo procedimientos nuevos y los mejoro' },
+  fabrica: { area: 'sistema', text: 'me fabrico herramientas nuevas, que tú apruebas' },
+  servicio: {
+    area: 'sistema',
+    text: 'propongo instalar programas de código abierto, con tu permiso',
+  },
+  done: null,
+  preguntar: null,
+  cargar_herramienta: null,
+};
+
+/**
+ * Líneas «sin comando» de un área. Fuera del chat privado del dueño solo salen
+ * las herramientas que funcionan en cualquier conversación sin aprobación.
+ */
+export function areaAbilities(view: FuncionesView, area: FuncionAreaId): string[] {
+  const open = view.owner ? undefined : new Set(threadAllowToolNames());
+  const seen = new Set<string>();
+  for (const [tool, ability] of Object.entries(TOOL_ABILITIES)) {
+    if (!ability || ability.area !== area) continue;
+    if (open && !open.has(tool)) continue;
+    seen.add(ability.text);
+  }
+  return [...seen];
+}
+
 export interface FuncionesView {
   /** Dueño en su chat privado: lo ve todo. */
   owner: boolean;
@@ -206,7 +278,7 @@ function visibleCommands(view: FuncionesView): FuncionCommand[] {
 /** Áreas con al menos un comando visible para quien pregunta, en orden. */
 export function visibleAreas(view: FuncionesView): FuncionArea[] {
   const used = new Set(visibleCommands(view).map((c) => c.area));
-  return FUNCION_AREAS.filter((a) => used.has(a.id));
+  return FUNCION_AREAS.filter((a) => used.has(a.id) || areaAbilities(view, a.id).length > 0);
 }
 
 /** Busca un área por id, título o palabra suelta («tele», «pc», «correo»…). */
@@ -273,7 +345,11 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
     const lines = visibleCommands(view)
       .filter((c) => c.area === area.id)
       .map((c) => `${usage(c)} — ${c.description}`);
-    return [`${area.title}: ${area.summary}`, `Ejemplo: ${area.example}`, '', ...lines].join('\n');
+    const abilities = areaAbilities(view, area.id).map((t) => `• ${t}`);
+    const out = [`${area.title}: ${area.summary}`, `Ejemplo: ${area.example}`];
+    if (abilities.length > 0) out.push('', 'Pídemelo con tus palabras:', ...abilities);
+    if (lines.length > 0) out.push('', 'Comandos:', ...lines);
+    return out.join('\n');
   }
   const blocks = areas.map((a) => `${a.title} — ${a.summary}\n   Ej.: ${a.example}`);
   return [
