@@ -50,6 +50,9 @@ const NUM_WORDS: Record<string, number> = {
 
 /** Paso por defecto de "sube/baja el volumen" sin numero. */
 export const DEFAULT_VOLUME_STEP = 3;
+
+/** «a tope» / «al máximo» por voz: nivel seguro, no 100. */
+export const VOLUME_TOPE = 50;
 const MAX_VOLUME_STEP = 15;
 
 function num(s: string | undefined): number | null {
@@ -120,6 +123,16 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'power', on: true };
   }
 
+  // "sube a tope", "volumen al maximo": tope de seguridad, no 100 (una LG a
+  // 100 revienta los altavoces); quien quiera mas lo dice con numero.
+  if (
+    /^(?:sube(?:le)?(?: el volumen)?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+      t,
+    )
+  ) {
+    return { action: 'volume', level: VOLUME_TOPE };
+  }
+
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
   m = /\bvolumen (?:a|al|en) (\d{1,3}|[a-z]+)\b/.exec(t);
   if (m) {
@@ -152,6 +165,11 @@ export function parseTvCommand(text: string): TvIntent | null {
   }
   m = /\bcanal (?:numero )?(\d{1,4})\b/.exec(t) ?? /^(?:pon|ponme) la (\d{1,2})$/.exec(t);
   if (m?.[1]) return { action: 'channel', channel: String(Number(m[1])) };
+  // "pon la uno", "canal cinco": numero en palabras (solo los de NUM_WORDS).
+  m = /\bcanal (?:numero )?([a-z]+)$/.exec(t) ?? /^(?:pon|ponme) (?:la|el) ([a-z]+)$/.exec(t);
+  if (m?.[1] && /^[a-z]+$/.test(m[1]) && m[1] in NUM_WORDS) {
+    return { action: 'channel', channel: String(NUM_WORDS[m[1]]) };
+  }
 
   // Entradas.
   m = /\bhdmi ?([1-4])\b/.exec(t);
