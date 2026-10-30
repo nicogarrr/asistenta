@@ -373,6 +373,28 @@ function coordsInRoi(
   return { x: scaled.x, y: scaled.y, viewX, viewY };
 }
 
+/**
+ * The mouse button for a click: left, right or middle, case-insensitive. An
+ * unknown name is refused here, before any input event: the backend used to turn
+ * it into a left-down with no matching left-up, leaving the button held.
+ */
+function parseButton(value: unknown): 'left' | 'right' | 'middle' {
+  if (value === undefined || value === null || value === '') return 'left';
+  const name = String(value).trim().toLowerCase();
+  if (name === 'left' || name === 'right' || name === 'middle') return name;
+  throw new Error(`unknown mouse button "${String(value)}": use left, right or middle`);
+}
+
+/** Click count: a whole number 1-5 (the backend's own range); anything else is refused. */
+function parseClicks(value: unknown): number {
+  if (value === undefined || value === null) return 1;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 5) {
+    throw new Error(`clicks must be a whole number from 1 to 5, got ${String(value)}`);
+  }
+  return n;
+}
+
 /** Actions that change the screen, and therefore deserve before/after verification. */
 function isMutatingAction(name: string): boolean {
   return name === 'click' || name === 'drag' || name === 'type' || name === 'key';
@@ -610,8 +632,8 @@ export function createComputerTool(
       case 'click': {
         const native = await backend.screenSize();
         const roi = parseRegionField(record.roi, 'roi');
-        const button = String(record.button ?? 'left');
-        const clicks = Number(record.clicks ?? 1);
+        const button = parseButton(record.button);
+        const clicks = parseClicks(record.clicks);
         if (roi) {
           const p = coordsInRoi(record, roi, view ?? native, native);
           // Verification looks at the point in screenshot space, same as the

@@ -23,6 +23,22 @@ const execFileAsync = promisify(execFile);
  * screenshots per step that is acceptable; if latency shows up later, the fix is a
  * small native helper, not a rewrite.
  */
+/** mouse_event flags for each button. Anything else is refused, never guessed. */
+const MOUSE_FLAGS: Record<string, { down: string; up: string }> = {
+  left: { down: '0x0002', up: '0x0004' },
+  right: { down: '0x0008', up: '0x0010' },
+  middle: { down: '0x0020', up: '0x0040' },
+};
+
+/** Down/up flags for a button name (case-insensitive). Throws on an unknown button. */
+export function mouseButtonFlags(button: string): { down: string; up: string } {
+  const flags = MOUSE_FLAGS[button.trim().toLowerCase()];
+  if (!flags) {
+    throw new Error(`botón de ratón desconocido: "${button}" (usa left, right o middle)`);
+  }
+  return flags;
+}
+
 export class WindowsScreen implements ScreenBackend {
   private readonly runPowerShell: (script: string) => Promise<{ stdout: string; stderr: string }>;
   constructor(runPowerShell?: (script: string) => Promise<{ stdout: string; stderr: string }>) {
@@ -88,15 +104,18 @@ export class WindowsScreen implements ScreenBackend {
     y: number,
     opts: { button?: string; clicks?: number } = {},
   ): Promise<void> {
-    const button = opts.button ?? 'left';
-    const clicks = Math.max(1, Math.min(5, Math.trunc(opts.clicks ?? 1)));
+    // Down and up flags come from ONE table: an unknown button used to send a
+    // left-down followed by a middle-up, which left the left button held and turned
+    // every later move into a drag.
+    const flags = mouseButtonFlags(opts.button ?? 'left');
+    const requested = Number(opts.clicks ?? 1);
+    const clicks = Math.max(1, Math.min(5, Math.trunc(Number.isFinite(requested) ? requested : 1)));
     // SetCursorPos + mouse_event rather than SendInput: it does not require this
     // process to be the foreground window.
-    const flag = button === 'right' ? '0x0008' : button === 'middle' ? '0x0020' : '0x0002';
     const sequence = Array.from(
       { length: clicks },
       () =>
-        `[M]::mouse_event(${flag},0,0,0,[IntPtr]::Zero); [M]::mouse_event(${button === 'left' ? '0x0004' : flag === '0x0008' ? '0x0010' : '0x0040'},0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 40`,
+        `[M]::mouse_event(${flags.down},0,0,0,[IntPtr]::Zero); [M]::mouse_event(${flags.up},0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 40`,
     ).join('\n');
 
     await this.#physicalPs(`
