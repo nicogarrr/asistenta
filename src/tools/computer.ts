@@ -666,9 +666,10 @@ export function createComputerTool(
           const cropped = await captureRoi(backend, roi);
           // The picture has to reach the chat, not just this context: the user asked
           // for it, and an image they cannot see is an image nobody sent.
-          const sent = record.send
-            ? await sendPhoto?.(cropped.image, { width: cropped.width, height: cropped.height })
-            : undefined;
+          const sent =
+            record.send === true
+              ? await sendPhoto?.(cropped.image, { width: cropped.width, height: cropped.height })
+              : undefined;
           if (!view) {
             // No full frame yet: reconstruct the capture scale from the crop's
             // own ratio so later clicks translate correctly even when the very
@@ -725,9 +726,10 @@ export function createComputerTool(
         viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
-        const sent = record.send
-          ? await sendPhoto?.(shot.image, { width: shot.width, height: shot.height })
-          : undefined;
+        const sent =
+          record.send === true
+            ? await sendPhoto?.(shot.image, { width: shot.width, height: shot.height })
+            : undefined;
         return {
           content: [
             {
