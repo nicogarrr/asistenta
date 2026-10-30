@@ -196,6 +196,11 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
 
         const candidate = await measure({ cwd: sandbox.dir });
         let verdict = judge(baseline, candidate, { minGainPct });
+        // A discard that never measured the idea (no comparable number, no per-test report)
+        // is about the machine, not the idea: it is archived as such so it is not a dead end.
+        let unmeasured =
+          verdict.kind === 'discard' &&
+          (!comparable(baseline, candidate) || !baseline.passingTests || !candidate.passingTests);
         // «Listo» sin prueba verificable no cuenta: un promote solo sale con la
         // checklist completa, y la checklist queda escrita como receipt.
         const receiptInput = {
@@ -229,6 +234,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         let batteryAfter: BatteryRun | undefined;
         if (verdict.kind === 'promote') {
           if (!opts.battery || !batteryBase) {
+            unmeasured = true;
             verdict = {
               kind: 'discard',
               delta: verdict.delta,
@@ -249,6 +255,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           hypothesis,
           verdict: verdict.kind,
           reason: verdict.reason,
+          ...(unmeasured ? { unmeasured: true } : {}),
           kernel,
           candidate: sandbox.branch,
           measured: {
