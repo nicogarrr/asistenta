@@ -9,8 +9,17 @@ describe('aislamiento del estado en los tests', () => {
   it('PA_STATE_DIR apunta a un directorio temporal de la ejecución', () => {
     const dir = process.env.PA_STATE_DIR;
     expect(dir).toBeTruthy();
-    expect(resolve(dir ?? '')).toContain(resolve(tmpdir()));
+    expect(resolve(dir ?? '')).toContain(resolve(tmpdir(), '..'));
     expect(dir).toMatch(/pa-test-state-/);
+  });
+
+  it('tmpdir() es un directorio propio de la ejecución (se borra entero al terminar)', () => {
+    const dir = tmpdir();
+    expect(dir).toMatch(/pa-test-tmp-/);
+    expect(process.env.PA_TEST_TMP_DIR).toBe(dir);
+    // Windows lee TEMP/TMP; los procesos hijos heredan los tres.
+    expect(process.env.TEMP).toBe(dir);
+    expect(process.env.TMP).toBe(dir);
   });
 
   it('paths.ts no resuelve al estado real de ~/.local/share/personal-agent', () => {

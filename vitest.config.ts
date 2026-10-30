@@ -11,6 +11,12 @@ import { defineConfig } from 'vitest/config';
 // global-state-dir.ts lo borra al terminar.
 const testStateDir = mkdtempSync(join(tmpdir(), 'pa-test-state-'));
 process.env.PA_TEST_STATE_DIR = testStateDir;
+// Igual con los temporales: cientos de tests hacen mkdtemp(tmpdir()) y no todos
+// lo borran (en una máquina compartida /tmp llegó a llenar el disco: 1.235
+// pa-goals-* en 45 min). Los workers y los procesos que lanzan ven un tmpdir()
+// propio de esta ejecución, que global-state-dir.ts borra entero al terminar.
+const testTmpDir = mkdtempSync(join(tmpdir(), 'pa-test-tmp-'));
+process.env.PA_TEST_TMP_DIR = testTmpDir;
 
 export default defineConfig({
   test: {
@@ -23,7 +29,13 @@ export default defineConfig({
     // were a stale fixed date and the pdfjs engine). Pin the zone so the suite means the same
     // thing everywhere; Node reads TZ lazily on Linux, and on Windows the
     // system zone already is Madrid.
-    env: { TZ: 'Europe/Madrid', PA_STATE_DIR: testStateDir },
+    env: {
+      TZ: 'Europe/Madrid',
+      PA_STATE_DIR: testStateDir,
+      TMPDIR: testTmpDir,
+      TEMP: testTmpDir,
+      TMP: testTmpDir,
+    },
     globalSetup: ['test/helpers/global-state-dir.ts'],
     // Generous, because the slow tests are the honest ones: they launch a real Chromium
     // and paint frames with PowerShell and System.Drawing. Both compete for the same
