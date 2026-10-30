@@ -115,6 +115,7 @@ import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
 import {
+  approvalScopeKey,
   BROWSER_FREE_ACTIONS,
   Gate,
   protectedRepoPaths,
@@ -842,7 +843,7 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
         const choice = await options.ask(options.threadKey, call.tool, reason, approval.question);
         if (choice.approved && choice.scope !== 'once') {
           try {
-            gate.setScope(options.threadKey, call.tool, choice.scope);
+            gate.setScope(options.threadKey, approvalScopeKey(call), choice.scope);
           } catch (err) {
             // A grant that could not be written is a nuisance; losing the call the
             // user just approved because of it would be a bug. Carry on, and say so:
