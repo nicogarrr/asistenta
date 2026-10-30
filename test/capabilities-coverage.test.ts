@@ -65,9 +65,14 @@ function threadToolsBlock(): string {
 
 function builtToolNames(): Map<string, string> {
   const byName = new Map<string, string>();
-  const factories = new Set(
-    [...threadToolsBlock().matchAll(/\b(create\w*Tools?)\(/g)].map((m) => m[1]),
-  );
+  const block = threadToolsBlock();
+  const factories = new Set([...block.matchAll(/\b(create\w*Tools?)\(/g)].map((m) => m[1]));
+  // Capacidades como plugin (src/plugins/*): `xPlugin.tools(...)` aporta las fábricas
+  // que use el fichero que define `export const xPlugin`.
+  for (const m of block.matchAll(/\b(\w+Plugin)\.tools\(/g)) {
+    const def = files.find(({ t }) => new RegExp(`export const ${m[1]}\\b`).test(t));
+    for (const f of def?.t.matchAll(/\b(create\w*Tools?)\(/g) ?? []) factories.add(f[1]);
+  }
   for (const fac of factories) {
     if (!fac) continue;
     const def = files.find(({ t }) => new RegExp(`export (async )?function ${fac}\\b`).test(t));
