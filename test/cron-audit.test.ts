@@ -19,7 +19,10 @@ afterAll(() => {
   else process.env.TZ = ORIGINAL_TZ;
 });
 
-vi.mock('../src/log.js', () => ({
+// Mantiene las exportaciones reales (p. ej. scrubLogText, que usa audit/log.ts desde #530)
+// y solo silencia el logger.
+vi.mock('../src/log.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/log.js')>()),
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   redact: (fields: Record<string, unknown>): Record<string, unknown> => fields,
 }));
