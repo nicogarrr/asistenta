@@ -4119,6 +4119,35 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const messages = await searchMail(account, { since, unreadOnly: true }, 30, 15_000);
       return pickImportantMail(messages, Date.now());
     },
+    goals: () => {
+      const owner = briefingOwner();
+      const key = owner ? ownerChatKey(owner) : undefined;
+      if (!key) return [];
+      return goalStore
+        .list()
+        .filter((g) => g.scope === key || g.scope.startsWith(`${key}#`))
+        .filter((g) => g.status === 'active' || g.status === 'blocked')
+        .map((g) => ({
+          title: g.title,
+          status: g.status as 'active' | 'blocked',
+          next:
+            g.status === 'blocked'
+              ? (g.blockedReason ?? undefined)
+              : g.plan.find((s) => !s.done)?.text,
+        }));
+    },
+    watches: () => {
+      const owner = briefingOwner();
+      if (!owner) return [];
+      return pageWatches
+        .list(owner)
+        .filter((w) => w.active && (w.targetCents !== null || w.dropPct !== null))
+        .map((w) => ({
+          label: w.label || w.url,
+          lastCents: pageWatches.summary(w.id)?.lastCents ?? null,
+          targetCents: w.targetCents,
+        }));
+    },
     weather: briefingWeather ? () => fetchWeatherLine(briefingWeather) : undefined,
     ...(() => {
       const today = () => {

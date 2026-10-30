@@ -27,6 +27,10 @@ export interface BriefingInput {
   weather?: string;
   /** Correo sin leer que merece mirarse hoy. Solo remitente y asunto, nunca el cuerpo. */
   mail?: Array<{ from: string; subject: string }>;
+  /** Objetivos en marcha: el siguiente paso, o por qué están bloqueados. */
+  goals?: Array<{ title: string; status: 'active' | 'blocked'; next?: string }>;
+  /** Vigilancias de precio: último precio leído y, si lo hay, el objetivo. */
+  watches?: Array<{ label: string; lastCents?: number | null; targetCents?: number | null }>;
 }
 
 const WEEKDAYS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -79,6 +83,58 @@ function mailLine(item: { from: string; subject: string }): string | null {
   return from ? `${from}: ${subject}` : subject;
 }
 
+/** `129900` -> `1.299,00 €`, sin depender del ICU instalado. */
+export function euros(cents: number): string {
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(Math.round(cents));
+  const int = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${sign}${int},${pad(abs % 100)} €`;
+}
+
+function goalLine(item: {
+  title: string;
+  status: 'active' | 'blocked';
+  next?: string;
+}): string | null {
+  const title = oneLine(item.title, 120);
+  if (!title) return null;
+  const next = oneLine(item.next ?? '', 120);
+  if (item.status === 'blocked') return `${title} (bloqueado${next ? `: ${next}` : ''})`;
+  return next ? `${title}: ${next}` : title;
+}
+
+/** Bloqueado = espera una decisión de Nico, así que va primero. */
+function goalSort(
+  a: { status: 'active' | 'blocked' },
+  b: { status: 'active' | 'blocked' },
+): number {
+  return (a.status === 'blocked' ? 0 : 1) - (b.status === 'blocked' ? 0 : 1);
+}
+
+export function watchHit(item: {
+  lastCents?: number | null;
+  targetCents?: number | null;
+}): boolean {
+  return (
+    typeof item.lastCents === 'number' &&
+    typeof item.targetCents === 'number' &&
+    item.lastCents <= item.targetCents
+  );
+}
+
+function watchLine(item: {
+  label: string;
+  lastCents?: number | null;
+  targetCents?: number | null;
+}): string | null {
+  const label = oneLine(item.label, 100);
+  if (!label) return null;
+  const last = typeof item.lastCents === 'number' ? euros(item.lastCents) : 'sin lectura aún';
+  const target =
+    typeof item.targetCents === 'number' ? ` (objetivo ${euros(item.targetCents)})` : '';
+  return `${watchHit(item) ? '¡' : ''}${label}: ${last}${target}${watchHit(item) ? ', ya está por debajo!' : ''}`;
+}
+
 function section(items: Array<string | null>): string[] {
   return items.filter((item): item is string => item !== null);
 }
@@ -97,7 +153,7 @@ function clamp(text: string): string {
 
 /**
  * Construye el briefing. Las secciones van en orden fijo (Hoy, Correo, Pendiente,
- * Recordatorios, Seguimientos; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
+ * Recordatorios, Seguimientos, Objetivos, Precios; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
  * se lea siempre igual; las que no tienen contenido no aparecen.
  */
 export function buildBriefing(input: BriefingInput): string {
@@ -122,6 +178,19 @@ export function buildBriefing(input: BriefingInput): string {
     {
       title: 'Seguimientos',
       items: section(input.followups.map(followupLine)),
+    },
+    {
+      title: 'Objetivos',
+      items: section([...(input.goals ?? [])].sort(goalSort).slice(0, 5).map(goalLine)),
+    },
+    {
+      title: 'Precios',
+      items: section(
+        [...(input.watches ?? [])]
+          .sort((a, b) => Number(watchHit(b)) - Number(watchHit(a)))
+          .slice(0, 5)
+          .map(watchLine),
+      ),
     },
   ];
 
