@@ -125,7 +125,9 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
 
   // Never retry what already failed, and prefer what has not been tried at all.
   const dead = new Set(archive.deadEnds());
-  const ideas = ((await opts.hypotheses?.()) ?? []).filter((h) => !dead.has(h));
+  // Sin repetidas: la misma idea apuntada dos veces se probaba dos veces la misma semana
+  // (otra medición entera y otra batería con el modelo) aunque la primera ya la descartara.
+  const ideas = [...new Set((await opts.hypotheses?.()) ?? [])].filter((h) => !dead.has(h));
 
   const report: WeekReport = {
     week,
