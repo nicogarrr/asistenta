@@ -67,12 +67,16 @@ describe('/vigilancias en Telegram', () => {
 
   it('botones: «📈 Precio …» por página de este chat, solo lectura (/precio <id>)', () => {
     const r = vigilanciasReply(entries, '42');
-    expect(r.buttons?.map((b) => b.label)).toEqual(['📈 Precio Zapatillas']);
-    expect(r.buttons?.map((b) => commandFromCallback(b.action))).toEqual(['/precio a1b2']);
+    // Detrás, el ⏸ de la rutina de este chat (test/telegram-vigilancias-rutinas.test.ts).
+    expect(r.buttons?.map((b) => b.label)).toEqual(['📈 Precio Zapatillas', '⏸ Pausar resumen']);
+    expect(r.buttons?.map((b) => commandFromCallback(b.action))).toEqual([
+      '/precio a1b2',
+      '/cron pausa resumen',
+    ]);
   });
 
   it('sin páginas: sin botones; vacío: frase clara', () => {
-    expect(vigilanciasReply([entries[2] as OverviewEntry], '42').buttons).toBeUndefined();
+    expect(vigilanciasReply([entries.at(-1) as OverviewEntry], '42').buttons).toBeUndefined();
     const empty = vigilanciasReply([], '42');
     expect(empty.text).toBe('No hay ninguna vigilancia activa.');
     expect(empty.buttons).toBeUndefined();

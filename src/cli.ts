@@ -7698,6 +7698,15 @@ export function vigilanciasReply(
     .slice(0, 8)
     .map((e) => commandButton(`📈 Precio ${e.label || e.target}`, 'precio', e.id))
     .filter((b): b is { label: string; action: string } => b !== undefined);
+  // ⏸/▶️ de las rutinas de ESTE chat (las globales no: /cron solo ve las del chat). Lo
+  // mismo que los botones de /cron: pausar no borra nada y se deshace con «Reanudar».
+  const routines =
+    cronListButtons(
+      shown
+        .filter((e) => e.kind === 'rutina' && e.scope.startsWith('telegram:'))
+        .map((e) => ({ name: e.label, kind: 'schedule', schedule: e.target, enabled: e.enabled })),
+    ) ?? [];
+  buttons.push(...routines);
   return {
     text: marksWithTitles(formatOverview(shown, now), isOverviewTitle),
     buttons: buttons.length ? buttons : undefined,
