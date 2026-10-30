@@ -1815,7 +1815,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             });
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
-          // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram.
+          // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram
+          // (el panel no tiene las fotos): se dice así, no «no hay nada que repetir».
           retry: async () => {
             const thread = await getOrCreateThread(
               `telegram:dm:${String(vigilanteOwnerId ?? 'local')}`,
@@ -1823,7 +1824,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               'principal',
             );
             const last = lastTurns.get(thread.key);
-            if (!last || last.images?.length) return null;
+            if (!last) return null;
+            if (last.images?.length) return 'con-fotos';
             const base = inboundFor(thread);
             const panelInbound: Inbound = {
               channel: base.channel,
