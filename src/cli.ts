@@ -47,6 +47,7 @@ import { attentionFreeConfig, createAttentionJudge } from './core/attention-mode
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
+import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
@@ -1090,19 +1091,13 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   // bug this wiring prevents.
   const sessionId = 'local';
   let factorySyncLocal: () => Promise<void> = async () => {};
-  const tools: AgentTool[] = [
-    ...fsTools,
-    createFetchTool(),
-    createWebTool(config),
-    createDoneTool(),
-    createAskTool(),
-    createFactoryTool({ onChange: () => void factorySyncLocal() }),
-    createShellTool(config),
-    delegateTool(config),
-    createComputerTool(config, screen, (call) =>
-      gate.check(sessionId, { ...call, actor: 'asistenta' }),
-    ),
-  ] as AgentTool[];
+  const tools = baseTools({
+    config,
+    screen,
+    computerGate: (call) => gate.check(sessionId, { ...call, actor: 'asistenta' }),
+    delegate: delegateTool(config),
+    onFactoryChange: () => void factorySyncLocal(),
+  });
 
   const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
   factorySyncLocal = createFactorySync(
@@ -1206,19 +1201,13 @@ async function runCommand(prompt: string): Promise<number> {
   // sub-actions see the same decisions, and an unwired gate blocks every batch.
   const sessionId = 'run';
   let factorySyncRun: () => Promise<void> = async () => {};
-  const tools = [
-    ...fsTools,
-    createFetchTool(),
-    createWebTool(config),
-    createDoneTool(),
-    createAskTool(),
-    createFactoryTool({ onChange: () => void factorySyncRun() }),
-    createShellTool(config),
-    delegateTool(config),
-    createComputerTool(config, screen, (call) =>
-      gate.check(sessionId, { ...call, actor: 'asistenta' }),
-    ),
-  ] as AgentTool[];
+  const tools = baseTools({
+    config,
+    screen,
+    computerGate: (call) => gate.check(sessionId, { ...call, actor: 'asistenta' }),
+    delegate: delegateTool(config),
+    onFactoryChange: () => void factorySyncRun(),
+  });
 
   const agent = await PersonalAgent.create(config, tools, gate, 'local', { sessionId });
   factorySyncRun = createFactorySync(
@@ -2062,10 +2051,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
-    const exclusive = new Set(['computer', 'shell', 'browser', 'checkout', 'write', 'media']);
     const raw = toolsForMode(all, desktop);
     return raw.map((tool): AgentTool => {
-      if (!exclusive.has(tool.name)) return tool;
+      if (!MACHINE_TOOLS.has(tool.name)) return tool;
       const inner = tool.execute.bind(tool);
       return {
         ...tool,
