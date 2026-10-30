@@ -291,6 +291,7 @@ import { startTvButtonListener, type TvButtonListener } from './tv/button-listen
 import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { tvPower } from './tv/power.js';
+import { readTvStatus } from './tv/status.js';
 import { sendWakeOnLan } from './tv/wol.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex, plainInline } from './utils.js';
@@ -1021,6 +1022,23 @@ function tvToolDeps(store: Store): TvToolDeps {
           return true;
         },
         info: (msg, data) => log.info(msg, data),
+      });
+    },
+    status: async () => {
+      const p = await paired();
+      const ssap = (uri: string, payload: Record<string, unknown>) =>
+        tvRequest(p.host, p.clientKey, uri, payload, {
+          allowPlaintext: p.allowPlaintext,
+          commandTimeoutMs: 4_000,
+        });
+      return readTvStatus({
+        ssap,
+        apps: async () => {
+          const res = await ssap('com.webos.applicationManager/listLaunchPoints', {});
+          return (
+            (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? []
+          ).map((lp) => ({ id: lp.id, title: lp.title }));
+        },
       });
     },
     stats: async () => (await ghClient()).getJson('/api/stats'),
