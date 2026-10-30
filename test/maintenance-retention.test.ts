@@ -44,7 +44,15 @@ describe('retención de sesiones (pasada diaria del daemon)', () => {
   it('borra solo las terminadas más antiguas que la retención, y sus turnos', () => {
     const db = dbWith(rows, now);
     let marked = 0;
-    const r = retentionIfDue({ db, now, lastRunMs: 0, markRun: (at) => (marked = at), env: {} });
+    const r = retentionIfDue({
+      db,
+      now,
+      lastRunMs: 0,
+      markRun: (at) => {
+        marked = at;
+      },
+      env: {},
+    });
     expect(r).toEqual({ ran: true, sessions: 1 });
     expect(marked).toBe(now.getTime());
     expect(ids(db)).toEqual(['reciente', 'vieja-abierta']);

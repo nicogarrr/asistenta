@@ -13,7 +13,14 @@ afterAll(() => rmSync(stateDir, { recursive: true, force: true }));
 
 function capture() {
   let text = '';
-  return { out: { write: (t: string) => (text += t) }, text: () => text };
+  return {
+    out: {
+      write: (t: string) => {
+        text += t;
+      },
+    },
+    text: () => text,
+  };
 }
 
 const file = join(stateDir, 'calls-test.jsonl');
