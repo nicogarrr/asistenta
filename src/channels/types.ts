@@ -146,6 +146,17 @@ export interface ChannelHandlers {
    * approve from the channel they happen to be looking at.
    */
   onApprovalNeeded?(request: ApprovalRequest): void | Promise<void>;
+  /**
+   * Botón del mando de la tele (callback `tv:<id>`, ver src/tv/tv-chat-command.ts),
+   * pulsado en `chatId` por `userId`. Devuelve el texto corto del aviso del botón.
+   * Va por su propio camino: nunca resuelve ni consume una aprobación.
+   */
+  onTvButton?(press: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    data: string;
+  }): Promise<string>;
   log(
     level: 'debug' | 'info' | 'warn' | 'error',
     msg: string,

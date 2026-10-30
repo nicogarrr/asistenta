@@ -340,7 +340,12 @@ import { GlasshouseClient, GlasshouseUnavailableError } from './tv/glasshouse.js
 import { tvKey, tvRequest, tvScreenshot, tvToast } from './tv/lgtv.js';
 import { tvPower } from './tv/power.js';
 import { readTvStatus } from './tv/status.js';
-import { tvChatCommand } from './tv/tv-chat-command.js';
+import {
+  TV_BUTTONS_TITLE,
+  tvButtonCommand,
+  tvButtons,
+  tvChatCommand,
+} from './tv/tv-chat-command.js';
 import { sendWakeOnLan } from './tv/wol.js';
 import { setUndoDir, undoLast } from './undo.js';
 import { Mutex, plainInline } from './utils.js';
@@ -4786,18 +4791,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /tv <orden>: orden simple a la tele sin pasar por el modelo (solo el dueño, en privado). */
   let tvChatTool: ReturnType<typeof createTvTool> | undefined;
+  const runTvOrder = async (text: string): Promise<string> => {
+    tvChatTool ??= createTvTool(tvToolDeps(store));
+    const res = await tvChatTool.execute('tv-chat', { action: 'command', text });
+    return res.content
+      .map((c) => (c.type === 'text' ? c.text : ''))
+      .join(' ')
+      .trim();
+  };
   const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
-    const reply = await tvChatCommand(args, {
-      isOwner: isOwnerDm(inbound, vigilanteOwnerId),
-      run: async (text) => {
-        tvChatTool ??= createTvTool(tvToolDeps(store));
-        const res = await tvChatTool.execute('tv-chat', { action: 'command', text });
-        return res.content
-          .map((c) => (c.type === 'text' ? c.text : ''))
-          .join(' ')
-          .trim();
-      },
-    });
+    const isOwner = isOwnerDm(inbound, vigilanteOwnerId);
+    // /tv a secas, del dueño en privado: el mando con botones.
+    if (!args.trim() && isOwner) {
+      await say(inbound, TV_BUTTONS_TITLE, { quote: true, buttons: tvButtons() });
+      return;
+    }
+    const reply = await tvChatCommand(args, { isOwner, run: runTvOrder });
     await say(inbound, reply, { quote: true });
   };
 
@@ -6860,6 +6869,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     onPollingRecovered: () => {
       void notifyLastChat('Telegram reconectado.').catch(() => {});
     },
+    onTvButton: (press) =>
+      tvButtonCommand(press.data, {
+        isOwner: isOwnerDm(press, vigilanteOwnerId),
+        run: runTvOrder,
+      }),
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
       await withInboundFailureReply(
