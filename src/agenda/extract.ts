@@ -809,8 +809,41 @@ function withoutTimeOfDay(folded: string): string {
     // mañana te mandé la factura" put a commitment on the next day. With a clock after
     // it, spokenTimes() has already turned it into "hoy a las ...".
     /\b(?:(?:por|en|a|de|esta) la (?:manana|tarde|noche|morning|afternoon|evening)|esta (?:manana|tarde|noche))\b/g,
-    ' ',
+    (phrase: string) => {
+      // "por la tarde" is still not a date, but next to one it says when that day:
+      // leave a marker no date or kind pattern reads (see partOfDayHour()).
+      const part = /^(?:por|en|a|de) la (manana|tarde|noche)$/.exec(phrase)?.[1];
+      return part ? ` ${PART_OF_DAY_MARK}${part} ` : ' ';
+    },
   );
+}
+
+const PART_OF_DAY_MARK = 'pdxfranja';
+const PART_OF_DAY_RE = new RegExp(`\\b${PART_OF_DAY_MARK}(manana|tarde|noche)\\b`, 'g');
+/**
+ * Nominal hours for "el sábado por la tarde": still `timed: false` (no clock was given),
+ * but a reminder for Saturday afternoon must not fire at 09:00 on Saturday morning.
+ */
+const PART_OF_DAY_HOUR: Record<string, number> = { manana: NOMINAL_HOUR, tarde: 16, noche: 21 };
+/** "el sábado por la tarde" / "por la tarde del sábado": a few words, not a paragraph. */
+const PART_OF_DAY_NEAR = 30;
+
+function partOfDayHour(date: DateHit, folded: string): number | undefined {
+  let best: number | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const m of folded.matchAll(PART_OF_DAY_RE)) {
+    const distance = Math.abs((m.index ?? 0) - date.index);
+    if (distance > PART_OF_DAY_NEAR || distance >= bestDistance) continue;
+    best = PART_OF_DAY_HOUR[m[1] ?? ''];
+    bestDistance = distance;
+  }
+  return best;
+}
+
+function nominalAt(date: DateHit, folded: string, timeZone: string): number {
+  const hour = partOfDayHour(date, folded);
+  if (hour === undefined || hour === NOMINAL_HOUR) return date.at;
+  return zonedTime({ ...ymd(date.at, timeZone), hour, minute: 0 }, timeZone);
 }
 
 /**
@@ -854,7 +887,7 @@ export function extractCommitments(
           },
           timeZone,
         )
-      : date.at;
+      : nominalAt(date, folded, timeZone);
 
     // Filter 2: the past is not pending. An untimed date is compared as a DAY, because
     // "hoy" written at 14:00 is still today even though the 09:00 anchor is behind us.
