@@ -9,9 +9,19 @@ import {
   captureRoi,
   compareFrames,
   type FrameDiff,
+  notCompared,
   type Screenshot,
   verifyBatch,
 } from '../screen/verify.js';
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** `verified` in details: true/false only when a comparison really ran. */
+function verifiedOf(check: FrameDiff | null): boolean | null {
+  return check && !check.failed ? check.changed : null;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -453,8 +463,12 @@ export function createComputerTool(
       // perceptual diff exists to reject.
       before = (await backend.screenshot()).image;
     } catch (err) {
+      // The capture is what failed, not the action: run it anyway. Returning here
+      // without acting reported "Clicked"/"Pressed" for an action that never
+      // happened, and the model carried on as if it had.
       log.warn('verification baseline capture failed', { err });
-      return null;
+      await action();
+      return notCompared(`la captura previa ha fallado (${errorText(err)})`);
     }
     await action();
     // Long enough for a repaint to land. Windows animations run 150-250ms, so a
@@ -465,7 +479,7 @@ export function createComputerTool(
       after = (await backend.screenshot()).image;
     } catch (err) {
       log.warn('verification post-action capture failed', { err });
-      return null;
+      return notCompared(`la captura posterior ha fallado (${errorText(err)})`);
     }
     return compareFrames(before, after, at ? { at, radius: 48 } : {});
   };
@@ -621,7 +635,7 @@ export function createComputerTool(
               viewX: p.viewX,
               viewY: p.viewY,
               roi,
-              verified: check?.changed ?? null,
+              verified: verifiedOf(check),
               localRatio: check?.localRatio ?? null,
             },
             at,
@@ -651,7 +665,7 @@ export function createComputerTool(
           ],
           details: {
             ...p,
-            verified: check?.changed ?? null,
+            verified: verifiedOf(check),
             localRatio: check?.localRatio ?? null,
           },
           at,
@@ -686,7 +700,7 @@ export function createComputerTool(
               }`,
             },
           ],
-          details: { from, to, verified: check?.changed ?? null },
+          details: { from, to, verified: verifiedOf(check) },
           at: null,
         };
       }
@@ -703,7 +717,7 @@ export function createComputerTool(
               text: `Typed ${text.length} characters${check ? `\n${check.verdict}` : ''}`,
             },
           ],
-          details: { chars: text.length, verified: check?.changed ?? null },
+          details: { chars: text.length, verified: verifiedOf(check) },
           at: null,
         };
       }
@@ -714,7 +728,7 @@ export function createComputerTool(
         const check = await act(() => backend.key(key));
         return {
           content: [{ type: 'text', text: `Pressed ${key}${check ? `\n${check.verdict}` : ''}` }],
-          details: { key, verified: check?.changed ?? null },
+          details: { key, verified: verifiedOf(check) },
           at: null,
         };
       }
