@@ -47,7 +47,7 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 
 ## Desde Telegram sin gastar
 - `/tv <orden>` (solo tú, en tu chat privado): «/tv apaga la tele», «/tv abre Netflix», «/tv volumen a 15», «/tv modo cine», «/tv estado». Va directo a la tele, sin pasar por el modelo (0 tokens). Si no la entiende, lo dice y no hace nada.
-- Frases: «pon la uno» (canal en palabras), «sube a tope» / «volumen al máximo» = volumen 50 (tope de seguridad; para más, dilo con número: «volumen a 80»), «quita el sonido» = silencio.
+- Frases: «pon la uno» (canal en palabras), «sube a tope» / «volumen al máximo» = volumen 100 (el máximo de la tele; decisión de Nico, 30-oct-2026; para menos, dilo con número: «volumen a 30»), «quita el sonido» = silencio.
 - `pa tv orden "<texto>"` en la terminal del PC: la misma orden, igual de directa y sin modelo («pa tv orden "volumen a 15"»). Código 0 si se hizo, 2 si no se entiende (no toca la tele), 1 si la tele falla.
 
 ## Mando con botones
@@ -59,3 +59,11 @@ Si la orden tarda más de 2,5 s (encender por WoL, tele lenta), el botón contes
 `/tv baja a la mitad` (o «volumen a la mitad») lee el volumen real y lo deja en la mitad; nunca lo sube y, si no puede leerlo, no toca nada.
 
 Doble toque: si se pulsa el mismo botón del mando dos veces en menos de 1 s (o Telegram entrega dos veces el mismo toque), la orden se manda una sola vez y el aviso dice «Ya lo he mandado; espera un segundo para repetir». Vol + y Vol − no se filtran: dos toques seguidos suben o bajan dos pasos.
+
+## Extras de Glasshouse en las rutinas (decidido 30-oct-2026)
+
+Nico pidió «elige las opciones con más lógica». Decisión:
+- «apagar todo» NO cierra la app antes de apagar: apagar ya para la reproducción, y un `closeApp` previo solo añade un paso más que puede fallar.
+- «modo noche» NO cambia la imagen (brillo, ahorro de energía): son ajustes persistentes de la tele y se quedarían oscuros al día siguiente, sin forma fiable de restaurar el valor anterior. Solo baja el volumen.
+- Ninguna rutina programa el temporizador de apagado: podría cortar una peli a medias.
+
