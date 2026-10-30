@@ -40,13 +40,6 @@ export interface ModelConfigLike {
   baseUrl?: string | undefined;
 }
 
-/** Margen de seguridad: nunca se llena el 100% de la ventana declarada. */
-export const CONTEXT_SAFETY_MARGIN = 0.1;
-
-/** Estimacion conservadora de tokens por caracter y margen del estimador. */
-const CHARS_PER_TOKEN = 4;
-const PROMPT_TOKEN_MARGIN = 1.1;
-
 const OPENCODE_CAPS: ModelCaps = {
   id: 'space-bunny-free',
   contextWindow: 1_048_576,
@@ -172,33 +165,4 @@ export function resolveModelCaps(config: ModelConfigLike = {}): ModelCaps {
     inputPerMTok,
     outputPerMTok,
   };
-}
-
-/**
- * Estimacion de tokens de un prompt: 4 caracteres por token y un 10% extra.
- * El margen cubre conteos de tokens que no siguen la media (codigo, UTF-8,
- * tablas) sin necesidad de cargar un tokenizer. Redondea siempre hacia arriba.
- */
-export function estimatePromptTokens(text: string): number {
-  if (!text) return 0;
-  return Math.ceil((text.length / CHARS_PER_TOKEN) * PROMPT_TOKEN_MARGIN);
-}
-
-/**
- * true si prompt + salida reservada caben dejando un 10% de la ventana libre.
- *
- * `reserveForOutput` por defecto es `caps.maxOutput`: el presupuesto de salida
- * que el modelo puede llegar a usar. Una reserva negativa o no finita se trata
- * como 0; una ventana invalida (<= 0) nunca admite nada.
- */
-export function fitsContext(
-  inputTokens: number,
-  caps: ModelCaps,
-  reserveForOutput: number = caps.maxOutput,
-): boolean {
-  if (!Number.isFinite(caps.contextWindow) || caps.contextWindow <= 0) return false;
-  const input = Number.isFinite(inputTokens) && inputTokens > 0 ? inputTokens : 0;
-  const reserve = Number.isFinite(reserveForOutput) && reserveForOutput > 0 ? reserveForOutput : 0;
-  const usable = Math.floor(caps.contextWindow * (1 - CONTEXT_SAFETY_MARGIN));
-  return input + reserve <= usable;
 }

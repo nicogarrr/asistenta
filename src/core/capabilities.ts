@@ -120,11 +120,6 @@ export const CAPABILITIES: readonly Capability[] = [
 const names = (pick: (c: Capability) => boolean | undefined): string[] =>
   CAPABILITIES.filter((c) => pick(c)).map((c) => c.name);
 
-/** Busca la entrada de una herramienta (undefined si no tiene metadatos). */
-export function capabilityOf(name: string): Capability | undefined {
-  return CAPABILITIES.find((c) => c.name === name);
-}
-
 /** Herramientas que mueven la máquina: en el daemon solo estas pasan por el mutex. */
 export function machineToolNames(): string[] {
   return names((c) => c.machine);

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   CAPABILITIES,
-  capabilityOf,
   deferredSpecs,
   desktopOnlyToolNames,
   LOADER_TOOL_NAME,
@@ -84,12 +83,6 @@ describe('catálogo de capacidades (P1)', () => {
     ]) {
       expect(THREAD_ALLOW_TOOLS).not.toContain(name);
     }
-  });
-
-  it('capabilityOf devuelve la entrada o undefined', () => {
-    expect(capabilityOf('computer')?.machine).toBe(true);
-    expect(capabilityOf('computer')?.desktopOnly).toBe(true);
-    expect(capabilityOf('no-existe')).toBeUndefined();
   });
 
   it('la auto-mejora no puede volver libre una herramienta desde el catálogo', () => {

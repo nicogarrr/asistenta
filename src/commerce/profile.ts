@@ -113,12 +113,6 @@ export async function loadPassenger(vault: VaultReader = defaultVault): Promise<
   };
 }
 
-/** True only when all four fields are stored, i.e. no question is needed. */
-export async function hasPassenger(vault: VaultReader = defaultVault): Promise<boolean> {
-  const passenger = await loadPassenger(vault);
-  return passenger !== null && missingPassengerFields(passenger).length === 0;
-}
-
 /** Fields with nothing stored, in form order. Names only. */
 export function missingPassengerFields(passenger: Passenger | null): PassengerField[] {
   if (!passenger) return [...PASSENGER_FIELDS];

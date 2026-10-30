@@ -39,11 +39,6 @@ export interface ProviderHandle {
 /** Identifies this client to OpenCode Go (own user agent, never a generic SDK name). */
 export const CLIENT_USER_AGENT = 'asistenta/1.0';
 
-/** True for the OpenCode Go endpoint, which documents the client + session-header rules. */
-export function isGoEndpoint(baseUrl: string): boolean {
-  return /\/zen\/go(\/|$)/.test(baseUrl);
-}
-
 /** True for any OpenCode endpoint (Zen or Go): both document the own-UA + session rules. */
 export function isOpenCodeEndpoint(baseUrl: string): boolean {
   return /^https:\/\/opencode\.ai\/zen(\/|$)/.test(baseUrl);
