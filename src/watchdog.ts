@@ -33,6 +33,9 @@ import { readFileSync, statSync } from 'node:fs';
 import { log } from './log.js';
 import { sameProcessAsRecorded } from './process-identity.js';
 
+/** A beat this far ahead of the clock was written before the clock went back. */
+const FUTURE_BEAT_TOLERANCE_MS = 60_000;
+
 /**
  * Heartbeat cadence, mirrored from `installLifecycle`'s `setInterval`. Duplicated
  * rather than imported because a watchdog that imports the daemon's lifecycle module
@@ -263,6 +266,7 @@ export class Watchdog {
   };
 
   /** Timestamps of restarts still inside the window. */
+  #futureBeat: { at: number; seenAt: number } | null = null;
   #window: number[] = [];
   #totalRestarts = 0;
   #gaveUp = false;
@@ -350,6 +354,23 @@ export class Watchdog {
     }
   }
 
+  /**
+   * How long the daemon has gone without a beat. A beat dated in the future means the
+   * clock went back after it was written (a fast clock corrected by Windows time sync,
+   * dual boot with Linux): counted from now - at it would read as fresh until the clock
+   * catches up, so a daemon that hung after the correction was never restarted. Such a
+   * beat counts from the moment we first saw it; a live daemon rewrites it within 15 s.
+   */
+  #staleness(at: number | null, now: number): number {
+    if (at === null) return Number.POSITIVE_INFINITY;
+    if (at - now <= FUTURE_BEAT_TOLERANCE_MS) {
+      this.#futureBeat = null;
+      return Math.max(0, now - at);
+    }
+    if (this.#futureBeat?.at !== at) this.#futureBeat = { at, seenAt: now };
+    return Math.max(0, now - this.#futureBeat.seenAt);
+  }
+
   /** Everything `check()` would decide, without touching a process. */
   #inspect(): WatchdogVerdict {
     const now = this.#opts.now();
@@ -357,7 +378,7 @@ export class Watchdog {
     const beat = readHeartbeat(this.#opts.heartbeatFile);
     this.#lastHeartbeatAt = beat.at;
     this.#lastSource = beat.source;
-    const staleMs = beat.at === null ? Number.POSITIVE_INFINITY : Math.max(0, now - beat.at);
+    const staleMs = this.#staleness(beat.at, now);
     this.#lastStaleMs = staleMs;
     this.#prune(now);
     // Read on every check, healthy or not: the pid is what lets a report name the
@@ -507,7 +528,7 @@ export class Watchdog {
   summary(verdict?: WatchdogVerdict): string {
     const now = this.#opts.now();
     const beat = readHeartbeat(this.#opts.heartbeatFile);
-    const staleMs = beat.at === null ? Number.POSITIVE_INFINITY : Math.max(0, now - beat.at);
+    const staleMs = this.#staleness(beat.at, now);
     const healthy = staleMs < this.#opts.staleAfterMs;
     const pid = verdict?.pid ?? this.#lastPid ?? this.#readPidSafely();
     const last = this.#safeLastTurn();
