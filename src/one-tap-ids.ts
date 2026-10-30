@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { setAsideCorrupt, uniqueTmpPath } from './fs-tmp.js';
+import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
 /**
  * Ids cortos (8 hex) de los botones inline de un toque («✅ Hecho», «⏰ +1h», «🌅 Mañana
@@ -87,9 +87,9 @@ export class OneTapIds<T> {
     if (!this.#file) return;
     try {
       mkdirSync(dirname(this.#file), { recursive: true });
-      const tmp = uniqueTmpPath(this.#file);
-      writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.#items)), { mode: 0o600 });
-      renameSync(tmp, this.#file);
+      writeFileReplacing(this.#file, JSON.stringify(Object.fromEntries(this.#items)), {
+        mode: 0o600,
+      });
     } catch {
       // los botones siguen sirviendo en memoria hasta reiniciar
     }

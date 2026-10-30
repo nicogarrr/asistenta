@@ -4,9 +4,9 @@
  * real lo hace PersonalAgent.chooseModel.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { uniqueTmpPath } from './fs-tmp.js';
+import { writeFileReplacing } from './fs-tmp.js';
 
 export type ModeloAction =
   | { kind: 'show' }
@@ -107,9 +107,7 @@ export class ModelChoiceStore {
 
   #write(all: Record<string, string>): void {
     mkdirSync(dirname(this.#file), { recursive: true });
-    const tmp = uniqueTmpPath(this.#file);
-    writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, this.#file);
+    writeFileReplacing(this.#file, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
   }
 }
 

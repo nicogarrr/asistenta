@@ -13,8 +13,9 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { writeFileReplacing } from './fs-tmp.js';
 
 /** Marca en `routine.prompt`: la rutina es un comando y jamás se manda al modelo. */
 export const COMMAND_PROMPT_PREFIX = '[comando] ';
@@ -161,9 +162,7 @@ export class CommandRoutineStore {
 
   #write(all: Record<string, CommandSpec>): void {
     mkdirSync(dirname(this.#path), { recursive: true });
-    const tmp = `${this.#path}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`);
-    renameSync(tmp, this.#path);
+    writeFileReplacing(this.#path, `${JSON.stringify(all, null, 2)}\n`);
   }
 
   get(scope: string, name: string): CommandSpec | null {
