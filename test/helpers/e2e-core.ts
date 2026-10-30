@@ -344,7 +344,9 @@ export class Core {
       ...this.extraTools,
     ];
     const agent = await PersonalAgent.create(E2E_CONFIG, tools, gate, 'e2e', {
-      sessionId: `e2e-${key}`,
+      // Igual que el daemon (cli.ts: sessionId = key): el Gate se consulta con este id
+      // y `clearSession(key)` al final del turno tiene que borrar lo mismo.
+      sessionId: key,
       desktop: false,
     });
     const t: Thread = {
