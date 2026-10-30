@@ -787,7 +787,7 @@ export class TelegramChannel implements ChannelAdapter {
       withTimeout(
         this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
           message_thread_id: threadId ? Number(threadId) : undefined,
-          caption: `. ${Math.round(seconds)}s de microfono`.slice(0, 1024),
+          caption: fitCaption(`. ${Math.round(seconds)}s de microfono`),
         }),
         60_000,
         'sendVoice timed out',
@@ -976,7 +976,7 @@ export class TelegramChannel implements ChannelAdapter {
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendVideo(chatId, new InputFile(bytes), {
-          caption: `${caption} (${Math.round(durationSeconds)}s)`.slice(0, 1024),
+          caption: fitCaption(`${caption} (${Math.round(durationSeconds)}s)`),
           supports_streaming: true,
         }),
         120_000,
@@ -999,7 +999,7 @@ export class TelegramChannel implements ChannelAdapter {
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendDocument(chatId, new InputFile(bytes, filename), {
-          caption: caption.slice(0, 1024),
+          caption: fitCaption(caption),
           message_thread_id: threadId ? Number(threadId) : undefined,
         }),
         120_000,
@@ -1491,6 +1491,27 @@ export function isAudioDocument(doc: { mime_type?: string; file_name?: string })
   if (mime.startsWith('audio/') || mime === 'application/ogg') return true;
   if (mime && mime !== 'application/octet-stream') return false;
   return AUDIO_FILE_NAME.test(doc.file_name ?? '');
+}
+
+/** Tope de Telegram para el pie de un archivo, en unidades UTF-16 (como cuenta Telegram). */
+export const CAPTION_MAX = 1024;
+
+/**
+ * Pie de archivo dentro del tope de Telegram.
+ *
+ * Antes se cortaba con slice a 1024 a ciegas: cortaba a media palabra sin avisar y podía partir
+ * un emoji (par sustituto) y dejar medio carácter, que Telegram rechaza o pinta como
+ * «�». Ahora corta en el último espacio de la ventana (si no queda demasiado corto),
+ * nunca parte un par sustituto y termina en «…» para que se vea que falta algo.
+ */
+export function fitCaption(text: string, max = CAPTION_MAX): string {
+  if (text.length <= max) return text;
+  let cut = max - 1; // sitio para «…»
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1; // no dejar medio emoji
+  const space = text.lastIndexOf(' ', cut);
+  if (space > max * 0.8) cut = space;
+  return `${text.slice(0, cut).trimEnd()}…`;
 }
 
 /** Prefijo del callback de «📖 Ver todo»; nunca empieza como approve:/deny:. */
