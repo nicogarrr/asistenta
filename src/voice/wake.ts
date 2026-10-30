@@ -739,6 +739,13 @@ export class WakeWordListener {
   #running = false;
   #captureActive = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Sube en cada start() y stop(). Un tick captura la generación al empezar: si al
+   * volver de una transcripción lenta ya no coincide, el oyente se paró (y quizá
+   * volvió a arrancar) mientras tanto, así que el resultado es de otra sesión y ese
+   * tick no puede despertar ni programar otro chequeo (habría dos bucles a la vez).
+   */
+  #generation = 0;
   #suppressedUntil = 0;
   #checks = 0;
   #wakeCount = 0;
@@ -842,6 +849,7 @@ export class WakeWordListener {
         throw new Error('la palabra de activacion esta vacia');
       }
       this.#running = true;
+      this.#generation++;
       this.#captureActive = true;
       this.#consecutiveFailures = 0;
       try {
@@ -893,6 +901,7 @@ export class WakeWordListener {
   async stop(): Promise<void> {
     await this.#lock.run(async () => {
       this.#running = false;
+      this.#generation++;
       if (this.#timer) {
         clearTimeout(this.#timer);
         this.#timer = null;
@@ -988,6 +997,8 @@ export class WakeWordListener {
 
   #scheduleCheck(): void {
     if (!this.#running) return;
+    // Nunca dos temporizadores vivos: el anterior quedaría fuera del alcance de stop().
+    if (this.#timer) clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
       this.#timer = null;
       void this.#tick();
@@ -1002,6 +1013,7 @@ export class WakeWordListener {
    * exists for).
    */
   async #tick(): Promise<void> {
+    const generation = this.#generation;
     try {
       if (!this.#running) return;
       if (this.#held) return;
@@ -1016,8 +1028,11 @@ export class WakeWordListener {
       let text: string;
       try {
         text = await this.#transcriber(window, this.#initialPrompt);
+        if (generation !== this.#generation) return;
         this.#consecutiveFailures = 0;
       } catch (err) {
+        // Un fallo de la sesión anterior no cuenta para la nueva.
+        if (generation !== this.#generation) return;
         this.#consecutiveFailures++;
         this.#reportError(err);
         if (this.#consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -1032,7 +1047,7 @@ export class WakeWordListener {
       }
 
       // stop() during the transcription: the result is stale, discard it.
-      if (!this.#running) return;
+      if (!this.#running || generation !== this.#generation) return;
       this.#checks++;
       if (!matchesWakeWord(text, this.#word, this.#sensitivity)) {
         // Why the word did not fire is otherwise invisible: the listener stays silent and
@@ -1054,7 +1069,8 @@ export class WakeWordListener {
       this.#ring.clear();
       this.#fireWake(text);
     } finally {
-      this.#scheduleCheck();
+      // Solo el bucle de la sesión vigente se reprograma; start() ya lanzó el suyo.
+      if (generation === this.#generation) this.#scheduleCheck();
     }
   }
 
