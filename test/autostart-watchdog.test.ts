@@ -157,6 +157,27 @@ describe('pa autostart con el vigilante (todo simulado)', () => {
     expect(calls().filter(([e]) => e === 'schtasks.exe')).toEqual([]);
   });
 
+  it('install --start la deja encendida: quita la marca de pa stop (como pa iniciar)', async () => {
+    const d = tmp();
+    markStoppedOnPurpose(d);
+    await autostartCommand(['install'], { stateDir: d });
+    await autostartCommand(['install', '--start', '--what-if'], { stateDir: d });
+    expect(existsSync(join(d, STOPPED_ON_PURPOSE_FILE))).toBe(true);
+    await autostartCommand(['install', '--start'], { stateDir: d });
+    expect(existsSync(join(d, STOPPED_ON_PURPOSE_FILE))).toBe(false);
+  });
+
+  it('install --start fallido no quita la marca de pa stop', async () => {
+    const d = tmp();
+    markStoppedOnPurpose(d);
+    execFile.mockImplementation(
+      (_e: string, _f: string[], _o: unknown, cb: (...a: unknown[]) => void) =>
+        cb(new Error('falló'), '', ''),
+    );
+    expect(await autostartCommand(['install', '--start'], { stateDir: d })).toBe(1);
+    expect(existsSync(join(d, STOPPED_ON_PURPOSE_FILE))).toBe(true);
+  });
+
   it('uninstall lo borra', async () => {
     await autostartCommand(['uninstall'], { stateDir: tmp() });
     expect(calls()[1]).toEqual(['schtasks.exe', ['/Delete', '/F', '/TN', WATCHDOG_TASK_NAME]]);
