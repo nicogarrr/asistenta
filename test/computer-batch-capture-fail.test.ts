@@ -103,7 +103,7 @@ describe('computer · batch cuando falla una captura de verificación', () => {
     });
     expect(calls).toEqual(['screenshot', 'type:hola', 'key:enter', 'screenshot']);
     const text = textOf(r);
-    expect(text).toMatch(/^Batch 2 actions: 2 ok, 0 not executed\./);
+    expect(text).toMatch(/^Lote de 2 acciones: 2 ok, 0 sin ejecutar\./);
     expect(text).toMatch(/\[0\] type: ok/);
     expect(text).toMatch(/\[1\] key: ok/);
     expect(text).toMatch(
@@ -132,7 +132,7 @@ describe('computer · batch cuando falla una captura de verificación', () => {
     // (compararía marcos equivocados) y sin captura posterior inútil.
     expect(calls).toEqual(['screenshot', 'click:10,20:left:1', 'type:x']);
     const text = textOf(r);
-    expect(text).toMatch(/^Batch 2 actions: 2 ok, 0 not executed\./);
+    expect(text).toMatch(/^Lote de 2 acciones: 2 ok, 0 sin ejecutar\./);
     expect(text).not.toMatch(/FAILED/);
     expect(text).toMatch(
       /no he podido comparar el lote: la captura previa ha fallado \(captura rota\)/,

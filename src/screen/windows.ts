@@ -205,9 +205,8 @@ Add-Type -AssemblyName System.Windows.Forms
           if (done === 0) throw err;
           const reason = err instanceof Error ? err.message : String(err);
           throw new Error(
-            `${reason}\nPartial: ${done} of ${total} characters were already typed before the failure — ` +
-              'do not retype the whole text; take a screenshot and continue from where it stopped. ' +
-              `Ya se habían escrito ${done} de ${total} caracteres.`,
+            `${reason}\nParcial: ya se habían escrito ${done} de ${total} caracteres antes del fallo; ` +
+              'no vuelvas a escribir el texto entero: haz una captura y sigue desde donde se paró.',
           );
         }
         done += Array.from(piece).length;

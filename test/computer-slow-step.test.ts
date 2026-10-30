@@ -50,8 +50,9 @@ describe('computer · aviso de paso lento', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const tool = createComputerTool(config, backend(12_000));
     const r = await tool.execute('1', { action: 'click', x: 10, y: 10 } as never);
-    expect(texts(r)).toContain('Clicked');
+    expect(texts(r)).toContain('Clic en');
     expect(texts(r)).toContain('Paso lento: 12 s');
+    expect(texts(r)).not.toMatch(/Slow step|took|busy/);
   });
 
   it('un clic rápido no cambia (caracterización)', async () => {
@@ -59,7 +60,6 @@ describe('computer · aviso de paso lento', () => {
     const tool = createComputerTool(config, backend(50));
     const r = await tool.execute('1', { action: 'click', x: 10, y: 10 } as never);
     expect(texts(r)).not.toContain('Paso lento');
-    expect(texts(r)).not.toContain('Slow step');
   });
 
   it('justo en el umbral no avisa; un error lento lleva la nota en el mensaje', async () => {

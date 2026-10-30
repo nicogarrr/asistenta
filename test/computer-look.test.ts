@@ -112,7 +112,7 @@ describe('computer · look: la pantalla de después en la misma llamada', () => 
     const texts = r.content
       .filter((b) => b.type === 'text')
       .map((b) => (b as { text: string }).text);
-    expect(texts.join('\n')).toMatch(/Screenshot after the action: 1280x720/);
+    expect(texts.join('\n')).toMatch(/Captura tras la acción: 1280x720/);
   });
 
   it('sin verificación, hace una sola captura tras la acción', async () => {
@@ -154,7 +154,7 @@ describe('computer · look: la pantalla de después en la misma llamada', () => 
     expect(calls).toEqual(['key:enter', 'screenshot']);
     expect(images(r)).toBe(0);
     const texts = r.content.map((b) => (b as { text?: string }).text ?? '').join('\n');
-    expect(texts).toMatch(/Pressed enter/);
+    expect(texts).toMatch(/Pulsada la tecla enter/);
     expect(texts).toMatch(/No he podido capturar la pantalla después/);
   });
 

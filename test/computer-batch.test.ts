@@ -240,7 +240,7 @@ describe('batch execution', () => {
     expect(batchResults(result.details)).toEqual([
       { index: 0, action: 'type', ok: true, result: { chars: 1, verified: null } },
       { index: 1, action: 'type', ok: false, error: 'type failed' },
-      { index: 2, action: 'type', ok: false, error: 'skipped: action 1 did not complete' },
+      { index: 2, action: 'type', ok: false, error: 'omitida: la acción 1 no se completó' },
     ]);
   });
 
@@ -291,7 +291,7 @@ describe('batch execution', () => {
     expect(batchResults(result.details)).toEqual([
       { index: 0, action: 'type', ok: true, result: { chars: 1, verified: null } },
       { index: 1, action: 'key', ok: false, error: 'blocked: not allowed' },
-      { index: 2, action: 'type', ok: false, error: 'skipped: action 1 did not complete' },
+      { index: 2, action: 'type', ok: false, error: 'omitida: la acción 1 no se completó' },
     ]);
   });
 
