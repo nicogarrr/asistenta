@@ -205,8 +205,10 @@ export function parseRenfeResults(text: string): RenfeTrain[] {
   }
   hits.forEach((hit, i) => {
     const chunk = body.slice(hit.end, hits[i + 1]?.index ?? body.length);
-    const price = /Precio desde\s*\n?\s*(\d{1,3}(?:\.\d{3})*,\d{2}) €/.exec(chunk);
-    hit.train.precioDesde = price ? `${price[1]} €` : null;
+    // Espacio duro/fino antes de «€» (lo que da `&nbsp;`), precio entero («59 €») o miles sin
+    // punto («1299,00 €») también son un precio; antes salía «sin precio visible».
+    const price = /Precio desde\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{2}))?\s?€/.exec(chunk);
+    hit.train.precioDesde = price ? `${price[1]}${price[2] ? `,${price[2]}` : ''} €` : null;
   });
   return hits.map((h) => h.train);
 }
