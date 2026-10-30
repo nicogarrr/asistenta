@@ -7,6 +7,8 @@
  * textContent, nunca con innerHTML.
  */
 
+import { resumenAprobacion, tiempoRestante } from './client-format.js';
+
 const ICON_SVG = [
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
   '<rect width="180" height="180" rx="40" fill="#0b0f14"/>',
@@ -17,6 +19,19 @@ const ICON_SVG = [
 ].join('');
 
 const ICON_DATA_URI = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;
+
+/**
+ * Script con las funciones puras de client-format.ts, copiadas tal cual al
+ * navegador. Va aparte del script principal para poder probarlo en un vm.
+ */
+export function renderFormatScript(): string {
+  return `var asistentaFormato = (function () {
+  'use strict';
+  var resumenAprobacion = ${resumenAprobacion.toString()};
+  var tiempoRestante = ${tiempoRestante.toString()};
+  return { resumenAprobacion: resumenAprobacion, tiempoRestante: tiempoRestante };
+})();`;
+}
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -272,6 +287,16 @@ export function renderPage(): string {
     .aprobacion:last-child { margin-bottom: 0; }
     .aprobacion h3 { margin: 0; font-size: 14px; word-break: break-word; }
     .aprobacion .botones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .aprobacion .pregunta { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; word-break: break-word; }
+    .aprobacion .meta { margin: 6px 0 0; color: var(--suave); font-size: 13px; word-break: break-word; }
+    .aprobacion .caduca { margin: 6px 0 0; font-size: 13px; color: var(--texto); font-variant-numeric: tabular-nums; }
+    .aprobacion .caduca.urgente { color: var(--mal); }
+    .aprobacion .botones button { padding: 8px 12px; font-size: 14px; min-height: 40px; }
+    .aprobacion .botones button.permitir { border-color: #1d4f35; background: #0f241a; color: var(--ok); }
+    .aprobacion .botones button.siempre { border-color: #6b4f1d; color: #fcd34d; background: transparent; }
+    .aprobacion .botones button.denegar { border-color: #5b2424; background: #241111; color: var(--mal); }
+    .aprobacion .resultado { margin: 8px 0 0; font-size: 13px; }
+    .aprobacion.caducada { opacity: 0.6; }
     details { margin-top: 8px; }
     summary { cursor: pointer; color: var(--suave); font-size: 12px; }
     summary:hover { color: var(--texto); }
@@ -411,8 +436,12 @@ export function renderPage(): string {
   </main>
 
   <script>
+${renderFormatScript()}
+  </script>
+  <script>
     (function () {
       'use strict';
+      var formato = window.asistentaFormato;
 
       var CLAVE_TOKEN = 'asistenta.webui.token';
       var parametros = new URLSearchParams(window.location.search);
@@ -697,10 +726,10 @@ export function renderPage(): string {
       }
 
       var DECISIONES = [
-        { id: 'once', texto: 'Permitir una vez' },
-        { id: 'session', texto: 'Permitir en la sesión' },
-        { id: 'always', texto: 'Permitir siempre' },
-        { id: 'deny', texto: 'Denegar' }
+        { id: 'once', texto: 'Permitir una vez', clase: 'permitir', hecho: 'Permitido una vez' },
+        { id: 'session', texto: 'Permitir en esta sesión', clase: '', hecho: 'Permitido en esta sesión' },
+        { id: 'always', texto: 'Permitir siempre', clase: 'siempre', hecho: 'Permitido siempre' },
+        { id: 'deny', texto: 'Denegar', clase: 'denegar', hecho: 'Denegado' }
       ];
 
       function listaDeAprobaciones(datos) {
@@ -728,35 +757,61 @@ export function renderPage(): string {
         return '';
       }
 
-      function tituloAprobacion(item, indice) {
-        if (typeof item === 'string') return item;
-        if (item && typeof item === 'object') {
-          var claves = ['title', 'label', 'summary', 'tool', 'toolName', 'action', 'description', 'reason'];
-          for (var i = 0; i < claves.length; i += 1) {
-            var valor = item[claves[i]];
-            if (valor !== undefined && valor !== null && String(valor) !== '') {
-              return String(valor);
+      // Mensaje de la última decisión, para que sobreviva al repintado de la lista.
+      var ultimaDecision = '';
+
+      async function aprobar(id, decision, tarjeta) {
+        if (
+          decision.id === 'always' &&
+          !window.confirm(
+            '«Permitir siempre» deja de preguntarte por esta acción en el futuro. ¿Seguro?'
+          )
+        ) {
+          return;
+        }
+        var botones = tarjeta.querySelectorAll('button');
+        for (var i = 0; i < botones.length; i += 1) botones[i].disabled = true;
+        try {
+          await enviar('/api/approvals/' + encodeURIComponent(id), { decision: decision.id });
+          mostrarAviso('');
+          ultimaDecision = decision.hecho + ': «' + tarjeta.getAttribute('data-titulo') + '».';
+          await cargarAprobaciones();
+        } catch (error) {
+          for (var j = 0; j < botones.length; j += 1) botones[j].disabled = false;
+          var resultado = tarjeta.querySelector('.resultado');
+          resultado.className = 'resultado error';
+          resultado.textContent =
+            error && error.message ? error.message : 'No se pudo aplicar la decisión.';
+        }
+      }
+
+      // Cuenta atrás de cada aprobación; al caducar se desactivan sus botones.
+      function actualizarCaducidades() {
+        var ahora = Date.now();
+        var marcas = document.querySelectorAll('#panel-aprobaciones [data-caduca]');
+        for (var i = 0; i < marcas.length; i += 1) {
+          var caduca = Number(marcas[i].getAttribute('data-caduca'));
+          var texto = formato.tiempoRestante(caduca, ahora);
+          if (marcas[i].textContent !== texto) marcas[i].textContent = texto;
+          marcas[i].className = 'caduca' + (caduca - ahora < 60000 ? ' urgente' : '');
+          if (texto === 'Caducada') {
+            var tarjeta = marcas[i].closest('.aprobacion');
+            if (tarjeta && !tarjeta.classList.contains('caducada')) {
+              tarjeta.classList.add('caducada');
+              var botones = tarjeta.querySelectorAll('.botones button');
+              for (var j = 0; j < botones.length; j += 1) botones[j].disabled = true;
             }
           }
         }
-        return 'Aprobación ' + (indice + 1);
       }
-
-      async function aprobar(id, decision, boton) {
-        boton.disabled = true;
-        try {
-          await enviar('/api/approvals/' + encodeURIComponent(id), { decision: decision });
-          mostrarAviso('');
-          await cargarAprobaciones();
-        } catch (error) {
-          pintarError(document.getElementById('panel-aprobaciones'), error);
-        } finally {
-          boton.disabled = false;
-        }
-      }
+      window.setInterval(actualizarCaducidades, 1000);
 
       function pintarAprobaciones(contenedor, datos) {
         contenedor.replaceChildren();
+        if (ultimaDecision) {
+          contenedor.appendChild(nodo('p', 'resultado chip ok', ultimaDecision));
+          ultimaDecision = '';
+        }
         var lista = listaDeAprobaciones(datos);
         if (!lista) {
           contenedor.appendChild(renderValor(datos, 0));
@@ -776,34 +831,55 @@ export function renderPage(): string {
         for (var i = 0; i < lista.length; i += 1) {
           var item = lista[i];
           var id = idAprobacion(item);
+          var resumen = formato.resumenAprobacion(item, i);
           var tarjeta = document.createElement('article');
           tarjeta.className = 'aprobacion';
-          tarjeta.appendChild(nodo('h3', null, tituloAprobacion(item, i)));
+          tarjeta.setAttribute('data-titulo', resumen.titulo);
+          var tituloId = 'aprobacion-' + i;
+          tarjeta.setAttribute('aria-labelledby', tituloId);
+          var titulo = nodo('h3', 'pregunta', resumen.titulo);
+          titulo.id = tituloId;
+          tarjeta.appendChild(titulo);
+          var meta = [];
+          if (resumen.motivo) meta.push(resumen.motivo);
+          if (resumen.herramienta) meta.push('Herramienta: ' + resumen.herramienta);
+          if (meta.length) tarjeta.appendChild(nodo('p', 'meta', meta.join(' · ')));
+          if (resumen.caduca !== null) {
+            var caduca = nodo('p', 'caduca', formato.tiempoRestante(resumen.caduca, Date.now()));
+            caduca.setAttribute('data-caduca', String(resumen.caduca));
+            tarjeta.appendChild(caduca);
+          }
           if (item && typeof item === 'object') {
             var detalles = document.createElement('details');
-            detalles.appendChild(nodo('summary', null, 'Detalles'));
+            detalles.appendChild(nodo('summary', null, 'Detalles técnicos'));
             detalles.appendChild(renderValor(item, 1));
             tarjeta.appendChild(detalles);
           }
           var botones = document.createElement('div');
           botones.className = 'botones';
+          botones.setAttribute('role', 'group');
+          botones.setAttribute('aria-label', 'Decisión');
           if (id) {
             for (var j = 0; j < DECISIONES.length; j += 1) {
-              (function (identificador, decision, etiqueta) {
-                var boton = nodo('button', 'mini', etiqueta);
+              (function (identificador, decision, tarjetaActual) {
+                var boton = nodo('button', decision.clase, decision.texto);
                 boton.type = 'button';
                 boton.addEventListener('click', function () {
-                  aprobar(identificador, decision, boton);
+                  aprobar(identificador, decision, tarjetaActual);
                 });
                 botones.appendChild(boton);
-              })(id, DECISIONES[j].id, DECISIONES[j].texto);
+              })(id, DECISIONES[j], tarjeta);
             }
           } else {
-            botones.appendChild(nodo('span', 'muted', 'Sin identificador'));
+            botones.appendChild(nodo('span', 'muted', 'Sin identificador: decide desde Telegram.'));
           }
           tarjeta.appendChild(botones);
+          var resultado = nodo('p', 'resultado');
+          resultado.setAttribute('role', 'status');
+          tarjeta.appendChild(resultado);
           contenedor.appendChild(tarjeta);
         }
+        actualizarCaducidades();
       }
 
       async function cargarAprobaciones() {
@@ -814,6 +890,15 @@ export function renderPage(): string {
         } catch (error) {
           pintarError(contenedor, error);
         }
+      }
+
+      // Recarga periódica: sin «Cargando…» y sin repintar si el usuario está pulsando un botón.
+      async function cargarAprobacionesEnSilencio() {
+        var contenedor = document.getElementById('panel-aprobaciones');
+        if (contenedor.contains(document.activeElement) && document.activeElement.tagName === 'BUTTON') return;
+        try {
+          pintarAprobaciones(contenedor, await pedir('/api/approvals'));
+        } catch (error) {}
       }
 
       async function enviarChat(evento) {
@@ -996,6 +1081,11 @@ export function renderPage(): string {
           navigator.serviceWorker.register('/sw.js').catch(function (error) {});
         });
       }
+
+      // Las aprobaciones caducan en minutos: se consultan solas mientras el panel está a la vista.
+      window.setInterval(function () {
+        if (document.visibilityState === 'visible' && token) cargarAprobacionesEnSilencio();
+      }, 15000);
 
       refrescarTodo();
     })();
