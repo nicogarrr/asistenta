@@ -2046,6 +2046,15 @@ export class BrowserService {
    * in session lives, and throwing it away on every close would mean logging in again
    * for every task.
    */
+  /** URL de la página en la que está ahora la sesión, o undefined si no hay ninguna. */
+  currentUrl(scope: string): string | undefined {
+    try {
+      return this.#sessions.get(scope)?.page.url() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async close(scope: string, strict = false): Promise<void> {
     const session = this.#sessions.get(scope);
     if (!session) return;

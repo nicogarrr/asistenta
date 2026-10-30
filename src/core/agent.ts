@@ -715,7 +715,17 @@ export class PersonalAgent {
                 .map((c) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
                 .join('\n')
             : '';
-          gate.settle(personal.sessionId, started, isError, resultText);
+          // La página en la que quedó el navegador (src/tools/browser.ts la pone en
+          // details.pageUrl) para que un clic que acaba en Gmail cuente como privado.
+          const pageUrl = (result as { details?: { pageUrl?: unknown } } | undefined)?.details
+            ?.pageUrl;
+          gate.settle(
+            personal.sessionId,
+            started,
+            isError,
+            resultText,
+            typeof pageUrl === 'string' ? pageUrl : undefined,
+          );
           const audit = callAudit.get(toolCall.id);
           callAudit.delete(toolCall.id);
           appendCallAudit({
