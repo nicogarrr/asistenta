@@ -373,7 +373,13 @@ interface Session {
 /** Hostname of a URL, or null when the string is not a URL. */
 export function hostOf(url: string): string | null {
   try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
+    // and to Chromium, so it must be the same host here: otherwise it walks past the
+    // never-approve list and past every domain approval.
+    return new URL(url).hostname
+      .toLowerCase()
+      .replace(/\.+$/, '')
+      .replace(/^www\./, '');
   } catch {
     return null;
   }
@@ -388,8 +394,14 @@ export function hostOf(url: string): string | null {
  * `renfe.com.evil.net`.
  */
 export function domainCovers(domain: string, host: string): boolean {
-  const d = domain.toLowerCase().replace(/^www\./, '');
-  const h = host.toLowerCase().replace(/^www\./, '');
+  const d = domain
+    .toLowerCase()
+    .replace(/\.+$/, '')
+    .replace(/^www\./, '');
+  const h = host
+    .toLowerCase()
+    .replace(/\.+$/, '')
+    .replace(/^www\./, '');
   return h === d || h.endsWith(`.${d}`);
 }
 
