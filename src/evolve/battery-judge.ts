@@ -224,8 +224,12 @@ export function judge(c: BatteryCase, t: Trace, now: Date = new Date()): Judgeme
         else if (Math.abs(minutesOfDay(fire) - (Number(m[1]) * 60 + Number(m[2]))) > 0)
           fail('S1: hora dicha distinta de la programada');
       } else {
-        const tomorrow = new Date(now.getTime() + 86400000);
-        if (dayKey(fire) !== dayKey(tomorrow) || minutesOfDay(fire) !== 9 * 60)
+        // Mañana en el calendario de Madrid, no ahora + 24 h: el día del cambio de hora
+        // tiene 23 o 25 horas.
+        const p = madridParts(now);
+        const t = new Date(Date.UTC(p.y, p.mo - 1, p.d + 1, 12));
+        const tomorrow = `${t.getUTCFullYear()}-${t.getUTCMonth() + 1}-${t.getUTCDate()}`;
+        if (dayKey(fire) !== tomorrow || minutesOfDay(fire) !== 9 * 60)
           fail('no es manana a las 09:00 de Madrid');
       }
     }
