@@ -60,7 +60,15 @@ const NAMED_KEYS: Record<string, string> = {
   space: ' ',
   spacebar: ' ',
   capslock: '{CAPSLOCK}',
-  printscreen: '{PRINTSCREEN}',
+  numlock: '{NUMLOCK}',
+  scrolllock: '{SCROLLLOCK}',
+  // SendKeys' own word is PRTSC: «{PRINTSCREEN}» is not one of its keywords, so
+  // SendWait threw and «printscreen» failed every time on Windows.
+  printscreen: '{PRTSC}',
+  prtsc: '{PRTSC}',
+  prtscn: '{PRTSC}',
+  plus: '{+}',
+  minus: '-',
   f1: '{F1}',
   f2: '{F2}',
   f3: '{F3}',
@@ -73,6 +81,11 @@ const NAMED_KEYS: Record<string, string> = {
   f10: '{F10}',
   f11: '{F11}',
   f12: '{F12}',
+  // SendKeys goes up to F16; F17-F24 only exist through real key events (win+…).
+  f13: '{F13}',
+  f14: '{F14}',
+  f15: '{F15}',
+  f16: '{F16}',
 };
 
 /**
@@ -183,7 +196,7 @@ export function parseKeyChord(chord: string): string {
     // The bug this replaces: returning the raw string made SendKeys type it.
     throw new Error(
       `unrecognised key ${JSON.stringify(last)} in chord ${JSON.stringify(chord)}. ` +
-        `Use a named key (enter, tab, escape, f1-f12, arrows) or a single character.`,
+        `Use a named key (enter, tab, escape, f1-f16, arrows) or a single character.`,
     );
   }
 
@@ -277,6 +290,15 @@ const VK_NAMED: Record<string, number> = {
   space: 0x20,
   spacebar: 0x20,
   printscreen: 0x2c,
+  prtsc: 0x2c,
+  prtscn: 0x2c,
+  // VK_OEM_PLUS / VK_OEM_MINUS: the «=+» and «-_» keys (win++ / win+- zoom the
+  // magnifier in and out).
+  '+': 0xbb,
+  plus: 0xbb,
+  '=': 0xbb,
+  '-': 0xbd,
+  minus: 0xbd,
   '.': 0xbe,
   ',': 0xbc,
   ';': 0xba,
@@ -297,6 +319,10 @@ export function winChordVirtualKeys(chord: string): number[] | null {
     .split('+')
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean);
+  // «win++» splits into ['win'] once the empty pieces are dropped, which pressed
+  // the Windows key alone (Start menu) instead of Win+Plus. Same rule as
+  // parseKeyChord: a chord ending in two '+' means the '+' key itself.
+  if (parts.length > 0 && /\+\s*\+$/.test(raw)) parts.push('+');
   if (parts.length === 0) return null;
   const isWin = (p: string) => VK_MODIFIERS[p] === 0x5b;
   if (!parts.some(isWin)) return null;
