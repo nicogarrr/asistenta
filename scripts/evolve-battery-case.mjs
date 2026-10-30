@@ -24,6 +24,9 @@ const dir = mkdtempSync(join(tmpdir(), 'pa-battery-'));
 process.env.PA_STATE_DIR = join(dir, 'state');
 process.env.HOME = dir;
 process.env.USERPROFILE = dir;
+// El almacén cifrado de Windows no está en esta carpeta: la clave del modelo solo puede llegar
+// como PA_SECRET_PROVIDER_APIKEY (en PA_EVOLVE_PROPOSER_PASS), que lee el almacén portátil.
+process.env.PA_VAULT_BACKEND = 'portable';
 
 let code = 1;
 try {

@@ -23,7 +23,10 @@ Sin batería configurada no se promueve nada.
   reales. Memoria y recordatorios funcionan de verdad (en esa carpeta); correo, navegador, web,
   shell, ficheros, Renfe y PC existen con su nombre pero no hacen nada y quedan en la traza. Toda
   petición de aprobación se cuenta y se deniega. El modelo es el de tu configuración: pon en
-  `PA_EVOLVE_PROPOSER_PASS` las variables que necesita (p. ej. `PA_API_KEY,PA_MODEL,PA_BASE_URL`).
+  `PA_EVOLVE_PROPOSER_PASS` las variables que necesita: `PA_PROVIDER,PA_MODEL,PA_BASE_URL,PA_PROVIDER_PRESET,PA_SECRET_PROVIDER_APIKEY`.
+  El evaluador no ve el almacén cifrado de Windows (sus datos están en una carpeta temporal), así que la
+  clave del modelo tiene que estar también en la variable `PA_SECRET_PROVIDER_APIKEY` (el evaluador usa
+  el almacén portátil, que la lee de ahí). No existe `PA_API_KEY`.
 - `PA_EVOLVE_BATTERY=off` apaga el evaluador: entonces ningún cambio se aprueba.
 
 ## Cómo se puntúa
