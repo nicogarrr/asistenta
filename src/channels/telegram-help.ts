@@ -41,6 +41,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'status', args: 'on|off', description: 'avisos de cómo voy mientras trabajo' },
       { command: 'topic', args: '<nombre>', description: 'abre o cambia de conversación' },
       { command: 'topics', description: 'conversaciones abiertas' },
+      {
+        command: 'proyecto',
+        args: '<carpeta>|quitar',
+        description: 'liga una carpeta: su ASISTENTA.md entra en el contexto',
+      },
     ],
   },
   {

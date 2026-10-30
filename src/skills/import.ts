@@ -86,6 +86,23 @@ export class SkillImportError extends Error {
   }
 }
 
+/**
+ * Revisa texto de terceros o de disco antes de meterlo en el prompt (skills,
+ * ficheros de proyecto): secretos, URLs con credenciales en la query y frases
+ * de inyección. Devuelve el motivo del rechazo o null si pasa.
+ */
+export function screenUntrustedText(text: string): string | null {
+  const secret = looksLikeSecret(text);
+  if (secret) return `parece contener ${secret}`;
+  if (EXFILTRATION_QUERY.test(text)) {
+    return 'contiene una URL con credenciales en la query (token/key)';
+  }
+  const folded = fold(text).replace(/\s+/g, ' ');
+  const injection = INJECTION_PHRASES.find((phrase) => folded.includes(phrase));
+  if (injection) return `contiene instrucciones sospechosas ("${injection}")`;
+  return null;
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
