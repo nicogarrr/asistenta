@@ -50,11 +50,24 @@ mismo patrón que playbooks y skills. El conocimiento por SITIO web sigue yendo
 a los playbooks del gestor; la ficha de servicio guarda la adopción y su
 verificación, no selectores ni logins.
 
-## Piloto: Kanvas (datos verificados 2026-10-28)
+## Piloto: Kanvas (datos verificados 2026-10-28, revisados 2026-10-30)
 
 - Fuente: https://github.com/XMihura/Kanvas — licencia MIT, €0, paquete
-  `kanvas-board` en PyPI (existe 0.4.0rc4), Python >= 3.8, sin dependencias.
-- Método: local (`uvx kanvas-board ...`); tablero HTML servido en un puerto
-  local y expuesto solo por `tailscale serve`.
+  `kanvas-board` en PyPI (0.4.0 estable desde el 27-10-2026), Python >= 3.8,
+  sin dependencias. Funciona en Windows (CI en Windows; servicio con el
+  Programador de tareas, sin permisos de administrador).
+- Qué es: un tablero de tareas para proyectos con agentes de código (Claude
+  Code, Cursor, Codex…). Los agentes proponen y avanzan tareas con una CLI;
+  la persona aprueba y revisa en el navegador. No es una interfaz de chat ni
+  sustituye al panel de Asistenta ni a Telegram.
+- Método: local (`uvx kanvas-board serve` o `uv tool install kanvas-board`).
+- **Exposición: NO con `tailscale serve`.** Kanvas solo responde a sus nombres
+  locales (`localhost`, `127.0.0.1`, `[::1]`) y a su propia dirección de
+  Tailscale cuando la abre él; a una petición reenviada por `tailscale serve`
+  (Host `*.ts.net`) le contesta 403 «Host not allowed» (comprobado el
+  2026-10-30 con 0.4.0). Para el móvil, usar su modo propio:
+  `kanvas service install --tailscale` (escucha en loopback y en la IP de
+  Tailscale, nunca en la LAN). Ojo: sin contraseña, cualquiera de la tailnet
+  puede editar los tableros.
 - Pendiente por construcción: la aprobación de Nico en `instalar`, y la prueba
   real del enlace desde su móvil.
