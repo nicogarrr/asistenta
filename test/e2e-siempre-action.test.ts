@@ -126,27 +126,22 @@ describe('«Siempre» por acción de punta a punta', () => {
     expect(hits).toEqual(['send', 'send']);
   }, 60_000);
 
-  // BUG conocido (HINTS.md → security-3): approval_scopes no guarda el chat, así que
-  // un «Siempre» dado en el privado de Nico vale también en un grupo. Cuando se
-  // arregle, este escenario pasa y `it.fails` lo avisa: cambiarlo a `it`.
-  it.fails(
-    'el «Siempre» de un chat no vale en otro chat',
-    async () => {
-      const core = boot('b');
-      core.telegram.answers.push({ approved: true, scope: 'always' }, false);
-      const model = new ScriptedModel();
-      model.script(...clickOn('#b1'), say('Enviado.'), ...clickOn('#b1'), say('Sin permiso.'));
-      await (await core.thread()).user('dale a enviar');
-      await (await core.thread('777')).user('dale a enviar');
-      await settle();
-      expect(core.telegram.approvals.map((a) => [a.chatId, a.approved])).toEqual([
-        ['424242', true],
-        ['777', false],
-      ]);
-      expect(hits).toEqual(['send']);
-    },
-    60_000,
-  );
+  // approval_scopes guarda el chat: un «Siempre» dado en el privado de Nico no
+  // vale en otro chat ni en un grupo.
+  it('el «Siempre» de un chat no vale en otro chat', async () => {
+    const core = boot('b');
+    core.telegram.answers.push({ approved: true, scope: 'always' }, false);
+    const model = new ScriptedModel();
+    model.script(...clickOn('#b1'), say('Enviado.'), ...clickOn('#b1'), say('Sin permiso.'));
+    await (await core.thread()).user('dale a enviar');
+    await (await core.thread('777')).user('dale a enviar');
+    await settle();
+    expect(core.telegram.approvals.map((a) => [a.chatId, a.approved])).toEqual([
+      ['424242', true],
+      ['777', false],
+    ]);
+    expect(hits).toEqual(['send']);
+  }, 60_000);
 
   it('un «Enviar» que cambia de texto vuelve a preguntar', async () => {
     const core = boot('c');
