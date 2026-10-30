@@ -50,6 +50,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 
 export interface MemorySnapshotOptions {
   dir: string;
@@ -218,11 +219,7 @@ export class MemorySnapshot {
    * cuántas entradas salieron; el llamador debe decir la verdad del resultado.
    */
   removeEntries(query: string): number {
-    const fold = (s: string) =>
-      s
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
+    const fold = foldAccents;
     const needle = fold(query).trim();
     if (!needle) return 0;
     try {

@@ -10,6 +10,7 @@
  * bytes y redirecciones manuales para volver a validar el esquema en cada salto.
  */
 import { looksLikeSecret } from '../memory/snapshot.js';
+import { foldAccents } from '../text.js';
 
 export const SKILL_MAX_BYTES = 64 * 1024;
 
@@ -108,10 +109,7 @@ function oneLine(value: string): string {
 }
 
 function fold(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+  return foldAccents(value);
 }
 
 /** Deshace las comillas simples o dobles del subconjunto YAML que aceptamos. */

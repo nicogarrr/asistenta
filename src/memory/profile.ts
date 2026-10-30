@@ -22,6 +22,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 import { looksLikeSecret } from './snapshot.js';
 
 export interface ProfileFact {
@@ -46,10 +47,7 @@ function oneLine(value: string): string {
 
 /** Minúsculas y sin acentos: la búsqueda no debe depender de cómo se escribió. */
 function fold(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+  return foldAccents(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

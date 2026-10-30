@@ -15,6 +15,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import type { MailMessage } from './mail/types.js';
+import { foldAccents } from './text.js';
 
 export const SPIKE_FACTOR_NUM = 3; // > 1,5 x mediana  <=>  cents * 2 > mediana * 3
 export const SPIKE_FACTOR_DEN = 2;
@@ -30,11 +31,7 @@ const PROMO_RE = /\b(oferta|descuento|promocion|black friday|cupon|rebajas|sorte
 const FREEMAIL = /^(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|me|proton|protonmail)\./;
 
 function fold(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ');
+  return foldAccents(value).replace(/\s+/g, ' ');
 }
 
 // Token numérico COMPLETO: toda la racha de dígitos, puntos y comas, sin frontera partida

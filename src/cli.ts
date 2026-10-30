@@ -3,6 +3,7 @@
 
 import { cleanProjectPath, ProjectContextStore } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
+import { foldAccents } from './text.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -206,6 +207,7 @@ import {
   scheduledForToday,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
+
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
 import { helpText, startText } from './channels/telegram-help.js';
 import {
@@ -6828,12 +6830,6 @@ function safeRemember(fn: () => void): void {
  * Lowercase and strip accents, so "mañana" and "manana" match the same pattern.
  * Only used for matching; stored text keeps the user's own spelling.
  */
-function foldAccents(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
 
 /**
  * The four preference words the instinct category was designed for. Broader

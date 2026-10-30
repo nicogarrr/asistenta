@@ -6,6 +6,7 @@ import { type BrowserContext, chromium, type Locator, type Page } from 'playwrig
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
+import { foldAccents, normalizeHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
@@ -377,10 +378,7 @@ export function hostOf(url: string): string | null {
     // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
     // and to Chromium, so it must be the same host here: otherwise it walks past the
     // never-approve list and past every domain approval.
-    return new URL(url).hostname
-      .toLowerCase()
-      .replace(/\.+$/, '')
-      .replace(/^www\./, '');
+    return normalizeHostname(new URL(url).hostname).replace(/^www\./, '');
   } catch {
     return null;
   }
@@ -2091,12 +2089,7 @@ export function formatValue(value: unknown, depth = 0): string {
   return String(value);
 }
 
-const fold = (v: string): string =>
-  v
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+const fold = (v: string): string => foldAccents(v).replace(/\s+/g, ' ');
 
 /** Case/accent/whitespace insensitive "contains". Empty `needle` is never a match. */
 export function textIncludes(haystack: string, needle: string): boolean {
