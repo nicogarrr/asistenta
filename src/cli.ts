@@ -6724,6 +6724,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                   });
                 },
                 chatKey_,
+                (text) => {
+                  void say(inbound, text, { quote: true });
+                },
               );
               if (!queued) {
                 void say(
