@@ -40,6 +40,7 @@ import {
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
+import { bootBanner, maybeSendBootNotice } from './boot-notice.js';
 import { BrowserService } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
@@ -6915,6 +6916,42 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   }
 
   log.info('daemon ready', { allowed, threads: threads.size });
+
+  // Arranque: una sola línea clara en la consola y el aviso «Asistenta lista ✅» al
+  // chat privado del dueño (como mucho uno cada 10 min; PA_BOOT_NOTICE=0 lo apaga).
+  void (async () => {
+    const facts = {
+      model: config.model,
+      tv: Boolean(await vaultGet('tv:host').catch(() => undefined)),
+      computerUse: desktop && config.computerUse !== false,
+      mail: await mailStatus()
+        .then((m) => m.read === 'ok')
+        .catch(() => false),
+      threads: threads.size,
+    };
+    process.stdout.write(`${bootBanner(facts)}\n`);
+    const result = await maybeSendBootNotice({
+      statePath: join(paths.state, 'boot-notice.json'),
+      ownerChatId: vigilanteOwnerId,
+      facts,
+      send: (chatId, text) =>
+        say(
+          {
+            channel: 'telegram',
+            account: telegram.account,
+            chatId,
+            userId: chatId,
+            text: '',
+            authorised: true,
+            messageId: 'boot-notice',
+            receivedAt: new Date().toISOString(),
+          },
+          text,
+          { quote: false },
+        ),
+    });
+    if (result !== 'off') log.info('boot notice', { result });
+  })().catch(() => {});
 
   // Started last, and off the critical path: a machine with no microphone, or one
   // where the device is already held by Teams, must still end up with a working
