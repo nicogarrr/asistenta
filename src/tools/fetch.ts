@@ -273,6 +273,71 @@ export interface FetchedPage {
 }
 
 /**
+ * Techo de bytes que se leen de una respuesta. Una ficha de producto pesa 0,2-2 MB;
+ * sin techo, una URL que sirve un flujo sin fin se leía entera en memoria durante los
+ * 30 s del timeout (cientos de MB) antes de recortar a `maxChars`.
+ */
+export const MAX_FETCH_BYTES = 10 * 1024 * 1024;
+
+/** Juego de caracteres declarado: cabecera Content-Type o, si no, `<meta charset>`. */
+function charsetOf(contentType: string, bytes: Uint8Array): string {
+  const fromHeader = /charset\s*=\s*["']?([\w.:-]+)/i.exec(contentType)?.[1];
+  if (fromHeader) return fromHeader.toLowerCase();
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 4096));
+  const meta =
+    /<meta[^>]+charset\s*=\s*["']?([\w.:-]+)/i.exec(head)?.[1] ??
+    /<meta[^>]+content=["'][^"']*charset=([\w.:-]+)/i.exec(head)?.[1];
+  return (meta ?? 'utf-8').toLowerCase();
+}
+
+/**
+ * Lee el cuerpo con techo de bytes y lo decodifica con el charset de la página.
+ * `Response.text()` siempre decodifica como UTF-8: una web en ISO-8859-1/windows-1252
+ * (frecuente en tiendas españolas) llegaba con «Espa\uFFFDa» y el «€» roto.
+ */
+async function readBody(
+  res: Response,
+  contentType: string,
+  maxBytes: number,
+): Promise<{ text: string; capped: boolean }> {
+  const stream = res.body as ReadableStream<Uint8Array> | null | undefined;
+  if (!stream || typeof stream.getReader !== 'function') {
+    // Dobles de prueba sin stream: el camino de siempre.
+    return { text: await res.text(), capped: false };
+  }
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let capped = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (total + value.byteLength > maxBytes) {
+      chunks.push(value.subarray(0, maxBytes - total));
+      total = maxBytes;
+      capped = true;
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  let decoder: TextDecoder;
+  try {
+    decoder = new TextDecoder(charsetOf(contentType, bytes));
+  } catch {
+    decoder = new TextDecoder('utf-8');
+  }
+  return { text: decoder.decode(bytes), capped };
+}
+
+/**
  * Egress allowlist (PA_FETCH_ALLOWED_HOSTS).
  *
  * `fetch` es una herramienta gratuita (sin aprobación) y una página inyectada
@@ -309,8 +374,9 @@ export async function fetchPage(
   opts: { format?: 'text' | 'markdown' | 'html'; maxChars?: number; timeoutMs?: number } = {},
 ): Promise<FetchedPage> {
   const limit = opts.maxChars ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const allowedHosts = parseAllowedHosts(process.env.PA_FETCH_ALLOWED_HOSTS);
 
   try {
@@ -354,7 +420,7 @@ export async function fetchPage(
     }
 
     const contentType = res.headers.get('content-type') ?? '';
-    const body = await res.text();
+    const { text: body, capped } = await readBody(res, contentType, MAX_FETCH_BYTES);
     log.info('fetch', { host: logHost(url), status: res.status, bytes: body.length });
 
     const isHtml = contentType.includes('html') || /^\s*<!doctype html/i.test(body);
@@ -367,8 +433,13 @@ export async function fetchPage(
         : isHtml
           ? await extractText(body, opts.format ?? 'markdown')
           : body;
-    const truncated = text.length > limit;
-    const content = truncated ? `${text.slice(0, limit)}\n\n[truncated at ${limit} chars]` : text;
+    const truncated = capped || text.length > limit;
+    const content =
+      text.length > limit
+        ? `${text.slice(0, limit)}\n\n[truncated at ${limit} chars]`
+        : capped
+          ? `${text}\n\n[truncated at ${MAX_FETCH_BYTES} bytes]`
+          : text;
     return {
       url,
       status: res.status,
@@ -379,7 +450,7 @@ export async function fetchPage(
     };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`fetch timed out after 30s: ${url}`);
+      throw new Error(`fetch timed out after ${timeoutMs / 1000}s: ${url}`);
     }
     throw err;
   } finally {
