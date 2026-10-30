@@ -90,10 +90,9 @@ describe('«🔕 Silenciar 1 día» en avisos del vigilante de precios', () => {
     const r = pricewatchMuteReply('silenciar', 'a1b2c3d4', { product: 'TV', until: 10 * DAY });
     expect(r.text).toContain('🔕 Silenciado 1 día: TV');
     expect(commandFromCallback(r.buttons[0]?.action ?? '')).toBe('/precio avisar a1b2c3d4');
-    expect(pricewatchMuteReply('avisar', 'a1b2c3d4', { product: 'TV', until: 0 })).toEqual({
-      text: '🔔 Vuelvo a avisarte de TV.',
-      buttons: [],
-    });
+    expect(pricewatchMuteReply('avisar', 'a1b2c3d4', { product: 'TV', until: 0 }).text).toBe(
+      '🔔 Vuelvo a avisarte de TV.',
+    );
     expect(pricewatchMuteReply('silenciar', 'a1b2c3d4', null).buttons).toEqual([]);
   });
 

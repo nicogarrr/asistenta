@@ -7630,7 +7630,7 @@ export function vigilaSilenceArgs(
 
 /**
  * Respuesta a `/vigila silenciar|avisar <id>`. Tras silenciar lleva «🔔 Avisar otra vez»
- * (= `/vigila avisar <id>`): solo deshace el silencio, no borra nada.
+ * (= `/vigila avisar <id>`) y tras avisar otra vez «🔕 Silenciar 1 día»: ninguno borra nada.
  */
 export function vigilaSilenceReply(
   action: 'silenciar' | 'avisar',
@@ -7639,7 +7639,10 @@ export function vigilaSilenceReply(
   if (!w)
     return { text: 'No encuentro esa vigilancia en este chat. Mira /vigilando.', buttons: [] };
   const name = w.label || w.url;
-  if (action === 'avisar') return { text: `🔔 Vuelvo a avisarte de ${name}.`, buttons: [] };
+  if (action === 'avisar') {
+    const mute = commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar');
+    return { text: `🔔 Vuelvo a avisarte de ${name}.`, buttons: mute ? [mute] : [] };
+  }
   const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
   return {
     text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`,
@@ -7662,7 +7665,7 @@ export function pricewatchMuteButtons(key: string): Array<{ label: string; actio
   return b ? [b] : [];
 }
 
-/** Respuesta a /precio silenciar|avisar; tras silenciar ofrece «🔔 Avisar otra vez». */
+/** Respuesta a /precio silenciar|avisar; ofrece el contrario («🔔 Avisar otra vez» / «🔕 Silenciar 1 día»). */
 export function pricewatchMuteReply(
   action: 'silenciar' | 'avisar',
   key: string,
@@ -7677,7 +7680,8 @@ export function pricewatchMuteReply(
       buttons: [],
     };
   }
-  if (action === 'avisar') return { text: `🔔 Vuelvo a avisarte de ${hit.product}.`, buttons: [] };
+  if (action === 'avisar')
+    return { text: `🔔 Vuelvo a avisarte de ${hit.product}.`, buttons: pricewatchMuteButtons(key) };
   const again = commandButton('🔔 Avisar otra vez', 'precio', key, 'avisar');
   return {
     text: `🔕 Silenciado 1 día: ${hit.product}. Sigo leyendo el precio, pero no te aviso de posibles errores de precio hasta ${fmtMuteUntil(hit.until)}. Para quitarlo antes: /precio avisar ${key}`,

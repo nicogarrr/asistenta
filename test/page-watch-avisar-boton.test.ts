@@ -19,10 +19,7 @@ describe('«🔔 Avisar otra vez» tras silenciar', () => {
     expect(commandFromCallback(r.buttons[0]?.action ?? '')).toBe('/vigila avisar abc123');
   });
 
-  it('volver a avisar y «no encuentro» no llevan botón', () => {
-    const back = vigilaSilenceReply('avisar', { ...w, mutedUntil: 0 });
-    expect(back.text).toBe('🔔 Vuelvo a avisarte de Tele 55.');
-    expect(back.buttons).toEqual([]);
+  it('«no encuentro» no lleva botón', () => {
     const none = vigilaSilenceReply('silenciar', null);
     expect(none.text).toContain('No encuentro esa vigilancia');
     expect(none.buttons).toEqual([]);
