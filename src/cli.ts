@@ -52,7 +52,9 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
 import { parseCronAdd, parseNatural } from './cron/scheduler.js';
+import { createGoalTickExecute } from './daemon/goal-tick.js';
 import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
+import { createRoutineTask } from './daemon/routine-task.js';
 import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
@@ -60,12 +62,7 @@ import { createFactorySync } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, goalNotifyTarget, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
-import {
-  GOAL_ROUTINE_PREFIX,
-  GoalRunner,
-  type GoalTickResult,
-  isGoalRoutine,
-} from './goals/runner.js';
+import { GOAL_ROUTINE_PREFIX, GoalRunner, isGoalRoutine } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { IphoneClient } from './iphone/client.js';
 import { LearnRecorder } from './learn.js';
@@ -215,14 +212,7 @@ import {
   setPace,
 } from './notice-pace.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
-import {
-  type DeliveryPlan,
-  describeDelivery,
-  parseDeliveryArgs,
-  planDelivery,
-  RoutineDeliveryStore,
-  writeRoutineOutput,
-} from './routine-delivery.js';
+import { describeDelivery, parseDeliveryArgs, RoutineDeliveryStore } from './routine-delivery.js';
 import {
   buildMacroPrompt,
   canonicalMacroName,
@@ -230,7 +220,6 @@ import {
   isMacroName,
   parseMacroArgs,
   procedurePrompt,
-  type RoutineRunContext,
   RoutineRunner,
   summarizeRoutine,
   validateSchedule,
@@ -278,17 +267,12 @@ import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import { createPriceWatchTool } from './tools/price-watch.js';
 import {
   createReminderTool,
-  deliverMissedReminders,
   formatReminderRows,
-  isOneShotReminder,
   isReminder,
-  oneShotStillPending,
   pickReminder,
   readDroppedReminders,
-  recordDroppedReminder,
   reminderRows,
   reminderText,
-  settleOneShot,
 } from './tools/reminder.js';
 import { createServiceTool } from './tools/service.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
@@ -2518,6 +2502,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   }, NOTIFY_FLUSH_INTERVAL_MS);
   goalDeliveryTimer.unref();
   void goalNotifier.flushAll().catch(() => {}); // a reboot delivers at once
+  // Tick de objetivo y tarea de rutina: src/daemon/goal-tick.ts y routine-task.ts.
+  const threadTickDeps = {
+    threadFor: getOrCreateThread,
+    sessions,
+    contextNoteFor: (thread: Thread, prompt: string) =>
+      buildContextNote(
+        thread,
+        store,
+        memory,
+        snapshot,
+        workstreams,
+        skills,
+        sessions,
+        ownerProfile,
+        prompt,
+        isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      ),
+    safeRemember,
+  };
+  const goalTickExecute = createGoalTickExecute({ ...threadTickDeps, actions });
   const goalRunner = new GoalRunner({
     goals: goalStore,
     workstreams,
@@ -2528,141 +2532,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!goal.workstreamId) return;
       safeRemember(() => workstreams.update(goal.workstreamId as string, { status: 'done' }));
     },
-    execute: async (goal, prompt): Promise<GoalTickResult> => {
-      // The tick rides the owning thread's tail, so it never collides with a
-      // live conversation, and it runs through the thread's agent, so the gate
-      // is exactly the one a chat message would face. What it does NOT do is
-      // talk: no typing indicator, no progress notes, no auto-reply - a goal
-      // speaks through the notifier alone (novedad o decisión).
-      // The OWNING thread, not #main: the scope is a full thread key and the
-      // tick must run where the goal was proposed, with that thread's agent,
-      // context and gate - or objetivo:avance/reanudar would reject the tick's
-      // own goal as belonging to another chat.
-      const { chatKey: goalChatKey, thread: goalThreadName } = splitGoalScope(goal.scope);
-      const thread = await getOrCreateThread(
-        goalChatKey,
-        goalThreadName,
-        goalThreadName === 'main' ? 'principal' : goalThreadName,
-      );
-      const gen = thread.generation;
-      const tick = async (): Promise<GoalTickResult> => {
-        if (thread.generation !== gen) return { text: '', error: 'turno cancelado (/stop)' };
-        thread.active = true;
-        let sessionId = '';
-        safeRemember(() => {
-          // origin 'goal-tick': the machine's own session must never count as
-          // Nico's answer to a pending decision (provenance, not titles).
-          sessionId = sessions.begin(
-            thread.key,
-            `[objetivo] ${goal.title}`.slice(0, 80),
-            'goal-tick',
-          );
-        });
-        let result: AgentRunResult | null = null;
-        try {
-          thread.agent.attachContext(
-            buildContextNote(
-              thread,
-              store,
-              memory,
-              snapshot,
-              workstreams,
-              skills,
-              sessions,
-              ownerProfile,
-              prompt,
-              isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-            ),
-          );
-          result = await thread.agent.run(prompt);
-          safeRemember(() =>
-            sessions.addTurn(sessionId, 'assistant', (result?.text ?? '').slice(0, 500)),
-          );
-          actions.record({
-            actor: 'asistenta',
-            action: 'objetivo-tick',
-            target: thread.name,
-            result: result?.error ? 'error' : 'ok',
-            detail: `${result?.toolCalls ?? 0} tools`,
-          });
-          return { text: result?.text ?? '', error: result?.error ?? null };
-        } catch (err) {
-          return { text: '', error: err instanceof Error ? err.message : String(err) };
-        } finally {
-          thread.active = false;
-          thread.gate.clearSession(thread.key);
-          safeRemember(() => sessions.end(sessionId, (result?.text ?? '').slice(0, 200)));
-        }
-      };
-      const next = thread.tail.then(tick);
-      thread.tail = next.catch(() => {});
-      return next;
-    },
+    execute: goalTickExecute,
   });
 
-  /**
-   * Ejecuta la tarea de una rutina programada en el hilo que la creó.
-   *
-   * Antes, el tick solo publicaba la FICHA de la rutina ("⏰ Rutina X: <metadatos>"),
-   * así que "/cron …" o "cada mañana a las 8 resumen del día" no hacían nada: el
-   * usuario veía el horario en vez del trabajo. Ahora corre por el agente del hilo
-   * (mismo contexto, mismo gate y mismo presupuesto) y devuelve su respuesta, que
-   * es lo que se envía. Encadenado a thread.tail como un tick de objetivo: nunca
-   * se solapa con una conversación viva.
-   */
-  const runRoutineTask = async (prompt: string, ctx: RoutineRunContext): Promise<string> => {
-    const [chatPart, threadRaw] = ctx.scope.split('#');
-    if (!chatPart) return '';
-    const threadName = threadRaw || 'main';
-    const thread = await getOrCreateThread(
-      chatPart,
-      threadName,
-      threadName === 'main' ? 'principal' : threadName,
-    );
-    const generation = thread.generation;
-    const task = async (): Promise<string> => {
-      if (thread.generation !== generation) return '';
-      thread.active = true;
-      let sessionId = '';
-      let text = '';
-      safeRemember(() => {
-        sessionId = sessions.begin(
-          thread.key,
-          `[rutina] ${ctx.routine.name}`.slice(0, 80),
-          'goal-tick',
-        );
-      });
-      try {
-        thread.agent.attachContext(
-          buildContextNote(
-            thread,
-            store,
-            memory,
-            snapshot,
-            workstreams,
-            skills,
-            sessions,
-            ownerProfile,
-            prompt,
-            isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-          ),
-        );
-        const result = await thread.agent.run(prompt);
-        text = result.text ?? '';
-        if (result.error)
-          log.warn('routine run error', { routine: ctx.routine.name, error: result.error });
-        safeRemember(() => sessions.addTurn(sessionId, 'assistant', text.slice(0, 500)));
-      } finally {
-        thread.active = false;
-        thread.gate.clearSession(thread.key);
-        safeRemember(() => sessions.end(sessionId, text.slice(0, 200)));
-      }
-      return text;
-    };
-    const next = thread.tail.then(task);
-    thread.tail = next.catch(() => {});
-    return next;
-  };
+  const runRoutineTask = createRoutineTask(threadTickDeps);
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
   const sendToChat = (chatId: string, text: string) =>
