@@ -11,6 +11,7 @@ import {
   preflightExitCode,
   runPreflight,
 } from './preflight.js';
+import { computerOffSaved } from './screen/computer-switch.js';
 import { saveStartupRecord } from './startup-record.js';
 
 export interface IniciarOptions {
@@ -117,6 +118,7 @@ export async function realPreflightDeps(): Promise<PreflightDeps> {
     },
     desktopEnabled: () => platform.desktopEnabled(),
     computerUseEnabled: () => config.loadConfig().computerUse !== false,
+    computerOffSaved: () => computerOffSaved(pathsMod.paths.state),
     mailStatus: () => mail.mailStatus(),
     freeDiskBytes: async () => {
       pathsMod.ensureDirs();
