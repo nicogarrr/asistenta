@@ -283,6 +283,13 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
       }
       const { alert } = result;
       const t = now();
+      // Si no se llega a entregar, la misma petición firmada tiene que poder repetirse:
+      // la respuesta dice «reintenta», y antes ese reintento idéntico era un replay (401)
+      // y la alerta se perdía. Reenviar algo que no se entregó no es un replay dañino.
+      const releaseSignature = (): void => {
+        const sig = req.headers['x-alert-sig'];
+        if (typeof sig === 'string') seenSignatures.delete(sig);
+      };
       const key = alertKey(alert);
       for (const [k, exp] of seenIds) if (t > exp) seenIds.delete(k);
       if (seenIds.has(key) || inFlight.has(key)) {
@@ -302,6 +309,11 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
       try {
         const delivered = await opts.send(formatAlert(alert));
         if (!delivered) {
+          // Nada salió hacia Telegram: ni gasta cupo ni quema la firma. Sin esto, un
+          // emisor reintentando mientras aún no hay chat del dueño agotaba el cupo del
+          // minuto y la primera alerta real tras abrir el chat recibía 429.
+          windowCount = Math.max(0, windowCount - 1);
+          releaseSignature();
           reply(res, 503, { ok: false, error: 'sin chat del dueno; reintenta' });
           return;
         }
@@ -319,6 +331,9 @@ export function startAlertInbox(opts: AlertInboxOptions): AlertInbox | null {
         reply(res, 202, { ok: true });
       } catch (err) {
         log.warn('alert inbox: fallo de entrega', { err });
+        // El envío pudo salir a medias: el cupo se queda gastado, pero la firma se libera
+        // para que el reintento que pide la respuesta no se trate como replay.
+        releaseSignature();
         reply(res, 503, { ok: false, error: 'entrega fallida; reintenta' });
       } finally {
         inFlight.delete(key);
