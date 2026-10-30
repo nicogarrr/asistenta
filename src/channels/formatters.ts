@@ -10,7 +10,7 @@
  * testable without a token or a network.
  */
 
-import { log } from '../log.js';
+import { log, scrubLogText } from '../log.js';
 
 /** Appended when a reply is cut short, so the user knows more is available. */
 const DETAIL_HINT = 'Dime "más" para el detalle.';
@@ -505,4 +505,70 @@ const VOICE_PREFIX = /^\s*\[?\s*nota de voz transcrita\s*\]?\s*[:\-–—]?\s*/i
 
 export function stripVoicePrefix(text: string): string {
   return text.replace(VOICE_PREFIX, '');
+}
+
+/** Errores de red típicos de Node/undici: no dicen nada a quien lee el chat. */
+const NETWORK_ERROR =
+  /\b(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up|fetch failed|network error|getaddrinfo)\b/i;
+const TIMEOUT_ERROR =
+  /\b(?:ETIMEDOUT|timed? ?out|timeout|AbortError|aborted|UND_ERR_[A-Z_]*TIMEOUT)\b/i;
+const RATE_LIMIT_ERROR =
+  /\b(?:429|rate[ _-]?limit(?:ed)?|too many requests|quota|resource[_ ]exhausted)\b/i;
+const AUTH_ERROR =
+  /\b(?:401|unauthori[sz]ed|invalid[_ ]api[_ ]key|incorrect api key|authentication|permission[_ ]denied)\b/i;
+const OVERLOAD_ERROR =
+  /\b(?:5\d\d|overloaded|service unavailable|bad gateway|internal server error)\b/i;
+/** Fallos de programación: el texto es para el registro, no para el chat. */
+const BUG_ERROR =
+  /\b(?:Cannot read propert|Cannot set propert|is not a function|is not defined|is not iterable|undefined is not|null is not|Maximum call stack|Unexpected token|ReferenceError|TypeError|SyntaxError|RangeError)\b/;
+
+/**
+ * Lo que ve el usuario cuando un turno o un comando falla.
+ *
+ * Antes el chat recibía `Algo falló: ${err.message}` tal cual: «fetch failed»,
+ * «Cannot read properties of undefined (reading 'text')», un 429 con el JSON del
+ * proveedor entero o, con un Error de varias líneas, la pila. Ahora:
+ * - las familias conocidas (red, tiempo agotado, límite de peticiones, clave inválida,
+ *   proveedor caído, fallo interno) se cuentan en una frase en español con qué hacer;
+ * - un mensaje propio corto y de una línea (los «Uso: …» o «No encuentro ese id» que
+ *   lanzan los comandos) se respeta tal cual, con `prefix` delante si se da;
+ * - nunca sale una pila, un JSON ni un secreto: se pasa por el mismo limpiador que el
+ *   registro y se corta a 200 caracteres.
+ */
+export function friendlyError(err: unknown, prefix = ''): string {
+  const raw =
+    err instanceof Error
+      ? `${err.name && err.name !== 'Error' ? `${err.name}: ` : ''}${err.message}`
+      : String(err ?? '');
+  const firstLine = raw.split('\n')[0]?.trim() ?? '';
+  const code = (err as { code?: unknown } | null)?.code;
+  const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
+  if (BUG_ERROR.test(probe)) {
+    return 'Se me ha roto algo por dentro y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+  }
+  if (RATE_LIMIT_ERROR.test(probe)) {
+    return 'El modelo de IA me está limitando por exceso de peticiones. Espera un minuto y repítemelo.';
+  }
+  if (AUTH_ERROR.test(probe)) {
+    return 'El proveedor de IA ha rechazado la clave (no es válida o ha caducado). Revísala con «pa doctor» en el PC.';
+  }
+  if (TIMEOUT_ERROR.test(probe)) {
+    return 'Ha tardado demasiado y lo he cortado. Prueba otra vez en un momento.';
+  }
+  if (NETWORK_ERROR.test(probe)) {
+    return 'No he podido conectar (fallo de red). Vuelve a intentarlo en un momento.';
+  }
+  if (
+    OVERLOAD_ERROR.test(probe) &&
+    /\b(?:api|model|modelo|provider|proveedor|http|status)\b/i.test(probe)
+  ) {
+    return 'El servicio de IA está caído o saturado ahora mismo. Prueba de nuevo en unos minutos.';
+  }
+  const clean = scrubLogText(firstLine.replace(/^Error:\s*/, '')).trim();
+  const looksTechnical =
+    !clean || /[{}[\]]|\bat \S+:\d+|https?:\/\//.test(clean) || clean.length > 200;
+  if (looksTechnical) {
+    return 'Algo ha fallado y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+  }
+  return `${prefix}${clean}`;
 }
