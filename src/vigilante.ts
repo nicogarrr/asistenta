@@ -92,6 +92,9 @@ export const MAX_TITULO = 90;
 /** Tope por defecto para construir la agenda: una fuente colgada no puede eternizar un barrido. */
 export const AGENDA_TIMEOUT_MS = 60_000;
 
+/** Tope por defecto del envío del aviso; ver `VigilanteDeps.sendTimeoutMs`. */
+export const SEND_TIMEOUT_MS = 120_000;
+
 /** Rechaza `p` si tarda más de `ms`: el temporizador gana aunque la promesa no se rinda nunca. */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -133,6 +136,12 @@ export interface VigilanteDeps {
    * `stop()` podría esperar una fuente colgada y el daemon no cerraría nunca.
    */
   agendaTimeoutMs?: number;
+  /**
+   * Tope para el envío del aviso (Telegram colgado). Sin él un envío que nunca
+   * responde bloqueaba la cadena de barridos para siempre y el drain de `stop()`
+   * no terminaba: el daemon no cerraba. Vencido, cuenta como no enviado.
+   */
+  sendTimeoutMs?: number;
   /**
    * Horas de silencio (hora local). Sin esto no hay silencio: lo activa el
    * cableado del daemon, así los tests y otros usos son deterministas.
@@ -635,7 +644,15 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
 
     let sent = false;
     try {
-      sent = await deps.send(parts.join('\n\n'));
+      // Vencido el plazo cuenta como no enviado: los números se sueltan y el
+      // aviso se reintenta en el próximo barrido. Si el envío lento llegara a
+      // entregarse, el peor caso es un aviso repetido, nunca uno perdido ni un
+      // daemon que no cierra.
+      sent = await withTimeout(
+        deps.send(parts.join('\n\n')),
+        Math.max(1, deps.sendTimeoutMs ?? SEND_TIMEOUT_MS),
+        'vigilante: envío del aviso',
+      );
     } catch (err) {
       log.warn('vigilante: envío fallido, se reintenta en el próximo barrido', {
         err: String(err),
