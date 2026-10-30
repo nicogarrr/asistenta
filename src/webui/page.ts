@@ -1109,6 +1109,10 @@ ${renderFormatScript()}
           campo.focus();
           return;
         }
+        // Un mensaje cada vez: con Enter el formulario se envía aunque «Enviar» esté
+        // desactivado. Mientras Asistenta responde, el texto se queda en el campo.
+        if (chatOcupado) return;
+        chatOcupado = true;
         // En el móvil (≤ 780 px), tras pulsar «Enviar», enfocar el campo abre el teclado
         // y tapa la respuesta: allí solo vuelve al campo si ya lo tenía (Enter).
         var volverAlCampo = document.activeElement === campo || !pantallaPequena();
@@ -1140,6 +1144,7 @@ ${renderFormatScript()}
           var reintentar = nodo('button', 'mini', 'Reintentar');
           reintentar.type = 'button';
           reintentar.addEventListener('click', function () {
+            if (chatOcupado) return;
             reintentar.disabled = true;
             // Sin conexión el mensaje no llegó: se manda otra vez. Si llegó y falló el
             // turno, se repite sin la respuesta anterior (como /reintentar).
@@ -1150,6 +1155,7 @@ ${renderFormatScript()}
           if (!campo.value) campo.value = texto;
           if (!volverAlCampo) devolverFoco(reintentar);
         } finally {
+          chatOcupado = false;
           window.clearInterval(reloj);
           boton.disabled = false;
           if (volverAlCampo) campo.focus();
@@ -1211,6 +1217,8 @@ ${renderFormatScript()}
       }
 
       async function repetirUltimo() {
+        if (chatOcupado) return;
+        chatOcupado = true;
         var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
         espera.setAttribute('data-reintento', 'true');
         var cuerpo = espera.querySelector('.texto');
@@ -1221,8 +1229,10 @@ ${renderFormatScript()}
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
           if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
           avisoConexion(false);
+          chatOcupado = false;
           devolverFoco(espera);
         } catch (error) {
+          chatOcupado = false;
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
           cuerpo.textContent = error && error.message ? error.message : 'No se pudo repetir el mensaje.';
@@ -1236,6 +1246,7 @@ ${renderFormatScript()}
           var otraVez = nodo('button', 'mini', 'Reintentar');
           otraVez.type = 'button';
           otraVez.addEventListener('click', function () {
+            if (chatOcupado) return;
             otraVez.disabled = true;
             repetirUltimo();
           });
@@ -1254,6 +1265,9 @@ ${renderFormatScript()}
         if (destino.tagName !== 'BUTTON') destino.setAttribute('tabindex', '-1');
         destino.focus();
       }
+
+      // true mientras un mensaje o un «Reintentar» del chat espera respuesta.
+      var chatOcupado = false;
 
       async function cargarObjetivos() {
         var contenedor = document.getElementById('panel-objetivos');
