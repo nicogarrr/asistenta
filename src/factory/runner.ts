@@ -47,9 +47,11 @@
  * captured output is capped - a flood kills the run instead of eating
  * daemon memory.
  */
+
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { factoryDir } from './store.js';
 import type { FactoryToolContract } from './types.js';
 
@@ -302,6 +304,46 @@ async function main(raw) {
 }
 `;
 
+/**
+ * Collects the child's stdout/stderr for the parent side of the sandbox.
+ * Bytes are counted as they arrive (chunk.length), so the cap check is O(1)
+ * per chunk instead of re-measuring everything collected so far, and each
+ * stream has its own UTF-8 decoder so a character split across two pipe
+ * chunks («á», «ñ», emoji) is not turned into replacement characters.
+ */
+export interface OutputCollector {
+  /** Bytes received so far across all streams. */
+  readonly bytes: number;
+  /** Adds a chunk on a default stream; returns true once bytes > maxBytes. */
+  push(chunk: Buffer): boolean;
+  /** A writer for one stream with its own decoder; returns true once over the cap. */
+  stream(): (chunk: Buffer) => boolean;
+  /** Text collected so far. */
+  text(): string;
+}
+
+export function createOutputCollector(maxBytes: number): OutputCollector {
+  let bytes = 0;
+  let text = '';
+  const stream = (): ((chunk: Buffer) => boolean) => {
+    const decoder = new StringDecoder('utf8');
+    return (chunk: Buffer) => {
+      bytes += chunk.length;
+      text += decoder.write(chunk);
+      return bytes > maxBytes;
+    };
+  };
+  const def = stream();
+  return {
+    get bytes() {
+      return bytes;
+    },
+    push: def,
+    stream,
+    text: () => text,
+  };
+}
+
 function tail(s: string): string {
   return s.length <= LOG_TAIL_BYTES
     ? s
@@ -376,7 +418,7 @@ export async function runFactoryToolSandboxed(
       // on purpose.
       { cwd: dir, env: {}, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], detached: true },
     );
-    let logs = '';
+    const collected = createOutputCollector(MAX_FACTORY_OUTPUT_BYTES);
     let verdictRaw = '';
     let settled = false;
     const finish = (r: FactoryTestResult) => {
@@ -401,24 +443,27 @@ export async function runFactoryToolSandboxed(
       finish({
         ok: false,
         stage: 'timeout',
-        output: `${tail(logs)}\n[timeout ${timeoutMs}ms: grupo de procesos muerto]`,
+        output: `${tail(collected.text())}\n[timeout ${timeoutMs}ms: grupo de procesos muerto]`,
         durationMs: Date.now() - started,
       });
     }, timeoutMs);
-    const onLog = (d: Buffer) => {
-      logs += d.toString();
-      if (Buffer.byteLength(logs) > MAX_FACTORY_OUTPUT_BYTES) {
-        killGroup();
-        finish({
-          ok: false,
-          stage: 'output',
-          output: `${tail(logs)}\n[salida > ${MAX_FACTORY_OUTPUT_BYTES} bytes: grupo de procesos muerto]`,
-          durationMs: Date.now() - started,
-        });
-      }
+    const onOverflow = () => {
+      killGroup();
+      finish({
+        ok: false,
+        stage: 'output',
+        output: `${tail(collected.text())}\n[salida > ${MAX_FACTORY_OUTPUT_BYTES} bytes: grupo de procesos muerto]`,
+        durationMs: Date.now() - started,
+      });
     };
-    child.stdout?.on('data', onLog);
-    child.stderr?.on('data', onLog);
+    const outWriter = collected.stream();
+    const errWriter = collected.stream();
+    child.stdout?.on('data', (d: Buffer) => {
+      if (outWriter(d)) onOverflow();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      if (errWriter(d)) onOverflow();
+    });
     const verdictStream = child.stdio[3];
     if (verdictStream)
       verdictStream.on('data', (d: Buffer) => {
@@ -439,7 +484,7 @@ export async function runFactoryToolSandboxed(
         finish({
           ok: verdict.ok as boolean,
           stage: verdict.stage as FactoryRunStage,
-          output: String((verdict.ok ? verdict.text : verdict.error) ?? tail(logs)),
+          output: String((verdict.ok ? verdict.text : verdict.error) ?? tail(collected.text())),
           durationMs: Date.now() - started,
           ...(verdict.contract ? { contract: verdict.contract } : {}),
         });
@@ -447,7 +492,9 @@ export async function runFactoryToolSandboxed(
         finish({
           ok: false,
           stage: 'supervisor',
-          output: tail(logs) || `el supervisor no produjo veredicto (exit ${String(exitCode)})`,
+          output:
+            tail(collected.text()) ||
+            `el supervisor no produjo veredicto (exit ${String(exitCode)})`,
           durationMs: Date.now() - started,
         });
       }
