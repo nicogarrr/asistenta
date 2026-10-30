@@ -18,6 +18,7 @@
  */
 
 import { localDay } from '../datecontext.js';
+import { foldAccents } from '../text.js';
 import type { Skill, SkillDraft } from './types.js';
 
 /** How many different tool calls a task must have used before it is a recipe. */
@@ -193,10 +194,7 @@ export function resultLooksSuccessful(result: string): boolean {
 }
 
 function normalizeName(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
+  return foldAccents(text)
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }

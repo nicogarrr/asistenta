@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import { localDay } from '../datecontext.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 import type { Skill, SkillDraft, SkillTrust } from './types.js';
 
 export const SKILL_FILENAME = 'SKILL.md';
@@ -55,10 +56,7 @@ export function isSkillId(id: string): boolean {
 
 /** Name to directory id. Idempotent, accent-insensitive, and collision-visible. */
 export function slugify(name: string): string {
-  const slug = name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
+  const slug = foldAccents(name)
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, MAX_ID_LENGTH)
