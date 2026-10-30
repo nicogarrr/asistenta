@@ -11,8 +11,9 @@ import {
   tvToast,
 } from './lgtv.js';
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
+import { readNeighborMac } from './neighbor-mac.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
-import { parseMac, sendWakeOnLan } from './wol.js';
+import { parseMac, sendWakeOnLan, validateTvMac } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
@@ -76,6 +77,8 @@ export interface TvCliDeps {
   runOrder?: (text: string) => Promise<string>;
   out?: (s: string) => void;
   err?: (s: string) => void;
+  /** `pa tv mac auto`: MAC de la IP en la tabla de vecinos (tests: falso). */
+  neighborMac?: (ip: string) => Promise<string | null>;
 }
 
 export const TV_ORDER_USAGE =
@@ -333,26 +336,53 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
     }
     case 'mac': {
       const { vaultGet, vaultSetMany } = await import('../vault.js');
+      const out = deps.out ?? ((s: string) => void process.stdout.write(s));
+      const err = deps.err ?? ((s: string) => void process.stderr.write(s));
       const raw = rest.find((a) => !a.startsWith('--'))?.trim();
       if (!raw) {
         const current = await vaultGet(TV_MAC_KEY);
-        process.stdout.write(
+        out(
           current
             ? `MAC de la tele: ${current}\n`
-            : 'Sin MAC guardada. uso: pa tv mac AA:BB:CC:DD:EE:FF (Ajustes > General > Acerca de esta TV)\n',
+            : 'Sin MAC guardada. uso: pa tv mac AA:BB:CC:DD:EE:FF (Ajustes > General > Acerca de este TV) o pa tv mac auto\n',
         );
         return 0;
       }
-      let mac: string;
+      let candidate = raw;
+      if (raw.toLowerCase() === 'auto') {
+        const host = await vaultGet(TV_HOST_KEY);
+        let ip: string;
+        try {
+          if (!host) throw new Error('sin ip');
+          ip = assertTvHost(host);
+        } catch {
+          err(
+            'No sé la IP de la tele: empareja primero con «pa tv setup <ip>» con la tele encendida, o pon la MAC a mano: pa tv mac AA:BB:CC:DD:EE:FF\n',
+          );
+          return 2;
+        }
+        const found = await (deps.neighborMac ?? ((h: string) => readNeighborMac(h)))(ip).catch(
+          () => null,
+        );
+        if (!found) {
+          err(
+            `No encuentro la MAC de la tele (${ip}) en la tabla de red del PC. ¿Está encendida y en la misma red? Enciéndela y repite «pa tv mac auto», o mírala en Ajustes > General > Acerca de este TV.\n`,
+          );
+          return 2;
+        }
+        candidate = found;
+      }
+      let checked: { mac: string; warning: string | null };
       try {
-        mac = parseMac(raw);
-      } catch (err) {
-        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        checked = validateTvMac(candidate);
+      } catch (e) {
+        err(`${e instanceof Error ? e.message : String(e)}\n`);
         return 2;
       }
-      await vaultSetMany({ [TV_MAC_KEY]: mac });
-      process.stdout.write(
-        `MAC guardada: ${mac}. Ya puedo encender la tele por red (pa tv wake).\n`,
+      if (checked.warning) err(`${checked.warning}\n`);
+      await vaultSetMany({ [TV_MAC_KEY]: checked.mac });
+      out(
+        `MAC guardada: ${checked.mac}${raw.toLowerCase() === 'auto' ? ' (leída de la red)' : ''}. Ya puedo encender la tele por red (pa tv wake).\n`,
       );
       return 0;
     }
