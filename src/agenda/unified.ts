@@ -266,6 +266,12 @@ function mergeItems(primary: AgendaItem, other: AgendaItem): AgendaItem {
     ...(primary.expiry || other.expiry ? { expiry: true } : {}),
     sources: [...new Set([...(primary.sources ?? [primary.where]), other.where])].sort(),
     ...(other.location && !primary.location ? { location: other.location } : {}),
+    // An all-day or untimed entry merged with the same thing at a known hour takes
+    // the hour: «Cita dentista» (all day in the calendar) and the clinic's mail «el
+    // jueves a las 10:00» used to merge into an all-day item and the 10:00 was lost.
+    ...(primary.timed === false && other.timed !== false && other.at !== null
+      ? { at: other.at, timed: true, allDay: false, end: other.end }
+      : {}),
   };
 }
 
