@@ -715,7 +715,17 @@ ${renderFormatScript()}
           var boton = nodo('button', 'mini', 'Reintentar');
           boton.type = 'button';
           boton.addEventListener('click', function () {
-            reintentar();
+            boton.disabled = true;
+            // Al recargar, el bloque (y este botón) desaparece y el foco del teclado se iría
+            // al principio de la página: pasa al nuevo «Reintentar» o al título de la tarjeta.
+            Promise.resolve(reintentar()).then(function () {
+              var tarjeta = contenedor.closest('.tarjeta');
+              devolverFoco(
+                contenedor.querySelector('.error-bloque button') ||
+                  (tarjeta && tarjeta.querySelector('h2')) ||
+                  contenedor
+              );
+            });
           });
           bloque.appendChild(boton);
         }
