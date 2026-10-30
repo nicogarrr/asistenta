@@ -36,7 +36,7 @@ import { log } from '../log.js';
 import type { MailMessage } from '../mail/types.js';
 import { classifyKind, extractCommitments } from './extract.js';
 import type { AgendaEvent } from './ics.js';
-import { zonedDayKey, zonedDayStart, zonedParts } from './ics.js';
+import { zonedAddDays, zonedDayKey, zonedDayStart, zonedParts } from './ics.js';
 
 export type AgendaKind = 'meeting' | 'travel' | 'payment' | 'deadline' | 'reminder' | 'other';
 
@@ -104,8 +104,6 @@ export interface FormatOptions {
   now?: number;
   timeZone?: string;
 }
-
-const DAY_MS = 86_400_000;
 
 const DEFAULT_DAYS = 7;
 
@@ -338,11 +336,11 @@ export async function buildAgenda(deps: BuildAgendaDeps): Promise<UnifiedAgenda>
   }
 
   const from = zonedDayStart(now, timeZone);
-  const tomorrow = zonedDayStart(from + DAY_MS, timeZone);
+  const tomorrow = zonedAddDays(from, 1, timeZone);
   // `days` counts the days AFTER today, so the default 7 means "the next seven days"
   // and not "today plus six". A window one day short is a week of agenda that stops a
   // day early without saying so.
-  const horizon = zonedDayStart(tomorrow + days * DAY_MS, timeZone);
+  const horizon = zonedAddDays(tomorrow, days, timeZone);
 
   const dated = deduped.filter((item) => item.at !== null);
   const today = dated
@@ -451,8 +449,8 @@ export function formatAgenda(agenda: UnifiedAgenda, opts: FormatOptions = {}): s
     for (const item of agenda.today) lines.push(bullet(item, timeZone));
   }
 
-  const tomorrow = zonedDayStart(zonedDayStart(reference, timeZone) + DAY_MS, timeZone);
-  const endOfTomorrow = zonedDayStart(tomorrow + DAY_MS, timeZone);
+  const tomorrow = zonedAddDays(reference, 1, timeZone);
+  const endOfTomorrow = zonedAddDays(reference, 2, timeZone);
   const tomorrowItems = agenda.upcoming.filter(
     (item) => item.at !== null && item.at >= tomorrow && item.at < endOfTomorrow,
   );

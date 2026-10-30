@@ -34,7 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { zonedDayKey, zonedDayStart } from './agenda/ics.js';
+import { zonedAddDays, zonedDayKey, zonedDayStart } from './agenda/ics.js';
 import type { AgendaItem, AgendaKind, UnifiedAgenda } from './agenda/unified.js';
 import { localTimeZone } from './datecontext.js';
 import { log } from './log.js';
@@ -241,14 +241,14 @@ export function collectFindings(
   now: number = Date.now(),
 ): AgendaItem[] {
   const dayStart = zonedDayStart(now, timeZone);
-  const tomorrow = zonedDayStart(dayStart + DAY_MS, timeZone);
+  const tomorrow = zonedAddDays(dayStart, 1, timeZone);
   // La misma ventana que unified.ts: `days` días DESPUÉS de hoy.
-  const horizon = zonedDayStart(tomorrow + agenda.days * DAY_MS, timeZone);
+  const horizon = zonedAddDays(tomorrow, agenda.days, timeZone);
   const pendingVigente = agenda.pending.filter(
     (item) => item.at != null && item.at >= dayStart && item.at < horizon,
   );
   // Lo normal avisa a 7 días vista; solo las caducidades miran más lejos (30 días).
-  const baseHorizon = zonedDayStart(tomorrow + BASE_DAYS * DAY_MS, timeZone);
+  const baseHorizon = zonedAddDays(tomorrow, BASE_DAYS, timeZone);
   return [...agenda.today, ...agenda.upcoming, ...pendingVigente]
     .filter((item) => item.at != null && VIGILANTE_KINDS.includes(item.kind))
     .filter((item) => agenda.days <= BASE_DAYS || item.expiry || (item.at as number) < baseHorizon)
