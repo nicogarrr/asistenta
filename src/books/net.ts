@@ -65,6 +65,36 @@ export function sniff(bytes: Uint8Array): 'epub' | 'pdf' | null {
   return null;
 }
 
+/**
+ * The body, read chunk by chunk and abandoned the moment it passes `maxBytes`.
+ *
+ * `arrayBuffer()` buffered the whole download before the size was checked, so a
+ * server that sends no Content-Length (or a false one) could push gigabytes into the
+ * daemon's memory from a link pasted in a chat before the 50 MB rule ever ran.
+ */
+async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+  const tooBig = () => new Error('el archivo supera 50 MB (límite de Telegram y Kindle)');
+  if (!res.body) {
+    const whole = Buffer.from(await res.arrayBuffer());
+    if (whole.length > maxBytes) throw tooBig();
+    return whole;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw tooBig();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 export async function downloadBook(
   url: string,
   fetcher: Fetcher = fetch,
@@ -103,9 +133,7 @@ export async function downloadBook(
     const declared = Number(res.headers.get('content-length') ?? 0);
     if (declared > maxBytes)
       throw new Error('el archivo supera 50 MB (límite de Telegram y Kindle)');
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > maxBytes)
-      throw new Error('el archivo supera 50 MB (límite de Telegram y Kindle)');
+    const buf = await readCapped(res, maxBytes);
     const kind = sniff(buf);
     if (!kind) throw new Error('lo descargado no es un EPUB ni un PDF');
     return { bytes: buf, kind };
