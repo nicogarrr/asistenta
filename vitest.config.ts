@@ -59,7 +59,7 @@ export default defineConfig({
       exclude: ['src/**/*.d.ts'],
       reporter: ['text-summary', 'json-summary', 'html'],
       reportsDirectory: 'coverage',
-      thresholds: { lines: 77, statements: 77, branches: 82, functions: 82 },
+      thresholds: { lines: 80, statements: 80, branches: 83, functions: 84 },
     },
   },
 });
