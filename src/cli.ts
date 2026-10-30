@@ -42,6 +42,7 @@ import { ChannelRegistry } from './channels/registry.js';
 import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
 import {
   InboundReceipt,
+  LiveNote,
   RECEIPT_READ_TEXT,
   receiptKind,
   receiptStartText,
@@ -5262,6 +5263,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     let finished = false;
     /** The progress notes this turn sent, so they can be taken out of the chat at the end. */
     const progressIds: string[] = [];
+    /** La nota de progreso del turno: se publica una vez y después se edita. */
+    const liveProgress = new LiveNote({
+      send: (text) =>
+        telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: inbound.chatId,
+          text,
+        }),
+      edit: (id, text) => telegram.editMessageText(inbound.chatId, id, text),
+    });
 
     /**
      * A capture the user asked for is sent by the channel, not by the model.
@@ -5300,24 +5312,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const now = Date.now();
       if (now - startedAt > 25_000 && now - lastStatusAt > 45_000) {
         lastStatusAt = now;
-        void telegram
-          .send({
-            channel: 'telegram',
-            account: telegram.account,
-            chatId: inbound.chatId,
-            // Varied and short. A progress note that says the same three words every
-            // time reads as an automated nag; this is the same information in the
-            // voice of someone checking in.
-            text: progressNote({
+        // Varied and short. A progress note that says the same three words every
+        // time reads as an automated nag; this is the same information in the
+        // voice of someone checking in. UNA sola nota por turno, editada: antes cada
+        // 45 s salía un mensaje nuevo (y una notificación en el móvil).
+        const hadNote = liveProgress.id !== null;
+        void liveProgress
+          .show(
+            progressNote({
               elapsedMs: now - startedAt,
               summary: lastSummary,
               toolCalls: toolNames.length,
             }),
-          })
-          .then((id) => {
-            if (id) progressIds.push(id);
-          })
-          .catch(() => {});
+          )
+          .then(() => {
+            if (!hadNote && liveProgress.id) progressIds.push(liveProgress.id);
+          });
       }
     }, 5000);
     status.unref();

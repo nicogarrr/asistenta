@@ -79,25 +79,45 @@ export interface ReceiptDeps {
 }
 
 /**
- * Un acuse por mensaje recibido. Nunca rompe el turno: si el envío falla no hay
- * acuse y las ediciones se omiten; el resto del turno sigue igual.
+ * Un mensaje que se publica una vez y después se EDITA. Nunca rompe el turno: si el
+ * envío falla no hay mensaje y las ediciones se omiten. Las llamadas se encadenan,
+ * así que un `show` que llega mientras el primer envío sigue en vuelo edita ese
+ * mismo mensaje en vez de publicar otro.
  */
-export class InboundReceipt {
+export class LiveNote {
   #id: string | null = null;
   #last = '';
+  #chain: Promise<void> = Promise.resolve();
   readonly #deps: ReceiptDeps;
 
   constructor(deps: ReceiptDeps) {
     this.#deps = deps;
   }
 
-  /** Id del mensaje de acuse, o null si no se llegó a publicar. */
+  /** Id del mensaje publicado, o null si no se llegó a publicar. */
   get id(): string | null {
     return this.#id;
   }
 
-  async start(text: string): Promise<void> {
-    if (this.#id) return;
+  /** Publica el texto la primera vez; las siguientes edita el mismo mensaje. */
+  show(text: string): Promise<void> {
+    this.#chain = this.#chain.then(() => (this.#id ? this.#edit(text) : this.#send(text)));
+    return this.#chain;
+  }
+
+  /** Solo publica (si aún no hay mensaje). */
+  start(text: string): Promise<void> {
+    this.#chain = this.#chain.then(() => (this.#id ? undefined : this.#send(text)));
+    return this.#chain;
+  }
+
+  /** Solo edita (si ya hay mensaje). */
+  update(text: string): Promise<void> {
+    this.#chain = this.#chain.then(() => (this.#id ? this.#edit(text) : undefined));
+    return this.#chain;
+  }
+
+  async #send(text: string): Promise<void> {
     try {
       this.#id = await this.#deps.send(text);
       this.#last = text;
@@ -106,13 +126,16 @@ export class InboundReceipt {
     }
   }
 
-  async update(text: string): Promise<void> {
+  async #edit(text: string): Promise<void> {
     if (!this.#id || text === this.#last) return;
     this.#last = text;
     try {
       await this.#deps.edit(this.#id, text);
     } catch {
-      // Un acuse que no se pudo editar no vale un turno roto.
+      // Un mensaje que no se pudo editar no vale un turno roto.
     }
   }
 }
+
+/** Acuse de recibo de un mensaje entrante: un {@link LiveNote} con nombre propio. */
+export class InboundReceipt extends LiveNote {}
