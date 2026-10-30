@@ -377,6 +377,7 @@ Usage:
   pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
+  pa precio [comprobar]          un ciclo del vigilante de precios ahora (avisos por pantalla) o valida pricewatch.json
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
   pa stop                 Linux: cierre graceful autenticado, sin matar por PID
   pa restart              no disponible sin verificar supervisor
@@ -443,6 +444,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'autostart-notify': {
       const { notifyAutostart } = await import('./autostart.js');
       return rest.length === 1 ? notifyAutostart(rest[0] ?? '') : 2;
+    }
+    case 'precio': {
+      const { pricewatchCommand } = await import('./watch/pricewatch-cli.js');
+      return pricewatchCommand(rest);
     }
     case 'watchdog': {
       if (rest[0] !== '--status') {
