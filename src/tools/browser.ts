@@ -476,7 +476,9 @@ export function createBrowserTool(
       'aprobación otra vez si sigue siendo lo que hay que hacer.'
     );
   };
-  return {
+  const tool: AgentTool<typeof BrowserParams> & {
+    gateHint: (args: Record<string, unknown>) => Promise<string>;
+  } = {
     name: 'browser',
     label: 'Browser',
     description: [
@@ -1007,6 +1009,34 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
       }
     },
   };
+  const run = tool.execute;
+  tool.execute = async (...a) =>
+    withPageUrl(service, scopeOf(), String(a[1]?.action ?? ''), await run(...a));
+  return tool;
+}
+
+/**
+ * Añade a `details` la URL en la que quedó la página (no al texto del modelo). El
+ * Gate la mira al cerrar la llamada: un clic o un «atrás» que acaba en una web con
+ * sesión iniciada mete contenido privado en el turno igual que abrirla con `url`.
+ */
+function withPageUrl<T extends { details?: unknown }>(
+  service: BrowserService,
+  scope: string,
+  action: string,
+  result: T,
+): T {
+  if (action === 'close') return result;
+  let pageUrl: string | undefined;
+  try {
+    pageUrl = (service as { currentUrl?: (s: string) => string | undefined }).currentUrl?.(scope);
+  } catch {
+    pageUrl = undefined;
+  }
+  if (!pageUrl) return result;
+  const details =
+    result.details && typeof result.details === 'object' ? (result.details as object) : {};
+  return { ...result, details: { ...details, pageUrl } };
 }
 
 /**

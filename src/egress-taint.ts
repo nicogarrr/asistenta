@@ -70,6 +70,16 @@ function privateWebHost(url: unknown): string | null {
   return PRIVATE_WEB_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? host : null;
 }
 
+/**
+ * Fuente privada de una página a la que el navegador llegó (p. ej. tras un clic o
+ * un «atrás» que acabó en Gmail sin `url` en la llamada), o null si no es una web
+ * con sesión iniciada.
+ */
+export function taintSourceOfPage(url: unknown): string | null {
+  const host = privateWebHost(url);
+  return host ? `una web con tu sesión iniciada (${host})` : null;
+}
+
 /** Acciones concretas que no leen nada privado aunque la herramienta pueda hacerlo. */
 const NON_TAINTING_ACTIONS: ReadonlySet<string> = new Set([
   'computer:move',
@@ -110,8 +120,8 @@ const LABELS: Record<string, string> = {
  */
 export function taintSourceOf(tool: string, args: Record<string, unknown>): string | null {
   if (tool === 'browser') {
-    const host = privateWebHost(args.url);
-    if (host) return `una web con tu sesión iniciada (${host})`;
+    const page = taintSourceOfPage(args.url);
+    if (page) return page;
   }
   if (NON_TAINTING_TOOLS.has(tool)) return null;
   const action = typeof args.action === 'string' ? args.action : '';

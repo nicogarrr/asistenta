@@ -11,6 +11,7 @@ import {
   egressTaintReason,
   egressUrlOf,
   taintSourceOf,
+  taintSourceOfPage,
   urlCarriesData,
 } from './egress-taint.js';
 import type { EffectClass } from './gestor/effects.js';
@@ -1385,8 +1386,23 @@ export class Gate {
    * so a clean end of one concurrent run cannot unlock the memo while another
    * identical run is still going.
    */
-  settle(sessionId: string, call: ToolCall, isError: boolean, resultText?: string): void {
-    if (!isError && resultText && this.#egressTaint && taintSourceOf(call.tool, call.args)) {
+  settle(
+    sessionId: string,
+    call: ToolCall,
+    isError: boolean,
+    resultText?: string,
+    pageUrl?: string,
+  ): void {
+    // El navegador puede acabar en una web con sesión iniciada sin `url` en la llamada
+    // (un clic, un «atrás», un enlace): la página final cuenta igual que abrirla.
+    const page = call.tool === 'browser' ? taintSourceOfPage(pageUrl) : null;
+    if (page && !this.#privateTaint.has(sessionId)) this.#privateTaint.set(sessionId, page);
+    if (
+      !isError &&
+      resultText &&
+      this.#egressTaint &&
+      (page || taintSourceOf(call.tool, call.args))
+    ) {
       this.#rememberPrivate(sessionId, resultText);
     }
     const entry = this.#unsettled.get(sessionId)?.get(this.#fingerprint(call));
