@@ -126,6 +126,11 @@ export const DEFAULT_VOLUME_STEP = 3;
 /** «a tope» / «al máximo» por voz: 100, el máximo de la tele (decisión de Nico, 30-oct-2026: «a tope es a tope»). */
 export const VOLUME_TOPE = 100;
 const MAX_VOLUME_STEP = 15;
+/**
+ * «volumen al mínimo»: 1, no 0. A 0 la tele parece silenciada o rota; quien
+ * quiera 0 o silencio lo pide («volumen a 0», «silencia la tele»).
+ */
+export const VOLUME_MINIMO = 1;
 
 const COMPOUND =
   /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
@@ -159,6 +164,13 @@ const DEFERRED = new RegExp(
   ].join('|'),
 );
 
+/**
+ * Muletillas y vocativo delante de la orden: «oye, sube el volumen», «tele, baja
+ * el volumen», «oye tele, apágala». No cambian la orden; se quitan antes de leerla.
+ */
+const MULETILLA =
+  /^(?:(?:oye|oiga|eh|ey|hey|venga|vale|ok|okay) )?(?:(?:tele|tv|television|televisor) )?/;
+
 /** «… en la tele» al final no forma parte de la orden («abre Netflix en la tele»). */
 const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
 
@@ -166,6 +178,7 @@ function normalizeOrder(text: string): string {
   return normalizeTvText(text)
     .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
     .trim()
+    .replace(MULETILLA, '')
     .replace(EN_LA_TELE, '');
 }
 
@@ -184,7 +197,9 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (
     new RegExp(
       `^(?:(?:vuelve|volver|ve|vete|dale(?: al?)?|pulsa|presiona|toca)(?: (?:hacia|para))? )?(?:(?:el )?boton (?:de )?)?atras(?: (?:en|de) ${TV})?$`,
-    ).test(t)
+    ).test(t) ||
+    // «volver», «vuelve», «regresa» a secas: también es la tecla atrás.
+    new RegExp(`^(?:vuelve|volver|regresa|regresar)(?: (?:en|de) ${TV})?$`).test(t)
   ) {
     return { action: 'key', name: 'BACK' };
   }
@@ -209,6 +224,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (/\bmodo (?:noche|nocturno)\b/.test(t)) {
     m = /\bcon ([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
     return { action: 'scene', scene: 'noche', ...(m?.[1] ? { appId: m[1].trim() } : {}) };
+  }
+  // «modo juego», «pon el modo deportes»: el modo de imagen de la tele («modo cine»
+  // es la rutina de arriba, que además baja luces y abre la app).
+  m = new RegExp(
+    `^(?:(?:pon|ponme|poner|activa|activar|cambia a|cambiar a)(?: el)? )?modo (juego|juegos|videojuegos|deporte|deportes|futbol)(?: (?:en|de) ${TV})?$`,
+  ).exec(t);
+  if (m?.[1]) {
+    const word = m[1];
+    const hit = PICTURE_WORDS.find(([re]) => re.test(word));
+    if (hit) return { action: 'picture', pictureMode: hit[1] };
   }
   // "apaga todo" / "apagalo todo": aviso y apagar la tele.
   if (/^(?:apaga|apagar|apagalo|apagamelo) todo[\s,.!]*$/.test(t)) {
@@ -278,6 +303,14 @@ export function parseTvCommand(text: string): TvIntent | null {
   ) {
     return { action: 'volume', level: VOLUME_TOPE };
   }
+  // «volumen al mínimo», «bájalo al mínimo»: VOLUME_MINIMO (1), nunca 0 ni silencio.
+  if (
+    /^(?:baja(?:le|lo)?(?: el volumen)?|(?:pon(?:me|le|lo|la)? )?el volumen|volumen|pon(?:lo|la)) (?:a|al) (?:minimo|lo minimo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+      t,
+    )
+  ) {
+    return { action: 'volume', level: VOLUME_MINIMO };
+  }
 
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
   m =
@@ -292,7 +325,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
   // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|subelo|baja|bajale|bajalo)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?)?)?(?: (?:el|al) volumen)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
+    `^(sube|subele|subelo|baja|bajale|bajalo)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| niveles?| veces| vez)?)?(?: (?:el|al) volumen)?(?: (?:a|de) (?:la )?(?:tele|tv))?$`,
   ).exec(t);
   if (m?.[1]) {
     const n = m[2] === undefined ? DEFAULT_VOLUME_STEP : num(m[2]);
@@ -305,8 +338,13 @@ export function parseTvCommand(text: string): TvIntent | null {
         : { action: 'volumeStep', steps: signed };
     }
   }
-  if (/\bmas alto\b/.test(t)) return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
-  if (/\bmas bajo\b/.test(t)) return { action: 'volumeStep', steps: -DEFAULT_VOLUME_STEP };
+  // «más alto», «pon la tele más baja», «ponla más fuerte», «más bajito».
+  if (/\bmas (?:alto|alta|fuerte)\b/.test(t)) {
+    return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
+  }
+  if (/\bmas (?:bajo|baja|bajito|bajita|flojo|flojito|suave)\b/.test(t)) {
+    return { action: 'volumeStep', steps: -DEFAULT_VOLUME_STEP };
+  }
 
   // Canales.
   if (
