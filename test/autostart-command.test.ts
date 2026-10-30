@@ -66,7 +66,7 @@ describe('pa autostart', () => {
     expect(flags).not.toContain('-Start');
     expect(opts).toMatchObject({ windowsHide: true, timeout: 120_000 });
     expect(out).toMatch(
-      /^Última comprobación de arranque \(pa iniciar\)[^\n]*\nAviso «Asistenta lista ✅» del último arranque[^\n]*\nTarea: OK\nVigilante: [^\n]*\n$/,
+      /^Última comprobación de arranque \(pa iniciar\)[^\n]*\nAviso «Asistenta lista ✅» del último arranque[^\n]*\nTarea: OK\nVigilante: [^\n]*\nAutoactualización: [^\n]*\n$/,
     );
   });
 

@@ -17,12 +17,19 @@ import {
   watchdogEnabled,
   watchdogTaskXml,
 } from './autostart-watchdog.js';
+
+import { lockHeld } from './autoupdate.js';
+import {
+  autoupdateStatusLine,
+  daemonRunState,
+  maybeLaunchAutoupdate,
+  sendOwnerTelegram,
+} from './autoupdate-cli.js';
 import { BOOT_NOTICE_FILE, formatBootNoticeResult, readBootNoticeResult } from './boot-notice.js';
-import { daemonStatus } from './daemon-status.js';
+
 import { paths } from './paths.js';
 import { formatStartupRecord, readStartupRecord, STARTUP_RECORD_FILE } from './startup-record.js';
 import { unlock, vaultGet } from './vault.js';
-import { resolveOwnerUserId } from './vigilante.js';
 
 export function autostartRepo(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL('..', moduleUrl));
@@ -50,21 +57,17 @@ export interface AutostartOptions {
   bootAt?: number;
   /** Estado del daemon; por defecto, el pid y su proceso. */
   daemonState?: () => DaemonRunState;
-}
-
-function realDaemonState(stateDir: string): DaemonRunState {
-  const r = daemonStatus({ stateDir }) as { pidState?: string; processState?: string };
-  if (r.pidState === 'missing' || r.processState === 'dead') return 'stopped';
-  if (r.pidState === 'valid' && r.processState === 'alive') return 'running';
-  return 'unknown';
+  /** Lanza `pa autoupdate aplicar` aparte; por defecto, un proceso desligado. */
+  launchAutoupdate?: (exe: string, args: string[]) => void;
 }
 
 /** `pa autostart vigilar`: lo que hace la tarea del vigilante cada 5 minutos. */
 async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number> {
   const decision = watchdogDecide({
     enabled: watchdogEnabled(),
-    state: (opts.daemonState ?? (() => realDaemonState(stateDir)))(),
+    state: (opts.daemonState ?? (() => daemonRunState(stateDir)))(),
     stoppedAt: readStoppedOnPurpose(stateDir),
+    updating: lockHeld(stateDir),
     bootAt: opts.bootAt ?? Date.now() - uptime() * 1000,
   });
   let text = describeDecision(decision);
@@ -74,6 +77,13 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
       startDaemonTaskArgs(),
     );
     if (r.error) text = describeDecision({ action: 'start-failed' });
+  }
+  if (decision.action === 'skip' && decision.reason === 'en-marcha') {
+    // Corre aparte: la tarea del vigilante tiene 2 min y compilar puede tardar más.
+    const cliJs = opts.cliJs ?? join(autostartRepo(), 'dist', 'cli.js');
+    if (maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)) {
+      text += '; miro si hay novedades en main';
+    }
   }
   saveWatchdogLast(stateDir, text);
   process.stdout.write(`Vigilante: ${text}\n`);
@@ -115,7 +125,7 @@ async function watchdogStatus(stateDir: string): Promise<void> {
     const min = Math.max(0, Math.round((Date.now() - last.at) / 60_000));
     line += ` Última revisión hace ${min} min: ${last.text}.`;
   }
-  process.stdout.write(`${line}\n`);
+  process.stdout.write(`${line}\n${autoupdateStatusLine(stateDir)}\n`);
 }
 
 export async function autostartCommand(
@@ -206,40 +216,8 @@ export async function notifyAutostart(
   deps = { unlock, get: vaultGet, fetch: globalThis.fetch },
 ): Promise<number> {
   if (!(event in SUPERVISOR_MESSAGES) || !Object.hasOwn(SUPERVISOR_MESSAGES, event)) return 2;
-  try {
-    await deps.unlock();
-    const allowed =
-      (await deps.get('telegram:allowedUserIds'))
-        ?.split(',')
-        .map(Number)
-        .filter((n) => Number.isSafeInteger(n) && n > 0) ?? [];
-    const explicit = Number(await deps.get('vigilante:ownerUserId'));
-    const owner = resolveOwnerUserId(
-      allowed,
-      Number.isSafeInteger(explicit) && explicit > 0 ? explicit : null,
-    );
-    const token = await deps.get('telegram:botToken');
-    if (!owner || !allowed.includes(owner) || !token) return 1;
-    const response = await deps.fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(8000),
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: owner,
-        text: SUPERVISOR_MESSAGES[event as keyof typeof SUPERVISOR_MESSAGES],
-      }),
-    });
-    const data: unknown = await response.json();
-    return response.ok &&
-      data !== null &&
-      typeof data === 'object' &&
-      'ok' in data &&
-      data.ok === true
-      ? 0
-      : 1;
-  } catch {
-    return 1;
-  }
+  const text = SUPERVISOR_MESSAGES[event as keyof typeof SUPERVISOR_MESSAGES];
+  return (await sendOwnerTelegram(text, deps)) ? 0 : 1;
 }
 
 export async function localLlmHealthy(fetcher: typeof fetch = fetch): Promise<boolean> {

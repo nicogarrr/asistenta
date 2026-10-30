@@ -477,6 +477,7 @@ Usage:
   pa opengym status       check the openGym connection
   pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
   pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]
+  pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa precio [comprobar]          un ciclo del vigilante de precios ahora (avisos por pantalla) o valida pricewatch.json
@@ -594,6 +595,11 @@ export async function main(argv: string[]): Promise<number> {
     case 'autostart': {
       const { autostartCommand } = await import('./autostart.js');
       return autostartCommand(rest);
+    }
+    case 'autoupdate': {
+      const { autostartRepo } = await import('./autostart.js');
+      const { autoupdateCommand } = await import('./autoupdate-cli.js');
+      return autoupdateCommand(rest, { stateDir: paths.state, repo: autostartRepo() });
     }
     case 'autostart-notify': {
       const { notifyAutostart } = await import('./autostart.js');
