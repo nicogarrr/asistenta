@@ -445,3 +445,37 @@ export function nextRunLabel(
   const check = schedule ? validateSchedule(schedule) : null;
   return check?.ok ? check.next : 'sin próxima ejecución';
 }
+
+/**
+ * /agenda (y la parte de rutinas de la agenda del dueño): las rutinas
+ * programadas de este chat. Una rutina de comando lleva la misma marca que en
+ * /cron, para que no parezca que habla con el modelo ni que va a correr si
+ * está sin aprobar o con PA_CRON_COMANDOS apagado.
+ */
+export function scheduledAgendaText(deps: {
+  store: Pick<Store, 'listRoutines'>;
+  routineRunner: Pick<RoutineRunner, 'status'>;
+  chatKey: string;
+  commands?: Pick<CommandRoutineStore, 'get'>;
+  commandsEnabled?: boolean;
+}): string {
+  const scheduled = deps.store
+    .listRoutines()
+    .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule');
+  if (!scheduled.length) {
+    return 'No hay rutinas programadas. Puedes crearlas con /routine.';
+  }
+  const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
+  const live = new Map(deps.routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));
+  const lines = scheduled.map((r) => {
+    const held = live.get(`${r.scope}\u0000${r.name}`);
+    const state = r.enabled ? '' : ' (desactivada)';
+    const running = held?.running ? ' [en curso]' : '';
+    const tag = commandRoutineTag(r, deps.commands, commandsOn);
+    return `- ${r.name}${tag}${state} [${r.schedule ?? 'sin horario'}] — próxima: ${nextRunLabel(
+      r.schedule,
+      held?.next ?? null,
+    )}${running}`;
+  });
+  return [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n');
+}
