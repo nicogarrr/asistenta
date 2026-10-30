@@ -1,8 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { BrowserService } from '../src/browser/service.js';
 import { UNREADABLE_TARGET } from '../src/browser/target.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // SYNTHETIC page. The model often names an element by the text it reads on screen
 // ("Añadir a la cesta"), not by a CSS selector. The action resolves that text through the
@@ -12,7 +13,7 @@ const PAGE = `<!doctype html><html><body>
 <form action="/pedido"><p>Total: 25,00 €</p><button type="submit">Confirmar y pagar</button></form>
 </body></html>`;
 
-describe('describeTarget by visible text', () => {
+describeBrowser('describeTarget by visible text', () => {
   let server: Server;
   let svc: BrowserService;
   let url = '';

@@ -6,6 +6,7 @@ import {
   normalizeText,
   pickSuggestion,
 } from '../src/browser/autocomplete.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 describe('pickSuggestion', () => {
   const opts = ['Madrid (TODAS)', 'Madrid-Chamartín-Clara Campoamor', 'Madrid-Puerta de Atocha'];
@@ -87,7 +88,7 @@ c.addEventListener('input', () => {
 });
 </script>`;
 
-describe('chooseSuggestion on real pages', () => {
+describeBrowser('chooseSuggestion on real pages', () => {
   let browser: Browser;
   let page: Page;
   beforeAll(async () => {

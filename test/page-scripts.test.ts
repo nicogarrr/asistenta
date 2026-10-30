@@ -2,8 +2,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { BrowserService } from '../src/browser/service.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 /**
  * The two ways the page-side code used to break, against a real page.
@@ -45,7 +46,7 @@ const PAGE = `<!doctype html>
   </script>
 </body></html>`;
 
-describe('page-side scripts reach the browser', () => {
+describeBrowser('page-side scripts reach the browser', () => {
   let server: Server;
   let base: string;
   let dir: string;

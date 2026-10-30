@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { describeBrowser } from './helpers/real-browser.js';
 
 /**
  * Compra de punta a punta contra la tienda sintética de qa/shop-harness (local, sin
@@ -88,7 +89,7 @@ const toPayment = [
 /** La pregunta del botón de pago de la tienda: «Pagar 7,50 €». */
 const isPayQuestion = (q: string): boolean => /Pagar \d/.test(q);
 
-describe('compra en la tienda sintética de punta a punta', () => {
+describeBrowser('compra en la tienda sintética de punta a punta', () => {
   it('con «sí» a la cesta, se para en «Pagar» con el importe y sin «sí» no paga', async () => {
     const core = boot();
     // La cesta y la página de pago son vocabulario de dinero: preguntan (más estricto

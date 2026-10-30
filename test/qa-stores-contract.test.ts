@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { BrowserService } from '../src/browser/service.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // SYNTHETIC fixture contract (qa/shop-harness/README.md). No model, no real site.
 // Goal city comes from the trusted caller (this test); the selected state is read from
@@ -9,7 +10,7 @@ const PORT = 18765;
 const verdict = (goalCity: string, selected: string): 'ok' | 'fail' =>
   selected.toLowerCase().includes(goalCity.toLowerCase()) ? 'ok' : 'fail';
 
-describe('/stores fixture contract (SYNTHETIC)', () => {
+describeBrowser('/stores fixture contract (SYNTHETIC)', () => {
   let svc: BrowserService;
   let srv: { close: () => void };
   beforeAll(async () => {
