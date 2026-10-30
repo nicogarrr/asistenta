@@ -1388,7 +1388,9 @@ export class Gate {
         rule.match(call) &&
         askRule.id === 'ask-unlisted'
       ) {
-        this.#openGrantWindow(sessionId, call.tool);
+        // Una acción LIBRE (captura, mover el ratón) no abre la ventana de
+        // confianza: esa ventana es la extensión de una aprobación humana. Antes,
+        // una captura de pantalla daba 90 s de teclado y ratón sin preguntar a nadie.
         return this.#record(call, { verdict: 'allow', reason: rule.reason });
       }
     }
