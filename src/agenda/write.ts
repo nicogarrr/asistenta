@@ -124,42 +124,94 @@ async function writeAtomic(file: string, contents: string): Promise<void> {
   }
 }
 
+/** Índice de la primera / última línea que es exactamente `tag` (sin distinguir mayúsculas). */
+function lineIndex(text: string, tag: string, which: 'first' | 'last'): number {
+  // Se busca sobre el texto original, no sobre `toUpperCase()`: «ß» pasa a «SS» y
+  // desplaza todos los índices, con lo que el evento acababa insertado a mitad de
+  // una línea y el fichero quedaba roto. Y solo líneas completas: un DESCRIPTION
+  // que contiene el texto «END:VCALENDAR» no es el cierre del calendario.
+  const re = new RegExp(`^${tag}[ \\t]*$`, 'gim');
+  let found = -1;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    found = m.index;
+    if (which === 'first') break;
+  }
+  return found;
+}
+
+/** El UID de un bloque VEVENT ya escrito, tal cual figura en la línea `UID:`. */
+function uidOfBlock(block: string): string | undefined {
+  return /^UID:(.*)$/im.exec(block)?.[1]?.trim();
+}
+
+/**
+ * Sustituye en `text` el VEVENT con el mismo UID que `block`. Devuelve null si no hay
+ * ninguno. Repetir la misma escritura (un reintento, el mismo «/calendario add» dos
+ * veces) actualiza el evento en vez de duplicarlo: el UID es su identidad.
+ */
+function replaceSameUid(text: string, block: string): string | null {
+  const uid = uidOfBlock(block);
+  if (!uid) return null;
+  const events = /^BEGIN:VEVENT[ \t]*\n[\s\S]*?^END:VEVENT[ \t]*$/gim;
+  for (let m = events.exec(text); m; m = events.exec(text)) {
+    if (uidOfBlock(m[0]) === uid) {
+      return `${text.slice(0, m.index)}${block}${text.slice(m.index + m[0].length)}`;
+    }
+  }
+  return null;
+}
+
+function mergeInto(existing: string, block: string): string {
+  const normalized = normalizeNewlines(existing).trimEnd();
+  if (!normalized) return [...CALENDAR_HEADER, block, CALENDAR_FOOTER].join('\n');
+  const replaced = replaceSameUid(normalized, normalizeNewlines(block));
+  if (replaced !== null) return replaced;
+  const begin = lineIndex(normalized, 'BEGIN:VCALENDAR', 'first');
+  const end = lineIndex(normalized, 'END:VCALENDAR', 'last');
+  if (begin >= 0 && end > begin) {
+    const before = normalized.slice(0, end);
+    const glue = before.endsWith('\n') ? '' : '\n';
+    return `${before}${glue}${block}\n${normalized.slice(end)}`;
+  }
+  if (begin >= 0) {
+    // Cabecera sin cierre (fichero truncado): se repara al añadir.
+    return `${normalized}\n${block}\n${CALENDAR_FOOTER}`;
+  }
+  // Contenido suelto o fichero de otro formato: se conserva y se envuelve.
+  return [...CALENDAR_HEADER, normalized, block, CALENDAR_FOOTER].join('\n');
+}
+
+/** Una cola por fichero: dos añadidos a la vez no pueden pisarse (leer-modificar-escribir). */
+const pending = new Map<string, Promise<void>>();
+
 /**
  * Añade un evento al calendario local, creándolo si no existe. Si el fichero ya tiene
  * VCALENDAR, el VEVENT se inserta antes del último `END:VCALENDAR`; si le falta la
- * cabecera, se envuelve el contenido existente en vez de descartarlo.
+ * cabecera, se envuelve el contenido existente en vez de descartarlo. Un evento con
+ * un UID que ya está en el fichero lo sustituye. Los añadidos al mismo fichero se
+ * hacen de uno en uno: antes, dos a la vez leían el mismo contenido y el segundo
+ * rename borraba el evento del primero.
  */
 export async function appendEvent(file: string, event: IcsEvent): Promise<void> {
   const block = toIcsEvent(event);
-
-  let existing = '';
+  const previous = pending.get(file) ?? Promise.resolve();
+  const run = previous
+    .catch(() => undefined)
+    .then(async () => {
+      let existing = '';
+      try {
+        existing = await readFile(file, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      const body = mergeInto(existing, block);
+      const contents = `${normalizeNewlines(body).replace(/\n/g, '\r\n')}\r\n`;
+      await writeAtomic(file, contents);
+    });
+  pending.set(file, run);
   try {
-    existing = await readFile(file, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    await run;
+  } finally {
+    if (pending.get(file) === run) pending.delete(file);
   }
-
-  const normalized = normalizeNewlines(existing).trimEnd();
-  let body: string;
-  if (!normalized) {
-    body = [...CALENDAR_HEADER, block, CALENDAR_FOOTER].join('\n');
-  } else {
-    const upper = normalized.toUpperCase();
-    const begin = upper.indexOf('BEGIN:VCALENDAR');
-    const end = upper.lastIndexOf('END:VCALENDAR');
-    if (begin >= 0 && end > begin) {
-      const before = normalized.slice(0, end);
-      const glue = before.endsWith('\n') ? '' : '\n';
-      body = `${before}${glue}${block}\n${normalized.slice(end)}`;
-    } else if (begin >= 0) {
-      // Cabecera sin cierre (fichero truncado): se repara al añadir.
-      body = `${normalized}\n${block}\n${CALENDAR_FOOTER}`;
-    } else {
-      // Contenido suelto o fichero de otro formato: se conserva y se envuelve.
-      body = [...CALENDAR_HEADER, normalized, block, CALENDAR_FOOTER].join('\n');
-    }
-  }
-
-  const contents = `${normalizeNewlines(body).replace(/\n/g, '\r\n')}\r\n`;
-  await writeAtomic(file, contents);
 }
