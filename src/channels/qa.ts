@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { stripMarks } from './formatters.js';
 import { type ApprovalChoice, TelegramChannel, type TelegramOptions } from './telegram.js';
 import type { ChannelHandlers, Inbound, Outbound } from './types.js';
 
@@ -253,7 +254,7 @@ export class QaChannel extends TelegramChannel {
     if (!isQaChatId(outbound.chatId)) return super.send(outbound);
     this.#out(outbound.chatId, {
       kind: 'text',
-      text: outbound.text,
+      text: outbound.format === 'marks' ? stripMarks(outbound.text) : outbound.text,
       buttons: outbound.buttons?.map((b) => b.label),
       hasImages: outbound.images?.length ?? 0,
       hasAudio: Boolean(outbound.audio),
