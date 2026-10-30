@@ -187,6 +187,7 @@ import {
   wideResearchEnabled,
 } from './research/wide-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
+import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
 import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
 import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
@@ -5486,6 +5487,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       quote: true,
     });
   };
+  const cmdSkillsCatalog = async (inbound: Inbound): Promise<void> => {
+    await say(inbound, await skillsCatalogReply(skills.list(), process.env.PA_SKILLS_CATALOG_URL), {
+      quote: true,
+    });
+  };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
     const current = voiceOn.get(inbound.chatId) ?? voiceDefault;
@@ -7143,9 +7149,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (sub === 'buscar' || sub === 'search') {
           return cmdSkillsSearch(inbound, args.trim().split(/\s+/).slice(1).join(' '));
         }
-        return say(inbound, 'Uso: /skills buscar <texto> · /skills instalar <url de SKILL.md>', {
-          quote: true,
-        });
+        if (sub === 'catalogo' || sub === 'catálogo' || sub === 'catalog') {
+          return cmdSkillsCatalog(inbound);
+        }
+        return say(
+          inbound,
+          'Uso: /skills buscar <texto> · /skills catalogo · /skills instalar <url de SKILL.md>',
+          { quote: true },
+        );
       },
     },
     { names: ['agenda'], run: (inbound, args) => cmdAgenda(inbound, args) },

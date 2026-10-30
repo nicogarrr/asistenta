@@ -387,3 +387,65 @@ export async function fetchCatalog(
     if (timer !== undefined) clearTimeout(timer);
   }
 }
+
+/** Cuántas filas enseña `/skills catalogo` por bloque (el mensaje de Telegram es corto). */
+const SHOWN = 20;
+const DESC_MAX = 120;
+
+function shortDesc(value: string): string {
+  const d = oneLine(value);
+  return d.length > DESC_MAX ? `${d.slice(0, DESC_MAX - 1)}…` : d;
+}
+
+/** Los motivos propios de `fetchCatalog`/`parseCatalog` van en castellano; el resto no se enseña. */
+function friendlyReason(reason: string): string {
+  return /^(el |la |solo |demasiadas |no hay |maxBytes |timeoutMs )/.test(reason)
+    ? oneLine(reason)
+    : 'sin conexión o respuesta no válida';
+}
+
+/**
+ * `/skills catalogo`: las skills instaladas (sin red) y, solo si el dueño
+ * configuró `PA_SKILLS_CATALOG_URL`, el catálogo remoto cruzado con lo
+ * instalado. Nunca instala nada: cada fila no instalada muestra el
+ * `/skills instalar <url>` que el dueño puede escribir si la quiere.
+ */
+export async function skillsCatalogReply(
+  installed: Array<{ id: string; name: string; description?: string }>,
+  catalogUrl: string | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<string> {
+  const mine = catalogFromInstalled(installed);
+  const lines: string[] = [
+    mine.length ? `Skills instaladas (${mine.length}):` : 'No tienes skills instaladas.',
+  ];
+  for (const e of mine.slice(0, SHOWN)) {
+    lines.push(`• ${e.name}${e.description ? ` — ${shortDesc(e.description)}` : ''}`);
+  }
+  if (mine.length > SHOWN) lines.push(`… y ${mine.length - SHOWN} más`);
+  const url = catalogUrl?.trim();
+  if (!url) {
+    lines.push(
+      '',
+      'Sin catálogo remoto. Para verlo, pon PA_SKILLS_CATALOG_URL=https://… (un JSON { "skills": [...] }) en .env.',
+    );
+    return lines.join('\n');
+  }
+  const remote = await fetchCatalog(url, { fetchImpl });
+  if (!remote.ok) {
+    lines.push('', `No he podido leer el catálogo de skills (${friendlyReason(remote.reason)}).`);
+    return lines.join('\n');
+  }
+  const merged = mergeCatalog(
+    remote.entries,
+    installed.map((s) => s.id),
+  );
+  lines.push('', merged.length ? `Catálogo (${merged.length}):` : 'El catálogo está vacío.');
+  for (const e of merged.slice(0, SHOWN)) {
+    const desc = e.description ? ` — ${shortDesc(e.description)}` : '';
+    lines.push(`• ${e.name}${e.installed ? ' ✓ instalada' : ''}${desc}`);
+    if (!e.installed && e.url) lines.push(`  /skills instalar ${e.url}`);
+  }
+  if (merged.length > SHOWN) lines.push(`… y ${merged.length - SHOWN} más`);
+  return lines.join('\n');
+}
