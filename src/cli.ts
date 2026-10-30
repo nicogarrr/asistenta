@@ -6965,6 +6965,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['resumen'], run: (inbound, args) => cmdResumen(inbound, args) },
     { names: ['evolucion'], run: (inbound, args) => cmdEvolucion(inbound, args) },
     { names: ['estado'], run: (inbound) => cmdEstado(inbound) },
+    {
+      names: ['actualizacion'],
+      run: async (inbound) => {
+        const { autoupdateStatusLine } = await import('./autoupdate-cli.js');
+        await say(inbound, autoupdateStatusLine(paths.state));
+      },
+    },
     { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
     { names: ['compactar'], run: (inbound) => cmdCompactar(inbound) },
     { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },

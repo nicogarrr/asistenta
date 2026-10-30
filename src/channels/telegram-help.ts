@@ -222,6 +222,10 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'servicios', description: 'herramientas externas adoptadas y su estado' },
       { command: 'skills', args: 'instalar <url>', description: 'instala una skill' },
       { command: 'evolucion', args: '[idea <texto>|ahora]', description: 'la auto-mejora semanal' },
+      {
+        command: 'actualizacion',
+        description: 'si me actualizo sola desde main y cómo fue la última vez',
+      },
     ],
   },
   {

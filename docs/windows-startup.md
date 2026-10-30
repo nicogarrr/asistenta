@@ -95,3 +95,23 @@ CI Windows ejecuta el parser PS5 real, canarios con Scheduler/handles simulados,
 Rollback de instalación: si falla el segundo registro se restaura el primero desde su XML previo (o se quita si antes no existía). Una reversión que falle también es fallo visible. No se permite considerar la instalación completada con una excepción oculta.
 
 `pa autostart status` empieza con una línea sobre la última comprobación de `pa iniciar` (cuándo fue, si estaba todo en verde o qué falló). Se guarda en `<estado>/iniciar-ultimo.json` cada vez que corre `pa iniciar`.
+
+## Autoactualización desde main
+
+Con `PA_AUTOUPDATE=1` (por defecto) Asistenta se actualiza sola cuando entra algo en `main`. No hace falta ninguna tarea nueva de Windows: la lanza el vigilante («Asistenta-vigilante», cada 5 min) cada `PA_AUTOUPDATE_INTERVAL_MIN` minutos (30 por defecto), como proceso aparte para no chocar con el límite de 2 min de la tarea.
+
+1. `git fetch origin main`. Solo sigue si estás en la rama `main`, no hay cambios sin guardar en ficheros de git y `origin/main` es un fast-forward del commit local. Nunca hace un merge de verdad, nunca resetea encima de cambios tuyos y nunca toca otra rama.
+2. Espera a que Asistenta esté libre: ningún turno en marcha y ninguna aprobación esperando. Si está ocupada, lo vuelve a mirar en la siguiente pasada del vigilante.
+3. Guarda `dist` en `dist.anterior`, para el daemon con cierre limpio (sin marcarlo como parado a propósito), hace `git merge --ff-only`, `npm ci` solo si cambió `package-lock.json` y `npm run build`.
+4. Arranca la tarea del daemon (el mismo camino que el vigilante) y espera hasta 2 min a que vuelva sana. Mientras dura, el vigilante ve el candado y no arranca nada por su cuenta.
+5. Si todo va bien te escribe por Telegram «🆕 Me he actualizado» con la lista de novedades (títulos de los commits, sin `feat:`/`fix:`, como mucho 8 y «y N cambios más»). Si falla `npm ci`, la compilación o el arranque, vuelve al commit y al `dist` de antes, rearranca y te avisa de que sigue en la versión anterior y por qué.
+
+Como mucho una actualización cada 30 min. Dos revisiones nunca se pisan (candado). Los ficheros están en `state/autoupdate/` (los `*.log` de los fallos se podan con `PA_FILE_RETENTION_DAYS`).
+
+```powershell
+node dist/cli.js autoupdate status   # encendida/apagada y el último resultado
+node dist/cli.js autoupdate now      # mirar y actualizar ya (sin esperar al intervalo)
+node dist/cli.js autoupdate off      # apagarla (on la vuelve a encender); PA_AUTOUPDATE=0 manda siempre
+```
+
+`pa autostart status` también enseña la línea de la autoactualización.
