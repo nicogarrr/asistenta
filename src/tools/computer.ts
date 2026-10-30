@@ -840,16 +840,20 @@ export function createComputerTool(
       case 'type': {
         const text = String(record.text ?? '');
         if (!text) throw new Error('la acción type necesita texto');
+        // Characters as a person counts them (code points): `text.length` counts an
+        // emoji as 2, so «Escritos N» disagreed with the «Parcial: … N de M» that
+        // the Windows backend reports, and the model resumed from the wrong place.
+        const chars = Array.from(text).length;
         const check = await act(() => backend.type(text));
-        log.info('typed', { chars: text.length, changed: check?.changed ?? null });
+        log.info('typed', { chars, changed: check?.changed ?? null });
         return {
           content: [
             {
               type: 'text',
-              text: `Escritos ${text.length} caracteres${check ? `\n${check.verdict}` : ''}`,
+              text: `Escritos ${chars} caracteres${check ? `\n${check.verdict}` : ''}`,
             },
           ],
-          details: { chars: text.length, verified: verifiedOf(check) },
+          details: { chars, verified: verifiedOf(check) },
           at: null,
         };
       }
