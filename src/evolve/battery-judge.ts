@@ -105,6 +105,7 @@ export const BATTERY_CALL_KIND: Readonly<Record<string, 'lee' | 'actua'>> = {
   read: 'lee',
   list: 'lee',
   write: 'actua',
+  'calendar.agenda': 'lee',
   'memory.recall': 'lee',
   'memory.get': 'lee',
   'memory.list': 'lee',

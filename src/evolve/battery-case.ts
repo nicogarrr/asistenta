@@ -18,6 +18,7 @@ import { PersonalAgent } from '../core/agent.js';
 import { Store } from '../db.js';
 import { MemoryStore } from '../memory.js';
 import { type Decision, Gate, type ToolCall as GateCall } from '../permissions.js';
+import { createCalendarTool } from '../tools/calendar.js';
 import { createMemoryTool } from '../tools/memory.js';
 import { createReminderTool } from '../tools/reminder.js';
 import type { BatteryCase, Scheduled, ToolCall, Trace } from './battery-judge.js';
@@ -35,6 +36,21 @@ export const INERT_TOOLS = [
   'computer',
   'renfe',
 ] as const;
+
+/**
+ * El calendario real (solo lectura: «agenda»), con fuentes vacías y sin red. Así B21
+ * («crea un evento») ve la misma herramienta que en producción y su aviso de que no
+ * puede crear nada; sin ella el caso medía otra cosa.
+ */
+export function batteryCalendarTool(): AgentTool {
+  return createCalendarTool({
+    getUrl: async () => undefined,
+    fetchText: async () => {
+      throw new Error(INERT_TEXT);
+    },
+    readLocal: async () => undefined,
+  }) as unknown as AgentTool;
+}
 
 /** read/write/list de verdad, pero encerradas en el espacio de trabajo de la carpeta temporal. */
 export const WORKSPACE_TOOLS = ['read', 'write', 'list'] as const;
@@ -170,7 +186,8 @@ class TracingGate extends Gate {
       dbPath,
       grantWindowMs: 0,
       // read/write/list solo ven la carpeta temporal (workspaceTools): no hay nada que aprobar.
-      allow: ['memory', 'reminder', ...WORKSPACE_TOOLS],
+      // calendar: solo «agenda» y aquí sin fuentes (batteryCalendarTool).
+      allow: ['memory', 'reminder', 'calendar', ...WORKSPACE_TOOLS],
       approver: () => {
         asked.n++;
         return false;
@@ -233,6 +250,7 @@ export async function runBatteryCase(c: BatteryCase, deps: CaseRunDeps): Promise
         sync: () => {},
         now,
       }) as unknown as AgentTool,
+      batteryCalendarTool(),
       ...workspaceTools(join(dir, 'espacio')),
       ...INERT_TOOLS.map(inertTool),
     ].map((t) => recorded(t, calls));
