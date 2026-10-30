@@ -267,6 +267,13 @@ import {
 } from './command-routine.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import {
+  FUNCIONES_CALLBACK_PREFIX,
+  findArea,
+  funcionesButtons,
+  funcionesButtonText,
+  funcionesText,
+} from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
 import { createMcpTools } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
@@ -5475,6 +5482,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, helpText({ bold: true }), { quote: true, format: 'marks' });
   };
 
+  /** /funciones [área]: lo que sé hacer por áreas; el dueño en privado lo ve todo. */
+  const cmdFunciones = async (inbound: Inbound, args: string): Promise<void> => {
+    const view = { owner: isOwnerDm(inbound, vigilanteOwnerId) };
+    const area = findArea(args);
+    await say(inbound, funcionesText(view, args), {
+      quote: true,
+      buttons: funcionesButtons(view, args.trim() ? area?.id : undefined),
+    });
+  };
+
   const cmdStart = async (inbound: Inbound): Promise<void> => {
     await say(inbound, startText(inbound.displayName), { quote: true });
   };
@@ -6740,6 +6757,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['wake', 'asistenta'], run: (inbound, args) => cmdWake(inbound, args) },
     { names: ['status'], run: (inbound, args) => cmdStatus(inbound, args) },
     { names: ['start'], run: (inbound) => cmdStart(inbound) },
+    { names: ['funciones'], run: (inbound, args) => cmdFunciones(inbound, args) },
     { names: ['help'], run: (inbound) => cmdHelp(inbound) },
   ]);
 
@@ -6756,6 +6774,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     onPollingRecovered: () => {
       void notifyLastChat('Telegram reconectado.').catch(() => {});
+    },
+    onFuncionesButton: async (press) => {
+      const view = { owner: isOwnerDm(press, vigilanteOwnerId) };
+      return {
+        text: funcionesButtonText(press.data, view),
+        buttons: funcionesButtons(
+          view,
+          findArea(press.data.slice(FUNCIONES_CALLBACK_PREFIX.length))?.id,
+        ),
+      };
     },
     onTvButton: (press) =>
       tvButtonCommand(press.data, {
