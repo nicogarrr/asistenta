@@ -53,9 +53,20 @@ CREATE TABLE IF NOT EXISTS instincts (
   UNIQUE (pattern, category, scope)
 );
 CREATE INDEX IF NOT EXISTS idx_instincts_scope ON instincts(scope, confidence);
+CREATE TABLE IF NOT EXISTS instinct_sweeps (
+  id      INTEGER PRIMARY KEY CHECK (id = 1),
+  last_at INTEGER NOT NULL
+);
 `;
 
 const DAY_MS = 86_400_000;
+/**
+ * The daemon sweeps at every boot. Without a floor, ten restarts in one
+ * afternoon (updates, a Windows reboot, a crash loop) took ten points off every
+ * pattern unseen for 90 days and wiped out rules the user had built over months.
+ * At most one sweep per day counts; the rest are no-ops.
+ */
+export const DECAY_MIN_INTERVAL_MS = DAY_MS;
 
 type InstinctRow = {
   id: string;
@@ -115,11 +126,23 @@ export class InstinctStore {
 
   /**
    * One point of confidence off every pattern not seen in `days`, deleting the
-   * ones that hit zero. Returns how many were touched. Decay is per sweep, not
-   * per day, so the caller decides how often to run it.
+   * ones that hit zero. Returns how many were touched. Decay is per sweep, but
+   * sweeps closer than {@link DECAY_MIN_INTERVAL_MS} to the previous one do
+   * nothing (and return 0), so restarting the daemon often never speeds it up.
    */
   decay(days = 90): number {
-    const cutoff = Date.now() - days * DAY_MS;
+    const now = Date.now();
+    const last = this.#db.prepare('SELECT last_at FROM instinct_sweeps WHERE id = 1').get() as
+      | { last_at: number }
+      | undefined;
+    if (last && now >= Number(last.last_at) && now - Number(last.last_at) < DECAY_MIN_INTERVAL_MS)
+      return 0;
+    this.#db
+      .prepare(
+        'INSERT INTO instinct_sweeps (id, last_at) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET last_at = excluded.last_at',
+      )
+      .run(now);
+    const cutoff = now - days * DAY_MS;
     const result = this.#db
       .prepare(
         'UPDATE instincts SET confidence = MAX(confidence - 1, 0) WHERE last_seen < ? AND confidence > 0',
@@ -129,11 +152,15 @@ export class InstinctStore {
     return Number(result.changes);
   }
 
-  /** Force a pattern up to rule weight, e.g. after the user confirms it. */
+  /**
+   * Force a pattern up to rule weight, e.g. after the user confirms it. Never
+   * lowers a pattern already above it, and a confirmation counts as a sighting
+   * (otherwise the next sweep would take the point straight back).
+   */
   promote(id: string): void {
     const result = this.#db
-      .prepare('UPDATE instincts SET confidence = ? WHERE id = ?')
-      .run(RULE_THRESHOLD, id);
+      .prepare('UPDATE instincts SET confidence = MAX(confidence, ?), last_seen = ? WHERE id = ?')
+      .run(RULE_THRESHOLD, Date.now(), id);
     if (Number(result.changes) === 0) throw new Error(`no existe el instinto: ${id}`);
   }
 
