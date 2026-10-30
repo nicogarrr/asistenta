@@ -293,6 +293,13 @@ export interface MissedSlot {
  * or null when nothing was missed. Only the LAST missed slot counts: a job every
  * 5 minutes with the PC off for an hour is recovered once, not twelve times.
  */
+/** Gracia de un hueco: la mitad de su periodo, entre 2 min y 2 h. */
+function graceAfter(cron: Cron, slot: Date): number {
+  const after = cron.nextRun(slot);
+  const period = after ? after.getTime() - slot.getTime() : 2 * CATCHUP_MAX_GRACE_MS;
+  return Math.min(CATCHUP_MAX_GRACE_MS, Math.max(CATCHUP_MIN_GRACE_MS, Math.floor(period / 2)));
+}
+
 export function findMissedSlot(expr: string, since: Date, now: Date): MissedSlot | null {
   let cron: Cron;
   try {
@@ -313,12 +320,7 @@ export function findMissedSlot(expr: string, since: Date, now: Date): MissedSlot
       from = next;
     }
     if (!last || i >= CATCHUP_MAX_SLOTS) return null;
-    const after = cron.nextRun(last);
-    const period = after ? after.getTime() - last.getTime() : 2 * CATCHUP_MAX_GRACE_MS;
-    const graceMs = Math.min(
-      CATCHUP_MAX_GRACE_MS,
-      Math.max(CATCHUP_MIN_GRACE_MS, Math.floor(period / 2)),
-    );
+    const graceMs = graceAfter(cron, last);
     return { slot: last, graceMs, withinGrace: nowMs - last.getTime() <= graceMs };
   } finally {
     cron.stop();
@@ -591,6 +593,7 @@ export class RoutineRunner {
       });
     }
     let job: Cron;
+    let expected: Date | null = null;
     try {
       job = new Cron(
         expr,
@@ -612,6 +615,12 @@ export class RoutineRunner {
           ...(startAt ? { startAt } : {}),
         },
         () => {
+          // The slot this fire belongs to. croner keeps its timer through a sleep
+          // of the PC and fires the overdue slot on wake, so a fire can be hours
+          // late: it gets the same «con retraso» label and grace limit as the
+          // catch-up path instead of running as if it were on time.
+          const slot = expected;
+          expected = job.nextRun();
           // Re-read at fire time: the prompt or the schedule may have been
           // corrected since registration.
           const fresh = this.#store.getRoutine(routine.scope, routine.name);
@@ -628,9 +637,36 @@ export class RoutineRunner {
             this.sync();
             return;
           }
+          const lateMs = slot ? this.#now().getTime() - slot.getTime() : 0;
+          if (slot && lateMs > CATCHUP_SETTLE_MS) {
+            const slotIso = slot.toISOString();
+            const handled = `${key}@${slotIso}`;
+            if (this.#handledSlots.has(handled)) return;
+            if (this.#handledSlots.size > 1000) this.#handledSlots.clear();
+            this.#handledSlots.add(handled);
+            const graceMs = graceAfter(job, slot);
+            if (lateMs > graceMs) {
+              this.#missed.set(key, slotIso);
+              log.warn('routine fired after a sleep beyond its grace window, not run', {
+                scope: routine.scope,
+                name: routine.name,
+                slot: localStamp(slot),
+                graceMin: Math.round(graceMs / 60_000),
+              });
+              return;
+            }
+            log.info('routine fired late after a sleep: running it marked late', {
+              scope: routine.scope,
+              name: routine.name,
+              slot: localStamp(slot),
+            });
+            void this.#runRoutine(fresh, { scheduledFor: slot });
+            return;
+          }
           void this.#runRoutine(fresh);
         },
       );
+      expected = job.nextRun();
     } catch (err) {
       log.warn('croner refused the routine pattern', {
         scope: routine.scope,
