@@ -105,9 +105,16 @@ function removeQuietly(file: string): void {
   }
 }
 
+/**
+ * Un único rango `bytes=a-b` (lo que piden los reproductores de la tele). Lo que no
+ * entendemos (varios rangos, otra unidad) se ignora y se sirve el fichero entero con
+ * 200, como permite el RFC 9110 §14.2; 416 solo para un rango que no cabe.
+ */
 function parseRange(header: string | undefined, size: number): [number, number] | null | 'bad' {
   if (!header) return null;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  const h = header.trim();
+  if (!/^bytes=/i.test(h) || h.includes(',')) return null;
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(h);
   if (!m) return 'bad';
   let start: number;
   let end: number;
@@ -199,12 +206,23 @@ export function serveFileToHost(opts: ServeOptions): Promise<ServedFile> {
     };
     const timer = setTimeout(close, opts.ttlMs ?? DEFAULT_TTL_MS);
     timer.unref?.();
-    server.once('error', (err) => {
+    let listening = false;
+    server.on('error', (err) => {
+      if (listening) {
+        // Tras abrir, un error del servidor lo cierra del todo (y borra el audio):
+        // antes solo se paraba el temporizador y el puerto quedaba abierto para siempre.
+        log.warn('altavoz: el servidor del audio para la tele ha fallado; lo cierro', {
+          error: err.message,
+        });
+        close();
+        return;
+      }
       clearTimeout(timer);
       if (opts.deleteOnClose !== false) removeQuietly(opts.file);
       reject(err);
     });
     server.listen(opts.port ?? 0, opts.bindIp, () => {
+      listening = true;
       const { port } = server.address() as AddressInfo;
       resolve({
         url: `http://${opts.bindIp}:${port}${route}`,
