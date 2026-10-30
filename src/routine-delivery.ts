@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { localDay, wallClock } from './datecontext.js';
 import { uniqueTmpPath } from './fs-tmp.js';
 
 /**
@@ -80,10 +81,11 @@ export function writeRoutineOutput(
   body: string,
   now = new Date(),
 ): string {
-  const day = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const day = localDay(now);
+  const w = wallClock(now);
   const file = join(baseDir, safeRoutineDirName(name), `${day}.md`);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  appendFileSync(file, `## ${pad(now.getHours())}:${pad(now.getMinutes())}\n\n${body.trim()}\n\n`, {
+  appendFileSync(file, `## ${pad(w.hour)}:${pad(w.minute)}\n\n${body.trim()}\n\n`, {
     mode: 0o600,
   });
   return file;
