@@ -1318,8 +1318,14 @@ ${renderFormatScript()}
             detalles.appendChild(nodo('summary', null, 'Plan y contexto'));
             detalles.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id + ' · Ámbito: ' + objetivo.scope));
             var lista = document.createElement('ul');
-            objetivo.plan.forEach(function (paso) { lista.appendChild(nodo('li', null, (paso.done ? '✓ Hecho: ' : '○ Pendiente: ') + paso.text)); });
-            detalles.appendChild(lista);
+            // Un objetivo sin plan (o con un paso raro) no debe tumbar toda la tarjeta.
+            var pasos = Array.isArray(objetivo.plan) ? objetivo.plan : [];
+            pasos.forEach(function (paso) {
+              if (!paso || typeof paso !== 'object') return;
+              lista.appendChild(nodo('li', null, (paso.done ? '✓ Hecho: ' : '○ Pendiente: ') + (paso.text || '')));
+            });
+            if (lista.children.length) detalles.appendChild(lista);
+            else detalles.appendChild(nodo('p', 'muted', 'Sin plan todavía.'));
             if (objetivo.blockedReason) detalles.appendChild(nodo('p', 'texto', 'Bloqueo: ' + objetivo.blockedReason));
             if (objetivo.lastOutcome) detalles.appendChild(nodo('p', 'texto', 'Último resultado: ' + objetivo.lastOutcome));
             detalles.appendChild(nodo('p', 'muted', 'Actualizado: ' + (formato.formatearCampo('updatedAt', objetivo.updatedAt) || objetivo.updatedAt)));
