@@ -5,7 +5,7 @@
  *
  * Guardarlo nunca puede impedir arrancar: cualquier error se ignora.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { PreflightCheck } from './preflight.js';
 
@@ -33,13 +33,19 @@ export function saveStartupRecord(
   checks: readonly PreflightCheck[],
   now: Date = new Date(),
 ): void {
+  const tmp = `${path}.${process.pid}.${now.getTime()}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.${now.getTime()}.tmp`;
     writeFileSync(tmp, JSON.stringify(startupRecordFrom(checks, now)));
     renameSync(tmp, path);
   } catch {
-    // Solo es un diagnóstico: arrancar importa más que recordarlo.
+    // Solo es un diagnóstico: arrancar importa más que recordarlo. Pero sin dejar
+    // un .tmp por arranque si el rename falla (en Windows, fichero abierto).
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // Ni el .tmp se puede quitar: no hay nada más que hacer.
+    }
   }
 }
 
