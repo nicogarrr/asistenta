@@ -63,8 +63,13 @@ export function daemonRunState(
     pid?: number | null;
     pidState?: string;
     processState?: string;
+    heartbeatState?: string;
   };
   if (r.pidState === 'missing' || r.processState === 'dead') return 'stopped';
+  // agent.pid vacío o a medias (un corte de luz a mitad de escritura) y sin latido
+  // reciente: nadie la está moviendo. Antes quedaba «dudoso» y nunca se relanzaba.
+  if (r.pidState === 'invalid' && (r.heartbeatState === 'stale' || r.heartbeatState === 'missing'))
+    return 'stopped';
   if (r.pidState === 'valid' && r.processState === 'alive') {
     // Tras un cuelgue el pid queda en agent.pid y Windows lo reutiliza pronto: si el
     // proceso vivo no es el que arrancó Asistenta (agent.pid.start), no está en marcha.
