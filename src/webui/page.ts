@@ -755,7 +755,11 @@ ${renderFormatScript()}
           rechazo.sinToken = true;
           throw rechazo;
         }
-        if (!respuesta.ok) throw new Error(formato.mensajeDeError(respuesta.status, datos));
+        if (!respuesta.ok) {
+          var fallo = new Error(formato.mensajeDeError(respuesta.status, datos));
+          fallo.estado = respuesta.status;
+          throw fallo;
+        }
         if (!esJson) throw new Error('La respuesta del panel no es JSON válido.');
         return datos;
       }
@@ -1202,11 +1206,22 @@ ${renderFormatScript()}
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
           if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
+          avisoConexion(false);
         } catch (error) {
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
           cuerpo.textContent = error && error.message ? error.message : 'No se pudo repetir el mensaje.';
           if (error && error.sinConexion) avisoConexion(true, true);
+          // Si la repetición también falla, se puede volver a intentar (sin conexión o
+          // turno fallido). No si no hay nada que repetir (409) o falta el token.
+          if (error && (error.estado === 409 || error.sinToken)) return;
+          var otraVez = nodo('button', 'mini', 'Reintentar');
+          otraVez.type = 'button';
+          otraVez.addEventListener('click', function () {
+            otraVez.disabled = true;
+            repetirUltimo();
+          });
+          espera.appendChild(otraVez);
         }
       }
 
