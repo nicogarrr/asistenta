@@ -10,6 +10,7 @@
 import {
   etiquetaCampo,
   formatearCampo,
+  mensajeDeError,
   resumenAprobacion,
   tiempoRestante,
 } from './client-format.js';
@@ -36,7 +37,9 @@ export function renderFormatScript(): string {
   var tiempoRestante = ${tiempoRestante.toString()};
   var etiquetaCampo = ${etiquetaCampo.toString()};
   var formatearCampo = ${formatearCampo.toString()};
+  var mensajeDeError = ${mensajeDeError.toString()};
   return {
+    mensajeDeError: mensajeDeError,
     resumenAprobacion: resumenAprobacion,
     tiempoRestante: tiempoRestante,
     etiquetaCampo: etiquetaCampo,
@@ -159,6 +162,12 @@ export function renderPage(): string {
       background: #2a1215;
       color: var(--aviso);
     }
+    .token { display: grid; gap: 8px; border-color: #264357; background: var(--panel); color: var(--texto); }
+    .token .token-fila { display: flex; gap: 8px; flex-wrap: wrap; }
+    .token input { flex: 1 1 200px; min-width: 0; font: inherit; color: var(--texto); background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; }
+    .token p { margin: 0; font-size: 12px; }
+    .error-bloque { display: grid; gap: 8px; justify-items: start; }
+    .error-bloque p { margin: 0; }
     .rejilla {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -344,6 +353,14 @@ export function renderPage(): string {
 
   <main id="contenido">
     <p id="aviso" class="aviso" role="alert" hidden></p>
+    <form id="form-token" class="aviso token" hidden>
+      <label for="campo-token">Token del panel (PA_WEB_TOKEN)</label>
+      <div class="token-fila">
+        <input id="campo-token" type="password" autocomplete="off" spellcheck="false" required />
+        <button type="submit">Guardar y cargar</button>
+      </div>
+      <p class="muted">Se guarda solo en este navegador.</p>
+    </form>
     <noscript>
       <p class="aviso">Este panel necesita JavaScript para consultar el estado local.</p>
     </noscript>
@@ -556,83 +573,73 @@ ${renderFormatScript()}
         contenedor.replaceChildren(nodo('p', 'muted', 'Cargando…'));
       }
 
-      function pintarError(contenedor, error) {
+      function pintarError(contenedor, error, reintentar) {
         var mensaje =
           error && error.message ? error.message : 'No se pudo cargar la información.';
-        contenedor.replaceChildren(nodo('p', 'error', mensaje));
+        var bloque = nodo('div', 'error-bloque');
+        bloque.appendChild(nodo('p', 'error', mensaje));
+        if (reintentar && !(error && error.sinToken)) {
+          var boton = nodo('button', 'mini', 'Reintentar');
+          boton.type = 'button';
+          boton.addEventListener('click', function () {
+            reintentar();
+          });
+          bloque.appendChild(boton);
+        }
+        contenedor.replaceChildren(bloque);
       }
 
-      async function pedir(ruta) {
-        if (!token) {
-          throw new Error(
-            'Falta el token de acceso. Abre /?token=TU_TOKEN una vez para guardarlo en este navegador.'
-          );
-        }
+      function errorSinToken() {
+        var error = new Error('Falta el token: pégalo arriba para cargar esta sección.');
+        error.sinToken = true;
+        return error;
+      }
+
+      function pedirToken(texto) {
+        mostrarAviso(texto);
+        document.getElementById('form-token').hidden = false;
+      }
+
+      async function llamar(ruta, opciones) {
+        if (!token) throw errorSinToken();
+        var cabeceras = { Authorization: 'Bearer ' + token };
+        if (opciones.cuerpo !== undefined) cabeceras['Content-Type'] = 'application/json';
         var respuesta;
         try {
           respuesta = await fetch(ruta, {
-            method: 'GET',
-            headers: { Authorization: 'Bearer ' + token },
+            method: opciones.metodo,
+            headers: cabeceras,
+            body: opciones.cuerpo === undefined ? undefined : JSON.stringify(opciones.cuerpo),
             cache: 'no-store',
             credentials: 'omit'
           });
         } catch (error) {
-          throw new Error('No se pudo conectar con el panel local.');
+          throw new Error('No se pudo conectar con el asistente. ¿Está encendido?');
+        }
+        var datos = null;
+        var esJson = true;
+        try {
+          datos = await respuesta.json();
+        } catch (error) {
+          esJson = false;
         }
         if (respuesta.status === 401) {
-          throw new Error(
-            'Token rechazado. Vuelve a abrir /?token=TU_TOKEN con el token correcto.'
-          );
+          pedirToken('Token rechazado: pega el token correcto (PA_WEB_TOKEN).');
+          var rechazo = new Error(formato.mensajeDeError(401, datos));
+          rechazo.sinToken = true;
+          throw rechazo;
         }
-        if (!respuesta.ok) {
-          throw new Error('El panel respondió con el código ' + respuesta.status + '.');
-        }
-        try {
-          return await respuesta.json();
-        } catch (error) {
-          throw new Error('La respuesta del panel no es JSON válido.');
-        }
+        if (!respuesta.ok) throw new Error(formato.mensajeDeError(respuesta.status, datos));
+        if (!esJson) throw new Error('La respuesta del panel no es JSON válido.');
+        return datos;
       }
 
-      async function enviar(ruta, cuerpo) {
-        if (!token) {
-          throw new Error(
-            'Falta el token de acceso. Abre /?token=TU_TOKEN una vez para guardarlo en este navegador.'
-          );
-        }
-        var respuesta;
-        try {
-          respuesta = await fetch(ruta, {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + token,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(cuerpo),
-            cache: 'no-store',
-            credentials: 'omit'
-          });
-        } catch (error) {
-          throw new Error('No se pudo conectar con el panel local.');
-        }
-        if (respuesta.status === 401) {
-          throw new Error(
-            'Token rechazado. Vuelve a abrir /?token=TU_TOKEN con el token correcto.'
-          );
-        }
-        if (!respuesta.ok) {
-          var detalle = '';
-          try {
-            var datos = await respuesta.json();
-            if (datos && datos.error) detalle = ': ' + datos.error;
-          } catch (error) {}
-          throw new Error('El panel respondió con el código ' + respuesta.status + detalle + '.');
-        }
-        try {
-          return await respuesta.json();
-        } catch (error) {
-          throw new Error('La respuesta del panel no es JSON válido.');
-        }
+      function pedir(ruta) {
+        return llamar(ruta, { metodo: 'GET' });
+      }
+
+      function enviar(ruta, cuerpo) {
+        return llamar(ruta, { metodo: 'POST', cuerpo: cuerpo });
       }
 
       function listaDeSesiones(datos) {
@@ -889,8 +896,9 @@ ${renderFormatScript()}
         try {
           pintarAprobaciones(contenedor, await pedir('/api/approvals'));
         } catch (error) {
-          pintarError(contenedor, error);
+          pintarError(contenedor, error, cargarAprobaciones); return false;
         }
+        return true;
       }
 
       // Recarga periódica: sin «Cargando…» y sin repintar si el usuario está pulsando un botón.
@@ -962,7 +970,8 @@ ${renderFormatScript()}
             } else tarjeta.appendChild(nodo('p', 'muted', 'Continúa en el hilo original de Telegram: ' + objetivo.thread + '. El chat del panel solo abre el principal.'));
             contenedor.appendChild(tarjeta);
           });
-        } catch (error) { pintarError(contenedor, error); }
+        } catch (error) { pintarError(contenedor, error, cargarObjetivos); return false; }
+        return true;
       }
 
       async function cargarEstado() {
@@ -971,8 +980,9 @@ ${renderFormatScript()}
         try {
           contenedor.replaceChildren(renderValor(await pedir('/api/status'), 0));
         } catch (error) {
-          pintarError(contenedor, error);
+          pintarError(contenedor, error, cargarEstado); return false;
         }
+        return true;
       }
 
       async function cargarSesiones() {
@@ -983,8 +993,9 @@ ${renderFormatScript()}
         try {
           pintarSesiones(contenedor, await pedir(ruta));
         } catch (error) {
-          pintarError(contenedor, error);
+          pintarError(contenedor, error, cargarSesiones); return false;
         }
+        return true;
       }
 
       async function cargarMemoria() {
@@ -995,8 +1006,9 @@ ${renderFormatScript()}
         try {
           contenedor.replaceChildren(renderValor(await pedir(ruta), 0));
         } catch (error) {
-          pintarError(contenedor, error);
+          pintarError(contenedor, error, cargarMemoria); return false;
         }
+        return true;
       }
 
       async function cargarAuditoria() {
@@ -1005,8 +1017,9 @@ ${renderFormatScript()}
         try {
           pintarAuditoria(contenedor, await pedir('/api/audit/verify'));
         } catch (error) {
-          pintarError(contenedor, error);
+          pintarError(contenedor, error, cargarAuditoria); return false;
         }
+        return true;
       }
 
       var refrescos = {
@@ -1022,6 +1035,7 @@ ${renderFormatScript()}
         var boton = document.getElementById('refrescar');
         var marca = document.getElementById('actualizado');
         boton.disabled = true;
+        marca.textContent = 'Actualizando…';
         document.body.setAttribute('aria-busy', 'true');
         Promise.all([
           cargarObjetivos(),
@@ -1031,13 +1045,36 @@ ${renderFormatScript()}
           cargarAuditoria(),
           cargarAprobaciones()
         ])
-          .catch(function (error) {})
+          .then(function (resultados) {
+            var fallos = resultados.filter(function (ok) { return !ok; }).length;
+            var hora = new Date().toLocaleTimeString('es-ES');
+            if (!token) marca.textContent = 'Sin token';
+            else if (fallos === 0) marca.textContent = 'Actualizado · ' + hora;
+            else marca.textContent = fallos + (fallos === 1 ? ' sección' : ' secciones') + ' con error · ' + hora;
+          })
+          .catch(function (error) {
+            marca.textContent = 'Error al actualizar';
+          })
           .finally(function () {
             boton.disabled = false;
             document.body.removeAttribute('aria-busy');
-            marca.textContent = 'Actualizado · ' + new Date().toLocaleTimeString('es-ES');
           });
       }
+
+      document.getElementById('form-token').addEventListener('submit', function (evento) {
+        evento.preventDefault();
+        var campo = document.getElementById('campo-token');
+        var valor = campo.value.trim();
+        if (!valor) return;
+        token = valor;
+        try {
+          window.localStorage.setItem(CLAVE_TOKEN, valor);
+        } catch (error) {}
+        campo.value = '';
+        evento.currentTarget.hidden = true;
+        mostrarAviso('');
+        refrescarTodo();
+      });
 
       var temporizadorSesiones = 0;
       document.getElementById('buscar-sesiones').addEventListener('input', function () {
@@ -1072,9 +1109,7 @@ ${renderFormatScript()}
       }
 
       if (!token) {
-        mostrarAviso(
-          'Falta el token de acceso. Abre /?token=TU_TOKEN una vez; se guardará en este navegador.'
-        );
+        pedirToken('Falta el token de acceso: pégalo aquí o abre /?token=TU_TOKEN una vez.');
       }
 
       if ('serviceWorker' in navigator) {
