@@ -265,6 +265,21 @@ export function scopeKey(tool: string, action: string, args: Record<string, unkn
 }
 
 /**
+ * Herramientas cuyo «Siempre» vale para UNA acción concreta (herramienta, acción y
+ * argumentos), no para la herramienta entera. Antes, un «Siempre» dado a un clic de
+ * «Enviar» en el navegador autorizaba cualquier envío, borrado o reserva posterior,
+ * en cualquier chat; con `servicio` y `windows` pasaba lo mismo.
+ */
+export const ACTION_SCOPED_TOOLS: ReadonlySet<string> = new Set(['browser', 'servicio', 'windows']);
+
+/** La clave con la que se guarda un «Siempre»/«Sesión» aprobado por el humano. */
+export function approvalScopeKey(call: { tool: string; args: Record<string, unknown> }): string {
+  if (!ACTION_SCOPED_TOOLS.has(call.tool)) return call.tool;
+  const action = typeof call.args.action === 'string' ? call.args.action : '';
+  return scopeKey(call.tool, action, call.args);
+}
+
+/**
  * Techo de gasto: true cuando `amountCents` es un entero seguro no negativo que
  * no supera `cap`. Un importe inválido NUNCA se considera dentro del techo; la
  * regla de dinero solo lo usa para ESCALAR a pregunta, nunca para autoaprobar.

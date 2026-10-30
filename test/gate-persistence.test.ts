@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalChoice, ApprovalScope } from '../src/channels/telegram.js';
 import { approvalsDbPath, createDaemonGate } from '../src/cli.js';
 import { paths } from '../src/paths.js';
+import { approvalScopeKey } from '../src/permissions.js';
 
 const MAIN = 'telegram:main:42#main';
 
@@ -70,7 +71,8 @@ describe('standing approvals across a daemon restart', () => {
     const first = await gate.check(MAIN, probe(1));
     expect(first.verdict).toBe('allow');
     expect(asked).toEqual(['question']);
-    expect(gate.scopeFor(MAIN, 'browser')).toBe('always');
+    // «Siempre» del navegador es por acción (approvalScopeKey), no por herramienta.
+    expect(gate.scopeFor(MAIN, approvalScopeKey(probe(1)))).toBe('always');
     // The file is the whole point: without it there is nothing to read on the next run.
     expect(existsSync(approvalsDbPath(dir))).toBe(true);
   });
@@ -91,9 +93,10 @@ describe('standing approvals across a daemon restart', () => {
       dbPath: approvalsDbPath(dir),
       ask: channel('refuse'),
     });
-    expect(after.scopeFor('telegram:main:42#m99', 'browser')).toBe('always');
+    expect(after.scopeFor('telegram:main:42#m99', approvalScopeKey(probe(1)))).toBe('always');
 
-    const second = await after.check('telegram:main:42#m99', probe(2));
+    // La misma acción exacta (el «Siempre» es por acción, no por herramienta).
+    const second = await after.check('telegram:main:42#m99', probe(1));
     expect(second.verdict).toBe('allow');
     // The reason is the assertion that matters: it was allowed by the stored grant, not
     // by a second question the fake channel happened to approve.
@@ -137,6 +140,9 @@ describe('standing approvals across a daemon restart', () => {
     // never run unattended. `shell` ya no admite "Siempre" (scopes-v2), así que el
     // escenario se prueba con la herramienta que aún puede tenerlo.
     await gate.check(MAIN, probe(1));
+    // El botón «Siempre» ya guarda por acción; un permiso de herramienta entera aún
+    // puede existir (disco antiguo, /permisos), y es el que esta prueba necesita.
+    gate.setScope(MAIN, 'browser', 'always');
     const benign = await gate.check(MAIN, probe(2));
     expect(benign.reason).toBe('always-allow scope');
     expect(asked).toHaveLength(1);
