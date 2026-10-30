@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { TELEGRAM_COMMANDS } from '../src/channels/telegram-commands.js';
+import { helpText } from '../src/channels/telegram-help.js';
 
 describe('Telegram command discovery', () => {
   it('offers every canonical command without duplicates and within Telegram limits', () => {
@@ -15,9 +16,12 @@ describe('Telegram command discovery', () => {
   });
   it('describes recording and live photos as different operations', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
+    const help = helpText();
     expect(cli).not.toContain('/watch live');
-    expect(cli).toContain('/screen live');
-    expect(cli).toContain('/screen off');
+    expect(help).not.toContain('/watch live');
+    // /help vive en telegram-help.ts desde que se agrupó por secciones.
+    expect(help).toContain('/screen [live|off]');
+    expect(help).toMatch(/\/watch \[segundos.*vídeo/);
     expect(TELEGRAM_COMMANDS.find((x) => x.command === 'watch')?.description).toContain('vídeo');
     expect(TELEGRAM_COMMANDS.find((x) => x.command === 'screen')?.description).toContain('foto');
   });

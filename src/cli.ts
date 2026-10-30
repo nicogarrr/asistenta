@@ -195,6 +195,7 @@ import {
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 import { cacheFullReply, isMoreRequest, takeFullReply } from './channels/telegram.js';
+import { helpText, startText } from './channels/telegram-help.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { parseMcpServers } from './mcp/client.js';
@@ -5234,53 +5235,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const cmdHelp = async (inbound: Inbound): Promise<void> => {
-    await say(
-      inbound,
-      [
-        'Habla conmigo normal y te contesto a cada mensaje por separado.',
-        '',
-        '/screen [live|off] - captura ahora; live actualiza una foto; off detiene el directo',
-        '/watch [segundos [fps]] - graba la pantalla y te manda el vídeo',
-        '/topic <nombre> - abre una conversación; /topics para verlas',
-        '/learn <nombre> ⬦ /learn end - guarda una rutina de lo que hagamos (con {parametros} es una macro)',
-        '/routine <nombre> - repite una rutina (macro/<nombre> clave=valor con parámetros); con horario en palabras crea una programada',
-        '/routines - lista de rutinas',
-        '/agenda - calendario, pendientes, rutinas y objetivos; /agenda rutinas para horarios',
-        '/cron [add horario | tarea ⬦ del <nombre>] - programa, lista y borra rutinas sin reiniciar',
-        '/disparador <mensaje|archivo|precio> <coincidencia> | <rutina> - dispara una rutina cuando pasa algo (sin gastar tokens); /disparadores lista, /disparador del <n> borra',
-        '/ocr [md|todo] - manda un PDF o foto con este pie: te lo devuelvo con texto seleccionable (md = Markdown, todo = ambos)',
-        '/ojo [on|off] - ojo de águila: avisos proactivos (estado, encender, apagar)',
-        '/ignora <n> ⬦ /ignorados - descarta un aviso [#n]; reglas de ignorar',
-        '/avisos [menos|minimo|normal] - ritmo de avisos del filtro',
-        '/memory - lo que recuerdo de ti',
-        '/steer <instrucción> - cambia lo que estoy haciendo ahora mismo sin pararlo',
-        '/pendientes - lo que te tengo que recordar',
-        '/recordatorios [borrar <n>] - tus recordatorios con la próxima vez que suenan; borrar uno sin gastar tokens',
-        '/deshacer - repone el fichero que escribí por última vez como estaba antes',
-        '/resolver <id> - marca un pendiente como resuelto',
-        '/entreno_hoy ⬦ /ultimo ⬦ /peso - tu gimnasio en openGym (solo lectura)',
-        '/resumen - lo que he hecho esta semana (te lo mando solo los domingos por la tarde); /resumen hoy - el resumen del día',
-        '/evolucion - estado de la auto-mejora semanal; /evolucion idea <texto> ⬦ /evolucion ahora',
-        '/estado - cómo estoy: herramientas, errores de hoy',
-        '/consumo [hoy|semana|mes] - tokens y coste estimado por día y modelo, y el presupuesto diario',
-        '/servicios - herramientas externas adoptadas (p. ej. "adopta Kanvas") y su estado',
-        '/vigila <enlace> [nombre] - te aviso si cambia el precio de esa página',
-        '/vigilando ⬦ /dejar_de_vigilar <id> - lista o quita lo que vigilo',
-        '/buscar <texto> - busca en conversaciones pasadas',
-        '/investiga <pregunta> - investigo a fondo: varias fuentes y un informe con citas',
-        '/voice on|off - contestar con voz',
-        '/wake on|off - escuchar mi nombre en el micrófono',
-        '/conversacion on|off|estado|corte - tras mi nombre, hablar sin repetirlo (cortarme: apagado por defecto)',
-        '/permisos [revocar <herramienta>|todo] - los permisos "siempre" que me diste: verlos y quitarlos',
-        '/camera [on|off|clip|av [seg]] - foto, directo, vídeo o vídeo con tu voz',
-        '/play [volumen] - suena en el PC el último audio que me mandaste',
-        '/mic [segundos] - escuchar lo que oye el microfono',
-        '/screen live [intervalo_segundos] - foto en directo; /screen off para parar',
-        '/status on|off - avisarte de como voy mientras trabajo',
-        '/stop - para todo lo que esté corriendo',
-      ].join('\n'),
-      { quote: true },
-    );
+    await say(inbound, helpText(), { quote: true });
+  };
+
+  const cmdStart = async (inbound: Inbound): Promise<void> => {
+    await say(inbound, startText(inbound.displayName), { quote: true });
   };
 
   /**
@@ -6598,6 +6557,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               case 'status':
                 return cmdStatus(inbound, command.args);
               case 'start':
+                return cmdStart(inbound);
               case 'help':
                 return cmdHelp(inbound);
               default:
