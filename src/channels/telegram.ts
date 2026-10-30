@@ -1608,6 +1608,7 @@ function splitAt(text: string, budget: number): { head: string; rest: string; mi
       break;
     }
   }
+  cut = outsideMdLink(points, cut);
   const head = points.slice(0, cut).join('').replace(/\s+$/u, '');
   const tail = points.slice(cut).join('');
   // El separador se queda en el corte: sin líneas en blanco ni espacio inicial en el
@@ -1616,6 +1617,28 @@ function splitAt(text: string, budget: number): { head: string; rest: string; mi
   // midLine: el corte no cae en un salto de línea (la línea sigue en el próximo trozo).
   const midLine = cut < points.length && !/^[ \t]*\r?\n/u.test(tail);
   return { head: head || points.slice(0, cut).join(''), rest, midLine };
+}
+
+/** Enlace markdown `[texto](url)` como lo convierte telegramHtml (formatters.ts). */
+const MD_LINK_SPAN = /\[[^\]\n]+\]\(https?:\/\/(?:[^\s()<>"]|\([^\s()<>"]*\))+\)/gu;
+
+/**
+ * Si el corte (en puntos de código) cae dentro de un enlace `[texto](url)`, lo
+ * adelanta al inicio del enlace para que salga entero en el trozo siguiente: partido,
+ * Telegram enseñaría «[texto» en un mensaje y «resto](https://…)» en el otro. Un enlace
+ * que empieza el trozo (más largo que la ventana) se corta igual: no hay otra.
+ */
+function outsideMdLink(points: string[], cut: number): number {
+  const scope = points.slice(0, cut + 1).join('');
+  if (!scope.includes('[')) return cut;
+  const lookahead = points.slice(0, cut + 2100).join('');
+  for (const match of lookahead.matchAll(MD_LINK_SPAN)) {
+    const start = Array.from(lookahead.slice(0, match.index ?? 0)).length;
+    if (start >= cut) break;
+    const end = start + Array.from(match[0]).length;
+    if (cut < end) return start > 0 ? start : cut;
+  }
+  return cut;
 }
 
 const AUDIO_FILE_NAME = /\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|amr|wma)$/i;
