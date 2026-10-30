@@ -881,6 +881,7 @@ export function createComputerTool(
     const images: ContentBlock[] = [];
     const targets: Array<{ at: { x: number; y: number } | null }> = [];
     let before: Screenshot | null = null;
+    let baselineError: string | null = null;
     let cutAt = -1;
 
     let cancelledAt = -1;
@@ -907,10 +908,24 @@ export function createComputerTool(
         break;
       }
 
-      try {
-        if (config.verifyActions && isMutatingAction(name) && before === null) {
+      if (
+        config.verifyActions &&
+        isMutatingAction(name) &&
+        before === null &&
+        baselineError === null
+      ) {
+        // The baseline only feeds the final diff. A failed capture must not stop
+        // the batch: the action has not run yet, and reporting it as FAILED made
+        // a flaky capture block every desktop sequence. Not retried on later
+        // items: a baseline taken after item 0 ran would compare the wrong frames.
+        try {
           before = await backend.screenshot();
+        } catch (err) {
+          baselineError = errorText(err);
+          log.warn('batch verification baseline capture failed', { err });
         }
+      }
+      try {
         const out = await runAction(item, { verifyResult: false });
         results.push({ index: i, action: name, ok: true, result: out.details });
         for (const block of out.content) {
@@ -956,22 +971,38 @@ export function createComputerTool(
     }
 
     let verdict: BatchVerdict | null = null;
+    /** Set when the diff could not run although the actions did: never a silent gap. */
+    let uncompared: string | null = null;
     const beforeShot = before;
-    if (config.verifyActions && beforeShot && targets.length > 0) {
+    if (config.verifyActions && targets.length > 0 && !beforeShot && baselineError) {
+      uncompared = `la captura previa ha fallado (${baselineError})`;
+    } else if (config.verifyActions && beforeShot && targets.length > 0) {
       // Long enough for a repaint to land — once for the whole batch, which is
       // where most of the saved latency lives (see `verify`).
       await sleep(config.verifySettleMs);
-      const after = await backend.screenshot();
-      lastAfter = after;
-      // Each pair shares the two frames and differs in the window it checks: a
-      // click's window is the 96x96 box around its point (radius 48, matching a
-      // standalone click), an untargeted action counts anywhere.
-      const pairs = targets.map((target) => ({
-        before: beforeShot,
-        after,
-        roi: target.at ? expand({ ...target.at, width: 0, height: 0 }, 48) : undefined,
-      }));
-      verdict = await verifyBatch(pairs);
+      let after: Screenshot | null = null;
+      try {
+        after = await backend.screenshot();
+      } catch (err) {
+        // The actions already ran. Throwing here lost the per-item report and the
+        // model, seeing only an error, repeated the whole batch: double clicks,
+        // text typed twice.
+        log.warn('batch verification post-action capture failed', { err });
+        uncompared = `la captura posterior ha fallado (${errorText(err)})`;
+      }
+      if (after) {
+        const afterShot = after;
+        lastAfter = afterShot;
+        // Each pair shares the two frames and differs in the window it checks: a
+        // click's window is the 96x96 box around its point (radius 48, matching a
+        // standalone click), an untargeted action counts anywhere.
+        const pairs = targets.map((target) => ({
+          before: beforeShot,
+          after: afterShot,
+          roi: target.at ? expand({ ...target.at, width: 0, height: 0 }, 48) : undefined,
+        }));
+        verdict = await verifyBatch(pairs);
+      }
     }
 
     const okCount = results.filter((r) => r.ok).length;
@@ -984,6 +1015,10 @@ export function createComputerTool(
         return `${head}: FAILED — ${r.error ?? 'unknown error'}`;
       }),
       verdict ? verdict.reason : '',
+      uncompared
+        ? `VERIFICACION: no he podido comparar el lote: ${uncompared}. Las acciones marcadas ok SI ` +
+          'se han ejecutado: no repitas el lote; captura y comprueba el estado actual.'
+        : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -995,6 +1030,7 @@ export function createComputerTool(
         verified: verdict
           ? { done: verdict.done, changed: verdict.changed, total: verdict.total }
           : null,
+        ...(uncompared ? { verifyError: uncompared } : {}),
         ...scaling,
       },
     };
