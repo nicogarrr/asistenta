@@ -439,7 +439,12 @@ export async function runConsolidation(opts: {
 
   const backup = (file: string): void => {
     if (!existsSync(file)) return;
-    const target = join(dest, basename(file));
+    // Nunca pisar una copia ya hecha: con la regla de 20 h puede haber dos pasadas el
+    // mismo día (03:00 y 23:00) y la segunda sobrescribía la copia ORIGINAL de la
+    // primera con el fichero ya consolidado. Tampoco un scope que se llame como
+    // PERFIL.md puede pisar la del perfil.
+    let target = join(dest, basename(file));
+    for (let n = 1; existsSync(target); n++) target = join(dest, `${basename(file)}.${n}`);
     copyFileSync(file, target);
     backups.push(target);
   };
