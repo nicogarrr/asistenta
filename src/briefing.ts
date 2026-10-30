@@ -150,6 +150,8 @@ export function buildBriefing(input: BriefingInput): string {
  * - Una vez al día: si ya se envió hoy (a cualquier hora), no se repite.
  * - Recuperación: si el último envío fue otro día y ya pasó la hora, se manda ahora,
  *   aunque hayan pasado horas o el daemon llevara días parado.
+ * - Un último envío fechado en un día futuro (reloj corregido hacia atrás) no
+ *   bloquea: cuenta como sin registro.
  */
 export function briefingDue(lastMs: number | undefined, now: Date, hour = 8): boolean {
   const nowMs = now.getTime();
@@ -162,12 +164,18 @@ export function briefingDue(lastMs: number | undefined, now: Date, hour = 8): bo
 
   if (lastMs === undefined || !Number.isFinite(lastMs) || lastMs <= 0) return true;
   const last = new Date(lastMs);
-  if (!Number.isFinite(last.getTime()) || last.getTime() > nowMs) return false;
+  if (!Number.isFinite(last.getTime())) return false;
 
   // Comparar el día local, no el instante: un envío a las 07:00 de hoy ya es el de hoy.
-  return (
-    last.getFullYear() !== now.getFullYear() ||
-    last.getMonth() !== now.getMonth() ||
-    last.getDate() !== now.getDate()
-  );
+  const sameDay =
+    last.getFullYear() === now.getFullYear() &&
+    last.getMonth() === now.getMonth() &&
+    last.getDate() === now.getDate();
+  if (sameDay) return false;
+  // Un último envío fechado en un día FUTURO es imposible: el reloj iba adelantado
+  // y luego se corrigió. Antes bloqueaba el briefing hasta que pasara esa fecha
+  // (días o meses sin resumen). Se trata como "sin registro": se envía y el
+  // markSent de este envío deja la fecha buena. Un adelanto de minutos dentro de
+  // hoy cae en sameDay arriba y no duplica.
+  return true;
 }
