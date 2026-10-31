@@ -131,6 +131,31 @@ describe('instalar.mjs: instalación en un paso', () => {
     expect(d.copy).not.toHaveBeenCalled();
   });
 
+  it('token ya guardado y sin ID: usa el token guardado para el «hola», sin pedir el ID a mano', async () => {
+    const { d, vault, text } = deps({ answers: ['', '', 's'] });
+    vault.set('telegram:botToken', TOKEN).set('provider:apiKey', KEY);
+    d.vaultList = async () => [...vault.keys()];
+    const vaultGet = vi.fn(async (k: string) => vault.get(k) ?? null);
+    Object.assign(d, { vaultGet });
+    expect(await instalar(d)).toBe(0);
+    expect(vaultGet).toHaveBeenCalledWith('telegram:botToken');
+    expect(String(d.fetch.mock.calls[0]?.[0])).toContain(`bot${TOKEN}/getUpdates`);
+    expect(vault.get('telegram:allowedUserIds')).toBe('42');
+    expect(d.vaultSet).toHaveBeenCalledTimes(1);
+    expect(d.ask).not.toHaveBeenCalledWith(expect.stringContaining('Escribe tu ID'));
+    expect(text()).not.toContain(TOKEN);
+  });
+
+  it('token guardado que Telegram ya no acepta: lo dice y pide pegar uno nuevo', async () => {
+    const { d, vault, text } = deps({ answers: ['', ''], fetch: vi.fn(async () => res(401)) });
+    vault.set('telegram:botToken', TOKEN).set('provider:apiKey', KEY);
+    d.vaultList = async () => [...vault.keys()];
+    Object.assign(d, { vaultGet: async () => TOKEN });
+    expect(await instalar(d)).toBe(1);
+    expect(text()).toContain('el token guardado ya no vale');
+    expect(text()).not.toContain(TOKEN);
+  });
+
   it('ayudantes', async () => {
     expect(nodeMajor('v24.1.0')).toBe(24);
     expect(nodeMajor('raro')).toBe(0);
