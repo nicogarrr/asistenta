@@ -130,16 +130,30 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
   return 0;
 }
 
+/** Sin espacio o sin permiso en TEMP: lo principal ya quedó instalado, así que solo se avisa. */
+export const WATCHDOG_TEMP_FAILED =
+  'Vigilante: no pude registrarlo porque no pude escribir en la carpeta temporal (¿disco lleno?). Asistenta arranca igual al iniciar sesión; libera espacio y repite pa autostart install.';
+
 async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
   const xmlPath = join(tmpdir(), `asistenta-vigilante-${process.pid}.xml`);
-  // schtasks lee el XML en UTF-16 con BOM, como lo exporta el propio Programador de tareas.
-  writeFileSync(
-    xmlPath,
-    Buffer.concat([
-      Buffer.from([0xff, 0xfe]),
-      Buffer.from(watchdogTaskXml({ nodeExe: process.execPath, cliJs }), 'utf16le'),
-    ]),
-  );
+  try {
+    // schtasks lee el XML en UTF-16 con BOM, como lo exporta el propio Programador de tareas.
+    writeFileSync(
+      xmlPath,
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(watchdogTaskXml({ nodeExe: process.execPath, cliJs }), 'utf16le'),
+      ]),
+    );
+  } catch {
+    removeQuietly(xmlPath);
+    saveWatchdogLast(
+      stateDir,
+      'no se registró al instalar (no pude escribir en la carpeta temporal)',
+    );
+    process.stdout.write(`${WATCHDOG_TEMP_FAILED}\n`);
+    return;
+  }
   try {
     const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
     process.stdout.write(
@@ -148,9 +162,16 @@ async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
         : `Vigilante: registrado (al iniciar sesión y cada ${WATCHDOG_INTERVAL_MIN} min la vuelve a arrancar si no está en marcha).\n`,
     );
   } finally {
-    rmSync(xmlPath, { force: true });
+    removeQuietly(xmlPath);
   }
-  void stateDir;
+}
+
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Un antivirus puede tener el XML abierto: es un temporal, Windows lo limpiará.
+  }
 }
 
 async function watchdogStatus(stateDir: string): Promise<void> {
