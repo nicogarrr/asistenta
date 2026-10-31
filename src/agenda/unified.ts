@@ -287,6 +287,9 @@ function bestConfidence(a: number | undefined, b: number | undefined): number | 
  * `Promise<T> | T` because the tracker is a synchronous sqlite read and forcing the
  * caller to wrap it in an async function it does not need would be noise.
  */
+/** A note that is already plain Spanish written by us («No se ha podido leer …»). */
+const PLAIN_NOTE = /^No se ha podido leer [^:]*(?::|\.)/;
+
 async function settle<T>(
   label: string,
   load: (() => T | Promise<T>) | undefined,
@@ -299,7 +302,10 @@ async function settle<T>(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     log.warn(`agenda: ${label} unavailable`, { err });
-    notes.push(`No se ha podido leer ${label}: ${detail}`);
+    // /agenda and the morning notice are read by the owner: a line that is
+    // already one of our own plain ones (the calendar's) stays; a raw driver error
+    // («imap timeout», «SQLITE_BUSY…») goes only to the log above.
+    notes.push(PLAIN_NOTE.test(detail) ? detail : `No se ha podido leer ${label} ahora mismo.`);
     return fallback;
   }
 }
