@@ -16,7 +16,7 @@ export function scriptTecla(teclas: number[][], pidPadre: number): string {
   const grupos = teclas.map((g) => g.join(',')).join(';');
   return `$ErrorActionPreference='Stop'
 Add-Type -Namespace PaDict -Name K -MemberDefinition '[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);'
-$g='${grupos}'.Split(';'); $down=$false; $n=0
+$g='${grupos}'.Split(';'); $down=$false; $n=0; $esc=$false
 while ($true) {
   $todas=$true; $ninguna=$true
   foreach ($grp in $g) { $una=$false
@@ -24,6 +24,8 @@ while ($true) {
     if ($una) { $ninguna=$false } else { $todas=$false } }
   if (-not $down -and $todas) { $down=$true; [Console]::Out.WriteLine('D'); [Console]::Out.Flush(); [Console]::Beep(880,70) }
   elseif ($down -and $ninguna) { $down=$false; [Console]::Out.WriteLine('U'); [Console]::Out.Flush(); [Console]::Beep(620,70) }
+  $e=([PaDict.K]::GetAsyncKeyState(27) -band 0x8000) -ne 0
+  if ($e -and -not $esc) { [Console]::Out.WriteLine('X'); [Console]::Out.Flush() }; $esc=$e
   if ((++$n % 60) -eq 0 -and -not (Get-Process -Id ${pidPadre} -ErrorAction SilentlyContinue)) { exit }
   Start-Sleep -Milliseconds 30
 }`;
@@ -46,7 +48,7 @@ export class TeclaWindows implements TeclaDictado {
     this.#lanzar = lanzar;
   }
 
-  async start(alPulsar: () => void, alSoltar: () => void): Promise<void> {
+  async start(alPulsar: () => void, alSoltar: () => void, alCancelar?: () => void): Promise<void> {
     if (this.#hijo) return;
     const hijo = this.#lanzar(scriptTecla(this.#teclas, process.pid));
     this.#hijo = hijo;
@@ -57,6 +59,7 @@ export class TeclaWindows implements TeclaDictado {
       for (const l of lineas) {
         if (l.trim() === 'D') alPulsar();
         else if (l.trim() === 'U') alSoltar();
+        else if (l.trim() === 'X') alCancelar?.();
       }
     });
     hijo.on('exit', () => {

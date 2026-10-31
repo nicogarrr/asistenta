@@ -17,6 +17,8 @@ La tecla por defecto es **Ctrl + Windows**. Para cambiarla: `PA_DICTADO_TECLA=ct
 - Suelta: suena un pitido más grave y en uno o dos segundos aparece el texto.
 - Dos pitidos graves: no se ha podido (sin micrófono, o estás en un campo de contraseña).
 - Como mucho graba 2 minutos seguidos; al llegar ahí escribe lo dicho.
+- **Esc** mientras graba tira lo grabado: no escribe nada.
+- Si prefieres no mantener la tecla: `PA_DICTADO_MODO=alternar` (una pulsación empieza, otra termina).
 
 Puedes dictar signos: «coma», «punto», «punto y coma», «dos puntos», «punto y aparte», «nueva línea», «abre interrogación» / «cierra interrogación», «abre exclamación», «abre paréntesis» / «cierra paréntesis». Las muletillas («eh», «em», «o sea») se quitan solas. «Que se coma la tarta» o «el punto de encuentro» se quedan como palabras.
 
@@ -27,3 +29,5 @@ Puedes dictar signos: «coma», «punto», «punto y coma», «dos puntos», «p
 - Nunca escribe en un campo de contraseña: lo mira al pulsar y otra vez antes de escribir.
 
 Si usas la palabra de activación a la vez, los dos comparten el micrófono sin problema.
+
+Esc para descartar y el modo alternar son ideas de [pi-voice](https://github.com/earendil-works/pi-voice) (MIT).
