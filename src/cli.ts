@@ -106,6 +106,7 @@ import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
+import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -2584,6 +2585,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     run: runRoutineFire,
     catchUp: process.env.PA_ROUTINE_CATCHUP !== '0',
   });
+  // Reminders dropped while there was no connection: told once when sending works again.
+  setInterval(
+    () => void announceDropped(join(paths.state, 'dropped-reminders.jsonl'), sendToChat),
+    DROPPED_NOTICE_EVERY_MS,
+  ).unref();
   // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
   // so a job due this minute cannot also fire fresh (see deliverMissedThenStart).
   void deliverMissedThenStart({
