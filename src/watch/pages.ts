@@ -710,7 +710,7 @@ export function readFailureCause(message: string): string {
   ) {
     return message.slice(0, 120);
   }
-  return 'no sé por qué; queda en el registro';
+  return 'no sé bien por qué';
 }
 
 const fmtDay = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
