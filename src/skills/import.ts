@@ -11,6 +11,7 @@
  */
 import { looksLikeSecret } from '../memory/snapshot.js';
 import { foldAccents } from '../text.js';
+import type { Skill, SkillDraft } from './types.js';
 
 export const SKILL_MAX_BYTES = 64 * 1024;
 
@@ -407,4 +408,39 @@ export async function installSkill(
     description: parsed.description,
   });
   return { id: parsed.id, name: parsed.name };
+}
+
+/**
+ * Lo que se guarda de un skill importado. Siempre `outward: true`: un fichero
+ * descargado no puede declararse inofensivo, así que antes de enviar, reservar
+ * o gastar nada se pide permiso. No pisa una habilidad propia (sembrada,
+ * aprendida o del dueño) con el mismo nombre: quedaría con pasos de fuera.
+ */
+export function importedSkillDraft(
+  md: string,
+  meta: SkillMeta,
+  url: string,
+  existing: Skill | null = null,
+): SkillDraft {
+  // Solo se puede re-importar encima de otra importada; nunca encima de una
+  // sembrada, aprendida o del dueño.
+  if (existing && (existing.trust !== 'community' || existing.category !== 'importadas')) {
+    throw new SkillImportError(
+      `ya tengo una habilidad propia llamada «${existing.name}»; no la sustituyo por una de fuera`,
+    );
+  }
+  const steps = md
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('---') && !/^(name|description):/.test(l))
+    .slice(0, 40);
+  return {
+    name: meta.name,
+    description: meta.description,
+    category: 'importadas',
+    whenToUse: 'Cuando la tarea encaje con la descripción de la skill.',
+    steps,
+    notes: [`Importada de ${url}`],
+    outward: true,
+  };
 }
