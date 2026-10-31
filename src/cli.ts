@@ -56,7 +56,13 @@ import {
   routeReplyToAltavoz,
 } from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
-import { isBackupDue, runBackup } from './backup.js';
+import {
+  BackupMirrorError,
+  backupMirrorNotice,
+  isBackupDue,
+  localBackupDone,
+  runBackup,
+} from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
 import {
   BOOT_NOTICE_FILE,
@@ -4522,6 +4528,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
     } catch (err) {
       log.warn('backup failed', { err });
+      // Solo falló el espejo: la copia local está hecha, no repetirla cada 10 minutos.
+      if (localBackupDone(err)) weeklyState.markSent('backup', Date.now());
       if (Date.now() - weeklyState.lastSent('backup-aviso') < 20 * 3_600_000) return;
       weeklyState.markSent('backup-aviso', Date.now());
       await telegram
@@ -7706,6 +7714,7 @@ export function failedReply(what: string, err: unknown): string {
 
 /** Aviso al dueño cuando falla la copia de seguridad diaria: motivo en castellano, sin texto técnico. */
 export function backupFailedNotice(err: unknown): string {
+  if (err instanceof BackupMirrorError) return backupMirrorNotice(err);
   const base = 'No he podido hacer la copia de seguridad de hoy';
   const retry = 'Lo reintento en unos minutos.';
   const code = (err as { code?: unknown } | null)?.code;
