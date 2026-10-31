@@ -23,7 +23,7 @@ import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { countsAsBrowser, ownerLookupWorks } from './probe-owner.js';
-import { connectionOwnerAny } from './probe-owner-os.js';
+import { fallbackNote, OWNER_LOOKUP_WAIT_MS, ownerLookupAny } from './probe-owner-os.js';
 import { pngColourShare, type Rgb } from './probe-png.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
@@ -122,9 +122,15 @@ const server = createServer(async (req, res) => {
 
 // Si el sistema sabe decir de quién es una conexión, solo cuenta la que se demuestra del
 // navegador; una cuyo dueño ya no está (abre, escribe y se cierra) no demuestra nada.
+// Una sola consulta por tanda de conexiones (en Windows, PowerShell tarda); si no responde a
+// tiempo se dice por qué, en vez de bajar en silencio a mirar solo el User-Agent.
+const lookup = ownerLookupAny({ onProblem: (why) => process.stderr.write(`[sonda] ${why}\n`) });
 const lookupWorks = await ownerLookupWorks(
-  async (c, s) => (await connectionOwnerAny(c, s)).browser,
+  async (c, s) => (await lookup(c, s)).browser,
+  OWNER_LOOKUP_WAIT_MS,
 );
+const fallback = fallbackNote(lookupWorks, lookup.problem());
+if (fallback) process.stderr.write(`[sonda] ${fallback}\n`);
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
 // Un solo navegador, el que lanzó el agente: si habla un segundo (lanzado aparte por el
@@ -134,7 +140,7 @@ let firstRoot: number | undefined;
 server.on('connection', (socket: Socket) => {
   owner.set(
     socket,
-    connectionOwnerAny(socket.remotePort ?? 0, port, { agentPid: agent.pid }).then(
+    lookup(socket.remotePort ?? 0, port, { agentPid: agent.pid }).then(
       (v) => {
         if (v.browser && v.root !== undefined) {
           firstRoot ??= v.root;
