@@ -19,11 +19,29 @@ import {
 } from '../credentials/store.js';
 
 const Params = Type.Object({
-  action: Type.Union([Type.Literal('listar'), Type.Literal('buscar')], {
-    description: 'listar = all saved accounts; buscar = is there an account for a site.',
-  }),
-  sitio: Type.Optional(
-    Type.String({ description: 'Site or domain for buscar, e.g. wallapop.es.' }),
+  action: Type.Union(
+    [
+      Type.Literal('listar'),
+      Type.Literal('buscar'),
+      Type.Literal('preparar_registro'),
+      Type.Literal('confirmar_registro'),
+      Type.Literal('guardar'),
+      Type.Literal('descartar'),
+    ],
+    {
+      description:
+        'listar = all saved accounts; buscar = is there an account for a site; preparar_registro / confirmar_registro / guardar / descartar = the sign-up steps.',
+    },
+  ),
+  sitio: Type.Optional(Type.String({ description: 'Site or domain, e.g. wallapop.es.' })),
+  correo: Type.Optional(
+    Type.String({ description: 'For confirmar_registro: the email of the prepared sign-up.' }),
+  ),
+  sin_simbolos: Type.Optional(
+    Type.Boolean({ description: 'For preparar_registro: the site does not accept symbols.' }),
+  ),
+  max_largo: Type.Optional(
+    Type.Number({ description: 'For preparar_registro: maximum password length the site allows.' }),
   ),
 });
 
