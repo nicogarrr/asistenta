@@ -20,7 +20,7 @@ import {
   watchdogTaskXml,
 } from './autostart-watchdog.js';
 
-import { lockHeld } from './autoupdate.js';
+import { lockHeld, readAutoupdateState } from './autoupdate.js';
 import {
   autoupdateStatusLine,
   daemonRunState,
@@ -101,6 +101,9 @@ export interface AutostartOptions {
   launchAutoupdate?: (exe: string, args: string[]) => void;
 }
 
+export const WATCHDOG_REPAIR_FIRST =
+  'había una actualización a medias: primero vuelvo a la versión anterior y luego la arranco';
+
 /** `pa autostart vigilar`: lo que hace la tarea del vigilante cada 5 minutos. */
 async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number> {
   const decision = watchdogDecide({
@@ -112,6 +115,20 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
     daemonStartedAt: readDaemonStartedAt(stateDir),
   });
   let text = describeDecision(decision);
+  const cliJs = opts.cliJs ?? join(autostartRepo(), 'dist', 'cli.js');
+  // Tras un apagón a mitad de actualizar, arrancar la versión a medio montar podía fallar
+  // una y otra vez, y el arreglo solo se lanzaba con Asistenta ya en marcha: nunca llegaba.
+  // Primero se arregla (vuelve a la versión anterior), y el arreglo ya la arranca.
+  if (
+    decision.action === 'start' &&
+    readAutoupdateState(stateDir).pending &&
+    maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)
+  ) {
+    text = WATCHDOG_REPAIR_FIRST;
+    saveWatchdogLast(stateDir, text);
+    process.stdout.write(`Vigilante: ${text}\n`);
+    return 0;
+  }
   if (decision.action === 'start') {
     const r = await runExe(
       windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -121,7 +138,6 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
   }
   if (decision.action === 'skip' && decision.reason === 'en-marcha') {
     // Corre aparte: la tarea del vigilante tiene 2 min y compilar puede tardar más.
-    const cliJs = opts.cliJs ?? join(autostartRepo(), 'dist', 'cli.js');
     if (maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)) {
       text += '; miro si hay novedades en main';
     }
