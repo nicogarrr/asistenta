@@ -71,10 +71,11 @@ describe('pa stop habla claro', () => {
     }
   });
 
-  it('un motivo desconocido se enseña tal cual', async () => {
+  it('un motivo desconocido da una línea clara, no el texto técnico', async () => {
     const r = await run(async () => {
       throw new Error('Algo raro.');
     });
-    expect(r.err).toContain('No he podido parar Asistenta: Algo raro.');
+    expect(r.err).toContain('No he podido parar Asistenta: ha pasado algo inesperado');
+    expect(r.err).not.toContain('Algo raro.');
   });
 });

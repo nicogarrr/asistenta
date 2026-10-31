@@ -18,7 +18,7 @@ export const STOPPED_TEXT =
 
 /**
  * The control layer speaks in technical terms («Metadata…», «flock», «Parada … no
- * confirmada…»). The person gets what happened and what to do; unknown reasons pass as-is.
+ * confirmada…»). The person gets what happened and what to do, also for unknown reasons.
  */
 const PLAIN_REASONS: [RegExp, string][] = [
   [
@@ -37,15 +37,27 @@ const PLAIN_REASONS: [RegExp, string][] = [
     /Metadata .*(ilegible|inválida|cambió|cambiada)/i,
     'sus ficheros de control están dañados y parece que sigue en marcha. Reinicia el PC o ciérrala desde el Administrador de tareas.',
   ],
+  [
+    /instancia|sustituida|autenticad|prueba de cierre|propiedad .*perdida/i,
+    'ha cambiado mientras la paraba (se ha reiniciado o hay otra en marcha). Mira cómo está con `pa status` y prueba otra vez.',
+  ],
+  [
+    /EACCES|EPERM|permission denied/i,
+    'no tengo permiso para leer sus ficheros de control. Prueba desde la misma cuenta con la que se arrancó.',
+  ],
 ];
+
+/** Lo que no está en la lista: una línea clara en vez del texto técnico. */
+export const UNKNOWN_STOP_REASON =
+  'ha pasado algo inesperado con sus ficheros de control. Mira cómo está con `pa status`; si sigue en marcha y no se para, reinicia el PC.';
 
 /** `pa restart` no reinicia: lo dice claro y explica cómo hacerlo a mano. */
 export const RESTART_TEXT =
   'pa restart no reinicia por sí solo, porque no puedo asegurar que Asistenta vuelva a arrancar. Para reiniciarla: pa stop y después levantar.bat (o pa iniciar). No he parado ni arrancado nada.';
 
 export function plainStopReason(reason: string): string {
-  if (OTHER_OWNER.test(reason)) return reason;
-  return PLAIN_REASONS.find(([re]) => re.test(reason))?.[1] ?? reason;
+  if (OTHER_OWNER.test(reason)) return 'sus ficheros de control son de otra cuenta de usuario.';
+  return PLAIN_REASONS.find(([re]) => re.test(reason))?.[1] ?? UNKNOWN_STOP_REASON;
 }
 
 /** The control files belong to another Windows/Linux account (or an elevated one). */
