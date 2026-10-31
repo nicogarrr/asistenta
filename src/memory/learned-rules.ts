@@ -20,6 +20,8 @@ export const LEARNED_TAG = 'aprendido';
 /** Reglas aprendidas activas por chat; al pasar, se olvida la más vieja. */
 export const MAX_LEARNED_RULES = 30;
 export const MAX_RULE_CHARS = 200;
+/** Reglas que se guardan de una sola respuesta (varias marcas). */
+export const MAX_RULES_PER_TURN = 3;
 
 export function learnCorrectionsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.PA_LEARN_CORRECTIONS ?? '1').trim() !== '0';
@@ -117,28 +119,28 @@ export function correctionHint(opts: {
 const MARKER =
   /(?:`{1,3}|\*\*)?\[\[?\s*aprendido\s*:([^\]\n]{0,2000})(?:\]\]?(?:`{1,3}|\*\*)?|(?=\n|$))/gi;
 
-/** Quita toda marca de la respuesta; devuelve la última (tema opcional). */
+/** Quita toda marca de la respuesta; devuelve la última (tema opcional) y todas en orden. */
 export function extractLearnedMarker(reply: string): {
   text: string;
   topic: string | null;
   rule: string | null;
+  all: Array<{ topic: string | null; rule: string }>;
 } {
-  let topic: string | null = null;
-  let rule: string | null = null;
+  const all: Array<{ topic: string | null; rule: string }> = [];
   for (const m of reply.matchAll(MARKER)) {
     const body = (m[1] ?? '').trim();
     const bar = body.indexOf('|');
     const t = bar >= 0 ? body.slice(0, bar).trim() : '';
     const r = (bar >= 0 ? body.slice(bar + 1) : body).trim();
-    topic = t || null;
-    rule = r || null;
+    if (r) all.push({ topic: t || null, rule: r });
   }
+  const last = all.at(-1);
   const text = reply
     .replace(MARKER, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return { text, topic, rule };
+  return { text, topic: last?.topic ?? null, rule: last?.rule ?? null, all };
 }
 
 // Frases que piden MÁS control: se quitan antes de buscar las que lo relajan.
@@ -389,9 +391,9 @@ export function learnFromTurn(opts: {
    */
   forgetScopes?: readonly string[];
 }): { text: string; line: string | null; outcome: LearnOutcome | null } {
-  const { text, topic, rule } = extractLearnedMarker(opts.reply);
+  const { text, all } = extractLearnedMarker(opts.reply);
   // Sin instrucción en este turno (no lo pidió el dueño), una marca no vale: se quita y ya.
-  if (!opts.hinted || !rule) return { text, line: null, outcome: null };
+  if (!opts.hinted || !all.length) return { text, line: null, outcome: null };
   if (opts.tainted) {
     return {
       text,
@@ -399,31 +401,40 @@ export function learnFromTurn(opts: {
       outcome: null,
     };
   }
-  const outcome = saveLearnedRule(opts.memory, opts.scope, rule, topic, opts.forgetScopes);
+  // Varias marcas en una respuesta: antes solo valía la última y las otras se perdían
+  // sin decir nada. Se guardan todas (con tope) y cada una lleva su línea.
+  const saved = all
+    .slice(0, MAX_RULES_PER_TURN)
+    .map(({ topic, rule }) =>
+      saveLearnedRule(opts.memory, opts.scope, rule, topic, opts.forgetScopes),
+    );
+  // Los números de /olvida, cuando ya están todas: cada regla nueva mueve a las demás.
+  const order = opts.forgetScopes ? learnedRules(opts.memory, opts.forgetScopes) : [];
+  const lines = saved.map((outcome) => lineFor(outcome, order));
+  if (all.length > MAX_RULES_PER_TURN) {
+    lines.push(`📝 Solo guardo ${MAX_RULES_PER_TURN} de una vez; dime las demás después.`);
+  }
+  const line = [...new Set(lines.filter((l): l is string => l !== null))].join('\n') || null;
+  return { text, line, outcome: saved.at(-1) ?? null };
+}
+
+/** La línea breve para el dueño de una regla, o null. */
+function lineFor(outcome: LearnOutcome, order: readonly MemoryEntry[]): string | null {
   if (outcome.status === 'saved' || outcome.status === 'updated') {
-    const n = opts.forgetScopes
-      ? learnedRules(opts.memory, opts.forgetScopes).findIndex((e) => e.id === outcome.id) + 1
-      : 0;
-    // Solo con un número que /olvida acepta (sale en /aprendido).
+    const n = order.findIndex((e) => e.id === outcome.id) + 1;
+    // Solo con un número que /olvida acepta (sale en /aprendido). Una regla que otra
+    // del mismo turno ya sustituyó no tiene número.
     const how = n >= 1 && n <= MAX_LEARNED_RULES ? ` (/olvida ${n} para borrarla)` : '';
-    return { text, line: `📝 Aprendido: ${outcome.rule}${how}`, outcome };
+    return `📝 Aprendido: ${outcome.rule}${how}`;
   }
   if (outcome.status === 'unsafe') {
-    return {
-      text,
-      line: '📝 No lo aprendo: lo que toca permisos o seguridad solo lo cambias tú en la configuración.',
-      outcome,
-    };
+    return '📝 No lo aprendo: lo que toca permisos o seguridad solo lo cambias tú en la configuración.';
   }
   if (outcome.rule.length > MAX_RULE_CHARS) {
     // Antes se perdía sin decir nada: el dueño creía que estaba aprendida.
-    return {
-      text,
-      line: '📝 No la he guardado: es demasiado larga. Dímela más corta, en una frase.',
-      outcome,
-    };
+    return '📝 No la he guardado: es demasiado larga. Dímela más corta, en una frase.';
   }
-  return { text, line: null, outcome };
+  return null;
 }
 
 /** «2026-10-31» → «31/10» (este año) o «31/10/2025» (otro año); lo raro, tal cual. */
