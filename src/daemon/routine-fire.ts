@@ -14,6 +14,7 @@ import {
   isOneShotReminder,
   isReminder,
   oneShotStillPending,
+  parkFailedRepeating,
   recordDroppedReminder,
   reminderEnded,
   reminderText,
@@ -177,6 +178,15 @@ export function createRoutineFire(
         recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name, Date.now(), chatId);
       }
       deps.sync();
+    } else if (!sent && reminder) {
+      // A repeating reminder that could not be sent is parked as a one-time retry
+      // for this slot instead of being lost until its next day.
+      try {
+        parkFailedRepeating(store, ctx.routine);
+        deps.sync();
+      } catch (err) {
+        log.warn('could not park a failed reminder for retry', { err });
+      }
     } else if (sent && reminder && reminderEnded(ctx.routine, new Date(), true)) {
       // That was its last firing: remove it now so lists and the briefing stop showing it.
       store.deleteRoutine(ctx.scope, ctx.routine.name);
