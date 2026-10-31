@@ -51,6 +51,33 @@ export function parseCronAdd(
   return { ok: true, schedule: parsed.schedule, prompt: parsed.prompt };
 }
 
+/** «a la una», «a las doce»: hours people say in words. */
+const SPOKEN_HOUR_VALUE: Record<string, number> = {
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+};
+const SPOKEN_HOURS = Object.keys(SPOKEN_HOUR_VALUE).join('|');
+
+/** A clock hour with the part of the day said next to it, in 24h. */
+function withPartOfDay(hour: number, part: string): number {
+  if (part === 'manana' || part === 'madrugada') return hour === 12 ? 0 : hour;
+  if (part === 'tarde') return hour >= 1 && hour < 12 ? hour + 12 : hour;
+  // «de la noche»: 12 is midnight, 1-4 are the small hours, 5-11 the evening.
+  if (hour === 12) return 0;
+  if (hour >= 5 && hour < 12) return hour + 12;
+  return hour;
+}
+
 /**
  * Turn an ordinary Spanish sentence into a schedule.
  *
@@ -66,17 +93,32 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   let minute = 0;
   let hasTime = false;
 
-  const timeMatch = /\ba las?\s+(\d{1,2})(?::(\d{2}))?\s*(h|hs|horas?)?\b/.exec(normalised);
+  const timeMatch = new RegExp(
+    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?::(\\d{2}))?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
+  ).exec(normalised);
   if (timeMatch) {
-    hour = Number(timeMatch[1] ?? 0);
+    const said = timeMatch[1] ?? '0';
+    hour = /^\d+$/.test(said) ? Number(said) : (SPOKEN_HOUR_VALUE[said] ?? 0);
     minute = Number(timeMatch[2] ?? 0);
     hasTime = true;
-    // "a las 6 por la tarde" means six in the evening to a person, and a scheduler that
-    // fires at 6 a.m. instead is the kind of bug that makes people stop using it. The
-    // modifier is matched anywhere in the sentence, not only after the time.
-    if (/(tarde|noche)/.test(normalised) && hour < 12) {
+    const part = timeMatch[4];
+    if (part) {
+      // The part of the day said right next to the clock is the one that counts:
+      // «a las 12 de la noche» is midnight and «a la una de la noche» is 01:00, not
+      // noon and 13:00; «a las 8 de la mañana … esta noche» stays at 8.
+      hour = withPartOfDay(hour, part);
+    } else if (/(tarde|noche)/.test(normalised) && hour < 12) {
+      // "a las 6 … por la tarde" means six in the evening to a person, and a scheduler
+      // that fires at 6 a.m. instead is the kind of bug that makes people stop using it.
+      // Without a part of day next to the clock, the modifier counts anywhere.
       hour += 12;
     }
+  } else if (/\b(?:a )?medianoche\b/.test(normalised)) {
+    hour = 0;
+    hasTime = true;
+  } else if (/\b(?:a(?:l)? )?mediodia\b/.test(normalised)) {
+    hour = 12;
+    hasTime = true;
   } else if (/cada manana/.test(normalised)) {
     hour = 8;
     hasTime = true;
