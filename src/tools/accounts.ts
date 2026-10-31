@@ -94,6 +94,7 @@ async function signupStep(
   vault: VaultOps,
   owner: () => Promise<OwnerIdentity | null>,
   mail: MailSearch = realSignupMail,
+  shown?: string,
 ): Promise<string> {
   const sitio = (args.sitio ?? '').trim();
   if (!sitio) return '¿En qué web? Dime el nombre o el dominio.';
@@ -116,7 +117,7 @@ async function signupStep(
       ].join('\n');
     }
     if (args.action === 'confirmar_registro') {
-      const a = await approveSignup(sitio, args.correo ?? '', vault);
+      const a = await approveSignup(sitio, args.correo ?? '', vault, shown);
       return `Aprobado (vale 10 minutos): pulsa ya el botón de crear cuenta en ${a.domain}. Cuando la web confirme el alta, llama a cuentas guardar; si falla, cuentas descartar.`;
     }
     if (args.action === 'guardar') {
@@ -137,8 +138,36 @@ export function createAccountsTool(
   vault: VaultOps = realVault,
   owner: () => Promise<OwnerIdentity | null> = () => ownerIdentity(process.env, vault),
   mail: MailSearch = realSignupMail,
-): AgentTool<typeof Params> {
+): AgentTool<typeof Params> & { gateHint: (args: Record<string, unknown>) => Promise<string> } {
+  // La web exacta que la pregunta de la Gate enseñó al dueño para cada confirmar_registro
+  // (por nombre+correo). Con ella, «confirma wallapop» pide un solo sí en vez de dos.
+  const shown = new Map<string, { domain: string; at: number }>();
+  const shownKey = (a: Record<string, unknown>): string =>
+    `${String(a.sitio ?? '')
+      .trim()
+      .toLowerCase()}|${String(a.correo ?? '')
+      .trim()
+      .toLowerCase()}`;
+  const takeShown = (a: Record<string, unknown>): string | undefined => {
+    const k = shownKey(a);
+    const s = shown.get(k);
+    shown.delete(k);
+    return s && Date.now() - s.at < SHOWN_TTL_MS ? s.domain : undefined;
+  };
   return {
+    // Para la pregunta de la Gate: la web exacta del alta a medias que encaja con el nombre
+    // (nunca mezcla webs distintas: si encajan varias, no hay pista y el paso pregunta cuál).
+    gateHint: async (args) => {
+      if (args.action !== 'confirmar_registro' && args.action !== 'codigo_registro') return '';
+      const sitio = typeof args.sitio === 'string' ? args.sitio.trim() : '';
+      if (!sitio) return '';
+      const p = await pendingOf(sitio, vault, true).catch(() => null);
+      if (args.action === 'confirmar_registro') {
+        if (p) shown.set(shownKey(args), { domain: p.domain, at: Date.now() });
+        else shown.delete(shownKey(args));
+      }
+      return p?.domain ?? '';
+    },
     name: 'cuentas',
     label: 'Cuentas',
     description:
@@ -148,7 +177,11 @@ export function createAccountsTool(
     execute: async (_id, args) => {
       let text: string;
       if (args.action !== 'listar' && args.action !== 'buscar') {
-        text = await signupStep(args, vault, owner, mail);
+        const seen =
+          args.action === 'confirmar_registro'
+            ? takeShown(args as Record<string, unknown>)
+            : undefined;
+        text = await signupStep(args, vault, owner, mail, seen);
       } else {
         text = await readStep(args, vault);
       }
@@ -194,6 +227,9 @@ async function readStep(
   }
   return text;
 }
+
+/** Lo que el dueño vio en la pregunta vale para la llamada que sigue, no para siempre. */
+const SHOWN_TTL_MS = 10 * 60_000;
 
 export const VAULT_UNREADABLE =
   'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
