@@ -121,6 +121,7 @@ import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
+import { TurnAck } from './daemon/turn-ack.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
@@ -5863,14 +5864,28 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
     // is alive. It says "working" without inventing a progress report.
+    // Al momento, no a los 4 s: el primer tic del intervalo llegaba tarde.
+    if (!out) void telegram.action(inbound.chatId, 'typing');
     const typing = setInterval(() => {
       if (finished || out) return;
       void telegram.action(inbound.chatId, 'typing');
     }, 4000);
     typing.unref();
+    // Acuse con la tarea («Miro tu correo, dame un momento») si el turno tarda; es
+    // la primera versión de la nota de progreso, que se edita y se borra al final.
+    const turnAck = new TurnAck({
+      show: (text) =>
+        liveProgress.show(text).then(() => {
+          if (liveProgress.id && !progressIds.includes(liveProgress.id))
+            progressIds.push(liveProgress.id);
+        }),
+      enabled: () =>
+        !finished && !out && statusOn.get(inbound.chatId) !== false && receipt.id === null,
+    });
 
     const status = setInterval(() => {
       if (finished || out) return;
+      turnAck.tick(Date.now() - startedAt, toolNames);
       // The progress note is opt-out per chat: some people want to be told how it is
       // going while it works, others want one message at the end and nothing between.
       if (statusOn.get(inbound.chatId) === false) return;
@@ -6129,6 +6144,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         onToolCall: (info) => {
           lastSummary = info.summary;
           toolNames.push(info.tool);
+          turnAck.tick(Date.now() - startedAt, toolNames);
           // Mid-turn trail: a session that only holds the final answer cannot
           // answer "what did you do first?" two days later.
           safeRemember(() => sessions.addTurn(sessionId, 'assistant', info.summary));
