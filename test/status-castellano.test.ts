@@ -24,11 +24,13 @@ function status(prep?: (dir: string) => void): string {
 
 it('sin archivo de PID dice que Asistenta no parece estar en marcha', () => {
   const out = status();
-  expect(out.split('\n')[0]).toBe('No hay archivo de PID: Asistenta no parece estar en marcha.');
+  expect(out.split('\n')[0]).toBe('No encuentro Asistenta en marcha.');
   expect(out).not.toMatch(/\((missing|invalid|unreadable)\)/);
 });
 
 it('un PID dañado se dice en castellano', () => {
   const out = status((d) => writeFileSync(join(d, 'agent.pid'), 'hola'));
-  expect(out.split('\n')[0]).toBe('El archivo de PID está dañado: no sé qué proceso es Asistenta.');
+  expect(out.split('\n')[0]).toBe(
+    'No sé si Asistenta está en marcha: el archivo que lo apunta está dañado.',
+  );
 });

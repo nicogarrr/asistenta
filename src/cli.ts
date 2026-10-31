@@ -7664,7 +7664,7 @@ export function failedReply(what: string, err: unknown): string {
   const friendly = friendlyError(err, `${what}: `);
   if (friendly.startsWith(`${what}: `)) return friendly;
   if (/^(?:Algo ha fallado|Se me ha roto algo)/.test(friendly)) {
-    return `${what} (error interno). Prueba otra vez; si se repite, mira /estado.`;
+    return `${what}. Algo ha fallado por mi parte; vuelve a intentarlo en un momento.`;
   }
   return `${what}. ${friendly}`;
 }
@@ -7683,7 +7683,7 @@ export function backupFailedNotice(err: unknown): string {
   if (/\bEBUSY\b/.test(probe)) return `${base}: había un archivo en uso. ${retry}`;
   const friendly = failedReply(base, err);
   if (friendly.startsWith(`${base}: `)) return `${friendly.replace(/\.?$/, '.')} ${retry}`;
-  return `${base} (detalles en el registro). ${retry}`;
+  return `${base}: algo ha fallado por mi parte. ${retry}`;
 }
 
 const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);

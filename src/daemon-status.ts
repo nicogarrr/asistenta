@@ -98,9 +98,9 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
 
 /** Sin PID legible: por qué, en castellano (antes «PID no disponible (missing)»). */
 const PID_SIN_ARCHIVO = {
-  missing: 'No hay archivo de PID: Asistenta no parece estar en marcha.',
-  invalid: 'El archivo de PID está dañado: no sé qué proceso es Asistenta.',
-  unreadable: 'No pude leer el archivo de PID (¿permisos?).',
+  missing: 'No encuentro Asistenta en marcha.',
+  invalid: 'No sé si Asistenta está en marcha: el archivo que lo apunta está dañado.',
+  unreadable: 'No he podido comprobar si Asistenta está en marcha (¿permisos?).',
 } as const;
 
 const segundos = (ms: number | null) => {
