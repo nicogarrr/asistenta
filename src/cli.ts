@@ -518,9 +518,11 @@ import {
   protectedPaths,
   secretStatePaths,
 } from './daemon/gate.js';
+import { inspectionThreadKey } from './daemon/inspection-thread.js';
 import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
 import { summarizeTranscript } from './daemon/transcript-summary.js';
+import { tvButtonAction } from './daemon/tv-button.js';
 import { retentionIfDue } from './maintenance.js';
 import { tvCommand } from './tv/tv-cli.js';
 
@@ -537,9 +539,11 @@ export {
   uniqueRoutineName,
 } from './daemon/cron-command.js';
 export { approvalsDbPath, createDaemonGate, type DaemonGateOptions } from './daemon/gate.js';
+export { inspectionThreadKey } from './daemon/inspection-thread.js';
 export { formatSessionHits } from './daemon/session-hits.js';
 export { trimForSpeech } from './daemon/speech-text.js';
 export { summarizeTranscript } from './daemon/transcript-summary.js';
+export { type TvButtonAction, tvButtonAction } from './daemon/tv-button.js';
 
 /** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
 const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
@@ -7359,59 +7363,6 @@ export function followupFromMessage(
   const quoted = first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
   const subject = (quoted || text.trim()).replace(/\s+/g, ' ').slice(0, 160);
   return { subject, dueAt: estimateDueAt(text, now) };
-}
-
-/**
- * What the TV remote button does when pressed. It is an activation path of
- * its own — pressing a physical button IS the intent — so conversation mode
- * is NOT an input: /conversacion resets to off at every boot, and that used
- * to turn the button into a silent no-op (audit, "botón TV"). Without a chat
- * (nobody has talked yet) there is nowhere to open the session; without a
- * live wake listener there is no audio to feed it: the chat notice says so
- * instead of staying silent, and with no chat at all the log line is all
- * there is.
- */
-export type TvButtonAction = 'open-session' | 'need-mic' | 'no-chat' | 'already-open';
-
-export function tvButtonAction(opts: {
-  hasChat: boolean;
-  hasListener: boolean;
-  sessionOpen: boolean;
-}): TvButtonAction {
-  if (!opts.hasChat) return 'no-chat';
-  if (opts.sessionOpen) return 'already-open';
-  if (!opts.hasListener) return 'need-mic';
-  return 'open-session';
-}
-
-/**
- * The conversation an inspection command (/memory and friends) reads. Unlike
- * resolveThread it NEVER creates a thread — a read-only command has no
- * business spawning a conversation — and it never looks at occupancy: the
- * new-request heuristic ("main is busy, start #m<messageId>") is exactly what
- * made /memory answer "No recuerdo nada" with a full memory and litter a new
- * thread per read (auditor #152 ronda 1). Explicit intent wins, in
- * resolveThread's order: /topic, a reply to one of our messages, a real
- * Telegram thread id; without any of them, main is read even while busy.
- */
-export function inspectionThreadKey(opts: {
-  chatKey: string;
-  activeTopic?: string | undefined;
-  replyThreadKey?: string | undefined;
-  /** Durable reply routing: a goal notification's owning scope, from SQLite. */
-  replyGoalScope?: string | undefined;
-  threadId?: string | undefined;
-}): string {
-  if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
-  if (opts.replyThreadKey) return opts.replyThreadKey;
-  if (opts.replyGoalScope) {
-    // Same validation as resolveThread: the notification must belong to THIS
-    // chat — a foreign scope is ignored, never followed.
-    const { chatKey, thread } = splitGoalScope(opts.replyGoalScope);
-    if (chatKey === opts.chatKey) return `${chatKey}#${thread}`;
-  }
-  if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
-  return `${opts.chatKey}#main`;
 }
 
 /**
