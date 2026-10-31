@@ -206,6 +206,8 @@ const SKIPS: Record<string, string> = {
   'no-en-marcha': 'Asistenta no está en marcha: espero a que vuelva',
   ocupada: 'Asistenta está ocupada (un turno o una aprobación): lo dejo para luego',
   desconocido: 'no sé si Asistenta está ocupada: lo dejo para luego',
+  'sin-git':
+    'esta carpeta no viene de git (¿la bajaste en ZIP?) o git no está instalado: no puedo actualizarme sola. Para una versión nueva, baja el ZIP otra vez, o instala git y clona Asistenta (README, paso 2)',
 };
 
 /**
@@ -269,7 +271,9 @@ export async function runAutoupdate(
     return deps.npm(args, t);
   };
   try {
-    const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim();
+    const head = await git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (head.code !== 0) return skip('sin-git');
+    const branch = head.out.trim();
     if (branch !== 'main')
       return skip(`estás en la rama «${branch || '?'}»: solo me actualizo en main`);
     if ((await git(['fetch', '--quiet', 'origin', 'main'], 120_000)).code !== 0) {
