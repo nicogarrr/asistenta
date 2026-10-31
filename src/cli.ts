@@ -139,7 +139,7 @@ import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
-import { handleFeatureAsk } from './evolve/ask.js';
+import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -391,6 +391,7 @@ import { formatServicesList, ServiceStore } from './services/store.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
 import { detectSkillEnv } from './skills/env.js';
 import { seedGeneralSkills } from './skills/general.js';
+import { GrillMe } from './skills/grill.js';
 import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
@@ -4535,6 +4536,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Una petición hablada que llega con un ciclo en marcha se prueba al terminar ese.
   let evolveAgain = false;
   const featureAsks = new Map<string, { idea: string; at: number }>();
+  const grillMe = new GrillMe();
   const runEvolveCycle = async (chatId: string): Promise<void> => {
     if (evolving) {
       evolveAgain = true;
@@ -7433,6 +7435,28 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
           const plainText =
             !inbound.documentFileId && !inbound.audioFileId && !inbound.images?.length;
+          // Lo grande o abierto: 3–5 preguntas y un resumen antes de empezar (skill grill-me).
+          const grill =
+            plainText && isOwnerDm(inbound, vigilanteOwnerId)
+              ? await grillMe.handle(chatKey_, inbound.text, {
+                  // El modelo solo se prepara si de verdad toca preguntar.
+                  llm: async (system, user, max) => {
+                    const llm = await researchLlm();
+                    if (!llm) throw new Error('sin modelo');
+                    return llm(system, user, max);
+                  },
+                  reply: (text) => say(inbound, text, { quote: true }).then(() => undefined),
+                })
+              : ({ kind: 'pass' } as const);
+          if (grill.kind === 'handled') return;
+          if (grill.kind === 'go' && grill.feature) {
+            const busy = evolving;
+            addHypothesis(paths.state, `Petición del dueño: ${grill.request} — ${grill.spec}`);
+            await say(inbound, busy ? ASK_QUEUED_BUSY : ASK_QUEUED, { quote: true });
+            void runEvolveCycle(inbound.chatId);
+            return;
+          }
+          if (grill.kind === 'go') inbound.text = grill.text;
           if (
             plainText &&
             (await handleFeatureAsk(chatKey_, inbound.text, {
