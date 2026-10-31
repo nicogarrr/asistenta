@@ -17,7 +17,8 @@ describe('levantar.bat', () => {
   });
 
   it('sigue comprobando Node 24 y dist antes, y deja la ventana abierta si falla', () => {
-    expect(bat).toContain('>=24');
+    expect(bat).toContain('call scripts\\node24.cmd');
+    expect(bat.indexOf('node24.cmd')).toBeLessThan(bat.indexOf('dist\\cli.js iniciar'));
     expect(bat).toContain('if not exist dist\\cli.js');
     expect(bat.slice(bat.indexOf('cli.js iniciar'))).toMatch(/if errorlevel 1 \(\r?\n[\s\S]*pause/);
   });
