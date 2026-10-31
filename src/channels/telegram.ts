@@ -7,6 +7,7 @@ import {
   STALE_TV_BUTTON_NOTICE,
   tvButtonMaybeStale,
 } from '../tv/stale-order.js';
+import { TelegramClock } from '../tv/telegram-clock.js';
 import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
@@ -181,6 +182,8 @@ export class TelegramChannel implements ChannelAdapter {
   #pollingConfirmed = false;
   /** Inicio de la última conexión (arranque o reconexión): ver #onTvPress. */
   #pollStartedAt: number | undefined;
+  /** Hora de Telegram medida con el sondeo: las órdenes a la tele no dependen del reloj del PC. */
+  readonly #clock = new TelegramClock();
   #healthProbeInstalled = false;
   /**
    * One gate for every outbound call in the process.
@@ -283,6 +286,9 @@ export class TelegramChannel implements ChannelAdapter {
         // ok === true AND a real batch — never just "no throw" (auditor #153
         // ronda 2).
         const result = await prev(method, payload, signal);
+        if (method === 'getUpdates' && result.ok === true && Array.isArray(result.result)) {
+          this.#clock.observe(result.result, (payload as { limit?: number } | undefined)?.limit);
+        }
         if (
           method === 'getUpdates' &&
           result.ok === true &&
@@ -304,6 +310,7 @@ export class TelegramChannel implements ChannelAdapter {
     const poll = async (): Promise<void> => {
       this.#pollingConfirmed = false;
       this.#pollStartedAt = Date.now();
+      this.#clock.reset();
       try {
         await bot.start({
           onStart: (me) => {
@@ -403,7 +410,9 @@ export class TelegramChannel implements ChannelAdapter {
       isGroup,
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
-      sentAt: msg.date ? new Date(msg.date * 1000).toISOString() : undefined,
+      sentAt: msg.date
+        ? new Date(this.#clock.sentAtMs(msg.date, ctx.update?.update_id)).toISOString()
+        : undefined,
       replyToMessageId: msg.reply_to_message
         ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
         : undefined,
@@ -556,7 +565,9 @@ export class TelegramChannel implements ChannelAdapter {
     // primero; si Telegram dice que la pulsación es vieja, la tele no se toca.
     const keyboard = ctx.callbackQuery?.message;
     const keyboardAt = keyboard?.date
-      ? Math.max(keyboard.date, ('edit_date' in keyboard && keyboard.edit_date) || 0) * 1000
+      ? this.#clock.sentAtMs(
+          Math.max(keyboard.date, ('edit_date' in keyboard && keyboard.edit_date) || 0),
+        )
       : undefined;
     let answered = false;
     if (tvButtonMaybeStale(keyboardAt, this.#pollStartedAt)) {
