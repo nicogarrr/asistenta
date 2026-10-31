@@ -219,10 +219,11 @@ function redactSecret(message: string, secret: string): string {
 function failureMessage(err: unknown, secret: string): string {
   const detail = err instanceof Error ? err.message : String(err);
   const status = /\b([45]\d\d)\b/.exec(detail)?.[1];
-  const why = status
-    ? `el calendario respondió ${status} (dirección iCal caducada o reiniciada)`
-    : redactSecret(detail, secret);
-  return `No se ha podido leer el calendario: ${why}`;
+  if (status)
+    return `No se ha podido leer el calendario: el calendario respondió ${status} (dirección iCal caducada o reiniciada)`;
+  // The raw error (redacted) is for the log; /agenda and the briefing get a plain line.
+  log.warn('agenda: remote calendar unreachable', { err: redactSecret(detail, secret) });
+  return 'No se ha podido leer el calendario: no hay conexión o no responde.';
 }
 
 /** `parseIcs` shape -> agenda shape, including the all-day fix. */

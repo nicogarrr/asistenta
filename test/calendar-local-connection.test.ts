@@ -57,7 +57,8 @@ describe('local calendar write -> normal read -> proactive agenda', () => {
       },
     }).execute('read', { action: 'agenda' });
     expect(textOf(result)).toContain('Cita local de prueba');
-    expect(textOf(result)).toContain('socket');
+    expect(textOf(result)).toContain('No he podido leer el calendario remoto');
+    expect(textOf(result)).not.toContain('socket');
     expect(textOf(result)).not.toContain(secret);
   });
   it('deduplicates an exported local event imported into the remote feed by UID and occurrence', async () => {
@@ -155,7 +156,12 @@ it('keeps calendar degradation observable in the proactive reader', async () => 
   expect(events).toHaveLength(1);
   expect(log.warn).toHaveBeenCalledWith(
     'agenda: calendar unavailable',
-    expect.objectContaining({ reason: expect.stringContaining('socket') }),
+    expect.objectContaining({ reason: expect.stringContaining('no hay conexión') }),
+  );
+  // The raw cause stays observable, in the log only.
+  expect(log.warn).toHaveBeenCalledWith(
+    'agenda: remote calendar unreachable',
+    expect.objectContaining({ err: expect.stringContaining('socket') }),
   );
   expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain(secret);
 });
