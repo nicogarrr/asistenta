@@ -96,6 +96,9 @@ export async function waitOwnerMessage(fetchFn, token, { tries = 6 } = {}) {
 }
 
 /** Pasos del instalador. Todo lo que toca el sistema llega en `d` (tests). */
+const ENCENDIDA =
+  'Asistenta sigue encendida y así Windows no deja cambiar sus archivos. Apágala (cierra la ventana de levantar.bat o escribe node dist\\cli.js stop) y vuelve a abrir instalar.bat.';
+
 export async function instalar(d) {
   const say = (s) => d.write(`${s}\n`);
   const fail = (s) => {
@@ -119,6 +122,21 @@ export async function instalar(d) {
     say(
       `⚠ Asistenta está dentro de OneDrive (${d.cwd}). OneDrive bloquea archivos mientras sincroniza y la instalación suele fallar. ${ONEDRIVE_MOVER}`,
     );
+
+  // Segunda pasada sobre una instalación en marcha: npm ci borra node_modules y Windows
+  // no deja tocar archivos que Asistenta tiene abiertos (EBUSY/EPERM a mitad).
+  if (d.encendida && (await d.encendida())) {
+    const si = (
+      await d.ask(
+        'Asistenta está encendida y para reinstalar hay que apagarla. ¿La apago ahora? (s/n): ',
+      )
+    )
+      .trim()
+      .toLowerCase();
+    const parada = si.startsWith('s') && ((await d.cli(['stop'])) === 0 || !(await d.encendida()));
+    if (!parada) return fail(ENCENDIDA);
+    say('✓ Asistenta apagada. Cuando termine, enciéndela otra vez con levantar.bat.');
+  }
 
   say('… Instalando dependencias (npm ci). Tarda unos minutos.');
   if ((await d.run('npm', ['ci', '--no-audit', '--no-fund'])) !== 0)
@@ -301,6 +319,19 @@ export const realDeps = {
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
     return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : null;
+  },
+  // Solo si ya hubo una instalación: `pa status --json` dice si el proceso vive.
+  encendida: async () => {
+    if (!existsSync('dist/cli.js')) return false;
+    const r = spawnSync(process.execPath, cliArgs(['status', '--json']), {
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    try {
+      return JSON.parse(r.stdout).processState === 'alive';
+    } catch {
+      return false;
+    }
   },
   // Lee una clave guardada por una tubería: nunca sale en pantalla.
   vaultGet: async (key) => {
