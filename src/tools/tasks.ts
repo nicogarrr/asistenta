@@ -3,6 +3,7 @@ import { Type } from 'typebox';
 import {
   type BoardTask,
   dayLabel,
+  fold,
   normaliseTime,
   resolveDay,
   resolveStatus,
@@ -18,11 +19,12 @@ const Params = Type.Object({
       Type.Literal('marcar'),
       Type.Literal('mover'),
       Type.Literal('borrar'),
+      Type.Literal('renombrar'),
     ],
-    { description: 'apuntar | ver | marcar | mover | borrar' },
+    { description: 'apuntar | ver | marcar | mover | borrar | renombrar' },
   ),
   titulo: Type.Optional(
-    Type.String({ description: 'apuntar: what to do, short («llamar al banco»).' }),
+    Type.String({ description: 'apuntar/renombrar: what to do, short («llamar al banco»).' }),
   ),
   dia: Type.Optional(
     Type.String({
@@ -104,7 +106,9 @@ export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
       "The owner's weekly task board (local). Use for «apúntame para el jueves llamar al banco»,",
       '«¿qué tengo esta semana?», «marca hecho lo del banco», «pasa lo del banco al viernes».',
       'apuntar: titulo + dia (+ hora). ver: semana esta|proxima. marcar: tarea + estado',
-      '(pendiente|en curso|hecho). mover: tarea + dia. borrar: only when the owner explicitly asks.',
+      '(pendiente|en curso|hecho). mover: tarea + dia and/or hora («pásalo a las 11»; hora «sin hora» removes it;',
+      'tarea «lo atrasado» moves every overdue open task). renombrar: tarea + titulo.',
+      'borrar: only when the owner explicitly asks.',
       'A task with a time does NOT remind by itself: offer a reminder and use the reminder tool if he says yes.',
       'For planning an event, apuntar one task per step, then ask him only what is really missing.',
     ].join('\n'),
@@ -148,6 +152,22 @@ function pick(
   return found[0] as BoardTask;
 }
 
+/** «Pasa lo atrasado a hoy»: todas las pendientes de días pasados, al día pedido. */
+function moveOverdue(deps: TasksToolDeps, day: string): string {
+  const board = deps.board;
+  const late = board
+    .all(deps.scopeOf())
+    .filter((t) => t.day < board.today() && t.status !== 'hecho');
+  if (late.length === 0) return 'No tienes nada atrasado.';
+  for (const t of late) board.move(t.id, day);
+  const when = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
+  const n = late.length === 1 ? '1 tarea' : `${late.length} tareas`;
+  return `Pasadas a ${when} ${n}: ${late
+    .slice(0, 8)
+    .map((t) => t.title)
+    .join(', ')}${late.length > 8 ? '…' : ''}.`;
+}
+
 function run(deps: TasksToolDeps, args: Args): string {
   const board = deps.board;
   const now = new Date(`${board.today()}T12:00:00`);
@@ -175,14 +195,35 @@ function run(deps: TasksToolDeps, args: Args): string {
       return `${t.title}: ${STATUS_LABEL[status]}.`;
     }
     case 'mover': {
-      const day = resolveDay(args.dia?.trim() ?? '', now);
-      if (!day) return `No entiendo el día «${args.dia ?? ''}». Dímelo como «viernes» o «5/11».`;
-      const time = normaliseTime(args.hora);
-      if (time === null) return `No entiendo la hora «${args.hora}».`;
+      const dayText = args.dia?.trim() ?? '';
+      const noTime = /^(?:sin hora|ninguna|quita(?:r|le)? la hora)$/.test(fold(args.hora ?? ''));
+      const time = noTime ? null : normaliseTime(args.hora);
+      if (time === null && !noTime) return `No entiendo la hora «${args.hora}».`;
+      if (!dayText && time === undefined) return '¿A qué día o a qué hora la paso?';
+      const day = dayText ? resolveDay(dayText, now) : undefined;
+      if (day === null) return `No entiendo el día «${dayText}». Dímelo como «viernes» o «5/11».`;
+      if (
+        /^(?:todo )?(?:lo )?atrasad[oa]s?$|^(?:las )?(?:tareas )?atrasadas$/.test(
+          fold(args.tarea ?? ''),
+        )
+      ) {
+        return moveOverdue(deps, day ?? board.today());
+      }
       const t = pick(deps, args.tarea, true);
       if (typeof t === 'string') return t;
-      board.move(t.id, day, time);
-      return `Movido al ${dayLabel(day)}: ${t.title}.`;
+      const moved = board.move(t.id, day ?? t.day, time);
+      const label = dayLabel(moved?.day ?? t.day);
+      if (!day && noTime) return `Sin hora, el ${label}: ${t.title}.`;
+      if (!day) return `Cambiado a las ${time} del ${label}: ${t.title}.`;
+      return `Movido al ${label}: ${t.title}.`;
+    }
+    case 'renombrar': {
+      const title = args.titulo?.trim();
+      const t = pick(deps, args.tarea, true);
+      if (typeof t === 'string') return t;
+      if (!title) return '¿Cómo la llamo?';
+      const r = board.rename(t.id, title);
+      return `Cambiado: «${t.title}» → «${r?.title ?? title}».`;
     }
     case 'borrar': {
       const t = pick(deps, args.tarea, false);
@@ -191,6 +232,6 @@ function run(deps: TasksToolDeps, args: Args): string {
       return `Borrada: ${t.title}.`;
     }
     default:
-      return 'Acción desconocida: apuntar, ver, marcar, mover o borrar.';
+      return 'Acción desconocida: apuntar, ver, marcar, mover, renombrar o borrar.';
   }
 }

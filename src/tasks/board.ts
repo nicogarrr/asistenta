@@ -357,10 +357,18 @@ export class TaskBoard {
     });
   }
 
-  move(id: number, day: string, time?: string): BoardTask | undefined {
+  rename(id: number, title: string): BoardTask | undefined {
+    return this.#update(id, (t) => {
+      t.title = title.trim().slice(0, 200);
+    });
+  }
+
+  /** Cambia el día (y la hora si viene; `null` le quita la hora). */
+  move(id: number, day: string, time?: string | null): BoardTask | undefined {
     return this.#update(id, (t) => {
       t.day = day;
       if (time) t.time = time;
+      else if (time === null) delete t.time;
       // Con fecha nueva puede volver a atrasarse, y entonces se avisa otra vez (una).
       delete t.lateNoticeDay;
     });
