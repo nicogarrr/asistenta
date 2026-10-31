@@ -36,7 +36,7 @@ function panelPort(rawPort: string): number | null {
 export type PanelStart =
   | { kind: 'off' }
   | { kind: 'start'; port: number; token: string }
-  | { kind: 'problem'; message: string };
+  | { kind: 'problem'; message: string; problem: 'panel-puerto' | 'panel-token' };
 
 export function panelStartPlan(env: NodeJS.ProcessEnv = process.env): PanelStart {
   const rawPort = env.PA_WEB_PORT?.trim();
@@ -46,6 +46,7 @@ export function panelStartPlan(env: NodeJS.ProcessEnv = process.env): PanelStart
     return {
       kind: 'problem',
       message: `El panel web no se ha encendido: PA_WEB_PORT=${rawPort} no es un puerto válido. Pon en .env un número entre 1 y 65535 (por ejemplo PA_WEB_PORT=8787) y reinicia Asistenta.`,
+      problem: 'panel-puerto',
     };
   }
   const token = panelTokenFromEnv(env);
@@ -53,6 +54,7 @@ export function panelStartPlan(env: NodeJS.ProcessEnv = process.env): PanelStart
     return {
       kind: 'problem',
       message: `El panel web no se ha encendido: falta PA_WEB_TOKEN en .env. Añade una línea PA_WEB_TOKEN= con ${MIN_TOKEN} o más letras y números al azar y reinicia Asistenta.`,
+      problem: 'panel-token',
     };
   }
   return { kind: 'start', port, token };

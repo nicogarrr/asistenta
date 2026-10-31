@@ -44,11 +44,17 @@ export interface BootFacts {
 }
 
 /** Problemas de arranque que merecen un mensaje al dueño. */
-export type BootProblem = 'modelo';
+export type BootProblem = 'modelo' | 'panel-puerto' | 'panel-token';
 
 const PROBLEM_TEXT: Record<BootProblem, string> = {
   modelo:
     'No puedo contestarte: falta la clave del modelo o no vale. Revísala en el PC con «pa iniciar».',
+  // El panel web no se enciende: antes solo se decía en la consola del PC, que en
+  // Windows casi nunca está a la vista. Aquí se avisa una vez, no en cada reinicio.
+  'panel-puerto':
+    'El panel web no se ha encendido: el número de PA_WEB_PORT en el archivo .env no vale. Pon uno como 8787 y reinicia Asistenta.',
+  'panel-token':
+    'El panel web no se ha encendido: falta PA_WEB_TOKEN en el archivo .env. Añade esa línea con 24 o más letras y números al azar y reinicia Asistenta.',
 };
 
 const yesNo = (on: boolean) => (on ? 'sí' : 'no');
