@@ -33,7 +33,7 @@ const Params = Type.Object({
   dia: Type.Optional(
     Type.String({
       description:
-        'apuntar/mover: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «5/11» or YYYY-MM-DD.',
+        'apuntar/mover, or ver one day: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «5/11» or YYYY-MM-DD.',
     }),
   ),
   hora: Type.Optional(
@@ -65,6 +65,29 @@ export interface TasksToolDeps {
 
 const line = (t: BoardTask): string =>
   `${t.status === 'hecho' ? '✓ ' : ''}${t.title}${t.time ? ` (${t.time})` : ''}${t.repeat ? ` (${REPEAT_LABEL[t.repeat]})` : ''}${t.status === 'en_curso' ? ', en curso' : ''} [${t.id}]`;
+
+/** «¿Qué tengo hoy?»: solo ese día (y lo atrasado, si es hoy). */
+export function dayText(board: TaskBoard, scope: string | undefined, day: string): string {
+  const today = board.today();
+  const w = board.week(scope, day);
+  const tasks = w.tasks.filter((t) => t.day === day);
+  const head = day === today ? 'Hoy' : day === nextDay(today) ? 'Mañana' : `El ${dayLabel(day)}`;
+  const out =
+    tasks.length === 0
+      ? [`${head} no tienes nada apuntado.`]
+      : [`${head}:`, ...tasks.map((t) => `  ${line(t)}`)];
+  const now = board.week(scope);
+  const late = [...now.overdue, ...now.tasks.filter((t) => t.day < today && t.status !== 'hecho')];
+  if (day === today && late.length > 0) {
+    out.push(
+      `Sin hacer de antes: ${late
+        .slice(0, 5)
+        .map((t) => `${t.title} (${dayLabel(t.day)}) [${t.id}]`)
+        .join('; ')}.`,
+    );
+  }
+  return out.join('\n');
+}
 
 export function weekText(board: TaskBoard, scope: string | undefined, next = false): string {
   const base = next ? board.week(scope).to : board.today();
@@ -115,7 +138,7 @@ export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
     description: [
       "The owner's weekly task board (local). Use for «apúntame para el jueves llamar al banco»,",
       '«¿qué tengo esta semana?», «marca hecho lo del banco», «pasa lo del banco al viernes».',
-      'apuntar: titulo + dia (+ hora). ver: semana esta|proxima. marcar: tarea + estado',
+      'apuntar: titulo + dia (+ hora). ver: semana esta|proxima, or dia for one day. marcar: tarea + estado',
       '(pendiente|en curso|hecho). mover: tarea + dia and/or hora («pásalo a las 11»; hora «sin hora» removes it;',
       'tarea «lo atrasado» moves every overdue open task). renombrar: tarea + titulo.',
       'repetir: tarea + repetir (also on apuntar, e.g. «todos los lunes sacar la basura»; «no» stops it).',
@@ -188,8 +211,14 @@ function run(deps: TasksToolDeps, args: Args): string {
   const board = deps.board;
   const now = new Date(`${board.today()}T12:00:00`);
   switch (args.action) {
-    case 'ver':
+    case 'ver': {
+      if (args.dia?.trim() && args.semana !== 'proxima') {
+        const day = resolveDay(args.dia.trim(), now);
+        if (!day) return `No entiendo el día «${args.dia}». Dímelo como «jueves» o «5/11».`;
+        return dayText(board, deps.scopeOf(), day);
+      }
       return weekText(board, deps.scopeOf(), args.semana === 'proxima');
+    }
     case 'apuntar': {
       const title = args.titulo?.trim();
       if (!title) return '¿Qué apunto?';
@@ -200,6 +229,19 @@ function run(deps: TasksToolDeps, args: Args): string {
       const rep = args.repetir?.trim() ? resolveRepeat(args.repetir) : 'no';
       if (rep === null) return repeatHelp(args.repetir);
       const repeat: TaskRepeat | undefined = rep === 'no' ? undefined : rep;
+      const same = board
+        .week(deps.scopeOf(), day)
+        .tasks.find(
+          (o) =>
+            o.day === day &&
+            o.status !== 'hecho' &&
+            (o.time ?? '') === (time ?? '') &&
+            fold(o.title) === fold(title),
+        );
+      if (same) {
+        const cuando = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
+        return `Ya lo tenías apuntado para ${cuando}: ${same.title}${same.time ? ` a las ${same.time}` : ''} [${same.id}].`;
+      }
       const t = board.add(deps.scopeOf(), title, day, time, repeat);
       const when = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
       const every = repeat ? ` (${REPEAT_LABEL[repeat]})` : '';
