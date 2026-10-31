@@ -308,6 +308,7 @@ import {
 } from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
 import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
+import { guardReaTools, withRea } from './mcp/rea.js';
 import { createMcpTools, mcpCommandText, mcpResourcesDoctorLines } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
 import {
@@ -1669,7 +1670,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // --- Integraciones opcionales del daemon -----------------------------------
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
   // entran en todos los hilos. Un servidor caído se salta y no impide arrancar.
-  const mcpServers = parseMcpServers(process.env.PA_MCP_SERVERS);
+  // PA_REA=1 añade REA (src/mcp/rea.ts): solo lectura, solo el dueño, pide permiso cada vez.
+  const mcpServers = withRea(parseMcpServers(process.env.PA_MCP_SERVERS));
   // Entradas con `url` (MCP por HTTP): solo con PA_MCP_HTTP=1.
   const mcpHttpServers = mcpHttpEnabled() ? parseMcpHttpServers(process.env.PA_MCP_SERVERS) : [];
   const mcpTools =
@@ -2287,7 +2289,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     all.push(...iphonePlugin.tools({}));
     // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
     all.push(...ocrLocalPlugin.tools({}));
-    if (mcpTools.length) all.push(...mcpTools);
+    if (mcpTools.length)
+      all.push(...guardReaTools(mcpTools, () => isOwnerDm(inboundFor(thread), vigilanteOwnerId)));
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
