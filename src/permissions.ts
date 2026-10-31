@@ -543,6 +543,8 @@ function readScript(path: string): { text: string; truncated: boolean } | null {
  * Las órdenes normales (`pa vault list`, `npx vitest run`, `& $exe --version`) no cambian.
  */
 const ENCODED_PS = /\b(powershell|pwsh)(\.exe)?\b[^;|&\n]*?\s[-/]e(c|n[a-z]*)?(?=[\s:]|$)/i;
+/** Texto construido que va al portapapeles para pegarlo luego en una terminal. */
+const TO_CLIPBOARD = /\b(set-clipboard|scb)\b|\|\s*clip(\.exe)?\b/i;
 const DYNAMIC_EXEC = /\b(iex|invoke-expression)\b|\[scriptblock\]\s*::\s*create/i;
 const BUILT_TEXT =
   /frombase64string|\[char\]|[\s(]-(join|replace)\b|\breverse\b|["']\s*\+\s*["']|[\s)]-f\s/i;
@@ -562,7 +564,7 @@ function hidesSecretCli(c: ToolCall): boolean {
   // Tecleado con `computer`: solo el texto, sin la palabra «type» de la acción delante.
   const raw = c.tool === 'computer' && typeof c.args.text === 'string' ? c.args.text : blobOf(c);
   if (ENCODED_PS.test(raw)) return true;
-  if (DYNAMIC_EXEC.test(raw) && BUILT_TEXT.test(raw)) return true;
+  if ((DYNAMIC_EXEC.test(raw) || TO_CLIPBOARD.test(raw)) && BUILT_TEXT.test(raw)) return true;
   if (c.tool !== 'shell' && c.tool !== 'computer') return false;
   const texts = cliTexts(raw);
   const withVariable = c.tool === 'shell' ? CLI_WITH_VARIABLE : TYPED_CLI_WITH_VARIABLE;
@@ -573,6 +575,27 @@ function hidesSecretCli(c: ToolCall): boolean {
 /** Reglas que también se aplican a la línea tecleada con `computer` desde el último Enter. */
 const TYPED_LINE_RULES = new Set(['deny-secret-cli', 'deny-hidden-cli']);
 const TYPED_LINE_MAX = 512;
+
+/**
+ * Pegar (ctrl+v, shift+insert) mete en la línea lo que haya en el portapapeles, que el
+ * gate no ve (`type` lo deja como estaba): se marca con UNKNOWN_PASTE.
+ */
+const PASTE_KEY = /^(ctrl|control|cmd|command|win)\+(shift\+)?v$|^shift\+(insert|ins)$/;
+const UNKNOWN_PASTE = '\u0000';
+
+/**
+ * Texto desconocido pegado en una línea que nombra el vault o las cuentas
+ * («pa vault » + ctrl+v): no se puede saber qué orden queda.
+ */
+const PASTE_NEAR_CLI = /\b(pa(\.(cmd|ps1|bat|exe))?|cli\.js)\s+(vault|cuentas)\b/i;
+const CLI_BEFORE_PASTE = /(^|[;|&({}\s])pa(\.(cmd|ps1|bat|exe))?\s*$/i;
+
+function pastesUnknownNearSecret(line: string): boolean {
+  const at = line.indexOf(UNKNOWN_PASTE);
+  if (at < 0) return false;
+  if (CLI_BEFORE_PASTE.test(line.slice(0, at))) return true;
+  return cliTexts(line.split(UNKNOWN_PASTE).join(' ')).some((t) => PASTE_NEAR_CLI.test(t));
+}
 
 /**
  * La línea que queda en la ventana tras una acción `computer` de teclear: lo escrito
@@ -588,6 +611,7 @@ function typedLineAfter(prev: string, call: ToolCall): string | null {
   if (key === 'enter' || key === 'return') return '';
   if (key === 'space') return `${prev} `;
   if (key === 'backspace') return prev.slice(0, -1);
+  if (PASTE_KEY.test(key)) return `${prev}${UNKNOWN_PASTE}`.slice(-TYPED_LINE_MAX);
   if ([...key].length === 1) return `${prev}${key}`.slice(-TYPED_LINE_MAX);
   return prev;
 }
@@ -2158,6 +2182,10 @@ export class Gate {
 
   async check(sessionId: string, call: ToolCall): Promise<Decision> {
     const typed = typedLineAfter(this.#typedLine.get(sessionId) ?? '', call);
+    if (typed && pastesUnknownNearSecret(typed)) {
+      const hidden = this.#rules.find((r) => r.id === 'deny-hidden-cli');
+      if (hidden) return this.#record(call, { verdict: 'deny', reason: hidden.reason });
+    }
     if (typed) {
       // Una orden tecleada a trozos en una terminal del escritorio se lee entera.
       const line: ToolCall = { ...call, args: { action: 'type', text: typed } };
