@@ -186,6 +186,10 @@ async function watchdogStatus(stateDir: string): Promise<void> {
   process.stdout.write(`${line}\n${autoupdateStatusLine(stateDir)}\n`);
 }
 
+/** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b [--x]». */
+export const AUTOSTART_USAGE =
+  'No conozco esa orden. Usa: pa autostart install (que arranque sola al encender el PC), pa autostart status (cómo está) o pa autostart uninstall (quitarlo). Con install puedes añadir --start (arrancarla ya), --what-if (solo ver qué haría) o --no-local-llm (sin el modelo local).';
+
 export async function autostartCommand(
   args: string[],
   opts: AutostartOptions = {},
@@ -200,9 +204,7 @@ export async function autostartCommand(
     (action === 'vigilar' && args.length > 1) ||
     args.slice(1).some((a) => !['--start', '--what-if', '--no-local-llm'].includes(a))
   ) {
-    process.stderr.write(
-      'uso: pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]\n',
-    );
+    process.stderr.write(`${AUTOSTART_USAGE}\n`);
     return 2;
   }
   const stateDir = opts.stateDir ?? paths.state;
