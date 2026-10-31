@@ -96,6 +96,13 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
   };
 }
 
+/** Sin PID legible: por qué, en castellano (antes «PID no disponible (missing)»). */
+const PID_SIN_ARCHIVO = {
+  missing: 'No hay archivo de PID: Asistenta no parece estar en marcha.',
+  invalid: 'El archivo de PID está dañado: no sé qué proceso es Asistenta.',
+  unreadable: 'No pude leer el archivo de PID (¿permisos?).',
+} as const;
+
 export function statusCommand(
   args: string[],
   deps: DaemonStatusDeps = {},
@@ -116,7 +123,7 @@ export function statusCommand(
   } else {
     const pidText =
       report.pid === null
-        ? `PID no disponible (${report.pidState}).`
+        ? PID_SIN_ARCHIVO[report.pidState as Exclude<typeof report.pidState, 'valid'>]
         : `PID ${report.pid}: ${report.processState === 'alive' ? 'el proceso existe' : report.processState === 'dead' ? 'el proceso no existe' : 'no se pudo comprobar el proceso'}.`;
     const beatText =
       report.heartbeatState === 'fresh'
