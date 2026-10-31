@@ -7457,6 +7457,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (result !== 'off') log.info('boot notice', { result });
   })().catch(() => {});
 
+  // Dictado por voz (PA_DICTADO=1, Windows): tecla mantenida → texto en la app con el foco.
+  void import('./dictado/arranque.js')
+    .then((m) => m.arrancarDictado({ log: (l) => log.info(l), escritorio: desktopEnabled() }))
+    .then((d) => d && process.once('exit', () => void d.stop()))
+    .catch((err: unknown) => log.error('dictado could not start', { err }));
+
   // Started last, and off the critical path: a machine with no microphone, or one
   // where the device is already held by Teams, must still end up with a working
   // Telegram daemon. A failure here is logged and reported in /wake, never thrown.
