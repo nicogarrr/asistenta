@@ -41,6 +41,7 @@ Section "Asistenta"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   ; Accesos directos con la carpeta app como carpeta de trabajo (ahí vive .env).
   CreateDirectory "$SMPROGRAMS\Asistenta"
+  CreateShortcut "$SMPROGRAMS\Asistenta\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
   CreateShortcut "$SMPROGRAMS\Asistenta\Desinstalar Asistenta.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Asistenta" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "Asistenta"
