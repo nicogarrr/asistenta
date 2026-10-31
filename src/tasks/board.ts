@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 
 /**
@@ -114,6 +115,10 @@ const NUMBER_WORDS = [
 function smallNumber(word: string): number {
   if (/^\d+$/.test(word)) return Number(word);
   if (word === 'un' || word === 'uno') return 1;
+  // «dentro de quince días»: lo que se dice de verdad (gaps8).
+  if (word === 'quince') return 15;
+  if (word === 'veinte') return 20;
+  if (word === 'treinta') return 30;
   const i = NUMBER_WORDS.indexOf(word);
   return i === -1 ? Number.NaN : i;
 }
@@ -187,7 +192,14 @@ export function dayLabel(day: string): string {
  */
 export function resolveDay(input: string, now: Date): string | null {
   const today = localDay(now);
-  const text = fold(input).replace(/^(el|este|esta|para el|para)\s+/, '');
+  const said = fold(input).trim();
+  // «esta mañana», «esta tarde», «esta noche» son hoy: antes, «esta mañana» quedaba
+  // en «mañana» y la tarea se iba al día siguiente (gaps8).
+  if (/^(?:para\s+)?esta\s+(?:manana|tarde|noche)$/.test(said)) return today;
+  // «mañana por la tarde», «hoy por la noche»: la parte del día no cambia el día.
+  const part = /^(.+?)\s+(?:por|a|de)\s+la\s+(?:manana|tarde|noche)$/.exec(said);
+  if (part?.[1] && /^(?:hoy|manana|pasado manana)$/.test(part[1])) return resolveDay(part[1], now);
+  const text = said.replace(/^(el|este|esta|para el|para)\s+/, '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Number.isNaN(parseDay(text).getTime()) ? null : text;
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
@@ -262,9 +274,15 @@ export function normaliseTime(input: string | undefined): string | undefined | n
   const pm = period ? period[1] === 'tarde' || period[1] === 'noche' || period[2] === 'p' : false;
   if (period) t = t.slice(0, period.index).trim();
   let extra = 0;
-  const frac = /\s+(y media|y cuarto|menos cuarto)$/.exec(t);
+  t = t.replace(/\s+en punto$/, '');
+  // «8 y media», «8 y diez», «8 y 15», «9 menos veinte», «9 y treinta y cinco»: before,
+  // only media/cuarto were read and «a las 8 y diez» was refused (gaps8).
+  const frac = new RegExp(`\\s+(?:y\\s+(${MINUTES_AFTER})|menos\\s+(${MINUTES_BEFORE}))$`).exec(t);
   if (frac) {
-    extra = frac[1] === 'y media' ? 30 : frac[1] === 'y cuarto' ? 15 : -15;
+    const said = minuteSaid(frac[1] ?? frac[2] ?? '');
+    if (frac[2] !== undefined ? !(said >= 1 && said <= 30) : !(said >= 0 && said <= 59))
+      return null;
+    extra = frac[2] !== undefined ? -said : said === 0 ? 60 : said;
     t = t.slice(0, frac.index);
   }
   const word = /^[a-z]+$/.test(t) ? smallNumber(t) : Number.NaN;
@@ -281,7 +299,7 @@ export function normaliseTime(input: string | undefined): string | undefined | n
   else if (pm && h < 12 && !(night && h <= 4)) h += 12;
   if (extra) {
     if (m[2]) return null;
-    min = extra > 0 ? extra : 45;
+    min = extra === 60 ? 0 : extra > 0 ? extra : 60 + extra;
     if (extra < 0) h = (h + 23) % 24;
   }
   return `${pad(h)}:${pad(min)}`;
