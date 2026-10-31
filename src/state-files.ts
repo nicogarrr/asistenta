@@ -122,6 +122,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'memory', what: 'memoria a largo plazo (markdown por ámbito)', backup: 'dir' },
   { name: 'snapshot', what: 'instantáneas de memoria', backup: 'dir' },
   { name: 'skills', what: 'habilidades aprendidas', backup: 'dir' },
+  {
+    name: 'habilidades-repetidas.json',
+    what: 'recetas repetidas y la oferta pendiente de guardarlas como habilidad',
+    backup: 'file',
+  },
   { name: 'playbooks', what: 'playbooks', backup: 'dir' },
   { name: 'undo', what: 'deshacer de memoria', backup: 'dir' },
   { name: 'calendar', what: 'agenda local (sin Google)', backup: 'dir' },
