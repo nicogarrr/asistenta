@@ -43,7 +43,12 @@ function read(state: string, leaf: string): Record<string, unknown> {
     text.length > 2048
   )
     throw new Error('Metadata Windows cambió durante lectura.');
-  const value: unknown = JSON.parse(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Metadata Windows ilegible.');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Metadata Windows inválida.');
   return value as Record<string, unknown>;
@@ -80,9 +85,14 @@ function publish(state: string, leaf: string, value: unknown) {
   windowsNative(state, 'check', leaf);
 }
 function removeOwned(state: string, leaf: string) {
+  // Same ownership checks as read(), but the content is not parsed: a file left half-written
+  // by a power cut is removed instead of blocking every later start.
   try {
-    read(state, leaf);
-    unlinkSync(join(dir(state), leaf));
+    const path = join(dir(state), leaf);
+    const stat = lstatSync(path);
+    windowsNative(state, 'check', leaf);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Metadata Windows inválida.');
+    unlinkSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
@@ -179,6 +189,13 @@ export async function stopWindowsDaemon(
     original = record(state);
   } catch (error) {
     if (isMissingFile(error)) throw new DaemonNotRunningError();
+    // A broken ready.json (power cut) with nobody owning control: nothing is running.
+    if (
+      error instanceof Error &&
+      /^Metadata Windows (ilegible|inválida)\./.test(error.message) &&
+      windowsNative(state, 'probe') !== 'busy'
+    )
+      throw new DaemonNotRunningError();
     throw error;
   }
   // Nobody holds the owner lock: a ready record left by a crash, nothing to stop.
