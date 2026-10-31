@@ -31,3 +31,11 @@ pillo» o «explícamelo más fácil», Asistenta te lo vuelve a explicar: prime
 una frase de qué hablabais y luego lo importante con palabras sencillas, sin jerga
 y en pocas líneas. Lo reconoce el código (solo mensajes cortos) y no cambia nada
 más. Código: `src/skills/wait-what.ts`.
+
+## Cuestionario para otra persona (to-questionnaire)
+
+Cuando necesitas algo de alguien que sabe lo que tú no («prepárame las preguntas
+para el gestor», «qué le pregunto al casero»), Asistenta te pregunta solo a quién
+va y qué necesitas saber, y te prepara las preguntas ordenadas por importancia,
+una idea por pregunta. No lo envía a nadie sin tu permiso. Es una de las
+habilidades generales (`src/skills/general.ts`).
