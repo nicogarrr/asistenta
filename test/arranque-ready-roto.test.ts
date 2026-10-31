@@ -47,7 +47,7 @@ describe('Windows: ready.json roto tras un apagón', () => {
   it('pa stop con un ready.json roto y control ocupado no enseña el error crudo de JSON', async () => {
     native.probe = 'busy';
     const { state } = brokenState();
-    const error = await stopWindowsDaemon(state, 100).catch((e: unknown) => e as Error);
+    const error = (await stopWindowsDaemon(state, 100).catch((e: unknown) => e)) as Error;
     expect(error).not.toBeInstanceOf(DaemonNotRunningError);
     expect(error.message).toBe('Metadata Windows ilegible.');
   });
