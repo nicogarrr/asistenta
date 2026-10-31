@@ -530,19 +530,19 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'volumeHalf' };
   }
 
-  // "sube a tope", "volumen al maximo": 100. Nico lo decidio el 30-oct-2026
+  // "sube a tope", "volumen al maximo", "sube del todo": 100. Nico lo decidio el 30-oct-2026
   // («a tope es a tope»); antes era un tope de seguridad de 50.
   if (
-    /^(?:sube(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|pon(?:me)?(?:lo|la)?(?: (?:la tele|la tv))?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^(?:sube(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|pon(?:me)?(?:lo|la)?(?: (?:la tele|la tv))?|(?:pon(?:me)? )?el volumen|volumen) (?:(?:a|al) (?:tope|maximo|full)|del todo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
     return { action: 'volume', level: VOLUME_TOPE };
   }
-  // «bájala a tope», «baja el volumen al máximo»: bajar todo lo posible es el mínimo
+  // «bájala a tope», «baja el volumen al máximo» o «del todo»: bajar todo lo posible es el mínimo
   // (VOLUME_MINIMO, 1), nunca 0 ni silencio.
   if (
-    /^baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))? (?:a|al) (?:tope|maximo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))? (?:(?:a|al) (?:tope|maximo)|del todo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
