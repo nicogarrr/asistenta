@@ -198,8 +198,15 @@ export function autoupdateStatusLine(
       ? ` Última (${future}): ${state.last.text}.`
       : ` Última (hace ${min} min): ${state.last.text}.`;
   }
+  if (state.pending) line += lockHeld(stateDir, now) ? AUTOUPDATE_PENDING_BUSY : AUTOUPDATE_PENDING;
   return line;
 }
+
+/** Una actualización cortada (apagón, suspensión) que aún no se ha arreglado. */
+export const AUTOUPDATE_PENDING =
+  ' Hay una actualización a medias (se cortó antes de acabar): la arreglo sola en la próxima revisión del vigilante, o ya mismo con pa autoupdate now.';
+export const AUTOUPDATE_PENDING_BUSY =
+  ' Ahora mismo estoy arreglando una actualización que se quedó a medias.';
 
 /** Desde el vigilante: si toca revisar, lanza `pa autoupdate aplicar` aparte y vuelve. */
 export function maybeLaunchAutoupdate(
@@ -210,8 +217,14 @@ export function maybeLaunchAutoupdate(
   env: NodeJS.ProcessEnv = process.env,
   now: number = Date.now(),
 ): boolean {
-  if (!autoupdateEnabled(stateDir, env) || lockHeld(stateDir, now)) return false;
-  if (!autoupdateDue(readAutoupdateState(stateDir), now, autoupdateIntervalMin(env))) return false;
+  if (lockHeld(stateDir, now)) return false;
+  const state = readAutoupdateState(stateDir);
+  // Una actualización a medias se arregla ya, aunque esté apagada o no toque revisar:
+  // si no, Asistenta seguía con la versión a medio montar hasta 30 min (o para siempre).
+  if (!state.pending) {
+    if (!autoupdateEnabled(stateDir, env)) return false;
+    if (!autoupdateDue(state, now, autoupdateIntervalMin(env))) return false;
+  }
   try {
     launch(process.execPath, [cliJs, 'autoupdate', 'aplicar']);
     return true;
