@@ -523,7 +523,12 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
-import { cliFatalMessage, unknownCommandMessage, vaultListText } from './cli-messages.js';
+import {
+  cliFatalMessage,
+  unknownCommandMessage,
+  vaultListText,
+  vaultMissingText,
+} from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
   commandRoutineTag,
@@ -817,26 +822,28 @@ async function vaultCommand(args: string[]): Promise<number> {
 
   if (sub === 'init') {
     await initVault();
-    process.stdout.write(`vault created at ${paths.vault}\n`);
+    process.stdout.write(`Caja fuerte creada en ${paths.vault}\n`);
     return 0;
   }
   if (sub === 'set') {
     if (!key || value === undefined) {
-      process.stderr.write('usage: pa vault set <key> <value>\n');
+      process.stderr.write(
+        'Uso: pa vault set <nombre> <valor>  (mejor: pa vault set-stdin <nombre>, así el valor no queda en el historial)\n',
+      );
       return 2;
     }
     await vaultSet(key, value);
-    process.stdout.write(`stored ${key}\n`);
+    process.stdout.write(`Guardado: ${key}\n`);
     return 0;
   }
   if (sub === 'get') {
     if (!key) {
-      process.stderr.write('usage: pa vault get <key>\n');
+      process.stderr.write('Uso: pa vault get <nombre>\n');
       return 2;
     }
     const v = await vaultGet(key);
     if (v === undefined) {
-      process.stderr.write(`no such secret: ${key}\n`);
+      process.stderr.write(vaultMissingText(key));
       return 1;
     }
     process.stdout.write(`${v}\n`);
@@ -848,11 +855,11 @@ async function vaultCommand(args: string[]): Promise<number> {
   }
   if (sub === 'rm') {
     if (!key) {
-      process.stderr.write('usage: pa vault rm <key>\n');
+      process.stderr.write('Uso: pa vault rm <nombre>\n');
       return 2;
     }
     const removed = await vaultDelete(key);
-    process.stdout.write(removed ? `deleted ${key}\n` : `no such secret: ${key}\n`);
+    process.stdout.write(removed ? `Borrado: ${key}\n` : vaultMissingText(key));
     return removed ? 0 : 1;
   }
   process.stderr.write(USAGE);
