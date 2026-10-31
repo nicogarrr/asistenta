@@ -258,6 +258,7 @@ import {
   stopBriefingVoice,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
+import { briefingHour, envOn } from './briefing-env.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
 import {
   cacheFullReply,
@@ -4336,9 +4337,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
   const briefingWeather = weatherConfigFromEnv();
   const briefingDeps: DailyBriefingDeps = {
-    enabled: () => process.env.PA_BRIEFING === '1',
+    enabled: () => envOn(process.env.PA_BRIEFING),
     now: () => new Date(),
-    hour: Number.parseInt(process.env.PA_BRIEFING_HOUR ?? '', 10) || undefined,
+    hour: briefingHour(process.env.PA_BRIEFING_HOUR),
     lastSent: () => weeklyState.lastSent('briefing'),
     markSent: (at) => weeklyState.markSent('briefing', at),
     owner: briefingOwner,
@@ -4376,7 +4377,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return pickImportantMail(messages, Date.now());
     },
     speak:
-      process.env.PA_BRIEFING_VOZ === '1' && desktop
+      envOn(process.env.PA_BRIEFING_VOZ) && desktop
         ? briefingSpeaker({
             synth: (text) =>
               speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
