@@ -50,7 +50,12 @@ async function rawMeta(domain: string, vault: VaultOps): Promise<Record<string, 
   }
 }
 
-async function pendingOf(site: string, vault: VaultOps, byName = false): Promise<Account | null> {
+/** El alta a medias de esa web; con `byName`, el nombre a secas vale si solo encaja una. */
+export async function pendingOf(
+  site: string,
+  vault: VaultOps,
+  byName = false,
+): Promise<Account | null> {
   const domain = normalizeDomain(site);
   if (!domain) return null;
   const pending = (await listAccounts(vault)).filter((a) => a.status === 'pendiente');

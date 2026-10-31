@@ -1,7 +1,7 @@
-import { normalizeDomain } from '../gestor/login.js';
 import { loadReadMailAccount } from '../mail/idle.js';
 import { readReplyThread, searchInbox } from '../mail/reader.js';
-import { listAccounts, metaKey, realVault, type VaultOps } from './store.js';
+import { pendingOf } from './signup.js';
+import { AvisoCuenta, metaKey, realVault, type VaultOps } from './store.js';
 
 /**
  * El código de verificación de un alta, leído del correo del dueño.
@@ -61,11 +61,16 @@ export async function findSignupCode(
   vault: VaultOps = realVault,
   now: number = Date.now(),
 ): Promise<string> {
-  const domain = normalizeDomain(site);
-  const p = domain
-    ? (await listAccounts(vault)).find((a) => a.domain === domain && a.status === 'pendiente')
-    : undefined;
-  if (!domain || !p) return 'No hay ningún alta en marcha para esa web.';
+  let p: Awaited<ReturnType<typeof pendingOf>>;
+  try {
+    // «el código de wallapop»: el nombre a secas vale si solo encaja un alta (como guardar/descartar).
+    p = await pendingOf(site, vault, true);
+  } catch (err) {
+    if (err instanceof AvisoCuenta) return err.message;
+    throw err;
+  }
+  if (!p) return 'No hay ningún alta en marcha para esa web.';
+  const domain = p.domain;
   let approvedAt: unknown;
   try {
     approvedAt = (JSON.parse((await vault.get(metaKey(domain))) ?? '{}') as Record<string, unknown>)
