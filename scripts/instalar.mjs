@@ -264,6 +264,12 @@ export async function instalar(d) {
           ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
           : 'No se ha podido compilar. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y vuelve a abrir instalar.bat. Si no, descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
     );
+  // El antivirus a veces aparta un archivo de node_modules justo después de instalar:
+  // sin esto se decía «✓ Programa listo» y luego se culpaba a la caja fuerte.
+  if (d.arranca && !(await d.arranca()))
+    return fail(
+      'Asistenta se ha instalado pero no arranca: suele ser el antivirus, que ha apartado algún archivo de node_modules. Mira si te ha avisado y restaura el archivo (o pon la carpeta de Asistenta en sus excepciones), borra la carpeta node_modules y vuelve a abrir instalar.bat.',
+    );
   say('✓ Programa listo');
 
   if (d.exists('.env')) say('✓ .env ya existe; no lo toco');
@@ -446,6 +452,10 @@ export const realDeps = {
     }
   },
   readEnv: () => envText('.env'),
+  // `pa --help` carga el programa compilado; la ayuda no se enseña.
+  arranca: async () =>
+    spawnSync(process.execPath, cliArgs(['--help']), { stdio: 'ignore', timeout: 60_000 })
+      .status === 0,
   cli: cliWith(run),
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
