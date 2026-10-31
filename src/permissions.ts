@@ -504,6 +504,32 @@ const PACKAGE_RUNNER = /^(npm|pnpm|yarn|bun)(\.cmd|\.exe)?$/;
 const PACKAGE_SCRIPT =
   /^(run|run-script|rum|urn|test|t|tst|start|stop|restart|install|i|ci|add|exec)$/i;
 
+const MAKE_RUNNER = /^(make|gmake|mingw32-make|nmake|just)(\.exe)?$/i;
+const POWERSHELL = /^(powershell|pwsh)(\.exe)?$/i;
+const NO_PROFILE = /^[-/]nop(rofile)?$/i;
+
+/** Lo que lee `make`/`just` si no se le da otro fichero con -f: sus recetas son órdenes. */
+function recipeFiles(runner: string, words: string[]): string[] {
+  const at = words.findIndex((w) => /^(-f|--file|--justfile|\/f)$/i.test(w));
+  if (at >= 0 && words[at + 1]) return [words[at + 1] as string];
+  return /^just/i.test(runner)
+    ? ['justfile', 'Justfile', '.justfile']
+    : ['GNUmakefile', 'Makefile', 'makefile'];
+}
+
+/**
+ * Perfiles de PowerShell: se ejecutan solos cada vez que se abre `powershell`/`pwsh`
+ * sin -NoProfile (también la terminal que se abre en el escritorio).
+ */
+function powershellProfiles(): string[] {
+  const home = homedir();
+  return ['Documents', 'OneDrive/Documents', 'OneDrive/Documentos'].flatMap((docs) =>
+    ['WindowsPowerShell', 'PowerShell'].flatMap((dir) =>
+      ['profile.ps1', 'Microsoft.PowerShell_profile.ps1'].map((f) => join(home, docs, dir, f)),
+    ),
+  );
+}
+
 /** Palabras de una orden que pueden ser un script que se ejecuta. */
 function scriptRefs(command: string, fromCode = false): string[] {
   const feeds = FEEDS_SHELL.test(command);
@@ -519,6 +545,16 @@ function scriptRefs(command: string, fromCode = false): string[] {
     if (CHANGE_DIR.test(first) && words[1] && !words[1].startsWith('-')) {
       dir = at(words[1]);
       continue;
+    }
+    // `make build`, `just test`: ejecutan las recetas del Makefile/justfile.
+    if (MAKE_RUNNER.test(first)) refs.push(...recipeFiles(first, words).map(at));
+    if (words.some((w) => POWERSHELL.test(w)) && !words.some((w) => NO_PROFILE.test(w))) {
+      refs.push(...powershellProfiles());
+    }
+    // `code .`: VS Code puede lanzar al abrir la carpeta las tareas de .vscode/tasks.json.
+    if (/^code(-insiders)?(\.cmd|\.exe)?$/.test(first)) {
+      const folder = words.slice(1).find((w) => !w.startsWith('-')) ?? '.';
+      refs.push(at(`${folder.replace(/[\\/]+$/, '')}/.vscode/tasks.json`));
     }
     // `npm test`, `npm run x`, `npm ci`: ejecutan lo que diga package.json.
     if (PACKAGE_RUNNER.test(first) && PACKAGE_SCRIPT.test(words[1] ?? '')) {
@@ -2271,7 +2307,7 @@ export class Gate {
       for (const ref of pending) {
         const path = absolutizePath(ref.replace(/\\/g, '/'));
         const key = lexicalNormalize(path);
-        if (seen.has(key) || seen.size >= 20) continue;
+        if (seen.has(key) || seen.size >= 40) continue;
         seen.add(key);
         if (/\\node_modules\\/.test(key) || this.#isProtected(path) || isAppCode(path)) continue;
         const script = readScript(path);
