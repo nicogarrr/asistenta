@@ -119,6 +119,10 @@ export const CAPABILITIES: readonly Capability[] = [
     name: 'ocr_local',
     note: 'OCR local opcional (PA_OCR_LOCAL=1): lee una imagen/PDF de las carpetas permitidas; la Gate decide.',
   },
+  {
+    name: 'tiempo',
+    note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
+  },
 ];
 
 const names = (pick: (c: Capability) => boolean | undefined): string[] =>
