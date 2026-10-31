@@ -35,7 +35,8 @@ describe('resumen de la mañana: valores del .env como los escribe una persona',
   it('cli.ts usa estas lecturas para PA_BRIEFING, PA_BRIEFING_HOUR y PA_BRIEFING_VOZ', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
     expect(src).toContain('enabled: () => envOn(process.env.PA_BRIEFING),');
-    expect(src).toContain('hour: briefingHour(process.env.PA_BRIEFING_HOUR),');
+    // La hora puede moverla el silencio que dijo el dueño (src/daemon/briefing-quiet.ts).
+    expect(src).toContain('briefingHour(process.env.PA_BRIEFING_HOUR),');
     expect(src).toContain('envOn(process.env.PA_BRIEFING_VOZ) && desktop');
     expect(src).not.toContain("process.env.PA_BRIEFING === '1'");
   });
