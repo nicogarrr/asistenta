@@ -411,6 +411,19 @@ function cliText(text: string): string {
 }
 
 /**
+ * La misma orden leída como la junta el shell: cmd quita `^`, PowerShell quita la
+ * comilla invertida y los dos pegan las comillas a lo que tienen al lado, así que
+ * `g^et`, `` g`et `` y `"g"et` son `get`. Se comprueban las dos lecturas.
+ */
+function cliTexts(text: string): string[] {
+  const joined = text
+    .replace(/\\/g, ' ')
+    .replace(/["'`^]/g, '')
+    .replace(/\s+/g, ' ');
+  return [cliText(text), joined];
+}
+
+/**
  * La regla deny-secret-cli lee palabras escritas. Tres formas de esconderlas también
  * se deniegan: una orden de PowerShell codificada (`powershell -enc …`: no se puede
  * leer lo que ejecuta), ejecutar texto construido o decodificado (`iex` con base64,
@@ -432,9 +445,9 @@ function hidesSecretCli(c: ToolCall): boolean {
   if (ENCODED_PS.test(raw)) return true;
   if (DYNAMIC_EXEC.test(raw) && BUILT_TEXT.test(raw)) return true;
   if (c.tool !== 'shell') return false;
-  const text = cliText(raw);
-  if (CLI_WITH_VARIABLE.test(text)) return true;
-  return CALLS_VARIABLE.test(raw) && SECRET_WORDS.test(text);
+  const texts = cliTexts(raw);
+  if (texts.some((t) => CLI_WITH_VARIABLE.test(t))) return true;
+  return CALLS_VARIABLE.test(raw) && texts.some((t) => SECRET_WORDS.test(t));
 }
 
 function blobOf(c: ToolCall): string {
@@ -803,7 +816,7 @@ export class Gate {
           'muestra contraseñas o secretos del vault (pa vault get, pa cuentas copiar o exportar): solo Nico, en su terminal',
         match: (c) =>
           (c.tool === 'shell' || c.tool === 'computer') &&
-          (SECRET_CLI.test(cliText(blobOf(c))) || loadsSecretModule(cliText(blobOf(c)))),
+          cliTexts(blobOf(c)).some((t) => SECRET_CLI.test(t) || loadsSecretModule(t)),
       },
       {
         id: 'deny-hidden-cli',
