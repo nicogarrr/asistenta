@@ -36,14 +36,16 @@ function span({ startHour, endHour }: QuietHours): number {
 }
 
 /**
- * Horas de silencio del dueño: las de serie, con el principio o el final que él haya
- * dicho. Si lo ha dicho varias veces gana lo último apuntado.
+ * Horas de silencio que el dueño dijo él mismo, o null si no ha dicho ninguna (o lo
+ * dicho deja un silencio de más de MAX_QUIET_SPAN_HOURS). Si lo ha dicho varias veces
+ * gana lo último apuntado.
  */
-export function ownerQuietHours(
+export function ownerStatedQuiet(
   entries: readonly string[],
   base: QuietHours = DEFAULT_QUIET_HOURS,
-): QuietHours {
+): QuietHours | null {
   let { startHour, endHour } = base;
+  let stated = false;
   for (const entry of entries) {
     const e = entry.trim();
     if (!e.startsWith(SAID_PREFIX)) continue;
@@ -54,14 +56,31 @@ export function ownerQuietHours(
       // «antes de las 9 y media»: hasta la hora siguiente, mejor de más que de menos.
       const extra =
         before[2] && before[2] !== '00' ? 1 : /y (?:media|cuarto)/.test(before[0]) ? 1 : 0;
-      if (h !== null) endHour = (h + extra) % 24;
+      if (h !== null) {
+        endHour = (h + extra) % 24;
+        stated = true;
+      }
     }
     const after = AFTER.exec(t);
     if (after) {
       const h = hour24(after[1] ?? '', after[3], 'after');
-      if (h !== null) startHour = h;
+      if (h !== null) {
+        startHour = h;
+        stated = true;
+      }
     }
   }
   const out = { startHour, endHour };
-  return span(out) > MAX_QUIET_SPAN_HOURS ? base : out;
+  return stated && span(out) <= MAX_QUIET_SPAN_HOURS ? out : null;
+}
+
+/**
+ * Horas de silencio del dueño: las de serie, con el principio o el final que él haya
+ * dicho. Si lo ha dicho varias veces gana lo último apuntado.
+ */
+export function ownerQuietHours(
+  entries: readonly string[],
+  base: QuietHours = DEFAULT_QUIET_HOURS,
+): QuietHours {
+  return ownerStatedQuiet(entries, base) ?? base;
 }
