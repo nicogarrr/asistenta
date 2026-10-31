@@ -53,10 +53,12 @@ describe('icono de la bandeja', () => {
     expect(clic('estado')).toContain('🟡 En marcha, pero sin conexión con Telegram');
   });
 
-  it('panel solo en 127.0.0.1 y sin leer ni pasar el token', () => {
-    expect(clic('abrir')).toContain('Start-Process "http://127.0.0.1:$puerto/"');
+  it('panel: lo abre pa panel (ya con token); la bandeja no lee ni pasa el token', () => {
+    expect(tray).toMatch(/Panel\s+= @\('panel'\)/);
+    expect(clic('abrir')).toContain('Invoke-Pa $Ordenes.Panel');
+    expect(clic('abrir')).toContain('Show-Aviso $r.Text');
     expect(tray).not.toMatch(/PA_WEB_TOKEN\s*=|token=|vault/i);
-    expect(tray.match(/https?:\/\/[^\s"']+/g)).toEqual(['http://127.0.0.1:$puerto/']);
+    expect(tray.match(/https?:\/\/[^\s"']+/g)).toBeNull();
   });
 
   it('las órdenes van sin ventana de consola', () => {

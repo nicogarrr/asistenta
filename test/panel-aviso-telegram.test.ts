@@ -34,7 +34,7 @@ describe('panel que no arranca: aviso por Telegram', () => {
     ]);
     expect(problemOf({ PA_WEB_PORT: '8787' })).toEqual(['panel-token']);
     expect(problemOf({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: 'x'.repeat(30) })).toEqual([]);
-    expect(problemOf({})).toEqual([]);
+    expect(problemOf({ PA_WEB_PORT: '0' })).toEqual([]);
   });
 
   it('sin token: un mensaje claro al dueño, y no se repite en cada reinicio', async () => {
@@ -83,7 +83,7 @@ describe('panel que no arranca: aviso por Telegram', () => {
     expect(await run({ PA_WEB_PORT: '8787' })).toBe('sent');
     now += BOOT_NOTICE_MIN_INTERVAL_MS * 2;
     expect(await run({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: 'z'.repeat(30) })).toBe('quiet');
-    expect(await run({})).toBe('quiet');
+    expect(await run({ PA_WEB_PORT: '0' })).toBe('quiet');
     now += BOOT_NOTICE_MIN_INTERVAL_MS * 2;
     expect(await run({ PA_WEB_PORT: '8787' })).toBe('sent');
     expect(send).toHaveBeenCalledTimes(2);

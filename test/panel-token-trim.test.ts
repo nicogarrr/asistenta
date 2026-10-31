@@ -9,8 +9,8 @@ describe('token del panel con espacios o \\r de Windows', () => {
     );
     expect(panelTokenFromEnv({ PA_WEB_TOKEN: '   ' })).toBe('');
     expect(panelTokenFromEnv({})).toBe('');
-    expect(panelDoctorLines({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: ' \r' })[0]).toContain(
-      'falta PA_WEB_TOKEN',
+    expect(panelDoctorLines({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: ' \r' })[1]).toContain(
+      'panel token     automático',
     );
   });
 

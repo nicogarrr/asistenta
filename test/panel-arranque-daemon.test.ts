@@ -6,13 +6,13 @@ import { panelDoctorLines, panelStartPlan } from '../src/panel-doctor.js';
 // El daemon no comprobaba el puerto (pa doctor sí) y, sin token, solo dejaba una
 // línea técnica «PA_WEB_PORT sin PA_WEB_TOKEN» en el log.
 describe('panel: arranque desde el daemon', () => {
-  it('sin PA_WEB_PORT (o solo espacios) el panel está apagado y no avisa', () => {
-    expect(panelStartPlan({}).kind).toBe('off');
-    expect(panelStartPlan({ PA_WEB_PORT: '  ' }).kind).toBe('off');
+  it('PA_WEB_PORT=0 (u off) apaga el panel y no avisa', () => {
+    expect(panelStartPlan({ PA_WEB_PORT: '0' }).kind).toBe('off');
+    expect(panelStartPlan({ PA_WEB_PORT: ' off\r' }).kind).toBe('off');
   });
 
   it('un puerto que no es número dice qué poner, en castellano llano', () => {
-    for (const port of ['abc', '80a', '0', '70000', '8787.5']) {
+    for (const port of ['abc', '80a', '-1', '70000', '8787.5']) {
       const r = panelStartPlan({ PA_WEB_PORT: port, PA_WEB_TOKEN: 'x'.repeat(30) });
       expect(r.kind).toBe('problem');
       if (r.kind !== 'problem') continue;
@@ -45,7 +45,7 @@ describe('panel: arranque desde el daemon', () => {
 
   it('el daemon usa esta comprobación y ya no deja la línea técnica', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli).toContain('panelStartPlan()');
+    expect(cli).toContain('panelStartPlan(process.env, () => ensurePanelToken(paths.state))');
     expect(cli).not.toContain('PA_WEB_PORT sin PA_WEB_TOKEN');
     expect(cli).not.toContain('Number(process.env.PA_WEB_PORT)');
   });

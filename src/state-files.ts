@@ -165,6 +165,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     growth: 'no crece: un solo fichero que se reescribe',
   },
   {
+    name: 'panel-token',
+    what: 'token del panel web cuando no hay PA_WEB_TOKEN (se crea solo, solo lo lee el usuario)',
+    backup: false,
+    why: 'si falta se crea otro; copiarlo solo multiplica dónde vive un secreto',
+    growth: 'no crece: una sola línea',
+  },
+  {
     name: 'agent.pid',
     what: 'pid del daemon',
     backup: false,
