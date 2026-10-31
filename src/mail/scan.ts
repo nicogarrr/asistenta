@@ -3,6 +3,7 @@
  * y las cabeceras de listas/baja/autenticación. Solo lectura (mailbox en readOnly).
  */
 import { ImapFlow } from 'imapflow';
+import { uidValidityOf } from './move.js';
 import type { MailAccount } from './types.js';
 
 export const SCAN_HEADERS = [
@@ -72,11 +73,12 @@ interface RawRow {
 /** Los `limit` correos más nuevos de la bandeja (desde `since`), solo cabeceras. */
 export async function scanInbox(
   client: ImapLike,
-  opts: { limit: number; since?: number },
+  opts: { limit: number; since?: number; box?: { uidValidity: string } },
 ): Promise<ScannedMail[]> {
   try {
     await client.connect();
-    await client.mailboxOpen('INBOX', { readOnly: true });
+    const box = await client.mailboxOpen('INBOX', { readOnly: true });
+    if (opts.box) opts.box.uidValidity = uidValidityOf(box);
     const criteria: Record<string, unknown> = { all: true };
     if (opts.since) criteria.since = new Date(opts.since);
     const uids = await client.search(criteria, { uid: true });
