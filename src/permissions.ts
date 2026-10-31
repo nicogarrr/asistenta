@@ -489,6 +489,52 @@ function normalizeEcho(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ');
 }
 
+/** Tope de trozos del contenido externo apuntados por sesión. */
+const EXTERNAL_MAX_GRAMS = 100_000;
+/** Un tramo seguido así de largo copiado de lo leído ya es copiar, aunque haya más texto. */
+const MEMORY_ECHO_RUN_CHARS = 40;
+
+function echoGrams(text: string): Array<string | null> {
+  const norm = normalizeEcho(text).slice(0, ECHO_MAX_TEXT);
+  const out: Array<string | null> = [];
+  for (let i = 0; i + ECHO_GRAM_CHARS <= norm.length; i++) {
+    const gram = norm.slice(i, i + ECHO_GRAM_CHARS);
+    // Solo trozos con letras o cifras suficientes: espacios y signos no identifican nada.
+    out.push((gram.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= ECHO_MIN_ALNUM ? gram : null);
+  }
+  return out;
+}
+
+function addEchoGrams(map: Map<string, Set<string>>, key: string, text: string, max: number): void {
+  const set = map.get(key) ?? new Set<string>();
+  for (const gram of echoGrams(text)) {
+    if (set.size >= max) break;
+    if (gram) set.add(gram);
+  }
+  map.set(key, set);
+}
+
+/** True si el texto repite buena parte de los trozos: la mitad, o un tramo seguido largo. */
+function echoesSubstantially(set: Set<string>, text: string): boolean {
+  const grams = echoGrams(text);
+  let total = 0;
+  let hits = 0;
+  let run = 0;
+  for (const gram of grams) {
+    if (!gram) {
+      run = 0;
+      continue;
+    }
+    total++;
+    if (set.has(gram)) {
+      hits++;
+      run++;
+      if (run + ECHO_GRAM_CHARS - 1 >= MEMORY_ECHO_RUN_CHARS) return true;
+    } else run = 0;
+  }
+  return total > 0 && hits * 2 >= total;
+}
+
 /**
  * Trozos de la URL que parecen base64 (también base64url) o hexadecimal, decodificados
  * a texto cuando salen legibles: «manda el código en base64» no debe esquivar el eco.
@@ -1104,6 +1150,7 @@ export class Gate {
   /** A new message from the owner starts clean: the taint ends with the turn that read it. */
   clearTaint(sessionId: string): void {
     this.#taint.delete(sessionId);
+    this.#externalGrams.delete(sessionId);
   }
 
   /**
@@ -1340,6 +1387,7 @@ export class Gate {
     this.#privateTaint.delete(sessionId);
     this.#contactedHosts.delete(sessionId);
     this.#privateGrams.delete(sessionId);
+    this.#externalGrams.delete(sessionId);
     this.#afterSystemChord.delete(sessionId);
   }
 
@@ -1471,6 +1519,28 @@ export class Gate {
     return false;
   }
 
+  /** Trozos del contenido externo leído en el turno (se borran con clearTaint). */
+  #externalGrams = new Map<string, Set<string>>();
+
+  /**
+   * Memoria tras leer contenido externo: un recuerdo se sigue leyendo en todos los
+   * turnos futuros, así que guardar el texto de una página o un correo es justo lo que
+   * pediría una inyección. Pregunta solo si el recuerdo COPIA buena parte de lo leído
+   * en este turno (la mitad de sus trozos, o un tramo seguido de MEMORY_ECHO_RUN_CHARS);
+   * un recuerdo normal sigue sin preguntar.
+   */
+  #memoryEchoAsk(sessionId: string, call: ToolCall): string | null {
+    if (call.tool !== 'memory') return null;
+    const action = argString(call.args, 'action');
+    if (action !== 'remember' && action !== 'save_profile') return null;
+    const source = this.taintOf(sessionId);
+    const set = this.#externalGrams.get(sessionId);
+    if (!source || !set || set.size === 0) return null;
+    const tags = Array.isArray(call.args.tags) ? call.args.tags.join(' ') : '';
+    if (!echoesSubstantially(set, `${argString(call.args, 'text')} ${tags}`)) return null;
+    return `Este recuerdo copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
+  }
+
   /**
    * Fingerprints of memo-approved calls that started but have not ended cleanly
    * (still running, errored, timed out, or the process never reported an end).
@@ -1507,6 +1577,11 @@ export class Gate {
       (page || taintSourceOf(call.tool, call.args))
     ) {
       this.#rememberPrivate(sessionId, resultText);
+    }
+    // Lo leído de fuera (web, página, correo, documento, MCP) se apunta también, para
+    // saber si un recuerdo nuevo lo está copiando (ver #memoryEchoAsk).
+    if (!isError && resultText && this.#taintGate && externalReadSource(call) !== null) {
+      addEchoGrams(this.#externalGrams, sessionId, resultText, EXTERNAL_MAX_GRAMS);
     }
     const entry = this.#unsettled.get(sessionId)?.get(this.#fingerprint(call));
     if (!entry) return;
@@ -1813,7 +1888,10 @@ export class Gate {
     // una petición con datos a un dominio nuevo tras leer algo privado pregunta por
     // encima de la lista libre, los «Siempre», fullControl y la ventana de 90 s.
     const forced =
-      this.#forcedAsk.get(sessionId)?.(call) ?? this.#egressTaintAsk(sessionId, call) ?? null;
+      this.#forcedAsk.get(sessionId)?.(call) ??
+      this.#egressTaintAsk(sessionId, call) ??
+      this.#memoryEchoAsk(sessionId, call) ??
+      null;
     // Taint gate: after reading outside content, no standing allowance (memo,
     // scope, fullControl, grant window) covers a call that is not a read.
     const tainted = forced ? null : this.#taintReason(sessionId, call);
