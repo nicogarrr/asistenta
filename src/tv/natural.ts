@@ -201,6 +201,21 @@ const MULETILLA =
 /** «… en la tele» al final no forma parte de la orden («abre Netflix en la tele»). */
 const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
 
+/** «vuelve a <infinitivo>» → la orden en imperativo. */
+const IMPERATIVO: Record<string, string> = {
+  subir: 'sube',
+  bajar: 'baja',
+  poner: 'pon',
+  encender: 'enciende',
+  apagar: 'apaga',
+  abrir: 'abre',
+  quitar: 'quita',
+  silenciar: 'silencia',
+  pausar: 'pausa',
+  cambiar: 'cambia',
+};
+const VUELVE_A = new RegExp(`^vuelve a (${Object.keys(IMPERATIVO).join('|')})(l[aeo]s?)?\\b`);
+
 function normalizeOrder(text: string): string {
   return (
     normalizeTvText(text)
@@ -214,6 +229,16 @@ function normalizeOrder(text: string): string {
       .replace(/(?:^| )(?:muchas )?gracias$/, '')
       .replace(MULETILLA, '')
       .replace(EN_LA_TELE, '')
+      // «sube el volumen otra vez», «otra vez atrás», «pon otra vez netflix»: repetir
+      // es la misma orden. «otra vez» a secas sigue sin orden (al modelo).
+      .replace(/^(?:otra vez|de nuevo) /, '')
+      .replace(/^([a-z]+) (?:otra vez|de nuevo) /, '$1 ')
+      .replace(/ (?:otra vez|de nuevo)$/, '')
+      // «vuelve a subir el volumen», «vuelve a ponerla»: el infinitivo es la orden.
+      .replace(
+        VUELVE_A,
+        (_, verbo: string, cl?: string) => `${IMPERATIVO[verbo] ?? verbo}${cl ?? ''}`,
+      )
       // «vol 20», «baja vol»: abreviatura de volumen.
       .replace(/\bvol\b/g, 'volumen')
       // «baja el sonido», «súbele el sonido»: es el volumen («quita el sonido» sigue siendo silencio).
