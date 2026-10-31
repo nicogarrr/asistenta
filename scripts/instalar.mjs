@@ -155,9 +155,19 @@ export async function waitOwnerMessage(fetchFn, token, { tries = 6 } = {}) {
   return { error: 'tiempo' };
 }
 
+/**
+ * Orden de `pa` para escribir en una ventana nueva dentro de la carpeta. Si Node no
+ * está en el PATH (scripts\node24.cmd lo encontró en otra carpeta y lo marca con
+ * ASISTENTA_NODE_FUERA_PATH), «node» no se reconoce allí: va la ruta completa.
+ */
+export function ordenPa(args, env = {}, execPath) {
+  const exe = env.ASISTENTA_NODE_FUERA_PATH && execPath ? `"${execPath}"` : 'node';
+  return `${exe} dist\\cli.js ${args}`;
+}
+
 /** Pasos del instalador. Todo lo que toca el sistema llega en `d` (tests). */
-const ENCENDIDA =
-  'Asistenta sigue encendida y así Windows no deja cambiar sus archivos. Apágala (cierra la ventana de levantar.bat o escribe node dist\\cli.js stop) y vuelve a abrir instalar.bat.';
+const encendida = (parar) =>
+  `Asistenta sigue encendida y así Windows no deja cambiar sus archivos. Apágala (cierra la ventana de levantar.bat o escribe ${parar}) y vuelve a abrir instalar.bat.`;
 
 export async function instalar(d) {
   const say = (s) => d.write(`${s}\n`);
@@ -165,6 +175,7 @@ export async function instalar(d) {
     say(`✗ ${s}`);
     return 1;
   };
+  const parar = ordenPa('stop', d.env ?? {}, d.execPath);
 
   if (nodeMajor(d.nodeVersion) < NODE_MIN)
     return fail(
@@ -231,7 +242,7 @@ export async function instalar(d) {
       .trim()
       .toLowerCase();
     const parada = si.startsWith('s') && ((await d.cli(['stop'])) === 0 || !(await d.encendida()));
-    if (!parada) return fail(ENCENDIDA);
+    if (!parada) return fail(encendida(parar));
     say('✓ Asistenta apagada. Cuando termine, enciéndela otra vez con levantar.bat.');
   }
 
@@ -336,9 +347,7 @@ export async function instalar(d) {
               : 'Telegram dice que el token guardado ya no vale. Vuelve a abrir instalar.bat y pega el token nuevo de @BotFather.',
           );
         if (got.error === 'ocupado')
-          return fail(
-            'Asistenta ya está encendida con este bot. Apágala (node dist\\cli.js stop) y repite.',
-          );
+          return fail(`Asistenta ya está encendida con este bot. Apágala (${parar}) y repite.`);
         if (got.error === 'red')
           say(
             '⚠ No llego a Telegram: mira tu conexión a internet. Puedes escribir tu ID a mano o volver a abrir instalar.bat luego.',
@@ -414,6 +423,7 @@ export const cliWith =
 
 export const realDeps = {
   nodeVersion: process.version,
+  execPath: process.execPath,
   cwd: process.cwd(),
   env: process.env,
   write: (s) => process.stdout.write(s),
