@@ -52,6 +52,8 @@ export interface AjustesDictado {
   teclaTexto: string;
   /** null si PA_DICTADO_TECLA no se entiende. */
   tecla: number[][] | null;
+  /** mantener: graba mientras está pulsada; alternar: una pulsación empieza y otra termina. */
+  modo: 'mantener' | 'alternar';
 }
 
 export function ajustesDictado(env: NodeJS.ProcessEnv = process.env): AjustesDictado {
@@ -60,5 +62,8 @@ export function ajustesDictado(env: NodeJS.ProcessEnv = process.env): AjustesDic
     activo: envSwitch(env.PA_DICTADO, false),
     teclaTexto,
     tecla: parseTeclaDictado(teclaTexto),
+    modo: /^(alternar|toggle|pulsar)$/i.test((env.PA_DICTADO_MODO ?? '').trim())
+      ? 'alternar'
+      : 'mantener',
   };
 }
