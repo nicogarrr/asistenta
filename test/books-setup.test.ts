@@ -249,6 +249,19 @@ describe('setup server (adversarial)', () => {
     const res = await raw(port, { method: 'POST', path: `/login?k=${TOKEN}`, body: 'code=1' });
     expect(res.status).toBe(500);
     expect(res.body).not.toContain('<script>');
-    expect(res.body).toContain('&lt;script&gt;');
+    expect(res.body).not.toContain('alert(1)');
+  });
+
+  it('un fallo de Telegram sale en castellano llano, sin «Error:» crudo', async () => {
+    await boot();
+    flowCalls.failWith = 'PHONE_CODE_INVALID';
+    const bad = await raw(port, { method: 'POST', path: `/login?k=${TOKEN}`, body: 'code=1' });
+    expect(bad.status).toBe(500);
+    expect(bad.body).not.toMatch(/Error:|PHONE_CODE_INVALID/);
+    expect(bad.body).toContain('El código no es válido o ha caducado');
+    flowCalls.failWith = 'socket hang up';
+    const other = await raw(port, { method: 'POST', path: `/login?k=${TOKEN}`, body: 'code=1' });
+    expect(other.body).not.toMatch(/Error:|socket hang up/);
+    expect(other.body).toContain('No se pudo completar este paso con Telegram');
   });
 });

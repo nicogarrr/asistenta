@@ -252,8 +252,16 @@ describe('IphoneClient', () => {
       throw new Error('ECONNREFUSED');
     };
     await expect(new IphoneClient({ baseUrl: 'http://h', fetch: f }).status()).rejects.toThrow(
-      /No llego al servidor del iPhone.*ECONNREFUSED/,
+      /No llego al servidor del iPhone/,
     );
+  });
+
+  it('un fallo de red no repite el error crudo', async () => {
+    const f: FetchLike = async () => {
+      throw new Error('fetch failed ECONNREFUSED');
+    };
+    const err = await new IphoneClient({ baseUrl: 'http://h', fetch: f }).status().catch((e) => e);
+    expect(String(err.message)).not.toMatch(/ECONNREFUSED|fetch failed/);
   });
 });
 
