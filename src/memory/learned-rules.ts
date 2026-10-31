@@ -172,7 +172,15 @@ function words(text: string): Set<string> {
   );
 }
 
+/** Los números de la regla («10», «1,5»), sin orden ni repetidos. */
+function numbers(text: string): string {
+  return [...new Set(norm(text).match(/\d+(?:[.,]\d+)?/g) ?? [])].sort().join(' ');
+}
+
 function similar(a: string, b: string): boolean {
+  // «Avisar 10 min antes» y «Avisar 30 min antes» son reglas distintas: words() no ve
+  // los números, así que se comparan aparte. Con el mismo tema, la nueva sigue ganando.
+  if (numbers(a) !== numbers(b)) return false;
   const wa = words(a);
   const wb = words(b);
   if (!wa.size || !wb.size) return norm(a) === norm(b);
