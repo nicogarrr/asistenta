@@ -59,11 +59,20 @@ function Start-Asistenta {
     Start-Process -FilePath $node -ArgumentList (@("`"$cli`"") + $Ordenes.Encender) -WorkingDirectory $app -WindowStyle Hidden
 }
 
+# El icono de Asistenta (la imagen elegida) con un punto de color abajo a la derecha;
+# instalada con instalar.bat no hay icono y queda solo el punto.
+$appIco = Join-Path (Split-Path $app -Parent) 'asistenta.ico'
 function New-Punto([System.Drawing.Color] $color) {
     $bmp = New-Object System.Drawing.Bitmap 16, 16
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = 'AntiAlias'
-    $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), 1, 1, 14, 14)
+    if (Test-Path -LiteralPath $appIco) {
+        $base = New-Object System.Drawing.Icon($appIco, 16, 16)
+        $g.DrawIcon($base, (New-Object System.Drawing.Rectangle 0, 0, 16, 16))
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), 9, 9, 7, 7)
+    } else {
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), 1, 1, 14, 14)
+    }
     $g.Dispose()
     [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
 }

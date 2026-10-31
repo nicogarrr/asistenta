@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeIcons } from './icono.mjs';
 
 export const NODE_VERSION = '24.22.2';
 /** SHA-256 publicado en https://nodejs.org/dist/v24.22.2/SHASUMS256.txt */
@@ -118,6 +119,8 @@ export async function build(d) {
     throw new Error('No he podido descomprimir Node (¿falta unzip?).');
   cpSync(join(stage, `node-v${NODE_VERSION}-win-x64`), join(stage, 'node'), { recursive: true });
   rmSync(join(stage, `node-v${NODE_VERSION}-win-x64`), { recursive: true, force: true });
+  const sharp = d.sharp ?? (await import('sharp')).default;
+  await makeIcons(join(d.here, 'asistenta.png'), stage, sharp);
   const outFile = join(root, 'var', `Asistenta-Instalador-${version}.exe`);
   const nsi = renderNsi(readFileSync(join(d.here, 'asistenta.nsi'), 'utf8'), {
     VERSION: version,
