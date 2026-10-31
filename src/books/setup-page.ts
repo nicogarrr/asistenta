@@ -16,6 +16,7 @@ import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { envFileText } from '../env-text.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
+import { log } from '../log.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
 const ENV_PATH = process.env.BOOKS_ENV_PATH ?? '.env';
@@ -245,11 +246,26 @@ export function makeSetupHandler(deps: SetupDeps) {
             render(res, 'Ruta desconocida.', 404);
           }
         } catch (err) {
-          render(res, `Error: ${err instanceof Error ? err.message : String(err)}`, 500);
+          // El error crudo de Telegram («PHONE_CODE_INVALID», «FLOOD_WAIT_60») solo al registro.
+          log.warn('books setup: paso fallido', { err: String(err) });
+          render(res, setupFailureText(err), 500);
         }
       });
     });
   };
+}
+
+/** Motivo llano de un paso fallido de la página; nunca el texto crudo del error. */
+export function setupFailureText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/PHONE_CODE_(INVALID|EXPIRED|EMPTY)/i.test(raw)) {
+    return 'El código no es válido o ha caducado. Pide otro y vuelve a intentarlo.';
+  }
+  if (/PASSWORD|SRP/i.test(raw)) {
+    return 'Falta la contraseña de verificación en dos pasos de Telegram, o no es correcta.';
+  }
+  if (/FLOOD/i.test(raw)) return 'Telegram pide esperar un rato antes de volver a intentarlo.';
+  return 'No se pudo completar este paso con Telegram. Inténtalo de nuevo en un momento.';
 }
 
 export function startSetupServer(port = 8377): {
