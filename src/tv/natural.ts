@@ -306,7 +306,30 @@ const TELE_EN_MEDIO = new RegExp(
 /** «2.5», «12,5»: número con decimales (la tele solo entiende enteros). */
 const DECIMAL = /(\d{1,3})[.,](\d{1,2})(?!\d)/g;
 
+/**
+ * «si me duermo, apaga la tele», «apaga la tele si me duermo», «en cuanto me duerma,
+ * apágala»: es una condición, no una orden para ahora; nunca se ejecuta al momento
+ * (va al modelo). «sí, apaga la tele» (la coma se pierde: «si apaga la tele») sigue
+ * siendo la orden: tras el «sí» viene el verbo y delante solo hay muletillas.
+ */
+const CONDICION =
+  /\b(?:en cuanto|por si|en caso de|cada vez que|siempre que|a no ser que|salvo que)\b/;
+const SI_Y_ORDEN =
+  /^(?:pon|ponla|ponlo|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|apagalo|enciende|enciendela|silencia|mutea|quita|quitale|cambia|cambiala|vuelve|dale|pausa|para|reanuda|si)\b/;
+const SOLO_MULETILLAS = /^(?:(?:ya|venga|vale|bueno|pues|ok|okay|oye|si)(?: |$))*$/;
+
+function esCondicion(t: string): boolean {
+  if (CONDICION.test(t)) return true;
+  for (const m of t.matchAll(/(?<=^| )si (?=\S)/g)) {
+    const antes = t.slice(0, m.index).trim();
+    const despues = t.slice(m.index + m[0].length);
+    if (!SOLO_MULETILLAS.test(antes) || !SI_Y_ORDEN.test(despues)) return true;
+  }
+  return false;
+}
+
 export function parseTvCommand(text: string): TvIntent | null {
+  if (esCondicion(normalizeOrder(text))) return null;
   // «vol 2.5» ponía 2 (se perdía lo de detrás del punto). En el volumen se redondea
   // (2.5 → 3, 12,5 → 13); en cualquier otra orden un decimal no tiene sentido: al modelo.
   if (DECIMAL.test(text)) {
