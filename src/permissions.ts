@@ -817,6 +817,12 @@ export class Gate {
         match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro',
       },
       {
+        id: 'ask-cuentas-codigo',
+        verdict: 'ask',
+        reason: "reads a sign-up verification code from the owner's mail",
+        match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'codigo_registro',
+      },
+      {
         id: 'ask-servicio-instalar',
         verdict: 'ask',
         reason: 'installs an adopted third-party service on this machine',
@@ -1142,7 +1148,11 @@ export class Gate {
    */
   #isGestionEjecutar(c: ToolCall): boolean {
     // Crear una cuenta en nombre de Nico (cuentas confirmar_registro) va igual: un sí fresco cada vez.
-    if (c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro') return true;
+    if (
+      c.tool === 'cuentas' &&
+      ['confirmar_registro', 'codigo_registro'].includes(argString(c.args, 'action'))
+    )
+      return true;
     return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
   }
 
@@ -1310,7 +1320,8 @@ export class Gate {
       // Gestor de contraseñas: listar/buscar leen el vault sin devolver la contraseña.
       case 'cuentas': {
         const a = argString(c.args, 'action');
-        if (a === 'listar' || a === 'buscar') return 'lee';
+        // codigo_registro lee el correo del dueño (privado): lee, y la regla ask-cuentas-codigo pregunta siempre.
+        if (a === 'listar' || a === 'buscar' || a === 'codigo_registro') return 'lee';
         // preparar/guardar/descartar escriben solo en el vault local; confirmar_registro
         // crea una cuenta en nombre de Nico: opaco aquí, y la regla ask-cuentas-registro pregunta siempre.
         return a === 'preparar_registro' || a === 'guardar' || a === 'descartar'

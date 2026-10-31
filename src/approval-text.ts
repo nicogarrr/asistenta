@@ -88,6 +88,12 @@ export function formatApproval(
   const showArgs = opts.showArgs ?? true;
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
+  if (call.tool === 'cuentas' && call.args.action === 'codigo_registro') {
+    const sitio = typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '';
+    if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
+    const question = `Voy a mirar en tu correo el código que te ha mandado ${sitio} para terminar el alta. ¿Sigo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
   if (call.tool === 'cuentas' && call.args.action === 'confirmar_registro') {
     const sitio = typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '';
     const correo =
