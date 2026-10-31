@@ -249,6 +249,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     prune: { match: /^(ocr|rec|cam|camvid|camav|mic)-\d+\.[a-z0-9]+$/ },
   },
   {
+    name: 'ocr-progreso',
+    what: 'progreso de PDFs largos a medias (/ocr), para seguir por donde iba',
+    backup: false,
+    why: 'temporal: se rehace mandando el PDF otra vez',
+    retention: 'se borra al terminar; lo que queda a medias, a los 7 días (src/pdfmd/progress.ts)',
+  },
+  {
     name: 'sessions',
     what: 'temporales de sesión',
     backup: false,

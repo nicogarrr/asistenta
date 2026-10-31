@@ -3114,7 +3114,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       const result = await runOcrJob(
         Buffer.from(bytes),
-        { name: inbound.documentName },
+        { name: inbound.documentName, progressDir: join(paths.state, 'ocr-progreso') },
         mode,
         windowsDeps,
       );

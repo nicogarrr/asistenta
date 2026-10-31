@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PDFDocument, type PDFFont, type PDFPage, StandardFonts } from 'pdf-lib';
 import { log } from '../log.js';
+import type { PageProgress } from '../pdfmd/progress.js';
 import type { OcrResult } from '../screen/ocr.js';
 
 /**
@@ -52,6 +53,8 @@ export interface EngineDeps {
   noOcrReason?: string;
   /** Cancelación cooperativa: se mira antes de cada página. */
   shouldStop?: () => boolean;
+  /** Páginas ya reconocidas en un intento anterior (PDFs largos que se cortaron). */
+  progress?: PageProgress;
 }
 
 export interface OcrDocResult {
@@ -287,13 +290,17 @@ export async function ocrPdf(
       continue;
     }
     try {
-      if (!pdfWritten) {
-        await writeFile(pdfPath, bytes);
-        pdfWritten = true;
+      let result = deps.progress?.get(i);
+      if (!result) {
+        if (!pdfWritten) {
+          await writeFile(pdfPath, bytes);
+          pdfWritten = true;
+        }
+        const png = join(deps.workDir, `p${i + 1}.png`);
+        await deps.renderPage(pdfPath, i, png);
+        result = await deps.ocr(png);
+        await deps.progress?.put(i, result);
       }
-      const png = join(deps.workDir, `p${i + 1}.png`);
-      await deps.renderPage(pdfPath, i, png);
-      const result = await deps.ocr(png);
       const text = tidy(result.text ?? '');
       if (!text) {
         if (retainDigital('OCR sin texto adicional reconocido')) continue;
