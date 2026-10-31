@@ -28,6 +28,36 @@ export class BrowserService {
 }
 `;
 
+// Un intento que miente en lo que devuelve, sin tocar stdout: nunca abre el navegador y
+// devuelve justo lo que la sonda espera. Antes eran 10 PASA y «FLUJO GENERICO OK».
+const LIAR = `
+export class BrowserService {
+  constructor(_o: unknown) {}
+  async open(_s: string, url: string) { return { url: url.replace(/\\/inspirate.*$/, '/'), status: 404 }; }
+  async snapshot() { return 'Origen: sugerencias abiertas'; }
+  async execJs() { return { text: 'ok Sevilla goDisabled: false' }; }
+  async screenshot() { return { data: 'x'.repeat(5000) }; }
+  async closeAll() {}
+}
+`;
+
+async function runProbe(service: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
+  dirs.push(dir);
+  cpSync(join(repo, 'evolve'), join(dir, 'evolve'), { recursive: true });
+  mkdirSync(join(dir, 'src', 'browser'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'browser', 'service.ts'), service);
+  symlinkSync(join(repo, 'node_modules'), join(dir, 'node_modules'), 'junction');
+  return exec(
+    process.execPath,
+    [join(repo, 'node_modules', 'vite-node', 'vite-node.mjs'), 'evolve/probe-generic-flow.ts'],
+    { cwd: dir, timeout: 150_000 },
+  ).then(
+    (o) => ({ code: 0 as number | null, stdout: o.stdout }),
+    (e: { code?: number; stdout?: string }) => ({ code: e.code ?? null, stdout: e.stdout ?? '' }),
+  );
+}
+
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -35,24 +65,28 @@ afterEach(() => {
 
 describe('la sonda no se deja falsear desde el código del intento', () => {
   it('un FALLA sigue siendo FALLA aunque el intento parchee stdout y exit', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
-    dirs.push(dir);
-    cpSync(join(repo, 'evolve'), join(dir, 'evolve'), { recursive: true });
-    mkdirSync(join(dir, 'src', 'browser'), { recursive: true });
-    writeFileSync(join(dir, 'src', 'browser', 'service.ts'), FORGER);
-    symlinkSync(join(repo, 'node_modules'), join(dir, 'node_modules'), 'junction');
-    const r = await exec(
-      process.execPath,
-      [join(repo, 'node_modules', 'vite-node', 'vite-node.mjs'), 'evolve/probe-generic-flow.ts'],
-      { cwd: dir, timeout: 150_000 },
-    ).then(
-      (o) => ({ code: 0 as number | null, stdout: o.stdout }),
-      (e: { code?: number; stdout?: string }) => ({ code: e.code ?? null, stdout: e.stdout ?? '' }),
-    );
+    const r = await runProbe(FORGER);
     expect(r.stdout).toMatch(/^FALLA {2}la captura devuelve bytes enviables/m);
-    expect(r.stdout).toMatch(/^1 PASO\(S\) FALLARON$/m);
+    expect(r.stdout).toMatch(/^\d+ PASO\(S\) FALLARON$/m);
     expect(r.stdout).not.toMatch(/FLUJO GENERICO OK/);
     expect(r.stdout).not.toMatch(/un check que la sonda no tiene/);
+    expect(r.code).toBe(1);
+  }, 180_000);
+
+  it('lo que el intento devuelve se contrasta con lo que el navegador pidió al servidor', async () => {
+    const r = await runProbe(LIAR);
+    for (const label of [
+      'la URL adivinada con 404 no quema el turno',
+      'el campo recibe foco',
+      'el desplegable se abre tras la latencia real',
+      'las sugerencias tardias se leen y se eligen',
+      'el valor del campo se puede releer',
+      'el segundo desplegable tambien funciona',
+      'el boton se habilita solo cuando ambos campos estan puestos',
+    ]) {
+      expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
+    }
+    expect(r.stdout).not.toMatch(/FLUJO GENERICO OK/);
     expect(r.code).toBe(1);
   }, 180_000);
 });
