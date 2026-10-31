@@ -210,12 +210,15 @@ const ORDINALS: Record<string, number> = {
   quinto: 4,
 };
 
-/** «la segunda», «el primero», «la última»: a place in the list just shown. */
+/** «la segunda», «el primero», «la penúltima», «la última»: a place in the list just shown. */
 function byOrdinal(said: string, shown: BoardTask[]): BoardTask[] | undefined {
   const m = /^(?:(?:la|el|lo)\s+)?([a-z]+)(?:\s+(?:tarea|de la lista|de ellas))?$/.exec(said);
   const word = m?.[1];
   if (!word || shown.length === 0) return undefined;
   if (word === 'ultima' || word === 'ultimo') return shown.slice(-1);
+  // «la penúltima» (gaps9). Las cifras («la 2») no: la lista enseña [id] y «la 13» es un id.
+  if (word === 'penultima' || word === 'penultimo')
+    return shown.length >= 2 ? shown.slice(-2, -1) : [];
   const at = ORDINALS[word];
   if (at === undefined) return undefined;
   const hit = shown[at];
