@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { log } from '../log.js';
 import type { ReadMailAccount } from '../mail/idle.js';
 import type { InboxQuery, InboxRow } from '../mail/reader.js';
 import { scamWarning } from '../mail/triage.js';
@@ -93,7 +94,10 @@ async function runMailSend(
   try {
     sender = await deps.sendAccount();
   } catch (err) {
-    return `${MAIL_SEND_SETUP} (${err instanceof Error ? err.message : 'datos no válidos'})`;
+    log.warn('correo: datos de la cuenta no válidos', {
+      err: err instanceof Error ? err.message.slice(0, 300) : String(err),
+    });
+    return `${MAIL_SEND_SETUP} (Los datos guardados de la cuenta no son válidos.)`;
   }
   if (!sender) return MAIL_SEND_SETUP;
   const to = addressList(args.para);
@@ -153,7 +157,10 @@ export async function runMailTool(
   try {
     account = await deps.account();
   } catch (err) {
-    return `${MAIL_READ_SETUP} (${err instanceof Error ? err.message : 'datos no válidos'})`;
+    log.warn('correo: datos de la cuenta no válidos', {
+      err: err instanceof Error ? err.message.slice(0, 300) : String(err),
+    });
+    return `${MAIL_READ_SETUP} (Los datos guardados de la cuenta no son válidos.)`;
   }
   if (!account) return MAIL_READ_SETUP;
   const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : undefined);
