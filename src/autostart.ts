@@ -246,15 +246,15 @@ export async function autostartCommand(
 
 export const SUPERVISOR_MESSAGES = {
   restart:
-    'Asistenta: latido detenido más de 120 s. El supervisor externo solicita cierre limpio y reinicio de la tarea. Máximo 3 intentos en 15 min.',
+    'Asistenta lleva más de 2 minutos sin responder: la estoy reiniciando. Lo intento como mucho 3 veces cada 15 minutos.',
   forced:
-    'Asistenta: el cierre limpio no terminó a tiempo. Se terminó solo el proceso propio del launcher. No se declara cierre limpio; revisa pa autostart status y los logs locales.',
+    'Asistenta no se cerró a tiempo y la cerré a la fuerza (solo su propio proceso). Lo último que estaba haciendo puede no haberse guardado. En el PC, pa autostart status te dice cómo está.',
   blocked:
-    'Asistenta: agotados 3 reinicios del supervisor en 15 min. No forzaré otro. Revisa pa autostart status.',
+    'Asistenta se ha reiniciado 3 veces en 15 minutos y sigue sin responder, así que dejo de intentarlo. En el PC, pa autostart status te dice cómo está.',
   supervisor:
-    'Asistenta: el supervisor externo no pudo completar una comprobación o guardar su presupuesto. No forzaré un reinicio ni declararé cierre limpio. Revisa pa autostart status y los logs locales.',
+    'No pude comprobar si Asistenta está bien, así que no la reinicio por si acaso. En el PC, pa autostart status te dice cómo está.',
   heartbeat:
-    'Asistenta: no puedo verificar un latido válido de esta instancia. No termino ningún proceso; revisa pa autostart status.',
+    'No puedo comprobar que Asistenta esté respondiendo, así que no cierro nada. En el PC, pa autostart status te dice cómo está.',
 } as const;
 
 /** No chat history or group fallback: only the configured owner who is also allowlisted. */

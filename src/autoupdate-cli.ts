@@ -235,9 +235,7 @@ export async function autoupdateCommand(
   }
   if (action === 'now' || action === 'aplicar') {
     if (process.platform !== 'win32' && !opts.deps) {
-      process.stderr.write(
-        'Autoactualización disponible solo en Windows (reinicia la tarea del daemon).\n',
-      );
+      process.stderr.write('La autoactualización solo funciona en Windows.\n');
       return 2;
     }
     const out = await runAutoupdate(
