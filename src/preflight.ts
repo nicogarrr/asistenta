@@ -172,7 +172,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
         },
   );
 
-  // Dueño: el chat privado al que van avisos, vigilantes y «Asistenta lista ✅».
+  // Dueño: el chat privado al que van avisos, vigilantes y el aviso de arranque si algo falla.
   // Misma regla que el daemon (resolveOwnerUserId): el elegido si está autorizado,
   // o el único usuario autorizado.
   if (allowed?.length) {

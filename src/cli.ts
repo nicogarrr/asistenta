@@ -45,7 +45,12 @@ import {
 import { ActionLog } from './audit/log.js';
 import { isBackupDue, runBackup } from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
-import { BOOT_NOTICE_FILE, bootBanner, maybeSendBootNotice } from './boot-notice.js';
+import {
+  BOOT_NOTICE_FILE,
+  bootBanner,
+  maybeSendBootNotice,
+  telegramBotSend,
+} from './boot-notice.js';
 import { BrowserService } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
@@ -1306,8 +1311,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   // Resolve credentials before announcing readiness or creating a thread.
   // Provider construction does not issue a billable model request.
+  let providerOk = false;
   try {
     await createProviderHandle(config);
+    providerOk = true;
     if (process.env.PA_QA_CHANNEL !== '1') await checkTelegramToken(token);
   } catch (error) {
     const message =
@@ -1316,6 +1323,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ? error.message
         : startupFailureMessage(error);
     process.stderr.write(`${message}\n`);
+    if (!providerOk && process.env.PA_QA_CHANNEL !== '1') {
+      // Telegram sí está, el modelo no: una línea al dueño, una sola vez por problema.
+      const ownerSet = Number((await vaultGet('vigilante:ownerUserId').catch(() => ''))?.trim());
+      await maybeSendBootNotice({
+        statePath: join(paths.state, BOOT_NOTICE_FILE),
+        ownerChatId: resolveOwnerUserId(
+          allowed,
+          Number.isSafeInteger(ownerSet) && ownerSet > 0 ? ownerSet : null,
+        ),
+        facts: { tv: false, computerUse: false, mail: false, problems: ['modelo'] },
+        send: telegramBotSend(token),
+      }).catch(() => undefined);
+    }
     return 1;
   }
 
@@ -7231,8 +7251,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   log.info('daemon ready', { allowed, threads: threads.size });
 
-  // Arranque: una sola línea clara en la consola y el aviso «Asistenta lista ✅» al
-  // chat privado del dueño (como mucho uno cada 10 min; PA_BOOT_NOTICE=0 lo apaga).
+  // Arranque: una sola línea clara en la consola. A Telegram no va nada si todo está
+  // bien (se da por hecho); maybeSendBootNotice solo avisa de problemas, uno por vez.
   void (async () => {
     const facts = {
       model: config.model,

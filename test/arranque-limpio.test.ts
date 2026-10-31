@@ -1,17 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { bootNoticeText } from '../src/boot-notice.js';
+import { bootProblemText } from '../src/boot-notice.js';
 import { startText, startWelcomeDue } from '../src/channels/telegram-help.js';
 
 describe('arranque limpio (Nico, 31/10 00:43)', () => {
-  it('el aviso de arranque es una sola línea, sin modelo ni estado', () => {
-    const text = bootNoticeText({
-      model: 'deepseek',
-      tv: true,
-      computerUse: true,
-      mail: false,
-      threads: 3,
-    });
-    expect(text).toBe('Asistenta lista ✅');
+  it('el aviso de arranque (solo si algo falla) es una sola línea, sin modelo ni estado', () => {
+    const text = bootProblemText(['modelo']);
+    expect(text).not.toContain('\n');
+    expect(text).not.toMatch(/Modelo:|Tele:|PC:|Correo:|\/funciones/);
   });
 
   it('la bienvenida es corta: saludo, cómo usarla y permisos, con una sola pista', () => {
