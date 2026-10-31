@@ -196,7 +196,11 @@ const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
 function normalizeOrder(text: string): string {
   return (
     normalizeTvText(text)
-      .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
+      // «porfa», «porfi», «x favor», «xfa», «plis»: la cortesía no cambia la orden.
+      .replace(
+        /\bporf(?:a|i|is)(?:vor)?\b|\bpor favor\b|\bx ?fa(?:vor)?\b|\bplis\b|\bplease\b/g,
+        '',
+      )
       .trim()
       // «pausa, gracias», «sube el volumen, muchas gracias»: el gracias no cambia la orden.
       .replace(/(?:^| )(?:muchas )?gracias$/, '')
