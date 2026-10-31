@@ -1,6 +1,13 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
+import {
+  BOOKS_USAGE,
+  OPENGYM_PAIR_USAGE,
+  OPENGYM_USAGE,
+  STOP_USAGE,
+  WATCHDOG_USAGE,
+} from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
 import {
@@ -600,7 +607,7 @@ export async function main(argv: string[]): Promise<number> {
       return openGymCommand(rest);
     case 'books':
       if (rest[0] !== 'setup') {
-        process.stderr.write('uso: pa books setup' + '\n');
+        process.stderr.write(`${BOOKS_USAGE}\n`);
         return 2;
       }
       try {
@@ -661,9 +668,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'watchdog': {
       if (rest[0] !== '--status') {
-        process.stderr.write(
-          'uso: pa watchdog --status [--json] (solo consulta; no activa vigilancia)\n',
-        );
+        process.stderr.write(`${WATCHDOG_USAGE}\n`);
         return 2;
       }
       const { statusCommand } = await import('./daemon-status.js');
@@ -717,7 +722,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'stop': {
       if (rest.length) {
-        process.stderr.write('uso: pa stop\n');
+        process.stderr.write(`${STOP_USAGE}\n`);
         return 2;
       }
       const { stopDaemon } = await import('./daemon-control.js');
@@ -781,7 +786,7 @@ async function openGymCommand(args: string[]): Promise<number> {
     if (sub === 'pair') {
       const code = b ?? a;
       if (!code) {
-        process.stderr.write('uso: pa opengym pair [url] <código de 8 caracteres>\n');
+        process.stderr.write(`${OPENGYM_PAIR_USAGE}\n`);
         return 2;
       }
       const host = await pairOpenGym(b ? a : undefined, code);
@@ -808,7 +813,7 @@ async function openGymCommand(args: string[]): Promise<number> {
     process.stderr.write(`${err instanceof OpenGymError ? err.message : String(err)}\n`);
     return 1;
   }
-  process.stderr.write('uso: pa opengym pair [url] <código> | pa opengym status\n');
+  process.stderr.write(`${OPENGYM_USAGE}\n`);
   return 2;
 }
 
