@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { oldPendingOffer, pendingAge } from '../credentials/pending-age.js';
 import {
   approveSignup,
   discardSignup,
@@ -56,8 +57,15 @@ const fecha = (iso: string): string => {
     : ` desde ${new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'numeric', year: 'numeric', timeZone: 'Europe/Madrid' }).format(d)}`;
 };
 
+const sinTerminar = (a: Account): string => {
+  const age = pendingAge(a);
+  return `sin terminar${age ? `, ${age}` : ''}`;
+};
+
 const line = (a: Account): string =>
-  `${a.domain} (${maskUser(a.username)}${fecha(a.created)}${a.status === 'pendiente' ? ', sin terminar' : ''})`;
+  a.status === 'pendiente'
+    ? `${a.domain} (${maskUser(a.username)}, ${sinTerminar(a)})`
+    : `${a.domain} (${maskUser(a.username)}${fecha(a.created)})`;
 
 /**
  * «¿Qué cuentas tengo?» / «¿Tengo cuenta en Wallapop?»: lee el gestor de contraseñas.
@@ -165,7 +173,7 @@ async function readStep(
           found.length === 0
             ? `No tengo ninguna cuenta guardada de ${q}.`
             : one
-              ? `Sí, en ${one.domain}: tu usuario es ${one.username || '(sin usuario guardado)'}${fecha(one.created)}${one.status === 'pendiente' ? ', alta sin terminar' : ''}. La contraseña no la enseño; entro con ella cuando haga falta.`
+              ? `Sí, en ${one.domain}: tu usuario es ${one.username || '(sin usuario guardado)'}${one.status === 'pendiente' ? `, alta ${sinTerminar(one)}` : fecha(one.created)}. La contraseña no la enseño; entro con ella cuando haga falta.`
               : `Sí: ${found.map(line).join('; ')}. Puedo entrar con ella cuando haga falta.`;
       }
     } else {
@@ -173,7 +181,7 @@ async function readStep(
       text =
         all.length === 0
           ? 'Todavía no tengo ninguna cuenta guardada.'
-          : `Tienes ${all.length === 1 ? '1 cuenta' : `${all.length} cuentas`}: ${all.map(line).join('; ')}.`;
+          : `Tienes ${all.length === 1 ? '1 cuenta' : `${all.length} cuentas`}: ${all.map(line).join('; ')}.${oldPendingOffer(all) ? ` ${oldPendingOffer(all)}` : ''}`;
     }
   } catch (err) {
     log.warn('cuentas: no se pudo leer el gestor de contraseñas', {

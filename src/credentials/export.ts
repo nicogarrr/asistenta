@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { normalizeDomain } from '../gestor/login.js';
+import { oldPendingOffer, pendingAge } from './pending-age.js';
 import {
   type Account,
   deleteAccount,
@@ -220,7 +221,11 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
     const all = await listAccounts(vault);
     if (all.length === 0) out('No hay cuentas guardadas.');
     for (const a of all)
-      out(`${a.domain}  ${a.username}${a.status === 'pendiente' ? '  (sin terminar)' : ''}`);
+      out(
+        `${a.domain}  ${a.username}${a.status === 'pendiente' ? `  (sin terminar${pendingAge(a) ? `, ${pendingAge(a)}` : ''})` : ''}`,
+      );
+    const offer = oldPendingOffer(all, Date.now(), true);
+    if (offer) out(offer);
     return 0;
   }
   if (sub === 'copiar' && a1) {
