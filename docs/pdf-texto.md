@@ -15,6 +15,13 @@ Si una tabla no cuadra, el texto llega entero y al final dice, por ejemplo:
 > Ojo: no he podido comprobar una tabla; revísala con el PDF original:
 > - página 2, tabla 1: en la columna «Euros» la suma (100) no da el total (108).
 
+## Nada se pierde
+
+Si una página de un PDF sale sin texto o tiene una tabla que no cuadra, Asistenta guarda
+esa página como imagen junto al PDF, en la carpeta `<nombre>-paginas/` (`pagina-2.png`…,
+como mucho 10 por documento), y la enlaza al final del texto. Así siempre tienes el
+original a mano. Usa lo que ya trae Asistenta para leer PDFs; no instala nada más.
+
 Ejemplos: «pásame este PDF a texto», «resume este PDF».
 
 ## Créditos
