@@ -171,7 +171,7 @@ const RESULT_TEXT: Record<BootNoticeResult, string> = {
   'no-owner':
     '❌ no enviado: no sé cuál es tu chat privado. Mira «pa iniciar --solo-comprobar» (línea «Dueño»)',
   'rate-limited': 'no enviado: ya se había mandado hace menos de 10 min',
-  failed: '❌ falló al enviarlo por Telegram. Mira el log del daemon',
+  failed: '❌ no pude enviártelo por Telegram. Prueba «pa doctor» para ver qué falla',
 };
 
 /** Una línea para `pa autostart status`. */
