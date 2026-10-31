@@ -113,7 +113,7 @@ describe('paridad con las capturas: lo que Asistenta ya puede hacer', () => {
   it('transcribe notas de voz en local, sin claves de pago', async () => {
     const { createLocalWhisperStt, transcribeVoiceNote } = await import('../src/voice/stt.js');
     expect(typeof createLocalWhisperStt().transcribe).toBe('function');
-    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/vacia/);
+    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/vacía/);
   });
 
   it('busca en la web y cada resultado trae su fuente (horarios de TV, compras)', async () => {

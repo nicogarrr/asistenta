@@ -405,7 +405,7 @@ import { createDefaultTts } from './voice/piper.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
-import { transcribeVoiceNote } from './voice/stt.js';
+import { SttError, transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
@@ -5963,7 +5963,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 : `[Audio reenviado: ${label}. No se entendió ninguna palabra; no se indexó nada.]`;
             } catch (err) {
               log.warn('audio document index failed', { err: String(err) });
-              documentNote = `[Audio reenviado: ${label}. No se pudo transcribir: ${err instanceof Error ? err.message : String(err)}]`;
+              documentNote = forwardedAudioFailNote(label, err);
             }
           }
         } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
@@ -7612,7 +7612,17 @@ function fileErrorReason(raw: string): string | null {
   return `Windows no me deja abrir «${name}» (permiso denegado o lo tiene otro programa).`;
 }
 
+/**
+ * Nota para el modelo cuando un audio enviado como archivo no se transcribe: antes
+ * llevaba el `err.message` crudo (inglés, rutas) y el modelo lo repetía al dueño.
+ */
+export function forwardedAudioFailNote(label: string, err: unknown): string {
+  return `[Audio reenviado: ${label}. ${failedReply('No se pudo transcribir', err)}]`;
+}
+
 export function failedReply(what: string, err: unknown): string {
+  // Los fallos de la voz ya vienen en castellano: sin el «SttError:» que añadía friendlyError.
+  if (err instanceof SttError) return `${what}: ${err.message}`;
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   const missing = /\bspawn (\S+) ENOENT\b/.exec(raw)?.[1];
   if (missing) return `${what}: no encuentro «${missing.split(/[\\/]/).pop()}» instalado en el PC.`;
