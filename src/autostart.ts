@@ -160,6 +160,12 @@ async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
   }
   try {
     const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
+    if (r.error) {
+      logFile.warn('autostart: watchdog schtasks failed', {
+        err: r.error.message,
+        stderr: r.stderr.slice(-1000),
+      });
+    }
     process.stdout.write(
       r.error
         ? 'Vigilante: no pude registrarlo; Asistenta arranca igual al iniciar sesión.\n'
@@ -252,6 +258,12 @@ export async function autostartCommand(
   const r = await runExe(windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'), flags);
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.error) {
+    // El detalle (código, salida de PowerShell) solo al registro: la consola enseña una línea llana.
+    logFile.warn('autostart: installer failed', {
+      action,
+      err: r.error.message,
+      stderr: r.stderr.slice(-2000),
+    });
     process.stderr.write(`${autostartFailureMessage(r.error, r.stderr)}\n`);
     return 1;
   }
