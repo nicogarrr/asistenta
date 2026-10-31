@@ -57,6 +57,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   { name: 'memory.db', what: 'memoria semántica', backup: 'db' },
   { name: 'goals.db', what: 'objetivos', backup: 'db' },
+  { name: 'tareas.json', what: 'tablero semanal de tareas', backup: 'file' },
   {
     name: 'correo-canal.json',
     what: 'cursor del canal de correo (correos ya leídos)',
