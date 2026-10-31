@@ -113,7 +113,7 @@ import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
-import { createFactorySync } from './factory/loader.js';
+import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
@@ -327,6 +327,7 @@ import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { formatServicesList, ServiceStore } from './services/store.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
+import { detectSkillEnv } from './skills/env.js';
 import { seedGeneralSkills } from './skills/general.js';
 import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
@@ -2003,7 +2004,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Adopt a third-party service and serve it back privately (tailnet only):
       // proponer is free, instalar is always-ask in the Gate.
       createServiceTool({ services: adoptedServices, servicesDir: join(paths.state, 'services') }),
-      createSkillsTool({ store: skills, semantic: semanticRecall }),
+      createSkillsTool({
+        store: skills,
+        semantic: semanticRecall,
+        // Auto-chequeo con lo que hay de verdad (correo, calendario, herramientas).
+        checkEnv: () =>
+          detectSkillEnv({
+            vault: (key) => vaultGet(key),
+            hasLocalCalendar: () => existsSync(join(paths.state, 'calendar', 'local.ics')),
+            toolNames: async () => [
+              ...toolsForMode(all, desktop).map((t) => t.name),
+              ...(await loadInstalledFactoryTools()).map((t) => t.name),
+            ],
+          }),
+      }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
       // install mid-chat lands on the next message via this onChange.
