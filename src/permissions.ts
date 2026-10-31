@@ -745,6 +745,12 @@ export class Gate {
         match: (c) => c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar',
       },
       {
+        id: 'ask-cuentas-registro',
+        verdict: 'ask',
+        reason: "creates an account on a website in the owner's name",
+        match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro',
+      },
+      {
         id: 'ask-servicio-instalar',
         verdict: 'ask',
         reason: 'installs an adopted third-party service on this machine',
@@ -1069,6 +1075,8 @@ export class Gate {
    * never from a memo, a scope grant, the grant window or fullControl.
    */
   #isGestionEjecutar(c: ToolCall): boolean {
+    // Crear una cuenta en nombre de Nico (cuentas confirmar_registro) va igual: un sí fresco cada vez.
+    if (c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro') return true;
     return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
   }
 
@@ -1224,7 +1232,12 @@ export class Gate {
       // Gestor de contraseñas: listar/buscar leen el vault sin devolver la contraseña.
       case 'cuentas': {
         const a = argString(c.args, 'action');
-        return a === 'listar' || a === 'buscar' ? 'lee' : null;
+        if (a === 'listar' || a === 'buscar') return 'lee';
+        // preparar/guardar/descartar escriben solo en el vault local; confirmar_registro
+        // crea una cuenta en nombre de Nico: opaco aquí, y la regla ask-cuentas-registro pregunta siempre.
+        return a === 'preparar_registro' || a === 'guardar' || a === 'descartar'
+          ? 'escribe-local'
+          : null;
       }
       // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
       case 'tareas':

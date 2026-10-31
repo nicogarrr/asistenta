@@ -1,6 +1,15 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import {
+  approveSignup,
+  discardSignup,
+  finishSignup,
+  MISSING_IDENTITY,
+  type OwnerIdentity,
+  ownerIdentity,
+  prepareSignup,
+} from '../credentials/signup.js';
+import {
   type Account,
   findAccounts,
   listAccounts,
@@ -33,17 +42,71 @@ const line = (a: Account): string =>
  * Solo lectura y NUNCA devuelve la contraseña (ni siquiera la lee): para entrar en una
  * web el navegador la escribe desde el vault con `secret_key`.
  */
-export function createAccountsTool(vault: VaultOps = realVault): AgentTool<typeof Params> {
+const errText = (err: unknown): string =>
+  err instanceof Error ? err.message : 'No he podido hacerlo.';
+
+async function signupStep(
+  args: {
+    action: string;
+    sitio?: string;
+    correo?: string;
+    sin_simbolos?: boolean;
+    max_largo?: number;
+  },
+  vault: VaultOps,
+  owner: () => Promise<OwnerIdentity | null>,
+): Promise<string> {
+  const sitio = (args.sitio ?? '').trim();
+  if (!sitio) return '¿En qué web? Dime el nombre o el dominio.';
+  try {
+    if (args.action === 'preparar_registro') {
+      const me = await owner();
+      if (!me) return MISSING_IDENTITY;
+      const a = await prepareSignup(
+        sitio,
+        me,
+        { symbols: args.sin_simbolos ? false : undefined, maxLength: args.max_largo },
+        vault,
+      );
+      return [
+        `Registro en ${a.domain} preparado (contraseña fuerte ya guardada en el vault).`,
+        `Rellena el formulario: nombre «${me.name}», correo con browser fill secret_key=site:${a.domain}:username, contraseña (y su repetición) con secret_key=site:${a.domain}:password.`,
+        `NO pulses el botón de crear cuenta todavía: antes llama a cuentas confirmar_registro con sitio=${a.domain} y correo=${a.username}.`,
+        'Nunca aceptes planes de pago ni metas tarjetas. Si sale un captcha o piden un código (SMS o correo), para y pídeselo al dueño.',
+      ].join('\n');
+    }
+    if (args.action === 'confirmar_registro') {
+      const a = await approveSignup(sitio, args.correo ?? '', vault);
+      return `Aprobado: pulsa ya el botón de crear cuenta en ${a.domain}. Cuando la web confirme el alta, llama a cuentas guardar; si falla, cuentas descartar.`;
+    }
+    if (args.action === 'guardar') {
+      const a = await finishSignup(sitio, vault);
+      return `Cuenta de ${a.domain} creada y guardada en tu gestor de contraseñas (${maskUser(a.username)}).`;
+    }
+    return (await discardSignup(sitio, vault))
+      ? `He descartado el registro a medias de ${sitio}; no queda nada guardado.`
+      : `No había ningún registro a medias de ${sitio}.`;
+  } catch (err) {
+    return errText(err);
+  }
+}
+
+export function createAccountsTool(
+  vault: VaultOps = realVault,
+  owner: () => Promise<OwnerIdentity | null> = () => ownerIdentity(process.env, vault),
+): AgentTool<typeof Params> {
   return {
     name: 'cuentas',
     label: 'Cuentas',
     description:
-      "Owner's password manager (encrypted vault). listar: which sites he has an account on; buscar: is there one for a site. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password.",
+      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. Hand CAPTCHAs and SMS/email codes to the owner; never paid plans or card data.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async (_id, args) => {
       let text: string;
-      if (args.action === 'buscar') {
+      if (args.action !== 'listar' && args.action !== 'buscar') {
+        text = await signupStep(args, vault, owner);
+      } else if (args.action === 'buscar') {
         const q = (args.sitio ?? '').trim();
         if (!q) text = '¿De qué web? Dime el nombre o el dominio.';
         else {
