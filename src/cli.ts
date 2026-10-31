@@ -528,6 +528,7 @@ import {
   unknownCommandMessage,
   vaultListText,
   vaultMissingText,
+  vaultUsageText,
 } from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
@@ -862,7 +863,7 @@ async function vaultCommand(args: string[]): Promise<number> {
     process.stdout.write(removed ? `Borrado: ${key}\n` : vaultMissingText(key));
     return removed ? 0 : 1;
   }
-  process.stderr.write(USAGE);
+  process.stderr.write(vaultUsageText(sub));
   return 2;
 }
 

@@ -28,3 +28,15 @@ export function vaultListText(names: readonly string[]): string {
 export function vaultMissingText(name: string): string {
   return `No hay ninguna clave guardada con el nombre «${name}». Para verlas: pa vault list\n`;
 }
+
+/** `pa vault` sin orden o con una mal escrita: ayuda corta, no la de `pa` entera. */
+export function vaultUsageText(sub?: string): string {
+  const head = sub ? `No conozco «${sub}» en pa vault.\n` : '';
+  return `${head}Órdenes de la caja fuerte:
+  pa vault set-stdin <nombre>   guardar una clave (pegas el valor y no se ve)
+  pa vault list                 ver los nombres de las claves guardadas
+  pa vault get <nombre>         enseñar una clave en pantalla
+  pa vault rm <nombre>          borrar una clave
+  pa vault init                 crear la caja fuerte cifrada
+`;
+}
