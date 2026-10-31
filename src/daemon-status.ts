@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from './paths.js';
+import { readTelegramEstado } from './telegram-estado.js';
 import { staleThresholdMs } from './watchdog.js';
 
 export interface DaemonStatusDeps {
@@ -90,6 +91,7 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
     modifiedAt,
     ageMs,
     staleAfterMs,
+    telegram: readTelegramEstado(dir, now, staleAfterMs),
     pidFile,
     heartbeatFile,
     supervisionInstalled: null,
@@ -139,6 +141,10 @@ function humanStatus(report: ReturnType<typeof daemonStatus>): string[] {
     lines.push('El archivo de señal de vida es inválido o ilegible; no confirma que responda.');
   else if (beat === 'missing' && report.processState === 'alive')
     lines.push('Todavía no hay señal de vida.');
+  if (report.processState === 'alive' && report.telegram === 'conectada')
+    lines.push('Telegram: conectada.');
+  else if (report.processState === 'alive' && report.telegram === 'desconectada')
+    lines.push('Telegram: sin conexión ahora mismo; Asistenta reintenta sola.');
   lines.push('Que esté en marcha no garantiza que Telegram y el modelo respondan (pa doctor).');
   lines.push(
     'Esto solo mira: no inicia ni reinicia nada, y no comprueba si el autoarranque está instalado (pa autostart status).',

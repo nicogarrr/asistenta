@@ -16,12 +16,12 @@ Instalar encima de una versión anterior conserva tu `.env`, tus claves y tu mem
 
 ## El icono junto al reloj
 
-Verde: Asistenta está en marcha y da señales de vida. Rojo: parada o sin dar señales. Clic derecho:
+Verde: Asistenta está en marcha y conectada a Telegram. Ámbar: en marcha, pero sin conexión con Telegram (reintenta sola). Rojo: parada o sin dar señales. Clic derecho:
 
 - **Abrir panel**: abre el panel en `http://127.0.0.1:<puerto>/` (solo en este PC). Necesita `PA_WEB_PORT` y `PA_WEB_TOKEN` en el `.env`; la primera vez el panel te pide el token y luego lo recuerda. El icono no lee ni pasa el token.
 - **Pausar / Reanudar**: la apaga (`pa stop`) o la vuelve a encender.
 - **Reiniciar**: la apaga y la enciende.
-- **Ver estado**: verde o rojo, con el detalle de `pa status`.
+- **Ver estado**: verde, ámbar o rojo, con el detalle de `pa status`.
 - **Ver registro**: abre la carpeta de registros.
 - **Salir**: apaga Asistenta y quita el icono.
 
@@ -50,7 +50,6 @@ Sale `var/Asistenta-Instalador-<versión>.exe`. El script baja el Node portable 
 ## Lo que aún no hace
 
 - Actualizarse sola: la carpeta instalada no viene de git, así que `pa autoupdate` dice que no puede. Para una versión nueva, instala el `.exe` nuevo encima (conserva tus datos).
-- El verde del icono dice que Asistenta está viva; no comprueba aún la conexión con Telegram.
 - Dictado: mientras exista `dictado.grabando` en la carpeta de datos, el punto se pone naranja (gancho para el dictado por voz).
 
 `instalar.bat` y `levantar.bat` siguen funcionando igual para quien prefiera la carpeta con Node propio.

@@ -45,10 +45,13 @@ function Invoke-Pa([string[]] $Orden) {
     [pscustomobject]@{ Code = $p.ExitCode; Text = ($out.Result + $err.Result).Trim() }
 }
 
-function Test-EnMarcha {
+# Verde: en marcha y conectada a Telegram; ámbar: en marcha pero sin Telegram; rojo: parada.
+function Get-Estado {
     $r = Invoke-Pa $Ordenes.Estado
-    try { $s = $r.Text | ConvertFrom-Json } catch { return $false }
-    return ($s.processState -eq 'alive' -and $s.heartbeatState -eq 'fresh')
+    try { $s = $r.Text | ConvertFrom-Json } catch { return 'rojo' }
+    if (-not ($s.processState -eq 'alive' -and $s.heartbeatState -eq 'fresh')) { return 'rojo' }
+    if ($s.telegram -eq 'conectada') { return 'verde' }
+    return 'ambar'
 }
 
 # Encender: con el arranque automático instalado, por su tarea (así la vigila); si no,
@@ -78,6 +81,7 @@ function New-Punto([System.Drawing.Color] $color) {
 }
 $verde = New-Punto ([System.Drawing.Color]::FromArgb(40, 167, 69))
 $rojo = New-Punto ([System.Drawing.Color]::FromArgb(220, 53, 69))
+$ambar = New-Punto ([System.Drawing.Color]::FromArgb(255, 193, 7))
 $naranja = New-Punto ([System.Drawing.Color]::FromArgb(253, 126, 20))
 
 $icono = New-Object System.Windows.Forms.NotifyIcon
@@ -86,13 +90,15 @@ $icono.Text = 'Asistenta'
 $icono.Visible = $true
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:enMarcha = $false
+$script:color = 'rojo'
 
 function Update-Estado {
     # Desinstalada: el icono se va solo.
     if (-not (Test-Path -LiteralPath $cli)) { $icono.Visible = $false; [System.Windows.Forms.Application]::Exit(); return }
-    $script:enMarcha = Test-EnMarcha
-    $icono.Icon = if ($script:enMarcha) { $verde } else { $rojo }
-    $icono.Text = if ($script:enMarcha) { 'Asistenta: en marcha' } else { 'Asistenta: parada' }
+    $script:color = Get-Estado
+    $script:enMarcha = $script:color -ne 'rojo'
+    $icono.Icon = switch ($script:color) { 'verde' { $verde } 'ambar' { $ambar } default { $rojo } }
+    $icono.Text = switch ($script:color) { 'verde' { 'Asistenta: en marcha' } 'ambar' { 'Asistenta: en marcha, sin Telegram' } default { 'Asistenta: parada' } }
     $pausa.Text = if ($script:enMarcha) { 'Pausar' } else { 'Reanudar' }
 }
 
@@ -131,8 +137,8 @@ $estado = $menu.Items.Add('Ver estado')
 $estado.add_Click({
     Update-Estado
     $r = Invoke-Pa $Ordenes.Texto
-    $tipo = if ($script:enMarcha) { 'Information' } else { 'Warning' }
-    $cabeza = if ($script:enMarcha) { '🟢 En marcha' } else { '🔴 Parada o sin dar señales' }
+    $tipo = if ($script:color -eq 'verde') { 'Information' } else { 'Warning' }
+    $cabeza = switch ($script:color) { 'verde' { '🟢 En marcha y conectada a Telegram' } 'ambar' { '🟡 En marcha, pero sin conexión con Telegram' } default { '🔴 Parada o sin dar señales' } }
     [void][System.Windows.Forms.MessageBox]::Show("$cabeza`n`n$($r.Text)", 'Estado de Asistenta', 'OK', $tipo)
 })
 $registro = $menu.Items.Add('Ver registro')

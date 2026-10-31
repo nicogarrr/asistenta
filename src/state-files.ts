@@ -186,6 +186,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     growth: 'no crece: se reescribe en cada latido',
   },
   {
+    name: 'telegram.estado',
+    what: 'si Telegram está conectada (lo lee pa status y el icono de la bandeja)',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada latido',
+  },
+  {
     name: 'control',
     what: 'canal de control del daemon',
     backup: false,

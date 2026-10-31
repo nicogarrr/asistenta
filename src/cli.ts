@@ -393,6 +393,7 @@ import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
+import { startTelegramEstado } from './telegram-estado.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
@@ -7410,6 +7411,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (hint) process.stderr.write(`${hint}\n`);
     },
   });
+  // Para `pa status --json` y el icono de la bandeja: si Telegram está conectada.
+  startTelegramEstado(paths.state, () => telegram.isReady());
 
   // F3: webhook local para lanzar una rutina (apagado por defecto; docs/webhook.md).
   const hookCfg = webhookConfig();

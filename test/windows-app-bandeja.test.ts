@@ -39,8 +39,18 @@ describe('icono de la bandeja', () => {
     expect(clic('registro')).toContain("Join-Path $stateDir 'log'");
   });
 
-  it('verde solo si está viva y dando señales', () => {
+  it('verde solo si está viva, dando señales y conectada a Telegram; si no, ámbar o rojo', () => {
     expect(tray).toContain("$s.processState -eq 'alive' -and $s.heartbeatState -eq 'fresh'");
+    const fn = tray.slice(
+      tray.indexOf('function Get-Estado'),
+      tray.indexOf('\n}\n', tray.indexOf('function Get-Estado')),
+    );
+    expect(fn).toMatch(/catch \{ return 'rojo' \}/);
+    expect(fn).toMatch(/'fresh'\)\) \{ return 'rojo' \}/);
+    expect(fn).toMatch(/\$s\.telegram -eq 'conectada'\) \{ return 'verde' \}\s*return 'ambar'/);
+    expect(tray).toContain("'ambar' { 'Asistenta: en marcha, sin Telegram' }");
+    expect(tray).toContain("$script:enMarcha = $script:color -ne 'rojo'");
+    expect(clic('estado')).toContain('🟡 En marcha, pero sin conexión con Telegram');
   });
 
   it('panel solo en 127.0.0.1 y sin leer ni pasar el token', () => {
