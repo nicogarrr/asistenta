@@ -16,3 +16,10 @@ export function cliFatalMessage(err: unknown): string {
 export function unknownCommandMessage(command: string): string {
   return `No conozco la orden «${command}». Para ver todas: pa --help (o pa ayuda)\n`;
 }
+
+/** `pa vault list`: los nombres, uno por línea; con la caja fuerte vacía, una frase que lo diga. */
+export function vaultListText(names: readonly string[]): string {
+  if (names.length === 0)
+    return 'No hay ninguna clave guardada todavía. Para guardar una: pa vault set-stdin <nombre> (o vuelve a abrir instalar.bat)\n';
+  return names.map((name) => `${name}\n`).join('');
+}
