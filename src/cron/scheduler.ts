@@ -117,12 +117,12 @@ for (const [tens, t] of [
     MINUTE_WORD_VALUE[`${tens} y ${unit}`] = t + u;
 }
 // Longest first, so «treinta y cinco» wins over «treinta».
-const MINUTES_AFTER = `\\d{1,2}|${Object.keys(MINUTE_WORD_VALUE)
+export const MINUTES_AFTER = `\\d{1,2}|${Object.keys(MINUTE_WORD_VALUE)
   .sort((a, b) => b.length - a.length)
   .join('|')}`;
-const MINUTES_BEFORE = '\\d{1,2}|veinticinco|veinte|cuarto|cinco|diez';
+export const MINUTES_BEFORE = '\\d{1,2}|veinticinco|veinte|cuarto|cinco|diez';
 /** «15» or «quince» → 15; anything else → NaN. */
-const minuteSaid = (said: string): number =>
+export const minuteSaid = (said: string): number =>
   /^\d+$/.test(said) ? Number(said) : (MINUTE_WORD_VALUE[said] ?? Number.NaN);
 
 /** A clock hour with the part of the day said next to it, in 24h. */
