@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
@@ -6,6 +6,7 @@ import { Type } from 'typebox';
 import { scheduleEs } from '../cron/describe-es.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
+import { writeFileReplacing } from '../fs-tmp.js';
 import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
@@ -600,8 +601,39 @@ export function recordDroppedReminder(
       `${JSON.stringify({ at: now, text: `${label}${when}`, ...(chat ? { chat } : {}) })}\n`,
       'utf8',
     );
+    trimDroppedReminders(file, now);
   } catch {
     // The drop is already logged; failing to note it must not break the scheduler.
+  }
+}
+
+/** Past this size the dropped-reminder file is rewritten with only recent lines. */
+export const DROPPED_FILE_MAX_BYTES = 32 * 1024;
+
+/**
+ * The file only ever grew; /estado reads the last week. Once it passes the cap it
+ * keeps the last 30 days (at most 200 lines), replaced in one step so a crash never
+ * leaves it half written.
+ */
+export function trimDroppedReminders(file: string, now = Date.now()): void {
+  try {
+    if (statSync(file).size <= DROPPED_FILE_MAX_BYTES) return;
+    const cutoff = now - 30 * 86_400_000;
+    const keep = readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((line) => {
+        if (!line.trim()) return false;
+        try {
+          const at = (JSON.parse(line) as { at?: unknown }).at;
+          return typeof at === 'number' && at >= cutoff;
+        } catch {
+          return false;
+        }
+      })
+      .slice(-200);
+    writeFileReplacing(file, keep.length ? `${keep.join('\n')}\n` : '');
+  } catch {
+    // Trimming is housekeeping; the next drop tries again.
   }
 }
 
