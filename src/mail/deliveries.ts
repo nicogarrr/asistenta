@@ -257,3 +257,52 @@ export function markDeliveriesNotified(db: DatabaseSync, alerts: readonly Delive
   const upd = db.prepare('UPDATE deliveries SET notified = ? WHERE key = ? AND status = ?');
   for (const a of alerts) upd.run(a.status, a.key, a.status);
 }
+
+/**
+ * «Ya lo he recogido»: marca como entregado el envío que nombra el dueño (número,
+ * transportista o palabras del asunto), para que deje de salir en el panel y el resumen.
+ * Devuelve el envío marcado, los candidatos si hay varios, o [] si no hay ninguno.
+ */
+export function markDeliveryCollected(
+  db: DatabaseSync,
+  ref: string,
+  now: number,
+): { done: Delivery } | { matches: Delivery[] } {
+  const q = foldRef(ref);
+  const open = activeDeliveries(db, now).filter((d) => d.status !== 'entregado');
+  const exact = open.filter((d) => [d.tracking, d.orderRef].some((r) => r && foldRef(r) === q));
+  const words = q.split(' ').filter((w) => w.length > 2 && !REF_STOP.has(w));
+  const loose = open.filter((d) => {
+    const hay = foldRef(`${d.carrier} ${d.title} ${d.tracking ?? ''} ${d.orderRef ?? ''}`);
+    return words.length > 0 && words.some((w) => hay.includes(w));
+  });
+  const matches = exact.length > 0 ? exact : loose;
+  const one = matches.length === 1 ? matches[0] : open.length === 1 && !q ? open[0] : undefined;
+  if (!one) return { matches };
+  db.prepare(
+    "UPDATE deliveries SET status = 'entregado', status_at = ?, notified = 'entregado', updated_at = ? WHERE key = ?",
+  ).run(now, now, one.key);
+  return { done: { ...one, status: 'entregado', statusAt: now, notified: 'entregado' } };
+}
+
+const REF_STOP = new Set([
+  'paquete',
+  'pedido',
+  'envio',
+  'del',
+  'las',
+  'los',
+  'que',
+  'ese',
+  'este',
+  'ya',
+]);
+
+function foldRef(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
