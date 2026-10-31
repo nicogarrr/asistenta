@@ -301,12 +301,15 @@ async function finishInterrupted(
     await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
   deps.restoreDist();
   const back = await startAndWait(deps, health);
+  // Mismas palabras que la vuelta atrás de una actualización fallida: sin «git» ni «commit».
   const tail = [
-    reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
-    back ? '' : ' (y no he vuelto a arrancar sana: prueba «pa doctor»)',
+    reset.code === 0
+      ? ''
+      : ' (y no he podido volver del todo a la versión anterior: prueba «pa doctor»)',
+    back ? '' : ' (y no he vuelto a arrancar bien: prueba «pa doctor»)',
   ].join('');
   await deps.notify(`${INTERRUPTED_MESSAGE}${tail}`).catch(() => {});
-  return finish(`se quedó a medias; vuelve a ${p.from.slice(0, 7)}${tail}`);
+  return finish(`se quedó a medias; he vuelto a la versión anterior${tail}`);
 }
 
 export async function runAutoupdate(
