@@ -94,14 +94,21 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   let hasTime = false;
 
   const timeMatch = new RegExp(
-    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?::(\\d{2}))?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
+    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(media|cuarto)|\\s+menos\\s+(cuarto))?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
   ).exec(normalised);
   if (timeMatch) {
     const said = timeMatch[1] ?? '0';
     hour = /^\d+$/.test(said) ? Number(said) : (SPOKEN_HOUR_VALUE[said] ?? 0);
     minute = Number(timeMatch[2] ?? 0);
+    // «a las 8 y media», «a las 9 menos cuarto»: before, the half hour was dropped.
+    if (timeMatch[3] === 'media') minute = 30;
+    else if (timeMatch[3] === 'cuarto') minute = 15;
+    else if (timeMatch[4]) {
+      hour = hour === 0 ? 23 : hour - 1;
+      minute = 45;
+    }
     hasTime = true;
-    const part = timeMatch[4];
+    const part = timeMatch[6];
     if (part) {
       // The part of the day said right next to the clock is the one that counts:
       // «a las 12 de la noche» is midnight and «a la una de la noche» is 01:00, not
