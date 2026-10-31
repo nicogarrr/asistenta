@@ -329,7 +329,7 @@ import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
-import { TaskBoard } from './tasks/board.js';
+import { briefingTasks, TaskBoard } from './tasks/board.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
@@ -4373,6 +4373,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               }),
           })
         : undefined,
+    tasks: () => {
+      const owner = briefingOwner();
+      const key = owner ? ownerChatKey(owner) : undefined;
+      return key ? briefingTasks(new TaskBoard(join(paths.state, 'tareas.json')), key) : [];
+    },
     goals: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;
