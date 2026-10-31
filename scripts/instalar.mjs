@@ -103,6 +103,27 @@ export const SISTEMA_MOVER =
   'Mueve la carpeta de Asistenta a C:\\Asistenta (o dentro de tu carpeta de usuario) y abre instalar.bat desde allí.';
 
 /**
+ * ¿La carpeta es temporal? Abrir instalar.bat «desde dentro» del ZIP con WinRAR, 7-Zip
+ * o el Explorador saca los archivos a %TEMP% (Rar$EXa…, 7zO…, Temp1_x.zip) y Windows
+ * los borra al cerrar: la instalación desaparecería. Solo rutas de Windows (en Linux
+ * /tmp es donde corren los tests).
+ */
+export function enCarpetaTemporal(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!/^[a-z]:\\/.test(d)) return false;
+  for (const k of ['TEMP', 'TMP']) {
+    const r = norm(env[k]);
+    if (/^[a-z]:\\/.test(r) && d.startsWith(`${r}\\`)) return true;
+  }
+  return /\\appdata\\local\\temp\\/.test(d);
+}
+
+/**
  * Espera el primer mensaje privado que el dueño manda a SU bot y lo devuelve.
  * Marca la actualización como leída para que Asistenta no la conteste luego.
  */
@@ -171,6 +192,11 @@ export async function instalar(d) {
         'Cierra esta ventana y abre instalar.bat con doble clic normal (sin «Ejecutar como administrador»).',
       );
   }
+
+  if (enCarpetaTemporal(d.cwd, d.env))
+    return fail(
+      `Asistenta está en una carpeta temporal (${d.cwd}): pasa al abrir instalar.bat sin sacarlo del ZIP, y Windows la borrará. Cierra esto, haz clic derecho en el ZIP, «Extraer todo», mueve la carpeta a C:\\Asistenta y abre instalar.bat desde allí.`,
+    );
 
   const sistema = enCarpetaSistema(d.cwd, d.env);
   if (sistema)
