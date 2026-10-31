@@ -367,7 +367,7 @@ import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { tvRequest } from './tv/lgtv.js';
-import { staleTvOrderNotice } from './tv/stale-order.js';
+import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
   TV_BUTTONS_TITLE,
@@ -2105,8 +2105,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // The speakers are the microphone's other half. Quieten the listener before
         // the sound comes out or the agent answers its own playback.
         // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
+        // Un mensaje de Telegram viejo tampoco manda audio a la tele (src/tv/stale-order.ts).
         castToTv: audioTeleEnabled()
-          ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })
+          ? staleGuardedCaster(
+              tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey }),
+              () => staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
+              (file) => rmSync(file, { force: true }),
+            )
           : undefined,
         // Si la tele aceptó pero nunca bajó el fichero: aviso del firewall al chat.
         notifyChat: (text) => {
