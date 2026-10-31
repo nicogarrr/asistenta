@@ -33,9 +33,13 @@ describe('paquetes en el panel y en el resumen de la mañana', () => {
   it('panelRepartos: envío, estado, cuándo y asunto; nada más', () => {
     const r = panelRepartos(lista, 'Europe/Madrid');
     expect(r.repartos).toHaveLength(3);
-    expect(r.repartos[0]).toMatchObject({ envio: 'SEUR (ES1)', estado: 'en reparto' });
+    expect(r.repartos[0]).toMatchObject({
+      envio: 'SEUR',
+      seguimiento: 'ES1',
+      estado: 'en reparto',
+    });
     expect(r.repartos[0]?.cuando).toMatch(/29/);
-    expect(r.repartos[1]?.envio).toBe('Amazon (405-9)');
+    expect(r.repartos[1]).toMatchObject({ envio: 'Amazon', seguimiento: '405-9' });
     expect(JSON.stringify(r)).not.toMatch(/"key"|notified|http/);
   });
 

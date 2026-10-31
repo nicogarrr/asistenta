@@ -6,6 +6,8 @@ export interface PanelReparto {
   estado: string;
   cuando: string;
   titulo: string;
+  /** Número de seguimiento o de pedido, aparte para poder copiarlo. */
+  seguimiento?: string;
 }
 
 /**
@@ -27,10 +29,11 @@ export function panelRepartos(
     repartos: list.slice(0, 20).map((d) => {
       const ref = d.tracking ?? d.orderRef;
       return {
-        envio: `${d.carrier}${ref ? ` (${ref})` : ''}`,
+        envio: d.carrier,
         estado: DELIVERY_STATUS_LABEL[d.status],
         cuando: fmt.format(new Date(d.statusAt)),
         titulo: d.title,
+        ...(ref ? { seguimiento: ref } : {}),
       };
     }),
   };

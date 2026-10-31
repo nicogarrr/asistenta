@@ -298,6 +298,7 @@ export function renderPage(): string {
     .buscador input::placeholder { color: #8191a5; }
     .buscador input:focus-visible,
     .buscador select:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .copiable { user-select: all; cursor: pointer; }
     .buscador textarea {
       width: 100%;
       min-height: 82px;
@@ -1499,7 +1500,7 @@ ${renderFormatScript()}
 
       // silencio = true: recarga al volver a la pestaña, sin «Cargando…» y sin tapar lo que ya se ve si falla.
       function filaTarea(t) {
-        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo;
+        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo + (t.repite ? ' (' + t.repite + ')' : '');
         var fila = nodo('li', 'texto', texto + ' ');
         fila.appendChild(insignia('', t.estado));
         return fila;
@@ -1532,6 +1533,25 @@ ${renderFormatScript()}
         return true;
       }
 
+      function filaReparto(r) {
+        var fila = nodo('li', 'texto', r.envio + ' ');
+        if (r.seguimiento) {
+          // El número va aparte: un toque lo selecciona entero y lo copia.
+          var codigo = nodo('code', 'copiable', r.seguimiento);
+          codigo.title = 'Toca para copiar';
+          codigo.addEventListener('click', function () {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(r.seguimiento).then(function () { codigo.title = 'Copiado'; }, function () {});
+            }
+          });
+          fila.appendChild(codigo);
+          fila.appendChild(document.createTextNode(' '));
+        }
+        fila.appendChild(document.createTextNode('· ' + r.titulo + ' (' + r.cuando + ') '));
+        fila.appendChild(insignia('', r.estado));
+        return fila;
+      }
+
       async function cargarRepartos(silencio) {
         var contenedor = document.getElementById('panel-repartos');
         if (silencio !== true) pintarCarga(contenedor);
@@ -1542,11 +1562,7 @@ ${renderFormatScript()}
           if (!datos.repartos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay paquetes en camino.'));
           else {
             var lista = nodo('ul', 'tareas');
-            datos.repartos.forEach(function (r) {
-              var fila = nodo('li', 'texto', r.envio + ' · ' + r.titulo + ' (' + r.cuando + ') ');
-              fila.appendChild(insignia('', r.estado));
-              lista.appendChild(fila);
-            });
+            datos.repartos.forEach(function (r) { lista.appendChild(filaReparto(r)); });
             contenedor.appendChild(lista);
           }
           finCarga(contenedor, true);
