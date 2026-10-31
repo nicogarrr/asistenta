@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { REPO_DIR } from '../paths.js';
+import { checkPages, splitPages, tableNote } from '../pdfmd/verify.js';
 import {
   type OcrModel,
   resolveOcrPath,
@@ -75,7 +76,19 @@ export function createOcrLocalTool(deps: OcrLocalDeps): AgentTool<typeof Params>
       const cut = body.length > OCR_MAX_TEXT_CHARS;
       const shown = cut ? body.slice(0, OCR_MAX_TEXT_CHARS) : body;
       const note = cut ? `\n\n[recortado: ${OCR_MAX_TEXT_CHARS} de ${body.length} caracteres]` : '';
-      return { content: [text(shown + note)], details: { model, pages: r.pages, truncated: cut } };
+      // Tablas comprobadas sin IA (idea de pdf2md, MIT): si no cuadran, se avisa.
+      const check = checkPages(body);
+      const warn = tableNote(check.issues, splitPages(body).length > 1);
+      return {
+        content: [text(shown + note + (warn ? `\n\n${warn}` : ''))],
+        details: {
+          model,
+          pages: r.pages,
+          truncated: cut,
+          tables: check.tables,
+          tablesUnverified: check.issues.length,
+        },
+      };
     },
   };
 }
