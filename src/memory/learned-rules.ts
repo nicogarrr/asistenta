@@ -286,7 +286,14 @@ const IRREGULAR: ReadonlyArray<readonly [RegExp, string]> = [
   [new RegExp(`^(?:ten${PRON}|teng${SUBJ}|tener)$`), 'ten'],
   [new RegExp(`^(?:ven${PRON}|veng${SUBJ}|venir)$`), 'ven'],
   [new RegExp(`^(?:sal${PRON}|salg${SUBJ}|salir)$`), 'sal'],
+  [new RegExp(`^(?:se${SUBJ}|ser)$`), 'ser'],
+  [new RegExp(`^(?:vay${SUBJ}|vete)$`), 'ir'],
 ];
+/** Imperativos de una sola sílaba que solo lo son al empezar la regla. */
+const LEADING = new Map([
+  ['se', 'ser'],
+  ['ve', 'ir'],
+]);
 
 // «Avísame», «llámame», «escríbeme»: el pronombre pegado escondía el verbo («avisam» ≠
 // «avis» de «no me avises»). Se quita si delante queda un imperativo (acaba en a/e/i).
@@ -298,7 +305,15 @@ function enclitic(w: string): string {
 
 function stems(text: string): Set<string> {
   const out = new Set<string>();
-  for (const w of canon(text).split(/[^a-z0-9]+/)) {
+  const all = canon(text).split(/[^a-z0-9]+/);
+  for (const [i, w] of all.entries()) {
+    // «Sé breve» / «No seas breve», «Ve al grano» / «No vayas tan al grano»: «se» y «ve»
+    // son también «se» de «se lo digas» o «ve» de «se ve»; solo cuentan al empezar la regla.
+    const lead = i === all.findIndex((x) => x !== '') ? LEADING.get(w) : undefined;
+    if (lead) {
+      out.add(lead);
+      continue;
+    }
     const irregular = IRREGULAR.find(([re]) => re.test(w));
     if (irregular) out.add(irregular[1]);
     else if (w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w)) out.add(stem(enclitic(w)));
