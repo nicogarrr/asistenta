@@ -296,7 +296,9 @@ function similar(a: string, b: string): boolean {
 export function learnedRules(memory: MemoryStore, scopes: readonly string[]): MemoryEntry[] {
   // Con varios ámbitos, allIn los pone uno tras otro: dado la vuelta, las del último
   // ámbito salían primero aunque fueran viejas y el tope borraba las nuevas. Cada
-  // ámbito de nuevo a viejo y luego por fecha; el mismo día, gana el primer ámbito.
+  // ámbito de nuevo a viejo y luego por fecha y hora (las reglas viejas sin hora cuentan
+  // como de primera hora); con la misma fecha y hora, gana el primer ámbito.
+  const when = (e: MemoryEntry): string => `${e.date} ${e.time ?? ''}`;
   return [...new Set(scopes)]
     .flatMap((scope) =>
       memory
@@ -304,7 +306,7 @@ export function learnedRules(memory: MemoryStore, scopes: readonly string[]): Me
         .filter((e) => e.supersededBy === null && e.tags.includes(LEARNED_TAG))
         .reverse(),
     )
-    .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
+    .sort((a, b) => (when(a) === when(b) ? 0 : when(a) < when(b) ? 1 : -1));
 }
 
 export type LearnOutcome =
@@ -337,11 +339,11 @@ export function saveLearnedRule(
       // Entra como nueva (fecha de hoy, primera en /aprendido) y sustituye a TODAS las que
       // decían lo mismo: corregir en su sitio la dejaba con la fecha vieja, el tope la
       // olvidaba antes que reglas más viejas y otra parecida se quedaba duplicada.
-      const e = memory.remember(scope, rule, { tags });
+      const e = memory.remember(scope, rule, { tags, stampTime: true });
       for (const m of matches) memory.forgetIn(looked, m.id);
       return { status: 'updated', rule, id: e.id };
     }
-    const e = memory.remember(scope, rule, { tags });
+    const e = memory.remember(scope, rule, { tags, stampTime: true });
     // Tope: la más vieja se olvida para que la memoria no crezca sin fin. Se cuenta en
     // todo lo que lee /aprendido: contado solo en este ámbito salían más de 30 y las
     // sobrantes no se podían ver ni borrar.
