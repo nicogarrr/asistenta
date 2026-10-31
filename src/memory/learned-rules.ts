@@ -197,10 +197,17 @@ function similar(a: string, b: string): boolean {
 
 /** Reglas aprendidas activas del chat, de la más nueva a la más vieja. */
 export function learnedRules(memory: MemoryStore, scopes: readonly string[]): MemoryEntry[] {
-  return memory
-    .allIn(scopes)
-    .filter((e) => e.supersededBy === null && e.tags.includes(LEARNED_TAG))
-    .reverse();
+  // Con varios ámbitos, allIn los pone uno tras otro: dado la vuelta, las del último
+  // ámbito salían primero aunque fueran viejas y el tope borraba las nuevas. Cada
+  // ámbito de nuevo a viejo y luego por fecha; el mismo día, gana el primer ámbito.
+  return [...new Set(scopes)]
+    .flatMap((scope) =>
+      memory
+        .all(scope)
+        .filter((e) => e.supersededBy === null && e.tags.includes(LEARNED_TAG))
+        .reverse(),
+    )
+    .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
 }
 
 export type LearnOutcome =
@@ -238,9 +245,11 @@ export function saveLearnedRule(
       return { status: 'updated', rule, id: e.id };
     }
     const e = memory.remember(scope, rule, { tags });
-    // Tope: la más vieja se olvida para que la memoria no crezca sin fin.
-    const all = learnedRules(memory, [scope]);
-    for (const old of all.slice(MAX_LEARNED_RULES)) memory.forget(scope, old.id);
+    // Tope: la más vieja se olvida para que la memoria no crezca sin fin. Se cuenta en
+    // todo lo que lee /aprendido: contado solo en este ámbito salían más de 30 y las
+    // sobrantes no se podían ver ni borrar.
+    const all = learnedRules(memory, looked);
+    for (const old of all.slice(MAX_LEARNED_RULES)) memory.forgetIn(looked, old.id);
     return { status: 'saved', rule, id: e.id };
   } catch {
     return { status: 'invalid', rule };
