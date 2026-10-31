@@ -22,7 +22,7 @@ import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history
 import { loadBattery, type Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
-import { SANDBOX_ENV } from './reap.js';
+import { noteAttemptRoot, SANDBOX_ENV } from './reap.js';
 import { repoRoot } from './worktree.js';
 
 /**
@@ -133,7 +133,7 @@ export function proposerFromEnv(
   return (dir, hypothesis, attempt) =>
     withTempHome(async (home) => {
       const run = operatorCommand(cmd);
-      await exec(run.file, [], {
+      const child = exec(run.file, [], {
         cwd: dir,
         timeout: 30 * 60_000,
         windowsHide: true,
@@ -147,6 +147,13 @@ export function proposerFromEnv(
           PA_EVOLVE_ATTEMPT: String(attempt),
         },
       });
+      // Su pid, para encontrar después a sus hijos huérfanos en Windows (reap.ts).
+      const ended = noteAttemptRoot(dir, child.child?.pid);
+      try {
+        await child;
+      } finally {
+        ended();
+      }
     });
 }
 
