@@ -450,16 +450,20 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
       const mine = () => deps.store.listRoutines(scope).filter(isReminder);
 
       if (args.action === 'list') {
-        const rows = mine();
+        // Same words as /recordatorios («cada lunes a las 08:30», «lun 05/10 08:30»):
+        // with the raw cron the model read «30 8 * * 1» back to the owner.
+        const rows = reminderRows(mine());
         if (rows.length === 0) return reply('No hay recordatorios programados.');
-        const lines = rows.map((r) => {
-          const check = r.schedule ? validateSchedule(r.schedule) : null;
-          const next = check?.ok ? check.next : 'sin próxima ejecución';
+        const lines = rows.map(({ routine: r, next }) => {
+          const when = next
+            ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now())})`
+            : 'sin próxima vez';
           const end = untilOfReminder(r.name);
+          const said = r.schedule ? scheduleEs(r.schedule) : null;
           const kind = isOneShotReminder(r)
             ? 'una vez'
-            : `repite (${r.schedule})${end ? ` hasta ${end}` : ''}`;
-          return `- ${reminderText(r)} | ${kind} | próximo: ${next}`;
+            : `se repite ${said ?? 'con un horario propio'}${end ? ` hasta ${end}` : ''}`;
+          return `- ${reminderText(r)} | ${kind} | próximo: ${when}`;
         });
         return reply(lines.join('\n'));
       }
