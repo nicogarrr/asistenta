@@ -174,7 +174,7 @@ export function createRoutineFire(
         log.warn('one-time reminder dropped after an hour of failed delivery', {
           routine: ctx.routine.name,
         });
-        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name);
+        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name, Date.now(), chatId);
       }
       deps.sync();
     } else if (sent && reminder && reminderEnded(ctx.routine, new Date(), true)) {

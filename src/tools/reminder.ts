@@ -548,7 +548,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
  * settleOneShot). The drop used to leave only a log line, so the user never learned that
  * "avísame a las 9" had not happened. It is written down here and /estado shows it.
  */
-export function recordDroppedReminder(file: string, routineName: string, now = Date.now()): void {
+export function recordDroppedReminder(
+  file: string,
+  routineName: string,
+  now = Date.now(),
+  chat?: string,
+): void {
   const due = dueOfOneShot(routineName);
   const label = routineName
     .replace(REMINDER_ONCE_PREFIX, '')
@@ -563,7 +568,11 @@ export function recordDroppedReminder(file: string, routineName: string, now = D
     : '';
   try {
     mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify({ at: now, text: `${label}${when}` })}\n`, 'utf8');
+    appendFileSync(
+      file,
+      `${JSON.stringify({ at: now, text: `${label}${when}`, ...(chat ? { chat } : {}) })}\n`,
+      'utf8',
+    );
   } catch {
     // The drop is already logged; failing to note it must not break the scheduler.
   }
