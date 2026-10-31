@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 
 export const NODE_MIN = 24;
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{30,}$/;
@@ -18,10 +19,41 @@ export function nodeMajor(version) {
   return Number.isInteger(n) ? n : 0;
 }
 
-/** Preset del modelo escrito en .env (o el de por defecto). */
-export function presetFromEnv(text) {
-  const m = /^\s*PA_PROVIDER_PRESET\s*=\s*["']?([\w-]+)/m.exec(text ?? '');
-  return m?.[1] ?? 'opencode';
+/**
+ * Preset del modelo con las mismas reglas que al arrancar (src/config.ts): la
+ * variable del sistema gana al .env, en el .env gana la última línea, vacío es
+ * «opencode» y da igual mayúsculas. Antes, `PA_PROVIDER_PRESET=` vacío se comía la
+ * línea siguiente y «OpenCode-Local» pedía la clave de pago.
+ */
+export function presetFromEnv(text, env = {}) {
+  let v = String(env.PA_PROVIDER_PRESET ?? '').trim();
+  if (!v) {
+    try {
+      v = String(parseEnv(text ?? '').PA_PROVIDER_PRESET ?? '').trim();
+    } catch {
+      v = '';
+    }
+  }
+  return v.toLowerCase() || 'opencode';
+}
+
+/**
+ * Texto del .env como lo lee Asistenta (src/env-text.ts): el Bloc de notas guarda a
+ * menudo con BOM o en UTF-16. Vacío si no existe o no se puede leer.
+ */
+export function envText(file = '.env') {
+  let buf;
+  try {
+    buf = readFileSync(file);
+  } catch {
+    return '';
+  }
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString('utf8');
+  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+  if (buf[0] === 0xfe && buf[1] === 0xff)
+    return Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
+  return buf.toString('utf8');
 }
 
 /**
@@ -241,7 +273,8 @@ export async function instalar(d) {
       say('✓ Token de Telegram guardado');
     }
 
-    if (presetFromEnv(d.readEnv()) === 'opencode-local') say('✓ Modelo local: no hace falta clave');
+    if (presetFromEnv(d.readEnv(), d.env) === 'opencode-local')
+      say('✓ Modelo local: no hace falta clave');
     else {
       const key = (
         await d.ask(
@@ -376,7 +409,7 @@ export const realDeps = {
       return false;
     }
   },
-  readEnv: () => (existsSync('.env') ? readFileSync('.env', 'utf8') : ''),
+  readEnv: () => envText('.env'),
   cli: cliWith(run),
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
