@@ -9,7 +9,36 @@ import { startupFailureMessage } from './startup.js';
 export function cliFatalMessage(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err);
   if (/\bno (OpenRouter |Gemini )?API key\b/i.test(text)) return startupFailureMessage(err);
-  return text;
+  return dataFileFailText(err) ?? text;
+}
+
+/**
+ * Fallos de los ficheros de datos al arrancar, en castellano. Antes la consola
+ * enseñaba «file is not a database» o «ENOSPC: no space left on device, open
+ * 'C:\\Users\\…'» tal cual (tras un apagón o con el disco lleno pasa en Windows).
+ * El detalle sigue en el registro («fatal»). null = no es de ficheros de datos.
+ */
+export function dataFileFailText(err: unknown): string | null {
+  const e = (err ?? {}) as { code?: unknown; errcode?: unknown; errstr?: unknown };
+  const raw = `${err instanceof Error ? err.message : String(err)} ${String(e.code ?? '')} ${String(e.errstr ?? '')}`;
+  const sqliteCode = typeof e.errcode === 'number' ? e.errcode & 0xff : -1;
+  if (/\bENOSPC\b|no space left|disk is full|SQLITE_FULL/i.test(raw) || sqliteCode === 13)
+    return 'El disco está lleno y Asistenta no puede guardar sus datos. Libera espacio y vuelve a abrirla.';
+  if (
+    /not a database|malformed|SQLITE_CORRUPT|SQLITE_NOTADB/i.test(raw) ||
+    sqliteCode === 11 ||
+    sqliteCode === 26
+  )
+    return 'Un fichero de datos de Asistenta está dañado (pasa a veces tras un apagón). Recupera la última copia con: pa backup restaurar ultima';
+  if (/database is locked|SQLITE_BUSY|\bEBUSY\b/i.test(raw) || sqliteCode === 5)
+    return 'Otro programa está usando los datos de Asistenta (¿otra Asistenta abierta, OneDrive o el antivirus?). Ciérralo y vuelve a probar.';
+  if (
+    /unable to open database|SQLITE_CANTOPEN|readonly database/i.test(raw) ||
+    sqliteCode === 14 ||
+    (/\b(EACCES|EPERM)\b/.test(raw) && /\b(open|mkdir|rename|unlink|scandir)\b/.test(raw))
+  )
+    return 'Windows no deja a Asistenta abrir sus datos (permiso denegado o lo tiene otro programa). Cierra lo que los use y vuelve a probar.';
+  return null;
 }
 
 /** Orden desconocida: una línea clara en vez de «unknown command» y la ayuda entera. */
