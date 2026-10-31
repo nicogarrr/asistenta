@@ -4218,7 +4218,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!wideResearchEnabled()) {
         return void (await say(
           inbound,
-          'La investigacion amplia esta desactivada (hace una consulta al modelo por elemento). Activala con PA_INVESTIGA_AMPLIO=1 y reinicia Asistenta.',
+          'La investigación amplia está desactivada (hace una consulta al modelo por elemento). Actívala con PA_INVESTIGA_AMPLIO=1 y reinicia Asistenta.',
           { quote: true },
         ));
       }
@@ -5653,7 +5653,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'clip' || sub === 'video') {
       const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
-      await say(inbound, `Grabando ${seconds}s de camara...`, { quote: true });
+      await say(inbound, `Grabando ${seconds}s de cámara...`, { quote: true });
       const rec = await recordCamera({ seconds, fps: 10, maxEdge: config.screenshotMaxEdge });
       const bytes = consumeRecording(rec.file);
       await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara', inbound.threadId);
@@ -5665,7 +5665,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // voice in it.
     if (sub === 'av' || sub === 'voz' || sub === 'convoz') {
       const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
-      await say(inbound, `Grabando ${seconds}s de camara con tu voz...`, { quote: true });
+      await say(inbound, `Grabando ${seconds}s de cámara con tu voz...`, { quote: true });
       try {
         const rec = await recordCameraWithMic({
           seconds,
@@ -5700,7 +5700,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
       await say(
         inbound,
-        ok ? 'Esto veo por la camara ahora mismo.' : 'No he podido enviar la foto.',
+        ok ? 'Esto veo por la cámara ahora mismo.' : 'No he podido enviar la foto.',
         {
           quote: true,
         },
@@ -5712,7 +5712,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const cmdMic = async (inbound: Inbound, args: string): Promise<void> => {
     const seconds = Math.max(1, Math.min(60, Number(args.trim().split(/\s+/)[0]) || 10));
-    await say(inbound, `Escuchando ${seconds}s por el microfono...`, { quote: true });
+    await say(inbound, `Escuchando ${seconds}s por el micrófono...`, { quote: true });
     try {
       // Through withMicrophone: the wake listener holds the capture device open, and
       // two recorders fighting over one microphone is a failure that looks like
@@ -7059,7 +7059,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       next
-        ? `Escuchando "${wakeWord}" en el microfono. Dime "${wakeWord}, ..." y te hago caso.` +
+        ? `Escuchando "${wakeWord}" en el micrófono. Dime "${wakeWord}, ..." y te hago caso.` +
             (stats
               ? ` (ventanas oidas: ${stats.checks}, avisos: ${stats.wakeCount}` +
                 `${stats.lastHeard ? `, lo ultimo que he oido: "${stats.lastHeard}"` : ''})`
@@ -7251,7 +7251,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // esta caida, el catch lo traga y queda el log.
     onPollingLost: (_channel, message) => {
       void notifyLastChat(
-        `He perdido la conexion con Telegram: ${message}. Reintento solo cada poco y te aviso al volver.`,
+        `He perdido la conexión con Telegram: ${message}. Reintento solo cada poco y te aviso al volver.`,
       ).catch(() => {});
     },
     onPollingRecovered: () => {
