@@ -1,4 +1,4 @@
-# Library only. No task registration, Docker, network or process writes at import.
+﻿# Library only. No task registration, Docker, network or process writes at import.
 function ConvertTo-Literal { param([string]$Value) return "'" + $Value.Replace("'", "''") + "'" }
 function Get-TaskIdentity {
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name

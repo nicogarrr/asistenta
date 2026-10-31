@@ -1,4 +1,4 @@
-<#
+﻿<#
  Prueba LOCAL y de SOLO LECTURA de Cua Driver en Windows x64 (https://cua.ai/docs/cua-driver).
  ESTADO: ESCRITO SIN PODER EJECUTARLO (sin Windows ni PowerShell donde se preparo). Nunca probado.
  Si algo falla, el script para y lo dice; no reintenta.
