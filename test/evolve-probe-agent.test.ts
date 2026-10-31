@@ -45,6 +45,7 @@ export class BrowserService {
 // y los avisos que mandaría la página, con un User-Agent de navegador. Antes eran 10 PASA.
 const IMPOSTOR = `
 let base = '';
+let html = '';
 const ua = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0' };
 const hit = (p: string) => fetch(base + p, { headers: ua }).then((r) => r.text()).catch(() => '');
 export class BrowserService {
@@ -52,10 +53,10 @@ export class BrowserService {
   async open(_s: string, url: string) {
     base = new URL(url).origin;
     await hit(new URL(url).pathname);
-    await hit('/');
+    html = await hit('/');
     return { url: base + '/', status: 404 };
   }
-  async snapshot() { return 'Origen: sugerencias abiertas'; }
+  async snapshot() { return html + ' Origen: sugerencias abiertas'; }
   async execJs() {
     for (const q of ['foco=o', 'panel=o', 'c=o&v=Sevilla', 'foco=d', 'panel=d', 'c=d&v=Malaga&go=1'])
       await hit('/evento?' + q);
@@ -108,6 +109,9 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
       'el valor del campo se puede releer',
       'el segundo desplegable tambien funciona',
       'el boton se habilita solo cuando ambos campos estan puestos',
+      'el snapshot lista los campos',
+      'el snapshot avisa de los desplegables abiertos',
+      'la captura devuelve bytes enviables',
     ]) {
       expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
     }
@@ -126,6 +130,9 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
         'el valor del campo se puede releer',
         'el segundo desplegable tambien funciona',
         'el boton se habilita solo cuando ambos campos estan puestos',
+        'el snapshot lista los campos',
+        'el snapshot avisa de los desplegables abiertos',
+        'la captura devuelve bytes enviables',
       ]) {
         expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
       }
