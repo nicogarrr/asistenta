@@ -256,9 +256,22 @@ const TELE_EN_MEDIO = new RegExp(
 export function parseTvCommand(text: string): TvIntent | null {
   const direct = parseOne(text);
   if (direct) return direct;
-  const m = TELE_EN_MEDIO.exec(normalizeOrder(text));
-  return m?.[1] && m[2] ? parseOne(`${m[1]}${m[2]}`) : null;
+  const t = normalizeOrder(text);
+  const m = TELE_EN_MEDIO.exec(t);
+  if (m?.[1] && m[2]) return parseOne(`${m[1]}${m[2]}`);
+  // «sube el volumen de la tele a 20», «sube la tele a 25», «sube la tele 5».
+  const v = VOLUMEN_DE_TELE.exec(t);
+  if (v?.[1] && v[2]) return parseOne(`${v[1]}${v[2]}`);
+  const s = SUBE_LA_TELE.exec(t);
+  return s?.[1] && s[2] ? parseOne(`${s[1]} el volumen${s[2]}`) : null;
 }
+
+/** «el volumen de la tele …»: la tele sobra, el volumen es el de la tele. */
+const VOLUMEN_DE_TELE = new RegExp(`^(.*\\bvolumen) de ${TV}( .+)$`);
+/** «sube/baja la tele a 20» o «… 5»: es el volumen. */
+const SUBE_LA_TELE = new RegExp(
+  `^((?:sube|baja)(?:le|lo|la)?) ${TV}( (?:(?:a|al|hasta(?: el)?) )?(?:\\d{1,3}|[a-z]+))$`,
+);
 
 function parseOne(text: string): TvIntent | null {
   const t = normalizeOrder(text);
