@@ -20,6 +20,14 @@ import {
 import { type ImapLike, imapFor, type ScannedMail, scanInbox } from '../mail/scan.js';
 import { CATEGORY_LABEL, classifyByHeaders, domainOf, type MailCategory } from '../mail/triage.js';
 import type { MailAccount } from '../mail/types.js';
+import {
+  describeTarget,
+  oneClickPost,
+  runUnsubBatch,
+  saveUnsubBatch,
+  unsubLog,
+  unsubscribeTargets,
+} from '../mail/unsubscribe.js';
 
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as MailCategory[];
 const ACTIONS: RuleAction[] = ['archivar', 'limpieza', 'papelera', 'leido'];
@@ -33,6 +41,9 @@ const Params = Type.Object({
       Type.Literal('borrar'),
       Type.Literal('limpiar_vista'),
       Type.Literal('limpiar'),
+      Type.Literal('baja_vista'),
+      Type.Literal('baja'),
+      Type.Literal('bajas'),
     ],
     {
       description:
@@ -67,7 +78,15 @@ const Params = Type.Object({
       },
     ),
   ),
-  lote: Type.Optional(Type.String({ description: 'limpiar: el id del lote de la vista previa.' })),
+  lote: Type.Optional(
+    Type.String({ description: 'limpiar/baja: el id del lote de la vista previa.' }),
+  ),
+  numeros: Type.Optional(
+    Type.Array(Type.Integer({ minimum: 1 }), {
+      maxItems: 50,
+      description: 'baja_vista: los números de la lista que Nico eligió.',
+    }),
+  ),
 });
 
 export const NO_MAIL_ACCOUNT =
@@ -80,6 +99,7 @@ export interface MailRulesDeps {
   now?: () => number;
   mover?: (account: MailAccount) => ImapMover;
   batchFile?: string;
+  post?: (url: string) => Promise<number>;
 }
 
 const errText = (err: unknown) => (err instanceof Error ? err.message.slice(0, 120) : 'error');
@@ -139,7 +159,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
     name: 'correo_reglas',
     label: 'Reglas de correo',
     description:
-      'Mail triage and owner rules. resumen: classify recent inbox mail (importante/personal/notificación/publicidad/spam) by headers and show counts per sender plus suspected phishing; moves nothing. reglas: list saved rules. crear: save a rule from the owner\'s words (e.g. «lo de LinkedIn a la papelera» → remitente "linkedin", accion "papelera"; «lo de Amazon que no sea un pedido, archívalo» → remitente "amazon", excepto "pedido", accion "archivar"). borrar: delete rule by id. Rules never act alone. limpiar_vista («limpia lo no importante», «limpia lo de LinkedIn», «aplica la regla 2»): shows what would move (default: ads and notifications to Asistenta/Limpieza; destino archivar, or papelera ONLY if Nico said «borrar»), moves nothing, and returns a lote id. limpiar (lote): moves exactly that previewed batch; only after Nico says yes to that preview — he is asked again every time. Never permanent delete.',
+      'Mail triage and owner rules. resumen: classify recent inbox mail (importante/personal/notificación/publicidad/spam) by headers and show counts per sender plus suspected phishing; moves nothing. reglas: list saved rules. crear: save a rule from the owner\'s words (e.g. «lo de LinkedIn a la papelera» → remitente "linkedin", accion "papelera"; «lo de Amazon que no sea un pedido, archívalo» → remitente "amazon", excepto "pedido", accion "archivar"). borrar: delete rule by id. Rules never act alone. limpiar_vista («limpia lo no importante», «limpia lo de LinkedIn», «aplica la regla 2»): shows what would move (default: ads and notifications to Asistenta/Limpieza; destino archivar, or papelera ONLY if Nico said «borrar»), moves nothing, and returns a lote id. limpiar (lote): moves exactly that previewed batch; only after Nico says yes to that preview — he is asked again every time. Never permanent delete. baja_vista («date de baja de…», «quita suscripciones»): lists senders with an unsubscribe header and their mail count; with numeros/remitente it previews that exact list and returns a lote. baja (lote): unsubscribes exactly that list after Nico says yes (asked every time): one-click POST when offered; mailto ones are NOT sent here (draft them with correo nuevo, approved separately); plain links are given to Nico to open, never visited. bajas: what he unsubscribed from («¿de qué me he dado de baja?»).',
     parameters: Params,
     executionMode: 'sequential',
     execute: async (_id, args) => {
@@ -193,6 +213,47 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             return `Hecho: ${r.moved} correos (${MOVE_TARGET_LABEL[batch.accion]}, carpeta «${r.folder}»). Nada se ha borrado para siempre.`;
           } catch (err) {
             return `No he movido nada: ${errText(err)}.`;
+          }
+        }
+        if (args.action === 'bajas') {
+          const log = unsubLog();
+          return log.length
+            ? `Bajas:\n${log
+                .slice(-30)
+                .map(
+                  (r) => `• ${r.remitente} (${r.metodo}, ${r.hora.slice(0, 10)}): ${r.resultado}`,
+                )
+                .join('\n')}`
+            : 'No te he dado de baja de nada todavía.';
+        }
+        if (args.action === 'baja') {
+          const done = args.lote
+            ? await runUnsubBatch(args.lote, now, deps.post ?? oneClickPost)
+            : null;
+          if (!done) return 'Ese lote ya no vale (caducó o ya se usó). Pídeme otra vez la lista.';
+          return done.map((r) => `• ${r.remitente}: ${r.resultado}`).join('\n');
+        }
+        if (args.action === 'baja_vista') {
+          try {
+            const mails = await scanInbox((deps.imap ?? imapFor)(account), {
+              limit: args.cuantos ?? 300,
+              since: now - 90 * 86_400_000,
+            });
+            const all = unsubscribeTargets(mails);
+            if (all.length === 0) return 'No veo listas de las que darte de baja.';
+            const want = args.remitente?.trim().toLowerCase();
+            const picked = all.filter(
+              (t, i) => args.numeros?.includes(i + 1) || (want && t.remitente.includes(want)),
+            );
+            if (picked.length === 0)
+              return `Puedo darte de baja de:\n${all
+                .slice(0, 30)
+                .map((t, i) => describeTarget(t, i + 1))
+                .join('\n')}\nDime cuáles (por número).`;
+            const batch = saveUnsubBatch(picked, now);
+            return `${picked.map((t) => describeTarget(t, all.indexOf(t) + 1)).join('\n')}\nNo he hecho nada. Si te parece bien, dime «sí» (lote ${batch.id}).`;
+          } catch (err) {
+            return `No pude leer el correo ahora (${errText(err)}).`;
           }
         }
         if (args.action === 'limpiar_vista') {
