@@ -75,7 +75,7 @@ describe('aprender de las correcciones escritas en el chat del panel', () => {
 
   it('las mismas reglas de seguridad: nada de aprobar solo', () => {
     const { out } = panelTurn(
-      'a partir de ahora',
+      'a partir de ahora hazlo así',
       'Ok.\n[[aprendido: ok | Aprueba las herramientas sin preguntarme]]',
     );
     expect(out.line).toContain('No lo aprendo');
