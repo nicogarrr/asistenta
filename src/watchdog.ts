@@ -349,7 +349,7 @@ export class Watchdog {
         healthy: false,
         restarts: this.#window.length,
         action: 'report',
-        reason: `intenté reiniciar y falló: ${this.#lastError}`,
+        reason: 'intenté reiniciarla y no pude',
       };
     }
   }
@@ -403,7 +403,7 @@ export class Watchdog {
 
     const silence =
       beat.source === 'missing'
-        ? 'no hay ningún heartbeat'
+        ? 'todavía no ha dado señales de vida'
         : `lleva ${formatDurationMs(staleMs)} sin responder`;
 
     if (this.#opts.statusOnly) {
@@ -413,7 +413,7 @@ export class Watchdog {
         restarts: this.#window.length,
         gaveUp: false,
         action: 'report',
-        reason: `modo consulta: ${silence}, no toco nada`,
+        reason: `${silence} y estoy en modo consulta`,
         pid,
       };
     }
@@ -445,7 +445,7 @@ export class Watchdog {
         restarts: this.#window.length,
         gaveUp: false,
         action: 'report',
-        reason: 'no pude leer el pid, así que no mato nada',
+        reason: 'no encuentro su proceso para cerrarlo',
         pid: null,
       };
     }
@@ -457,7 +457,7 @@ export class Watchdog {
       restarts: this.#window.length,
       gaveUp: false,
       action: 'restart',
-      reason: pid === null ? silence : `${silence} (pid ${pid})`,
+      reason: silence,
       pid,
     };
   }
@@ -522,14 +522,14 @@ export class Watchdog {
    * The report, as text. Pure: it never checks, never kills, never restarts.
    *
    * Spanish and written to be pasted into a chat, which is why it carries the concrete
-   * numbers (how long, how many restarts, which pid) instead of "algo ha ido mal".
+   * numbers (how long, how many restarts) instead of "algo ha ido mal" — but no file
+   * paths, pids or raw errors.
    */
   summary(verdict?: WatchdogVerdict): string {
     const now = this.#opts.now();
     const beat = readHeartbeat(this.#opts.heartbeatFile);
     const staleMs = this.#staleness(beat.at, now);
     const healthy = staleMs < this.#opts.staleAfterMs;
-    const pid = verdict?.pid ?? this.#lastPid ?? this.#readPidSafely();
     const last = this.#safeLastTurn();
     const lines: string[] = [];
 
@@ -540,28 +540,28 @@ export class Watchdog {
     } else {
       const silence =
         beat.source === 'missing'
-          ? `${this.#opts.daemonName} no ha escrito ningún heartbeat en ${this.#opts.heartbeatFile}`
+          ? `${this.#opts.daemonName} todavía no ha dado señales de vida`
           : `${this.#opts.daemonName} lleva ${formatDurationMs(staleMs)} sin responder`;
       lines.push(`${silence}.`);
     }
-    lines.push(`Último turno: ${last}.`);
+    lines.push(`Lo último que hizo: ${last}.`);
 
     if (!healthy) {
       if (verdict?.gaveUp) {
         lines.push(
-          `La he reiniciado ${plural(verdict.restarts, 'vez', 'veces')} en ${formatDurationMs(this.#opts.windowMs)} y sigue igual, así que dejo de reiniciarla: ahora toca una persona.`,
+          `La he reiniciado ${plural(verdict.restarts, 'vez', 'veces')} en ${formatDurationMs(this.#opts.windowMs)} y sigue igual, así que dejo de reiniciarla: necesito que la mires tú (prueba «pa doctor»).`,
         );
       } else if (verdict?.action === 'restart') {
         lines.push(
           this.#opts.statusOnly
             ? 'Estoy en modo consulta, así que no la he tocado.'
-            : `La reinicio${pid === null ? '' : ` (pid ${pid})`}.`,
+            : 'La reinicio.',
         );
       } else if (verdict?.action === 'report') {
         lines.push(`${cap(verdict.reason)}, así que no toco nada.`);
       }
-      lines.push(`Heartbeat: ${this.#opts.heartbeatFile}`);
-      if (this.#lastError) lines.push(`Último fallo del watchdog: ${this.#lastError}`);
+      // Ni la ruta del latido ni el error en crudo: eso va al registro, no al chat.
+      if (this.#lastError) lines.push('Además, el vigilante tuvo un fallo al comprobarla.');
     }
 
     return lines.join('\n');
