@@ -105,7 +105,7 @@ describe('cableado en el daemon', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const clear = cli.indexOf('thread.gate.clearTaint(thread.key);');
     const mark = cli.indexOf(
-      'if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key);',
+      'if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key, inbound.text);',
     );
     expect(clear).toBeGreaterThan(0);
     expect(mark).toBeGreaterThan(clear);
