@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -437,6 +437,101 @@ function asCommand(c: ToolCall): ToolCall | null {
   if (c.tool === 'shell' || c.tool === 'computer') return c;
   if (c.tool !== 'write' || !SCRIPT_FILE.test(argString(c.args, 'path').trim())) return null;
   return { ...c, tool: 'shell', args: { command: argString(c.args, 'content') } };
+}
+
+/**
+ * Scripts que lanza una orden (`.\\a.ps1`, `powershell -File a.ps1`, `node a.mjs`,
+ * `cmd /c a.bat`, `gc a.txt | iex`): el gate no ve lo que hay dentro, así que un
+ * `pa vault get` escrito por otra vía (renombrando un .txt o pegado con -join) pasaría.
+ * Se leen esos ficheros locales (hasta SCRIPT_MAX_BYTES) y se les aplican las mismas reglas.
+ */
+const SCRIPT_RUNNER =
+  /^(node|nodejs|tsx|ts-node|bun|deno|python[0-9.]*|py|pythonw|powershell|pwsh|cmd|sh|bash|zsh|wscript|cscript|call|start|start-process|source|\.|&|iex|invoke-expression)(\.exe)?$/i;
+/** La orden ejecuta el texto de un fichero (`gc a.txt | iex`, `type a.txt | cmd`). */
+const FEEDS_SHELL =
+  /\b(iex|invoke-expression)\b|\|\s*(powershell|pwsh|cmd|sh|bash|zsh|node|python[0-9.]*)(\.exe)?\b/i;
+/** Código de programa (no órdenes de shell): solo se le aplica deny-secret-cli. */
+const CODE_FILE = /\.([cm]?[jt]s|py|pyw)$/i;
+const SCRIPT_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Dentro de un script todo está escrito, así que no se deniega por llamar a una
+ * variable (`& $node …`) ni por `-EncodedCommand $variable`: lo que construye está a la
+ * vista. Sí por ejecutar texto construido y por `pa $v get`; una orden codificada en
+ * literal se decodifica y se lee (withDecodedCommands).
+ */
+function hidesSecretInScript(text: string): boolean {
+  if (DYNAMIC_EXEC.test(text) && BUILT_TEXT.test(text)) return true;
+  return cliTexts(text).some((t) => CLI_WITH_VARIABLE.test(t));
+}
+
+const ENCODED_LITERAL = /\s[-/]e(?:c|n[a-z]*)?[\s:]+["']?([a-z0-9+/]{8,}={0,2})/gi;
+
+/** El script más el texto de cada `-enc <base64>` literal que contiene (UTF-16LE, como PowerShell). */
+function withDecodedCommands(text: string): string {
+  const decoded = [...text.matchAll(ENCODED_LITERAL)].map((m) =>
+    Buffer.from(m[1] ?? '', 'base64').toString('utf16le'),
+  );
+  return [text, ...decoded].join('\n');
+}
+
+/** Palabras de una orden que pueden ser un script que se ejecuta. */
+function scriptRefs(command: string): string[] {
+  const feeds = FEEDS_SHELL.test(command);
+  const refs: string[] = [];
+  for (const segment of command.split(/[;|&\n\r()]+/)) {
+    const words = (segment.match(/"[^"]*"|'[^']*'|[^\s"']+/g) ?? []).map((w) =>
+      w.replace(/^["']|["']$/g, ''),
+    );
+    let runner = false;
+    words.forEach((word, i) => {
+      if (SCRIPT_RUNNER.test(word)) runner = true;
+      const flag = word.startsWith('-') || /^\/[a-z?]{1,2}$/i.test(word);
+      const fileLike = /[\\/]/.test(word) || /\.[a-z0-9]{1,5}$/i.test(word);
+      if (!flag && fileLike && (i === 0 || runner || feeds)) refs.push(word);
+    });
+  }
+  return refs;
+}
+
+/** Texto de un script: UTF-8, o UTF-16 (lo que deja `>` en PowerShell 5.1). */
+function decodeScript(buf: Buffer): string {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+  if (buf[0] === 0xfe && buf[1] === 0xff)
+    return Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
+  const sample = buf.subarray(0, 256);
+  let oddNul = 0;
+  for (let i = 1; i < sample.length; i += 2) if (sample[i] === 0) oddNul++;
+  if (sample.length >= 4 && oddNul * 4 >= sample.length) return buf.toString('utf16le');
+  return buf.toString('utf8');
+}
+
+let appCode: string[] | null = null;
+
+/** Código de la propia app (dist, src/cli.ts…: protectedRepoPaths), que el modelo no puede escribir. */
+function isAppCode(path: string): boolean {
+  appCode ??= protectedRepoPaths().flatMap(spellingsOf);
+  const known = appCode;
+  return spellingsOf(path).some((l) => known.some((p) => l === p || l.startsWith(`${p}\\`)));
+}
+
+/** Contenido de un fichero local o `null` si no existe, no es fichero o no se puede leer. */
+function readScript(path: string): { text: string; truncated: boolean } | null {
+  try {
+    const st = statSync(path, { throwIfNoEntry: false });
+    if (!st?.isFile()) return null;
+    const size = Math.min(st.size, SCRIPT_MAX_BYTES);
+    const buf = Buffer.alloc(size);
+    const fd = openSync(path, 'r');
+    try {
+      readSync(fd, buf, 0, size, 0);
+    } finally {
+      closeSync(fd);
+    }
+    return { text: decodeScript(buf), truncated: st.size > SCRIPT_MAX_BYTES };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2071,6 +2166,8 @@ export class Gate {
       );
       if (rule) return this.#record(call, { verdict: 'deny', reason: rule.reason });
     }
+    const script = this.#scriptDenial(call, typed);
+    if (script) return this.#record(call, { verdict: 'deny', reason: script });
     const decision = await this.#check(sessionId, call);
     if (decision.verdict === 'allow') {
       const source = externalReadSource(call);
@@ -2079,6 +2176,56 @@ export class Gate {
       if (typed !== null) this.#typedLine.set(sessionId, typed);
     }
     return decision;
+  }
+
+  /**
+   * Motivo para denegar si la orden (shell, o la línea tecleada con `computer`) lanza
+   * un script local cuyo contenido saca secretos (ver scriptRefs). Se siguen los
+   * scripts que a su vez lanza, hasta tres niveles. El código de la propia app
+   * (rutas protegidas, node_modules) no se lee: no se puede escribir.
+   */
+  #scriptDenial(call: ToolCall, typed: string | null): string | null {
+    const command =
+      call.tool === 'shell'
+        ? argString(call.args, 'command')
+        : call.tool === 'computer'
+          ? typed
+          : null;
+    if (!command) return null;
+    const seen = new Set<string>();
+    let pending = scriptRefs(command);
+    for (let depth = 0; depth < 3 && pending.length > 0; depth++) {
+      const next: string[] = [];
+      for (const ref of pending) {
+        const path = absolutizePath(ref.replace(/\\/g, '/'));
+        const key = lexicalNormalize(path);
+        if (seen.has(key) || seen.size >= 20) continue;
+        seen.add(key);
+        if (/\\node_modules\\/.test(key) || this.#isProtected(path) || isAppCode(path)) continue;
+        const script = readScript(path);
+        if (!script) continue;
+        const name = basename(path);
+        if (script.truncated && SCRIPT_FILE.test(path)) {
+          return `el script ${name} es demasiado grande para revisarlo: si hace falta, que lo lance Nico en su terminal`;
+        }
+        const code = CODE_FILE.test(path);
+        // En código, `['pa', 'vault', 'get', k]` son las mismas palabras separadas por comas.
+        const text = code
+          ? `${script.text}\n${script.text.replace(/[,[\]]/g, ' ')}`
+          : withDecodedCommands(script.text);
+        const asShell: ToolCall = { ...call, tool: 'shell', args: { command: text } };
+        const rule = this.#rules.find(
+          (r) =>
+            (r.id === 'deny-secret-cli' && r.match(asShell)) ||
+            (r.id === 'deny-hidden-cli' && !code && hidesSecretInScript(text)),
+        );
+        if (rule) return `el script ${name} ${rule.reason}`;
+        // Solo se siguen los scripts de shell: en código, «node»/«python» son palabras sueltas.
+        if (!code) next.push(...scriptRefs(script.text));
+      }
+      pending = next;
+    }
+    return null;
   }
 
   async #check(sessionId: string, call: ToolCall): Promise<Decision> {
