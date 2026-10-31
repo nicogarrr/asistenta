@@ -1,7 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { activeDeliveries, ingestDeliveries, markDeliveryCollected } from '../mail/deliveries.js';
+import {
+  activeDeliveries,
+  type Delivery,
+  ingestDeliveries,
+  markDeliveryCollected,
+} from '../mail/deliveries.js';
 import { deliveriesText } from '../mail/deliveries-text.js';
 import type { MailMessage } from '../mail/types.js';
 
@@ -9,11 +14,47 @@ const Params = Type.Object({
   recogido: Type.Optional(
     Type.String({
       description:
-        'Only when the owner says he already picked up or received a parcel («ya he recogido el de InPost»): its tracking number, carrier or a word of it. Marks it delivered so it stops showing. Empty for «where is my parcel».',
+        'Only when the owner says he already picked up or received a parcel («ya he recogido el de InPost»): its tracking number, carrier or a word of it. Marks it delivered so it stops showing. After a «¿Cuál?» pass his answer as said («el segundo», «el último»). Empty for «where is my parcel».',
     }),
   ),
 });
 const LOOKBACK_MS = 14 * 86_400_000;
+
+/** The last «¿Cuál?» list, so «el segundo» or «el último» picks from it (30 min). */
+const lastChoices = new WeakMap<DatabaseSync, { keys: string[]; at: number }>();
+const CHOICES_TTL_MS = 30 * 60_000;
+const ORDINALS: Record<string, number> = {
+  primer: 0,
+  primero: 0,
+  primera: 0,
+  segundo: 1,
+  segunda: 1,
+  tercer: 2,
+  tercero: 2,
+  tercera: 2,
+  cuarto: 3,
+  cuarta: 3,
+};
+
+/** «el segundo», «la última»: a place in the list just shown, or undefined. */
+function chosenKey(db: DatabaseSync, said: string, now: number): string | undefined {
+  const word = /^(?:(?:el|la|lo)\s+)?([a-z]+)$/.exec(
+    said
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[.,!?]/g, '')
+      .trim(),
+  )?.[1];
+  const shown = lastChoices.get(db);
+  if (!word || !shown || now - shown.at > CHOICES_TTL_MS) return undefined;
+  if (word === 'ultimo' || word === 'ultima') return shown.keys.at(-1);
+  const at = ORDINALS[word];
+  return at === undefined ? undefined : shown.keys[at];
+}
+
+const choiceLabel = (d: Delivery): string =>
+  `${d.carrier}${d.tracking ? ` (${d.tracking})` : ` («${d.title.slice(0, 60)}»)`}`;
 
 export interface DeliveriesToolDeps {
   db: DatabaseSync;
@@ -38,12 +79,19 @@ export function createDeliveriesTool(deps: DeliveriesToolDeps): AgentTool<typeof
     execute: async (_id, args) => {
       const now = deps.now?.() ?? Date.now();
       if (args.recogido !== undefined) {
-        const r = markDeliveryCollected(deps.db, args.recogido, now);
+        const r = markDeliveryCollected(
+          deps.db,
+          args.recogido,
+          now,
+          chosenKey(deps.db, args.recogido, now),
+        );
+        if ('matches' in r && r.matches.length > 1)
+          lastChoices.set(deps.db, { keys: r.matches.map((d) => d.key), at: now });
         const text =
           'done' in r
             ? `Hecho, quito ${r.done.carrier}${r.done.tracking ? ` (${r.done.tracking})` : ''} de la lista: ya lo tienes.`
             : r.matches.length > 1
-              ? `¿Cuál? ${r.matches.map((d) => `${d.carrier}${d.tracking ? ` (${d.tracking})` : ''}`).join(', ')}.`
+              ? `¿Cuál? ${r.matches.map(choiceLabel).join(', ')}.`
               : 'No encuentro ese paquete entre los que están en camino.';
         return { content: [{ type: 'text', text }], details: {} };
       }
