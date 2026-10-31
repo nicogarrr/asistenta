@@ -352,6 +352,7 @@ import {
   panelListenProblem,
   panelStartPlan,
 } from './panel-doctor.js';
+import { ensurePanelToken } from './panel-token.js';
 import { pdfSummaryIntent, pdfToTextIntent } from './pdfmd/chat-intent.js';
 import { ocrScannedForModel } from './pdfmd/scanned.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
@@ -563,6 +564,7 @@ Uso:
   pa stop                 parar Asistenta con un cierre limpio (Windows y Linux; no mata por PID)
   pa restart              no disponible: para y vuelve a abrir levantar.bat (o pa iniciar)
   pa doctor               revisar la configuración del PC
+  pa panel                abrir el panel web en el navegador (ya con su token)
   pa backup [lista]       copias de seguridad; pa backup restaurar <AAAA-MM-DD|ultima> con el daemon parado
   pa auditoria [--tool <n>] [--verdict allow|deny] [--since 24h|7d] [--last N] [--json]  registro de llamadas (solo lectura)
   pa mcp serve            servidor MCP de solo lectura por stdio (Claude Desktop, Cursor)
@@ -747,6 +749,15 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'doctor':
       return doctorCommand();
+    case 'panel': {
+      const { openInBrowser, panelCommand } = await import('./panel-abrir.js');
+      return panelCommand({
+        env: process.env,
+        stateDir: paths.state,
+        open: (url) => openInBrowser(url),
+        print: (line) => console.log(line),
+      });
+    }
     case 'llm-health':
       return llmHealthCommand();
     case 'evolve':
@@ -1727,8 +1738,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       tools: mcpTools.length,
     });
   const panelGoals = createOwnerGoalsReader();
-  // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
-  const panelPlan = panelStartPlan();
+  // Panel web local (PWA), encendido por defecto en 127.0.0.1:8787 (PA_WEB_PORT=0 lo
+  // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
+  const panelPlan = panelStartPlan(process.env, () => ensurePanelToken(paths.state));
   let panelStarted: Promise<string | PanelListenProblem> | undefined;
   if (panelPlan.kind !== 'off') {
     if (panelPlan.kind === 'problem') {

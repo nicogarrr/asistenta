@@ -25,6 +25,7 @@ $Ordenes = @{
     Texto   = @('status')
     Pausar  = @('stop')
     Encender = @('iniciar')
+    Panel   = @('panel')
 }
 
 function Invoke-Pa([string[]] $Orden) {
@@ -108,15 +109,9 @@ function Show-Aviso([string] $texto) {
 
 $abrir = $menu.Items.Add('Abrir panel')
 $abrir.add_Click({
-    $envFile = Join-Path $app '.env'
-    $puerto = $null
-    if (Test-Path -LiteralPath $envFile) {
-        # Solo la línea del puerto: el token no se lee aquí (el panel lo recuerda o lo pide).
-        $m = Select-String -LiteralPath $envFile -Pattern '^\s*PA_WEB_PORT\s*=\s*"?(\d{2,5})"?\s*$' | Select-Object -Last 1
-        if ($m) { $puerto = $m.Matches[0].Groups[1].Value }
-    }
-    if ($puerto) { Start-Process "http://127.0.0.1:$puerto/" }
-    else { Show-Aviso 'El panel está apagado. Ponlo con PA_WEB_PORT y PA_WEB_TOKEN en el .env (Configurar Asistenta).' }
+    # pa panel abre el panel en el navegador ya con el token: la bandeja no lo lee nunca.
+    $r = Invoke-Pa $Ordenes.Panel
+    if ($r.Code -ne 0) { Show-Aviso $r.Text }
 })
 $pausa = $menu.Items.Add('Pausar / Reanudar')
 $pausa.add_Click({
