@@ -324,6 +324,7 @@ import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
+import { TaskBoard } from './tasks/board.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
@@ -362,6 +363,7 @@ import { createShellTool } from './tools/shell.js';
 import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
+import { createTasksTool } from './tools/tasks.js';
 import { createTvTool } from './tools/tv.js';
 import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
@@ -1919,6 +1921,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
       createWeatherTool(() => weatherConfigFromEnv()),
+      createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,
