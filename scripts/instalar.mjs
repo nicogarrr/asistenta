@@ -25,6 +25,29 @@ export function presetFromEnv(text) {
 }
 
 /**
+ * ¿La carpeta está dentro de OneDrive? OneDrive bloquea archivos mientras los sube y
+ * `npm ci` / la compilación fallan con EPERM o EBUSY. Mira las variables que pone
+ * Windows (OneDrive, OneDriveConsumer, OneDriveCommercial) y, si faltan, el nombre.
+ */
+export function enOneDrive(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!d) return false;
+  for (const k of ['OneDrive', 'OneDriveConsumer', 'OneDriveCommercial']) {
+    const r = norm(env[k]);
+    if (r && (d === r || d.startsWith(`${r}\\`))) return true;
+  }
+  return /\\onedrive( - [^\\]+)?(\\|$)/.test(d);
+}
+
+export const ONEDRIVE_MOVER =
+  'Mueve la carpeta de Asistenta fuera de OneDrive, por ejemplo a C:\\Asistenta, y abre instalar.bat desde allí.';
+
+/**
  * Espera el primer mensaje privado que el dueño manda a SU bot y lo devuelve.
  * Marca la actualización como leída para que Asistenta no la conteste luego.
  */
@@ -63,15 +86,25 @@ export async function instalar(d) {
     );
   say(`✓ Node ${d.nodeVersion}`);
 
+  const oneDrive = enOneDrive(d.cwd, d.env);
+  if (oneDrive)
+    say(
+      `⚠ Asistenta está dentro de OneDrive (${d.cwd}). OneDrive bloquea archivos mientras sincroniza y la instalación suele fallar. ${ONEDRIVE_MOVER}`,
+    );
+
   say('… Instalando dependencias (npm ci). Tarda unos minutos.');
   if ((await d.run('npm', ['ci', '--no-audit', '--no-fund'])) !== 0)
     return fail(
-      'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si se repite, borra la carpeta node_modules y prueba otra vez.',
+      oneDrive
+        ? `No se han podido instalar las dependencias: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+        : 'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y prueba otra vez. Si se repite, borra la carpeta node_modules y prueba otra vez.',
     );
   say('… Compilando.');
   if ((await d.run('npm', ['run', 'build'])) !== 0)
     return fail(
-      'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
+      oneDrive
+        ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+        : 'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
     );
   say('✓ Programa listo');
 
@@ -225,6 +258,8 @@ export const cliWith =
 
 export const realDeps = {
   nodeVersion: process.version,
+  cwd: process.cwd(),
+  env: process.env,
   write: (s) => process.stdout.write(s),
   run,
   exists: existsSync,
