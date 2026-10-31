@@ -11,6 +11,14 @@ import { vaultDelete, vaultGet, vaultList, vaultSet } from '../vault.js';
  * `revealPassword`, que usa la CLI local (portapapeles / exportar), la lee.
  */
 
+/**
+ * Aviso del gestor o del registro, ya escrito en castellano llano para el dueño.
+ * Cualquier otro error (lectura/escritura del vault, disco…) es técnico: solo va al log.
+ */
+export class AvisoCuenta extends Error {
+  override name = 'AvisoCuenta';
+}
+
 export interface VaultOps {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
@@ -161,9 +169,10 @@ export interface SaveInput {
 /** Guarda (o actualiza) una cuenta. Devuelve la cuenta SIN contraseña. */
 export async function saveAccount(input: SaveInput, vault: VaultOps = realVault): Promise<Account> {
   const domain = normalizeDomain(input.site);
-  if (!domain) throw new Error('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
+  if (!domain)
+    throw new AvisoCuenta('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
   const username = input.username.trim();
-  if (!username) throw new Error('Falta el usuario o correo de la cuenta.');
+  if (!username) throw new AvisoCuenta('Falta el usuario o correo de la cuenta.');
   const password = input.password ?? generatePassword(input.rules);
   const prev = parseMeta(domain, await vault.get(metaKey(domain)), username);
   const account: Account = {

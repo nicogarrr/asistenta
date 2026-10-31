@@ -12,6 +12,7 @@ import {
 import { findSignupCode, type MailSearch, realSignupMail } from '../credentials/signup-code.js';
 import {
   type Account,
+  AvisoCuenta,
   findAccounts,
   listAccounts,
   maskUser,
@@ -63,8 +64,15 @@ const line = (a: Account): string =>
  * Solo lectura y NUNCA devuelve la contraseña (ni siquiera la lee): para entrar en una
  * web el navegador la escribe desde el vault con `secret_key`.
  */
-const errText = (err: unknown): string =>
-  err instanceof Error ? err.message : 'No he podido hacerlo.';
+/** Los avisos propios del registro llegan tal cual; un fallo del vault, en llano (crudo solo al log). */
+const errText = (err: unknown, action: string): string => {
+  if (err instanceof AvisoCuenta) return err.message;
+  log.warn('cuentas: fallo del gestor de contraseñas en el registro', {
+    action,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  return SIGNUP_VAULT_FAILED;
+};
 
 async function signupStep(
   args: {
@@ -110,7 +118,7 @@ async function signupStep(
       ? `He descartado el registro a medias de ${sitio}; no queda nada guardado.`
       : `No había ningún registro a medias de ${sitio}.`;
   } catch (err) {
-    return errText(err);
+    return errText(err, args.action);
   }
 }
 
@@ -178,3 +186,6 @@ async function readStep(
 
 export const VAULT_UNREADABLE =
   'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
+
+export const SIGNUP_VAULT_FAILED =
+  'No he podido usar tu gestor de contraseñas para el registro; no he tocado nada en la web. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
