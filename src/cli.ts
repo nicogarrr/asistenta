@@ -2704,11 +2704,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
-  // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 lo desactiva.
+  // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 (o no/false/off) lo desactiva.
   const routineRunner = new RoutineRunner({
     store,
     run: runRoutineFire,
-    catchUp: process.env.PA_ROUTINE_CATCHUP !== '0',
+    catchUp: envSwitchOn('PA_ROUTINE_CATCHUP'),
   });
   // Reminders dropped while there was no connection: told once when sending works again.
   setInterval(
