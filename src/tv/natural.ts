@@ -244,7 +244,23 @@ const KEY_NAMES: Record<TvKeyName, string> = {
   EXIT: 'salir de la app',
 };
 
+/**
+ * «pausa la tele un rato», «baja la tele un poco», «pon la tele en pausa»: la tele
+ * dicha en medio, con un final que no cambia la orden. Se quita la tele y se lee
+ * otra vez (una sola). «en un rato» sigue siendo «más tarde» (DEFERRED).
+ */
+const TELE_EN_MEDIO = new RegExp(
+  `^(.+?) (?:(?:a|de) )?${TV}( (?:un |una )?(?:poco|poquito|momento|momentito|segundo|segundito|rato|ratito)| ahi| en pausa)$`,
+);
+
 export function parseTvCommand(text: string): TvIntent | null {
+  const direct = parseOne(text);
+  if (direct) return direct;
+  const m = TELE_EN_MEDIO.exec(normalizeOrder(text));
+  return m?.[1] && m[2] ? parseOne(`${m[1]}${m[2]}`) : null;
+}
+
+function parseOne(text: string): TvIntent | null {
   const t = normalizeOrder(text);
   if (!t) return null;
   if (DEFERRED.test(t)) return null;
@@ -573,14 +589,14 @@ export function parseTvCommand(text: string): TvIntent | null {
   // «pausa la tele», «reanuda la tv», «quita la pausa a la tele»: la tele dicha al final.
   const sinTele = t.replace(new RegExp(` (?:(?:a|de) )?${TV}${YA}$`), '');
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|pon(?:la|lo|le)? en pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
       sinTele,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
-    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|(?:dale|pon) play|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
+    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|(?:dale|pon) play|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita(?:le)? la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
       sinTele,
     )
   ) {
