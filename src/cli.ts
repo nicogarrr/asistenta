@@ -7598,10 +7598,26 @@ export function ownerFailNote(kind: keyof typeof OWNER_FAIL_WHAT, err: unknown):
   return failedReply(OWNER_FAIL_WHAT[kind], err);
 }
 
+/**
+ * Errores de archivo de Node (ENOENT, EACCES…) en castellano y sin la ruta entera:
+ * antes la respuesta al dueño era «ENOENT: no such file or directory, open 'C:\\…'».
+ */
+function fileErrorReason(raw: string): string | null {
+  const m = /\b(ENOENT|EACCES|EPERM|EBUSY)\b[^']*'([^']+)'/.exec(raw);
+  if (!m) return null;
+  const name = (m[2] ?? '').split(/[\\/]/).pop() || 'un archivo';
+  if (m[1] === 'ENOENT') return `falta el archivo «${name}» en el PC.`;
+  if (m[1] === 'EBUSY')
+    return `«${name}» está en uso por otro programa; ciérralo y prueba otra vez.`;
+  return `Windows no me deja abrir «${name}» (permiso denegado o lo tiene otro programa).`;
+}
+
 export function failedReply(what: string, err: unknown): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   const missing = /\bspawn (\S+) ENOENT\b/.exec(raw)?.[1];
   if (missing) return `${what}: no encuentro «${missing.split(/[\\/]/).pop()}» instalado en el PC.`;
+  const fsReason = fileErrorReason(raw);
+  if (fsReason) return `${what}: ${fsReason}`;
   const friendly = friendlyError(err, `${what}: `);
   if (friendly.startsWith(`${what}: `)) return friendly;
   if (/^(?:Algo ha fallado|Se me ha roto algo)/.test(friendly)) {
