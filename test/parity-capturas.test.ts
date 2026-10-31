@@ -242,8 +242,26 @@ describe('paridad con las capturas: lo que Asistenta ya puede hacer', () => {
   });
 });
 
-describe('paridad con las capturas: lo que todavía no puede', () => {
-  it.todo(
-    'seguir un pedido a domicilio y avisar cuando llega: no hay seguimiento de entregas (las vigilancias son de precio y páginas)',
-  );
+describe('paridad con las capturas: añadido después', () => {
+  it('seguir un pedido a domicilio y avisar cuando llega (leyendo los correos de envío)', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const { createDeliveriesTool } = await import('../src/tools/deliveries.js');
+    const msg = {
+      id: 'p1',
+      from: 'noreply@seur.com',
+      to: ['yo@x.es'],
+      subject: 'Tu pedido está en reparto',
+      text: 'Número de envío: 12345678901. Llega hoy.',
+      at: Date.UTC(2026, 9, 30, 8),
+      seen: true,
+      folder: 'INBOX',
+    };
+    const tool = createDeliveriesTool({
+      db: new DatabaseSync(':memory:'),
+      recentMail: async () => [msg],
+      now: () => msg.at + 3_600_000,
+    });
+    const text = ((await tool.execute('x', {} as never)).content[0] as { text: string }).text;
+    expect(text).toContain('SEUR (12345678901): en reparto');
+  });
 });

@@ -30,6 +30,7 @@ const BEFORE = {
     'cuentas',
     'opengym',
     'book',
+    'repartos',
     'objetivo',
     'gestion',
     'delegate',

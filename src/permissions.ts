@@ -1215,6 +1215,8 @@ export class Gate {
       case 'gestion':
       case 'windows':
       case 'ocr':
+      // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
+      case 'repartos':
       case 'cargar_herramienta':
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
@@ -2063,6 +2065,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'gestion',
   'windows',
   'ocr',
+  'repartos',
   'cargar_herramienta',
   'tiempo',
   'cuentas',
