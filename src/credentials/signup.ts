@@ -86,7 +86,11 @@ export async function approveSignup(
     throw new Error('Ese correo no es el del registro preparado; no sigo.');
   await vault.set(
     metaKey(p.domain),
-    JSON.stringify({ ...(await rawMeta(p.domain, vault)), approvedAt: Date.now() }),
+    JSON.stringify({
+      ...(await rawMeta(p.domain, vault)),
+      approvedAt: Date.now(),
+      approvedEmail: p.username,
+    }),
   );
   return p;
 }
