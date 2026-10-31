@@ -314,6 +314,27 @@ const SUBE_LA_TELE = new RegExp(
   `^((?:sube|baja)(?:le|lo|la)?) ${TV}( (?:(?:a|al|hasta(?: el)?) )?(?:\\d{1,3}|[a-z]+))$`,
 );
 
+/**
+ * Delante de «apaga la tele» no puede haber otra orden, un motivo ni un «no»:
+ * «pausa que voy a apagar la tele» es una pausa, no apagar.
+ */
+const DELANTE_NO =
+  /\b(?:que|porque|pq|xq|cuando|antes|despues|sin|para|hasta|no|voy|vas|vamos|iba|ibamos|pausa|pon|ponme|sube|subele|baja|bajale|quita|dale|abre|cambia|silencia|vuelve|reanuda)\b/;
+/** «puedes / me podrías / quiero / hay que apagar la tele»: el infinitivo es la orden. */
+const PIDE =
+  '^(?:(?:ya|venga|vale|bueno|pues|ahora|ok|oye|hey) )*(?:(?:me|nos) )?(?:puedes|podrias|quiero|quisiera|necesito|hay que)(?: (?:me|nos))?$';
+
+function esOrdenDeEnergia(t: string, verbos: string): boolean {
+  if (/\bno (?:apagar|encender|prender)\b/.test(t)) return false;
+  if (new RegExp(`${ANTES_DEL_VERBO}(?:${verbos})(?:${YA} ${TV})?${YA}$`).test(t)) return true;
+  const m = new RegExp(`\\b(${verbos}) ${TV}\\b`).exec(t);
+  if (!m?.[1]) return false;
+  const delante = t.slice(0, m.index).trim();
+  if (!delante) return true;
+  if (m[1].endsWith('r')) return new RegExp(PIDE).test(delante);
+  return !DELANTE_NO.test(delante);
+}
+
 function parseOne(text: string): TvIntent | null {
   const t = normalizeOrder(text);
   if (!t) return null;
@@ -452,19 +473,14 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'mute', on: true };
   }
 
-  if (
-    new RegExp(
-      `${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?:${YA} ${TV})?${YA}$`,
-    ).test(t) ||
-    new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
-  ) {
+  if (esOrdenDeEnergia(t, 'apaga|apagar|apagame|apagala|apagalo')) {
     return { action: 'power', on: false };
   }
   if (
-    new RegExp(
-      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?:${YA} ${TV})?${YA}$`,
-    ).test(t) ||
-    new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
+    esOrdenDeEnergia(
+      t,
+      'enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela',
+    )
   ) {
     return { action: 'power', on: true };
   }
