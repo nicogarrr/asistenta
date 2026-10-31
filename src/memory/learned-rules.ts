@@ -120,11 +120,16 @@ const LOOSEN =
 const PRIVILEGED =
   /(pantalla|raton|teclado|computer|ordenador|\bpc\b|\btele\b|\btv\b|television|pago|pagar|compra|tarjeta|\bexec\b|shell|terminal|comando|seguridad|contrasena|password|clave|vault|token)/;
 
+// Expresiones corrientes con una palabra de PRIVILEGED dentro, que no la tocan.
+const HARMLESS =
+  /\b(palabras?|puntos?|ideas?|datos?|frases?|conceptos?|fechas?|partes?) clave\b|\blista de (la )?compra\b/g;
+
 /** true si la regla podría dar permisos o tocar seguridad (no se guarda). */
 export function unsafeLearnedRule(rule: string): boolean {
   const n = norm(rule);
   const strict = n.match(STRICT) !== null;
-  const rest = n.replace(STRICT, ' ');
+  // «palabras clave» o «la lista de la compra» no hablan de claves ni de comprar.
+  const rest = n.replace(STRICT, ' ').replace(HARMLESS, ' ');
   if (LOOSEN.test(rest)) return true;
   if (PRIVILEGED.test(rest) && !strict) return true;
   return false;
