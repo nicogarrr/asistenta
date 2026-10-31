@@ -1,5 +1,12 @@
 @echo off
 setlocal
+rem Desde una carpeta de red (\\servidor\...) cmd no puede entrar en ella y
+rem acabaria en C:\Windows diciendo que falta todo: mejor avisarlo claro.
+if "%~d0"=="\\" (
+    echo [levantar] Asistenta esta en una carpeta de red. Copiala a tu PC, por ejemplo a C:\Asistenta, y abre levantar.bat desde alli.
+    pause
+    exit /b 1
+)
 cd /d "%~dp0"
 rem UTF-8 para que la lista de pa iniciar (tildes y simbolos) se lea bien en la consola.
 chcp 65001 >nul
