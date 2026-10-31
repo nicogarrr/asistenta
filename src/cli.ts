@@ -288,7 +288,7 @@ import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { installDoctorLines } from './doctor-install.js';
 import { doctorLinesEs } from './doctor-labels.js';
 import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
-import { envSwitchesDoctorLine, envSwitchOn } from './env-flags.js';
+import { envNumbersDoctorLine, envSwitchesDoctorLine, envSwitchOn } from './env-flags.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -960,6 +960,8 @@ async function doctorCommand(): Promise<number> {
   lines.push(briefingDoctorLine());
   const switchesLine = envSwitchesDoctorLine();
   if (switchesLine) lines.push(switchesLine);
+  const numbersLine = envNumbersDoctorLine();
+  if (numbersLine) lines.push(numbersLine);
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);

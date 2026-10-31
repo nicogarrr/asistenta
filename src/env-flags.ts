@@ -47,3 +47,31 @@ export function envSwitchesDoctorLine(env: NodeJS.ProcessEnv = process.env): str
   if (bad.length === 0) return undefined;
   return `ajustes         no entiendo ${bad.join(', ')}: pon 1 para activarlo o 0 para apagarlo`;
 }
+
+/**
+ * Ajustes numéricos que se leían con Number(): «30 días» o «20 MB» daban NaN y el
+ * ajuste se quedaba apagado o en su valor por defecto sin avisar. `pa doctor` lo dice.
+ */
+const ENV_NUMBERS: ReadonlyArray<{ name: string; ok: (v: string) => boolean; example: string }> = [
+  { name: 'PA_FILE_RETENTION_DAYS', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '30' },
+  { name: 'PA_DOCUMENT_RETENTION_DAYS', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '90' },
+  { name: 'PA_LOG_DAY_MAX_MB', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '20' },
+  {
+    name: 'PA_COMPACT_TOKENS',
+    ok: (v) => /^\d+k?$/i.test(v.replace(/[\s._,]/g, '')),
+    example: '100000',
+  },
+];
+
+/** Línea de `pa doctor` solo si algún ajuste numérico tiene un valor que no es un número. */
+export function envNumbersDoctorLine(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const bad = ENV_NUMBERS.filter(({ name }) => {
+    const v = (env[name] ?? '').trim();
+    return v !== '' && !ENV_NUMBERS.find((n) => n.name === name)?.ok(v);
+  }).map(
+    ({ name, example }) =>
+      `${name} «${shown((env[name] ?? '').trim())}» (pon solo un número, p. ej. ${example})`,
+  );
+  if (bad.length === 0) return undefined;
+  return `ajustes         no entiendo ${bad.join('; ')}`;
+}
