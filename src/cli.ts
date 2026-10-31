@@ -113,6 +113,7 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { parseNatural } from './cron/scheduler.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
+import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
 import { CloseLoop } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
@@ -2513,7 +2514,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       splitGoalScope,
       getOrCreateThread,
       defaultThread,
-      looksLikeFollowUp,
+      // «pásame una captura cuando lo tengas» sigue la tarea en marcha (captura-tarea.ts).
+      looksLikeFollowUp: (t: string) => looksLikeFollowUp(t) || sigueLaTareaEnCurso(t),
     });
 
   const say = async (
@@ -3379,9 +3381,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     caption: string,
     threadKey?: string,
   ): Promise<boolean> => {
-    if (!desktop) {
+    const service = threadKey ? browsers.get(threadKey) : undefined;
+    // Con escritorio también: si la tarea tiene una página abierta (el navegador va sin
+    // ventana), «pásame una captura» es esa página, no el escritorio (captura-tarea.ts).
+    const pagina =
+      service !== undefined &&
+      threadKey !== undefined &&
+      capturaDeLaPagina(inbound.text, service.isOpen(threadKey));
+    if (!desktop || pagina) {
       // Headless: no desktop to photograph, but the page the task is working on counts.
-      const service = threadKey ? browsers.get(threadKey) : undefined;
       if (!service || !threadKey) return false;
       try {
         const png = await capturePageIfOpen(service, threadKey);
