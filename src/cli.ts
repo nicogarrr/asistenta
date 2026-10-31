@@ -205,7 +205,12 @@ import { drainThreadTails } from './shutdown-drain.js';
 import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
 import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
-import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
+import {
+  checkTelegramToken,
+  SERVE_TELEGRAM_RETRY_DELAYS_MS,
+  startupFailureMessage,
+  withInboundFailureReply,
+} from './startup.js';
 import { WebDemoRecorder } from './teach-demo-web.js';
 import {
   buildTriggerPrompt,
@@ -1362,7 +1367,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   try {
     await createProviderHandle(config);
     providerOk = true;
-    if (process.env.PA_QA_CHANNEL !== '1') await checkTelegramToken(token);
+    if (process.env.PA_QA_CHANNEL !== '1')
+      await checkTelegramToken(token, fetch, { delaysMs: SERVE_TELEGRAM_RETRY_DELAYS_MS });
   } catch (error) {
     const message =
       (error instanceof Error && error.message.startsWith('Telegram')) ||

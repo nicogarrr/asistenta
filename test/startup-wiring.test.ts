@@ -60,7 +60,11 @@ describe('serve preflight wiring', () => {
     mocks.telegram.mockRejectedValue(new Error('El token de Telegram no es válido.'));
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     expect(await main(['serve'])).toBe(1);
-    expect(mocks.telegram).toHaveBeenCalledWith('synthetic-token');
+    expect(mocks.telegram).toHaveBeenCalledWith(
+      'synthetic-token',
+      expect.anything(),
+      expect.objectContaining({ delaysMs: expect.any(Array) }),
+    );
     expect(stderr.mock.calls.map(([s]) => String(s)).join('')).toContain(
       'El token de Telegram no es válido',
     );
