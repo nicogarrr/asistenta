@@ -737,7 +737,7 @@ function renderText(data: DiagnoseData): string {
   const stateLines: string[] = [];
   stateLines.push(
     state.pid === null
-      ? 'pid: no hay fichero de pid legible; el daemon puede no haber arrancado nunca'
+      ? 'pid: no hay fichero de pid legible; puede que Asistenta no haya arrancado nunca'
       : `pid: ${state.pid} (${state.alive === true ? 'vivo' : state.alive === false ? 'MUERTO' : 'estado desconocido'})`,
   );
   if (state.startedAt) {
@@ -748,11 +748,11 @@ function renderText(data: DiagnoseData): string {
   stateLines.push(
     state.heartbeatAt
       ? `heartbeat: ${state.heartbeatAt} (hace ${formatDurationMs(state.heartbeatAgeMs ?? 0)})`
-      : 'heartbeat: no existe, el daemon no está escribiendo',
+      : 'heartbeat: no existe, Asistenta no está dando señales de vida',
   );
   stateLines.push(`versión: ${state.version ?? 'desconocida'} · node ${state.node}`);
   stateLines.push(
-    `hilos activos: ${context.threads === null ? 'no informado (esta vista no ve al daemon en marcha)' : context.threads}`,
+    `hilos activos: ${context.threads === null ? 'no informado (desde aquí no veo a Asistenta en marcha)' : context.threads}`,
   );
   if (context.wake === null) {
     stateLines.push('wake word: no informado desde aquí');
@@ -838,7 +838,7 @@ function renderText(data: DiagnoseData): string {
   const parts: string[] = [];
   if (state.pid === null && actions.read === 0 && log.scanned === 0 && !approvals.present) {
     parts.push(
-      `Diagnóstico de Asistenta — generado ${data.generatedAt}. No hay estado que leer: parece que el daemon nunca ha arrancado o que ${stateDirHint(data)} no existe.`,
+      `Diagnóstico de Asistenta — generado ${data.generatedAt}. No hay estado que leer: parece que Asistenta nunca ha arrancado o que ${stateDirHint(data)} no existe.`,
     );
   } else {
     parts.push(
