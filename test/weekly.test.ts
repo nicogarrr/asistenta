@@ -31,7 +31,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 2');
+    expect(text).toContain('Proyectos de varios archivos que te he hecho: 2');
   });
   it('playbook outcomes render one honest line per domain (C3)', () => {
     const text = buildWeeklySummary({
@@ -44,10 +44,8 @@ describe('buildWeeklySummary', () => {
         { domain: 'sin-uso.es', ok: 0, failed: 0 },
       ],
     });
-    expect(text).toContain(
-      'Gestiones en sitios con playbook guardado (acumulado desde que se activó el registro):',
-    );
-    expect(text).toContain('seg-social.es: 2 completadas, 1 no completadas');
+    expect(text).toContain('Gestiones en webs que ya conozco (desde que empecé a contarlas):');
+    expect(text).toContain('seg-social.es: 2 terminadas, 1 sin terminar');
     expect(text).not.toContain('sin-uso.es');
     expect(text).not.toContain('fall');
   });
@@ -62,7 +60,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 1');
+    expect(text).toContain('Proyectos de varios archivos que te he hecho: 1');
   });
   it('reports zero builds explicitly when there was activity but no build', () => {
     const text = buildWeeklySummary({
@@ -71,7 +69,7 @@ describe('buildWeeklySummary', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Builds multi-archivo (2+ rutas distintas escritas en una petición): 0');
+    expect(text).toContain('Proyectos de varios archivos que te he hecho: 0');
   });
   it('says plainly when nothing happened', () => {
     const text = buildWeeklySummary({

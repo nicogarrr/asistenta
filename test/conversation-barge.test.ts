@@ -376,13 +376,11 @@ describe('resumen semanal', () => {
       pending: '',
       watching: 0,
     };
-    expect(buildWeeklySummary(base)).not.toContain('Interrupciones de voz');
+    expect(buildWeeklySummary(base)).not.toContain('me cortaste');
     const out = buildWeeklySummary({
       ...base,
       barge: { sessions: 1, bargeIns: 4, trueIns: 3, falseNoise: 1, falseEcho: 0, unclassified: 0 },
     });
-    expect(out).toContain(
-      'Interrupciones de voz (corte): 4 (4 clasificadas: 3 uso estimado, 25% falsas estimadas).',
-    );
+    expect(out).toContain('Veces que me cortaste al hablar: 4 (calculo que un 25% sin querer).');
   });
 });

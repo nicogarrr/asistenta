@@ -8,7 +8,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ActionEntry } from './audit/log.js';
 import { wallClock } from './datecontext.js';
-import { type BargeTotals, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
+import { type BargeTotals, bargeFalseRate } from './voice/barge-stats.js';
 
 const WEEK_MS = 7 * 24 * 3_600_000;
 
@@ -55,7 +55,7 @@ export function buildWeeklySummary(i: WeeklyInput): string {
     // semanal de ese disparador; el 0 tambien es dato. Solo builds ok: uno
     // fallido no es evidencia de capacidad (auditor #134).
     const builds = week.filter((e) => e.action === 'build_multi' && e.result === 'ok').length;
-    lines.push(`- Builds multi-archivo (2+ rutas distintas escritas en una petición): ${builds}.`);
+    lines.push(`- Proyectos de varios archivos que te he hecho: ${builds}.`);
   }
   // C3: dónde el conocimiento guardado no basta. Solo gestiones INTENTADAS
   // en dominios con playbook; una cancelada cuenta como "no completada",
@@ -64,11 +64,9 @@ export function buildWeeklySummary(i: WeeklyInput): string {
   // dice para no leerlo como cifra de la semana (auditor C3 ronda 2).
   const pb = (i.playbooks ?? []).filter((p) => p.ok + p.failed > 0);
   if (pb.length) {
-    lines.push(
-      '- Gestiones en sitios con playbook guardado (acumulado desde que se activó el registro):',
-    );
+    lines.push('- Gestiones en webs que ya conozco (desde que empecé a contarlas):');
     for (const p of pb) {
-      lines.push(`  - ${p.domain}: ${p.ok} completadas, ${p.failed} no completadas.`);
+      lines.push(`  - ${p.domain}: ${p.ok} terminadas, ${p.failed} sin terminar.`);
     }
   }
   // D1: falsos disparos del corte por voz, la metrica que decide si algun dia
@@ -76,7 +74,7 @@ export function buildWeeklySummary(i: WeeklyInput): string {
   if (i.barge && i.barge.bargeIns > 0) {
     const rate = bargeFalseRate(i.barge);
     lines.push(
-      `- Interrupciones de voz (corte): ${i.barge.bargeIns} (${bargeClassified(i.barge)} clasificadas: ${i.barge.trueIns} uso estimado${rate !== null ? `, ${Math.round(rate * 100)}% falsas estimadas` : ''}${i.barge.unclassified > 0 ? `; ${i.barge.unclassified} sin clasificar` : ''}).`,
+      `- Veces que me cortaste al hablar: ${i.barge.bargeIns}${rate !== null ? ` (calculo que un ${Math.round(rate * 100)}% sin querer)` : ''}.`,
     );
   }
   lines.push(`- Páginas que vigilo ahora: ${i.watching}.`);
