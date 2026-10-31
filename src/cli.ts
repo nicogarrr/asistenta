@@ -128,6 +128,7 @@ import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
+import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
 import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
@@ -1890,22 +1891,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    */
   const MAX_THREADS = 20;
   const evictIdleThreads = (): void => {
-    if (threads.size <= MAX_THREADS) return;
-    const idle = [...threads.values()]
-      .filter((t) => !t.active && t.name !== activeTopic.get(t.chatKey))
-      .sort((a, b) => a.createdAt - b.createdAt);
-    while (threads.size > MAX_THREADS && idle.length) {
-      const victim = idle.shift();
-      if (!victim) break;
-      threads.delete(victim.key);
-      // The browser profile stays on disk on purpose; only the live Chromium goes.
-      const service = browsers.get(victim.key);
-      if (service) {
-        void service.closeAll().catch(() => {});
-        browsers.delete(victim.key);
-      }
-      log.info('thread evicted', { thread: victim.key, remaining: threads.size });
-    }
+    evictThreads({
+      threads,
+      max: MAX_THREADS,
+      selected: (chatKey_) => activeTopic.get(chatKey_),
+      // Per-thread state outside the Thread object goes with it (robustez-12).
+      perThread: [threadInbound, factorySyncs, { delete: (k: string) => lastTurns.forget(k) }],
+      onEvict: (victim) => {
+        // The browser profile stays on disk on purpose; only the live Chromium goes.
+        const service = browsers.get(victim.key);
+        if (service) {
+          void service.closeAll().catch(() => {});
+          browsers.delete(victim.key);
+        }
+        log.info('thread evicted', { thread: victim.key, remaining: threads.size });
+      },
+    });
   };
   /** chatKey -> explicitly selected thread name, set by /topic. */
   const activeTopic = new Map<string, string>();
