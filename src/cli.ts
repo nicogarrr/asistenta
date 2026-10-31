@@ -287,7 +287,7 @@ import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { installDoctorLines } from './doctor-install.js';
 import { doctorLinesEs } from './doctor-labels.js';
 import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
-import { envSwitchesDoctorLine } from './env-flags.js';
+import { envSwitchesDoctorLine, envSwitchOn } from './env-flags.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -4540,13 +4540,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /**
-   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1): fusiona
+   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1 o sí): fusiona
    * duplicados con supersedes y copia recuperable previa (src/memory/consolidate.ts).
    * Mismo patron que el backup de las 03:00: solo cuenta como hecha si termina bien;
    * un fallo se reintenta en el siguiente tick y queda en el log.
    */
   const consolidateIfDue = async (): Promise<void> => {
-    if (process.env.PA_MEMORY_CONSOLIDATE !== '1') return;
+    if (!envSwitchOn('PA_MEMORY_CONSOLIDATE')) return;
     if (!isConsolidationDue(new Date(), weeklyState.lastSent('consolida'))) return;
     try {
       const report = await runConsolidation({
@@ -4645,7 +4645,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
-      if (process.env.PA_MEMORY_CONSOLIDATE === '1') void consolidateIfDue();
+      if (envSwitchOn('PA_MEMORY_CONSOLIDATE')) void consolidateIfDue();
       retentionTick();
     },
     10 * 60 * 1000,
