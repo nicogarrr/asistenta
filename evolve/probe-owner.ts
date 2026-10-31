@@ -138,7 +138,13 @@ export function browsersFolder(env: NodeJS.ProcessEnv = process.env): string | n
   }
 }
 
-function inside(file: string, dir: string): boolean {
+function inside(file: string, dir: string, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') {
+    // Windows paths: either slash, any case.
+    const f = file.replace(/\//g, '\\').toLowerCase();
+    const d = dir.replace(/\//g, '\\').toLowerCase();
+    return f.startsWith(d.endsWith('\\') ? d : `${d}\\`);
+  }
   let real = file;
   try {
     real = realpathSync(file);
@@ -173,7 +179,13 @@ export type Verdict = { browser: boolean | null; root?: number };
 /** Judges a process already known to own the connection. */
 export function judgeProcess(
   pid: number,
-  opts: { agentPid?: number; folder?: string | null; proc?: ProcInfo; node?: string } = {},
+  opts: {
+    agentPid?: number;
+    folder?: string | null;
+    proc?: ProcInfo;
+    node?: string;
+    platform?: NodeJS.Platform;
+  } = {},
 ): Verdict {
   const proc = opts.proc ?? linuxProc;
   const exe = proc.exe(pid);
@@ -181,7 +193,7 @@ export function judgeProcess(
   if (!BROWSER_EXE.test(exe.split(/[\\/]/).pop() ?? '')) return { browser: false };
   if (isNodeInDisguise(exe, opts.node)) return { browser: false };
   const folder = opts.folder === undefined ? browsersFolder() : opts.folder;
-  if (folder && !inside(exe, folder)) return { browser: false };
+  if (folder && !inside(exe, folder, opts.platform ?? process.platform)) return { browser: false };
   if (opts.agentPid && !descendsFrom(pid, opts.agentPid, proc)) return { browser: false };
   return { browser: true, root: browserRoot(pid, proc) };
 }
@@ -208,7 +220,10 @@ export function connectionFromBrowser(clientPort: number, serverPort: number): b
  * come out as «not a browser». The probe only trusts the User-Agent where it can't.
  */
 export async function ownerLookupWorks(
-  look: (clientPort: number, serverPort: number) => boolean | null = connectionFromBrowser,
+  look: (
+    clientPort: number,
+    serverPort: number,
+  ) => boolean | null | Promise<boolean | null> = connectionFromBrowser,
 ): Promise<boolean> {
   const server = createServer();
   let verdict: boolean | null = null;
@@ -216,15 +231,15 @@ export async function ownerLookupWorks(
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const port = (server.address() as { port: number }).port;
     const judged = new Promise<void>((resolve) =>
-      server.once('connection', (s) => {
-        verdict = look(s.remotePort ?? 0, port);
+      server.once('connection', async (s) => {
+        verdict = await look(s.remotePort ?? 0, port);
         s.destroy();
         resolve();
       }),
     );
     const client = connect(port, '127.0.0.1');
     client.on('error', () => {});
-    await Promise.race([judged, new Promise((r) => setTimeout(r, 5000))]);
+    await Promise.race([judged, new Promise((r) => setTimeout(r, 20_000))]);
     client.destroy();
   } catch {
     verdict = null;
