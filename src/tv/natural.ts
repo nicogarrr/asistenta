@@ -607,9 +607,16 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'media', command: 'rewind' };
   }
   // «pausa la tele», «reanuda la tv», «quita la pausa a la tele»: la tele dicha al final.
-  const sinTele = t.replace(new RegExp(` (?:(?:a|de) )?${TV}${YA}$`), '');
+  // «play a la peli», «dale al play a la serie», «ponle pausa a la peli»: lo que se
+  // pausa o reanuda tampoco cambia la orden (la tecla es la misma).
+  const sinTele = t
+    .replace(new RegExp(` (?:(?:a|de) )?${TV}${YA}$`), '')
+    .replace(
+      / (?:(?:a|de|en|con) )?(?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa))$/,
+      '',
+    );
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|pon(?:la|lo|le)? en pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|pon(?:la|lo|le)? en pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|dale a la pausa|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
       sinTele,
     )
   ) {
@@ -623,7 +630,7 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'media', command: 'play' };
   }
   // «stop», «pulsa stop», «dale al stop»: la tecla stop del mando (como en tools/tv.ts media).
-  if (/^(?:(?:dale (?:al?)|pulsa|presiona|toca) )?stop$/.test(t)) {
+  if (/^(?:(?:dale (?:al?)|pulsa|presiona|toca) )?stop$/.test(sinTele)) {
     return { action: 'media', command: 'stop' };
   }
 
