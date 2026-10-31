@@ -217,6 +217,12 @@ describe('runAutoupdate', () => {
       const f = fake({ busy });
       const out = await runAutoupdate(dir, f.deps, { env: {} });
       expect(out.kind).toBe('aplazada');
+      expect(out.text).not.toMatch(/turno/);
+      if (busy === 'ocupada') {
+        expect(out.text).toBe(
+          'Asistenta está haciendo algo o esperando tu permiso: lo dejo para luego',
+        );
+      }
       expect(f.calls).not.toContain('stop');
       expect(readAutoupdateState(dir).lastCheckAt).toBeUndefined();
     }
