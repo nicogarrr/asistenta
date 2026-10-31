@@ -134,6 +134,7 @@ import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
+import { handleFeatureAsk } from './evolve/ask.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -4502,8 +4503,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   let evolving = false;
+  // Una petición hablada que llega con un ciclo en marcha se prueba al terminar ese.
+  let evolveAgain = false;
+  const featureAsks = new Map<string, { idea: string; at: number }>();
   const runEvolveCycle = async (chatId: string): Promise<void> => {
-    if (evolving) return;
+    if (evolving) {
+      evolveAgain = true;
+      return;
+    }
     evolving = true;
     try {
       const out = await runEvolution({
@@ -4515,6 +4522,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .catch((err: unknown) => log.warn('evolve report failed', { err }));
     } finally {
       evolving = false;
+    }
+    if (evolveAgain) {
+      evolveAgain = false;
+      void runEvolveCycle(chatId);
     }
   };
 
@@ -7340,6 +7351,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             return;
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
+
+          // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
+          const plainText =
+            !inbound.documentFileId && !inbound.audioFileId && !inbound.images?.length;
+          if (
+            plainText &&
+            (await handleFeatureAsk(chatKey_, inbound.text, {
+              isOwner: isOwnerDm(inbound, vigilanteOwnerId),
+              addHypothesis: (idea) => addHypothesis(paths.state, idea),
+              busy: () => evolving,
+              start: () => void runEvolveCycle(inbound.chatId),
+              reply: (text) => say(inbound, text, { quote: true }).then(() => undefined),
+              pending: featureAsks,
+            }))
+          )
+            return;
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
