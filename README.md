@@ -22,6 +22,14 @@ En esta guía `pa` es lo mismo que `node dist\cli.js`, dentro de la carpeta de A
 
 Si algo se tuerce, `node dist\cli.js iniciar --solo-comprobar` dice qué falta sin arrancar nada.
 
+## Quitar Asistenta del PC
+
+1. Apágala: cierra la ventana de `levantar.bat` o escribe `node dist\cli.js stop`.
+2. Si pusiste el arranque con Windows, quítalo antes de borrar nada: `node dist\cli.js autostart uninstall`. Si borras la carpeta primero, Windows sigue intentando arrancarla cada pocos minutos; entonces abre el Programador de tareas y borra `personal-agent-daemon`, `browserd-sidecar` y `Asistenta-vigilante`.
+3. Borra la carpeta de Asistenta.
+4. Tus datos (memoria, conversaciones y la caja fuerte de claves) están aparte, en `%USERPROFILE%\.local\share\personal-agent` (o en `PA_STATE_DIR` si lo cambiaste). Bórrala solo si no vas a volver.
+5. Si no vas a volver, anula el token del bot en @BotFather (`/revoke`) y la clave del modelo en la web de tu proveedor.
+
 ## Qué es gratis
 
 Lo único de pago es **la clave del modelo**: tu proveedor te cobra por uso según su plan. Todo lo demás es gratis y corre en tu PC:
