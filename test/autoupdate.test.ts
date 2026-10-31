@@ -257,6 +257,34 @@ describe('runAutoupdate', () => {
   });
 });
 
+describe('una versión que falla', () => {
+  it('avisa una sola vez y no la reintenta cada 30 min', async () => {
+    const f = fake({ build: 1 });
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('revertida');
+    expect(f.sent).toHaveLength(1);
+    await f.deps.sleep(31 * 60_000);
+    const calls = f.calls.length;
+    const again = await runAutoupdate(dir, f.deps, { env: {} });
+    expect(again.kind).toBe('omitida');
+    expect(again.text).toContain('ya falló');
+    expect(f.calls.slice(calls)).not.toContain('stop');
+    expect(f.sent).toHaveLength(1);
+    await f.deps.sleep(7 * 60 * 60_000);
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('revertida');
+    expect(f.sent).toHaveLength(1);
+  });
+
+  it('pa autoupdate now la reintenta ya, y una versión nueva se prueba normal', async () => {
+    const f = fake({ build: 1 });
+    await runAutoupdate(dir, f.deps, { env: {} });
+    expect((await runAutoupdate(dir, f.deps, { env: {}, force: true })).kind).toBe('revertida');
+    writeAutoupdateState(dir, { ...readAutoupdateState(dir), failedRemote: 'c'.repeat(40) });
+    const ok = fake();
+    expect((await runAutoupdate(dir, ok.deps, { env: {} })).kind).toBe('actualizada');
+    expect(readAutoupdateState(dir).failedRemote).toBeUndefined();
+  });
+});
+
 describe('changelog', () => {
   it('quita prefijos y números de PR, deduplica y corta en 8 con «y N cambios más»', () => {
     expect(cleanSubject('feat(arranque)!: vigilante de Windows (#746)')).toBe(
