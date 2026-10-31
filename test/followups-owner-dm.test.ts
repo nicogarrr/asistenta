@@ -8,7 +8,8 @@ describe('vigilante y resumen diario: solo seguimientos del privado del dueño',
   it('cli.ts ya no lee los seguimientos de todos los chats para lo que va al privado', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/followups\.list\(undefined/);
-    expect(src.match(/ownerDmFollowups\(followups, ownerDmFollowupKey\(\)\)/g)?.length).toBe(2);
+    // Vigilante, resumen diario y la pregunta de «¿qué tal fue?» (close-loop): los tres al privado.
+    expect(src.match(/ownerDmFollowups\(followups, ownerDmFollowupKey\(\)\)/g)?.length).toBe(3);
   });
 
   it('ownerDmFollowups lee solo el chat del dueño y nada si no hay dueño', () => {

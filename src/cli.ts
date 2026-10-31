@@ -111,6 +111,7 @@ import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { parseNatural } from './cron/scheduler.js';
+import { CloseLoop } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
@@ -180,7 +181,7 @@ import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
 import { trackBusyIn } from './ocupada.js';
-import { DEFAULT_QUIET_HOURS } from './ojo.js';
+import { DEFAULT_QUIET_HOURS, inQuietHours } from './ojo.js';
 import {
   createDownloadsController,
   getDownloadsEnabled,
@@ -4657,6 +4658,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   pageWatchTimer.unref();
   // El resumen diario se comprueba cada minuto (antes, cada 2 h con las vigilancias).
   startDailyBriefingTimer(briefingDeps);
+  // Cerrar el círculo: algo con fecha que contaste ya pasó → una pregunta, una vez.
+  const closeLoop = new CloseLoop({
+    followups: () => ownerDmFollowups(followups, ownerDmFollowupKey()),
+    markAsked: (id, at) => followups.safe(() => followups.markPushed(id, at), undefined),
+    resolve: (id) => followups.safe(() => followups.resolve(id), undefined),
+    send: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) return false;
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+      return true;
+    },
+    now: Date.now,
+    quiet: (now) => inQuietHours(now, DEFAULT_QUIET_HOURS, localTimeZone()),
+    enabled: () => briefingOwner() !== null,
+  });
+  setInterval(() => void closeLoop.tick().catch(() => null), 10 * 60 * 1000).unref();
 
   // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
   // Ver docs/ocr-telegram.md.
@@ -7240,6 +7257,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               }),
           });
           if (control === 'handled') return;
+          // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
+          if (inbound.chatId === briefingOwner() && closeLoop.answered(inbound.text)) {
+            await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
+            return;
+          }
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
