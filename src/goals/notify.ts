@@ -22,9 +22,11 @@
  * The destination is the caller's business (the owning chat's DM), wired as
  * `send` - this module never sees a transport.
  */
+
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { chatIdOf } from '../channels/types.js';
+import { friendlyModelError } from '../core/friendly-error.js';
 import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
@@ -106,7 +108,8 @@ export function formatGoalMessage(kind: string, goal: Pick<Goal, 'title'>, reaso
     case 'hecho':
       return `🎯 Objetivo cumplido: "${goal.title}". ${r}`;
     case 'error':
-      return `🎯 "${goal.title}" falló en su último tick: ${r}\nLo reintento en el siguiente; si persiste, paúsalo o échame un ojo.`;
+      // El motivo es el error crudo del modelo («fetch failed»): dicho en claro.
+      return `🎯 "${goal.title}" falló en su último intento: ${friendlyModelError(r)}\nLo reintento en el siguiente; si persiste, paúsalo o échame un ojo.`;
     default:
       // desconocido: la regla es "si dudas entre escalar o seguir, escala".
       return `🎯 ${goal.title}: ${r}`;
