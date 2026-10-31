@@ -522,6 +522,16 @@ export function renderPage(): string {
         </div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-tareas">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-tareas">Tareas de la semana</h2>
+          <button class="mini" type="button" data-refrescar="tareas" aria-label="Refrescar Tareas de la semana">Refrescar</button>
+        </header>
+        <div id="panel-tareas" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-funciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-funciones">Funciones</h2>
@@ -1471,6 +1481,40 @@ ${renderFormatScript()}
       }
 
       // silencio = true: recarga al volver a la pestaña, sin «Cargando…» y sin tapar lo que ya se ve si falla.
+      function filaTarea(t) {
+        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo;
+        var fila = nodo('li', 'texto', texto + ' ');
+        fila.appendChild(insignia('', t.estado));
+        return fila;
+      }
+
+      async function cargarTareas(silencio) {
+        var contenedor = document.getElementById('panel-tareas');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/tareas');
+          if (!datos || !Array.isArray(datos.tareas) || !Array.isArray(datos.atrasadas)) throw new Error('Respuesta de tareas inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para apuntar o cambiar una tarea, pídelo en el chat.'));
+          if (!datos.tareas.length && !datos.atrasadas.length) contenedor.appendChild(nodo('p', 'muted', 'No tienes tareas esta semana.'));
+          if (datos.atrasadas.length) {
+            contenedor.appendChild(nodo('h3', null, 'Atrasadas'));
+            var lista1 = nodo('ul', 'tareas');
+            datos.atrasadas.forEach(function (t) { lista1.appendChild(filaTarea(t)); });
+            contenedor.appendChild(lista1);
+          }
+          if (datos.tareas.length) {
+            var lista2 = nodo('ul', 'tareas');
+            datos.tareas.forEach(function (t) { lista2.appendChild(filaTarea(t)); });
+            contenedor.appendChild(lista2);
+          }
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarTareas); return false;
+        }
+        return true;
+      }
+
       async function cargarRutinas(silencio) {
         var contenedor = document.getElementById('panel-rutinas');
         if (silencio !== true) pintarCarga(contenedor);
@@ -1571,6 +1615,7 @@ ${renderFormatScript()}
       var refrescos = {
         objetivos: cargarObjetivos,
         rutinas: cargarRutinas,
+        tareas: cargarTareas,
         funciones: cargarFunciones,
         estado: cargarEstado,
         sesiones: cargarSesiones,
@@ -1589,6 +1634,7 @@ ${renderFormatScript()}
           cargarObjetivos(),
           cargarRutinas(),
           cargarFunciones(),
+          cargarTareas(),
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),
