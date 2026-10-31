@@ -205,7 +205,7 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
         // Refused here rather than transcribed: an empty note sent to whisper
         // reliably returns a hallucinated sentence, and a hallucinated
         // instruction is worse than no reply at all.
-        throw new Error('la nota de voz esta vacia o en silencio');
+        throw new Error('la nota de voz está vacía o en silencio');
       }
 
       const pipe = await loadPipeline(model);
@@ -238,6 +238,10 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
 }
 
 /** Error with a message worth showing to the user rather than a stack trace. */
+/** Fallo de red al bajar el modelo (Node fetch o la descarga del hub de modelos). */
+const OFFLINE_DOWNLOAD =
+  /\b(?:fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|getaddrinfo)\b|Could not locate file|huggingface\.co/i;
+
 export class SttError extends Error {
   constructor(message: string) {
     super(message);
@@ -256,7 +260,7 @@ export async function transcribeVoiceNote(
   input: Buffer,
   opts: { mimeType?: string } = {},
 ): Promise<SttResult> {
-  if (input.length === 0) throw new SttError('la nota de voz llego vacia');
+  if (input.length === 0) throw new SttError('la nota de voz llegó vacía');
 
   try {
     return await createLocalWhisperStt().transcribe(input, opts);
@@ -266,9 +270,9 @@ export async function transcribeVoiceNote(
     // Matched on message text rather than error classes: the underlying throws
     // come from three unrelated libraries (opus decoder, onnxruntime, fetch), so
     // this is the only shape they share.
-    if (detail.includes('silencio')) throw new SttError('la nota de voz esta vacia o en silencio');
+    if (detail.includes('silencio')) throw new SttError('la nota de voz está vacía o en silencio');
     if (detail.includes('no opus frames')) {
-      throw new SttError('no pude entender el audio recibido (no es un ogg/opus valido)');
+      throw new SttError('no pude entender el audio recibido (no es un ogg/opus válido)');
     }
     if (detail.includes('no pude leer ese audio') || detail.includes('pista de sonido')) {
       throw new SttError(
@@ -277,14 +281,22 @@ export async function transcribeVoiceNote(
     }
     if (detail.includes('ffmpeg no esta disponible')) {
       throw new SttError(
-        'no pude leer ese audio: falta ffmpeg en esta instalacion; prueba a mandarlo como nota de voz',
+        'no pude leer ese audio: falta ffmpeg en esta instalación; prueba a mandarlo como nota de voz',
       );
     }
     if (detail.includes('whisper model')) {
       throw new SttError(
-        'el modelo de voz no se pudo cargar. Revisa la conexion la primera vez y vuelve a intentarlo',
+        'el modelo de voz no se pudo cargar. La primera vez necesita internet; revisa la conexión y vuelve a intentarlo',
       );
     }
-    throw new SttError(`no pude transcribir la nota de voz: ${detail}`);
+    // Sin internet la primera vez no se puede bajar el modelo: el error crudo
+    // («fetch failed», «Could not locate file: https://…») acababa en «error interno».
+    if (OFFLINE_DOWNLOAD.test(detail)) {
+      throw new SttError(
+        'la primera nota de voz necesita internet para descargar el modelo de voz (solo una vez). Conéctate y vuelve a mandarla',
+      );
+    }
+    // El detalle técnico ya está en el registro; al chat solo va la frase.
+    throw new SttError('no pude transcribir la nota de voz. Prueba otra vez en un momento');
   }
 }
