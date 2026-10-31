@@ -17,6 +17,15 @@ if not exist dist\cli.js (
     exit /b 1
 )
 
+rem npm escribe node_modules\.package-lock.json al terminar: sin el, la instalacion
+rem quedo a medias (npm ci fallido o node_modules borrada) y Node soltaria un error en ingles.
+if not exist node_modules\.package-lock.json (
+    echo [levantar] La instalacion de Asistenta esta incompleta ^(faltan piezas en node_modules^).
+    echo [levantar] Haz doble clic en instalar.bat para completarla y vuelve a abrir este archivo.
+    pause
+    exit /b 1
+)
+
 rem Node 24 o mas nuevo: lo busca scripts\node24.cmd (PATH y carpetas habituales).
 call scripts\node24.cmd
 if not defined NODE_EXE (
