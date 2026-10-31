@@ -68,21 +68,62 @@ const SPOKEN_HOUR_VALUE: Record<string, number> = {
 };
 const SPOKEN_HOURS = Object.keys(SPOKEN_HOUR_VALUE).join('|');
 
-/** Minutes said in words after «y» / «menos»: «y diez», «menos veinte». Longest first. */
+/** Minutes said in words after «y» / «menos»: «y diez», «menos veinte», «y treinta y cinco». */
+const MINUTE_UNITS: Record<string, number> = {
+  uno: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+};
 const MINUTE_WORD_VALUE: Record<string, number> = {
-  'cuarenta y cinco': 45,
-  veinticinco: 25,
-  cincuenta: 50,
-  cuarenta: 40,
-  treinta: 30,
+  ...MINUTE_UNITS,
+  diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
+  quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
   veinte: 20,
+  veintiuno: 21,
+  veintidos: 22,
+  veintitres: 23,
+  veinticuatro: 24,
+  veinticinco: 25,
+  veintiseis: 26,
+  veintisiete: 27,
+  veintiocho: 28,
+  veintinueve: 29,
+  treinta: 30,
+  cuarenta: 40,
+  cincuenta: 50,
   cuarto: 15,
   media: 30,
-  cinco: 5,
-  diez: 10,
 };
-const MINUTES_AFTER = Object.keys(MINUTE_WORD_VALUE).join('|');
-const MINUTES_BEFORE = 'veinticinco|veinte|cuarto|cinco|diez';
+for (const [tens, t] of [
+  ['treinta', 30],
+  ['cuarenta', 40],
+  ['cincuenta', 50],
+] as const) {
+  for (const [unit, u] of Object.entries(MINUTE_UNITS))
+    MINUTE_WORD_VALUE[`${tens} y ${unit}`] = t + u;
+}
+// Longest first, so «treinta y cinco» wins over «treinta».
+const MINUTES_AFTER = `\\d{1,2}|${Object.keys(MINUTE_WORD_VALUE)
+  .sort((a, b) => b.length - a.length)
+  .join('|')}`;
+const MINUTES_BEFORE = '\\d{1,2}|veinticinco|veinte|cuarto|cinco|diez';
+/** «15» or «quince» → 15; anything else → NaN. */
+const minuteSaid = (said: string): number =>
+  /^\d+$/.test(said) ? Number(said) : (MINUTE_WORD_VALUE[said] ?? Number.NaN);
 
 /** A clock hour with the part of the day said next to it, in 24h. */
 function withPartOfDay(hour: number, part: string): number {
@@ -118,10 +159,13 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     minute = Number(timeMatch[2] ?? 0);
     // «a las 8 y media», «a las ocho y diez», «a las 9 menos veinte»: before, the
     // minutes said in words were dropped and the routine fired on the hour.
-    if (timeMatch[3]) minute = MINUTE_WORD_VALUE[timeMatch[3]] ?? 0;
+    // «a las 8 y 15», «a las 9 menos 10» and «y treinta y cinco» too (gaps8).
+    if (timeMatch[3]) minute = minuteSaid(timeMatch[3]);
     else if (timeMatch[4]) {
+      const before = minuteSaid(timeMatch[4]);
+      if (!(before >= 1 && before <= 30)) return null;
       hour = hour === 0 ? 23 : hour - 1;
-      minute = 60 - (MINUTE_WORD_VALUE[timeMatch[4]] ?? 0);
+      minute = 60 - before;
     }
     hasTime = true;
     const part = timeMatch[6];
@@ -166,7 +210,7 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     }
   }
 
-  if (hour > 23 || minute > 59) return null;
+  if (hour > 23 || !(minute >= 0 && minute <= 59)) return null;
 
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
@@ -249,7 +293,15 @@ function daysOfWeek(normalised: string): string | null {
   const range = new RegExp(`\\bde (${DAY}) a (${DAY})\\b`).exec(normalised);
   const from = DAY_VALUE[range?.[1] ?? ''];
   const to = DAY_VALUE[range?.[2] ?? ''];
-  if (from !== undefined && to !== undefined && from >= 1 && to > from) return `${from}-${to}`;
+  if (from !== undefined && to !== undefined && from !== to) {
+    if (to > from) return `${from}-${to}`;
+    // «de viernes a lunes», «de sábado a lunes»: the range goes round the weekend.
+    // Before, it was not read at all and the job fired every day.
+    const days: number[] = [];
+    for (let d = from; d !== to; d = (d + 1) % 7) days.push(d);
+    days.push(to);
+    return days.join(',');
+  }
   // «los lunes», «cada martes», «los lunes y miércoles», «los lunes, martes y jueves».
   const list = new RegExp(
     `\\b(?:los|cada) (${DAY})((?:\\s*,\\s*(?:los )?(?:${DAY}))*(?:\\s+y\\s+(?:los )?(?:${DAY}))?)\\b`,

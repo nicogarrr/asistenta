@@ -10,7 +10,7 @@ const num = (field: string, max: number): number | null =>
 function daysEs(dow: string): string | null {
   if (dow === '*') return 'cada día';
   if (dow === '1-5') return 'de lunes a viernes';
-  const range = /^([1-6])-([1-6])$/.exec(dow);
+  const range = /^([0-6])-([0-6])$/.exec(dow);
   if (range && Number(range[1]) < Number(range[2]))
     return `de ${DAY[Number(range[1])]} a ${DAY[Number(range[2])]}`;
   const days = dow.split(',').map((d) => num(d, 7));
@@ -19,6 +19,13 @@ function daysEs(dow: string): string | null {
   if (names.length === 2 && names.includes('sábado') && names.includes('domingo'))
     return 'los fines de semana';
   if (names.length === 1) return `cada ${names[0]}`;
+  // «de viernes a lunes»: three or more days in a row, round the weekend too.
+  const order = days.map((x) => (x as number) % 7);
+  if (
+    order.length >= 3 &&
+    order.every((x, i) => i === 0 || x === ((order[i - 1] as number) + 1) % 7)
+  )
+    return `de ${DAY[order[0] as number]} a ${DAY[order.at(-1) as number]}`;
   const plural = names.map((n) => (n.endsWith('s') ? n : `${n}s`));
   return `los ${plural.slice(0, -1).join(', ')} y ${plural.at(-1)}`;
 }
