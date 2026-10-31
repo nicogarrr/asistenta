@@ -20,6 +20,12 @@ if not exist dist\cli.js (
 rem Node 24 o mas nuevo: lo busca scripts\node24.cmd (PATH y carpetas habituales).
 call scripts\node24.cmd
 if not defined NODE_EXE (
+    if defined NODE_OLD (
+        echo [levantar] Tienes Node %NODE_OLD%, pero Asistenta necesita la version 24 o mas nueva.
+        echo [levantar] Descarga la 24 LTS gratis de https://nodejs.org, instalala encima de la que tienes y vuelve a abrir este archivo.
+        pause
+        exit /b 1
+    )
     echo [levantar] No encuentro Node 24 o mas nuevo. Descargalo gratis de https://nodejs.org ^(version 24 LTS^), instalalo y vuelve a abrir este archivo.
     echo [levantar] Si ya lo tienes en otra carpeta, pon su ruta en la variable ASISTENTA_NODE, por ejemplo C:\node24\node.exe.
     pause
