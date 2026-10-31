@@ -18,6 +18,10 @@ Var CasillaDatos
 Var Arranque
 Var CasillaArranque
 !define MUI_ABORTWARNING
+!define MUI_ICON "@@STAGE@@/asistenta.ico"
+!define MUI_UNICON "@@STAGE@@/asistenta.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "@@STAGE@@/bienvenida.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "@@STAGE@@/bienvenida.bmp"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\node\node.exe"
 !define MUI_FINISHPAGE_RUN_PARAMETERS "$\"$INSTDIR\app\scripts\windows-app\configurar.mjs$\""
 !define MUI_FINISHPAGE_RUN_TEXT "Configurar Asistenta ahora (token de Telegram y clave del modelo)"
@@ -48,17 +52,19 @@ Section "Asistenta"
   File /r "@@STAGE@@/node/*"
   SetOutPath "$INSTDIR\app"
   File /r "@@STAGE@@/app/*"
+  SetOutPath "$INSTDIR"
+  File "@@STAGE@@/asistenta.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   ; Accesos directos con la carpeta app como carpeta de trabajo (ahí vive .env).
   CreateDirectory "$SMPROGRAMS\Asistenta"
-  CreateShortcut "$SMPROGRAMS\Asistenta\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
-  CreateShortcut "$SMPROGRAMS\Asistenta\Configurar Asistenta.lnk" "$INSTDIR\node\node.exe" '"$INSTDIR\app\scripts\windows-app\configurar.mjs"'
+  CreateShortcut "$SMPROGRAMS\Asistenta\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"' "$INSTDIR\asistenta.ico"
+  CreateShortcut "$SMPROGRAMS\Asistenta\Configurar Asistenta.lnk" "$INSTDIR\node\node.exe" '"$INSTDIR\app\scripts\windows-app\configurar.mjs"' "$INSTDIR\asistenta.ico"
   CreateShortcut "$SMPROGRAMS\Asistenta\Desinstalar Asistenta.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Asistenta" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "Asistenta"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "@@VERSION@@"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "Asistenta (nicogarrr)"
-  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\Uninstall.exe,0"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\asistenta.ico"
   WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
@@ -73,7 +79,7 @@ Section "Asistenta"
       DetailPrint "No he podido dejar el arranque con Windows: vuelve a instalar y marca la casilla."
     ${EndIf}
     ; Solo el icono junto al reloj; a Asistenta la arranca su propia tarea.
-    CreateShortcut "$SMSTARTUP\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
+    CreateShortcut "$SMSTARTUP\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"' "$INSTDIR\asistenta.ico"
   ${EndIf}
 SectionEnd
 
@@ -126,6 +132,7 @@ Section "Uninstall"
 @@REMOVE_APP@@
   RMDir /r "$INSTDIR\node"
   Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\asistenta.ico"
   RMDir /r "$SMPROGRAMS\Asistenta"
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\Asistenta"

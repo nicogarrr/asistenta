@@ -15,6 +15,8 @@ import {
   stagePlan,
   // @ts-expect-error TS7016: módulo .mjs ejecutable, sin declaración de tipos.
 } from '../scripts/windows-app/build-installer.mjs';
+// @ts-expect-error TS7016: módulo .mjs ejecutable, sin declaración de tipos.
+import { bmp24, icoFromPngs } from '../scripts/windows-app/icono.mjs';
 
 const NSI = readFileSync('scripts/windows-app/asistenta.nsi', 'utf8');
 const dirs: string[] = [];
@@ -134,6 +136,12 @@ describe('instalador .exe: script NSIS', () => {
     mkdirSync(join(stage, 'node'));
     writeFileSync(join(stage, 'app', 'dist', 'cli.js'), '');
     writeFileSync(join(stage, 'node', 'node.exe'), '');
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    writeFileSync(join(stage, 'asistenta.ico'), icoFromPngs([{ size: 16, data: png }]));
+    writeFileSync(join(stage, 'bienvenida.bmp'), bmp24(1, 1, Buffer.from([1, 2, 3])));
     const out = join(stage, 'prueba.exe');
     writeFileSync(join(stage, 'a.nsi'), renderNsi(NSI, { ...vars, STAGE: stage, OUTFILE: out }));
     const r = spawnSync(
