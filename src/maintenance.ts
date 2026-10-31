@@ -91,6 +91,58 @@ export function fileRetentionDays(env: NodeJS.ProcessEnv = process.env): number 
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+/** Días que se guardan por defecto los registros diarios de log/ (AAAA-MM-DD.jsonl). */
+export const DEFAULT_LOG_RETENTION_DAYS = 30;
+/**
+ * Los de consumo (usage-AAAA-MM-DD.jsonl) se guardan más: algo más de un año, más que
+ * las sesiones (365 días), para que el consumo de una sesión viva nunca salga cortado.
+ */
+export const USAGE_RETENTION_DAYS = 400;
+
+/**
+ * Días de retención de los registros diarios (`PA_LOG_RETENTION_DAYS`, 30 por defecto;
+ * `0` = nunca). Antes no había ninguna por defecto y log/ crecía un fichero al día para
+ * siempre, y el consumo de una sesión leía todos los de consumo en cada respuesta.
+ */
+export function logRetentionDays(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PA_LOG_RETENTION_DAYS?.trim();
+  if (!raw) return DEFAULT_LOG_RETENTION_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_LOG_RETENTION_DAYS;
+  return Math.floor(n);
+}
+
+const DAILY_LOG = /^(usage-)?\d{4}-\d{2}-\d{2}\.jsonl$/;
+
+/** Borra los registros diarios de log/ más viejos que el plazo. Devuelve cuántos borró. */
+export function pruneLogFiles(stateDir: string, logDays: number, now = Date.now()): number {
+  if (logDays <= 0) return 0;
+  const dir = join(stateDir, 'log');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const m = DAILY_LOG.exec(name);
+    if (!m) continue;
+    const days = m[1] ? Math.max(USAGE_RETENTION_DAYS, logDays) : logDays;
+    const p = join(dir, name);
+    try {
+      const st = lstatSync(p);
+      if (st.isFile() && st.mtimeMs < now - days * DAY_MS) {
+        rmSync(p, { force: true });
+        removed++;
+      }
+    } catch {
+      // sigue con el resto
+    }
+  }
+  return removed;
+}
+
 /**
  * Borra los ficheros más antiguos que el plazo en los directorios que el registro
  * marca como podables. Nunca borra directorios ni sigue enlaces; un fallo en un
@@ -193,11 +245,12 @@ export function retentionIfDue(deps: RetentionDeps): {
   const days = sessionRetentionDays(deps.env);
   const docDays = deps.pruneDocs ? documentRetentionDays(deps.env) : 0;
   const fileDays = deps.stateDir ? fileRetentionDays(deps.env) : 0;
+  const logDays = deps.stateDir ? logRetentionDays(deps.env) : 0;
   const idle = { ran: false, sessions: 0, documents: 0, files: 0 };
   // Con la poda de ficheros apagada (por defecto) el tope de tamaño de los ficheros de
   // añadido no corría nunca y web-metrics.jsonl crecía sin fin. Mirarlo es un lstat.
   if (fileDays === 0 && deps.stateDir) capStateFiles(deps.stateDir);
-  if (days === 0 && docDays === 0 && fileDays === 0) return idle;
+  if (days === 0 && docDays === 0 && fileDays === 0 && logDays === 0) return idle;
   const now = deps.now;
   if (wallClock(now).hour < RETENTION_HOUR) return idle;
   if (now.getTime() - deps.lastRunMs < DAY_MS - 4 * 3_600_000) return idle;
@@ -207,8 +260,10 @@ export function retentionIfDue(deps: RetentionDeps): {
     fileDays > 0 && deps.stateDir
       ? pruneStateFiles(deps.stateDir, fileDays * DAY_MS, now.getTime())
       : 0;
+  const logs =
+    logDays > 0 && deps.stateDir ? pruneLogFiles(deps.stateDir, logDays, now.getTime()) : 0;
   deps.markRun(now.getTime());
-  return { ran: true, sessions, documents, files };
+  return { ran: true, sessions, documents, files: files + logs };
 }
 
 /** Borra un fichero solo si existe; nunca propaga el error. */

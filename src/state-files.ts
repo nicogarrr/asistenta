@@ -193,7 +193,8 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'registros y consumo',
     backup: false,
     why: 'diagnóstico; crece y se regenera',
-    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    retention:
+      'diarios 30 días y consumo 400 (PA_LOG_RETENTION_DAYS, maintenance.ts, 04:00); PA_FILE_RETENTION_DAYS',
     // Solo los ficheros diarios (AAAA-MM-DD.jsonl y usage-AAAA-MM-DD.jsonl).
     prune: { match: /^(usage-)?\d{4}-\d{2}-\d{2}\.jsonl$/ },
     // web-metrics.jsonl no es diario: un solo fichero que crece por añadido.
