@@ -10,8 +10,9 @@ import {
   readlinkSync,
   rmSync,
   statSync,
+  watch,
 } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, posix } from 'node:path';
 
 /**
  * Isolating an attempt, so measuring it cannot disturb what is running.
@@ -266,4 +267,65 @@ export function treeStatFingerprint(dir: string): string {
     h.update(`${line}\n`);
   }
   return h.digest('hex');
+}
+
+/**
+ * Huella de las carpetas con ficheros versionados (sin la raíz): fechas e inodo. Un fichero
+ * nuevo creado antes de que vitest recoja los tests y borrado antes de la revisión final (un
+ * test/x.test.ts que pasa) no deja rastro en git status ni en los ficheros versionados, pero
+ * sí en la fecha de su carpeta. Medir no cambia ninguna de estas carpetas (suite completa y
+ * sonda, 31 oct). La raíz sí cambia (un test crea y borra allí una carpeta temporal): la
+ * vigila watchRoot.
+ */
+export function treeDirFingerprint(dir: string): string {
+  const dirs = new Set<string>();
+  for (const f of git(dir, ['ls-files', '-z']).split('\0')) {
+    if (!f) continue;
+    for (let d = posix.dirname(f); d !== '.' && !dirs.has(d); d = posix.dirname(d)) dirs.add(d);
+  }
+  const h = createHash('sha256');
+  for (const d of [...dirs].sort()) {
+    let line: string;
+    try {
+      const st = lstatSync(join(dir, d));
+      line = `${d}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}`;
+    } catch {
+      line = `${d}\0-`;
+    }
+    h.update(`${line}\n`);
+  }
+  return h.digest('hex');
+}
+
+/** Lo único que una medición normal crea y borra en la raíz (test/context-limits.test.ts). */
+const ROOT_TEMP = [/^\.tmp-read-cap-/];
+
+/**
+ * Vigila la raíz de la copia mientras se mide. Un vitest.workspace.ts o un .env creados al
+ * empezar y borrados al acabar cambian qué se mide sin dejar huella en git. Devuelve una
+ * función que para la vigilancia y dice qué nombres aparecieron o cambiaron (fuera de los
+ * temporales conocidos); si no se pudo vigilar, lo dice también, porque no se sabe.
+ */
+export function watchRoot(dir: string): () => Promise<string[]> {
+  const seen = new Set<string>();
+  let failed = '';
+  let w: ReturnType<typeof watch> | undefined;
+  try {
+    w = watch(dir, { persistent: false }, (_ev, name) => {
+      if (name) seen.add(String(name));
+      else failed = '(cambio sin nombre)';
+    });
+    w.on('error', () => {
+      failed = '(no se pudo vigilar la raíz)';
+    });
+  } catch {
+    failed = '(no se pudo vigilar la raíz)';
+  }
+  return async () => {
+    // Los avisos del sistema llegan en la siguiente vuelta del bucle de eventos.
+    await new Promise((r) => setTimeout(r, 200));
+    w?.close();
+    const bad = [...seen].filter((n) => !ROOT_TEMP.some((re) => re.test(n))).sort();
+    return failed ? [...bad, failed] : bad;
+  };
 }

@@ -26,7 +26,9 @@ import {
   repoRoot,
   type Sandbox,
   sandboxGitFingerprint,
+  treeDirFingerprint,
   treeStatFingerprint,
+  watchRoot,
 } from './worktree.js';
 
 /**
@@ -161,6 +163,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       archive.add({ week, kind: 'hypothesis', hypothesis, tries: attempt });
 
       let sandbox: Sandbox;
+      let stopRootWatch: (() => Promise<string[]>) | undefined;
       try {
         sandbox = createSandbox(root, kernel, id, join(opts.stateDir, 'evolve', `w${id}`));
       } catch (err) {
@@ -248,6 +251,8 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
         const checkedHead = headCommit(sandbox.dir);
         const checkedTree = treeStatFingerprint(sandbox.dir);
+        const checkedDirs = treeDirFingerprint(sandbox.dir);
+        stopRootWatch = watchRoot(sandbox.dir);
         const touched = changedFiles(root, kernel, sandbox.branch);
         const patch = diffText(root, kernel, sandbox.branch);
         const forbidden = [
@@ -349,10 +354,13 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // Lo medido tiene que ser lo revisado. Un proceso que el proponente dejó vivo, o el propio
         // código del intento durante sus tests, puede cambiar la copia después del guard (un test,
         // la config, node_modules o su git): los números serían de otro árbol que el parche.
+        const rootNames = await stopRootWatch();
         if (
+          rootNames.length > 0 ||
           headCommit(sandbox.dir) !== checkedHead ||
           !isClean(sandbox.dir) ||
           treeStatFingerprint(sandbox.dir) !== checkedTree ||
+          treeDirFingerprint(sandbox.dir) !== checkedDirs ||
           depsFingerprint(sandbox.dir) !== depsBefore ||
           sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore
         ) {
@@ -361,8 +369,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           verdict = {
             kind: 'discard',
             delta: verdict.delta,
-            reason:
-              'la copia del intento cambió después de revisarla (ficheros, dependencias o git): lo medido no es el parche; no se promueve',
+            reason: `la copia del intento cambió después de revisarla (ficheros, dependencias o git${rootNames.length ? `; en la raíz: ${rootNames.slice(0, 3).join(', ')}` : ''}): lo medido no es el parche; no se promueve`,
           };
         }
         // Medir también ejecuta código del intento (sus tests, la batería): el kernel tiene que
@@ -439,6 +446,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // retry: the idea is worth another attempt with the same hypothesis, so the
         // model is asked again with the attempt number to change its approach.
       } finally {
+        await stopRootWatch?.();
         reapNow(sandbox.dir, 'al cerrar el intento');
         if (!report.promoted) dropSandbox(root, sandbox);
       }
