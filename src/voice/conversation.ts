@@ -1,4 +1,6 @@
+import { log } from '../log.js';
 import { foldAccents } from '../text.js';
+import { plainVoiceError } from './plain-error.js';
 /**
  * Spoken conversation session (capability 6, V1).
  *
@@ -393,6 +395,12 @@ export class ConversationSession {
   }
 
   /** Close for good. Idempotent. In-flight transcriptions and turns see a closed session and drop their result. */
+  /** Registra el fallo crudo y devuelve la frase en castellano que se muestra. */
+  #noteError(err: unknown): string {
+    log.warn('voice conversation error', { err });
+    return plainVoiceError(err);
+  }
+
   close(reason: CloseReason, detail?: string): void {
     if (this.#state === 'cerrada') return;
     this.#dropSeededUnclassified();
@@ -532,7 +540,8 @@ export class ConversationSession {
       try {
         allowed = await this.#speakerGate(joined);
       } catch (err) {
-        this.#lastError = `no pude verificar la voz; descarto esta frase (${err instanceof Error ? err.message : String(err)})`;
+        log.warn('voice speaker check failed', { err });
+        this.#lastError = `no pude verificar la voz; descarto esta frase (${plainVoiceError(err)})`;
       } finally {
         this.#gating = false;
       }
@@ -563,7 +572,7 @@ export class ConversationSession {
       if (generation !== this.#generation) return;
       this.#dropSeededUnclassified();
       this.#failures++;
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#lastError = this.#noteError(err);
       if (this.#failures >= this.#o.maxFailures) {
         this.close('fallo', `no consigo transcribir: ${this.#lastError}`);
         return;
@@ -631,7 +640,7 @@ export class ConversationSession {
     try {
       await this.#onUtterance(text);
     } catch (err) {
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#lastError = this.#noteError(err);
     }
     if (generation !== this.#generation) return;
     // Interrupted (barge-in) or superseded by a newer turn: that one owns the state now.
@@ -681,7 +690,7 @@ export class ConversationSession {
     } catch (err) {
       // Una síntesis cancelada por corte/cierre no es un fallo que reportar.
       if (!this.#speakInterrupted && !abort.signal.aborted) {
-        this.#lastError = err instanceof Error ? err.message : String(err);
+        this.#lastError = this.#noteError(err);
       }
     }
     const interrupted = this.#speakInterrupted;

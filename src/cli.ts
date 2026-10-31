@@ -412,6 +412,7 @@ import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { splitPhrases } from './voice/phrases.js';
 import { createDefaultTts } from './voice/piper.js';
+import { plainVoiceError } from './voice/plain-error.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
@@ -6650,7 +6651,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       onError: (err) => {
         log.warn('wake listener error', { err });
         // Capture failure ends any spoken session too: its audio is gone.
-        endSession('fallo', err.message);
+        endSession('fallo', plainVoiceError(err));
         // The listener stops itself when capture or transcription fails, and from the
         // user's side a listener that stopped listening is indistinguishable from one
         // that never started. Said once: the failure repeats until it is fixed.
