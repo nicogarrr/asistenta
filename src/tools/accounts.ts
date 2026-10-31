@@ -18,6 +18,7 @@ import {
   realVault,
   type VaultOps,
 } from '../credentials/store.js';
+import { log } from '../log.js';
 
 const Params = Type.Object({
   action: Type.Union(
@@ -129,29 +130,51 @@ export function createAccountsTool(
       let text: string;
       if (args.action !== 'listar' && args.action !== 'buscar') {
         text = await signupStep(args, vault, owner, mail);
-      } else if (args.action === 'buscar') {
-        const q = (args.sitio ?? '').trim();
-        if (!q) text = '¿De qué web? Dime el nombre o el dominio.';
-        else {
-          const found = await findAccounts(q, vault);
-          // Una sola web: «¿cuál es mi usuario en X?» recibe el usuario entero (nunca la
-          // contraseña). Con varias, el usuario va tapado como en listar.
-          const one = found.length === 1 ? found[0] : undefined;
-          text =
-            found.length === 0
-              ? `No tengo ninguna cuenta guardada de ${q}.`
-              : one
-                ? `Sí, en ${one.domain}: tu usuario es ${one.username || '(sin usuario guardado)'}${fecha(one.created)}${one.status === 'pendiente' ? ', alta sin terminar' : ''}. La contraseña no la enseño; entro con ella cuando haga falta.`
-                : `Sí: ${found.map(line).join('; ')}. Puedo entrar con ella cuando haga falta.`;
-        }
       } else {
-        const all = await listAccounts(vault);
-        text =
-          all.length === 0
-            ? 'Todavía no tengo ninguna cuenta guardada.'
-            : `Tienes ${all.length === 1 ? '1 cuenta' : `${all.length} cuentas`}: ${all.map(line).join('; ')}.`;
+        text = await readStep(args, vault);
       }
       return { content: [{ type: 'text', text }], details: {} };
     },
   };
 }
+
+/** listar / buscar. Si el gestor no se puede leer, una línea llana (el error, solo al log). */
+async function readStep(
+  args: { action: string; sitio?: string },
+  vault: VaultOps,
+): Promise<string> {
+  let text: string;
+  try {
+    if (args.action === 'buscar') {
+      const q = (args.sitio ?? '').trim();
+      if (!q) text = '¿De qué web? Dime el nombre o el dominio.';
+      else {
+        const found = await findAccounts(q, vault);
+        // Una sola web: «¿cuál es mi usuario en X?» recibe el usuario entero (nunca la
+        // contraseña). Con varias, el usuario va tapado como en listar.
+        const one = found.length === 1 ? found[0] : undefined;
+        text =
+          found.length === 0
+            ? `No tengo ninguna cuenta guardada de ${q}.`
+            : one
+              ? `Sí, en ${one.domain}: tu usuario es ${one.username || '(sin usuario guardado)'}${fecha(one.created)}${one.status === 'pendiente' ? ', alta sin terminar' : ''}. La contraseña no la enseño; entro con ella cuando haga falta.`
+              : `Sí: ${found.map(line).join('; ')}. Puedo entrar con ella cuando haga falta.`;
+      }
+    } else {
+      const all = await listAccounts(vault);
+      text =
+        all.length === 0
+          ? 'Todavía no tengo ninguna cuenta guardada.'
+          : `Tienes ${all.length === 1 ? '1 cuenta' : `${all.length} cuentas`}: ${all.map(line).join('; ')}.`;
+    }
+  } catch (err) {
+    log.warn('cuentas: no se pudo leer el gestor de contraseñas', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    text = VAULT_UNREADABLE;
+  }
+  return text;
+}
+
+export const VAULT_UNREADABLE =
+  'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
