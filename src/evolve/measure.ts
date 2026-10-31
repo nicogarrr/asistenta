@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -82,6 +82,30 @@ export function parseJsonReport(text: string): {
   } catch {
     return null;
   }
+}
+
+const REPORT_START = '{"numTotalTestSuites"';
+
+/**
+ * vitest's JSON report, printed on its standard output: the one line that starts with it.
+ * The report used to be a file in the shared temp folder, where a process left running by
+ * the attempt (same OS user) could rewrite it after vitest wrote it. The standard output is
+ * read only by measure(). A test can still print lines, so a second copy of the report
+ * anywhere in the output, or one that does not start its own line, means no report.
+ */
+export function reportFromOutput(stdout: string): string | null {
+  const clean = stdout.replace(ANSI, '');
+  const first = clean.indexOf(REPORT_START);
+  if (first < 0 || clean.indexOf(REPORT_START, first + 1) >= 0) return null;
+  if (first > 0 && clean[first - 1] !== '\n') return null;
+  const end = clean.indexOf('\n', first);
+  const line = clean.slice(first, end < 0 ? undefined : end).replace(/\r$/, '');
+  try {
+    JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return line;
 }
 
 export interface MeasureOptions {
@@ -190,36 +214,26 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   let checksFailed = 0;
 
   const home = mkdtempSync(join(tmpdir(), 'evolve-home-'));
-  // The report goes to its own directory with an unpredictable name, not into the home the
-  // candidate's tests run with. Same OS user, so this is a mitigation, not a wall: the report
-  // is also cross-checked against the runner's own summary line below.
-  const reportDir = mkdtempSync(join(tmpdir(), 'evolve-rep-'));
-  const reportFile = join(reportDir, `r-${Math.random().toString(36).slice(2)}.json`);
   let names: { passing: string[]; failing: string[] } | null = null;
   let suiteError: string | null = null;
   try {
-    const suite = await exec(
-      'npx',
-      ['vitest', '--run', '--reporter=basic', '--reporter=json', `--outputFile.json=${reportFile}`],
-      {
-        cwd,
-        timeout: timeoutMs,
-        windowsHide: true,
-        env: cleanEnv(process.env, home),
-        maxBuffer: 32 * 1024 * 1024,
-      },
-    )
+    // No --outputFile: the JSON report comes on vitest's own standard output (see
+    // reportFromOutput), not as a file another process of the same user can rewrite.
+    const suite = await exec('npx', ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
+      cwd,
+      timeout: timeoutMs,
+      windowsHide: true,
+      env: cleanEnv(process.env, home),
+      maxBuffer: 64 * 1024 * 1024,
+    })
       .then((r) => ({ ...r, code: 0 as number | string | null }))
       .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
         stdout: err.stdout ?? '',
         stderr: err.stderr ?? '',
         code: err.code ?? null,
       }));
-    try {
-      names = parseJsonReport(readFileSync(reportFile, 'utf8'));
-    } catch {
-      names = null;
-    }
+    const report = reportFromOutput(suite.stdout);
+    names = report ? parseJsonReport(report) : null;
     const parsed = parseSuite(`${suite.stdout}\n${suite.stderr}`);
     // A report that disagrees with the summary line is not trusted.
     if (
@@ -233,7 +247,6 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     suiteError = suiteUnfinished(suite.code, parsed.failed);
   } catch (err) {
     rmSync(home, { recursive: true, force: true });
-    rmSync(reportDir, { recursive: true, force: true });
     return {
       passed: 0,
       failed: 0,
@@ -266,7 +279,6 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const passingChecks = checkNames(`${probe.stdout}\n${probe.stderr}`).passing;
 
   rmSync(home, { recursive: true, force: true });
-  rmSync(reportDir, { recursive: true, force: true });
   if (suiteError) {
     return {
       passed,
