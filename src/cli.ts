@@ -4733,6 +4733,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       mode: watchModeFromEnv(process.env.PA_OCR_WATCH_MODE),
       makeDeps: windowsDeps,
       log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
+      progressDir: join(paths.state, 'ocr-progreso'),
     });
     ocrWatcher.start();
   }
