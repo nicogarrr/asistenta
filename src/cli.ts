@@ -7248,6 +7248,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .then((m) => m.read === 'ok')
         .catch(() => false),
       threads: threads.size,
+      // El panel que no arranca se avisa también por Telegram (una vez, ver boot-notice).
+      problems: panelPlan.kind === 'problem' ? [panelPlan.problem] : [],
     };
     process.stdout.write(`${bootBanner(facts)}\n`);
     const result = await maybeSendBootNotice({
