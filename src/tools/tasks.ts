@@ -245,7 +245,16 @@ function run(deps: TasksToolDeps, args: Args): string {
       const t = board.add(deps.scopeOf(), title, day, time, repeat);
       const when = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
       const every = repeat ? ` (${REPEAT_LABEL[repeat]})` : '';
-      return `Apuntado para ${when}: ${t.title}${time ? ` a las ${time}` : ''}${every}.${time ? ' ¿Te lo recuerdo a esa hora?' : ''}`;
+      const n = board.now();
+      const clock = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+      // A las 18:00, «llamar a Ana a las 10» ya pasó: no ofrecer un recordatorio imposible.
+      const past = Boolean(time && day === board.today() && time < clock);
+      const tail = !time
+        ? ''
+        : past
+          ? ' Esa hora ya ha pasado hoy; si era para mañana, dime «pásalo a mañana».'
+          : ' ¿Te lo recuerdo a esa hora?';
+      return `Apuntado para ${when}: ${t.title}${time ? ` a las ${time}` : ''}${every}.${tail}`;
     }
     case 'marcar': {
       const status = resolveStatus(args.estado ?? 'hecho');
