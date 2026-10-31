@@ -143,6 +143,7 @@ export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
       'tarea «lo atrasado» moves every overdue open task). renombrar: tarea + titulo.',
       'repetir: tarea + repetir (also on apuntar, e.g. «todos los lunes sacar la basura»; «no» stops it).',
       'borrar: only when the owner explicitly asks.',
+      'If he answers a «¿Cuál?» with «la segunda» or «la del viernes», pass his words as tarea.',
       'A task with a time does NOT remind by itself: offer a reminder and use the reminder tool if he says yes.',
       'For planning an event, apuntar one task per step, then ask him only what is really missing.',
     ].join('\n'),
@@ -166,21 +167,113 @@ type Args = {
   repetir?: string;
 };
 
+/**
+ * The last «Hay varias… ¿Cuál?» list per chat, so an answer like «la segunda» or
+ * «la del viernes» picks from what he was just shown. Small and short-lived.
+ */
+const lastChoices = new WeakMap<TaskBoard, Map<string, { ids: number[]; at: number }>>();
+const CHOICES_TTL_MS = 30 * 60_000;
+const CHOICES_MAX = 50;
+
+function rememberChoices(board: TaskBoard, scope: string, tasks: BoardTask[]): void {
+  const chats = lastChoices.get(board) ?? new Map<string, { ids: number[]; at: number }>();
+  lastChoices.set(board, chats);
+  chats.delete(scope);
+  chats.set(scope, { ids: tasks.map((t) => t.id), at: Date.now() });
+  while (chats.size > CHOICES_MAX) {
+    const oldest = chats.keys().next().value;
+    if (oldest === undefined) break;
+    chats.delete(oldest);
+  }
+}
+
+function shownChoices(deps: TasksToolDeps, scope: string): BoardTask[] {
+  const seen = lastChoices.get(deps.board)?.get(scope);
+  if (!seen || Date.now() - seen.at > CHOICES_TTL_MS) return [];
+  const all = deps.board.all(scope);
+  return seen.ids.flatMap((id) => all.filter((t) => t.id === id));
+}
+
+const ORDINALS: Record<string, number> = {
+  primer: 0,
+  primera: 0,
+  primero: 0,
+  segunda: 1,
+  segundo: 1,
+  tercer: 2,
+  tercera: 2,
+  tercero: 2,
+  cuarta: 3,
+  cuarto: 3,
+  quinta: 4,
+  quinto: 4,
+};
+
+/** «la segunda», «el primero», «la última»: a place in the list just shown. */
+function byOrdinal(said: string, shown: BoardTask[]): BoardTask[] | undefined {
+  const m = /^(?:(?:la|el|lo)\s+)?([a-z]+)(?:\s+(?:tarea|de la lista|de ellas))?$/.exec(said);
+  const word = m?.[1];
+  if (!word || shown.length === 0) return undefined;
+  if (word === 'ultima' || word === 'ultimo') return shown.slice(-1);
+  const at = ORDINALS[word];
+  if (at === undefined) return undefined;
+  const hit = shown[at];
+  return hit ? [hit] : [];
+}
+
+/**
+ * «la del viernes», «lo del banco del lunes»: a day said after the words. The words
+ * (if any) find the tasks, or the list just shown is used; the day narrows them.
+ */
+function byDay(
+  deps: TasksToolDeps,
+  scope: string,
+  said: string,
+  shown: BoardTask[],
+): BoardTask[] | undefined {
+  const now = new Date(`${deps.board.today()}T12:00:00`);
+  for (const m of said.matchAll(/(?:^|\s)(?:del|de|para el|para)\s+/g)) {
+    const tail = said.slice((m.index ?? 0) + m[0].length);
+    const day = resolveDay(tail, now);
+    if (!day) continue;
+    const head = said
+      .slice(0, m.index ?? 0)
+      .replace(/^(?:la|el|lo|las|los)\b\s*/, '')
+      .trim();
+    const pool = head ? deps.board.find(scope, head) : shown;
+    if (pool.length === 0) return undefined;
+    return pool.filter((t) => t.day === day);
+  }
+  return undefined;
+}
+
 function pick(
   deps: TasksToolDeps,
   ref: string | undefined,
   preferOpen: boolean,
 ): BoardTask | string {
   if (!ref?.trim()) return '¿Qué tarea? Dime unas palabras o su número.';
-  let found = deps.board.find(deps.scopeOf(), ref);
+  const scope = deps.scopeOf();
+  let found = deps.board.find(scope, ref);
+  if (found.length !== 1) {
+    // An answer to «¿Cuál?» («la segunda», «la del viernes») or words plus a day.
+    const said = fold(ref)
+      .replace(/[.,!?¿¡]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const shown = shownChoices(deps, scope);
+    const narrowed = byOrdinal(said, shown) ?? byDay(deps, scope, said, shown);
+    if (narrowed && narrowed.length > 0) found = narrowed;
+  }
   if (found.length > 1 && preferOpen) {
     const open = found.filter((t) => t.status !== 'hecho');
     if (open.length > 0) found = open;
   }
   if (found.length === 0) return `No encuentro ninguna tarea con «${ref.trim()}».`;
   if (found.length > 1) {
-    return `Hay varias: ${found
-      .slice(0, 5)
+    const listed = found.slice(0, 5);
+    rememberChoices(deps.board, scope, listed);
+    return `Hay varias: ${listed
       .map((t) => `[${t.id}] ${t.title} (${dayLabel(t.day)})`)
       .join('; ')}. ¿Cuál?`;
   }
