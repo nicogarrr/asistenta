@@ -451,7 +451,7 @@ const SCRIPT_RUNNER =
 const FEEDS_SHELL =
   /\b(iex|invoke-expression)\b|\|\s*(powershell|pwsh|cmd|sh|bash|zsh|node|python[0-9.]*)(\.exe)?\b/i;
 /** Código de programa (no órdenes de shell): solo se le aplica deny-secret-cli. */
-const CODE_FILE = /\.([cm]?[jt]s|py|pyw)$/i;
+const CODE_FILE = /\.([cm]?[jt]s|py|pyw|json)$/i;
 const SCRIPT_MAX_BYTES = 1024 * 1024;
 
 /**
@@ -475,20 +475,37 @@ function withDecodedCommands(text: string): string {
   return [text, ...decoded].join('\n');
 }
 
+const CHANGE_DIR = /^(cd|chdir|set-location|sl|pushd|push-location)$/;
+const PACKAGE_RUNNER = /^(npm|pnpm|yarn|bun)(\.cmd|\.exe)?$/;
+const PACKAGE_SCRIPT =
+  /^(run|run-script|rum|urn|test|t|tst|start|stop|restart|install|i|ci|add|exec)$/i;
+
 /** Palabras de una orden que pueden ser un script que se ejecuta. */
 function scriptRefs(command: string): string[] {
   const feeds = FEEDS_SHELL.test(command);
   const refs: string[] = [];
+  // `cd C:\\x; .\\a.ps1`: lo relativo se lee desde la carpeta a la que se cambió.
+  let dir = '';
+  const at = (word: string) => (dir && !/^([a-z]:)?[\\/]|^~/i.test(word) ? `${dir}/${word}` : word);
   for (const segment of command.split(/[;|&\n\r()]+/)) {
     const words = (segment.match(/"[^"]*"|'[^']*'|[^\s"']+/g) ?? []).map((w) =>
       w.replace(/^["']|["']$/g, ''),
     );
+    const first = (words[0] ?? '').toLowerCase();
+    if (CHANGE_DIR.test(first) && words[1] && !words[1].startsWith('-')) {
+      dir = at(words[1]);
+      continue;
+    }
+    // `npm test`, `npm run x`, `npm ci`: ejecutan lo que diga package.json.
+    if (PACKAGE_RUNNER.test(first) && PACKAGE_SCRIPT.test(words[1] ?? '')) {
+      refs.push(at('package.json'));
+    }
     let runner = false;
     words.forEach((word, i) => {
       if (SCRIPT_RUNNER.test(word)) runner = true;
       const flag = word.startsWith('-') || /^\/[a-z?]{1,2}$/i.test(word);
       const fileLike = /[\\/]/.test(word) || /\.[a-z0-9]{1,5}$/i.test(word);
-      if (!flag && fileLike && (i === 0 || runner || feeds)) refs.push(word);
+      if (!flag && fileLike && (i === 0 || runner || feeds)) refs.push(at(word));
     });
   }
   return refs;
