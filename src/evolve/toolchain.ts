@@ -29,9 +29,21 @@ export function toolchainFingerprint(
     } catch {}
     h.update(`${p}\0${line}\n`);
   };
+  // npx lanza vitest con el shell que encuentra el PATH (`sh -c vitest`, en Windows cmd): un
+  // `sh` falso antes en el PATH corría en la medición (comprobado con npm real, 31 oct).
   const names = win
-    ? ['node.exe', 'node.cmd', 'npx.cmd', 'npx.ps1', 'npx.exe', 'npm.cmd', 'npm.ps1', 'npm.exe']
-    : ['node', 'npx', 'npm'];
+    ? [
+        'node.exe',
+        'node.cmd',
+        'npx.cmd',
+        'npx.ps1',
+        'npx.exe',
+        'npm.cmd',
+        'npm.ps1',
+        'npm.exe',
+        'cmd.exe',
+      ]
+    : ['node', 'npx', 'npm', 'sh'];
   for (const dir of pathEnv.split(win ? ';' : delimiter).slice(0, 100)) {
     if (!dir) continue;
     // Solo los que existen: un fichero nuevo antes en el PATH añade una línea.
