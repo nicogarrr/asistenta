@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { maybeSendBootNotice } from '../src/boot-notice.js';
 
 // Tras corregir la hora hacia atrás (reloj adelantado, arranque dual), el último
-// aviso «Asistenta lista ✅» queda fechado en el futuro.
+// aviso de arranque queda fechado en el futuro.
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -17,7 +17,14 @@ function statePath(lastSentAt: number): string {
   writeFileSync(path, JSON.stringify({ lastSentAt }));
   return path;
 }
-const facts = { model: 'modelo-x', tv: true, computerUse: true, mail: false, threads: 2 };
+const facts = {
+  model: 'modelo-x',
+  tv: true,
+  computerUse: true,
+  mail: false,
+  threads: 2,
+  problems: ['modelo' as const],
+};
 const NOW = Date.parse('2026-10-31T10:00:00Z');
 const H = 60 * 60_000;
 const run = (path: string, now: number, send = vi.fn(async () => {})) =>

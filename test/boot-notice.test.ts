@@ -1,4 +1,4 @@
-/** Aviso «Asistenta lista ✅» al arrancar y banner de consola (src/boot-notice.ts). */
+/** Aviso de arranque (solo si algo falla) y banner de consola (src/boot-notice.ts). */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import {
   BOOT_NOTICE_MIN_INTERVAL_MS,
   bootBanner,
   bootNoticeEnabled,
-  bootNoticeText,
+  bootProblemText,
   maybeSendBootNotice,
 } from '../src/boot-notice.js';
 
@@ -21,7 +21,14 @@ function statePath(): string {
   return join(d, 'boot-notice.json');
 }
 
-const facts = { model: 'modelo-x', tv: true, computerUse: true, mail: false, threads: 2 };
+const facts = {
+  model: 'modelo-x',
+  tv: true,
+  computerUse: true,
+  mail: false,
+  threads: 2,
+  problems: ['modelo' as const],
+};
 const ON = { PA_BOOT_NOTICE: '1' };
 
 describe('aviso de arranque', () => {
@@ -43,7 +50,7 @@ describe('aviso de arranque', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('encendido: un mensaje al chat privado del dueño con el estado corto', async () => {
+  it('con un problema: una línea al chat privado del dueño', async () => {
     const send = vi.fn(async (_chat: string, _text: string) => {});
     const path = statePath();
     expect(
@@ -59,12 +66,11 @@ describe('aviso de arranque', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0]?.[0]).toBe('42');
     const text = send.mock.calls[0]?.[1] ?? '';
-    expect(text.split('\n')[0]).toBe('Asistenta lista ✅');
-    expect(text).toContain('Tele: sí');
-    expect(text).toContain('Correo: no');
-    expect(text).toContain('/funciones');
+    expect(text).toBe(bootProblemText(['modelo']));
+    expect(text).not.toContain('Tele:');
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       lastSentAt: 1_000_000,
+      told: ['modelo'],
       lastResult: 'sent',
       lastResultAt: new Date(1_000_000).toISOString(),
     });
@@ -84,7 +90,7 @@ describe('aviso de arranque', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('como mucho uno cada 10 minutos, aunque el daemon se reinicie en bucle', async () => {
+  it('como mucho uno cada 10 minutos y nunca el mismo problema dos veces', async () => {
     const send = vi.fn(async () => {});
     const path = statePath();
     let t = 5_000_000;
@@ -94,8 +100,8 @@ describe('aviso de arranque', () => {
     t += 60_000;
     expect(await run()).toBe('rate-limited');
     t += BOOT_NOTICE_MIN_INTERVAL_MS;
-    expect(await run()).toBe('sent');
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(await run()).toBe('repeated');
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('un envío que falla también cuenta (se apunta antes de enviar)', async () => {
@@ -159,7 +165,7 @@ describe('aviso de arranque', () => {
     expect(line.startsWith('Asistenta lista ✅')).toBe(true);
     expect(line).toContain('modelo modelo-x');
     expect(line).toContain('panel http://127.0.0.1:7777');
-    expect(bootNoticeText({ tv: false, computerUse: false, mail: true })).not.toContain('Modelo');
+    expect(bootProblemText(['modelo'])).not.toContain('\n');
   });
 
   it('el daemon lo cablea tras «daemon ready» y PA_BOOT_NOTICE está en .env.example', () => {
