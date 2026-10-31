@@ -14,6 +14,7 @@ import type { SessionStore } from '../memory/sessions.js';
 import type { MemorySnapshot } from '../memory/snapshot.js';
 import type { WorkstreamStore } from '../memory/workstreams.js';
 import { type MemoryStore, memoryScopesFor } from '../memory.js';
+import { renderPersonality } from '../personality.js';
 import type { ProjectContextStore } from '../project-context.js';
 import { skillsForContext } from '../skills/builtin.js';
 import { skillsIndex } from '../skills/lessons.js';
@@ -152,6 +153,11 @@ export function buildContextNote(
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
   parts.push(buildNowNote());
+  // PERSONALIDAD.md (tono y estilo que eligió el dueño): solo en su chat privado.
+  if (ownerView) {
+    const personality = renderPersonality();
+    if (personality) parts.push(personality);
+  }
   // F13: el ASISTENTA.md/AGENTS.md de la carpeta ligada con /proyecto. Es del
   // dueño, así que como el perfil solo entra en su chat privado.
   if (ownerView && projects) {
