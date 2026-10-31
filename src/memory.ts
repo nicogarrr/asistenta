@@ -75,6 +75,11 @@ export interface RememberOptions {
  * mode is silent truncation of the system prompt in the middle of a run.
  */
 export const MAX_MEMORY_BYTES = 64 * 1024;
+/**
+ * Tags whose entries are evicted last when a scope hits its cap. `aprendido` is
+ * learned-rules.ts's LEARNED_TAG (not imported: that module imports this one).
+ */
+export const PINNED_MEMORY_TAGS: readonly string[] = ['aprendido'];
 const MAX_ENTRY_CHARS = 2_000;
 const DEFAULT_RECALL = 10;
 const MAX_RECALL = 50;
@@ -717,8 +722,11 @@ export class MemoryStore {
       droppedNotes = true;
       text = serializeMemory(doc);
     }
+    // Las reglas aprendidas (/aprendido) suelen ser lo más antiguo del archivo y
+    // tienen su propio tope pequeño: se echan los hechos normales antes que ellas.
     while (over() && doc.entries.length > 1) {
-      doc.entries.shift();
+      const idx = doc.entries.findIndex((e) => !e.tags.some((t) => PINNED_MEMORY_TAGS.includes(t)));
+      doc.entries.splice(idx < 0 ? 0 : idx, 1);
       evicted++;
       text = serializeMemory(doc);
     }
