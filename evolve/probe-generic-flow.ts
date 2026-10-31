@@ -18,8 +18,10 @@
  * and turn a FALLA into a PASA, or hide it, and the loop would score the forgery.
  */ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { connectionFromBrowser } from './probe-owner.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
 // a late-rendering autocomplete, a field that silently keeps its default, and a
@@ -28,10 +30,14 @@ const page = (body: string) =>
   `<!doctype html><meta charset="utf-8"><title>Viajes Sur</title>${body}`;
 
 // Lo que el navegador pidió de verdad: ruta y si lo pidió un navegador (no un fetch de Node).
+// El User-Agent se puede imitar desde el código del intento; en Linux además se mira qué
+// proceso abrió la conexión, y si no es un navegador no cuenta.
 const seen: Array<{ url: string; browser: boolean }> = [];
+const owner = new WeakMap<Socket, boolean | null>();
 const server = createServer((req, res) => {
   const url = req.url ?? '/';
-  seen.push({ url, browser: /Mozilla\//.test(req.headers['user-agent'] ?? '') });
+  const ua = /Mozilla\//.test(req.headers['user-agent'] ?? '');
+  seen.push({ url, browser: ua && owner.get(req.socket) !== false });
   if (url.startsWith('/evento?')) {
     res.writeHead(204);
     res.end();
@@ -107,6 +113,9 @@ const server = createServer((req, res) => {
 
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
+server.on('connection', (socket: Socket) => {
+  owner.set(socket, connectionFromBrowser(socket.remotePort ?? 0, port));
+});
 const base = `http://127.0.0.1:${port}`;
 
 // The agent: the candidate's BrowserService in its own process. Its standard output goes
