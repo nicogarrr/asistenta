@@ -1328,8 +1328,6 @@ export class Gate {
       case 'gestion':
       case 'windows':
       case 'ocr':
-      // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
-      case 'repartos':
       case 'cargar_herramienta':
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
@@ -1353,6 +1351,10 @@ export class Gate {
         if (['resumen', 'reglas', 'bajas', 'limpiar_vista', 'baja_vista'].includes(a)) return 'lee';
         return a === 'crear' || a === 'borrar' ? 'escribe-local' : null;
       }
+      // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
+      // «Ya lo he recogido» marca el envío como entregado en la base local.
+      case 'repartos':
+        return argString(c.args, 'recogido') ? 'escribe-local' : 'lee';
       // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
       case 'tareas':
         return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
