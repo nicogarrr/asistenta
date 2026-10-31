@@ -27,10 +27,12 @@ const Params = Type.Object({
   dia: Type.Optional(
     Type.String({
       description:
-        'apuntar/mover: «hoy», «mañana», «jueves», «jueves que viene», «5/11» or YYYY-MM-DD.',
+        'apuntar/mover: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «5/11» or YYYY-MM-DD.',
     }),
   ),
-  hora: Type.Optional(Type.String({ description: 'Optional local time HH:MM.' })),
+  hora: Type.Optional(
+    Type.String({ description: 'Optional local time: HH:MM, «5 de la tarde», «diez y media».' }),
+  ),
   semana: Type.Optional(
     Type.Union([Type.Literal('esta'), Type.Literal('proxima')], {
       description: 'ver: this week (default) or next.',
