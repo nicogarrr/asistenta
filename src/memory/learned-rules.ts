@@ -115,7 +115,7 @@ export function correctionHint(opts: {
 // LEARN_HINT la enseña entre comillas de código y el modelo a veces las copia
 // («`[[aprendido: …]]`»): se quitan con la marca, si no quedaba «``» en la respuesta.
 const MARKER =
-  /(?:`{1,3}|\*\*)?\[\[?\s*aprendido\s*:([^\]\n]{0,400})(?:\]\]?(?:`{1,3}|\*\*)?|(?=\n|$))/gi;
+  /(?:`{1,3}|\*\*)?\[\[?\s*aprendido\s*:([^\]\n]{0,2000})(?:\]\]?(?:`{1,3}|\*\*)?|(?=\n|$))/gi;
 
 /** Quita toda marca de la respuesta; devuelve la última (tema opcional). */
 export function extractLearnedMarker(reply: string): {
@@ -412,6 +412,14 @@ export function learnFromTurn(opts: {
     return {
       text,
       line: '📝 No lo aprendo: lo que toca permisos o seguridad solo lo cambias tú en la configuración.',
+      outcome,
+    };
+  }
+  if (outcome.rule.length > MAX_RULE_CHARS) {
+    // Antes se perdía sin decir nada: el dueño creía que estaba aprendida.
+    return {
+      text,
+      line: '📝 No la he guardado: es demasiado larga. Dímela más corta, en una frase.',
       outcome,
     };
   }
