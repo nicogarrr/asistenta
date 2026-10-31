@@ -13,6 +13,7 @@
  * turno no leyó contenido de fuera (taint) y la regla no toca permisos ni
  * seguridad. Una regla nunca puede dar permisos: solo endurecerlos.
  */
+import { localDay } from '../datecontext.js';
 import type { MemoryEntry, MemoryStore } from '../memory.js';
 
 export const LEARNED_TAG = 'aprendido';
@@ -291,15 +292,26 @@ export function learnFromTurn(opts: {
   return { text, line: null, outcome };
 }
 
+/** «2026-10-31» → «31/10» (este año) o «31/10/2025» (otro año); lo raro, tal cual. */
+export function shortDate(iso: string, today: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  const dm = `${Number(m[3])}/${Number(m[2])}`;
+  return m[1] === today.slice(0, 4) ? dm : `${dm}/${m[1]}`;
+}
+
 /** Texto de /aprendido. */
-export function formatLearnedRules(rules: readonly MemoryEntry[]): string {
+export function formatLearnedRules(
+  rules: readonly MemoryEntry[],
+  today: string = localDay(),
+): string {
   if (!rules.length) {
     return 'Todavía no he aprendido ninguna regla. Cuando me corrijas («no, así no», «prefiero…»), la guardo sola.';
   }
   // Todas las que se guardan (el tope): antes salían 15 de 30 y las demás, que siguen
   // entrando en los turnos, no se veían ni se podían borrar. Telegram trocea si es largo.
   const shown = rules.slice(0, MAX_LEARNED_RULES);
-  const lines = shown.map((r, i) => `${i + 1}. ${r.text} (${r.date})`);
+  const lines = shown.map((r, i) => `${i + 1}. ${r.text} (${shortDate(r.date, today)})`);
   if (rules.length > shown.length) lines.push(`… y ${rules.length - shown.length} más.`);
   return [
     '📝 Reglas aprendidas (la más reciente primero):',
