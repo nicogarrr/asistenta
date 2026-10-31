@@ -271,6 +271,7 @@ import {
 } from './command-routine.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import { installDoctorLines } from './doctor-install.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -859,7 +860,7 @@ async function vaultCommand(args: string[]): Promise<number> {
 async function doctorCommand(): Promise<number> {
   ensureDirs();
   const lines: string[] = [];
-  lines.push(`node            ${process.version}`);
+  lines.push(...installDoctorLines());
   lines.push(`state dir       ${paths.state}`);
   lines.push(
     `vault           ${vaultExists() ? 'creado' : 'FALTA (doble clic en instalar.bat, o pa vault init)'}`,

@@ -22,6 +22,8 @@ it.skipIf(process.platform !== 'linux')(
       const out = r.stdout + r.stderr;
       expect(r.status).toBe(0);
       expect(out).toMatch(/^provider key +sin poner \(/m);
+      expect(out).toMatch(/^carpeta +\S/m);
+      expect(out).toMatch(/^node +v\d+/m);
       expect(out).toMatch(/^cron +0 tarea\(s\) programada\(s\) en PA_CRON$/m);
       expect(out).toMatch(/^verify actions +(activado \(2 capturas extra|desactivado)/m);
       expect(out).toMatch(/^browser +(chromium instalado|FALTA \(ejecuta: npx playwright)/m);
