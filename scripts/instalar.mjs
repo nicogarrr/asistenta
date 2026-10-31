@@ -119,6 +119,13 @@ export async function instalar(d) {
     );
   say(`✓ Node ${d.nodeVersion}`);
 
+  // Un node.exe suelto (sin el instalador oficial) no trae npm: sin esto, «npm ci»
+  // fallaba y el mensaje hablaba de la conexión a internet.
+  if (d.npm && !(await d.npm()))
+    return fail(
+      'No encuentro npm, que viene con Node. Instala Node 24 LTS desde https://nodejs.org con el instalador oficial (trae npm) y vuelve a abrir instalar.bat.',
+    );
+
   // «Ejecutar como administrador» con un usuario sin permisos pide la cuenta de otro
   // (el administrador): la caja fuerte y los datos se guardarían en SU perfil y luego
   // levantar.bat, con tu usuario, no encontraría nada.
@@ -143,6 +150,17 @@ export async function instalar(d) {
     say(
       `⚠ Asistenta está dentro de OneDrive (${d.cwd}). OneDrive bloquea archivos mientras sincroniza y la instalación suele fallar. ${ONEDRIVE_MOVER}`,
     );
+
+  // npm ci borra node_modules antes de descargar: sin conexión, repetir la instalación
+  // rompería una que funcionaba. Se pregunta (un proxy puede engañar a esta prueba).
+  if (d.internet && !(await d.internet())) {
+    say(
+      `⚠ No llego a internet (registry.npmjs.org) y para instalar hay que descargar piezas.${d.exists('node_modules') ? ' Si sigo sin conexión, npm borrará la carpeta node_modules que ya tienes y Asistenta no arrancará hasta repetir.' : ''}`,
+    );
+    const sigo = (await d.ask('¿Pruebo igualmente? (s/n): ')).trim().toLowerCase();
+    if (!sigo.startsWith('s'))
+      return fail('Conéctate a internet y vuelve a abrir instalar.bat. No he tocado nada.');
+  }
 
   // Segunda pasada sobre una instalación en marcha: npm ci borra node_modules y Windows
   // no deja tocar archivos que Asistenta tiene abiertos (EBUSY/EPERM a mitad).
@@ -346,6 +364,18 @@ export const realDeps = {
   // `net session` solo funciona en una consola con permisos de administrador.
   elevado: async () =>
     win && spawnSync('net', ['session'], { stdio: 'ignore', windowsHide: true }).status === 0,
+  npm: async () =>
+    spawnSync('npm', ['--version'], { shell: win, stdio: 'ignore', timeout: 30_000 }).status === 0,
+  internet: async () => {
+    try {
+      const r = await fetch('https://registry.npmjs.org/-/ping', {
+        signal: AbortSignal.timeout(10_000),
+      });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  },
   readEnv: () => (existsSync('.env') ? readFileSync('.env', 'utf8') : ''),
   cli: cliWith(run),
   vaultList: async () => {
