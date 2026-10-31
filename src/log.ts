@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from './datecontext.js';
 import { paths } from './paths.js';
@@ -31,6 +31,57 @@ if (parsedLevel.invalid !== undefined) {
 }
 
 /**
+ * Tope por día del registro (log/AAAA-MM-DD.jsonl). Un bucle de errores podía
+ * llenar el disco en un solo día: la poda por antigüedad viene apagada
+ * (PA_FILE_RETENTION_DAYS=0) y no había tope de tamaño. Al llegar al tope se
+ * escribe una sola línea de aviso y el resto del día solo va a la consola.
+ */
+const DEFAULT_DAY_MAX_MB = 50;
+
+function dayMaxBytes(): number {
+  const mb = Number(process.env.PA_LOG_DAY_MAX_MB ?? DEFAULT_DAY_MAX_MB);
+  return Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024 : DEFAULT_DAY_MAX_MB * 1024 * 1024;
+}
+
+function dayCapMarker(ts: string): string {
+  return JSON.stringify({
+    ts,
+    level: 'warn',
+    msg: 'log del día lleno: no se escriben más líneas en este fichero hasta mañana',
+    maxMb: dayMaxBytes() / (1024 * 1024),
+  });
+}
+
+class DayCap {
+  #day = '';
+  #bytes = 0;
+  #full = false;
+
+  /** 'write', 'full-now' (escribe el aviso una vez) o 'skip'. */
+  room(day: string, file: string, lineBytes: number): 'write' | 'full-now' | 'skip' {
+    if (day !== this.#day) {
+      this.#day = day;
+      this.#full = false;
+      // Tras un reinicio el fichero de hoy ya puede traer bytes.
+      try {
+        this.#bytes = statSync(file).size;
+      } catch {
+        this.#bytes = 0;
+      }
+    }
+    if (this.#full) return 'skip';
+    if (this.#bytes + lineBytes > dayMaxBytes()) {
+      this.#full = true;
+      return 'full-now';
+    }
+    this.#bytes += lineBytes;
+    return 'write';
+  }
+}
+
+const dayCap = new DayCap();
+
+/**
  * JSONL to stdout plus a daily file. A daemon that only logs to stderr and
  * loses it is worse than one that has no logs; `npm`/NSSM capture both, so we
  * write both. Scrub at this final boundary too: callers may pass raw errors.
@@ -54,7 +105,10 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
   try {
     mkdirSync(paths.log, { recursive: true });
     const day = localDay();
-    appendFileSync(join(paths.log, `${day}.jsonl`), `${line}\n`);
+    const file = join(paths.log, `${day}.jsonl`);
+    const room = dayCap.room(day, file, Buffer.byteLength(line) + 1);
+    if (room === 'write') appendFileSync(file, `${line}\n`);
+    else if (room === 'full-now') appendFileSync(file, `${dayCapMarker(ts)}\n`);
   } catch {
     // Never let logging be the reason a turn dies.
   }
