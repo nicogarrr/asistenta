@@ -340,6 +340,7 @@ import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
+import { createCasaTool } from './tools/casa.js';
 import { createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import type { ActionGate } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
@@ -1988,6 +1989,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createWeatherTool(() => weatherConfigFromEnv()),
+      // Home Assistant local, solo si el dueño puso PA_HA_URL (token en el vault).
+      ...(process.env.PA_HA_URL?.trim()
+        ? [
+            createCasaTool({
+              config: async () => {
+                const token = await vaultGet('homeassistant:token');
+                const url = process.env.PA_HA_URL?.trim() ?? '';
+                return token && url ? { url, token } : null;
+              },
+            }),
+          ]
+        : []),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
       createMailRulesTool({ account: () => loadMailAccount() }),

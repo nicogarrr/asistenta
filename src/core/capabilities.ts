@@ -134,6 +134,10 @@ export const CAPABILITIES: readonly Capability[] = [
     name: 'tiempo',
     note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },
+  {
+    name: 'casa',
+    note: 'Home Assistant de la red de casa (solo con PA_HA_URL): mirar es lectura; encender o apagar pregunta siempre.',
+  },
 ];
 
 const names = (pick: (c: Capability) => boolean | undefined): string[] =>
