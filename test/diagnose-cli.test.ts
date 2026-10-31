@@ -23,7 +23,8 @@ describe('pa diagnose', () => {
       }),
     ).toBe(0);
     expect(out).toContain('no hay fichero de pid legible');
-    expect(out).toContain('no existe, el daemon no está escribiendo');
+    expect(out).toContain('no existe, Asistenta no está dando señales de vida');
+    expect(out).not.toMatch(/\bdaemon\b/);
     expect(existsSync(missing)).toBe(false);
   });
 
