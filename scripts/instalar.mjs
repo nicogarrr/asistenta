@@ -112,6 +112,20 @@ export async function instalar(d) {
     );
   say(`✓ Node ${d.nodeVersion}`);
 
+  // «Ejecutar como administrador» con un usuario sin permisos pide la cuenta de otro
+  // (el administrador): la caja fuerte y los datos se guardarían en SU perfil y luego
+  // levantar.bat, con tu usuario, no encontraría nada.
+  if (d.elevado && (await d.elevado())) {
+    say(
+      '⚠ Has abierto instalar.bat como administrador. No hace falta y, si Windows te ha pedido la contraseña de otra cuenta, las claves se guardarían en esa cuenta y no en la tuya.',
+    );
+    const sigo = (await d.ask('¿Sigo de todas formas? (s/n): ')).trim().toLowerCase();
+    if (!sigo.startsWith('s'))
+      return fail(
+        'Cierra esta ventana y abre instalar.bat con doble clic normal (sin «Ejecutar como administrador»).',
+      );
+  }
+
   const sistema = enCarpetaSistema(d.cwd, d.env);
   if (sistema)
     say(
@@ -314,6 +328,9 @@ export const realDeps = {
   run,
   exists: existsSync,
   copy: copyFileSync,
+  // `net session` solo funciona en una consola con permisos de administrador.
+  elevado: async () =>
+    win && spawnSync('net', ['session'], { stdio: 'ignore', windowsHide: true }).status === 0,
   readEnv: () => (existsSync('.env') ? readFileSync('.env', 'utf8') : ''),
   cli: cliWith(run),
   vaultList: async () => {
