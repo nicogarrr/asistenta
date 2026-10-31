@@ -161,3 +161,59 @@ export function resolveReplyCard(
 ): string | null {
   return /^responde(?:r)? a ese\s*\n/i.test(text) && replyTo ? (cards.get(replyTo) ?? null) : null;
 }
+
+export interface InboxQuery {
+  from?: string;
+  subject?: string;
+  text?: string;
+  unreadOnly?: boolean;
+  /** Only messages at or after this epoch ms. */
+  since?: number;
+}
+export interface InboxRow {
+  ref: string;
+  from: string;
+  subject: string;
+  at: number;
+  seen: boolean;
+}
+/** IMAP SEARCH criteria for the inbox list. Pure, so it is testable without a server. */
+export function inboxCriteria(query: InboxQuery): Record<string, unknown> {
+  const criteria: Record<string, unknown> = {};
+  if (query.from?.trim()) criteria.from = query.from.trim();
+  if (query.subject?.trim()) criteria.subject = query.subject.trim();
+  if (query.text?.trim()) criteria.text = query.text.trim();
+  if (query.unreadOnly) criteria.seen = false;
+  if (query.since && Number.isFinite(query.since)) criteria.since = new Date(query.since);
+  return Object.keys(criteria).length ? criteria : { all: true };
+}
+/** Read-only inbox search for the chat tool: envelopes only, newest first, refs `UIDVALIDITY:UID`. */
+export async function searchInbox(
+  account: ReadMailAccount,
+  query: InboxQuery,
+  limit = 10,
+): Promise<InboxRow[]> {
+  return withReader(account, async (client) => {
+    const box = await client.mailboxOpen('INBOX', { readOnly: true });
+    if (!box.readOnly) throw new Error('Read-only required');
+    const found = await client.search(inboxCriteria(query), { uid: true });
+    if (!Array.isArray(found)) throw new Error('Search failed');
+    const rows: InboxRow[] = [];
+    for (const uid of found.slice(-Math.max(1, Math.min(limit, 20))).reverse()) {
+      const row = await client.fetchOne(
+        String(uid),
+        { uid: true, envelope: true, flags: true },
+        { uid: true },
+      );
+      if (!row) continue;
+      rows.push({
+        ref: `${box.uidValidity}:${uid}`,
+        from: row.envelope?.from?.map((a) => a.address ?? '').join(', ') ?? '',
+        subject: row.envelope?.subject ?? '(sin asunto)',
+        at: row.envelope?.date ? new Date(row.envelope.date).getTime() : 0,
+        seen: row.flags?.has('\\Seen') ?? false,
+      });
+    }
+    return rows;
+  });
+}
