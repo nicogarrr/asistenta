@@ -746,14 +746,14 @@ function parseOne(text: string): TvIntent | null {
       '',
     );
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|pon(?:la|lo|le)? en pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|dale a la pausa|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la| el)? (?:pausa|pause)|pon(?:la|lo|le)? en pausa|(?:dale(?: al?| el| la)?|pulsa|presiona|toca)(?: (?:el )?boton(?: de)?)? (?:pausa|pause)|dale a la pausa|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
       sinTele,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
-    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|(?:dale|pon) play|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita(?:le)? la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
+    /^(?:play|(?:dale(?: al?| el)?|pon(?:le)?(?: el)?|pulsa|presiona|toca)(?: (?:el )?boton(?: de)?)? play|dale a reproducir|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita(?:le)? la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
       sinTele,
     )
   ) {
