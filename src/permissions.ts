@@ -1210,7 +1210,6 @@ export class Gate {
       case 'list':
       case 'done':
       case 'memory':
-      case 'skills':
       case 'documents':
       case 'objetivo':
       case 'gestion':
@@ -1244,6 +1243,13 @@ export class Gate {
       // salida a la red, y la puerta de exfiltración la trata como un fetch (egressUrlOf).
       case 'vigilar_precio':
         return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
+      // Habilidades: leerlas es lectura; guardar o mejorar una deja instrucciones que se
+      // seguirán en turnos futuros. Tras leer una página o un correo, eso es justo lo que
+      // pediría un texto inyectado, así que no cuenta como lectura y se pregunta.
+      case 'skills':
+        return ['list', 'read', 'search', 'suggest'].includes(argString(c.args, 'action'))
+          ? 'lee'
+          : 'escribe-local';
       default:
         return null;
     }
