@@ -11,12 +11,13 @@ import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
  */
 
 export type TaskStatus = 'pendiente' | 'en_curso' | 'hecho';
-export type TaskRepeat = 'diario' | 'laborables' | 'semanal' | 'mensual';
+export type TaskRepeat = 'diario' | 'laborables' | 'semanal' | 'quincenal' | 'mensual';
 
 export const REPEAT_LABEL: Record<TaskRepeat, string> = {
   diario: 'cada día',
   laborables: 'de lunes a viernes',
   semanal: 'cada semana',
+  quincenal: 'cada dos semanas',
   mensual: 'cada mes',
 };
 
@@ -142,7 +143,10 @@ function monthNameDay(text: string, now: Date): string | null | undefined {
   return day;
 }
 
-/** «todos los lunes», «cada día», «de lunes a viernes», «cada mes»; «no» = dejar de repetir. */
+/**
+ * «todos los lunes», «los lunes», «cada día», «de lunes a viernes», «cada dos semanas»,
+ * «cada mes»; «no» = dejar de repetir.
+ */
 export function resolveRepeat(input: string): TaskRepeat | 'no' | null {
   const t = fold(input);
   if (/^(?:no|nunca|ninguna|sin repetir|no repetir|dejar de repetir)$/.test(t)) return 'no';
@@ -151,9 +155,17 @@ export function resolveRepeat(input: string): TaskRepeat | 'no' | null {
   if (
     /^(?:semanal|cada semana|todas las semanas|(?:todos los|cada) (?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?))$/.test(
       t,
-    )
+    ) ||
+    // «los lunes» sin «todos»/«cada» (gaps9): en plural es cada semana.
+    /^los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos)$/.test(t)
   )
     return 'semanal';
+  if (
+    /^(?:quincenal|cada (?:dos|2) semanas|cada (?:quince|15) dias|(?:una )?semana si,? (?:y )?(?:otra|semana) no)$/.test(
+      t,
+    )
+  )
+    return 'quincenal';
   if (/^(?:mensual|cada mes|todos los meses)$/.test(t)) return 'mensual';
   return null;
 }
@@ -162,6 +174,7 @@ export function resolveRepeat(input: string): TaskRepeat | 'no' | null {
 export function nextOccurrence(day: string, repeat: TaskRepeat): string {
   if (repeat === 'diario') return addDays(day, 1);
   if (repeat === 'semanal') return addDays(day, 7);
+  if (repeat === 'quincenal') return addDays(day, 14);
   if (repeat === 'laborables') {
     let next = addDays(day, 1);
     while ([0, 6].includes(parseDay(next).getDay())) next = addDays(next, 1);
