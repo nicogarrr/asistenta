@@ -134,7 +134,10 @@ export const log = {
   error: (msg: string, fields: Record<string, unknown> = {}) => write('error', msg, fields),
 };
 
-const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
+const SECRET_KEY =
+  /(key|token|secret|password|passwd|passphrase|pwd|authorization|cookie|cvv|card|contrase(?:ñ|n)a|clave)/i;
+/** Nombres cortos que solo son credencial como nombre completo (`pass`, `pin`, `otp`). */
+const SECRET_EXACT_KEY = /^(?:pass|pin|otp)$/i;
 /**
  * Nombres que contienen esas letras sin ser credenciales: se tapaban y el registro
  * perdía diagnóstico (teclado de Telegram, tokens consumidos, «discard»). Lista cerrada
@@ -142,7 +145,8 @@ const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
  */
 const INNOCENT_KEY =
   /^(?:keyboards?|discard(?:ed|s)?|cardinality|(?:input|output|total|max|prompt|completion|cached|reasoning|context)[_-]?tokens|tokens?[_-]?(?:count|used|total|limit))$/i;
-const isSecretKey = (key: string): boolean => SECRET_KEY.test(key) && !INNOCENT_KEY.test(key);
+const isSecretKey = (key: string): boolean =>
+  SECRET_EXACT_KEY.test(key) || (SECRET_KEY.test(key) && !INNOCENT_KEY.test(key));
 /**
  * Para un valor del registro (mensaje o campo): un error de execFile/exec copiado a texto
  * o re-envuelto en otro Error ya no lleva `cmd`. Tras «Command failed:» va la orden (un
@@ -169,9 +173,10 @@ export function scrubLogText(text: string): string {
       // clave de Google/Gemini (`AIza…`): fuera de una URL no los tapaba nada.
       .replace(/\b\d{6,12}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
       .replace(/\bAIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
+      // También en castellano: «contraseña: …», «clave=…».
       .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.:-]+/gi, '$1 [redacted]')
       .replace(
-        /\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+        /\b(password|passwd|passphrase|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie|contrase(?:ñ|n)a|clave)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
         '$1=[redacted]',
       )
   );
