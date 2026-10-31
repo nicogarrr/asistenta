@@ -275,7 +275,10 @@ export function normaliseTime(input: string | undefined): string | undefined | n
   let min = Number(m[2] ?? '0');
   if (h > 23 || min > 59) return null;
   if (period && h > 12) return pm ? `${pad(h)}:${pad(min)}` : null;
-  if (pm && h < 12) h += 12;
+  const night = period?.[1] === 'noche' || period?.[1] === 'madrugada';
+  // «12 de la noche» / «12am» es medianoche; «la una de la noche» es la 1:00, no las 13:00.
+  if (h === 12 && (night || period?.[2] === 'a')) h = 0;
+  else if (pm && h < 12 && !(night && h <= 4)) h += 12;
   if (extra) {
     if (m[2]) return null;
     min = extra > 0 ? extra : 45;
