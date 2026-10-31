@@ -121,7 +121,7 @@ import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
-import { listReplyInbox, resolveReplyCard } from './mail/reader.js';
+import { listReplyInbox, readReplyThread, resolveReplyCard, searchInbox } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
 import { findCurlImpersonate } from './media/download.js';
@@ -339,6 +339,7 @@ import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.j
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
+import { createMailTool } from './tools/mail.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
@@ -1970,6 +1971,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
           return res.text();
         },
+      }),
+      // «correo»: el buzón de Gmail, solo lectura y solo en el chat privado del dueño.
+      createMailTool({
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        account: () => loadReadMailAccount(),
+        search: (account, query, limit) => searchInbox(account, query, limit),
+        read: (account, ref) => readReplyThread(account, ref),
       }),
       // The machine itself: volume, mute, lock, and how it is doing.
       createSystemTool(),
