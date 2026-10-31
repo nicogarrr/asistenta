@@ -241,5 +241,5 @@ function decodeSafe(s: string): string {
 
 /** El motivo que se enseña en la pregunta (la URL completa la añade el formateador). */
 export function egressTaintReason(source: string, host: string): string {
-  return `Este turno ya ha leído contenido privado (${source}) y ahora quiere enviar una petición con datos a un dominio nuevo (${host}). Revisa la URL completa: si no la esperabas, puede ser una página intentando sacar tus datos.`;
+  return `Acabo de leer contenido privado (${source}) y ahora iba a mandar datos a una web nueva (${host}). Mira la dirección completa: si no te la esperabas, puede ser una página intentando sacar tus datos.`;
 }
