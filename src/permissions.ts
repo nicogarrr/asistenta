@@ -1209,6 +1209,9 @@ export class Gate {
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
         return 'lee';
+      // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
+      case 'tareas':
+        return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
         // GET/HEAD are reads. Anything else transmits to a third party whose
@@ -2030,6 +2033,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'ocr',
   'cargar_herramienta',
   'tiempo',
+  'tareas',
   'fetch',
   'write',
   'edit',
