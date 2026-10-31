@@ -323,6 +323,22 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
               : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
           }
         }
+        // Medir también ejecuta código del intento (sus tests, la batería): el kernel tiene que
+        // seguir igual después. Primero la huella de .git, que se lee sin llamar a git.
+        if (
+          gitControlFingerprint(root) !== gitBefore ||
+          !isClean(root) ||
+          headCommit(root) !== kernel
+        ) {
+          unmeasured = true;
+          proposerDown = true;
+          verdict = {
+            kind: 'discard',
+            delta: verdict.delta,
+            reason:
+              'medir el intento cambió el árbol, la config o los hooks del kernel: no se promueve; revisa los cambios a mano',
+          };
+        }
         receiptInput.verdictReason = verdict.reason;
         archive.add({
           week,
