@@ -277,6 +277,7 @@ import {
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { installDoctorLines } from './doctor-install.js';
+import { doctorLinesEs } from './doctor-labels.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -947,7 +948,7 @@ async function doctorCommand(): Promise<number> {
     );
   }
 
-  process.stdout.write(`${lines.join('\n')}\n`);
+  process.stdout.write(`${doctorLinesEs(lines).join('\n')}\n`);
   return 0;
 }
 
