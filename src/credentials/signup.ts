@@ -1,6 +1,7 @@
 import { normalizeDomain } from '../gestor/login.js';
 import {
   type Account,
+  AvisoCuenta,
   deleteAccount,
   listAccounts,
   maskUser,
@@ -64,10 +65,11 @@ export async function prepareSignup(
   vault: VaultOps = realVault,
 ): Promise<Account> {
   const domain = normalizeDomain(site);
-  if (!domain) throw new Error('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
+  if (!domain)
+    throw new AvisoCuenta('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
   const existing = (await listAccounts(vault)).find((a) => a.domain === domain);
   if (existing?.status === 'activa') {
-    throw new Error(
+    throw new AvisoCuenta(
       `Ya tienes cuenta en ${domain} (${maskUser(existing.username)}); no creo otra.`,
     );
   }
@@ -81,9 +83,9 @@ export async function approveSignup(
   vault: VaultOps = realVault,
 ): Promise<Account> {
   const p = await pendingOf(site, vault);
-  if (!p) throw new Error('No hay ningún registro preparado para esa web.');
+  if (!p) throw new AvisoCuenta('No hay ningún registro preparado para esa web.');
   if (p.username !== correo.trim())
-    throw new Error('Ese correo no es el del registro preparado; no sigo.');
+    throw new AvisoCuenta('Ese correo no es el del registro preparado; no sigo.');
   await vault.set(
     metaKey(p.domain),
     JSON.stringify({
@@ -98,10 +100,10 @@ export async function approveSignup(
 /** La web confirmó el alta: la cuenta pasa a activa. Solo si el dueño la había aprobado. */
 export async function finishSignup(site: string, vault: VaultOps = realVault): Promise<Account> {
   const p = await pendingOf(site, vault);
-  if (!p) throw new Error('No hay ningún registro pendiente para esa web.');
+  if (!p) throw new AvisoCuenta('No hay ningún registro pendiente para esa web.');
   const meta = await rawMeta(p.domain, vault);
   if (typeof meta.approvedAt !== 'number')
-    throw new Error('Ese registro no está aprobado todavía.');
+    throw new AvisoCuenta('Ese registro no está aprobado todavía.');
   await vault.set(
     metaKey(p.domain),
     JSON.stringify({ created: p.created, notes: p.notes, status: 'activa' }),
