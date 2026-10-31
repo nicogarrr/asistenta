@@ -672,12 +672,16 @@ const APP_COLA = new RegExp(
   ` (?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|un (?:rato|ratito|momento|segundo)|en ${TV})$`,
 );
 
+/** Lo que se está viendo, no una app: «abre la peli», «abre la serie». */
+const LO_QUE_SE_VE =
+  '(?:la |una |esa |esta )?(?:peli|pelicula|serie|cancion|musica)|(?:el |un |ese |este )?(?:video|capitulo|episodio|partido|programa)';
+
 /**
  * «abre ya», «abre eso», «abre la app», «abre la tele»: no dicen qué app. Sin
  * nombre no se lanza nada (antes buscaba una app llamada «ya»); va al modelo.
  */
 const SIN_APP = new RegExp(
-  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV})$`,
+  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV}|${LO_QUE_SE_VE})$`,
 );
 
 /**
