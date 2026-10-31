@@ -774,7 +774,9 @@ describe('goal runner ticks', () => {
     await runner.tickByRoutineName(goalRoutineName(g.id));
     await runner.tickByRoutineName(goalRoutineName(g.id));
     expect(sent.length).toBe(1);
-    expect(sent[0]).toContain('provider caído');
+    // robustez-2: el error crudo ya no llega al chat; el aviso lo dice en claro.
+    expect(sent[0]).toContain('falló en su último intento');
+    expect(sent[0]).not.toContain('provider caído');
     expect(goals.read(g.id)?.status).toBe('active');
   });
 
