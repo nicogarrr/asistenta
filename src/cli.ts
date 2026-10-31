@@ -329,7 +329,7 @@ import { formatServicesList, ServiceStore } from './services/store.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
 import { detectSkillEnv } from './skills/env.js';
 import { seedGeneralSkills } from './skills/general.js';
-import { fetchSkillMarkdown, installSkill } from './skills/import.js';
+import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
@@ -5437,19 +5437,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       const md = await fetchSkillMarkdown(url);
       const meta = await installSkill(md, async (text, m) => {
-        const steps = text
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith('---') && !/^(name|description):/.test(l))
-          .slice(0, 40);
-        skills.save({
-          name: m.name,
-          description: m.description,
-          category: 'importadas',
-          whenToUse: 'Cuando la tarea encaje con la descripción de la skill.',
-          steps,
-          notes: [`Importada de ${url}`],
-        });
+        skills.save(importedSkillDraft(text, m, url, skills.read(m.id)));
       });
       await say(inbound, `Skill instalada: ${meta.name} (${meta.id}).`, { quote: true });
     } catch (err) {
