@@ -519,6 +519,7 @@ Uso:
   pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]  probar que un audio suena en la tele
   pa voice enroll|verify|list|remove  voces del hogar: enrolar, puntuar un audio, listar, borrar
   pa dictado prueba [segundos]        prueba el dictado: graba y enseña el texto, sin escribirlo
+  pa dictado tecla                    comprueba que se nota la tecla del dictado (Windows)
   pa opengym pair [url] <código>  emparejar openGym (registro del gimnasio, solo lectura)
   pa opengym status       comprobar la conexión con openGym
   pa evolve [--idea <texto>]  una vuelta de automejora sobre esta copia git (necesita PA_EVOLVE_PROPOSER)
