@@ -650,6 +650,14 @@ const APP_COLA = new RegExp(
 );
 
 /**
+ * «abre ya», «abre eso», «abre la app», «abre la tele»: no dicen qué app. Sin
+ * nombre no se lanza nada (antes buscaba una app llamada «ya»); va al modelo.
+ */
+const SIN_APP = new RegExp(
+  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV})$`,
+);
+
+/**
  * «abre youtube ya», «abre netflix, que quiero ver una peli», «abre netflix en la
  * tele un rato»: solo el nombre («youtube ya» no es ninguna app instalada).
  */
@@ -659,7 +667,7 @@ function appName(raw: string): string {
     prev = s;
     s = s.replace(APP_COLA, '').trim();
   }
-  return s;
+  return SIN_APP.test(s) ? '' : s;
 }
 
 /** Como se entendio la orden, en castellano (para confirmar al usuario). */
