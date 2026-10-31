@@ -87,13 +87,12 @@ export function runBackup(opts: {
     for (const name of readdirSync(opts.stateDir)) {
       const from = join(opts.stateDir, name);
       if (!statSync(from).isFile()) continue;
-      // pricewatch.sqlite no acababa en .db y se quedaba fuera de la copia.
+      // Las bases *.sqlite también entran (no todas acaban en .db).
       if (name.endsWith('.db') || name.endsWith('.sqlite')) {
         copyDb(from, join(tmp, name));
         databases.push(name);
       } else if (name.endsWith('.json') || ROOT_FILES.has(name)) {
-        // Configuración que solo existe aquí: pricewatch.json (tus alertas de
-        // precio), routine-delivery.json...
+        // Configuración que solo existe aquí: routine-delivery.json, modelos.json...
         cpSync(from, join(tmp, name));
       }
     }

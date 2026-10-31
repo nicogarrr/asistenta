@@ -13,7 +13,7 @@
  *   completo (hash).
  * - En fichas de las 7 tiendas del vigilante (Amazon.es, MediaMarkt, PcComponentes,
  *   Carrefour, El Corte Inglés, Fnac, Worten) la lectura es estructurada: el MISMO
- *   extractor con consenso de pricewatch (JSON-LD/meta/selectores). Si las fuentes
+ *   extractor con consenso de price-extract (JSON-LD/meta/selectores). Si las fuentes
  *   discrepan, la página muestra un captcha o no hay precio claro, la lectura es
  *   "no se pudo comprobar": cuenta como fallo, nunca se inventa un número.
  * - Cada lectura fiable se guarda en `watch_readings` (histórico propio, retención de
@@ -38,7 +38,7 @@ import {
   parseMachinePrice,
   STORES,
   type StoreId,
-} from './pricewatch.js';
+} from './price-extract.js';
 
 export interface PageWatch {
   id: string;
@@ -519,7 +519,7 @@ export class PageWatchStore {
    * Lee la página, compara con la referencia y la actualiza. No lanza: devuelve el resultado.
    * `fetchHtml` (opcional) devuelve el HTML crudo; se usa solo en fichas de las 7 tiendas
    * del vigilante, donde la lectura es estructurada con el extractor de consenso de
-   * pricewatch. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
+   * price-extract. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
    */
   async check(
     w: PageWatch,

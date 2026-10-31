@@ -54,7 +54,6 @@ describe('pa vigilancias: ojo de águila (pantalla y descargas)', () => {
     const { entries, errors } = collectWatches({
       stateDir: dir,
       agentDb: join(dir, 'no-existe.db'),
-      priceConfig: join(dir, 'no-existe.json'),
     });
     expect(errors).toEqual([]);
     const ojo = entries.filter((e) => e.kind === 'ojo').map((e) => [e.id, e.enabled]);
