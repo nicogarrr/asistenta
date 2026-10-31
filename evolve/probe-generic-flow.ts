@@ -22,7 +22,8 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connectionOwner, countsAsBrowser, ownerLookupWorks } from './probe-owner.js';
+import { countsAsBrowser, ownerLookupWorks } from './probe-owner.js';
+import { connectionOwnerAny } from './probe-owner-os.js';
 import { pngColourShare, type Rgb } from './probe-png.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
@@ -40,11 +41,11 @@ const page = (body: string) =>
 // El User-Agent se puede imitar desde el código del intento; en Linux además se mira qué
 // proceso abrió la conexión, y si no es un navegador no cuenta.
 const seen: Array<{ url: string; browser: boolean; outsider: boolean }> = [];
-const owner = new WeakMap<Socket, boolean | null>();
-const server = createServer((req, res) => {
+const owner = new WeakMap<Socket, Promise<boolean | null>>();
+const server = createServer(async (req, res) => {
   const url = req.url ?? '/';
   const ua = /Mozilla\//.test(req.headers['user-agent'] ?? '');
-  const who = owner.get(req.socket);
+  const who = await owner.get(req.socket);
   seen.push({ url, browser: countsAsBrowser(ua, who, lookupWorks), outsider: who === false });
   if (url.startsWith('/evento?')) {
     res.writeHead(204);
@@ -121,7 +122,9 @@ const server = createServer((req, res) => {
 
 // Si el sistema sabe decir de quién es una conexión, solo cuenta la que se demuestra del
 // navegador; una cuyo dueño ya no está (abre, escribe y se cierra) no demuestra nada.
-const lookupWorks = await ownerLookupWorks();
+const lookupWorks = await ownerLookupWorks(
+  async (c, s) => (await connectionOwnerAny(c, s)).browser,
+);
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
 // Un solo navegador, el que lanzó el agente: si habla un segundo (lanzado aparte por el
@@ -129,13 +132,20 @@ const port = (server.address() as { port: number }).port;
 const roots = new Set<number>();
 let firstRoot: number | undefined;
 server.on('connection', (socket: Socket) => {
-  const v = connectionOwner(socket.remotePort ?? 0, port, { agentPid: agent.pid });
-  if (v.browser && v.root !== undefined) {
-    firstRoot ??= v.root;
-    roots.add(v.root);
-    if (v.root !== firstRoot) v.browser = false;
-  }
-  owner.set(socket, v.browser);
+  owner.set(
+    socket,
+    connectionOwnerAny(socket.remotePort ?? 0, port, { agentPid: agent.pid }).then(
+      (v) => {
+        if (v.browser && v.root !== undefined) {
+          firstRoot ??= v.root;
+          roots.add(v.root);
+          if (v.root !== firstRoot) return false;
+        }
+        return v.browser;
+      },
+      () => null,
+    ),
+  );
 });
 const base = `http://127.0.0.1:${port}`;
 
