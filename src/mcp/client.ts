@@ -360,6 +360,23 @@ export function parseMcpServers(raw: string | undefined): McpServerConfig[] {
 }
 
 /**
+ * Línea en castellano llano cuando no arranca un servidor MCP. Sin el texto
+ * crudo del sistema (va al log): solo qué pasa y qué hacer.
+ */
+export function mcpStartFailureText(name: string, command: string, error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  const program = command.trim().split(/\s+/)[0] ?? command;
+  const head = `No se pudo arrancar el servidor MCP "${name}"`;
+  if (code === 'ENOENT') {
+    return `${head}: no encuentro el programa «${program}». Revisa que esté instalado o corrige PA_MCP_SERVERS.`;
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return `${head}: no hay permiso para ejecutar «${program}».`;
+  }
+  return `${head}. Revisa su configuración en PA_MCP_SERVERS.`;
+}
+
+/**
  * Cliente de un servidor MCP local.
  *
  * `start()` hace el handshake y deja el proceso listo; los metodos publicos
@@ -677,9 +694,9 @@ export class McpClient {
     });
     child.on('error', (error) => {
       if (this.#child !== child) return;
-      this.#fail(
-        new Error(`No se pudo arrancar el servidor MCP "${this.#config.name}": ${error.message}`),
-      );
+      // El error crudo (spawn ENOENT, rutas…) solo al log; al modelo, una línea clara.
+      log.warn('No arranca el servidor MCP', { server: this.#config.name, err: error.message });
+      this.#fail(new Error(mcpStartFailureText(this.#config.name, this.#config.command, error)));
     });
     child.on('exit', (code, signal) => {
       if (this.#closed || this.#child !== child) return;
@@ -688,8 +705,12 @@ export class McpClient {
     });
     child.stdin.on('error', (error) => {
       if (this.#child !== child) return;
+      log.warn('Se cortó la entrada del servidor MCP', {
+        server: this.#config.name,
+        err: error.message,
+      });
       this.#fail(
-        new Error(`Se perdio la entrada del servidor MCP "${this.#config.name}": ${error.message}`),
+        new Error(`Se ha perdido la conexión con el servidor MCP "${this.#config.name}".`),
       );
     });
   }
