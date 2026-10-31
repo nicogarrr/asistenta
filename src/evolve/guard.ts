@@ -213,6 +213,14 @@ export function checkPatch(diff: string): Violation[] {
     for (const [re, rule] of RELAX_PATTERNS)
       if (re.test(line)) v.push({ file: '(contenido)', rule: `${rule}: ${line.slice(0, 80)}` });
   }
+  // Un repo git anidado entra como enlace (modo 160000): sus ficheros se miden desde el disco,
+  // pero el diff solo trae «Subproject commit», así que el guard no vería su contenido.
+  if (/^(new file mode|old mode|new mode|deleted file mode|index \S+) 160000$/m.test(diff)) {
+    v.push({
+      file: '(submódulo)',
+      rule: 'añade un repositorio git anidado: su contenido se mediría sin revisarse',
+    });
+  }
   // Borrar tests tambien es cambiar la regla de medir.
   if (/^deleted file mode/m.test(diff) && /^diff --git "?a\/test\//m.test(diff)) {
     v.push({ file: 'test/', rule: 'borra tests' });
