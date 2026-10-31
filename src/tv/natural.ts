@@ -357,7 +357,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Estado: preguntas, no ordenes.
   if (
     new RegExp(
-      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV})\\b`,
+      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV}|^(?:a )?que volumen (?:tiene|esta|hay|lleva)|^que canal (?:tiene|esta|hay)(?: puesto)?)\\b`,
     ).test(t)
   ) {
     return { action: 'status' };
@@ -372,6 +372,9 @@ export function parseTvCommand(text: string): TvIntent | null {
     return { action: 'mute', on: false };
   }
   if (
+    /^(?:(?:pon|ponla|ponlo|deja|dejala|dejalo)(?: la tele| la tv)? )?sin (?:sonido|voz)$/.test(
+      t,
+    ) ||
     /\b(?:silencia|silencio|mutea|mute|calla)\b|\b(?:apaga|quita|quitale|quitalo) (?:el )?(?:sonido|audio|volumen)\b/.test(
       t,
     )
@@ -453,7 +456,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Volumen absoluto: "volumen a 20", "pon el volumen al 15", "baja el volumen a 10".
   m =
     new RegExp(`\\bvolumen (?:a|al|en|hasta(?: el)?) (\\d{1,3}|[a-z]+${Y_UNIT})\\b`).exec(t) ??
-    /^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\d{1,3})$/.exec(t) ??
+    new RegExp(`^(?:(?:pon|ponme|deja)(?: el)? )?volumen (\\d{1,3}|[a-z]+${Y_UNIT})$`).exec(t) ??
     // «sube a 30», «baja a 10», «pon la tele a 15», «ponla a 20», «déjala a 12».
     new RegExp(
       `^(?:(?:sube(?:le|lo|la)?|baja(?:le|lo|la)?)(?: el volumen)?|(?:pon(?:me)?|deja)(?:lo|la)?(?: ${TV})?) (?:a|al|hasta(?: el)?) (\\d{1,3}|[a-z]+${Y_UNIT})$`,
@@ -490,7 +493,7 @@ export function parseTvCommand(text: string): TvIntent | null {
   // La cantidad puede ir antes de «el volumen»: «baja un poco mas el volumen»,
   // «subele un poco al volumen», «baja dos el volumen».
   m = new RegExp(
-    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| mas| (\\d{1,2}|[a-z]+${Y_UNIT})(?: puntos?| puntitos?| niveles?| veces| vez)?| (un par)(?: de (?:puntos?|puntitos?|niveles?|veces))?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV})?$`,
+    `^(sube|subele|subelo|subela|baja|bajale|bajalo|bajala)(?: el)?(?: volumen)?(?: un (?:poco|poquito|poquitin|pelin|pelito)(?: mas)?| mas| (\\d{1,2}|(?!(?:de|la|el|a|ya|ahora)\\b)[a-z]+${Y_UNIT})(?: puntos?| puntitos?| niveles?| veces| vez)?| (un par)(?: de (?:puntos?|puntitos?|niveles?|veces))?)?(?: (?:el|al) volumen)?(?: (?:a|de) ${TV}| (?:la |el )?(?:tele|tv|television|televisor))?${YA}$`,
   ).exec(t);
   if (m?.[1]) {
     // «un par (de puntos)»: 2.
@@ -522,14 +525,16 @@ export function parseTvCommand(text: string): TvIntent | null {
   // Canales.
   if (/^cambia (?:de|el) canal$/.test(t)) return { action: 'channel', channel: 'up' };
   if (
-    /\b(?:siguiente canal|canal siguiente|sube (?:de |el )?canal|canal arriba|canal mas|otro canal)\b/.test(
+    /\b(?:siguiente canal|canal siguiente|sube (?:de |el |un )?canal|canal arriba|canal mas|otro canal)\b/.test(
       t,
     )
   ) {
     return { action: 'channel', channel: 'up' };
   }
   if (
-    /\b(?:canal anterior|anterior canal|baja (?:de |el )?canal|canal abajo|canal menos)\b/.test(t)
+    /\b(?:canal anterior|anterior canal|baja (?:de |el |un )?canal|canal abajo|canal menos)\b/.test(
+      t,
+    )
   ) {
     return { action: 'channel', channel: 'down' };
   }
@@ -565,16 +570,18 @@ export function parseTvCommand(text: string): TvIntent | null {
   if (new RegExp(`^(?:rebobina|retrocede|atrasa)${QUE}$`).test(t)) {
     return { action: 'media', command: 'rewind' };
   }
+  // «pausa la tele», «reanuda la tv», «quita la pausa a la tele»: la tele dicha al final.
+  const sinTele = t.replace(new RegExp(` (?:(?:a|de) )?${TV}${YA}$`), '');
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
-      t,
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
+      sinTele,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
     /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|(?:dale|pon) play|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
-      t,
+      sinTele,
     )
   ) {
     return { action: 'media', command: 'play' };
