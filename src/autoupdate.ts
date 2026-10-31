@@ -101,16 +101,54 @@ export function autoupdateDue(state: AutoupdateState, now: number, intervalMin: 
   return Number.isNaN(last) || now - last >= intervalMin * 60_000 || last > now;
 }
 
-export function lockHeld(stateDir: string, now: number = Date.now()): boolean {
+/** ¿Sigue vivo el proceso? `kill(pid, 0)` no envía nada: solo pregunta (EPERM = vive, de otro usuario). */
+export function pidAlive(pid: number): boolean {
   try {
-    return now - statSync(join(dir(stateDir), AUTOUPDATE_LOCK_FILE)).mtimeMs < LOCK_STALE_MS;
-  } catch {
-    return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
+/**
+ * ¿Hay una actualización en curso? Un candado caducado no cuenta, y tampoco uno cuyo
+ * proceso ya no existe: tras apagar o reiniciar el PC a mitad de actualizar, el candado
+ * se quedaba ahí y el vigilante no arrancaba Asistenta («actualizando») hasta 45 min.
+ */
+export function lockHeld(
+  stateDir: string,
+  now: number = Date.now(),
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
+  const file = join(dir(stateDir), AUTOUPDATE_LOCK_FILE);
+  try {
+    if (now - statSync(file).mtimeMs >= LOCK_STALE_MS) return false;
+  } catch {
+    return false;
+  }
+  try {
+    const pid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: unknown }).pid;
+    if (
+      typeof pid === 'number' &&
+      Number.isInteger(pid) &&
+      pid > 0 &&
+      pid !== process.pid &&
+      !alive(pid)
+    )
+      return false;
+  } catch {
+    // Recién creado y aún vacío, o ilegible: se respeta mientras no caduque.
+  }
+  return true;
+}
+
 /** Candado exclusivo (O_EXCL): dos revisiones nunca se pisan. Uno caducado se reemplaza. */
-export function tryLock(stateDir: string, now: number = Date.now()): boolean {
+export function tryLock(
+  stateDir: string,
+  now: number = Date.now(),
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
   const file = join(dir(stateDir), AUTOUPDATE_LOCK_FILE);
   for (let i = 0; i < 2; i++) {
     try {
@@ -119,7 +157,7 @@ export function tryLock(stateDir: string, now: number = Date.now()): boolean {
       writeFileSync(file, JSON.stringify({ pid: process.pid, at: new Date(now).toISOString() }));
       return true;
     } catch {
-      if (lockHeld(stateDir, now)) return false;
+      if (lockHeld(stateDir, now, alive)) return false;
       rmSync(file, { force: true });
     }
   }
