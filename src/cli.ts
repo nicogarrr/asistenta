@@ -514,6 +514,7 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
+import { cliFatalMessage, unknownCommandMessage } from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
   commandRoutineTag,
@@ -718,10 +719,11 @@ export async function main(argv: string[]): Promise<number> {
     case '--help':
     case '-h':
     case 'help':
+    case 'ayuda':
       process.stdout.write(USAGE);
       return 0;
     default:
-      process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
+      process.stderr.write(unknownCommandMessage(command));
       return 2;
   }
 }
@@ -7921,7 +7923,7 @@ if (isEntrypoint()) {
     })
     .catch((err) => {
       log.error('fatal', { err });
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`${cliFatalMessage(err)}\n`);
       process.exitCode = 1;
     });
 }
