@@ -54,7 +54,7 @@ const Params = Type.Object({
   repetir: Type.Optional(
     Type.String({
       description:
-        'apuntar/repetir: «todos los lunes», «cada día», «de lunes a viernes», «cada mes»; «no» stops it.',
+        'apuntar/repetir: «todos los lunes», «los lunes», «cada día», «de lunes a viernes», «cada dos semanas», «cada mes»; «no» stops it.',
     }),
   ),
 });
@@ -282,7 +282,7 @@ function pick(
 }
 
 function repeatHelp(said: string | undefined): string {
-  return `No entiendo cada cuánto «${said ?? ''}». Dime «cada día», «todos los lunes», «de lunes a viernes» o «cada mes».`;
+  return `No entiendo cada cuánto «${said ?? ''}». Dime «cada día», «todos los lunes», «de lunes a viernes», «cada dos semanas» o «cada mes».`;
 }
 
 /** «Pasa lo atrasado a hoy»: todas las pendientes de días pasados, al día pedido. */
