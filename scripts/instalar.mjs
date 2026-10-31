@@ -205,13 +205,23 @@ function ask(question, { secret = false } = {}) {
 }
 
 const win = process.platform === 'win32';
-const run = (cmd, args) =>
-  new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: 'inherit', shell: win });
-    p.on('error', () => resolve(1));
-    p.on('close', (code) => resolve(code ?? 1));
-  });
+// `shell` solo hace falta para npm (npm.cmd en Windows). Con shell, una ruta con
+// espacios sin comillas se rompe: «C:\Program Files\nodejs\node.exe» → «'C:\Program'
+// no se reconoce…». Por eso node (process.execPath) va siempre sin shell.
+export const makeRun =
+  (spawnFn = spawn, isWin = win) =>
+  (cmd, args, { shell = isWin } = {}) =>
+    new Promise((resolve) => {
+      const p = spawnFn(cmd, args, { stdio: 'inherit', shell });
+      p.on('error', () => resolve(1));
+      p.on('close', (code) => resolve(code ?? 1));
+    });
+const run = makeRun();
 const cliArgs = (args) => ['dist/cli.js', ...args];
+export const cliWith =
+  (runFn, exe = process.execPath) =>
+  (args) =>
+    runFn(exe, cliArgs(args), { shell: false });
 
 export const realDeps = {
   nodeVersion: process.version,
@@ -220,7 +230,7 @@ export const realDeps = {
   exists: existsSync,
   copy: copyFileSync,
   readEnv: () => (existsSync('.env') ? readFileSync('.env', 'utf8') : ''),
-  cli: (args) => run(process.execPath, cliArgs(args)),
+  cli: cliWith(run),
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
     return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : null;
