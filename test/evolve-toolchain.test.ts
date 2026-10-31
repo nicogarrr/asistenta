@@ -78,3 +78,18 @@ describe('la huella de Node y npm fuera de la copia', () => {
     expect(t.fp()).not.toBe(mid);
   });
 });
+
+describe('el shell que usa npx también cuenta', () => {
+  it('un sh puesto antes en el PATH cambia la huella', () => {
+    const t = fakeNode();
+    const before = t.fp();
+    writeFileSync(join(t.early, 'sh'), '#!/bin/bash\nexec /bin/sh "$@"');
+    expect(t.fp()).not.toBe(before);
+  });
+  it('en Windows, un cmd.exe puesto antes en el PATH cambia la huella', () => {
+    const t = fakeNode(true);
+    const before = t.fp();
+    writeFileSync(join(t.early, 'cmd.exe'), 'MZ');
+    expect(t.fp()).not.toBe(before);
+  });
+});
