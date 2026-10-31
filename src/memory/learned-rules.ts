@@ -276,12 +276,20 @@ const IRREGULAR: ReadonlyArray<readonly [RegExp, string]> = [
   [new RegExp(`^(?:sal${PRON}|salg${SUBJ}|salir)$`), 'sal'],
 ];
 
+// «Avísame», «llámame», «escríbeme»: el pronombre pegado escondía el verbo («avisam» ≠
+// «avis» de «no me avises»). Se quita si delante queda un imperativo (acaba en a/e/i).
+const ENCLITIC = /^(.{3,}?[aei])(?:me|te|se|nos|lo|la|los|las|le|les){1,2}$/;
+
+function enclitic(w: string): string {
+  return ENCLITIC.exec(w)?.[1] ?? w;
+}
+
 function stems(text: string): Set<string> {
   const out = new Set<string>();
   for (const w of canon(text).split(/[^a-z0-9]+/)) {
     const irregular = IRREGULAR.find(([re]) => re.test(w));
     if (irregular) out.add(irregular[1]);
-    else if (w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w)) out.add(stem(w));
+    else if (w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w)) out.add(stem(enclitic(w)));
   }
   return out;
 }
