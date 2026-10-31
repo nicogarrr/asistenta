@@ -1167,6 +1167,17 @@ export class Gate {
     this.#taint.set(sessionId, { source: source || 'contenido externo', at: now });
   }
 
+  /**
+   * Texto de fuera que entra en el turno sin pasar por una herramienta (el cuerpo del
+   * correo que inicia un turno del canal de correo): se apunta igual que lo leído con
+   * una herramienta, para que un recuerdo o recordatorio que lo copie pregunte
+   * (ver #memoryEchoAsk). Solo endurece.
+   */
+  recordExternalText(sessionId: string, text: string): void {
+    if (!this.#taintGate || !text) return;
+    addEchoGrams(this.#externalGrams, sessionId, text, EXTERNAL_MAX_GRAMS);
+  }
+
   /** A new message from the owner starts clean: the taint ends with the turn that read it. */
   clearTaint(sessionId: string): void {
     this.#taint.delete(sessionId);

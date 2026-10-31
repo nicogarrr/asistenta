@@ -5853,7 +5853,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     thread.gate.clearTaint(thread.key);
     // F10: un turno que entra por correo es contenido externo: lo que no sea lectura pregunta.
     // También privado: el cuerpo del correo es de tu buzón y entra sin herramienta.
-    if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key);
+    if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key, inbound.text);
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still

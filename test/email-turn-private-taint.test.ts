@@ -42,6 +42,6 @@ describe('turno que entra por correo (F10): externo y privado', () => {
 
   it('el daemon lo usa para los turnos del canal de correo', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/EMAIL_CHANNEL\) taintEmailTurn\(thread\.gate, thread\.key\)/);
+    expect(src).toMatch(/EMAIL_CHANNEL\) taintEmailTurn\(thread\.gate, thread\.key[,)]/);
   });
 });
