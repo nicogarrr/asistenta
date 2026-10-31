@@ -1754,7 +1754,7 @@ ${renderFormatScript()}
         try {
           ambitos = await pedir('/api/memory/scopes');
         } catch (error) {
-          return;
+          return false;
         }
         // Sin ámbito, /api/memory lee el ámbito por defecto (el privado del dueño si
         // está configurado): la primera opción lo dice en vez de «Local».
@@ -1763,7 +1763,7 @@ ${renderFormatScript()}
           porDefecto = typeof ambitos.porDefecto === 'string' ? ambitos.porDefecto : '';
           ambitos = ambitos.ambitos;
         }
-        if (!Array.isArray(ambitos)) return;
+        if (!Array.isArray(ambitos)) return false;
         var elegido = lista.value;
         var opciones = [nodo('option', null, formato.etiquetaAmbitoPorDefecto(porDefecto))];
         opciones[0].value = '';
@@ -1776,6 +1776,8 @@ ${renderFormatScript()}
         lista.replaceChildren.apply(lista, opciones);
         lista.value = elegido;
         if (lista.value !== elegido) lista.value = '';
+        // «Actualizar» cuenta como sección sin cargar todo lo que no devuelva true.
+        return true;
       }
 
       var formularioChat = document.getElementById('form-chat');
