@@ -78,7 +78,7 @@ it(
       env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('cierre limpio confirmado');
+    expect(result.stdout).toContain('Asistenta parada');
     if (child.exitCode === null) await new Promise((r) => child.once('exit', r));
     expect(child.exitCode).toBe(0);
   },
