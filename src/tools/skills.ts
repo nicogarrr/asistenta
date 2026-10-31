@@ -30,10 +30,14 @@ const SkillsParams = Type.Object({
     Type.Literal('improve'),
     Type.Literal('search'),
     Type.Literal('suggest'),
+    Type.Literal('disable'),
+    Type.Literal('enable'),
+    Type.Literal('remove'),
   ]),
   id: Type.Optional(
     Type.String({
-      description: 'For read and improve: the skill id (the slug of its name, see list).',
+      description:
+        'For read, improve, disable, enable and remove: the skill id (the slug of its name, see list).',
     }),
   ),
   name: Type.Optional(
@@ -65,6 +69,23 @@ const SkillsParams = Type.Object({
         description: 'For save: one imperative line per step, in the order that worked.',
       }),
     ),
+  ),
+  outward: Type.Optional(
+    Type.Boolean({
+      description:
+        'For save: true if following it sends, books, buys, posts or switches something outside (default true when unsure). Permissions still ask as always.',
+    }),
+  ),
+  needs: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          'For save: what must be set up, e.g. correo, calendario, navegador, contactos, casa, notas-voz.',
+      }),
+    ),
+  ),
+  tool: Type.Optional(
+    Type.String({ description: 'For save: the factory tool it relies on (fab_<id>), if any.' }),
   ),
   newSteps: Type.Optional(
     Type.Array(
@@ -124,6 +145,11 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
       'it deserves to become a skill, with a draft ready to save. Call suggest right after a',
       'complex, novel task succeeded (several different tools, an outcome the user may ask',
       'for again); if it reports worth=true, follow with action=save using its draft.',
+      'When the owner asks for a new ability ("quiero que puedas…"), save it as a skill with',
+      'outward=true unless it only reads, plus needs and tool if any.',
+      'action=disable when the owner says to drop one ("quita la de X"); action=enable brings it',
+      'back; action=remove only when the owner explicitly asks to delete it (it goes to a',
+      'recoverable trash). Disabled skills are not followed.',
     ].join('\n'),
     parameters: SkillsParams,
     executionMode: 'sequential',
@@ -144,7 +170,7 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
                 text: skills
                   .map(
                     (skill) =>
-                      `- ${skill.id} (v${skill.version}): ${skill.name} -> ${skill.whenToUse}`,
+                      `- ${skill.id} (v${skill.version}${skill.disabled ? ', desactivada' : ''}${skill.outward ? ', pide permiso' : ''}): ${skill.name} -> ${skill.whenToUse}`,
                   )
                   .join('\n'),
               },
@@ -183,6 +209,10 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
             category: String(args.category ?? '').trim(),
             whenToUse,
             steps,
+            // Ante la duda, pide permiso: solo un false explícito lo quita.
+            outward: args.outward !== false,
+            needs: (args.needs ?? []).map((need) => String(need)),
+            ...(args.tool ? { tool: String(args.tool) } : {}),
           });
           return {
             content: [
@@ -208,6 +238,26 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
               },
             ],
             details: { id, version: store.read(id)?.version ?? 1, steps: newSteps },
+          };
+        }
+
+        case 'disable':
+        case 'enable':
+        case 'remove': {
+          const id = String(args.id ?? '').trim();
+          if (!id) throw new Error(`la acción ${args.action} necesita id`);
+          const ok =
+            args.action === 'remove'
+              ? store.remove(id)
+              : store.setDisabled(id, args.action === 'disable');
+          const done = {
+            disable: `Hecho, ya no uso «${id}». Si la quieres de vuelta, dímelo.`,
+            enable: `Hecho, vuelvo a usar «${id}».`,
+            remove: `Borrada «${id}». Queda en la papelera de habilidades por si acaso.`,
+          }[args.action];
+          return {
+            content: [{ type: 'text', text: ok ? done : `No tengo ninguna habilidad «${id}».` }],
+            details: { id, action: args.action, found: ok },
           };
         }
 
