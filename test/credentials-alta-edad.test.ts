@@ -76,7 +76,7 @@ describe('altas a medias: cuánto llevan así', () => {
     const all = lines.join('\n');
     expect(all).toMatch(/wallapop\.es .*\(sin terminar, de hace 10 días\)/);
     expect(all).toMatch(/vinted\.es .*\(sin terminar, de hace 2 días\)/);
-    expect(all).toMatch(/pídeme en el chat «descarta lo de wallapop\.es»/);
+    expect(all).toMatch(/escribe pa cuentas descartar wallapop\.es/);
     expect(all).not.toMatch(/vinted\.es» y la quito/);
     expect([...v.m.keys()].filter((k) => k.startsWith('cuenta:')).length).toBe(2);
   });
