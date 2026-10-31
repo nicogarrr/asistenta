@@ -110,6 +110,21 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Cómo lanzar un comando del operador (PA_EVOLVE_PROPOSER, PA_EVOLVE_BATTERY). En Windows un
+ * .cmd/.bat sin shell da EINVAL (Node 18.20/20.12+), igual que npx en #1253: se lanza con
+ * shell y la ruta entre comillas (puede tener espacios). Una ruta con comillas o % se rechaza:
+ * cmd.exe la reinterpretaría. Sin argumentos extra: la shell no recibe nada más.
+ */
+export function operatorCommand(
+  cmd: string,
+  platform: NodeJS.Platform = process.platform,
+): { file: string; shell: boolean } {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(cmd)) return { file: cmd, shell: false };
+  if (/["%]/.test(cmd)) throw new Error(`Ruta de comando no válida para cmd.exe: ${cmd}`);
+  return { file: `"${cmd}"`, shell: true };
+}
+
 export function proposerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): EvolveOptions['propose'] | null {
@@ -117,11 +132,12 @@ export function proposerFromEnv(
   if (!cmd) return null;
   return (dir, hypothesis, attempt) =>
     withTempHome(async (home) => {
-      await exec(cmd, [], {
+      const run = operatorCommand(cmd);
+      await exec(run.file, [], {
         cwd: dir,
         timeout: 30 * 60_000,
         windowsHide: true,
-        shell: false,
+        shell: run.shell,
         env: {
           ...proposerEnv(env, home),
           PA_EVOLVE_DIR: dir,
@@ -255,7 +271,10 @@ export function batteryRunnerFromEnv(
 ): BatteryRunner | null {
   const raw = env.PA_EVOLVE_BATTERY?.trim() ?? '';
   if (/^(off|0|no|false)$/i.test(raw)) return null;
-  const [file, args] = raw ? [raw, [] as string[]] : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
+  const custom = raw ? operatorCommand(raw) : null;
+  const [file, args] = custom
+    ? [custom.file, [] as string[]]
+    : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
   return async (c, cwd) => {
     // Solo el evaluador del repo recibe la clave: es el que usa el almacén por variables.
     const key = raw ? {} : await modelKeyEnv(env, deps);
@@ -264,7 +283,7 @@ export function batteryRunnerFromEnv(
         cwd,
         timeout: 10 * 60_000,
         windowsHide: true,
-        shell: false,
+        shell: custom?.shell ?? false,
         maxBuffer: 4 * 1024 * 1024,
         env: { ...proposerEnv(env, home), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
       }),
