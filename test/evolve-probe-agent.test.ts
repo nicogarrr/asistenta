@@ -41,6 +41,31 @@ export class BrowserService {
 }
 `;
 
+// Un intento que además imita al navegador: él mismo pide al servidor de la sonda las rutas
+// y los avisos que mandaría la página, con un User-Agent de navegador. Antes eran 10 PASA.
+const IMPOSTOR = `
+let base = '';
+const ua = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0' };
+const hit = (p: string) => fetch(base + p, { headers: ua }).then((r) => r.text()).catch(() => '');
+export class BrowserService {
+  constructor(_o: unknown) {}
+  async open(_s: string, url: string) {
+    base = new URL(url).origin;
+    await hit(new URL(url).pathname);
+    await hit('/');
+    return { url: base + '/', status: 404 };
+  }
+  async snapshot() { return 'Origen: sugerencias abiertas'; }
+  async execJs() {
+    for (const q of ['foco=o', 'panel=o', 'c=o&v=Sevilla', 'foco=d', 'panel=d', 'c=d&v=Malaga&go=1'])
+      await hit('/evento?' + q);
+    return { text: 'ok Sevilla goDisabled: false' };
+  }
+  async screenshot() { return { data: 'x'.repeat(5000) }; }
+  async closeAll() {}
+}
+`;
+
 async function runProbe(service: string) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
   dirs.push(dir);
@@ -89,4 +114,24 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
     expect(r.stdout).not.toMatch(/FLUJO GENERICO OK/);
     expect(r.code).toBe(1);
   }, 180_000);
+  it.runIf(process.platform === 'linux')(
+    'un intento que imita al navegador desde su propio proceso no cuenta como navegador',
+    async () => {
+      const r = await runProbe(IMPOSTOR);
+      for (const label of [
+        'la URL adivinada con 404 no quema el turno',
+        'el campo recibe foco',
+        'el desplegable se abre tras la latencia real',
+        'las sugerencias tardias se leen y se eligen',
+        'el valor del campo se puede releer',
+        'el segundo desplegable tambien funciona',
+        'el boton se habilita solo cuando ambos campos estan puestos',
+      ]) {
+        expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
+      }
+      expect(r.stdout).not.toMatch(/FLUJO GENERICO OK/);
+      expect(r.code).toBe(1);
+    },
+    180_000,
+  );
 });
