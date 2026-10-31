@@ -76,6 +76,11 @@ export interface AgentRunResult {
 export interface RunHooks {
   onToolCall?: (info: { tool: string; summary: string; count: number }) => void;
   /**
+   * Fin de una herramienta: si salió bien y si fue el control de permisos quien la
+   * paró (eso no es un fallo de la herramienta). Sin argumentos ni salida.
+   */
+  onToolEnd?: (info: { tool: string; ok: boolean; blocked: boolean }) => void;
+  /**
    * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
    * el mismo orden en que llega y sin acumular ni trocear. Un delta vacio o
    * ausente se ignora. Si el callback lanza, se registra y el turno continua.
@@ -1307,6 +1312,13 @@ export class PersonalAgent {
         const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
         if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
           shared.steps.push({ tool: event.toolName, action, ok: !event.isError });
+        }
+        if (hooks?.onToolEnd) {
+          try {
+            hooks.onToolEnd({ tool: event.toolName, ok: !event.isError, blocked: gateBlocked });
+          } catch (err) {
+            log.warn('tool end hook failed', { err: String(err) });
+          }
         }
         if (event.isError) {
           // A gate refusal and a tool that ran and failed are different failures

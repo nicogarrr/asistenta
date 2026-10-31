@@ -136,3 +136,68 @@ export class TurnAck {
     return true;
   }
 }
+
+/** Lo que se nombra cuando una herramienta falla: «con tu correo», «con la web». */
+const TASK_NOUNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/correo|mail/, 'tu correo'],
+  [/^(?:agenda|calendar|tareas|reminder|objetivo)$/, 'tu agenda'],
+  [/^(?:browser|fetch|web|download)$/, 'la web'],
+  [/^(?:computer|windows|ocr|ocr_local|system|shell)$/, 'el ordenador'],
+  [/^tv$/, 'la tele'],
+  [/^(?:documents|read|list|book|media|write)$/, 'tus archivos'],
+  [/^renfe$/, 'los trenes'],
+  [/^repartos$/, 'tus envíos'],
+  [/^tiempo$/, 'el tiempo'],
+  [/^iphone$/, 'el iPhone'],
+];
+
+const NEXT_STEP = ['pruebo de otra forma.', 'lo intento de otra manera.', 'busco otro camino.'];
+
+function nounFor(tool: string): string | null {
+  for (const [pattern, noun] of TASK_NOUNS) if (pattern.test(tool)) return noun;
+  return null;
+}
+
+/**
+ * Línea honesta cuando algo falla a mitad: qué ha fallado, en llano, y qué va a
+ * probar ahora. Nunca el nombre de la herramienta ni el error en crudo.
+ */
+export function setbackLine(
+  tool: string,
+  pick: (n: number) => number = (n) => Math.floor(Math.random() * n),
+): string {
+  const noun = nounFor(tool);
+  const next = NEXT_STEP[Math.abs(pick(NEXT_STEP.length)) % NEXT_STEP.length] ?? NEXT_STEP[0];
+  return noun
+    ? `No me ha salido a la primera con ${noun}; ${next}`
+    : `Algo no ha salido a la primera; ${next}`;
+}
+
+/** Como mucho estos avisos de fallo por turno: más ya sería un parte, no un aviso. */
+export const MAX_SETBACKS = 2;
+
+/**
+ * Avisos de fallo de un turno: uno por tipo de tarea y como mucho {@link MAX_SETBACKS}.
+ * Un «no» del control de permisos no es un fallo (ya se pregunta por otro lado).
+ */
+export class TurnSetbacks {
+  readonly #told = new Set<string>();
+  readonly #show: (text: string) => Promise<void> | void;
+  readonly #enabled: () => boolean;
+
+  constructor(deps: { show: (text: string) => Promise<void> | void; enabled: () => boolean }) {
+    this.#show = deps.show;
+    this.#enabled = deps.enabled;
+  }
+
+  /** Devuelve true solo cuando publica un aviso. */
+  toolEnded(info: { tool: string; ok: boolean; blocked: boolean }): boolean {
+    if (info.ok || info.blocked) return false;
+    const key = nounFor(info.tool) ?? '?';
+    if (this.#told.has(key) || this.#told.size >= MAX_SETBACKS) return false;
+    if (!this.#enabled()) return false;
+    this.#told.add(key);
+    void Promise.resolve(this.#show(setbackLine(info.tool))).catch(() => {});
+    return true;
+  }
+}
