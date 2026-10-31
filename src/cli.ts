@@ -514,6 +514,7 @@ Uso:
   pa tv off               apagar la tele
   pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]  probar que un audio suena en la tele
   pa voice enroll|verify|list|remove  voces del hogar: enrolar, puntuar un audio, listar, borrar
+  pa dictado prueba [segundos]        prueba el dictado: graba y enseña el texto, sin escribirlo
   pa opengym pair [url] <código>  emparejar openGym (registro del gimnasio, solo lectura)
   pa opengym status       comprobar la conexión con openGym
   pa evolve [--idea <texto>]  una vuelta de automejora sobre esta copia git (necesita PA_EVOLVE_PROPOSER)
@@ -657,6 +658,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'voice': {
       const { voiceCommand } = await import('./voice/voice-cli.js');
       return voiceCommand(rest);
+    }
+    case 'dictado': {
+      const { dictadoCommand } = await import('./dictado/prueba.js');
+      return dictadoCommand(rest);
     }
     case 'status': {
       const { statusCommand } = await import('./daemon-status.js');
