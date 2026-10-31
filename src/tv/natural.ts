@@ -293,8 +293,32 @@ export function parseTvCommand(text: string): TvIntent | null {
   ) {
     return parseTvCommand(r[1]);
   }
+  // «sube el volumen, no se oye» o «… . no se oye»: la coma (o el punto) separa la
+  // orden de su motivo, como «que». «no, sube el volumen»: la coletilla de delante sobra.
+  const c = COMA.exec(text);
+  if (c?.[1] && c[2] && COLETILLA.test(normalizeTvText(c[1]))) {
+    return c[2].includes('?') ? null : parseTvCommand(c[2]);
+  }
+  if (
+    c?.[1] &&
+    c[2] &&
+    !c[2].includes('?') &&
+    !DEFERRED.test(t) &&
+    !PREGUNTA.test(t) &&
+    !COMPOUND.test(t) &&
+    !MOTIVO_NO.test(normalizeOrder(c[2])) &&
+    !PON_LA_TELE.test(normalizeOrder(c[1])) &&
+    parseTvCommand(c[2]) === null
+  ) {
+    return parseOne(c[1]);
+  }
   return null;
 }
+
+/** «<orden>, <motivo>» (la primera coma, punto, punto y coma o exclamación). */
+const COMA = /^((?:[^,.;!?]|\.(?=\d))+)[,.;!]+(.+)$/;
+/** «no, …», «sí, …», «perdona, …»: delante de la orden no cambian nada. */
+const COLETILLA = /^(?:no|si|vale|bueno|pues|perdona|perdon|gracias|ok|venga|oye|asistenta)$/;
 
 const PON_LA_TELE = new RegExp(`^(?:pon|ponme|ponnos)${YA} ${TV}`);
 
