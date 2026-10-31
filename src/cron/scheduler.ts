@@ -137,6 +137,19 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     hasTime = true;
   }
 
+  if (!hasTime) {
+    // A part of the day with no clock: «los sábados por la mañana», «cada día por la
+    // tarde», «todas las mañanas». Before, the days ones fired at 00:00.
+    const part = /\bpor la (manana|tarde|noche)\b|\btodas las (manana|tarde|noche)s\b/.exec(
+      normalised,
+    );
+    const said = part?.[1] ?? part?.[2];
+    if (said) {
+      hour = said === 'manana' ? 8 : said === 'tarde' ? 18 : 22;
+      hasTime = true;
+    }
+  }
+
   if (hour > 23 || minute > 59) return null;
 
   // Intervals beat fixed times: "cada 5 minutos" is a schedule on its own.
@@ -153,22 +166,14 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     return { schedule: '0 8 * * *', prompt: text.trim() };
   }
 
-  const dayMap: Array<[RegExp, number]> = [
-    [/los lunes|cada lunes/, 1],
-    [/los martes|cada martes/, 2],
-    [/los miercoles|cada miercoles/, 3],
-    [/los jueves|cada jueves/, 4],
-    [/los viernes|cada viernes/, 5],
-    [/los sabados|cada sabado/, 6],
-    [/los domingos|cada domingo/, 0],
-  ];
-  for (const [pattern, dow] of dayMap) {
-    if (pattern.test(normalised)) {
-      return {
-        schedule: `${minute} ${hour} * * ${dow}`,
-        prompt: text.trim(),
-      };
-    }
+  // «los lunes y miércoles», «de lunes a viernes», «los fines de semana». With no
+  // clock a day job fires at 8, like «cada día»: before, «los lunes» fired at 00:00.
+  const dow = daysOfWeek(normalised);
+  if (dow !== null) {
+    return {
+      schedule: `${minute} ${hasTime ? hour : 8} * * ${dow}`,
+      prompt: text.trim(),
+    };
   }
 
   if (/cada semana|semanalmente/.test(normalised) && hasTime) {
@@ -177,4 +182,37 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
 
   if (hasTime) return { schedule: `${minute} ${hour} * * *`, prompt: text.trim() };
   return null;
+}
+
+const DAY_VALUE: Record<string, number> = {
+  lunes: 1,
+  martes: 2,
+  miercoles: 3,
+  jueves: 4,
+  viernes: 5,
+  sabado: 6,
+  sabados: 6,
+  domingo: 0,
+  domingos: 0,
+};
+const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
+
+/** The cron day-of-week field for the days said, or null when no day is said. */
+function daysOfWeek(normalised: string): string | null {
+  if (/\b(?:entre semana|(?:los )?dias laborables|de lunes a viernes)\b/.test(normalised)) {
+    return '1-5';
+  }
+  if (/\b(?:los|cada|el) fin(?:es)? de semana\b/.test(normalised)) return '0,6';
+  const range = new RegExp(`\\bde (${DAY}) a (${DAY})\\b`).exec(normalised);
+  const from = DAY_VALUE[range?.[1] ?? ''];
+  const to = DAY_VALUE[range?.[2] ?? ''];
+  if (from !== undefined && to !== undefined && from >= 1 && to > from) return `${from}-${to}`;
+  // «los lunes», «cada martes», «los lunes y miércoles», «los lunes, martes y jueves».
+  const list = new RegExp(
+    `\\b(?:los|cada) (${DAY})((?:\\s*,\\s*(?:los )?(?:${DAY}))*(?:\\s+y\\s+(?:los )?(?:${DAY}))?)\\b`,
+  ).exec(normalised);
+  if (!list) return null;
+  const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
+  const days = [...new Set(said.map((d) => DAY_VALUE[d] as number))].sort((a, b) => a - b);
+  return days.join(',');
 }
