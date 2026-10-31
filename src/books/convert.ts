@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { childEnv } from '../child-env.js';
+import { log } from '../log.js';
 
 /**
  * PDF -> EPUB with calibre's `ebook-convert`, the one converter that handles PDFs well
@@ -31,7 +32,9 @@ const defaultRunner: Runner = (cmd, args, timeoutMs) =>
       { timeout: timeoutMs, windowsHide: true, env: childEnv() },
       (err, _out, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-        resolve({ code, stderr: String(stderr ?? '').slice(-400) });
+        // A 5-minute timeout kills the converter with nothing on stderr: say so.
+        const why = err && (err as { killed?: boolean }).killed ? '\nETIMEDOUT' : '';
+        resolve({ code, stderr: `${String(stderr ?? '').slice(-400)}${why}` });
       },
     );
   });
@@ -78,11 +81,28 @@ export async function pdfToEpub(
       return {
         ok: false,
         reason: 'failed',
-        message: `la conversión falló: ${r.stderr.trim() || `código ${r.code}`}`,
+        message: conversionFailText(r.stderr.trim() || `código ${r.code}`),
       };
     }
     return { ok: true, epub: readFileSync(output) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Calibre's own words (a Python traceback, a Windows path) go to the log; the
+ * chat gets one plain reason, and the book still goes out as PDF.
+ */
+export function conversionFailText(raw: string): string {
+  log.warn('book conversion failed', { detail: raw.slice(-400) });
+  const tail = 'así que lo dejo en PDF';
+  if (/DRM/.test(raw)) return `el PDF tiene protección (DRM) y no se puede convertir, ${tail}`;
+  if (/ETIMEDOUT|timed? ?out/i.test(raw))
+    return `la conversión tardó más de 5 minutos y la he parado, ${tail}`;
+  if (/MemoryError|out of memory|bad_alloc|ENOMEM/i.test(raw))
+    return `el PC se quedó sin memoria al convertirlo, ${tail}`;
+  if (/PdfReadError|not a PDF|invalid pdf|EOF marker|damaged|corrupt/i.test(raw))
+    return `el PDF parece dañado y no se pudo convertir, ${tail}`;
+  return `la conversión a EPUB falló (el detalle queda en el registro del PC), ${tail}`;
 }
