@@ -25,7 +25,7 @@ export function createDeliveriesTool(deps: DeliveriesToolDeps): AgentTool<typeof
     name: 'repartos',
     label: 'Repartos',
     description:
-      "Where the owner's parcels are, from shipping/order emails already in his mailbox (Amazon, Correos, SEUR, MRW, GLS, DHL, UPS…): carrier, tracking number and last status. Use for «¿dónde está mi pedido?», «¿llega hoy el paquete?». Read-only; never opens carrier websites.",
+      "Where the owner's parcels are, from shipping/order emails already in his mailbox (Amazon, Correos, SEUR, MRW, GLS, DHL, UPS, InPost, Paack…): carrier, tracking number and last status (incl. ready for pickup at a locker/point). Use for «¿dónde está mi pedido?», «¿llega hoy el paquete?», «¿tengo algo para recoger?». Read-only; never opens carrier websites.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async () => {

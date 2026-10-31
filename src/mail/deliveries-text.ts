@@ -5,6 +5,7 @@ export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
   confirmado: 'pedido confirmado',
   enviado: 'enviado',
   en_reparto: 'en reparto',
+  para_recoger: 'listo para recoger',
   entregado: 'entregado',
   incidencia: 'incidencia',
 };
@@ -16,6 +17,8 @@ function who(d: Delivery): string {
 
 export function formatDeliveryAlert(d: Delivery): string {
   if (d.status === 'en_reparto') return `📦 Tu paquete de ${who(d)} está en reparto: llega hoy.`;
+  if (d.status === 'para_recoger')
+    return `📦 Tu paquete de ${who(d)} está listo para recoger: «${d.title}».`;
   if (d.status === 'entregado') return `📦 Tu paquete de ${who(d)} ya está entregado.`;
   return `📦 Hay una incidencia con tu paquete de ${who(d)}: «${d.title}». Mira el correo de la transportista.`;
 }
@@ -41,7 +44,7 @@ export function deliveriesText(list: readonly Delivery[], timeZone?: string): st
 
 /**
  * Paquetes para el resumen de la mañana: lo que sigue en camino (lo entregado ya no
- * es noticia). «notable» = en reparto o con incidencia: eso sí justifica el resumen.
+ * es noticia). «notable» = en reparto, para recoger o con incidencia: eso sí justifica el resumen.
  */
 export function briefingDeliveries(
   list: readonly Delivery[],
@@ -51,6 +54,7 @@ export function briefingDeliveries(
     .slice(0, 5)
     .map((d) => ({
       text: `${who(d)}: ${DELIVERY_STATUS_LABEL[d.status]}`,
-      notable: d.status === 'en_reparto' || d.status === 'incidencia',
+      notable:
+        d.status === 'en_reparto' || d.status === 'para_recoger' || d.status === 'incidencia',
     }));
 }
