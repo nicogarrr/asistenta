@@ -179,6 +179,7 @@ import {
   SAID_PREFIX,
   statedFact,
 } from './memory/owner-facts.js';
+import { ownerQuietHours } from './memory/owner-quiet.js';
 import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import { SessionStore } from './memory/sessions.js';
@@ -190,7 +191,7 @@ import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
 import { trackBusyIn } from './ocupada.js';
-import { DEFAULT_QUIET_HOURS, inQuietHours } from './ojo.js';
+import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
   getDownloadsEnabled,
@@ -1484,6 +1485,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * rebuilding the same context from scattered rows each time.
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  // Las horas en que el dueño dijo que no le escriban («no me escribas antes de las 9»).
+  const ownerQuiet = (): QuietHours => ownerQuietHours(snapshot.load().split(ENTRY_SEPARATOR));
   // S5 (opt-in PA_SEMANTIC_RECALL=1): embeddings locales para recall híbrido.
   const semanticRecall = semanticFromEnv(paths.models);
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
@@ -2910,7 +2913,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
-      quiet: DEFAULT_QUIET_HOURS,
+      get quiet() {
+        return ownerQuiet();
+      },
       screenScan,
       downloadsHealth: () => downloadsCtl.apply(),
       downloadsSuppressed: () => downloadsCtl.suppressed(),
@@ -3214,7 +3219,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       return;
     }
-    const quiet = DEFAULT_QUIET_HOURS;
+    const quiet = ownerQuiet();
     const ownerView = isOwnerDm(inbound, vigilanteOwnerId);
     const dst = ownerView && getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
     const screenLine = !ownerView
@@ -4682,7 +4687,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return true;
     },
     now: Date.now,
-    quiet: (now) => inQuietHours(now, DEFAULT_QUIET_HOURS, localTimeZone()),
+    quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
     enabled: () => briefingOwner() !== null,
   });
   setInterval(() => void closeLoop.tick().catch(() => null), 10 * 60 * 1000).unref();
