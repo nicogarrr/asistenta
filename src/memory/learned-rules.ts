@@ -112,7 +112,10 @@ export function correctionHint(opts: {
 
 // También la marca mal cerrada o abierta («[[aprendido: … ]», «[aprendido: … ]]» o sin
 // cerrar hasta el fin de línea): antes se colaba tal cual en la respuesta al dueño.
-const MARKER = /\[\[?\s*aprendido\s*:([^\]\n]{0,400})(?:\]\]?|(?=\n|$))/gi;
+// LEARN_HINT la enseña entre comillas de código y el modelo a veces las copia
+// («`[[aprendido: …]]`»): se quitan con la marca, si no quedaba «``» en la respuesta.
+const MARKER =
+  /(?:`{1,3}|\*\*)?\[\[?\s*aprendido\s*:([^\]\n]{0,400})(?:\]\]?(?:`{1,3}|\*\*)?|(?=\n|$))/gi;
 
 /** Quita toda marca de la respuesta; devuelve la última (tema opcional). */
 export function extractLearnedMarker(reply: string): {
