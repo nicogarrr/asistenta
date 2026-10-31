@@ -4,21 +4,17 @@ cd /d "%~dp0"
 rem UTF-8 para que la lista de pa iniciar (tildes y simbolos) se lea bien en la consola.
 chcp 65001 >nul
 
-rem Node 24 o superior es obligatorio y en este PC vive fuera del PATH.
-rem Preferir la ruta conocida; si no existe, probar con el node del PATH.
-set "NODE_EXE=C:\Users\nicoi\.local\node24\node.exe"
-if not exist "%NODE_EXE%" set "NODE_EXE=node"
-
 if not exist dist\cli.js (
     echo [levantar] Asistenta aun no esta instalada: haz doble clic en instalar.bat primero.
     pause
     exit /b 1
 )
 
-"%NODE_EXE%" -e "process.exit(Number(process.versions.node.split('.')[0])>=24?0:1)" 2>nul
-if errorlevel 1 (
-    echo [levantar] Node 24 o superior no encontrado en "%NODE_EXE%".
-    echo [levantar] Edita este .bat con la ruta correcta o usa deploy\windows\install-autostart.ps1 -NodeExe "C:\ruta\node.exe".
+rem Node 24 o mas nuevo: lo busca scripts\node24.cmd (PATH y carpetas habituales).
+call scripts\node24.cmd
+if not defined NODE_EXE (
+    echo [levantar] No encuentro Node 24 o mas nuevo. Descargalo gratis de https://nodejs.org ^(version 24 LTS^), instalalo y vuelve a abrir este archivo.
+    echo [levantar] Si ya lo tienes en otra carpeta, pon su ruta en la variable ASISTENTA_NODE, por ejemplo C:\node24\node.exe.
     pause
     exit /b 1
 )
