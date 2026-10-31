@@ -444,7 +444,7 @@ import {
   startVigilanteLoop,
 } from './vigilante.js';
 import { createAloudSpeaker } from './voice/aloud.js';
-import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
+import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { splitPhrases } from './voice/phrases.js';
@@ -6585,7 +6585,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sessionPlayback?.stop();
         activeSpeech?.abort();
         currentWake()?.hold(false);
-        lastConversationEnd = `${reason}${detail ? `: ${detail}` : ''}`;
+        lastConversationEnd =
+          reason === 'inactividad'
+            ? 'porque dejaste de hablar'
+            : reason === 'fallo'
+              ? 'porque no conseguía entenderte'
+              : reason === 'apagado'
+                ? 'al apagar la voz'
+                : 'porque la cerraste';
         const closeStats = created.stats();
         bargeStats.record({
           endedAt: Date.now(),
@@ -6841,13 +6848,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} uso estimado, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas estimadas, ${st.bargeUnclassified} sin clasificar${st.bargePending > 0 ? `, ${st.bargePending} pendiente de clasificar` : ''}${st.bargeVadRejected > 0 ? `, ${st.bargeVadRejected} ruidos rechazados por el detector` : ''}), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
-            : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
+            ? `Ahora estamos hablando: ${st.utterances} ${st.utterances === 1 ? 'frase' : 'frases'}${
+                st.bargeIns > 0
+                  ? `; me has cortado ${st.bargeIns} ${st.bargeIns === 1 ? 'vez' : 'veces'}${
+                      st.bargeFalseNoise + st.bargeFalseEcho > 0
+                        ? `, ${st.bargeFalseNoise + st.bargeFalseEcho} sin querer (ruido o eco)`
+                        : ''
+                    }`
+                  : ''
+              }.${st.lastHeard ? ` Lo último que te oí: «${st.lastHeard}».` : ''}${
+                st.lastError ? ' La última vez algo falló al oírte.' : ''
+              }`
+            : `Ahora no estamos hablando${lastConversationEnd ? ` (la última conversación acabó ${lastConversationEnd})` : ''}.`) +
           (currentWake()?.isRunning()
             ? ''
             : ' El micrófono está cerrado: /conversacion on lo abre.') +
           (bargeHist.bargeIns > 0
-            ? ` Histórico de cortes: ${bargeHist.bargeIns} interrupciones en ${bargeHist.sessions} sesiones (${bargeClassified(bargeHist)} clasificadas${bargeRate !== null ? `, ${Math.round(bargeRate * 100)}% falsas estimadas` : ''}${bargeHist.unclassified > 0 ? `, ${bargeHist.unclassified} sin clasificar` : ''}).`
+            ? ` En total me has cortado ${bargeHist.bargeIns} ${bargeHist.bargeIns === 1 ? 'vez' : 'veces'}${
+                bargeRate !== null
+                  ? `; calculo que un ${Math.round(bargeRate * 100)}% sin querer`
+                  : ''
+              }.`
             : ''),
         { quote: true },
       );
@@ -6868,7 +6889,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const histRate = bargeFalseRate(hist);
       const histLine =
         hist.bargeIns >= 20
-          ? ` Llevas ${hist.bargeIns} interrupciones: ${bargeClassified(hist)} clasificadas${histRate !== null ? ` (${Math.round(histRate * 100)}% falsas estimadas)` : ''}${hist.unclassified > 0 ? `, ${hist.unclassified} sin clasificar` : ''}. Es una estimación por transcripción, no una medición exacta.`
+          ? ` Hasta ahora me has cortado ${hist.bargeIns} veces${
+              histRate !== null ? `; calculo que un ${Math.round(histRate * 100)}% sin querer` : ''
+            }.`
           : '';
       await say(
         inbound,
