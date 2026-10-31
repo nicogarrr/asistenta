@@ -191,6 +191,22 @@ export function looksLikePhishing(signals: string[]): boolean {
   return signals.some((s) => s.includes(' imita a ')) || signals.length >= 2;
 }
 
+/**
+ * Aviso en una línea para un correo que huele a estafa, o '' si no. Solo avisa: no mueve,
+ * no borra, no contesta. Se usa al llegar el correo (atención) y al leerlo en el chat.
+ */
+export function scamWarning(m: TriageInput): string {
+  const signals = phishingSignals(m);
+  if (!looksLikePhishing(signals)) return '';
+  return `⚠️ Posible estafa: ${signals.slice(0, 2).join('; ')}. No pagues ni des datos sin comprobarlo por otro lado.`;
+}
+
+/** El texto de un correo nuevo para la cola de atención, con el aviso de estafa delante. */
+export function mailAttentionText(m: { from: string; subject: string; text: string }): string {
+  const warn = scamWarning(m);
+  return `${warn ? `${warn}\n` : ''}${m.subject}\n${m.text}`;
+}
+
 const NO_REPLY =
   /^(no-?reply|do-?not-?reply|noreply|notifica(tions|ciones)|notify|alerts?|avisos?|mailer-daemon|postmaster|info|news|newsletter|boletin|marketing|promo(ciones)?)([+.-].*)?@/i;
 const TRANSACTIONAL =
