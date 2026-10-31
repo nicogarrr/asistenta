@@ -2,6 +2,13 @@
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul
+rem Abierto desde dentro del ZIP: Windows solo copia este .bat a una carpeta temporal.
+if not exist package.json (
+    echo [instalar] No encuentro los archivos de Asistenta junto a este .bat.
+    echo [instalar] Si lo has abierto desde el ZIP, descomprimelo primero ^(clic derecho, "Extraer todo"^) y abre instalar.bat desde esa carpeta.
+    pause
+    exit /b 1
+)
 rem Instalacion de Asistenta en un paso: comprueba Node, instala, compila y
 rem pide solo el token de Telegram y la clave del modelo (y confirma tu ID).
 rem Node 24 o mas nuevo: lo busca scripts\node24.cmd (PATH y carpetas habituales).
