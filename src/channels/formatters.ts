@@ -750,7 +750,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const code = (err as { code?: unknown } | null)?.code;
   const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
-    return 'Se me ha roto algo por dentro y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+    return 'Se me ha roto algo por dentro y no he podido terminar. Prueba otra vez o mira /estado.';
   }
   if (RATE_LIMIT_ERROR.test(probe)) {
     return 'El modelo de IA me está limitando por exceso de peticiones. Espera un minuto y repítemelo.';
@@ -774,7 +774,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const looksTechnical =
     !clean || /[{}[\]]|\bat \S+:\d+|https?:\/\//.test(clean) || clean.length > 200;
   if (looksTechnical) {
-    return 'Algo ha fallado y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+    return 'Algo ha fallado y no he podido terminar. Prueba otra vez o mira /estado.';
   }
   return `${prefix}${clean}`;
 }
