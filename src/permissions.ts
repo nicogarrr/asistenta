@@ -1566,13 +1566,25 @@ export class Gate {
     // Un recordatorio es lo mismo hacia fuera: el texto te llega más tarde como mensaje
     // de Asistenta («entra en este enlace para verificar tu cuenta»).
     const reminder = call.tool === 'reminder' && action === 'create';
-    if (!memory && !reminder) return null;
+    // Una tarea del tablero también vuelve sola: sale en el resumen de la mañana.
+    const task = call.tool === 'tareas' && action === 'apuntar';
+    // Borrar recuerdos tras leer algo de fuera: «olvida que Nico es alérgico» escrito en
+    // una página borraría un dato que importa. Pregunta solo en un turno que leyó algo de
+    // fuera; olvidar algo a secas sigue sin preguntar.
+    const forget = call.tool === 'memory' && (action === 'forget' || action === 'forget_profile');
+    if (!memory && !reminder && !task && !forget) return null;
     const source = this.taintOf(sessionId);
+    if (forget) {
+      return source
+        ? `Borrar un recuerdo tras leer contenido externo (${source}) necesita tu aprobación expresa`
+        : null;
+    }
     const set = this.#externalGrams.get(sessionId);
     if (!source || !set || set.size === 0) return null;
     const tags = Array.isArray(call.args.tags) ? call.args.tags.join(' ') : '';
-    if (!echoesSubstantially(set, `${argString(call.args, 'text')} ${tags}`)) return null;
-    const what = memory ? 'Este recuerdo' : 'Este recordatorio';
+    const text = argString(call.args, task ? 'titulo' : 'text');
+    if (!echoesSubstantially(set, `${text} ${tags}`)) return null;
+    const what = memory ? 'Este recuerdo' : task ? 'Esta tarea' : 'Este recordatorio';
     return `${what} copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
   }
 
