@@ -280,6 +280,22 @@ describe('searchRenfe con página falsa', () => {
     expect(err?.message).toMatch(/paso navegador: .*npx playwright install chromium/);
     expect(err?.message).not.toMatch(/╔|\n/);
   });
+
+  it('otro fallo al abrir el navegador: frase llana, sin el error crudo', async () => {
+    const tool = createRenfeTool({
+      launch: async () => {
+        throw new Error(
+          'browserType.launch: Target page, context or browser has been closed (pid 4242)',
+        );
+      },
+    });
+    const err = await tool.execute('1', base).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toMatch(/paso navegador: no se pudo abrir el navegador/);
+    expect(err?.message).not.toMatch(/browserType|Target page|pid 4242/);
+  });
 });
 
 // Texto real del modal de Renfe: iconos sueltos, horas HH:MM y la estación debajo.
