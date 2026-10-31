@@ -54,6 +54,12 @@ export function cleanEnv(env: NodeJS.ProcessEnv = process.env, home?: string): N
     out.LOCALAPPDATA = join(home, 'AppData', 'Local');
     out.XDG_CONFIG_HOME = join(home, '.config');
     out.XDG_CACHE_HOME = join(home, '.cache');
+    // npm lee además su config global de <prefijo de Node>/etc/npmrc, fuera del HOME: en un Node
+    // del usuario (nvm en Linux/mac) el intento puede escribirla, y un node-options ahí carga
+    // código en el `npx vitest` de la medición (comprobado con npm real, 31 oct). Las dos
+    // configs de npm salen de la casa desechable (no existen: npm usa sus valores por defecto).
+    out.npm_config_globalconfig = join(home, '.npm-global-rc');
+    out.npm_config_userconfig = join(home, '.npmrc');
   }
   return out;
 }
