@@ -48,6 +48,29 @@ export const ONEDRIVE_MOVER =
   'Mueve la carpeta de Asistenta fuera de OneDrive, por ejemplo a C:\\Asistenta, y abre instalar.bat desde allí.';
 
 /**
+ * ¿La carpeta es del sistema (Archivos de programa, Windows)? Sin permisos de
+ * administrador no se puede escribir ahí: `npm ci` falla con EPERM y luego las
+ * actualizaciones tampoco. Mira las variables de Windows y, si faltan, la ruta.
+ */
+export function enCarpetaSistema(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!d) return false;
+  for (const k of ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'SystemRoot', 'windir']) {
+    const r = norm(env[k]);
+    if (r && (d === r || d.startsWith(`${r}\\`))) return true;
+  }
+  return /^[a-z]:\\(program files( \(x86\))?|windows)(\\|$)/.test(d);
+}
+
+export const SISTEMA_MOVER =
+  'Mueve la carpeta de Asistenta a C:\\Asistenta (o dentro de tu carpeta de usuario) y abre instalar.bat desde allí.';
+
+/**
  * Espera el primer mensaje privado que el dueño manda a SU bot y lo devuelve.
  * Marca la actualización como leída para que Asistenta no la conteste luego.
  */
@@ -86,6 +109,11 @@ export async function instalar(d) {
     );
   say(`✓ Node ${d.nodeVersion}`);
 
+  const sistema = enCarpetaSistema(d.cwd, d.env);
+  if (sistema)
+    say(
+      `⚠ Asistenta está en una carpeta del sistema (${d.cwd}). Sin permisos de administrador Windows no deja escribir ahí y la instalación falla. ${SISTEMA_MOVER}`,
+    );
   const oneDrive = enOneDrive(d.cwd, d.env);
   if (oneDrive)
     say(
@@ -95,16 +123,20 @@ export async function instalar(d) {
   say('… Instalando dependencias (npm ci). Tarda unos minutos.');
   if ((await d.run('npm', ['ci', '--no-audit', '--no-fund'])) !== 0)
     return fail(
-      oneDrive
-        ? `No se han podido instalar las dependencias: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
-        : 'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y prueba otra vez. Si se repite, borra la carpeta node_modules y prueba otra vez.',
+      sistema
+        ? `No se han podido instalar las dependencias: Windows no deja escribir en esta carpeta del sistema. ${SISTEMA_MOVER}`
+        : oneDrive
+          ? `No se han podido instalar las dependencias: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+          : 'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y prueba otra vez. Si se repite, borra la carpeta node_modules y prueba otra vez.',
     );
   say('… Compilando.');
   if ((await d.run('npm', ['run', 'build'])) !== 0)
     return fail(
-      oneDrive
-        ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
-        : 'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
+      sistema
+        ? `No se ha podido compilar: Windows no deja escribir en esta carpeta del sistema. ${SISTEMA_MOVER}`
+        : oneDrive
+          ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+          : 'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
     );
   say('✓ Programa listo');
 

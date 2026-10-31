@@ -24,6 +24,22 @@ export function enOneDrive(dir: string | undefined, env: NodeJS.ProcessEnv = {})
   return /\\onedrive( - [^\\]+)?(\\|$)/.test(d);
 }
 
+/** Carpeta del sistema (Archivos de programa, Windows): sin administrador no se puede escribir. */
+export function enCarpetaSistema(dir: string | undefined, env: NodeJS.ProcessEnv = {}): boolean {
+  const norm = (p: string | undefined): string =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!d) return false;
+  for (const k of ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'SystemRoot', 'windir']) {
+    const r = norm(env[k]);
+    if (r && (d === r || d.startsWith(`${r}\\`))) return true;
+  }
+  return /^[a-z]:\\(program files( \(x86\))?|windows)(\\|$)/.test(d);
+}
+
 export function nodeMajor(version: string): number {
   const n = Number(String(version).replace(/^v/, '').split('.')[0]);
   return Number.isInteger(n) ? n : 0;
@@ -44,8 +60,10 @@ export function installDoctorLines(input: InstallDoctorInput = {}): string[] {
     nodeMajor(v) >= NODE_MIN
       ? `node            ${v}`
       : `node            ${v} — DEMASIADO VIEJO: hace falta Node ${NODE_MIN} o más nuevo (gratis en https://nodejs.org); instálalo y vuelve a abrir instalar.bat`;
-  const carpeta = enOneDrive(dir, env)
-    ? `carpeta         ${dir} — está dentro de OneDrive: bloquea archivos al sincronizar y rompe la instalación y las actualizaciones. Muévela a C:\\Asistenta y vuelve a abrir instalar.bat`
-    : `carpeta         ${dir}`;
+  const carpeta = enCarpetaSistema(dir, env)
+    ? `carpeta         ${dir} — es una carpeta del sistema: sin permisos de administrador Windows no deja escribir ahí y fallan la instalación y las actualizaciones. Muévela a C:\\Asistenta y vuelve a abrir instalar.bat`
+    : enOneDrive(dir, env)
+      ? `carpeta         ${dir} — está dentro de OneDrive: bloquea archivos al sincronizar y rompe la instalación y las actualizaciones. Muévela a C:\\Asistenta y vuelve a abrir instalar.bat`
+      : `carpeta         ${dir}`;
   return [node, carpeta];
 }
