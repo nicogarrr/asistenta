@@ -228,6 +228,10 @@ export const TOOL_ABILITIES: Readonly<
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  cuentas: {
+    area: 'agenda',
+    text: 'guardo tus cuentas con contraseñas fuertes en un gestor cifrado y te digo dónde tienes cuenta',
+  },
   objetivo: { area: 'agenda', text: 'persigo un objetivo varios días y te aviso de los avances' },
   gestion: {
     area: 'agenda',
