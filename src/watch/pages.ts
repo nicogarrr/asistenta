@@ -677,9 +677,40 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
     return `Bajada del ${o.dropPct} % en ${name}: ${eur(o.cents)} frente a ${ref}${stockText(o.inStock)}\n${w.url}`;
   }
   if (o.kind === 'error' && o.notify) {
-    return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${o.message}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
+    return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${readFailureCause(o.message)}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
   }
   return null;
+}
+
+/**
+ * Causa en castellano para el aviso «No consigo leer…». Antes salía el error
+ * tal cual («fetch failed», «This operation was aborted», «HTTP 403 Forbidden»);
+ * el texto crudo se queda en la base, el chat recibe una frase corta.
+ */
+export function readFailureCause(message: string): string {
+  const m = message.toLowerCase();
+  const http = /\b(?:http|status)\s*(\d{3})\b/.exec(m);
+  if (http) {
+    const code = Number(http[1]);
+    if (code === 404 || code === 410) return 'la página ya no existe';
+    if (code === 401 || code === 403) return 'la web no me deja entrar';
+    if (code === 429) return 'la web me pide que espere';
+    if (code >= 500) return 'la web da error ahora mismo';
+    return `la web responde con error ${code}`;
+  }
+  if (/abort|timed? ?out|timeout|etimedout/.test(m)) return 'la web tarda demasiado en responder';
+  if (/fetch failed|enotfound|eai_again|econnrefused|econnreset|network|socket|und_err/.test(m)) {
+    return 'sin conexión o la web no responde';
+  }
+  if (/captcha|robot|bot detect/.test(m)) return 'la web me pide demostrar que no soy un robot';
+  // Mensajes propios ya en castellano (p. ej. «no encuentro un precio claro…»).
+  if (
+    /^[a-záéíóúñü ,;.()0-9%€-]+$/i.test(message) &&
+    /[áéíóúñ]|\b(no|la|el|en|de)\b/i.test(message)
+  ) {
+    return message.slice(0, 120);
+  }
+  return 'no sé por qué; queda en el registro';
 }
 
 const fmtDay = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
