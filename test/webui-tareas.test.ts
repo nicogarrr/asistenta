@@ -30,6 +30,18 @@ describe('panel: tareas de la semana (solo lectura)', () => {
     expect(JSON.stringify(r)).not.toMatch(/grupo|otra persona|telegram|"id"/);
   });
 
+  it('una tarea que se repite trae «cada semana» para el panel', () => {
+    const board = tablero();
+    board.add('telegram:dm:7', 'sacar la basura', '2026-10-31', undefined, 'semanal');
+    const fila = panelTareas(board, 7).tareas.find((t) => t.titulo === 'sacar la basura');
+    expect(fila).toEqual({
+      dia: 'sábado 31',
+      titulo: 'sacar la basura',
+      estado: 'pendiente',
+      repite: 'cada semana',
+    });
+  });
+
   it('sin dueño configurado no enseña chats de Telegram', () => {
     expect(panelTareas(tablero(), undefined)).toEqual({ tareas: [], atrasadas: [] });
   });
