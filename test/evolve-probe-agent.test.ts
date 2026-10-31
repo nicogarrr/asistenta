@@ -67,17 +67,51 @@ export class BrowserService {
 }
 `;
 
-async function runProbe(service: string) {
+// Un intento más listo: copia Node a un fichero «chrome» dentro de la carpeta de navegadores
+// de Playwright y manda desde ahí las rutas y los avisos. Antes valía por el nombre.
+const DISGUISED = `
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+const folder = join(process.env.PLAYWRIGHT_BROWSERS_PATH ?? '', 'chromium-1', 'chrome-linux');
+mkdirSync(folder, { recursive: true });
+const chrome = join(folder, 'chrome');
+copyFileSync(process.execPath, chrome);
+let base = '';
+let html = '';
+const hit = (...p: string[]) =>
+  execFileSync(chrome, ['-e', \`(async () => { let last = ''; for (const p of process.argv.slice(1))
+    last = await fetch(\${JSON.stringify(base)} + p, { headers: { 'user-agent': 'Mozilla/5.0 Chrome/120.0' } })
+      .then((r) => r.text()).catch(() => ''); process.stdout.write(last); })()\`, ...p]).toString();
+export class BrowserService {
+  constructor(_o: unknown) {}
+  async open(_s: string, url: string) {
+    base = new URL(url).origin;
+    html = hit(new URL(url).pathname, '/');
+    return { url: base + '/', status: 404 };
+  }
+  async snapshot() { return html + ' Origen: sugerencias abiertas'; }
+  async execJs() {
+    hit(...['foco=o', 'panel=o', 'c=o&v=Sevilla', 'foco=d', 'panel=d', 'c=d&v=Malaga&go=1'].map((q) => '/evento?' + q));
+    return { text: 'ok Sevilla goDisabled: false' };
+  }
+  async screenshot() { return { data: 'x'.repeat(5000) }; }
+  async closeAll() {}
+}
+`;
+
+async function runProbe(service: string, env: NodeJS.ProcessEnv = process.env) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
   dirs.push(dir);
   cpSync(join(repo, 'evolve'), join(dir, 'evolve'), { recursive: true });
   mkdirSync(join(dir, 'src', 'browser'), { recursive: true });
   writeFileSync(join(dir, 'src', 'browser', 'service.ts'), service);
+  cpSync(join(repo, 'src', 'evolve'), join(dir, 'src', 'evolve'), { recursive: true });
   symlinkSync(join(repo, 'node_modules'), join(dir, 'node_modules'), 'junction');
   return exec(
     process.execPath,
     [join(repo, 'node_modules', 'vite-node', 'vite-node.mjs'), 'evolve/probe-generic-flow.ts'],
-    { cwd: dir, timeout: 150_000 },
+    { cwd: dir, timeout: 150_000, env },
   ).then(
     (o) => ({ code: 0 as number | null, stdout: o.stdout }),
     (e: { code?: number; stdout?: string }) => ({ code: e.code ?? null, stdout: e.stdout ?? '' }),
@@ -137,6 +171,30 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
         expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
       }
       expect(r.stdout).not.toMatch(/FLUJO GENERICO OK/);
+      expect(r.code).toBe(1);
+    },
+    180_000,
+  );
+  it.runIf(process.platform === 'linux')(
+    'Node copiado como «chrome» en la carpeta de navegadores no cuenta como navegador',
+    async () => {
+      const pw = mkdtempSync(join(tmpdir(), 'evo-probe-pw-'));
+      dirs.push(pw);
+      const r = await runProbe(DISGUISED, { ...process.env, PLAYWRIGHT_BROWSERS_PATH: pw });
+      expect(r.stdout).toMatch(/FALLA {2}el campo recibe foco/);
+      for (const label of [
+        'la URL adivinada con 404 no quema el turno',
+        'el campo recibe foco',
+        'el desplegable se abre tras la latencia real',
+        'las sugerencias tardias se leen y se eligen',
+        'el valor del campo se puede releer',
+        'el segundo desplegable tambien funciona',
+        'el boton se habilita solo cuando ambos campos estan puestos',
+        'el snapshot lista los campos',
+        'el snapshot avisa de los desplegables abiertos',
+      ]) {
+        expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
+      }
       expect(r.code).toBe(1);
     },
     180_000,

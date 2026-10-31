@@ -22,7 +22,7 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connectionFromBrowser } from './probe-owner.js';
+import { connectionOwner } from './probe-owner.js';
 import { pngColourShare, type Rgb } from './probe-png.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
@@ -121,8 +121,18 @@ const server = createServer((req, res) => {
 
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
+// Un solo navegador, el que lanzó el agente: si habla un segundo (lanzado aparte por el
+// código del intento para mandar avisos), ese no cuenta y la sonda lo nota.
+const roots = new Set<number>();
+let firstRoot: number | undefined;
 server.on('connection', (socket: Socket) => {
-  owner.set(socket, connectionFromBrowser(socket.remotePort ?? 0, port));
+  const v = connectionOwner(socket.remotePort ?? 0, port, { agentPid: agent.pid });
+  if (v.browser && v.root !== undefined) {
+    firstRoot ??= v.root;
+    roots.add(v.root);
+    if (v.root !== firstRoot) v.browser = false;
+  }
+  owner.set(socket, v.browser);
 });
 const base = `http://127.0.0.1:${port}`;
 

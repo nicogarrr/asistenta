@@ -7,12 +7,19 @@
  * knows which process holds each socket, so we ask it: the client end of the connection
  * is looked up in /proc/net/tcp and then among the open files of every process we can read.
  *
- * true  = the socket belongs to a browser process (chrome, headless_shell, msedge, firefox)
- * false = it belongs to some other process (node, curl, python...): not the browser
- * null  = this system can't say (not Linux, or the owner is not readable); the caller falls
- *         back to the User-Agent, as before
+ * A name is not proof: the attempt could copy Node (or curl) to a file called «chrome».
+ * So the program must also be a browser Playwright installed (inside its browsers folder),
+ * must not be Node under another name, must run under the probe's agent process, and every
+ * connection must come from one and the same browser.
+ *
+ * browser: true  = the socket belongs to that browser
+ * browser: false = it belongs to some other program, or to a second browser
+ * browser: null  = this system can't say; the caller falls back to the User-Agent
  */
-import { readdirSync, readFileSync, readlinkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
+import { playwrightBrowsersPath } from '../src/evolve/browsers-path.js';
 
 const BROWSER_EXE = /chrom|headless_shell|msedge|firefox/i;
 
@@ -35,10 +42,7 @@ function socketInode(clientPort: number, serverPort: number): string | null {
   return null;
 }
 
-export function connectionFromBrowser(clientPort: number, serverPort: number): boolean | null {
-  if (process.platform !== 'linux') return null;
-  const inode = socketInode(clientPort, serverPort);
-  if (!inode) return null;
+function socketPid(inode: string): number | null {
   const target = `socket:[${inode}]`;
   let pids: string[] = [];
   try {
@@ -54,21 +58,146 @@ export function connectionFromBrowser(clientPort: number, serverPort: number): b
       continue;
     }
     for (const fd of fds) {
-      let link = '';
       try {
-        link = readlinkSync(`/proc/${pid}/fd/${fd}`);
-      } catch {
-        continue;
-      }
-      if (link !== target) continue;
-      let exe = '';
-      try {
-        exe = readlinkSync(`/proc/${pid}/exe`);
-      } catch {
-        return null;
-      }
-      return BROWSER_EXE.test(exe.split('/').pop() ?? '');
+        if (readlinkSync(`/proc/${pid}/fd/${fd}`) === target) return Number(pid);
+      } catch {}
     }
   }
   return null;
+}
+
+/** What the probe needs to know about a process. Swappable in tests. */
+export type ProcInfo = { exe(pid: number): string | null; ppid(pid: number): number | null };
+
+export const linuxProc: ProcInfo = {
+  exe: (pid) => {
+    try {
+      return readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, '');
+    } catch {
+      return null;
+    }
+  },
+  ppid: (pid) => {
+    try {
+      const m = /^PPid:\s+(\d+)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+      return m ? Number(m[1]) : null;
+    } catch {
+      return null;
+    }
+  },
+};
+
+const hashes = new Map<string, string>();
+function fileHash(path: string): string | null {
+  try {
+    const st = statSync(path);
+    const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}`;
+    const known = hashes.get(key);
+    if (known) return known;
+    const h = createHash('sha256').update(readFileSync(path)).digest('hex');
+    hashes.set(key, h);
+    return h;
+  } catch {
+    return null;
+  }
+}
+
+/** Is this file Node itself (a link or a copy of the program running the probe)? */
+export function isNodeInDisguise(exe: string, node: string = process.execPath): boolean {
+  try {
+    const a = statSync(exe);
+    const b = statSync(node);
+    if (a.dev === b.dev && a.ino === b.ino) return true;
+    if (a.size !== b.size) return false;
+    const ha = fileHash(exe);
+    return ha !== null && ha === fileHash(node);
+  } catch {
+    return false;
+  }
+}
+
+/** The folder Playwright installs its browsers into, resolved (null if unknown). */
+export function browsersFolder(env: NodeJS.ProcessEnv = process.env): string | null {
+  let dir = playwrightBrowsersPath(env);
+  if (dir === '0') {
+    try {
+      dir = join(
+        dirname(realpathSync(join('node_modules', 'playwright-core', 'package.json'))),
+        '.local-browsers',
+      );
+    } catch {
+      return null;
+    }
+  }
+  if (!dir) return null;
+  try {
+    return realpathSync(dir);
+  } catch {
+    return null;
+  }
+}
+
+function inside(file: string, dir: string): boolean {
+  let real = file;
+  try {
+    real = realpathSync(file);
+  } catch {}
+  return real.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+/** The topmost ancestor still running the same program: the browser's main process. */
+export function browserRoot(pid: number, proc: ProcInfo = linuxProc): number {
+  const exe = proc.exe(pid);
+  let root = pid;
+  for (let i = 0; i < 64; i++) {
+    const parent = proc.ppid(root);
+    if (!parent || parent <= 1 || proc.exe(parent) !== exe) break;
+    root = parent;
+  }
+  return root;
+}
+
+/** Does pid run under ancestor (or is it ancestor)? */
+export function descendsFrom(pid: number, ancestor: number, proc: ProcInfo = linuxProc): boolean {
+  let p: number | null = pid;
+  for (let i = 0; p && p > 1 && i < 128; i++) {
+    if (p === ancestor) return true;
+    p = proc.ppid(p);
+  }
+  return false;
+}
+
+export type Verdict = { browser: boolean | null; root?: number };
+
+/** Judges a process already known to own the connection. */
+export function judgeProcess(
+  pid: number,
+  opts: { agentPid?: number; folder?: string | null; proc?: ProcInfo; node?: string } = {},
+): Verdict {
+  const proc = opts.proc ?? linuxProc;
+  const exe = proc.exe(pid);
+  if (!exe) return { browser: null };
+  if (!BROWSER_EXE.test(exe.split(/[\\/]/).pop() ?? '')) return { browser: false };
+  if (isNodeInDisguise(exe, opts.node)) return { browser: false };
+  const folder = opts.folder === undefined ? browsersFolder() : opts.folder;
+  if (folder && !inside(exe, folder)) return { browser: false };
+  if (opts.agentPid && !descendsFrom(pid, opts.agentPid, proc)) return { browser: false };
+  return { browser: true, root: browserRoot(pid, proc) };
+}
+
+export function connectionOwner(
+  clientPort: number,
+  serverPort: number,
+  opts: { agentPid?: number } = {},
+): Verdict {
+  if (process.platform !== 'linux') return { browser: null };
+  const inode = socketInode(clientPort, serverPort);
+  if (!inode) return { browser: null };
+  const pid = socketPid(inode);
+  if (!pid) return { browser: null };
+  return judgeProcess(pid, opts);
+}
+
+export function connectionFromBrowser(clientPort: number, serverPort: number): boolean | null {
+  return connectionOwner(clientPort, serverPort).browser;
 }
