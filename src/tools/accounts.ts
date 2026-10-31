@@ -126,6 +126,10 @@ async function signupStep(
     }
     // Con el nombre a secas se nombra la web de verdad («de wallapop.es», no «de wallapop»).
     const p = await pendingOf(sitio, vault, true);
+    // El dueño dijo sí a descartar la web exacta que le enseñó la pregunta: si ahora el nombre
+    // lleva a otra, ese sí no vale para ella.
+    if (p && shown && p.domain !== shown)
+      return `No he descartado nada: ahora «${sitio}» no lleva a ${shown}. Dime la web exacta.`;
     return p && (await discardSignup(p.domain, vault))
       ? `He descartado el registro a medias de ${p.domain}; no queda nada guardado.`
       : `No había ningún registro a medias de ${sitio}.`;
@@ -143,7 +147,7 @@ export function createAccountsTool(
   // (por nombre+correo). Con ella, «confirma wallapop» pide un solo sí en vez de dos.
   const shown = new Map<string, { domain: string; at: number }>();
   const shownKey = (a: Record<string, unknown>): string =>
-    `${String(a.sitio ?? '')
+    `${String(a.action ?? '')}|${String(a.sitio ?? '')
       .trim()
       .toLowerCase()}|${String(a.correo ?? '')
       .trim()
@@ -158,11 +162,12 @@ export function createAccountsTool(
     // Para la pregunta de la Gate: la web exacta del alta a medias que encaja con el nombre
     // (nunca mezcla webs distintas: si encajan varias, no hay pista y el paso pregunta cuál).
     gateHint: async (args) => {
-      if (args.action !== 'confirmar_registro' && args.action !== 'codigo_registro') return '';
+      const a = args.action;
+      if (a !== 'confirmar_registro' && a !== 'codigo_registro' && a !== 'descartar') return '';
       const sitio = typeof args.sitio === 'string' ? args.sitio.trim() : '';
       if (!sitio) return '';
       const p = await pendingOf(sitio, vault, true).catch(() => null);
-      if (args.action === 'confirmar_registro') {
+      if (a === 'confirmar_registro' || a === 'descartar') {
         if (p) shown.set(shownKey(args), { domain: p.domain, at: Date.now() });
         else shown.delete(shownKey(args));
       }
@@ -171,14 +176,14 @@ export function createAccountsTool(
     name: 'cuentas',
     label: 'Cuentas',
     description:
-      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on (buscar on one site also gives the full username, for «¿cuál es mi usuario en X?»). Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
+      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on (buscar on one site also gives the full username, for «¿cuál es mi usuario en X?»). Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). sitio can be a bare name («regístrame en wallapop», «confirma lo de wallapop»): confirmar_registro, guardar, descartar and codigo_registro resolve it when only one half-done sign-up matches, and say which ones if several do; preparar_registro needs the exact domain (wallapop.es), so pass it if you know it or ask the owner. descartar asks the owner first, naming the exact site. Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async (_id, args) => {
       let text: string;
       if (args.action !== 'listar' && args.action !== 'buscar') {
         const seen =
-          args.action === 'confirmar_registro'
+          args.action === 'confirmar_registro' || args.action === 'descartar'
             ? takeShown(args as Record<string, unknown>)
             : undefined;
         text = await signupStep(args, vault, owner, mail, seen);

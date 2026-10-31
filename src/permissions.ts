@@ -1137,6 +1137,12 @@ export class Gate {
         match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro',
       },
       {
+        id: 'ask-cuentas-descartar',
+        verdict: 'ask',
+        reason: "deletes a half-done sign-up and its saved password from the owner's vault",
+        match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'descartar',
+      },
+      {
         id: 'ask-cuentas-codigo',
         verdict: 'ask',
         reason: "reads a sign-up verification code from the owner's mail",
@@ -1468,9 +1474,10 @@ export class Gate {
    */
   #isGestionEjecutar(c: ToolCall): boolean {
     // Crear una cuenta en nombre de Nico (cuentas confirmar_registro) va igual: un sí fresco cada vez.
+    // Descartar un alta también: si la web ya la creó, su única contraseña se perdería.
     if (
       c.tool === 'cuentas' &&
-      ['confirmar_registro', 'codigo_registro'].includes(argString(c.args, 'action'))
+      ['confirmar_registro', 'codigo_registro', 'descartar'].includes(argString(c.args, 'action'))
     )
       return true;
     // Limpiar correo o darse de baja (el lote exacto de la vista previa): un sí fresco cada vez.

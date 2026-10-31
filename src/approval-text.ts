@@ -100,6 +100,14 @@ export function formatApproval(
     const question = `Voy a mirar en tu correo el código que te ha mandado ${sitio} para terminar el alta. ¿Sigo?`;
     return withinBudget(question, question, 'cuentas');
   }
+  if (call.tool === 'cuentas' && call.args.action === 'descartar') {
+    const sitio =
+      exactSite ||
+      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+    if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
+    const question = `Voy a descartar el alta a medias en ${sitio} y borrar la contraseña que guardé para ella. ¿Sigo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
   if (call.tool === 'cuentas' && call.args.action === 'confirmar_registro') {
     const sitio =
       exactSite ||
