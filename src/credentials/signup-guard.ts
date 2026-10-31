@@ -85,3 +85,72 @@ export async function signupSubmitBlock(
   }
   return null;
 }
+
+/**
+ * El escritorio (herramienta `computer`) no sabe en qué web está: un clic o un Enter en una
+ * ventana de navegador de verdad puede enviar el alta que el navegador dejó a medias. Aquí
+ * se apuntan, para todo el PC, las altas pendientes ya escritas (por el navegador o
+ * tecleando su correo en el escritorio). Caducan a los 30 min; antes, solo las suelta el sí
+ * del dueño (confirmar_registro), guardar o descartar.
+ */
+export const DESKTOP_SIGNUP_ARM_TTL_MS = 30 * 60_000;
+const desktopArmed = new Map<string, number>();
+
+export function armDesktopSignup(domains: Iterable<string>, now: number = Date.now()): void {
+  for (const d of domains) desktopArmed.set(d, now);
+}
+
+/** Solo para pruebas. */
+export function resetDesktopSignup(): void {
+  desktopArmed.clear();
+}
+
+/** ¿Esta acción del escritorio puede enviar un formulario? (clic, Enter, texto con salto). */
+function desktopSubmits(item: Record<string, unknown>): boolean {
+  if (item.action === 'click') return true;
+  if (item.action === 'key') return /enter|return/i.test(String(item.key ?? ''));
+  if (item.action === 'type') return /[\r\n]/.test(String(item.text ?? ''));
+  return false;
+}
+
+/**
+ * Freno de altas para una llamada de `computer` (o un batch entero). Si teclea el correo de
+ * un alta pendiente, la arma antes de nada (sin web conocida: todas las de ese correo). Si
+ * hay un clic, un Enter o un salto de línea y alguna alta armada no tiene el sí reciente,
+ * devuelve el motivo y no se hace nada de la llamada.
+ */
+export async function desktopSignupBlock(
+  args: Record<string, unknown>,
+  vault: VaultOps = realVault,
+  now: number = Date.now(),
+): Promise<string | null> {
+  const items =
+    args.action === 'batch' && Array.isArray(args.actions)
+      ? (args.actions as unknown[]).filter(
+          (x): x is Record<string, unknown> => typeof x === 'object' && x !== null,
+        )
+      : [args];
+  for (const it of items) {
+    if (it.action === 'type' && it.secret !== true && String(it.text ?? '').includes('@')) {
+      const typed = await signupEmailDomains(it.text, undefined, vault).catch(() => []);
+      armDesktopSignup(typed, now);
+    }
+  }
+  if (desktopArmed.size === 0 || !items.some(desktopSubmits)) return null;
+  const domains = new Set<string>();
+  for (const [d, at] of desktopArmed) {
+    if (now - at > DESKTOP_SIGNUP_ARM_TTL_MS) desktopArmed.delete(d);
+    else domains.add(d);
+  }
+  try {
+    const block = await signupSubmitBlock(domains, vault, now);
+    for (const d of desktopArmed.keys()) if (!domains.has(d)) desktopArmed.delete(d);
+    return block;
+  } catch {
+    return DESKTOP_SIGNUP_UNKNOWN;
+  }
+}
+
+export const DESKTOP_SIGNUP_UNKNOWN =
+  'No he hecho clic: hay un alta de cuenta a medias y no he podido comprobar si tiene el sí del dueño. ' +
+  'Llama antes a cuentas confirmar_registro (o cuentas descartar si no sigues).';

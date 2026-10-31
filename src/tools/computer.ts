@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { Config } from '../config.js';
+import { desktopSignupBlock } from '../credentials/signup-guard.js';
 import { log } from '../log.js';
 import type { Decision, ToolCall } from '../permissions.js';
 import { expand, type Region, scaleRegion } from '../screen/regions.js';
@@ -1157,6 +1158,9 @@ export function createComputerTool(
           }
           const record = args as unknown as Record<string, unknown>;
           lastAfter = null;
+          // Alta de cuenta a medias: sin el sí reciente del dueño, ni clic ni Enter.
+          const signupBlock = await desktopSignupBlock(record);
+          if (signupBlock) throw new Error(signupBlock);
           const wantsLook = record.look === true && args.action !== 'screenshot';
           if (args.action === 'batch') {
             const out = await runBatch(record, signal);

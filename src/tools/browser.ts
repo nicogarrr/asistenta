@@ -10,6 +10,7 @@ import {
 } from '../browser/service.js';
 import { UNREADABLE_TARGET } from '../browser/target.js';
 import {
+  armDesktopSignup,
   signupEmailDomains,
   signupPasswordDomain,
   signupSubmitBlock,
@@ -1074,6 +1075,8 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
       const set = signupFills.get(scope) ?? new Set<string>();
       for (const d of signupDomains) set.add(d);
       signupFills.set(scope, set);
+      // La ventana del navegador también se ve en el escritorio: un clic de `computer` cuenta.
+      armDesktopSignup(signupDomains);
     }
     return withPageUrl(service, scopeOf(), action, result);
   };
