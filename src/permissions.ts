@@ -17,6 +17,7 @@ import {
 } from './egress-taint.js';
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
+import { reaAskReason } from './mcp/rea.js';
 import { stableStringify } from './utils.js';
 
 /**
@@ -2362,6 +2363,8 @@ export class Gate {
       this.#forcedAsk.get(sessionId)?.(call) ??
       this.#egressTaintAsk(sessionId, call) ??
       this.#memoryEchoAsk(sessionId, call) ??
+      // REA (src/mcp/rea.ts): cada llamada pregunta; ni «Siempre» ni control total.
+      reaAskReason(call.tool) ??
       null;
     // Taint gate: after reading outside content, no standing allowance (memo,
     // scope, fullControl, grant window) covers a call that is not a read.
