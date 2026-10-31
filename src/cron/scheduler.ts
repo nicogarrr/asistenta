@@ -68,6 +68,22 @@ const SPOKEN_HOUR_VALUE: Record<string, number> = {
 };
 const SPOKEN_HOURS = Object.keys(SPOKEN_HOUR_VALUE).join('|');
 
+/** Minutes said in words after «y» / «menos»: «y diez», «menos veinte». Longest first. */
+const MINUTE_WORD_VALUE: Record<string, number> = {
+  'cuarenta y cinco': 45,
+  veinticinco: 25,
+  cincuenta: 50,
+  cuarenta: 40,
+  treinta: 30,
+  veinte: 20,
+  cuarto: 15,
+  media: 30,
+  cinco: 5,
+  diez: 10,
+};
+const MINUTES_AFTER = Object.keys(MINUTE_WORD_VALUE).join('|');
+const MINUTES_BEFORE = 'veinticinco|veinte|cuarto|cinco|diez';
+
 /** A clock hour with the part of the day said next to it, in 24h. */
 function withPartOfDay(hour: number, part: string): number {
   if (part === 'manana' || part === 'madrugada') return hour === 12 ? 0 : hour;
@@ -94,18 +110,18 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   let hasTime = false;
 
   const timeMatch = new RegExp(
-    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(media|cuarto)|\\s+menos\\s+(cuarto))?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
+    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
   ).exec(normalised);
   if (timeMatch) {
     const said = timeMatch[1] ?? '0';
     hour = /^\d+$/.test(said) ? Number(said) : (SPOKEN_HOUR_VALUE[said] ?? 0);
     minute = Number(timeMatch[2] ?? 0);
-    // «a las 8 y media», «a las 9 menos cuarto»: before, the half hour was dropped.
-    if (timeMatch[3] === 'media') minute = 30;
-    else if (timeMatch[3] === 'cuarto') minute = 15;
+    // «a las 8 y media», «a las ocho y diez», «a las 9 menos veinte»: before, the
+    // minutes said in words were dropped and the routine fired on the hour.
+    if (timeMatch[3]) minute = MINUTE_WORD_VALUE[timeMatch[3]] ?? 0;
     else if (timeMatch[4]) {
       hour = hour === 0 ? 23 : hour - 1;
-      minute = 45;
+      minute = 60 - (MINUTE_WORD_VALUE[timeMatch[4]] ?? 0);
     }
     hasTime = true;
     const part = timeMatch[6];
