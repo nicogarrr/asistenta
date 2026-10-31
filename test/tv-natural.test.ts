@@ -118,7 +118,7 @@ describe('tool tv: launch por nombre, canal, volumen por pasos y command', () =>
     const { d, calls } = deps();
     const r = await run(d, { action: 'launch', appId: 'YouTube' });
     expect(calls).toEqual(['launch:youtube.leanback.v4']);
-    expect(text(r)).toBe('He lanzado YouTube (youtube.leanback.v4) en la tele.');
+    expect(text(r)).toBe('He abierto YouTube en la tele.');
     expect(r.details).toMatchObject({
       appId: 'youtube.leanback.v4',
       asked: 'YouTube',
@@ -130,21 +130,21 @@ describe('tool tv: launch por nombre, canal, volumen por pasos y command', () =>
     const { d, calls } = deps();
     const r = await run(d, { action: 'launch', appId: 'dazn' });
     expect(calls).toEqual(['apps', 'launch:com.dazn.app']);
-    expect(text(r)).toBe('He lanzado DAZN (com.dazn.app) en la tele.');
+    expect(text(r)).toBe('He abierto DAZN en la tele.');
   });
 
   it('un id real no cambia (ni pide la lista)', async () => {
     const { d, calls } = deps();
     const r = await run(d, { action: 'launch', appId: 'netflix' });
     expect(calls).toEqual(['launch:netflix']);
-    expect(text(r)).toBe('He lanzado netflix en la tele.');
+    expect(text(r)).toBe('He abierto Netflix en la tele.');
   });
 
   it('volumeStep: N teclas en una sola entrada de la cola', async () => {
     const { d, calls } = deps();
     const r = await run(d, { action: 'volumeStep', steps: -3 });
     expect(calls).toEqual(['key:VOLUMEDOWN', 'key:VOLUMEDOWN', 'key:VOLUMEDOWN']);
-    expect(text(r)).toBe('Volumen bajado 3 pasos (sin confirmacion de la tele).');
+    expect(text(r)).toBe('Volumen bajado 3 pasos (sin confirmación de la tele).');
     await expect(run(d, { action: 'volumeStep', steps: 0 })).rejects.toThrow(/entre -15 y 15/);
     await expect(run(d, { action: 'volumeStep', steps: 50 })).rejects.toThrow(/entre -15 y 15/);
   });
