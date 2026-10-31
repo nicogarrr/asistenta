@@ -238,7 +238,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           const reason = gitChanged
             ? 'el proponente cambió la config o los hooks de git del kernel: no se mide ni se promueve; revisa .git a mano'
             : toolChanged
-              ? 'el proponente cambió Node, npm o su config fuera de la copia: no se mide ni se promueve; revisa a mano'
+              ? 'el proponente cambió Node, npm, git o su config fuera de la copia: no se mide ni se promueve; revisa a mano'
               : sandboxGitChanged
                 ? 'el proponente redirigió el git del intento (su .git o su HEAD): no se mide ni se promueve; revisa a mano'
                 : 'el proponente cambió el árbol del kernel fuera de su sandbox: no se mide ni se promueve; revisa los cambios a mano';

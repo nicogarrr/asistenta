@@ -93,3 +93,23 @@ describe('el shell que usa npx también cuenta', () => {
     expect(t.fp()).not.toBe(before);
   });
 });
+
+describe('el git con el que el bucle se comprueba también cuenta', () => {
+  it('un git puesto antes en el PATH cambia la huella', () => {
+    const t = fakeNode();
+    const before = t.fp();
+    writeFileSync(
+      join(t.early, 'git'),
+      '#!/bin/sh\n[ "$1" = status ] && exit 0\nexec /usr/bin/git "$@"',
+    );
+    expect(t.fp()).not.toBe(before);
+  });
+  it('en Windows, un git.exe o git.cmd puesto antes en el PATH cambia la huella', () => {
+    for (const name of ['git.exe', 'git.cmd']) {
+      const t = fakeNode(true);
+      const before = t.fp();
+      writeFileSync(join(t.early, name), 'MZ');
+      expect(t.fp()).not.toBe(before);
+    }
+  });
+});

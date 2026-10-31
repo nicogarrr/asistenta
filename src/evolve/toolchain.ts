@@ -31,6 +31,8 @@ export function toolchainFingerprint(
   };
   // npx lanza vitest con el shell que encuentra el PATH (`sh -c vitest`, en Windows cmd): un
   // `sh` falso antes en el PATH corría en la medición (comprobado con npm real, 31 oct).
+  // Y `git`: el bucle mira con él si el kernel sigue limpio y en su commit; un `git` falso antes
+  // en el PATH contestaba «limpio» con el árbol sucio (comprobado con git real, 31 oct).
   const names = win
     ? [
         'node.exe',
@@ -42,8 +44,10 @@ export function toolchainFingerprint(
         'npm.ps1',
         'npm.exe',
         'cmd.exe',
+        'git.exe',
+        'git.cmd',
       ]
-    : ['node', 'npx', 'npm', 'sh'];
+    : ['node', 'npx', 'npm', 'sh', 'git'];
   for (const dir of pathEnv.split(win ? ';' : delimiter).slice(0, 100)) {
     if (!dir) continue;
     // Solo los que existen: un fichero nuevo antes en el PATH añade una línea.
