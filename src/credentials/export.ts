@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { normalizeDomain } from '../gestor/login.js';
+import { logFile } from '../log.js';
 import { oldPendingOffer, pendingAge } from './pending-age.js';
 import {
   type Account,
@@ -239,10 +240,58 @@ async function cambiar(
 export const CUENTAS_USO =
   'No conozco esa orden. Usa: pa cuentas listar (tus cuentas), pa cuentas copiar <web> (copia la contraseña), pa cuentas borrar <web>, pa cuentas cambiar <web> o pa cuentas exportar keepass|bitwarden <fichero>.';
 
+/** Como se dice de palabra: «pa cuentas lista», «copia wallapop», «borra …». */
+const ALIAS: Record<string, string> = {
+  lista: 'listar',
+  ver: 'listar',
+  copia: 'copiar',
+  borra: 'borrar',
+  cambia: 'cambiar',
+  exporta: 'exportar',
+};
+
+export const CUENTAS_GESTOR_KO =
+  'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
+
 export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}): Promise<number> {
-  const vault = deps.vault ?? realVault;
   const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
-  const [sub = 'listar', a1, a2] = argv;
+  try {
+    return await cuentasRun(argv, deps, out);
+  } catch (err) {
+    // Un fallo del gestor (vault ilegible, disco…): una línea llana; el detalle, solo al registro.
+    logFile.warn('pa cuentas: fallo del gestor de contraseñas', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    out(CUENTAS_GESTOR_KO);
+    return 1;
+  }
+}
+
+async function cuentasRun(
+  argv: string[],
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+): Promise<number> {
+  const vault = deps.vault ?? realVault;
+  const [rawSub = 'listar', a1, a2] = argv;
+  const sub = ALIAS[rawSub.toLowerCase()] ?? rawSub.toLowerCase();
+  // Una orden conocida a la que le falta la web no es «no conozco esa orden».
+  if (['copiar', 'borrar', 'cambiar'].includes(sub) && !a1) {
+    out(`Falta la web: pa cuentas ${sub} <web>, por ejemplo pa cuentas ${sub} wallapop.es.`);
+    return 2;
+  }
+  if (sub === 'exportar' && a1 !== 'keepass' && a1 !== 'bitwarden') {
+    out(
+      '¿A qué formato? Usa: pa cuentas exportar keepass <fichero> o pa cuentas exportar bitwarden <fichero>.',
+    );
+    return 2;
+  }
+  if (sub === 'exportar' && !a2) {
+    out(
+      `Falta el fichero: pa cuentas exportar ${a1} <fichero>, por ejemplo ${a1 === 'keepass' ? 'cuentas.csv' : 'cuentas.json'}.`,
+    );
+    return 2;
+  }
   if (sub === 'listar') {
     const all = await listAccounts(vault);
     if (all.length === 0) out('No hay cuentas guardadas.');
