@@ -853,7 +853,7 @@ export class TelegramChannel implements ChannelAdapter {
         buttons: opts?.askScope
           ? [
               { label: '✅ Una vez', action: `approve:once:${id}` },
-              { label: '🕒 Esta sesión', action: `approve:session:${id}` },
+              { label: '🕒 Por ahora', action: `approve:session:${id}` },
               { label: '♾️ Siempre', action: `approve:always:${id}` },
               { label: '❌ Denegar', action: `deny:${id}` },
             ]
@@ -1635,7 +1635,7 @@ export const NOT_PENDING = 'Esta solicitud ya no está pendiente.';
 /** Spanish verdicts, one per scope. */
 const DECISION_LABELS: Record<ApprovalScope, string> = {
   once: '✅ Aprobado para esta vez',
-  session: '✅ Aprobado para esta sesión',
+  session: '✅ Aprobado por ahora',
   always: '✅ Aprobado siempre',
 };
 

@@ -2766,7 +2766,7 @@ export function runPermisosCommand(
   };
   if (sub === '' || sub === 'estado') {
     if (tools.length === 0)
-      return 'No me has dado ningún permiso "siempre". Los de "esta sesión" o "una vez" no salen aquí: mueren solos al terminar su tarea.';
+      return 'No me has dado ningún permiso "siempre". Los de "por ahora" o "una vez" no salen aquí: mueren solos al terminar su tarea.';
     return (
       `Permisos "siempre" activos (${tools.length}): ${tools.map(withChats).join(', ')}. ` +
       'Cada uno vale solo en el chat donde lo diste. ' +

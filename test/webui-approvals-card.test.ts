@@ -70,7 +70,7 @@ describe('panel: tarjeta de aprobación legible', () => {
     expect(bloques.length).toBe(2);
     for (const bloque of bloques) expect(() => new Function(bloque)).not.toThrow();
     expect(html).toContain('Permitir una vez');
-    expect(html).toContain('Permitir en esta sesión');
+    expect(html).toContain('Permitir por ahora');
     expect(html).toContain('Denegar');
     expect(html).toContain('window.confirm(');
     expect(html).toContain('cargarAprobacionesEnSilencio');
