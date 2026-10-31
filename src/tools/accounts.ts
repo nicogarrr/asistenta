@@ -22,6 +22,7 @@ import {
   type VaultOps,
 } from '../credentials/store.js';
 import { log } from '../log.js';
+import { vaultExists as realVaultExists } from '../vault.js';
 
 const Params = Type.Object({
   action: Type.Union(
@@ -74,8 +75,9 @@ const line = (a: Account): string =>
  * web el navegador la escribe desde el vault con `secret_key`.
  */
 /** Los avisos propios del registro llegan tal cual; un fallo del vault, en llano (crudo solo al log). */
-const errText = (err: unknown, action: string): string => {
+const errText = (err: unknown, action: string, hasVault: () => boolean): string => {
   if (err instanceof AvisoCuenta) return err.message;
+  if (!vaultThere(hasVault)) return SIGNUP_NO_VAULT;
   log.warn('cuentas: fallo del gestor de contraseñas en el registro', {
     action,
     error: err instanceof Error ? err.message : String(err),
@@ -95,6 +97,7 @@ async function signupStep(
   owner: () => Promise<OwnerIdentity | null>,
   mail: MailSearch = realSignupMail,
   shown?: string,
+  hasVault: () => boolean = () => true,
 ): Promise<string> {
   const sitio = (args.sitio ?? '').trim();
   if (!sitio) return '¿En qué web? Dime el nombre o el dominio.';
@@ -134,7 +137,7 @@ async function signupStep(
       ? `He descartado el registro a medias de ${p.domain}; no queda nada guardado.`
       : `No había ningún registro a medias de ${sitio}.`;
   } catch (err) {
-    return errText(err, args.action);
+    return errText(err, args.action, hasVault);
   }
 }
 
@@ -142,6 +145,8 @@ export function createAccountsTool(
   vault: VaultOps = realVault,
   owner: () => Promise<OwnerIdentity | null> = () => ownerIdentity(process.env, vault),
   mail: MailSearch = realSignupMail,
+  // Instalación nueva: todavía no hay caja fuerte. Con un vault de prueba, se da por hecho que sí.
+  hasVault: () => boolean = vault === realVault ? realVaultExists : () => true,
 ): AgentTool<typeof Params> & { gateHint: (args: Record<string, unknown>) => Promise<string> } {
   // La web exacta que la pregunta de la Gate enseñó al dueño para cada confirmar_registro
   // (por nombre+correo). Con ella, «confirma wallapop» pide un solo sí en vez de dos.
@@ -186,9 +191,9 @@ export function createAccountsTool(
           args.action === 'confirmar_registro' || args.action === 'descartar'
             ? takeShown(args as Record<string, unknown>)
             : undefined;
-        text = await signupStep(args, vault, owner, mail, seen);
+        text = await signupStep(args, vault, owner, mail, seen, hasVault);
       } else {
-        text = await readStep(args, vault);
+        text = await readStep(args, vault, hasVault);
       }
       return { content: [{ type: 'text', text }], details: {} };
     },
@@ -199,6 +204,7 @@ export function createAccountsTool(
 async function readStep(
   args: { action: string; sitio?: string },
   vault: VaultOps,
+  hasVault: () => boolean,
 ): Promise<string> {
   let text: string;
   try {
@@ -228,13 +234,28 @@ async function readStep(
     log.warn('cuentas: no se pudo leer el gestor de contraseñas', {
       error: err instanceof Error ? err.message : String(err),
     });
-    text = VAULT_UNREADABLE;
+    text = vaultThere(hasVault) ? VAULT_UNREADABLE : NO_VAULT_YET;
   }
   return text;
 }
 
 /** Lo que el dueño vio en la pregunta vale para la llamada que sigue, no para siempre. */
 const SHOWN_TTL_MS = 10 * 60_000;
+
+/** Si no se puede saber, se supone que la caja fuerte existe (el aviso de siempre). */
+const vaultThere = (hasVault: () => boolean): boolean => {
+  try {
+    return hasVault();
+  } catch {
+    return true;
+  }
+};
+
+export const NO_VAULT_YET =
+  'Todavía no tengo ninguna cuenta guardada: aún no tienes caja fuerte de claves. Se crea al instalar (doble clic en instalar.bat) o con pa vault init.';
+
+export const SIGNUP_NO_VAULT =
+  'Todavía no tienes caja fuerte de claves, así que no puedo guardar la contraseña del alta; no he tocado nada en la web. Se crea al instalar (doble clic en instalar.bat) o con pa vault init; luego vuelve a pedírmelo.';
 
 export const VAULT_UNREADABLE =
   'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
