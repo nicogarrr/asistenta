@@ -616,14 +616,17 @@ ${renderFormatScript()}
 
       var CLAVE_TOKEN = 'asistenta.webui.token';
       var parametros = new URLSearchParams(window.location.search);
-      var tokenDeUrl = parametros.get('token');
+      // Sin espacios ni saltos de línea: el enlace copiado a veces los arrastra.
+      var tokenDeUrl = (parametros.get('token') || '').trim();
 
       // El token de la URL se guarda una vez y desaparece de la barra de direcciones.
-      if (tokenDeUrl) {
-        try {
-          window.localStorage.setItem(CLAVE_TOKEN, tokenDeUrl);
-        } catch (error) {
-          // Un navegador sin almacenamiento sigue pudiendo usar el panel en esta visita.
+      if (parametros.has('token')) {
+        if (tokenDeUrl) {
+          try {
+            window.localStorage.setItem(CLAVE_TOKEN, tokenDeUrl);
+          } catch (error) {
+            // Un navegador sin almacenamiento sigue pudiendo usar el panel en esta visita.
+          }
         }
         parametros.delete('token');
         var resto = parametros.toString();
@@ -638,7 +641,7 @@ ${renderFormatScript()}
 
       var token = '';
       try {
-        token = window.localStorage.getItem(CLAVE_TOKEN) || '';
+        token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
       } catch (error) {}
 
       var aviso = document.getElementById('aviso');
