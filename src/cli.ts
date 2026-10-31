@@ -280,7 +280,7 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
-import { panelDoctorLines } from './panel-doctor.js';
+import { panelDoctorLines, panelTokenFromEnv } from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
@@ -1591,7 +1591,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
   if (process.env.PA_WEB_PORT) {
-    const webToken = process.env.PA_WEB_TOKEN;
+    const webToken = panelTokenFromEnv();
     if (!webToken) log.warn('PA_WEB_PORT sin PA_WEB_TOKEN: panel web no arrancado');
     else {
       void startWebUi(
