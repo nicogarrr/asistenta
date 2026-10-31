@@ -351,7 +351,7 @@ function parseSchedule(expr: string): ScheduleCheck {
   if (fields.length !== 5 && fields.length !== 6) {
     return {
       ok: false,
-      error: `schedule must have 5 fields (min hour dom mon dow) or 6 with seconds first, got ${fields.length} in ${JSON.stringify(expr)}`,
+      error: `el horario «${expr.trim()}» tiene ${fields.length} partes y necesita 5 (minuto hora día mes día-de-la-semana) o 6 con los segundos delante; ejemplo: «0 8 * * *» = cada día a las 8:00`,
     };
   }
   let job: Cron;
@@ -361,14 +361,23 @@ function parseSchedule(expr: string): ScheduleCheck {
       paused: true,
       timezone: localTimeZone(),
     });
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } catch {
+    // El texto de croner va en inglés y técnico: al dueño, una frase llana con su horario.
+    return {
+      ok: false,
+      error: `no entiendo el horario «${fields.join(' ')}»: cada parte va en números (minuto 0-59, hora 0-23, día 1-31, mes 1-12, día de la semana 0-6); ejemplo: «30 7 * * 1-5» = de lunes a viernes a las 7:30`,
+    };
   }
   const next = job.nextRun();
   job.stop();
   // "0 0 30 2 *" parses cleanly and would then never fire, which looks exactly
   // like a routine that silently stopped working.
-  if (!next) return { ok: false, error: 'schedule parses but never fires (no matching date)' };
+  if (!next)
+    return {
+      ok: false,
+      error:
+        'ese horario nunca llega: no hay ninguna fecha que encaje (por ejemplo, un 30 de febrero)',
+    };
   return { ok: true, next };
 }
 
