@@ -1,4 +1,4 @@
-import type { ProjectContext } from './project-context.js';
+import { type ProjectContext, projectFolderName } from './project-context.js';
 /**
  * Datos para /estado: que Nico vea desde Telegram si algo falla, sin abrir el PC.
  *
@@ -77,8 +77,8 @@ export function conversationStatus(c: {
   const project = !c.projectDir
     ? 'Proyecto: ninguno (/proyecto <carpeta> para ligar uno).'
     : c.project?.ok
-      ? `Proyecto: ${c.project.dir} (cargo ${c.project.name}, ${c.project.bytes} bytes).`
-      : `Proyecto: ${c.projectDir}, ahora no cargo nada: ${c.project?.ok === false ? c.project.reason : 'sin fichero'}.`;
+      ? `Proyecto: carpeta «${projectFolderName(c.project.dir)}» (tengo en cuenta ${c.project.name}).`
+      : `Proyecto: carpeta «${projectFolderName(c.projectDir)}», pero ahora no puedo leer nada: ${c.project?.ok === false ? c.project.reason : 'no hay fichero'}.`;
   const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (elegido con /modelo)'}.`;
   return [project, model];
 }

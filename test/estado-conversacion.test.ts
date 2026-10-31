@@ -4,7 +4,7 @@ import { conversationStatus, formatStatus } from '../src/status.js';
 const base = { version: 't', node: 'v24', uptimeMs: 0, tools: [], log: null, pageWatches: 0 };
 
 describe('/estado: proyecto y modelo de esta conversación', () => {
-  it('con proyecto ligado y cargado dice carpeta, fichero y tamaño; el modelo elegido se nota', () => {
+  it('con proyecto ligado y cargado dice carpeta y fichero, sin ruta entera ni bytes; el modelo elegido se nota', () => {
     const lines = conversationStatus({
       projectDir: 'C:\\proyectos\\web',
       project: {
@@ -19,7 +19,7 @@ describe('/estado: proyecto y modelo de esta conversación', () => {
       primaryModel: 'main-model',
     });
     expect(lines).toEqual([
-      'Proyecto: C:\\proyectos\\web (cargo AGENTS.md, 812 bytes).',
+      'Proyecto: carpeta «web» (tengo en cuenta AGENTS.md).',
       'Modelo: alt-model (elegido con /modelo).',
     ]);
   });
@@ -35,7 +35,9 @@ describe('/estado: proyecto y modelo de esta conversación', () => {
       model: 'm',
       primaryModel: 'm',
     });
-    expect(p).toBe('Proyecto: /x, ahora no cargo nada: la carpeta ya no existe.');
+    expect(p).toBe(
+      'Proyecto: carpeta «x», pero ahora no puedo leer nada: la carpeta ya no existe.',
+    );
   });
 
   it('formatStatus añade la sección solo cuando se la pasan (dueño en privado)', () => {

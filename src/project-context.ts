@@ -197,7 +197,7 @@ export class ProjectContextStore {
 }
 
 /** Nombre corto de la carpeta (sin la ruta entera), con barras de Windows o de Linux. */
-function folderName(dir: string): string {
+export function projectFolderName(dir: string): string {
   const parts = dir.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? dir;
 }
@@ -205,7 +205,7 @@ function folderName(dir: string): string {
 /** Respuesta de `/proyecto <carpeta>` cuando la carpeta queda ligada. */
 export function projectLinkedReply(ctx: Extract<ProjectContext, { ok: true }>): string {
   const first = ctx.text.trim().split('\n')[0]?.slice(0, 80) ?? '';
-  return `Hecho: en esta conversación tendré en cuenta ${ctx.name} de la carpeta «${folderName(ctx.dir)}»${first ? ` («${first}»)` : ''}.`;
+  return `Hecho: en esta conversación tendré en cuenta ${ctx.name} de la carpeta «${projectFolderName(ctx.dir)}»${first ? ` («${first}»)` : ''}.`;
 }
 
 /** Respuesta de `/proyecto` (o `/proyecto estado`). */
@@ -216,7 +216,7 @@ export function projectStateReply(
   const state = !dir
     ? 'No hay ninguna carpeta de proyecto en esta conversación.'
     : ctx?.ok
-      ? `En esta conversación tengo en cuenta ${ctx.name} de la carpeta «${folderName(ctx.dir)}».`
-      : `Tengo ligada la carpeta «${folderName(dir)}», pero ahora no puedo leer nada: ${ctx?.ok === false ? ctx.reason : 'no hay fichero'}.`;
+      ? `En esta conversación tengo en cuenta ${ctx.name} de la carpeta «${projectFolderName(ctx.dir)}».`
+      : `Tengo ligada la carpeta «${projectFolderName(dir)}», pero ahora no puedo leer nada: ${ctx?.ok === false ? ctx.reason : 'no hay fichero'}.`;
   return `${state}\nPara ligar una: /proyecto <carpeta>. Para quitarla: /proyecto quitar.`;
 }
