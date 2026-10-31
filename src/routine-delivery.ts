@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { localDay, wallClock } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
@@ -94,7 +94,44 @@ export function writeRoutineOutput(
   appendFileSync(file, `## ${pad(w.hour)}:${pad(w.minute)}\n\n${body.trim()}\n\n`, {
     mode: 0o600,
   });
+  pruneRoutineOutputs(dirname(file), day);
   return file;
+}
+
+/** Días de salida que se guardan por rutina; uno por día, así que unos tres meses. */
+export const ROUTINE_OUTPUT_KEEP_DAYS = 90;
+
+/**
+ * Una rutina diaria deja un fichero por día y nunca se borraba: tras un año en el
+ * PC son cientos por rutina. Borra solo los `<AAAA-MM-DD>.md` de esta rutina más
+ * antiguos que los `keep` más recientes; nunca el de hoy ni nada con otro nombre.
+ * Un fallo al borrar no rompe la entrega.
+ */
+export function pruneRoutineOutputs(
+  dir: string,
+  today: string,
+  keep = ROUTINE_OUTPUT_KEEP_DAYS,
+): number {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  const days = names
+    .filter((n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n) && n.slice(0, 10) < today)
+    .sort()
+    .reverse();
+  let removed = 0;
+  for (const name of days.slice(Math.max(0, keep - 1))) {
+    try {
+      unlinkSync(join(dir, name));
+      removed++;
+    } catch {
+      // Abierto en otro programa (Windows) o ya borrado: se intenta en la próxima entrega.
+    }
+  }
+  return removed;
 }
 
 export class RoutineDeliveryStore {
