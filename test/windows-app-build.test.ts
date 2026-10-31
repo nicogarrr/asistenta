@@ -141,6 +141,7 @@ describe('instalador .exe: script NSIS', () => {
       'base64',
     );
     writeFileSync(join(stage, 'asistenta.ico'), icoFromPngs([{ size: 16, data: png }]));
+    writeFileSync(join(stage, 'bandeja.ico'), icoFromPngs([{ size: 16, data: png }]));
     writeFileSync(join(stage, 'bienvenida.bmp'), bmp24(1, 1, Buffer.from([1, 2, 3])));
     const out = join(stage, 'prueba.exe');
     writeFileSync(join(stage, 'a.nsi'), renderNsi(NSI, { ...vars, STAGE: stage, OUTFILE: out }));

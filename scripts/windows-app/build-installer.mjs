@@ -120,7 +120,7 @@ export async function build(d) {
   cpSync(join(stage, `node-v${NODE_VERSION}-win-x64`), join(stage, 'node'), { recursive: true });
   rmSync(join(stage, `node-v${NODE_VERSION}-win-x64`), { recursive: true, force: true });
   const sharp = d.sharp ?? (await import('sharp')).default;
-  await makeIcons(join(d.here, 'asistenta.png'), stage, sharp);
+  await makeIcons(stage, sharp);
   const outFile = join(root, 'var', `Asistenta-Instalador-${version}.exe`);
   const nsi = renderNsi(readFileSync(join(d.here, 'asistenta.nsi'), 'utf8'), {
     VERSION: version,
