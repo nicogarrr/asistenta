@@ -125,6 +125,8 @@ import { llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
+import { activeDeliveries } from './mail/deliveries.js';
+import { briefingDeliveries } from './mail/deliveries-text.js';
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
 import { listReplyInbox, readReplyThread, resolveReplyCard, searchInbox } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
@@ -450,6 +452,7 @@ import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
+import { panelRepartos } from './webui/repartos.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
 import { panelTareas } from './webui/tareas.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
@@ -1654,6 +1657,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               new TaskBoard(join(paths.state, 'tareas.json')),
               vigilanteOwnerId ?? undefined,
             ),
+          // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
+          repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           status: () => ({
             model: config.model,
             provider: config.provider,
@@ -4378,6 +4383,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const key = owner ? ownerChatKey(owner) : undefined;
       return key ? briefingTasks(new TaskBoard(join(paths.state, 'tareas.json')), key) : [];
     },
+    deliveries: () => briefingDeliveries(activeDeliveries(memoryDb, Date.now())),
     goals: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;

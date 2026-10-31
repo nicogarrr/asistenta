@@ -26,6 +26,8 @@ export interface BriefingInput {
   agenda: Array<{ title: string; when: string }>;
   /** Tareas del tablero para hoy sin hacer, y las atrasadas. */
   tasks?: Array<{ title: string; time?: string; late?: boolean }>;
+  /** Paquetes en camino, ya redactados («SEUR (123): en reparto»). */
+  deliveries?: Array<{ text: string; notable?: boolean }>;
   /** Una línea ya redactada con el tiempo de hoy («Madrid: 12–21 °C, despejado»). */
   weather?: string;
   /** Correo sin leer que merece mirarse hoy. Solo remitente y asunto, nunca el cuerpo. */
@@ -162,7 +164,7 @@ function clamp(text: string): string {
 }
 
 /**
- * Construye el briefing. Las secciones van en orden fijo (Hoy, Correo, Pendiente,
+ * Construye el briefing. Las secciones van en orden fijo (Hoy, Tareas, Correo, Paquetes, Pendiente,
  * Recordatorios, Seguimientos, Objetivos, Precios; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
  * se lea siempre igual; las que no tienen contenido no aparecen.
  */
@@ -180,6 +182,10 @@ export function buildBriefing(input: BriefingInput): string {
     {
       title: 'Correo',
       items: section((input.mail ?? []).map(mailLine)),
+    },
+    {
+      title: 'Paquetes',
+      items: section((input.deliveries ?? []).map((d) => oneLine(d.text, 140) || null)),
     },
     {
       title: 'Pendiente',
