@@ -29,7 +29,18 @@ describe('providerKeySource (pa doctor)', () => {
       getKey: vault({ 'provider:apiKey': 'k' }),
       env: { OPENCODE_GO_API_KEY: 'x' },
     });
-    expect(r).toEqual({ source: 'unset', hint: 'pa vault set provider:openrouterKey <clave>' });
+    expect(r).toEqual({
+      source: 'unset',
+      hint: 'pa vault set-stdin provider:openrouterKey: te la pide sin que se vea',
+    });
+  });
+
+  it('OpenCode sin clave: manda a instalar.bat y nunca a escribir la clave en la consola', async () => {
+    const r = await providerKeySource('https://opencode.ai/zen/v1', { getKey: vault({}), env: {} });
+    expect(r.source).toBe('unset');
+    expect(r.hint).toContain('instalar.bat');
+    expect(r.hint).toContain('set-stdin provider:apiKey');
+    expect(r.hint).not.toMatch(/vault set |<clave>/);
   });
 
   it('Gemini por variable de entorno', async () => {

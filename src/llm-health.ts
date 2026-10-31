@@ -254,7 +254,13 @@ export async function providerKeySource(
   if (vaultKey && (await getKey(vaultKey).catch(() => undefined)))
     return { source: 'vault', hint: '' };
   if (envNames.some((n) => env[n]?.trim())) return { source: 'env', hint: '' };
-  const hint = vaultKey ? `pa vault set ${vaultKey} <clave>` : `${envNames[0]} en .env`;
+  // Nunca `pa vault set <clave> <valor>`: la clave quedaría en el historial de la consola.
+  const hint =
+    vaultKey === 'provider:apiKey'
+      ? 'doble clic en instalar.bat, o pa vault set-stdin provider:apiKey'
+      : vaultKey
+        ? `pa vault set-stdin ${vaultKey}: te la pide sin que se vea`
+        : `${envNames[0]} en .env`;
   return { source: 'unset', hint };
 }
 
