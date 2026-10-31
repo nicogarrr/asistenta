@@ -128,7 +128,7 @@ import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
-import { TurnAck } from './daemon/turn-ack.js';
+import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
@@ -5907,6 +5907,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       enabled: () =>
         !finished && !out && statusOn.get(inbound.chatId) !== false && receipt.id === null,
     });
+    // Si algo falla a mitad, una línea honesta en la misma nota: qué y qué prueba ahora.
+    const setbacks = new TurnSetbacks({
+      show: (text) =>
+        liveProgress.show(text).then(() => {
+          if (liveProgress.id && !progressIds.includes(liveProgress.id))
+            progressIds.push(liveProgress.id);
+        }),
+      enabled: () => !finished && !out && statusOn.get(inbound.chatId) !== false,
+    });
 
     const status = setInterval(() => {
       if (finished || out) return;
@@ -6173,6 +6182,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Mid-turn trail: a session that only holds the final answer cannot
           // answer "what did you do first?" two days later.
           safeRemember(() => sessions.addTurn(sessionId, 'assistant', info.summary));
+        },
+        onToolEnd: (info) => {
+          setbacks.toolEnded(info);
         },
       });
 
