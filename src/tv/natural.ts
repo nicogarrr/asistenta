@@ -278,8 +278,34 @@ export function parseTvCommand(text: string): TvIntent | null {
   const v = VOLUMEN_DE_TELE.exec(t);
   if (v?.[1] && v[2]) return parseOne(`${v[1]}${v[2]}`);
   const s = SUBE_LA_TELE.exec(t);
-  return s?.[1] && s[2] ? parseOne(`${s[1]} el volumen${s[2]}`) : null;
+  if (s?.[1] && s[2]) return parseOne(`${s[1]} el volumen${s[2]}`);
+  // «sube el volumen que no se oye», «pausa que voy al baño»: el motivo no cambia la orden.
+  const r = MOTIVO.exec(t);
+  if (
+    r?.[1] &&
+    r[2] &&
+    !DEFERRED.test(t) &&
+    !PREGUNTA.test(t) &&
+    !MOTIVO_NO.test(r[2]) &&
+    // «pon la tele que empieza el partido»: «pon la tele» solo enciende dicha sola (Nico, 30-oct).
+    !PON_LA_TELE.test(r[1]) &&
+    parseTvCommand(r[2]) === null
+  ) {
+    return parseTvCommand(r[1]);
+  }
+  return null;
 }
+
+const PON_LA_TELE = new RegExp(`^(?:pon|ponme|ponnos)${YA} ${TV}`);
+
+/** «<orden> que/porque <motivo>». */
+const MOTIVO = /^(.+?) (?:que|porque|pq|xq) (.+)$/;
+/**
+ * El «que…» no es un motivo si señala algo («el volumen que tenía antes», «la peli que
+ * estaba viendo») o trae otra orden («… que pongas netflix»): entonces va al modelo.
+ */
+const MOTIVO_NO =
+  /\b(?:antes|estaba|estabamos|estaria|tenia|teniamos|habia|dije|dicho|puse|pusiste|pusimos|ultimo|ultima|mismo|misma|anterior|pon|pongas|ponga|ponme|ponla|sube|subas|baja|bajes|apaga|apagues|enciende|enciendas|abre|abras|cambia|cambies|quita|quites|silencia|pausa|pauses|dale|vuelve|vuelvas)\b/;
 
 /** «el volumen de la tele …»: la tele sobra, el volumen es el de la tele. */
 const VOLUMEN_DE_TELE = new RegExp(`^(.*\\bvolumen) de ${TV}( .+)$`);
