@@ -294,10 +294,11 @@ export async function searchRenfe(
     // al modelo (y a Nico) le basta con el paso y el remedio.
     const msg = err instanceof Error ? err.message : String(err);
     const missing = /Executable doesn't exist|playwright install/i.test(msg);
+    if (!missing) log.warn('renfe: el navegador no arranca', { err: msg.slice(0, 300) });
     throw new StepError(
       missing
         ? 'paso navegador: no hay Chromium instalado para Playwright (ejecuta `npx playwright install chromium`)'
-        : `paso navegador: no se pudo abrir el navegador (${msg.split('\n')[0]?.slice(0, 160)})`,
+        : 'paso navegador: no se pudo abrir el navegador del PC; prueba otra vez en un rato',
     );
   }
   try {
