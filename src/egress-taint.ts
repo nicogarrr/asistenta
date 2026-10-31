@@ -222,6 +222,9 @@ export function urlCarriesData(url: string): boolean {
     return true;
   }
   if (u.search.length > 1) return true;
+  // `#…` no viaja en la petición, pero la página abierta en el navegador (o en la tele)
+  // lo lee con location.hash y puede mandarlo donde quiera.
+  if (u.hash.length > 1) return true;
   if (u.username || u.password) return true;
   const path = decodeSafe(u.pathname);
   if (path.replace(/^\/+|\/+$/g, '').length > LONG_PATH_CHARS) return true;
