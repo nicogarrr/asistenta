@@ -17,27 +17,35 @@
  * candidate's own code shared this process: it could patch process.stdout or process.exit
  * and turn a FALLA into a PASA, or hide it, and the loop would score the forgery.
  */ import { spawn } from 'node:child_process';
+import { randomBytes, randomInt } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectionFromBrowser } from './probe-owner.js';
+import { pngColourShare, type Rgb } from './probe-png.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
 // a late-rendering autocomplete, a field that silently keeps its default, and a
 // result page that only exists if you filled both fields.
+// Una marca y un color de fondo nuevos en cada ejecución, que solo recibe quien carga la
+// página: un snapshot que no trae la marca, o una captura que no es de ese color, no salen
+// de esta página.
+const token = randomBytes(4).toString('hex');
+const colour: Rgb = [randomInt(40, 216), randomInt(40, 216), randomInt(40, 216)];
 const page = (body: string) =>
-  `<!doctype html><meta charset="utf-8"><title>Viajes Sur</title>${body}`;
+  `<!doctype html><meta charset="utf-8"><title>Viajes Sur ${token}</title><style>html,body{background:rgb(${colour.join(',')})}</style>${body}`;
 
 // Lo que el navegador pidió de verdad: ruta y si lo pidió un navegador (no un fetch de Node).
 // El User-Agent se puede imitar desde el código del intento; en Linux además se mira qué
 // proceso abrió la conexión, y si no es un navegador no cuenta.
-const seen: Array<{ url: string; browser: boolean }> = [];
+const seen: Array<{ url: string; browser: boolean; outsider: boolean }> = [];
 const owner = new WeakMap<Socket, boolean | null>();
 const server = createServer((req, res) => {
   const url = req.url ?? '/';
   const ua = /Mozilla\//.test(req.headers['user-agent'] ?? '');
-  seen.push({ url, browser: ua && owner.get(req.socket) !== false });
+  const who = owner.get(req.socket);
+  seen.push({ url, browser: ua && who !== false, outsider: who === false });
   if (url.startsWith('/evento?')) {
     res.writeHead(204);
     res.end();
@@ -185,7 +193,7 @@ const service = {
   open: (s: string, url: string) => call<{ url: string; status?: number | null }>('open', s, url),
   snapshot: (s: string) => call<string>('snapshot', s),
   execJs: (s: string, code: string) => call<{ text: string }>('execJs', s, code),
-  screenshot: (s: string) => call<{ data: { length: number } }>('screenshot', s),
+  screenshot: (s: string) => call<{ data: string | { length: number } }>('screenshot', s),
   closeAll: () => call<void>('closeAll'),
 };
 
@@ -204,6 +212,8 @@ const saw = async (pred: (url: string) => boolean, ms = 3000): Promise<boolean> 
     await new Promise((r) => setTimeout(r, 50));
   }
 };
+// Nadie más que el navegador ha hablado con el servidor (si el sistema lo puede saber).
+const untouched = () => !seen.some((r) => r.outsider);
 const ev = (q: string) => (url: string) => url.startsWith('/evento?') && url.includes(q);
 
 try {
@@ -223,7 +233,7 @@ try {
   const snap = await service.snapshot(scope);
   check(
     'el snapshot lista los campos',
-    /origen/i.test(snap),
+    /origen/i.test(snap) && snap.includes(token) && untouched(),
     `len=${snap.length} head=${snap.slice(0, 200)}`,
   );
 
@@ -264,7 +274,7 @@ try {
   const snapOpen = await service.snapshot(scope);
   check(
     'el snapshot avisa de los desplegables abiertos',
-    /sugerencias abiertas|ATENCION/i.test(snapOpen),
+    /sugerencias abiertas|ATENCION/i.test(snapOpen) && snapOpen.includes(token) && untouched(),
     snapOpen.split('\n').slice(0, 3).join(' | ').slice(0, 160),
   );
 
@@ -345,7 +355,12 @@ try {
 
   // 6. Screenshot with send=true must hand the bytes back so the channel can post them.
   const shot = await service.screenshot(scope);
-  check('la captura devuelve bytes enviables', shot.data.length > 1000, `${shot.data.length} b64`);
+  const share = typeof shot.data === 'string' ? pngColourShare(shot.data, colour) : null;
+  check(
+    'la captura devuelve bytes enviables',
+    shot.data.length > 1000 && share !== null && share > 0.3 && untouched(),
+    `${shot.data.length} b64, ${share === null ? 'no es un PNG legible' : `${Math.round(share * 100)}% del color de la página`}`,
+  );
 } finally {
   await service.closeAll().catch(() => {});
   agent.kill();
