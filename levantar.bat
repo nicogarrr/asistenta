@@ -10,7 +10,7 @@ set "NODE_EXE=C:\Users\nicoi\.local\node24\node.exe"
 if not exist "%NODE_EXE%" set "NODE_EXE=node"
 
 if not exist dist\cli.js (
-    echo [levantar] Falta dist\cli.js: ejecuta npm ci y npm run build primero.
+    echo [levantar] Asistenta aun no esta instalada: haz doble clic en instalar.bat primero.
     pause
     exit /b 1
 )
