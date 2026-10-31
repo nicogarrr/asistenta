@@ -332,3 +332,70 @@ describe('botones del mando: orden lenta', () => {
     expect(harness.sent).toEqual([]);
   });
 });
+
+describe('botones del mando: pulsados con Asistenta apagada', () => {
+  async function pressOld(
+    data: string,
+    keyboardAgoS: number,
+    answer: (args?: { text?: string }) => Promise<boolean>,
+  ): Promise<void> {
+    const handler = harness.handlers.get('callback_query:data');
+    if (!handler) throw new Error('no callback handler');
+    await handler({
+      callbackQuery: {
+        data,
+        message: {
+          chat: { id: 7 },
+          message_id: 1,
+          date: Math.floor(Date.now() / 1000) - keyboardAgoS,
+        },
+      },
+      from: { id: 7 },
+      answerCallbackQuery: answer,
+    });
+  }
+  const tooOld = async (): Promise<boolean> => {
+    throw new harness.FakeGrammyError(
+      400,
+      'Bad Request: query is too old and response timeout expired or query ID is invalid',
+    );
+  };
+
+  it('Telegram dice que la pulsación es vieja: la tele no se toca y se dice claro', async () => {
+    const calls: Press[] = [];
+    await makeChannel(async (p) => {
+      calls.push(p);
+      return 'Netflix abierto.';
+    });
+    await pressOld('tv:netflix', 3600, tooOld);
+    expect(calls).toEqual([]);
+    expect(harness.sent.map((m) => m.text)).toEqual([
+      'No he tocado la tele: ese botón se pulsó mientras Asistenta estaba apagada o sin conexión. Si aún lo quieres, púlsalo otra vez.',
+    ]);
+  });
+
+  it('teclado viejo pero pulsación a tiempo: se ejecuta y el resultado llega', async () => {
+    const calls: Press[] = [];
+    await makeChannel(async (p) => {
+      calls.push(p);
+      return 'Silencio puesto.';
+    });
+    await pressOld('tv:mute', 3600, async (args) => {
+      harness.answers.push(args?.text ?? '');
+      return true;
+    });
+    expect(calls.map((c) => c.data)).toEqual(['tv:mute']);
+    expect(harness.answers).toEqual(['Enviando a la tele…']);
+    expect(harness.sent.map((m) => m.text)).toEqual(['Silencio puesto.']);
+  });
+
+  it('teclado de después de conectar: sin comprobación, igual que siempre', async () => {
+    await makeChannel(async () => 'Silencio puesto.');
+    await pressOld('tv:mute', -5, async (args) => {
+      harness.answers.push(args?.text ?? '');
+      return true;
+    });
+    expect(harness.answers).toEqual(['Silencio puesto.']);
+    expect(harness.sent).toEqual([]);
+  });
+});

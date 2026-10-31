@@ -2,6 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
+import {
+  isTooOldButtonError,
+  STALE_TV_BUTTON_NOTICE,
+  tvButtonMaybeStale,
+} from '../tv/stale-order.js';
 import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
@@ -174,6 +179,8 @@ export class TelegramChannel implements ChannelAdapter {
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Health evidence: a getUpdates completed since the last (re)start. */
   #pollingConfirmed = false;
+  /** Inicio de la última conexión (arranque o reconexión): ver #onTvPress. */
+  #pollStartedAt: number | undefined;
   #healthProbeInstalled = false;
   /**
    * One gate for every outbound call in the process.
@@ -296,6 +303,7 @@ export class TelegramChannel implements ChannelAdapter {
     }
     const poll = async (): Promise<void> => {
       this.#pollingConfirmed = false;
+      this.#pollStartedAt = Date.now();
       try {
         await bot.start({
           onStart: (me) => {
@@ -544,6 +552,31 @@ export class TelegramChannel implements ChannelAdapter {
       await ctx.answerCallbackQuery({ text: TV_BUTTON_STALE }).catch(() => {});
       return;
     }
+    // Pulsado con Asistenta apagada: Telegram lo entrega al arrancar. Se contesta
+    // primero; si Telegram dice que la pulsación es vieja, la tele no se toca.
+    const keyboard = ctx.callbackQuery?.message;
+    const keyboardAt = keyboard?.date
+      ? Math.max(keyboard.date, ('edit_date' in keyboard && keyboard.edit_date) || 0) * 1000
+      : undefined;
+    let answered = false;
+    if (tvButtonMaybeStale(keyboardAt, this.#pollStartedAt)) {
+      try {
+        await ctx.answerCallbackQuery({ text: TV_BUTTON_SENDING });
+        answered = true;
+      } catch (err) {
+        if (isTooOldButtonError(err)) {
+          handlers.log('info', 'tv button pressed while off, skipped', { data: data.slice(0, 64) });
+          await this.#throttled(() =>
+            withTimeout(
+              this.#bot.api.sendMessage(chatId, STALE_TV_BUTTON_NOTICE),
+              20_000,
+              'sendMessage timed out',
+            ),
+          ).catch(() => {});
+          return;
+        }
+      }
+    }
     const run = handlers
       .onTvButton({
         channel: 'telegram',
@@ -569,13 +602,15 @@ export class TelegramChannel implements ChannelAdapter {
     clearTimeout(timer);
     // Respuesta rápida y corta: en el aviso del botón. Una larga (p. ej. «Estado»)
     // no cabe en el aviso (200 caracteres), así que va entera como mensaje.
-    if (quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
+    if (!answered && quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
       await ctx.answerCallbackQuery({ text: quick, show_alert: quick.length > 60 }).catch(() => {});
       return;
     }
-    await ctx
-      .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
-      .catch(() => {});
+    if (!answered) {
+      await ctx
+        .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
+        .catch(() => {});
+    }
     const text = quick ?? (await run);
     await this.#throttled(() =>
       withTimeout(
