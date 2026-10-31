@@ -1543,22 +1543,26 @@ export class Gate {
   #externalGrams = new Map<string, Set<string>>();
 
   /**
-   * Memoria tras leer contenido externo: un recuerdo se sigue leyendo en todos los
+   * Memoria (y recordatorios) tras leer contenido externo: un recuerdo se sigue leyendo en todos los
    * turnos futuros, así que guardar el texto de una página o un correo es justo lo que
    * pediría una inyección. Pregunta solo si el recuerdo COPIA buena parte de lo leído
    * en este turno (la mitad de sus trozos, o un tramo seguido de MEMORY_ECHO_RUN_CHARS);
    * un recuerdo normal sigue sin preguntar.
    */
   #memoryEchoAsk(sessionId: string, call: ToolCall): string | null {
-    if (call.tool !== 'memory') return null;
     const action = argString(call.args, 'action');
-    if (action !== 'remember' && action !== 'save_profile') return null;
+    const memory = call.tool === 'memory' && (action === 'remember' || action === 'save_profile');
+    // Un recordatorio es lo mismo hacia fuera: el texto te llega más tarde como mensaje
+    // de Asistenta («entra en este enlace para verificar tu cuenta»).
+    const reminder = call.tool === 'reminder' && action === 'create';
+    if (!memory && !reminder) return null;
     const source = this.taintOf(sessionId);
     const set = this.#externalGrams.get(sessionId);
     if (!source || !set || set.size === 0) return null;
     const tags = Array.isArray(call.args.tags) ? call.args.tags.join(' ') : '';
     if (!echoesSubstantially(set, `${argString(call.args, 'text')} ${tags}`)) return null;
-    return `Este recuerdo copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
+    const what = memory ? 'Este recuerdo' : 'Este recordatorio';
+    return `${what} copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
   }
 
   /**
