@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
+import { scheduleEs } from '../cron/describe-es.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { OneTapIds } from '../one-tap-ids.js';
@@ -679,7 +680,8 @@ export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()):
     const when = next
       ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime())})`
       : 'sin próxima vez';
-    const kind = isOneShotReminder(routine) ? '' : ` · se repite (${routine.schedule})`;
+    const said = routine.schedule ? scheduleEs(routine.schedule) : null;
+    const kind = isOneShotReminder(routine) ? '' : ` · ${said ?? 'se repite'}`;
     return `${i + 1}. ${reminderText(routine)} — ${when}${kind}`;
   });
   return [
