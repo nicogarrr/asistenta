@@ -22,6 +22,12 @@ En esta guía `pa` es lo mismo que `node dist\cli.js`, dentro de la carpeta de A
 
 Si algo se tuerce, `node dist\cli.js iniciar --solo-comprobar` dice qué falta sin arrancar nada.
 
+### Instalador .exe (recomendado)
+
+Con el instalador `Asistenta-Instalador-<versión>.exe` no hace falta Node ni consolas: siguiente, siguiente, listo. Instala sin administrador, sale en «Agregar o quitar programas», puede arrancar sola con el PC y deja un icono junto al reloj (abrir panel, pausar, reiniciar, ver estado). Cómo crearlo y usarlo: [docs/app-windows.md](docs/app-windows.md). Los pasos con `instalar.bat` siguen valiendo igual.
+
+Para quitarla si la instalaste así: Configuración → Aplicaciones → Asistenta → Desinstalar. Tus datos y claves se quedan salvo que marques la casilla de borrarlos.
+
 ## Quitar Asistenta del PC
 
 1. Apágala: cierra la ventana de `levantar.bat` o escribe `node dist\cli.js stop`.

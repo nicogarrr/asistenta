@@ -15,9 +15,19 @@ SetCompressor /SOLID lzma
 BrandingText "${APP} @@VERSION@@"
 Var BorrarDatos
 Var CasillaDatos
+Var Arranque
+Var CasillaArranque
 !define MUI_ABORTWARNING
+!define MUI_FINISHPAGE_RUN "$INSTDIR\node\node.exe"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "$\"$INSTDIR\app\scripts\windows-app\configurar.mjs$\""
+!define MUI_FINISHPAGE_RUN_TEXT "Configurar Asistenta ahora (token de Telegram y clave del modelo)"
+!define MUI_FINISHPAGE_SHOWREADME ""
+!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Abrir Asistenta ya (si ya estaba configurada)"
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION AbrirAsistenta
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
+Page custom PaginaOpciones SalirOpciones
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -42,6 +52,7 @@ Section "Asistenta"
   ; Accesos directos con la carpeta app como carpeta de trabajo (ahí vive .env).
   CreateDirectory "$SMPROGRAMS\Asistenta"
   CreateShortcut "$SMPROGRAMS\Asistenta\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
+  CreateShortcut "$SMPROGRAMS\Asistenta\Configurar Asistenta.lnk" "$INSTDIR\node\node.exe" '"$INSTDIR\app\scripts\windows-app\configurar.mjs"'
   CreateShortcut "$SMPROGRAMS\Asistenta\Desinstalar Asistenta.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Asistenta" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "Asistenta"
@@ -53,7 +64,40 @@ Section "Asistenta"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" @@SIZE_KB@@
+  ${If} $Arranque == ${BST_CHECKED}
+    ; El arranque con Windows de siempre (pa autostart install): tarea programada y vigilante.
+    SetOutPath "$INSTDIR\app"
+    nsExec::ExecToLog '"$INSTDIR\node\node.exe" "$INSTDIR\app\dist\cli.js" autostart install'
+    Pop $0
+    ${If} $0 != 0
+      DetailPrint "No he podido dejar el arranque con Windows: vuelve a instalar y marca la casilla."
+    ${EndIf}
+    ; Solo el icono junto al reloj; a Asistenta la arranca su propia tarea.
+    CreateShortcut "$SMSTARTUP\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
+  ${EndIf}
 SectionEnd
+
+Function .onInit
+  StrCpy $Arranque ${BST_CHECKED}
+FunctionEnd
+
+Function PaginaOpciones
+  !insertmacro MUI_HEADER_TEXT "Opciones" "Cómo quieres que arranque"
+  nsDialogs::Create 1018
+  Pop $0
+  ${NSD_CreateCheckbox} 0 0 100% 12u "Arrancar Asistenta al encender el PC"
+  Pop $CasillaArranque
+  ${NSD_SetState} $CasillaArranque $Arranque
+  nsDialogs::Show
+FunctionEnd
+
+Function SalirOpciones
+  ${NSD_GetState} $CasillaArranque $Arranque
+FunctionEnd
+
+Function AbrirAsistenta
+  Exec '"$SYSDIR\wscript.exe" "$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
+FunctionEnd
 Function un.PaginaDatos
   !insertmacro MUI_HEADER_TEXT "Tus datos" "Por defecto se conservan"
   nsDialogs::Create 1018
@@ -73,7 +117,11 @@ Section "Uninstall"
     SetOutPath "$INSTDIR\app"
     nsExec::Exec '"$INSTDIR\node\node.exe" "$INSTDIR\app\dist\cli.js" stop'
     Pop $0
+    ; Quita el arranque con Windows (tarea y vigilante) con la orden de siempre.
+    nsExec::Exec '"$INSTDIR\node\node.exe" "$INSTDIR\app\dist\cli.js" autostart uninstall'
+    Pop $0
   ${EndIf}
+  Delete "$SMSTARTUP\Asistenta.lnk"
   SetOutPath "$TEMP"
 @@REMOVE_APP@@
   RMDir /r "$INSTDIR\node"

@@ -79,6 +79,8 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:enMarcha = $false
 
 function Update-Estado {
+    # Desinstalada: el icono se va solo.
+    if (-not (Test-Path -LiteralPath $cli)) { $icono.Visible = $false; [System.Windows.Forms.Application]::Exit(); return }
     $script:enMarcha = Test-EnMarcha
     $icono.Icon = if ($script:enMarcha) { $verde } else { $rojo }
     $icono.Text = if ($script:enMarcha) { 'Asistenta: en marcha' } else { 'Asistenta: parada' }
