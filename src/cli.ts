@@ -124,6 +124,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
+import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
@@ -5898,7 +5899,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     /** Tool names in call order; two or more in a row is an observed sequence. */
     const toolNames: string[] = [];
     const startedAt = Date.now();
-    let lastStatusAt = 0;
+    const milestones = new ProgressMilestones();
     let finished = false;
     /** The progress notes this turn sent, so they can be taken out of the chat at the end. */
     const progressIds: string[] = [];
@@ -5972,8 +5973,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // going while it works, others want one message at the end and nothing between.
       if (statusOn.get(inbound.chatId) === false) return;
       const now = Date.now();
-      if (now - startedAt > 25_000 && now - lastStatusAt > 45_000) {
-        lastStatusAt = now;
+      // Solo en hitos: a partir del minuto y cuando cambia el paso (o cada 3 min).
+      if (milestones.due(now - startedAt, now, lastSummary)) {
+        milestones.shown(now, lastSummary);
         // Varied and short. A progress note that says the same three words every
         // time reads as an automated nag; this is the same information in the
         // voice of someone checking in. UNA sola nota por turno, editada: antes cada
