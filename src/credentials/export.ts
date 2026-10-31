@@ -1,6 +1,16 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { type Account, listAccounts, realVault, revealPassword, type VaultOps } from './store.js';
+import { normalizeDomain } from '../gestor/login.js';
+import {
+  type Account,
+  deleteAccount,
+  generatePassword,
+  listAccounts,
+  realVault,
+  revealPassword,
+  saveAccount,
+  type VaultOps,
+} from './store.js';
 
 /**
  * `pa cuentas`: lo único que enseña una contraseña, y solo en el propio PC.
@@ -8,13 +18,21 @@ import { type Account, listAccounts, realVault, revealPassword, type VaultOps } 
  * - copiar <web>: la pone en el portapapeles y lo vacía a los 30 s (nunca la imprime).
  * - exportar keepass|bitwarden <fichero>: CSV de KeePassXC o JSON de Bitwarden, en TEXTO
  *   PLANO, solo tras escribir EXPORTAR. Pensado para llevarlas a un gestor de verdad.
- * El modelo no tiene herramienta que llegue aquí.
+ * - borrar <web>: la quita del gestor tras escribir el nombre de la web.
+ * - cambiar <web>: guarda otra contraseña (escrita sin verse, dos veces, o una fuerte
+ *   nueva al portapapeles) tras escribir CAMBIAR.
+ * El modelo no tiene herramienta que llegue aquí; borrar y cambiar exigen además una
+ * terminal de verdad (no una tubería), para que nadie las conteste por él.
  */
 
 export interface CuentasCliDeps {
   vault?: VaultOps;
   out?: (s: string) => void;
   ask?: (question: string) => Promise<string>;
+  /** Pregunta sin mostrar lo que se escribe (contraseñas). */
+  askHidden?: (question: string) => Promise<string>;
+  /** ¿Hay una persona delante (stdin es una terminal)? */
+  isTty?: boolean;
   copy?: (secret: string, clearAfterMs: number) => Promise<void>;
   write?: (path: string, data: string) => void;
 }
@@ -95,6 +113,105 @@ async function askLine(question: string): Promise<string> {
   );
 }
 
+async function askHiddenLine(question: string): Promise<string> {
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const iface = rl as unknown as { _writeToOutput: (s: string) => void };
+  let asked = false;
+  iface._writeToOutput = (s: string) => {
+    if (!asked) {
+      asked = true;
+      process.stdout.write(s);
+    }
+  };
+  return new Promise((resolve) =>
+    rl.question(question, (a) => {
+      rl.close();
+      process.stdout.write('\n');
+      resolve(a);
+    }),
+  );
+}
+
+const NEEDS_TTY =
+  'Esto solo se hace a mano, desde una ventana de terminal en el PC (no por una tubería ni desde el chat).';
+
+async function borrar(
+  site: string,
+  vault: VaultOps,
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+) {
+  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
+  if (!acc) {
+    out(`No tengo ninguna cuenta guardada de ${site}.`);
+    return 1;
+  }
+  if (!deps.ask && !(deps.isTty ?? process.stdin.isTTY)) {
+    out(NEEDS_TTY);
+    return 1;
+  }
+  out(
+    `Vas a quitar ${acc.domain} (${acc.username}) del gestor. La cuenta en la web sigue existiendo.`,
+  );
+  const typed = await (deps.ask ?? askLine)(`Escribe ${acc.domain} para borrarla: `);
+  if (typed.trim().toLowerCase() !== acc.domain) {
+    out('Cancelado: no he borrado nada.');
+    return 1;
+  }
+  await deleteAccount(acc.domain, vault);
+  out(`Borrada ${acc.domain} del gestor.`);
+  return 0;
+}
+
+async function cambiar(
+  site: string,
+  vault: VaultOps,
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+) {
+  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
+  if (!acc || acc.status !== 'activa') {
+    out(`No tengo ninguna cuenta guardada de ${site}.`);
+    return 1;
+  }
+  if (!(deps.ask && deps.askHidden) && !(deps.isTty ?? process.stdin.isTTY)) {
+    out(NEEDS_TTY);
+    return 1;
+  }
+  const hidden = deps.askHidden ?? askHiddenLine;
+  const first = await hidden('Nueva contraseña (no se ve; vacío = genero una fuerte): ');
+  let password = first;
+  if (first) {
+    if ((await hidden('Repítela: ')) !== first) {
+      out('No coinciden: no he cambiado nada.');
+      return 1;
+    }
+  } else {
+    password = generatePassword();
+  }
+  const typed = await (deps.ask ?? askLine)(
+    `Escribe CAMBIAR para guardar la nueva de ${acc.domain}: `,
+  );
+  if (typed.trim() !== 'CAMBIAR') {
+    out('Cancelado: no he cambiado nada.');
+    return 1;
+  }
+  await saveAccount(
+    { site: acc.domain, username: acc.username, password, notes: acc.notes },
+    vault,
+  );
+  if (first) {
+    out(`Contraseña de ${acc.domain} cambiada en el gestor.`);
+  } else {
+    await (deps.copy ?? copyToClipboard)(password, 60_000);
+    out(
+      `Nueva contraseña de ${acc.domain} guardada y copiada al portapapeles (se borra en 60 s): ponla ya en la web.`,
+    );
+  }
+  return 0;
+}
+
 export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}): Promise<number> {
   const vault = deps.vault ?? realVault;
   const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
@@ -133,6 +250,10 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
     out(`Exportadas ${rows.length} cuentas a ${a2}.`);
     return 0;
   }
-  out('uso: pa cuentas [listar | copiar <web> | exportar keepass|bitwarden <fichero>]');
+  if (sub === 'borrar' && a1) return borrar(a1, vault, deps, out);
+  if (sub === 'cambiar' && a1) return cambiar(a1, vault, deps, out);
+  out(
+    'uso: pa cuentas [listar | copiar <web> | borrar <web> | cambiar <web> | exportar keepass|bitwarden <fichero>]',
+  );
   return 2;
 }
