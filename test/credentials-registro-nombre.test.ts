@@ -51,7 +51,7 @@ describe('guardar / descartar con solo el nombre de la web', () => {
   it('el sí (confirmar) sigue pidiendo el dominio exacto', async () => {
     const v = memVault();
     await prepareSignup('wallapop.es', me, {}, v);
-    await expect(approveSignup('wallapop', me.email, v)).rejects.toThrow(/No hay ningún registro/);
+    await expect(approveSignup('wallapop', me.email, v)).rejects.toThrow(/web exacta/);
   });
 
   it('un dominio distinto no se mezcla: es.wallapop.com no es wallapop.es', async () => {
