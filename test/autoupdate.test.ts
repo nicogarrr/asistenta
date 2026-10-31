@@ -285,6 +285,28 @@ describe('una versión que falla', () => {
   });
 });
 
+describe('candado durante una actualización larga', () => {
+  it('sigue cogido aunque npm ci y la compilación tarden más de 45 min', async () => {
+    const f = fake({ build: 1, lockChanged: true });
+    let now = Date.now();
+    const held: boolean[] = [];
+    const deps: AutoupdateDeps = {
+      ...f.deps,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      npm: async (args, timeoutMs) => {
+        held.push(lockHeld(dir, now));
+        now += 30 * 60_000;
+        return f.deps.npm(args, timeoutMs);
+      },
+    };
+    expect((await runAutoupdate(dir, deps, { env: {} })).kind).toBe('revertida');
+    expect(held).toEqual([true, true, true]);
+  });
+});
+
 describe('changelog', () => {
   it('quita prefijos y números de PR, deduplica y corta en 8 con «y N cambios más»', () => {
     expect(cleanSubject('feat(arranque)!: vigilante de Windows (#746)')).toBe(
