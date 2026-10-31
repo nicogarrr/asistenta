@@ -386,6 +386,14 @@ function isSecretFill(c: ToolCall): boolean {
   return c.tool === 'browser' && typeof c.args?.secret_key === 'string';
 }
 
+/** Órdenes de la CLI que imprimen o copian un secreto (ver la regla deny-secret-cli). */
+const SECRET_CLI = /\bvault\s+get\b|\bcuentas\s+(copiar|exportar)\b/i;
+
+/** Texto de una orden sin comillas ni escapes de shell, para que «"vault" get» no esquive la regla. */
+function cliText(text: string): string {
+  return text.replace(/["'`^\\]/g, ' ').replace(/\s+/g, ' ');
+}
+
 function blobOf(c: ToolCall): string {
   return Object.values(c.args)
     .map((v) => (typeof v === 'string' ? v : (JSON.stringify(v) ?? '')))
@@ -740,6 +748,18 @@ export class Gate {
           if (c.tool !== 'read') return false;
           return this.#isSecret(argString(c.args, 'path'));
         },
+      },
+      {
+        // `pa vault get` y `pa cuentas copiar|exportar` son lo único que enseña un
+        // secreto o una contraseña, y están pensados para Nico en su terminal. Desde el
+        // shell del modelo (o tecleados en una terminal) la contraseña acabaría en el
+        // chat o en el modelo, y con control total ni siquiera preguntaría: se deniega.
+        id: 'deny-secret-cli',
+        verdict: 'deny',
+        reason:
+          'muestra contraseñas o secretos del vault (pa vault get, pa cuentas copiar o exportar): solo Nico, en su terminal',
+        match: (c) =>
+          (c.tool === 'shell' || c.tool === 'computer') && SECRET_CLI.test(cliText(blobOf(c))),
       },
       {
         id: 'allow-tools',
