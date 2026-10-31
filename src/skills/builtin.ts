@@ -101,10 +101,12 @@ export function looksLikeCoding(request: string | undefined): boolean {
  * programación solo si la petición suena a código. Sin petición conocida, se
  * ocultan (no hay señal de que se esté programando).
  */
-export function skillsForContext<T extends Pick<Skill, 'category'>>(
+export function skillsForContext<T extends Pick<Skill, 'category' | 'disabled'>>(
   skills: readonly T[],
   request: string | undefined,
 ): T[] {
-  if (looksLikeCoding(request)) return [...skills];
-  return skills.filter((s) => s.category !== CODING_CATEGORY);
+  // Una skill desactivada por el dueño («quita la de X») no entra nunca.
+  const active = skills.filter((s) => !s.disabled);
+  if (looksLikeCoding(request)) return active;
+  return active.filter((s) => s.category !== CODING_CATEGORY);
 }
