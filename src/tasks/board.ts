@@ -70,6 +70,63 @@ function addDays(day: string, n: number): string {
   return localDay(at);
 }
 
+const MONTHS = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+const NUMBER_WORDS = [
+  'cero',
+  'una',
+  'dos',
+  'tres',
+  'cuatro',
+  'cinco',
+  'seis',
+  'siete',
+  'ocho',
+  'nueve',
+  'diez',
+  'once',
+  'doce',
+];
+
+/** «una», «un», «dos»… o cifras → número; si no, NaN. */
+function smallNumber(word: string): number {
+  if (/^\d+$/.test(word)) return Number(word);
+  if (word === 'un' || word === 'uno') return 1;
+  const i = NUMBER_WORDS.indexOf(word);
+  return i === -1 ? Number.NaN : i;
+}
+
+/** «12 de noviembre (de 2027)», con mes abreviado («dic»); sin año y ya pasado: el año que viene. */
+function monthNameDay(text: string, now: Date): string | null | undefined {
+  const m = /^(?:dia\s+)?(\d{1,2})\s+de\s+([a-z]+)\.?(?:\s+(?:de|del)\s+(\d{4}))?$/.exec(text);
+  if (!m) return undefined;
+  const name = (m[2] ?? '').replace(/^setiembre$/, 'septiembre');
+  const month = name.length >= 3 ? MONTHS.findIndex((x) => x.startsWith(name)) : -1;
+  if (month === -1) return null;
+  const d = Number(m[1]);
+  let y = m[3] ? Number(m[3]) : now.getFullYear();
+  let day = `${y}-${pad(month + 1)}-${pad(d)}`;
+  if (localDay(parseDay(day)) !== day) return null;
+  if (!m[3] && day < localDay(now)) {
+    y += 1;
+    day = `${y}-${pad(month + 1)}-${pad(d)}`;
+    if (localDay(parseDay(day)) !== day) return null;
+  }
+  return day;
+}
+
 /** Lunes de la semana del día dado. */
 export function weekStart(day: string): string {
   const dow = parseDay(day).getDay();
@@ -94,6 +151,23 @@ export function resolveDay(input: string, now: Date): string | null {
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
   if (text === 'pasado manana') return addDays(today, 2);
+  const within = /^(?:dentro de|en)\s+(\w+)\s+(dias?|semanas?)$/.exec(text);
+  if (within) {
+    const n = smallNumber(within[1] ?? '');
+    if (!Number.isInteger(n) || n < 0 || n > 366) return null;
+    return addDays(today, within[2]?.startsWith('semana') ? n * 7 : n);
+  }
+  if (/^(?:fin de semana|finde)$/.test(text)) {
+    return now.getDay() === 0 ? today : addDays(today, (6 - now.getDay() + 7) % 7);
+  }
+  // «jueves 12 (de noviembre)»: manda el número.
+  const dated = text.replace(
+    /^(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+(?=\d)/,
+    '',
+  );
+  if (dated !== text) return resolveDay(dated, now);
+  const named = monthNameDay(text, now);
+  if (named !== undefined) return named;
   const dm = /^(?:dia\s+)?(\d{1,2})(?:\/(\d{1,2})(?:\/(\d{2,4}))?)?$/.exec(text);
   if (dm) {
     const d = Number(dm[1]);
@@ -137,11 +211,35 @@ export function resolveStatus(input: string): TaskStatus | null {
 
 export function normaliseTime(input: string | undefined): string | undefined | null {
   if (input === undefined || input.trim() === '') return undefined;
-  const m = /^(\d{1,2})(?:[:.h](\d{2}))?$/.exec(fold(input).replace(/\s/g, ''));
+  let t = fold(input)
+    .replace(/^(?:a|sobre|hacia|para)\s+/, '')
+    .replace(/^(?:las|la)\s+/, '');
+  if (t === 'mediodia') return '12:00';
+  if (t === 'medianoche') return '00:00';
+  // «5 de la tarde», «9 de la noche», «5pm», «10 de la mañana».
+  const period = /\s*(?:(?:de|por) la (manana|tarde|noche|madrugada)|([ap])\.?\s?m\.?)$/.exec(t);
+  const pm = period ? period[1] === 'tarde' || period[1] === 'noche' || period[2] === 'p' : false;
+  if (period) t = t.slice(0, period.index).trim();
+  let extra = 0;
+  const frac = /\s+(y media|y cuarto|menos cuarto)$/.exec(t);
+  if (frac) {
+    extra = frac[1] === 'y media' ? 30 : frac[1] === 'y cuarto' ? 15 : -15;
+    t = t.slice(0, frac.index);
+  }
+  const word = /^[a-z]+$/.test(t) ? smallNumber(t) : Number.NaN;
+  if (!Number.isNaN(word)) t = String(word);
+  const m = /^(\d{1,2})(?:[:.h](\d{2}))?h?$/.exec(t.replace(/\s/g, ''));
   if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2] ?? '0');
+  let h = Number(m[1]);
+  let min = Number(m[2] ?? '0');
   if (h > 23 || min > 59) return null;
+  if (period && h > 12) return pm ? `${pad(h)}:${pad(min)}` : null;
+  if (pm && h < 12) h += 12;
+  if (extra) {
+    if (m[2]) return null;
+    min = extra > 0 ? extra : 45;
+    if (extra < 0) h = (h + 23) % 24;
+  }
   return `${pad(h)}:${pad(min)}`;
 }
 
