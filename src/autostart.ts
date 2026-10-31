@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, uptime } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +139,7 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
   }
   if (decision.action === 'skip' && decision.reason === 'en-marcha') {
     // Corre aparte: la tarea del vigilante tiene 2 min y compilar puede tardar más.
+    await refreshWatchdogTask(stateDir, cliJs);
     if (maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)) {
       text += '; miro si hay novedades en main';
     }
@@ -151,17 +153,73 @@ async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number
 export const WATCHDOG_TEMP_FAILED =
   'Vigilante: no pude registrarlo porque no pude escribir en la carpeta temporal (¿disco lleno?). Asistenta arranca igual al iniciar sesión; libera espacio y repite pa autostart install.';
 
-async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
+/** Huella de la tarea del vigilante registrada (XML con sus rutas de Node y del CLI). */
+export const WATCHDOG_TASK_MARK_FILE = 'vigilante-tarea.json';
+
+function currentWatchdogXml(cliJs: string): string {
+  return watchdogTaskXml({ nodeExe: process.execPath, cliJs });
+}
+
+function xmlSha(xml: string): string {
+  return createHash('sha256').update(xml).digest('hex').slice(0, 16);
+}
+
+function readTaskMark(stateDir: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(stateDir, 'vigilante-tarea.json'), 'utf8')) as {
+      sha?: unknown;
+    };
+    return typeof raw.sha === 'string' ? raw.sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeTaskMark(stateDir: string, sha: string): void {
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, 'vigilante-tarea.json'), JSON.stringify({ sha }));
+  } catch {
+    // Sin la marca solo se vuelve a registrar en la siguiente pasada.
+  }
+}
+
+/**
+ * La tarea del vigilante solo se registraba con `pa autostart install`: tras una
+ * actualización que la cambia (p. ej. el disparador al despertar) o con Node en otra
+ * ruta, seguía la vieja. Con Asistenta en marcha, se vuelve a registrar una vez por
+ * versión del XML, sin decir nada por consola (el detalle de un fallo va al registro).
+ */
+async function refreshWatchdogTask(stateDir: string, cliJs: string): Promise<void> {
+  const xml = currentWatchdogXml(cliJs);
+  const sha = xmlSha(xml);
+  if (readTaskMark(stateDir) === sha) return;
+  writeTaskMark(stateDir, sha);
   const xmlPath = join(tmpdir(), `asistenta-vigilante-${process.pid}.xml`);
   try {
+    writeFileSync(xmlPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]));
+    const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
+    if (r.error) {
+      logFile.warn('autostart: watchdog task refresh failed', {
+        err: r.error.message,
+        stderr: r.stderr.slice(-1000),
+      });
+    }
+  } catch (err) {
+    logFile.warn('autostart: watchdog task refresh failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    removeQuietly(xmlPath);
+  }
+}
+
+async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
+  const xmlPath = join(tmpdir(), `asistenta-vigilante-${process.pid}.xml`);
+  const xml = currentWatchdogXml(cliJs);
+  try {
     // schtasks lee el XML en UTF-16 con BOM, como lo exporta el propio Programador de tareas.
-    writeFileSync(
-      xmlPath,
-      Buffer.concat([
-        Buffer.from([0xff, 0xfe]),
-        Buffer.from(watchdogTaskXml({ nodeExe: process.execPath, cliJs }), 'utf16le'),
-      ]),
-    );
+    writeFileSync(xmlPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]));
   } catch (err) {
     logFile.warn('autostart: watchdog temp XML write failed', {
       err: err instanceof Error ? err.message : String(err),
@@ -176,6 +234,7 @@ async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
   }
   try {
     const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
+    if (!r.error) writeTaskMark(stateDir, xmlSha(xml));
     if (r.error) {
       logFile.warn('autostart: watchdog schtasks failed', {
         err: r.error.message,
