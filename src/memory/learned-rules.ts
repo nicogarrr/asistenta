@@ -440,9 +440,39 @@ export function forgetLearnedRule(
 ): string {
   const n = Number.parseInt(arg.trim(), 10);
   const rules = learnedRules(memory, scopes);
-  if (!/^\d+$/.test(arg.trim()) || n < 1 || n > Math.min(rules.length, MAX_LEARNED_RULES)) {
+  const max = Math.min(rules.length, MAX_LEARNED_RULES);
+  // «/olvida emojis»: por texto, si solo una de las que se ven lo lleva. Antes solo valía
+  // el número y había que mirar /aprendido primero.
+  const words = norm(arg)
+    .replace(/[^a-z0-9ñ ]+/g, ' ')
+    .trim();
+  if (words.length >= 3 && !/^\d+$/.test(words) && !/^\d+[.)]?$/.test(arg.trim())) {
+    const found = rules
+      .slice(0, max)
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) =>
+        norm(r.text)
+          .replace(/[^a-z0-9ñ ]+/g, ' ')
+          .includes(words),
+      );
+    if (found.length === 1) {
+      const hit = found[0] as { r: MemoryEntry; i: number };
+      return memory.forgetIn(scopes, hit.r.id)
+        ? `🗑️ Olvidada: ${hit.r.text}`
+        : 'No he podido borrarla; mira /aprendido.';
+    }
+    if (found.length > 1) {
+      return [
+        `Hay ${found.length} reglas con «${arg.trim()}». ¿Cuál borro?`,
+        ...found.map(({ r, i }) => `${i + 1}. ${r.text}`),
+        '',
+        'Escribe /olvida <número>',
+      ].join('\n');
+    }
+  }
+  if (!/^\d+[.)]?$/.test(arg.trim()) || n < 1 || n > max) {
     return rules.length
-      ? `Uso: /olvida <número> (de 1 a ${Math.min(rules.length, MAX_LEARNED_RULES)}, como salen en /aprendido)`
+      ? `Uso: /olvida <número> (de 1 a ${max}, como salen en /aprendido) o /olvida <palabra de la regla>`
       : 'No hay reglas aprendidas que borrar.';
   }
   const target = rules[n - 1] as MemoryEntry;
