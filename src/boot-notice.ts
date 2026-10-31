@@ -57,22 +57,12 @@ export function bootBanner(facts: BootFacts): string {
   return parts.join(' · ');
 }
 
-/** El mensaje a Nico: corto, sin datos sensibles (ni URL con token ni ids). */
-export function bootNoticeText(facts: BootFacts): string {
-  const lines = [
-    'Asistenta lista ✅',
-    [
-      facts.model ? `Modelo: ${facts.model}` : null,
-      `Tele: ${yesNo(facts.tv)}`,
-      `PC: ${yesNo(facts.computerUse)}`,
-      `Correo: ${yesNo(facts.mail)}`,
-    ]
-      .filter(Boolean)
-      .join(' · '),
-  ];
-  if (facts.threads) lines.push(`Recuperadas ${facts.threads} conversaciones.`);
-  lines.push('Escribe /funciones para ver lo que sé hacer.');
-  return lines.join('\n');
+/**
+ * El mensaje a Nico: una sola línea (Nico, 31/10 00:43: «que el mensaje sea limpio»).
+ * Ni modelo, ni estado de tele/PC/correo, ni pista de /funciones: eso está en /estado.
+ */
+export function bootNoticeText(_facts?: BootFacts): string {
+  return 'Asistenta lista ✅';
 }
 
 export type BootNoticeResult = 'sent' | 'off' | 'no-owner' | 'rate-limited' | 'failed';

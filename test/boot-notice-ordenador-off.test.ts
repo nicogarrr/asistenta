@@ -30,8 +30,8 @@ describe('aviso de arranque y /ordenador off guardado', () => {
     expect(applySavedComputerOff(config, dir)).toBe(true);
     expect(config.computerUse).toBe(false);
     const facts = boot({ computerUse: true }, dir);
-    expect(bootNoticeText(facts)).toContain('PC: no');
     expect(bootBanner(facts)).toContain('PC no');
+    expect(bootNoticeText(facts)).toBe('Asistenta lista ✅');
   });
 
   it('sin nada guardado no cambia nada: «PC: sí»', () => {
@@ -39,14 +39,14 @@ describe('aviso de arranque y /ordenador off guardado', () => {
     const config = { computerUse: true };
     expect(applySavedComputerOff(config, dir)).toBe(false);
     expect(config.computerUse).toBe(true);
-    expect(bootNoticeText(boot({}, dir))).toContain('PC: sí');
+    expect(bootBanner(boot({}, dir))).toContain('PC sí');
   });
 
   it('tras /ordenador on el apagado deja de aplicarse', () => {
     const dir = stateDir();
     saveComputerSwitch(dir, false);
     saveComputerSwitch(dir, true);
-    expect(bootNoticeText(boot({ computerUse: true }, dir))).toContain('PC: sí');
+    expect(bootBanner(boot({ computerUse: true }, dir))).toContain('PC sí');
   });
 
   it('PA_COMPUTER_USE=0 manda siempre: nada que aplicar y sigue «PC: no»', () => {
@@ -54,7 +54,7 @@ describe('aviso de arranque y /ordenador off guardado', () => {
     saveComputerSwitch(dir, false);
     const config = { computerUse: false };
     expect(applySavedComputerOff(config, dir)).toBe(false);
-    expect(bootNoticeText(boot(config, dir))).toContain('PC: no');
+    expect(bootBanner(boot(config, dir))).toContain('PC no');
   });
 
   it('el daemon aplica lo guardado ANTES de construir el aviso, con la misma config', () => {

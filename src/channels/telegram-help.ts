@@ -269,16 +269,32 @@ export function helpText(opts: { bold?: boolean } = {}): string {
   ].join('\n\n');
 }
 
-/** /start: bienvenida corta, con ejemplos, en vez del muro de /help. */
+/** /start: bienvenida corta (saludo, cómo usarla, permisos), en vez del muro de /help. */
 export function startText(displayName?: string): string {
   const name = displayName?.trim().split(/\s+/)[0];
   return [
     name ? `¡Hola, ${name}! Soy tu asistente.` : '¡Hola! Soy tu asistente.',
-    'Escríbeme o mándame una nota de voz como a una persona. Por ejemplo:',
-    '• «Recuérdame el viernes a las 10 pagar el alquiler»',
-    '• «Mira el precio de esta tele y avísame si baja» + enlace',
-    '• «Hazme una captura de la pantalla»',
-    'Antes de hacer algo importante (enviar, comprar, borrar) te pido permiso con botones.',
-    'Escribe /funciones para ver lo que sé hacer por áreas, o /help para todos los comandos.',
+    'Escríbeme o mándame una nota de voz como a una persona; /help tiene todo lo que sé hacer.',
+    'Antes de hacer algo importante (enviar, comprar, borrar) te pido permiso.',
   ].join('\n');
+}
+
+/** Un /start repetido en menos de esto (o que llega tarde, al arrancar) no se vuelve a contestar. */
+export const START_REPEAT_WINDOW_MS = 5 * 60_000;
+const START_STALE_MS = 2 * 60_000;
+const lastStartAt = new Map<string, number>();
+
+/**
+ * ¿Toca mandar la bienvenida? No si ya se mandó a este chat hace menos de 5 min ni
+ * si el /start es de hace más de 2 min (Telegram lo guardó con Asistenta apagada y
+ * lo entrega al arrancar). Así la bienvenida no sale dos veces seguidas.
+ */
+export function startWelcomeDue(chatKey: string, now: number, sentAt?: string): boolean {
+  const sent = sentAt ? Date.parse(sentAt) : Number.NaN;
+  if (Number.isFinite(sent) && now - sent > START_STALE_MS) return false;
+  const last = lastStartAt.get(chatKey);
+  if (last !== undefined && now - last >= 0 && now - last < START_REPEAT_WINDOW_MS) return false;
+  lastStartAt.set(chatKey, now);
+  if (lastStartAt.size > 100) lastStartAt.delete(lastStartAt.keys().next().value as string);
+  return true;
 }
