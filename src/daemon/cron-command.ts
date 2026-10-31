@@ -162,7 +162,7 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
   const id = name.slice(GOAL_ROUTINE_PREFIX.length).trim();
   const action = verb === 'borrar' ? 'cancela' : verb === 'pausar' ? 'pausa' : 'reanuda';
   return [
-    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'pausado pero con ticks' : 'activo pero sin ticks'}.`,
+    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'en pausa pero avanzando' : 'activo pero sin avanzar'}.`,
     `Para eso dime «${action} el objetivo ${id}» (o pídeme la lista de objetivos).`,
   ].join('\n');
 }
@@ -328,8 +328,9 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       // skips»): decir «Lanzo… el resultado llegará» y luego callar era mentir.
       const id = goalIdOf(routine.name) ?? '';
       const goal = id ? deps.goals.read(id) : null;
-      if (!goal) return `El objetivo ${id} ya no existe; su programación no tiene nada que probar.`;
+      if (!goal) return 'Ese objetivo ya no existe: no hay nada que probar.';
       if (goal.status !== 'active') {
+        const nombre = `«${goal.title?.trim() || id}»`;
         const estado =
           goal.status === 'paused'
             ? 'en pausa'
@@ -342,13 +343,13 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
                   : 'cancelado';
         const hint =
           goal.status === 'paused'
-            ? ` Dime «reanuda el objetivo ${id}» y vuelve a probar.`
+            ? ` Dime «reanuda el objetivo ${nombre}» y vuelve a probar.`
             : goal.status === 'proposed'
               ? ` Apruébalo primero.`
               : goal.status === 'blocked'
                 ? ' Respóndele primero.'
                 : '';
-        return `El objetivo ${id} está ${estado}: una prueba ahora no haría nada.${hint}`;
+        return `El objetivo ${nombre} está ${estado}: probarlo ahora no haría nada.${hint}`;
       }
     }
     if (deps.routineRunner.isRunning(routine.scope, routine.name)) {
