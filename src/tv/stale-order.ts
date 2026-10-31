@@ -51,3 +51,33 @@ export function staleGuardedCaster<R extends { ok: boolean; message: string }>(
     return { ok: false, message: stale };
   };
 }
+
+/**
+ * Botones del mando (/tv) pulsados con Asistenta apagada: Telegram también los
+ * guarda y los entrega al arrancar, pero una pulsación no trae su hora. Solo
+ * puede ser vieja si el teclado es de antes de la última conexión y estamos aún
+ * en los primeros minutos tras ella; entonces se comprueba con Telegram.
+ */
+export const STALE_TV_BUTTON_WINDOW_MS = STALE_TV_ORDER_MS;
+
+export function tvButtonMaybeStale(
+  keyboardAtMs: number | undefined,
+  connectedAtMs: number | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (connectedAtMs === undefined || keyboardAtMs === undefined) return false;
+  if (!Number.isFinite(keyboardAtMs) || keyboardAtMs >= connectedAtMs) return false;
+  return nowMs - connectedAtMs <= STALE_TV_BUTTON_WINDOW_MS;
+}
+
+/** Telegram responde así a una pulsación de hace más de unos segundos. */
+export function isTooOldButtonError(err: unknown): boolean {
+  const e = err as { description?: unknown; message?: unknown } | null;
+  const text = `${typeof e?.description === 'string' ? e.description : ''} ${
+    typeof e?.message === 'string' ? e.message : ''
+  }`;
+  return /query is too old|query id is invalid/i.test(text);
+}
+
+export const STALE_TV_BUTTON_NOTICE =
+  'No he tocado la tele: ese botón se pulsó mientras Asistenta estaba apagada o sin conexión. Si aún lo quieres, púlsalo otra vez.';
