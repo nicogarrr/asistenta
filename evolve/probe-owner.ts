@@ -224,6 +224,7 @@ export async function ownerLookupWorks(
     clientPort: number,
     serverPort: number,
   ) => boolean | null | Promise<boolean | null> = connectionFromBrowser,
+  waitMs = 20_000,
 ): Promise<boolean> {
   const server = createServer();
   let verdict: boolean | null = null;
@@ -239,7 +240,7 @@ export async function ownerLookupWorks(
     );
     const client = connect(port, '127.0.0.1');
     client.on('error', () => {});
-    await Promise.race([judged, new Promise((r) => setTimeout(r, 20_000))]);
+    await Promise.race([judged, new Promise((r) => setTimeout(r, waitMs).unref?.())]);
     client.destroy();
   } catch {
     verdict = null;
