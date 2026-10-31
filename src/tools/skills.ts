@@ -18,6 +18,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
 import { decideToSave } from '../skills/autocreate.js';
+import { checkSkill, type SelfCheckEnv } from '../skills/selfcheck.js';
 import { type SkillStore, scoreSkill } from '../skills/store.js';
 
 export const SKILLS_TOOL_NAME = 'skills';
@@ -33,6 +34,7 @@ const SkillsParams = Type.Object({
     Type.Literal('disable'),
     Type.Literal('enable'),
     Type.Literal('remove'),
+    Type.Literal('check'),
   ]),
   id: Type.Optional(
     Type.String({
@@ -121,10 +123,12 @@ export interface SkillsToolDeps {
   store: SkillStore;
   /** S5: present only when PA_SEMANTIC_RECALL=1; failures fall back to lexical. */
   semantic?: Embedder;
+  /** Para el auto-chequeo: qué hay configurado y qué herramientas hay cargadas. */
+  checkEnv?: () => SelfCheckEnv;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
-  const { store, semantic } = deps;
+  const { store, semantic, checkEnv } = deps;
   return {
     name: SKILLS_TOOL_NAME,
     label: 'Skills',
@@ -150,6 +154,8 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
       'action=disable when the owner says to drop one ("quita la de X"); action=enable brings it',
       'back; action=remove only when the owner explicitly asks to delete it (it goes to a',
       'recoverable trash). Disabled skills are not followed.',
+      'action=check runs the self-check of one skill (steps, needs set up, factory tool',
+      'installed). Run it right after saving a new ability and tell the owner what is missing.',
     ].join('\n'),
     parameters: SkillsParams,
     executionMode: 'sequential',
@@ -258,6 +264,23 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
           return {
             content: [{ type: 'text', text: ok ? done : `No tengo ninguna habilidad «${id}».` }],
             details: { id, action: args.action, found: ok },
+          };
+        }
+
+        case 'check': {
+          const id = String(args.id ?? '').trim();
+          if (!id) throw new Error('la acción check necesita id');
+          const skill = store.read(id);
+          if (!skill) {
+            return {
+              content: [{ type: 'text', text: `No tengo ninguna habilidad «${id}».` }],
+              details: { id, found: false },
+            };
+          }
+          const result = checkSkill(skill, checkEnv?.() ?? {});
+          return {
+            content: [{ type: 'text', text: result.summary }],
+            details: { id, found: true, ...result },
           };
         }
 
