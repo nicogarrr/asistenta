@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parsePriceToCents, samePrice } from '../src/tools/checkout.js';
 import { parseAmount } from '../src/watch/pages.js';
-import { parseEuroCents, parseMachinePrice } from '../src/watch/pricewatch.js';
+import { parseEuroCents, parseMachinePrice } from '../src/watch/price-extract.js';
 
 // «1299.99», «1.299,99» y «1,299.99» son el mismo precio en todos los lectores.
 const SAME = ['1299.99', '1.299,99', '1,299.99'];

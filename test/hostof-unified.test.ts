@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hostOf as browserHostOf } from '../src/browser/service.js';
 import { normalizeHostname, urlHostname } from '../src/text.js';
 import { hostOf as downloadHostOf } from '../src/tools/download.js';
-import { hostOf as pricewatchHostOf } from '../src/watch/pricewatch.js';
+import { hostOf as priceHostOf } from '../src/watch/price-extract.js';
 
 // Copies of the three hostOf bodies as they were before they shared urlHostname.
 function oldBrowser(url: string): string | null {
@@ -89,8 +89,8 @@ describe('hostOf unificado sobre urlHostname', () => {
     for (const u of corpus()) expect(browserHostOf(u), u).toBe(oldBrowser(u));
   });
 
-  it('watch/pricewatch.ts hostOf: idéntico al anterior en todo el corpus', () => {
-    for (const u of corpus()) expect(pricewatchHostOf(u), u).toBe(oldPricewatch(u));
+  it('watch/price-extract.ts hostOf: idéntico al anterior en todo el corpus', () => {
+    for (const u of corpus()) expect(priceHostOf(u), u).toBe(oldPricewatch(u));
   });
 
   it('tools/download.ts hostOf: el anterior normalizado (nunca más laxo), etiqueta igual si no es URL', () => {
@@ -104,6 +104,6 @@ describe('hostOf unificado sobre urlHostname', () => {
   it('una descarga de «Example.COM.» se registra con el mismo host que el navegador', () => {
     expect(downloadHostOf('https://WWW.Example.COM./f.pdf')).toBe('www.example.com');
     expect(browserHostOf('https://WWW.Example.COM./f.pdf')).toBe('example.com');
-    expect(pricewatchHostOf('https://WWW.Example.COM./f.pdf')).toBe('www.example.com');
+    expect(priceHostOf('https://WWW.Example.COM./f.pdf')).toBe('www.example.com');
   });
 });

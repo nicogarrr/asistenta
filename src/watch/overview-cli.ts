@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../db.js';
@@ -9,7 +9,6 @@ import {
   fromOjo,
   fromOjoRules,
   fromPageWatches,
-  fromPriceConfig,
   fromRoutines,
   fromTriggers,
   type OjoRule,
@@ -17,19 +16,16 @@ import {
   type OverviewEntry,
 } from './overview.js';
 import { PageWatchStore } from './pages.js';
-import { parseConfig, type WatchConfig } from './pricewatch.js';
 
 export interface OverviewSources {
   stateDir: string;
   agentDb: string;
-  priceConfig: string;
 }
 
-export function defaultSources(env: NodeJS.ProcessEnv = process.env): OverviewSources {
+export function defaultSources(): OverviewSources {
   return {
     stateDir: paths.state,
     agentDb: paths.db,
-    priceConfig: env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json'),
   };
 }
 
@@ -93,14 +89,6 @@ export function collectWatches(src: OverviewSources): {
       errors.push(`ojo: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       db?.close();
-    }
-  }
-  if (existsSync(src.priceConfig)) {
-    try {
-      const cfg: WatchConfig = parseConfig(JSON.parse(readFileSync(src.priceConfig, 'utf8')));
-      entries.push(...fromPriceConfig(cfg));
-    } catch (err) {
-      errors.push(`pricewatch.json: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   if (existsSync(src.agentDb)) {
