@@ -57,6 +57,10 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'memory', threadAllow: true },
   { name: 'reminder', threadAllow: true },
   { name: 'tareas', threadAllow: true },
+  {
+    name: 'correo_reglas',
+    note: 'Clasifica el correo y guarda reglas del dueño; no mueve ni borra correo. Sin threadAllow: en otros hilos pregunta.',
+  },
   { name: 'agenda', threadAllow: true },
   {
     name: 'cuentas',
