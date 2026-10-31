@@ -95,13 +95,20 @@ export async function prepareSignup(
   // se escribió en el formulario y la del gestor dejarían de coincidir y la cuenta quedaría sin
   // acceso. Solo con reglas nuevas (la web rechazó la contraseña) se genera otra.
   const sameRules = Object.values(rules).every((v) => v === undefined);
-  if (
-    existing?.status === 'pendiente' &&
-    existing.username === owner.email &&
-    sameRules &&
-    (await vault.get(siteKey(domain, 'password')))
-  ) {
-    return existing;
+  if (existing?.status === 'pendiente') {
+    const sameMail = existing.username.trim().toLowerCase() === owner.email.trim().toLowerCase();
+    // Ya aprobado: puede que la web ya tenga la cuenta con esa contraseña. Cambiarla (u otro
+    // correo) la dejaría sin acceso; solo se rehace tras descartar, que pregunta al dueño.
+    const approved = typeof (await rawMeta(domain, vault)).approvedAt === 'number';
+    if (approved && (!sameMail || !sameRules))
+      throw new AvisoCuenta(
+        `El alta en ${domain} ya la aprobaste y puede que la web ya tenga la cuenta, así que no cambio su contraseña. Pregúntale al dueño: si la web la creó, llama a guardar; si no, descártala primero y vuelve a prepararla.`,
+      );
+    if (!sameMail)
+      throw new AvisoCuenta(
+        `Ya hay un alta a medias en ${domain} con otro correo (${maskUser(existing.username)}); no la piso. Si quieres usar este correo, descarta antes esa.`,
+      );
+    if (sameRules && (await vault.get(siteKey(domain, 'password')))) return existing;
   }
   return saveAccount({ site: domain, username: owner.email, rules, status: 'pendiente' }, vault);
 }
