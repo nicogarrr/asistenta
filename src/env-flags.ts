@@ -26,7 +26,14 @@ export function envSwitch(value: string | undefined, byDefault: boolean): boolea
 /** Interruptores que `pa doctor` revisa (solo los que no son de seguridad). */
 export const ENV_SWITCHES: ReadonlyArray<{ name: string; byDefault: boolean }> = [
   { name: 'PA_SEMANTIC_RECALL', byDefault: false },
+  { name: 'PA_MEMORY_CONSOLIDATE', byDefault: false },
 ];
+
+/** Lee un interruptor de ENV_SWITCHES con su valor por defecto. */
+export function envSwitchOn(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const spec = ENV_SWITCHES.find((s) => s.name === name);
+  return envSwitch(env[name], spec?.byDefault ?? false);
+}
 
 const shown = (v: string) => v.replace(/[^\p{L}\p{N} :.,_-]/gu, '').slice(0, 30);
 
