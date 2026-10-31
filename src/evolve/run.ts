@@ -22,6 +22,7 @@ import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history
 import { loadBattery, type Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
+import { SANDBOX_ENV } from './reap.js';
 import { repoRoot } from './worktree.js';
 
 /**
@@ -124,6 +125,8 @@ export function proposerFromEnv(
         env: {
           ...proposerEnv(env, home),
           PA_EVOLVE_DIR: dir,
+          // Marca para cerrar después lo que deje en marcha (reap.ts), aunque cambie de carpeta.
+          [SANDBOX_ENV]: dir,
           PA_EVOLVE_HYPOTHESIS: hypothesis,
           PA_EVOLVE_ATTEMPT: String(attempt),
         },

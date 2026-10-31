@@ -19,6 +19,7 @@ const INTERNAL = new Set([
   'PA_TTS_WAV',
   'PA_SPK_FILE',
   'PA_EVOLVE_ATTEMPT', // evolve/run.ts → proponente
+  'PA_EVOLVE_SANDBOX', // evolve/reap.ts: marca de los procesos del intento
   'PA_EVOLVE_HYPOTHESIS',
   'PA_SECRET_TELEGRAM_BOTTOKEN', // nombre de secreto del almacén, no se configura aquí
 ]);
