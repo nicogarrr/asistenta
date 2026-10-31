@@ -9,6 +9,7 @@ import { listAccounts, metaKey, realVault, type VaultOps } from './store.js';
  * pendiente `approvedAt` + `approvedEmail`. Este módulo es el otro extremo: una vez que
  * la contraseña de esa cuenta pendiente se ha escrito en una página, el navegador no
  * hace clic ni pulsa teclas en ella sin ese sí, reciente y para esa web y ese correo.
+ * Lo mismo cuando la web no pide contraseña y lo que se escribe es el correo del alta.
  */
 export const SIGNUP_APPROVAL_TTL_MS = 10 * 60_000;
 
@@ -22,6 +23,30 @@ export function signupPasswordDomain(secretKey: unknown): string | null {
   if (typeof secretKey !== 'string') return null;
   const m = /^site:([^:]+):password$/i.exec(secretKey.trim());
   return m?.[1] ? normalizeDomain(m[1]) : null;
+}
+
+/**
+ * Altas sin contraseña (enlace o código por correo): dominios con un alta pendiente cuyo
+ * correo es `text` y cuya web es la página actual (con o sin www). Sin URL conocida
+ * cuentan todas las altas pendientes con ese correo: mejor frenar de más que de menos.
+ */
+export async function signupEmailDomains(
+  text: unknown,
+  pageUrl: string | undefined,
+  vault: VaultOps = realVault,
+): Promise<string[]> {
+  if (typeof text !== 'string' || !text.includes('@')) return [];
+  const email = text.trim().toLowerCase();
+  let host: string | null = null;
+  try {
+    host = pageUrl ? normalizeDomain(new URL(pageUrl).hostname) : null;
+  } catch {
+    host = null;
+  }
+  return (await listAccounts(vault))
+    .filter((a) => a.status === 'pendiente' && a.username.trim().toLowerCase() === email)
+    .filter((a) => host === null || host === a.domain || host.endsWith(`.${a.domain}`))
+    .map((a) => a.domain);
 }
 
 /**
