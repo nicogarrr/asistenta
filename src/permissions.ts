@@ -440,14 +440,45 @@ const CLI_WITH_VARIABLE =
 const CALLS_VARIABLE = /&\s*[$(]|\b(start-process|invoke-command)\b[^;|\n]*\$/i;
 const SECRET_WORDS = /\b(vault|cuentas|credentials?|secrets?)\b/i;
 
+/**
+ * Lo mismo para texto tecleado con `computer` en una terminal del escritorio, pero sin
+ * `pa (` ni `pa @`: en un chat «pa (mañana)» es castellano, no una orden.
+ */
+const TYPED_CLI_WITH_VARIABLE =
+  /(^|[;|&({}\n])\s*pa(\.cmd|\.ps1|\.bat|\.exe)?\s+[$%]|\bcli\.js\s+[$%@(]|\b(vault|cuentas)\s+[$%@(]/i;
+
 function hidesSecretCli(c: ToolCall): boolean {
-  const raw = blobOf(c);
+  // Tecleado con `computer`: solo el texto, sin la palabra «type» de la acción delante.
+  const raw = c.tool === 'computer' && typeof c.args.text === 'string' ? c.args.text : blobOf(c);
   if (ENCODED_PS.test(raw)) return true;
   if (DYNAMIC_EXEC.test(raw) && BUILT_TEXT.test(raw)) return true;
-  if (c.tool !== 'shell') return false;
+  if (c.tool !== 'shell' && c.tool !== 'computer') return false;
   const texts = cliTexts(raw);
-  if (texts.some((t) => CLI_WITH_VARIABLE.test(t))) return true;
+  const withVariable = c.tool === 'shell' ? CLI_WITH_VARIABLE : TYPED_CLI_WITH_VARIABLE;
+  if (texts.some((t) => withVariable.test(t))) return true;
   return CALLS_VARIABLE.test(raw) && texts.some((t) => SECRET_WORDS.test(t));
+}
+
+/** Reglas que también se aplican a la línea tecleada con `computer` desde el último Enter. */
+const TYPED_LINE_RULES = new Set(['deny-secret-cli', 'deny-hidden-cli']);
+const TYPED_LINE_MAX = 512;
+
+/**
+ * La línea que queda en la ventana tras una acción `computer` de teclear: lo escrito
+ * desde el último Enter más este trozo. `null` si la acción no teclea nada. Así
+ * «pa vault g» y luego «et x» (o tecla a tecla) se leen como `pa vault get x`.
+ */
+function typedLineAfter(prev: string, call: ToolCall): string | null {
+  if (call.tool !== 'computer') return null;
+  const action = argString(call.args, 'action');
+  if (action === 'type') return `${prev}${argString(call.args, 'text')}`.slice(-TYPED_LINE_MAX);
+  if (action !== 'key') return null;
+  const key = argString(call.args, 'key').trim().toLowerCase();
+  if (key === 'enter' || key === 'return') return '';
+  if (key === 'space') return `${prev} `;
+  if (key === 'backspace') return prev.slice(0, -1);
+  if ([...key].length === 1) return `${prev}${key}`.slice(-TYPED_LINE_MAX);
+  return prev;
 }
 
 function blobOf(c: ToolCall): string {
@@ -732,6 +763,8 @@ export class Gate {
   readonly #egressTaint: boolean;
   /** sessionId -> fuente del primer contenido privado que entró en el turno. */
   readonly #privateTaint = new Map<string, string>();
+  /** Lo tecleado con `computer` desde el último Enter, por sesión (ver typedLineAfter). */
+  readonly #typedLine = new Map<string, string>();
   /** sessionId -> hosts que este turno ya ha contactado (antes o después del taint). */
   readonly #contactedHosts = new Map<string, Set<string>>();
   /** SQLite file for `always` scopes; undefined means memory only. */
@@ -2006,11 +2039,21 @@ export class Gate {
   }
 
   async check(sessionId: string, call: ToolCall): Promise<Decision> {
+    const typed = typedLineAfter(this.#typedLine.get(sessionId) ?? '', call);
+    if (typed) {
+      // Una orden tecleada a trozos en una terminal del escritorio se lee entera.
+      const line: ToolCall = { ...call, args: { action: 'type', text: typed } };
+      const rule = this.#rules.find(
+        (r) => r.verdict === 'deny' && TYPED_LINE_RULES.has(r.id) && r.match(line),
+      );
+      if (rule) return this.#record(call, { verdict: 'deny', reason: rule.reason });
+    }
     const decision = await this.#check(sessionId, call);
     if (decision.verdict === 'allow') {
       const source = externalReadSource(call);
       if (source !== null) this.markTainted(sessionId, source);
       this.#noteAllowed(sessionId, call);
+      if (typed !== null) this.#typedLine.set(sessionId, typed);
     }
     return decision;
   }
