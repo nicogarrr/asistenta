@@ -410,6 +410,33 @@ function cliText(text: string): string {
   return text.replace(/["'`^\\]/g, ' ').replace(/\s+/g, ' ');
 }
 
+/**
+ * La regla deny-secret-cli lee palabras escritas. Tres formas de esconderlas también
+ * se deniegan: una orden de PowerShell codificada (`powershell -enc …`: no se puede
+ * leer lo que ejecuta), ejecutar texto construido o decodificado (`iex` con base64,
+ * `[char]`, `-join` o «"va"+"ult"») y llamar a `pa` con la orden en una variable
+ * (`$v="vault"; pa $v get`), o invocar algo en una variable cerca de vault/cuentas.
+ * Las órdenes normales (`pa vault list`, `npx vitest run`, `& $exe --version`) no cambian.
+ */
+const ENCODED_PS = /\b(powershell|pwsh)(\.exe)?\b[^;|&\n]*?\s[-/]e(c|n[a-z]*)?(?=[\s:]|$)/i;
+const DYNAMIC_EXEC = /\b(iex|invoke-expression)\b|\[scriptblock\]\s*::\s*create/i;
+const BUILT_TEXT =
+  /frombase64string|\[char\]|[\s(]-(join|replace)\b|\breverse\b|["']\s*\+\s*["']|[\s)]-f\s/i;
+const CLI_WITH_VARIABLE =
+  /(^|[;|&({}\n])\s*pa(\.cmd|\.ps1|\.bat|\.exe)?\s+[$%@(]|\bcli\.js\s+[$%@(]|\b(vault|cuentas)\s+[$%@(]/i;
+const CALLS_VARIABLE = /&\s*[$(]|\b(start-process|invoke-command)\b[^;|\n]*\$/i;
+const SECRET_WORDS = /\b(vault|cuentas|credentials?|secrets?)\b/i;
+
+function hidesSecretCli(c: ToolCall): boolean {
+  const raw = blobOf(c);
+  if (ENCODED_PS.test(raw)) return true;
+  if (DYNAMIC_EXEC.test(raw) && BUILT_TEXT.test(raw)) return true;
+  if (c.tool !== 'shell') return false;
+  const text = cliText(raw);
+  if (CLI_WITH_VARIABLE.test(text)) return true;
+  return CALLS_VARIABLE.test(raw) && SECRET_WORDS.test(text);
+}
+
 function blobOf(c: ToolCall): string {
   return Object.values(c.args)
     .map((v) => (typeof v === 'string' ? v : (JSON.stringify(v) ?? '')))
@@ -777,6 +804,13 @@ export class Gate {
         match: (c) =>
           (c.tool === 'shell' || c.tool === 'computer') &&
           (SECRET_CLI.test(cliText(blobOf(c))) || loadsSecretModule(cliText(blobOf(c)))),
+      },
+      {
+        id: 'deny-hidden-cli',
+        verdict: 'deny',
+        reason:
+          'orden escondida (codificada, construida o con la orden en una variable): no se puede saber si saca secretos del vault; si hace falta, que la escriba Nico en su terminal',
+        match: (c) => (c.tool === 'shell' || c.tool === 'computer') && hidesSecretCli(c),
       },
       {
         id: 'allow-tools',
