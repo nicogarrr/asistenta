@@ -55,3 +55,17 @@ export function pdfToTextIntent(m: PdfMessage): 'md' | null {
   if (CONVERT.test(t) || EXTRACT.test(t) || TRANSCRIBE.test(t) || OCR.test(t)) return 'md';
   return null;
 }
+
+const SUMMARY =
+  /\b(resume|resumeme|resumelo|resumemelo|resumen|resumir|resumirlo|resumirmelo|de que va|que dice|que pone|leeme|leemelo|leelo|lee este|lee esto)\b/;
+
+/**
+ * «resume este PDF» (o «¿qué dice?», «léemelo») con un PDF adjunto: si el PDF es escaneado,
+ * primero se lee con el OCR local y luego contesta el modelo.
+ */
+export function pdfSummaryIntent(m: PdfMessage): boolean {
+  if (!isPdfAttachment(m)) return false;
+  const raw = m.text?.trim() ?? '';
+  if (!raw || raw.startsWith('/') || raw.length > MAX_PHRASE) return false;
+  return SUMMARY.test(normalize(raw));
+}

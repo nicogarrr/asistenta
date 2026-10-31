@@ -28,7 +28,9 @@ Manda el PDF y escribe en el pie, por ejemplo, «pásame este PDF a texto», «s
 texto» o «hazle OCR». Es lo mismo que el pie «/ocr md»: te devuelve el texto en Markdown
 y te avisa si una tabla no cuadra. Solo en tu chat privado; si la frase es una pregunta
 sobre el PDF («¿qué dice la página 3?», «resume este PDF»), contesta Asistenta como
-siempre.
+siempre. Si el PDF es escaneado (solo imágenes) y le pides «resume este PDF», «¿qué dice?»
+o «léemelo», primero lo lee con el OCR local y luego te contesta; si una tabla no cuadra,
+te lo dice.
 
 ## Créditos
 

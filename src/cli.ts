@@ -346,7 +346,8 @@ import {
   panelListenProblem,
   panelStartPlan,
 } from './panel-doctor.js';
-import { pdfToTextIntent } from './pdfmd/chat-intent.js';
+import { pdfSummaryIntent, pdfToTextIntent } from './pdfmd/chat-intent.js';
+import { ocrScannedForModel } from './pdfmd/scanned.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
@@ -6129,11 +6130,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 },
                 bytes,
               );
+              // «resume este PDF» escaneado: primero el OCR local (como «/ocr md»), luego el modelo.
+              const scanned =
+                !indexed &&
+                !ocrBusy &&
+                isOwnerDm(inbound, vigilanteOwnerId) &&
+                pdfSummaryIntent(inbound)
+                  ? await ocrScannedForModel(bytes, label, {
+                      available: async () => ocrAvailability,
+                      run: async (b, meta, mode) => {
+                        ocrBusy = true;
+                        try {
+                          const progressDir = join(paths.state, 'ocr-progreso');
+                          return await runOcrJob(b, { ...meta, progressDir }, mode, windowsDeps);
+                        } finally {
+                          ocrBusy = false;
+                        }
+                      },
+                      index: (md) =>
+                        docMemory.indexOcr(
+                          memoryScopesFor(thread.key).write,
+                          inbound.documentFileId ?? label,
+                          md,
+                          inbound.text,
+                        ),
+                    })
+                  : null;
               documentNote = indexed
                 ? indexed.truncated
                   ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
                   : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
-                : `[Documento reenviado: ${label}. No tenía texto extraíble (un PDF escaneado son imágenes, no texto: por ahora no leo imágenes dentro de un PDF; si quieres, mándame las páginas como fotos).]`;
+                : (scanned ??
+                  `[Documento reenviado: ${label}. No tenía texto extraíble (un PDF escaneado son imágenes, no texto: por ahora no leo imágenes dentro de un PDF; si quieres, mándame las páginas como fotos).]`);
             }
           } catch (err) {
             log.warn('document index failed', { err });
