@@ -282,7 +282,16 @@ export async function openDaemonControl(
       }
       unlinkSync(file);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        // nothing left behind
+      } else if (
+        error instanceof Error &&
+        /^Metadata de control (ilegible|inválida)\./.test(error.message)
+      ) {
+        // Half-written by a power cut. recordAt already checked owner and permissions
+        // before parsing; we hold the lock, so it is ours to remove.
+        unlinkSync(file);
+      } else throw error;
     }
     await new Promise<void>((yes, no) => {
       server.once('error', no);
