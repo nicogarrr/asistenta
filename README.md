@@ -1,127 +1,129 @@
 # Asistenta
 
-> Language: **English** | [Español](README.es.md)
+> Idioma: **Español** | [English](#english) · [README completo en inglés](README.en.md)
 
 [![CI](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml)
 [![Windows](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**A personal assistant on Telegram, with memory, multi-day goals and tools that work on your computer.**
+**Un asistente personal por Telegram, con memoria, objetivos de varios días y herramientas para trabajar en tu ordenador.**
 
-Asistenta is a daemon that runs on your own PC. You talk to it through your private Telegram bot; it remembers context across conversations, proposes plans for multi-day goals that only run after your approval, and can use tools: browse the web, control the desktop, transcribe voice, run local OCR, send mail from your own account, control the TV and an iPhone. A local web panel shows chat, approvals, sessions, memory, status and audit, sharing the same permission flow as Telegram.
+El daemon corre en tu máquina. El panel web local ofrece chat, aprobaciones, sesiones, memoria, estado y auditoría; comparte el flujo de permisos de Telegram. Las funciones de escritorio necesitan una sesión Windows interactiva.
 
-> **Status:** work in progress. A feature existing in the code does not mean it is configured or validated on your machine. Messages sent to the LLM provider leave your PC to that provider. Preset names do not guarantee quota or zero cost.
+> **Estado:** proyecto en desarrollo. Tener una función en el código no garantiza que esté configurada ni validada en tu equipo. Los mensajes que recibe el proveedor LLM salen hacia ese proveedor. Los nombres de presets no garantizan cuota ni precio cero.
 
-- **Problem it solves:** having an assistant that actually does things (not just chat) while your data, keys and approvals stay on your own machine.
-- **Who it is for:** technical users who want a self-hosted personal agent and are comfortable creating a Telegram bot and an LLM API key.
-- **Cost:** everything is free except the LLM API key, billed by your provider per use.
+- **Qué resuelve:** un asistente que hace cosas de verdad (no solo chatear) mientras tus datos, claves y aprobaciones se quedan en tu máquina.
+- **Para quién:** gente técnica que quiere su propio agente personal y no se asusta de crear un bot de Telegram y una clave de un proveedor LLM.
+- **Coste:** todo es gratis menos la clave del modelo, que tu proveedor cobra por uso.
 
-## How it works
+## Cómo funciona
 
 ```text
-You on Telegram  <-->  Asistenta daemon (your PC)  <-->  LLM provider (the only paid part)
-                              |
-                     local web panel (loopback + token):
-                     chat, approvals, memory, status, audit
-                              |
-        tools: browser, Windows desktop, voice, OCR, mail,
-        calendar, reminders, routines, goals, TV, iPhone
+Tú en Telegram  <-->  Asistenta (en tu PC)  <-->  proveedor LLM (lo único de pago)
+                             |
+                  panel web local (loopback + token):
+                  chat, aprobaciones, memoria, estado, auditoría
+                             |
+      herramientas: navegador, escritorio Windows, voz, OCR, correo,
+      calendario, recordatorios, rutinas, objetivos, tele, iPhone
 ```
 
-## Start here (Windows, 10 minutes)
+## Empieza aquí (Windows, 10 minutos)
 
-In this guide `pa` means `node dist\cli.js`, run from the Asistenta folder.
+En esta guía `pa` es lo mismo que `node dist\cli.js`, dentro de la carpeta de Asistenta.
 
-1. Install Node 24 or newer, free, from https://nodejs.org.
-2. Download Asistenta. Best with git, so it updates itself: `git clone https://github.com/nicogarrr/asistenta` (if Windows says "git is not recognized", install it free from https://git-scm.com and open a new window). "Code -> Download ZIP" also works (unzip before opening anything), but then it does not self-update: download the ZIP again for a new version. Put it outside OneDrive (e.g. `C:\Asistenta`): OneDrive locks files and the install fails.
-3. In Telegram, talk to @BotFather, create your bot with `/newbot` and copy the token it gives you.
-4. Get the model key from your provider's website (OpenCode by default). This is the only paid part.
-5. With internet access, double-click `instalar.bat`. It checks Node and npm, downloads the pieces, installs, compiles and asks for the token and the key (they are not shown as you paste them). If you see "Windows protected your PC", click "More info" and then "Run anyway".
-6. When asked, send "hola" to your bot and confirm on the PC that it is you. That way only you can talk to it.
-7. Double-click `levantar.bat`. If something is missing, you will see a green/red list with the fix for each failure.
-8. Write to your bot. Done.
-9. Optional: to start it automatically with Windows, `node dist\cli.js autostart install --start` ([details](docs/windows-startup.md)).
+1. Instala Node 24 o más nuevo, gratis, desde https://nodejs.org.
+2. Descarga Asistenta. Mejor con git, así se actualiza sola: `git clone https://github.com/nicogarrr/asistenta` (si Windows dice que «git» no se reconoce, instálalo gratis desde https://git-scm.com y abre otra ventana). También vale «Code → Download ZIP» (descomprímelo antes de abrir nada), pero entonces no se actualiza sola: para una versión nueva vuelve a bajar el ZIP. Ponla fuera de OneDrive (por ejemplo en `C:\Asistenta`): OneDrive bloquea archivos y la instalación falla.
+3. En Telegram habla con @BotFather, crea tu bot con `/newbot` y copia el token que te da.
+4. Saca la clave del modelo en la web de tu proveedor (por defecto OpenCode). Es lo único de pago.
+5. Con internet, haz doble clic en `instalar.bat`. Comprueba Node y npm, descarga las piezas, instala, compila y te pide el token y la clave (no se ven al pegarlos). Si sale «Windows protegió su PC», pulsa «Más información» y luego «Ejecutar de todas formas».
+6. Cuando te lo pida, mándale «hola» a tu bot y confirma en el PC que eres tú. Así solo tú podrás hablarle.
+7. Haz doble clic en `levantar.bat`. Si falta algo, verás una lista en verde y rojo con el arreglo de cada fallo.
+8. Escríbele a tu bot. Ya está.
+9. Opcional: para que arranque sola con Windows, `node dist\cli.js autostart install --start` ([detalles](docs/windows-startup.md)).
 
-If something goes wrong, `node dist\cli.js iniciar --solo-comprobar` tells you what is missing without starting anything.
+Si algo se tuerce, `node dist\cli.js iniciar --solo-comprobar` dice qué falta sin arrancar nada.
 
-### .exe installer (recommended)
+### Instalador .exe (recomendado)
 
-With the `Asistenta-Instalador-<version>.exe` installer you need neither Node nor consoles: next, next, done. It installs without administrator rights, appears in "Add or remove programs", can start with the PC and leaves a tray icon (open panel, pause, restart, see status). How to build and use it: [docs/app-windows.md](docs/app-windows.md). The `instalar.bat` steps remain equally valid.
+Con el instalador `Asistenta-Instalador-<versión>.exe` no hace falta Node ni consolas: siguiente, siguiente, listo. Instala sin administrador, sale en «Agregar o quitar programas», puede arrancar sola con el PC y deja un icono junto al reloj (abrir panel, pausar, reiniciar, ver estado). Cómo crearlo y usarlo: [docs/app-windows.md](docs/app-windows.md). Los pasos con `instalar.bat` siguen valiendo igual.
 
-To uninstall an .exe install: Settings -> Apps -> Asistenta -> Uninstall. Your data and keys stay unless you tick the box to delete them.
+Para quitarla si la instalaste así: Configuración → Aplicaciones → Asistenta → Desinstalar. Tus datos y claves se quedan salvo que marques la casilla de borrarlos.
 
-## Uninstalling Asistenta
+## Quitar Asistenta del PC
 
-1. Stop it: close the `levantar.bat` window or run `node dist\cli.js stop`.
-2. If you enabled Windows autostart, remove it before deleting anything: `node dist\cli.js autostart uninstall`. If you delete the folder first, Windows keeps trying to start it every few minutes; in that case open Task Scheduler and delete `personal-agent-daemon`, `browserd-sidecar` and `Asistenta-vigilante`.
-3. Delete the Asistenta folder.
-4. Your data (memory, conversations and the secrets vault) lives separately, in `%USERPROFILE%\.local\share\personal-agent` (or in `PA_STATE_DIR` if you changed it). Delete it only if you are not coming back.
-5. If you are not coming back, revoke the bot token in @BotFather (`/revoke`) and the model key on your provider's website.
+1. Apágala: cierra la ventana de `levantar.bat` o escribe `node dist\cli.js stop`.
+2. Si pusiste el arranque con Windows, quítalo antes de borrar nada: `node dist\cli.js autostart uninstall`. Si borras la carpeta primero, Windows sigue intentando arrancarla cada pocos minutos; entonces abre el Programador de tareas y borra `personal-agent-daemon`, `browserd-sidecar` y `Asistenta-vigilante`.
+3. Borra la carpeta de Asistenta.
+4. Tus datos (memoria, conversaciones y la caja fuerte de claves) están aparte, en `%USERPROFILE%\.local\share\personal-agent` (o en `PA_STATE_DIR` si lo cambiaste). Bórrala solo si no vas a volver.
+5. Si no vas a volver, anula el token del bot en @BotFather (`/revoke`) y la clave del modelo en la web de tu proveedor.
 
-## What is free
+## Qué es gratis
 
-The only paid part is **the model key**: your provider bills you per use according to your plan. Everything else is free and runs on your PC:
+Lo único de pago es **la clave del modelo**: tu proveedor te cobra por uso según su plan. Todo lo demás es gratis y corre en tu PC:
 
-- the program, the Telegram bot and the local web panel;
-- memory, reminders, routines and goals;
-- web search (by default it only uses free search engines: `PA_WEB_MAX_COST_EUR=0`);
-- voice transcription and OCR, which run locally;
-- PC and TV control, mail with your own account and calendar;
-- autostart, the watchdog and self-update.
+- el programa, el bot de Telegram y el panel web local;
+- la memoria, los recordatorios, las rutinas y los objetivos;
+- la búsqueda web (por defecto solo usa buscadores gratis: `PA_WEB_MAX_COST_EUR=0`);
+- la transcripción de voz y el OCR, que funcionan en local;
+- el control del PC y de la tele, el correo con tu propia cuenta y el calendario;
+- el arranque automático, el vigilante y la autoactualización.
 
-No other feature needs a key.
+Ninguna otra función necesita una clave de pago.
 
-## What you can do
+## Qué puedes hacer
 
-| Area | What you get | Limits |
+| Área | Qué incluye | Condiciones |
 | --- | --- | --- |
-| Chat | Telegram conversations with your assistant | Requires your own bot token and provider key |
-| Approvals | Pending decisions in Telegram and in the panel | Does not replace reviewing the result nor authorize any action |
-| Voice dictation | Push-to-talk dictation in any app on your PC, fully local | Off by default; Windows with an interactive session; `PA_DICTADO=1` |
-| Recurring tasks and reminders | "every Monday", "every two weeks", "next week", "next month" | Natural-language scheduling with grace-window catch-up |
-| Feature requests by voice | Ask Asistenta for a new feature by talking to it; it proposes and validates changes itself | Only promoted with the full verification checklist |
-| Optional features | Voice, mail, TV and iPhone control | Require their own dependencies, devices and configuration; they are not enabled by installing the chat |
+| Conversación | Telegram y chat en el panel local | Bot, usuario autorizado y proveedor configurados |
+| Memoria | Contexto persistente, sesiones y búsqueda | El contenido y su alcance dependen de la configuración |
+| Objetivos | Plan propuesto, activación humana, pasos y ejecución programada | Límites de objetivos activos y de ejecuciones diarias |
+| Navegador y escritorio | Herramientas web y control del ordenador | Escritorio en Windows; sitios, acceso y permisos propios |
+| Aprobaciones | Decisiones pendientes en Telegram y en el panel | No sustituye la revisión del resultado ni autoriza cualquier acción |
+| Dictado por voz | Dictado pulsando una tecla en cualquier app de tu PC, todo en local | Apagado por defecto; Windows con sesión interactiva; `PA_DICTADO=1` |
+| Tareas y recordatorios recurrentes | «los lunes», «cada dos semanas», «la semana que viene», «el mes que viene» | Programación en lenguaje natural con recuperación tras apagado |
+| Pedir funciones hablando | Pídele una función nueva hablando; propone y valida los cambios ella misma | Solo se promueve con la checklist de verificación completa |
+| Funciones opcionales | Voz, correo, TV y control de iPhone | Requieren sus dependencias, equipos y configuración; no se activan al instalar el chat |
 
-### A goal, start to finish
+### Un objetivo, de principio a fin
 
-1. Describe what you want to achieve and its limits.
-2. Asistenta proposes a plan. It only activates after human confirmation and the corresponding permissions.
-3. It runs the steps on their schedule, saves progress and reports news or blockers.
-4. If a decision is missing, it stops to ask for it. A step marked as done does not by itself certify the quality of the result.
+1. Describe lo que quieres conseguir y sus límites.
+2. Asistenta propone un plan. Solo se activa después de la confirmación humana y de pasar por los permisos correspondientes.
+3. Ejecuta los pasos en su cadencia, guarda el avance y comunica novedades o bloqueos.
+4. Si falta una decisión, se detiene para pedirla. Un paso marcado como completado no certifica por sí solo la calidad del resultado.
 
-Goals are stored in SQLite with their conversation scope. The panel includes a **read-only view of the owner's goals**, with their states, blockers and steps. It does not allow activating, pausing or cancelling goals from that view. An editable board and a separate review state would be future work, not capabilities available from this guide.
+Los objetivos se guardan en SQLite con su ámbito de conversación. El panel incluye una **vista de solo lectura de los objetivos del propietario**, con sus estados, bloqueos y pasos. No permite activar, pausar ni cancelar objetivos desde esa vista. Un tablero editable y un estado separado de revisión serían trabajo futuro, no capacidades disponibles por esta guía.
 
-## Contents
+## Contenido
 
-- [Start here](#start-here-windows-10-minutes)
-- [What is free](#what-is-free)
-- [Prerequisites](#prerequisites)
-- [Preparing the code](#preparing-the-code)
-- [Configuration without secrets](#configuration-without-secrets)
-- [Secrets and Telegram](#secrets-and-telegram)
-- [Check and start](#check-and-start)
-- [Local web panel](#local-web-panel)
-- [Autostart](#autostart)
-- [Development and QA](#development-and-qa)
-- [How it is organized](#how-it-is-organized)
-- [Security and limits](#security-and-limits)
-- [Glossary](#glossary)
+- [Empieza aquí](#empieza-aquí-windows-10-minutos)
+- [Qué es gratis](#qué-es-gratis)
+- [Antes de empezar](#antes-de-empezar)
+- [Preparar el código](#preparar-el-código)
+- [Configuración sin secretos](#configuración-sin-secretos)
+- [Secretos y Telegram](#secretos-y-telegram)
+- [Comprobar y arrancar](#comprobar-y-arrancar)
+- [Panel web local](#panel-web-local)
+- [Arranque automático](#arranque-automático)
+- [Desarrollo y QA](#desarrollo-y-qa)
+- [Cómo está organizado](#cómo-está-organizado)
+- [Seguridad y límites](#seguridad-y-límites)
 
-## Prerequisites
+## Antes de empezar
 
-This and the following sections cover manual installation (Linux or advanced). On Windows, [Start here](#start-here-windows-10-minutes) is enough.
+Esto y lo que sigue es la instalación a mano (Linux o avanzada). En Windows basta con [Empieza aquí](#empieza-aquí-windows-10-minutos).
 
-- Node.js 24 or later and npm. The project enforces this version in `package.json`.
-- Git to get the code.
-- A Telegram bot and your numeric user ID.
-- Access to a compatible provider. Model names and presets in the code do not guarantee quota or zero cost.
-- Windows with an interactive session for desktop control. On Linux or without a desktop, use `PA_DESKTOP=off`; that does not cover every Windows feature.
+- Node.js 24 o posterior y npm. El proyecto exige esa versión en `package.json`.
+- Git para obtener el código.
+- Un bot de Telegram y tu identificador numérico de usuario.
+- Acceso a un proveedor compatible. Los nombres de modelos y los presets del código no garantizan cuota ni precio cero.
+- Windows con sesión interactiva para control de escritorio. En Linux o sin escritorio, usa `PA_DESKTOP=off`; no supone cobertura de todas las funciones de Windows.
 
-Do not use a real account or session for automated tests. Do not paste keys into issues, chats or screenshots.
+No uses una cuenta o sesión real para pruebas automatizadas. No pegues claves en incidencias, chats ni capturas.
 
-## Preparing the code
+## Preparar el código
 
-From the repository root:
+Desde la raíz del repositorio:
 
 ```sh
 node --version
@@ -130,124 +132,124 @@ npm run build
 node dist/cli.js --help
 ```
 
-The following commands use `node dist/cli.js` so they do not depend on a globally installed `pa`. Building creates `dist/`; it does not download or start an LLM provider. Some dependencies may download binaries while installing. For the bundled Chromium browser:
+En los comandos siguientes se usa `node dist/cli.js` para no depender de un `pa` instalado globalmente. La compilación crea `dist/`; no descarga ni inicia un proveedor LLM. Algunas dependencias pueden descargar binarios al instalarse. Para el navegador Chromium incluido:
 
 ```sh
 npx playwright install chromium
 ```
 
-With `PA_DESKTOP=off`, `doctor` skips the Windows desktop checks (screen, camera, microphone, windows). Also install the system dependencies Playwright indicates for your platform. You do not need browserd, Docker or TV features for basic chat.
+Con `PA_DESKTOP=off`, `doctor` omite los chequeos de escritorio Windows (pantalla, cámara, micrófono, ventanas). Instala también las dependencias de sistema que Playwright indique para tu plataforma. No hace falta instalar browserd, Docker ni funciones de TV para el chat básico.
 
-## Configuration without secrets
+## Configuración sin secretos
 
-Copy `.env.example` to `.env` and adjust only the options you need. The CLI loads the working directory's `.env` with Node's parser before loading the configuration. Variables already present in the environment take precedence. You can pass the file explicitly to make visible which configuration you are using:
+Copia `.env.example` a `.env` y ajusta solo las opciones que necesites. El CLI carga el `.env` del directorio de trabajo mediante el parser de Node antes de cargar la configuración. Las variables ya presentes en el entorno tienen prioridad. Puedes pasar el archivo expresamente para hacer visible qué configuración usas:
 
 ```sh
 node --env-file=.env dist/cli.js doctor
 ```
 
-The example file contains no keys. Do not commit `.env` or the state directory. If you choose another folder with `PA_STATE_DIR`, use the same one for every command and for autostart.
+El archivo de ejemplo no contiene claves. No subas `.env` ni el directorio de estado al repositorio. Si eliges otra carpeta con `PA_STATE_DIR`, usa la misma para todos los comandos y para el arranque automático.
 
-The default code preset is `opencode`. `openrouter` and `opencode-local` also exist; the latter requires an already configured OpenCode server, reachable at the selected local URL and with its sandbox validated. This guide does not install it nor switch providers automatically.
+El preset por defecto del código es `opencode`. También existen `openrouter` y `opencode-local`; este último requiere un servidor OpenCode ya configurado, accesible en la URL local seleccionada y con su jaula validada. Esta guía no lo instala ni cambia de proveedor automáticamente.
 
-## Secrets and Telegram
+## Secretos y Telegram
 
-The default store uses DPAPI on Windows, bound to the user and machine. On other systems it uses a portable file with restricted permissions; **it is not DPAPI encryption**. Do not switch to portable on Windows to work around a vault failure.
+El almacén por defecto usa DPAPI en Windows, ligado al usuario y máquina. En otros sistemas utiliza un archivo portable con permisos restringidos; **no es cifrado DPAPI**. No cambies a portable en Windows para esquivar un fallo del vault.
 
-1. In Telegram, open BotFather from its verified profile, create a bot with `/newbot` and keep the token private. Do not share it with third-party bots.
-2. Get your own numeric user ID through a method you control. It is neither your `@username` nor the bot's ID. `instalar.bat` (or `node scripts/instalar.mjs`) detects it: you send "hola" to your bot and confirm on the PC that it is you.
-3. Initialize the store once:
+1. En Telegram abre BotFather desde su perfil verificado, crea un bot con `/newbot` y guarda el token en privado. No lo compartas con bots de terceros.
+2. Obtén tu propio identificador numérico de usuario mediante un método que controles. No es tu nombre `@usuario` ni el identificador del bot. `instalar.bat` (o `node scripts/instalar.mjs`) lo detecta: le mandas «hola» a tu bot y confirmas en el PC que eres tú.
+3. Inicializa el almacén una sola vez:
 
    ```sh
    node --env-file=.env dist/cli.js vault init
    ```
 
-4. The names `serve` needs are `telegram:botToken`, `telegram:allowedUserIds` (comma-separated IDs) and `provider:apiKey`, when the provider requires a key. The current `vault set <key> <value>` command takes the value as an argument: it can end up in history and in the process list. Do not paste secrets in a shared, recorded or history-synced terminal. This guide does not present that path as safe secret input. `vault set-stdin <key>` allows private pipe input without the value in arguments and rejects an echoing terminal; see [`docs/vault-stdin-qa.md`](docs/vault-stdin-qa.md). It does not normalize the secret: it keeps spaces and a leading BOM; it only strips a final LF/CRLF. Do not write the secret in an echo/printf line, which puts it back into history. `node dist/cli.js setup` offers a partial guided local configuration; see [`docs/setup-qa.md`](docs/setup-qa.md) for its limits. It does not enable autostart nor make real calls to validate Telegram/model.
+4. Los nombres que `serve` necesita son `telegram:botToken`, `telegram:allowedUserIds` (IDs separados por comas) y `provider:apiKey`, cuando el proveedor requiere una clave. El comando actual `vault set <clave> <valor>` recibe el valor como argumento: puede quedar en historial y en la lista de procesos. No pegues secretos en una terminal compartida, grabada o con historial sincronizado. Esta guía no presenta ese camino como entrada secreta segura. `vault set-stdin <clave>` permite una entrada por pipe privado sin valor en argumentos y rechaza una terminal con eco; consulta [`docs/vault-stdin-qa.md`](docs/vault-stdin-qa.md). No normaliza el secreto: conserva espacios y BOM inicial; solo retira un salto final LF/CRLF. No escribas el secreto en una línea echo/printf, que lo vuelve a poner en el historial. `node dist/cli.js setup` ofrece una configuración local guiada parcial; consulta [`docs/setup-qa.md`](docs/setup-qa.md) para sus límites. No activa autostart ni hace llamadas reales para validar Telegram/modelo.
 
-   With the portable backend you can privately prepare the state directory's `secrets.json` file, a JSON object whose names are those keys and whose values are strings. Restrict the directory to the user and the file to `600` on Unix **before** writing secrets. Do not use `vault get` to check them: it prints the value. `vault list` shows only names.
+   En el backend portable puedes preparar de forma privada el archivo `secrets.json` del directorio de estado, con un objeto JSON cuyos nombres sean esas claves y cuyos valores sean cadenas. Limita el directorio al usuario y el archivo a `600` en Unix **antes** de escribir secretos. No uses `vault get` para comprobarlos: imprime el valor. `vault list` muestra solo nombres.
 
-By default state lives in `~/.local/share/personal-agent`, also under the user profile on Windows. Store data there only on a system account you control. DPAPI offers no recovery when moving the vault to another machine: keep a private way to rotate the keys. Backups intentionally exclude the vault.
+Por defecto el estado está en `~/.local/share/personal-agent`, también bajo el perfil del usuario en Windows. Guarda allí los datos solo en una cuenta de sistema que controles. DPAPI no ofrece recuperación al mover el vault a otra máquina: conserva una forma privada de rotar las claves. Las copias de seguridad no incluyen el vault de forma intencionada.
 
-## Check and start
+## Comprobar y arrancar
 
 ```sh
 node --env-file=.env dist/cli.js doctor
 node --env-file=.env dist/cli.js diagnose
 ```
 
-`doctor` checks the local environment. `diagnose` reads local evidence and may include paths, logs or actions: review the output before sharing it. Neither one proves by itself that the full chat works.
+`doctor` comprueba el entorno local. `diagnose` lee evidencia local y puede incluir rutas, logs o acciones: revisa el resultado antes de compartirlo. Ninguno prueba por sí solo que el chat completo funcione.
 
-`llm-health` makes real requests to configured providers. It can spend quota and, depending on the plan, money; do not run it as a harmless check:
+`llm-health` hace solicitudes reales a proveedores configurados. Puede gastar cuota y, según el plan, dinero; no lo ejecutes como comprobación inocua:
 
 ```sh
 node --env-file=.env dist/cli.js llm-health
 ```
 
-Before starting, check that everything is in place (green/red list with the fix for each failure; it does not spend model calls):
+Antes de arrancar, comprueba que todo está en su sitio (lista verde/rojo con el arreglo de cada fallo; no gasta llamadas al modelo):
 
 ```sh
 node --env-file=.env dist/cli.js iniciar --solo-comprobar
 ```
 
-Once you have verified access and its conditions, start in the foreground (`iniciar` without options checks and starts; `serve` starts directly):
+Cuando hayas comprobado el acceso y sus condiciones, arranca en primer plano (`iniciar` sin opciones comprueba y arranca; `serve` arranca directamente):
 
 ```sh
 node --env-file=.env dist/cli.js iniciar
 ```
 
-On Windows, `levantar.bat` does the same with a double-click.
+En Windows, `levantar.bat` hace lo mismo con doble clic.
 
-Send `/start` to your bot from the authorized user. A command that answers does not prove a model request works: afterwards try a generic question, with no private data. If credentials are missing or the token is invalid, fix the configuration; do not open the bot to every user to solve it.
+Envía `/start` a tu bot desde el usuario autorizado. Un comando que responde no prueba que una petición al modelo funcione: prueba después una pregunta genérica, sin datos privados. Si faltan credenciales o el token es inválido, corrige la configuración; no abras el bot a todos los usuarios para resolverlo.
 
-To stop a foreground start, use Ctrl+C and wait for the shutdown. Do not kill a process just from a PID copied from a file.
+Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mates un proceso solo por un PID copiado de un archivo.
 
-- `status` and `watchdog --status` are point-in-time queries of PID and heartbeat; they confirm neither Telegram/LLM health nor installed supervision.
-- On Linux, only in server mode, `node --env-file=.env dist/cli.js stop` uses authenticated local control and requires clean shutdown and released ownership. It needs `flock`, a private state directory and a daemon started with this version. It cannot stop an old daemon that does not publish that control. A timeout or unclean stop is a failure, not an invitation to kill by PID.
-- On Windows, `node dist\cli.js stop` shuts it down and the watchdog will not restart it until `iniciar` or the next PC reboot.
-- `restart` is rejected without changing the daemon because it cannot be verified whether a supervisor will relaunch it.
-- On Windows, `autostart install` also sets up the "Asistenta-vigilante" watchdog, which restarts it if it crashes (see [Autostart](#autostart)). It covers processes that exit, not hangs of processes that stay alive.
+- `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada.
+- En Linux, solo en modo servidor, `node --env-file=.env dist/cli.js stop` usa control local autenticado y exige cierre limpio y propiedad liberada. Requiere `flock`, directorio de estado privado y un daemon arrancado con esta versión. No puede detener un daemon antiguo que no publique ese control. Un timeout o cierre no limpio es un fallo, no una invitación a matar por PID.
+- En Windows, `node dist\cli.js stop` la apaga y el vigilante no la vuelve a levantar hasta `iniciar` o el siguiente reinicio del PC.
+- `restart` se rechaza sin cambiar el daemon porque no se puede verificar si un supervisor lo relanzará.
+- En Windows, `autostart install` deja además el vigilante «Asistenta-vigilante», que la vuelve a arrancar si se cae (ver [Arranque automático](#arranque-automático)). Cubre procesos que terminan, no cuelgues de procesos que siguen vivos.
 
-On Linux the new controller requires the state directory to be private (700, current owner, no symlink) and the socket path to fit the Unix limit. If an old install has open permissions, startup fails closed: review its content and ownership before restricting them. It does not change those permissions silently. `PA_DESKTOP=on` is not supported on this Linux path.
+En Linux el nuevo controlador exige que el directorio de estado sea privado (700, propietario actual, sin symlink) y que la ruta del socket quepa en el límite Unix. Si una instalación antigua tiene permisos abiertos, el arranque falla cerrado: revisa primero su contenido y propietario antes de restringirlos. No cambia esos permisos silenciosamente. `PA_DESKTOP=on` no se admite en este camino Linux.
 
-## Local web panel
+## Panel web local
 
-It is optional: set `PA_WEB_PORT` and `PA_WEB_TOKEN` through a private channel before starting. Without a token, the daemon does not start the panel. It listens on loopback by default, its APIs require Bearer and it only answers to local names (`127.0.0.1`, `localhost`, `[::1]`): any other Host header gets a 403, which stops DNS rebinding. If you serve the panel through your own proxy (e.g. `tailscale serve`), add its exact name to `PA_WEB_ALLOWED_HOSTS` (comma-separated). Do not publish the token, its initial URL or the browser storage. Do not expose the port to the Internet as if it had user management.
+Es opcional: configura `PA_WEB_PORT` y `PA_WEB_TOKEN` por un canal privado antes de arrancar. Sin token, el daemon no inicia el panel. Escucha por defecto en loopback, sus API exigen Bearer y solo responde a los nombres locales (`127.0.0.1`, `localhost`, `[::1]`): cualquier otra cabecera Host recibe 403, lo que corta el DNS rebinding. Si sirves el panel por un proxy propio (p. ej. `tailscale serve`), añade su nombre exacto en `PA_WEB_ALLOWED_HOSTS` (separados por comas). No publiques el token, su URL inicial ni el almacenamiento del navegador. No expongas el puerto a Internet como si tuviera gestión de usuarios.
 
-The panel and Telegram see the same pending approvals. The web view does not imply that every tool is configured or that the daemon is supervised.
+El panel y Telegram ven las mismas aprobaciones pendientes. La vista web no implica que todas las herramientas estén configuradas o que el daemon esté supervisado.
 
-## Autostart
+## Arranque automático
 
-See [`deploy/windows/README.md`](deploy/windows/README.md). Do not enable it until you have verified a manual start. The script uses the repository root as working directory; the CLI loads the optional `.env` from there. Variables already present in the task user's environment take precedence over the file. Do not put secrets in the task command. A native Windows install has not been validated in this QA round.
+Consulta [`deploy/windows/README.md`](deploy/windows/README.md). No lo actives hasta comprobar el arranque manual. El script usa la raíz del repositorio como directorio de trabajo; el CLI carga desde allí el `.env` opcional. Las variables ya presentes en el entorno del usuario de la tarea tienen prioridad sobre el archivo. No coloques secretos en el comando de la tarea. No se ha validado una instalación nativa Windows en esta ronda de QA.
 
-On Windows, the full autostart (a single `node dist/cli.js autostart install --start`, the prior `pa iniciar --solo-comprobar` list and the "Asistenta-vigilante" watchdog, which restarts it every 5 min if it crashes) is in [`docs/windows-startup.md`](docs/windows-startup.md); the watchdog has its own section at [Watchdog: "Asistenta-vigilante"](docs/windows-startup.md#vigilante-asistenta-vigilante). `pa stop` keeps it off until the PC restarts or `pa iniciar`, even if it was not running.
+En Windows, el arranque completo (una sola orden `node dist/cli.js autostart install --start`, la lista previa de `pa iniciar --solo-comprobar` y el vigilante «Asistenta-vigilante», que la vuelve a levantar cada 5 min si se cae) está en [`docs/windows-startup.md`](docs/windows-startup.md); el vigilante tiene su apartado en [Vigilante: «Asistenta-vigilante»](docs/windows-startup.md#vigilante-asistenta-vigilante). `pa stop` la deja apagada hasta reiniciar el PC o `pa iniciar`, también si ya no estaba en marcha.
 
-## Local OCR (optional)
+## OCR local (opcional)
 
-Asistenta can extract text from an image or a scanned PDF with an OCR engine that runs on your PC: no network (except the first weights download), no paid APIs and without using your model keys. It is **off by default**; enabling it adds the `ocr_local` tool, which only reads files inside the working folder (and `PA_OCR_WATCH_DIR` if you have it). The existing `ocr` tool (screen text with Windows OCR) is unchanged.
+Asistenta puede sacar el texto de una imagen o un PDF escaneado con un motor OCR que corre en tu PC: sin red (salvo la primera descarga de los pesos), sin APIs de pago y sin usar tus claves del modelo. Está **apagado por defecto**; al activarlo aparece la herramienta `ocr_local`, que solo lee ficheros dentro de la carpeta de trabajo (y de `PA_OCR_WATCH_DIR` si la tienes). La herramienta `ocr` de siempre (texto de la pantalla con el OCR de Windows) no cambia.
 
-Install (PowerShell, in the Asistenta folder; needs Python 3.10+ with the `py` launcher):
+Instalar (PowerShell, en la carpeta de Asistenta; necesita Python 3.10+ con el lanzador `py`):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1              # PP-OCRv5 (default)
-powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1 -Model glm   # GLM-OCR (best quality)
+powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1              # PP-OCRv5 (por defecto)
+powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1 -Model glm   # GLM-OCR (máxima calidad)
 ```
 
-On Linux/WSL: `scripts/ocr-sidecar/setup.sh [ppocr|glm]`. Then, in `.env`: `PA_OCR_LOCAL=1` and, if you want GLM-OCR, `PA_OCR_MODEL=glm`. Restart Asistenta.
+En Linux/WSL: `scripts/ocr-sidecar/setup.sh [ppocr|glm]`. Después, en `.env`: `PA_OCR_LOCAL=1` y, si quieres GLM-OCR, `PA_OCR_MODEL=glm`. Reinicia Asistenta.
 
-Measured on 30-Oct-2026 with 8 Spanish pages (receipt, web screenshot, scan, table, tilted photo, small print, ES/EN, handwriting), CPU only:
+Medido el 30-oct-2026 con 8 páginas en español (ticket, captura web, escaneo, tabla, foto inclinada, letra pequeña, ES/EN, letra manuscrita), solo CPU:
 
-| Engine | Accuracy | s/page | RAM | License |
+| Motor | Acierto | s/página | RAM | Licencia |
 | --- | --- | --- | --- | --- |
-| PP-OCRv5 (RapidOCR, ONNX) - default | 94.5 % | 1.3 | 0.8 GB | Apache-2.0 |
-| GLM-OCR (`zai-org/GLM-OCR`) - `PA_OCR_MODEL=glm` | 98.5 % | 8.9 | 3.1 GB | MIT |
+| PP-OCRv5 (RapidOCR, ONNX) — por defecto | 94,5 % | 1,3 | 0,8 GB | Apache-2.0 |
+| GLM-OCR (`zai-org/GLM-OCR`) — `PA_OCR_MODEL=glm` | 98,5 % | 8,9 | 3,1 GB | MIT |
 
-GLM-OCR downloads about 2 GB of weights the first time and needs PyTorch (CPU). PP-OCRv5 is weaker on web screenshots with menus; GLM-OCR, on very small print. PDFs are read up to 20 pages. If the engine is not installed, Asistenta tells you with the command to install it.
+GLM-OCR descarga unos 2 GB de pesos la primera vez y necesita PyTorch (CPU). PP-OCRv5 es más flojo en capturas de webs con menús; GLM-OCR, en letra muy pequeña. Los PDF se leen hasta 20 páginas. Si el motor no está instalado, Asistenta te lo dice con el comando para instalarlo.
 
-## Voice dictation anywhere (optional)
+## Dictado por voz en cualquier app (opcional)
 
-Hold a key, speak, release: the text appears wherever your cursor is (WhatsApp Web, Word, the browser, mail...). It runs entirely on your PC with the same local voice stack as voice notes: free, unlimited and keyless. **Off by default**; enable with `PA_DICTADO=1` and check the mic with `pa dictado prueba`. Default key is Ctrl + Windows (`PA_DICTADO_TECLA` to change it). It never types into password fields and stores neither audio nor text. Full guide: [`docs/dictado.md`](docs/dictado.md).
+Mantén una tecla, habla y suelta: el texto aparece donde tengas el cursor (WhatsApp Web, Word, el navegador, el correo...). Todo pasa en tu PC con la misma voz local que las notas de voz: gratis, sin límite y sin claves. **Apagado por defecto**; actívalo con `PA_DICTADO=1` y comprueba el micrófono con `pa dictado prueba`. La tecla por defecto es Ctrl + Windows (`PA_DICTADO_TECLA` para cambiarla). Nunca escribe en campos de contraseña y no guarda ni audio ni texto. Guía completa: [`docs/dictado.md`](docs/dictado.md).
 
-## Development and QA
+## Desarrollo y QA
 
 ```sh
 npm run typecheck
@@ -256,65 +258,64 @@ npm run build
 npm test
 ```
 
-The suite has 1,200+ test files; the runner executes a general phase and a serial phase for resource tests. CI runs on every push on Linux (`CI` workflow) and Windows (`Windows` workflow), and the installer workflow attaches the `.exe` installer to each GitHub release. Browser/desktop tests require their dependencies; Linux tests do not replace Windows verification. A test with a simulated process does not prove a real daemon stopped.
+La suite tiene más de 1.200 archivos de test; el runner ejecuta una fase general y una fase serial para pruebas de recursos. CI corre en cada push en Linux (workflow `CI`) y en Windows (workflow `Windows`), y el workflow del instalador adjunta el `.exe` en cada release de GitHub. Las pruebas de navegador/escritorio requieren sus dependencias; las pruebas Linux no sustituyen la verificación de Windows. Un test con un proceso simulado no prueba que un daemon real se haya detenido.
 
-- [`ROADMAP.md`](ROADMAP.md): work context and debts; may contain plans not yet implemented.
-- [`docs/voz-piper.md`](docs/voz-piper.md): local fallback voice with Piper (opt-in `PA_PIPER_MODEL`).
-- [`docs/resumen-diario.md`](docs/resumen-diario.md): morning briefing (opt-in `PA_BRIEFING=1`) and `/resumen hoy`.
-- [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): startup validation and its limits.
-- [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): local diagnostics and QA.
-- [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): Linux stop, tests and limits.
-- [`docs/tv-ordenes.md`](docs/tv-ordenes.md): LG TV commands and network wake-on-LAN; `pa tv mac auto` reads the TV's MAC from the network (with the TV on).
-- [`docs/skills-incluidas.md`](docs/skills-incluidas.md): bundled engineering skills (diagnosing bugs, TDD), loaded only when coding.
-- Scheduled routines: if the PC was off or asleep at a routine's time, when it comes back it runs ONCE late (noting the scheduled time) if the grace window has not passed (half the period, between 2 min and 2 h); if it has passed, it does not run and is recorded as missed. Disable: `PA_ROUTINE_CATCHUP=0`.
-- Weekly evolution (`src/evolve`): a candidate is only promoted with the full verification checklist (written spec, no forbidden files, valid measurement, no more failures than the baseline) and leaves `state/evolve/promovido-<n>.receipt.md` next to the patch.
+- [`ROADMAP.md`](ROADMAP.md): contexto de trabajo y deudas; puede contener planes aún no implementados.
+- [`docs/voz-piper.md`](docs/voz-piper.md): voz local de respaldo con Piper (opt-in `PA_PIPER_MODEL`).
+- [`docs/resumen-diario.md`](docs/resumen-diario.md): resumen de la mañana (opt-in `PA_BRIEFING=1`) y `/resumen hoy`.
+- [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
+- [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
+- [`docs/daemon-stop-qa.md`](docs/daemon-stop-qa.md): parada Linux, pruebas y límites.
+- [`docs/tv-ordenes.md`](docs/tv-ordenes.md): órdenes a la tele LG y encendido por red; `pa tv mac auto` lee la MAC de la tele de la red (con la tele encendida).
+- [`docs/skills-incluidas.md`](docs/skills-incluidas.md): skills de ingeniería incluidas (diagnosticar bugs, TDD), que solo se cargan al programar.
+- Rutinas programadas: si el PC estaba apagado o dormido a la hora de una rutina, al volver se ejecuta UNA vez con retraso (avisando de la hora a la que tocaba) si no ha pasado la ventana de gracia (mitad del periodo, entre 2 min y 2 h); si ya pasó, no se ejecuta y queda anotada como perdida. Desactivar: `PA_ROUTINE_CATCHUP=0`.
+- Evolución semanal (`src/evolve`): un candidato solo se promueve con la checklist de verificación completa (spec escrita, sin ficheros prohibidos, medición válida, sin más fallos que la base) y deja `state/evolve/promovido-<n>.receipt.md` junto al parche.
 
-## How it is organized
+## Cómo está organizado
 
 ```text
-src/cli.ts         Startup and service wiring
-src/channels/      Conversation channels
-src/tools/         Tools available to the agent
-src/goals/         Goal persistence, execution and notices
-src/webui/         Local panel and authenticated API
-src/               Memory, permissions, providers and services
-browserd/          Optional browser service
-deploy/            Per-platform instructions
-test/, qa/         Tests and verification scenarios
-docs/              Technical guides and QA limits
+src/cli.ts          Arranque y conexión de servicios
+src/channels/      Canales de conversación
+src/tools/         Herramientas disponibles para el agente
+src/goals/         Persistencia, ejecución y avisos de objetivos
+src/webui/         Panel local y API autenticada
+src/               Memoria, permisos, proveedores y servicios
+browserd/          Servicio de navegador opcional
+deploy/            Instrucciones por plataforma
+test/, qa/         Tests y escenarios de comprobación
+docs/              Guías técnicas y límites de QA
 ```
 
-You do not need to start every component for basic chat. Read each feature's guide before adding services.
+No es necesario arrancar todos los componentes para usar el chat básico. Consulta la guía de cada función antes de añadir servicios.
 
-## Security and limits
+## Seguridad y límites
 
-- Do not use real data, accounts or sessions in automated tests.
-- Do not commit secrets, state directories, private screenshots or unreviewed logs.
-- The portable store is not equivalent to Windows DPAPI encryption. See [the safe stdin input](docs/vault-stdin-qa.md).
-- Browsing, running a tool and getting a result are distinct facts. A mocked or Linux test does not certify Windows desktop control.
-- External services have their own terms, quotas and data policies. Review the plan before enabling a key or an integration.
-- Exfiltration gate: as soon as a turn reads something private (files, memory, mail, documents, screen, terminal...), a `fetch`, `download` or browser request carrying data (query, long path, user in the URL or long subdomain) to a domain the turn has not yet visited asks for approval showing the full URL. Before reading anything private, browsing stays free. `PA_TAINT_GATE=0` disables it.
-- The delegation code is not presented here as an operational multi-agent system: its existence does not prove connection to the daemon.
+- No uses datos, cuentas ni sesiones reales en pruebas automatizadas.
+- No subas secretos, directorios de estado, capturas privadas ni logs sin revisar.
+- El almacén portable no equivale al cifrado DPAPI de Windows. Revisa [la entrada segura por stdin](docs/vault-stdin-qa.md).
+- Navegar, ejecutar una herramienta y obtener un resultado son hechos distintos. Una prueba con mocks o en Linux no certifica el control del escritorio Windows.
+- Los servicios externos tienen sus propios términos, cuotas y políticas de datos. Revisa el plan antes de activar una clave o una integración.
+- Puerta de exfiltración: en cuanto un turno lee algo privado (archivos, memoria, correo, documentos, pantalla, terminal…), una petición de `fetch`, `download` o del navegador con datos (query, ruta larga, usuario en la URL o subdominio largo) a un dominio que el turno aún no ha visitado pide aprobación enseñando la URL completa. Antes de leer nada privado, navegar sigue siendo libre. `PA_TAINT_GATE=0` la apaga.
+- El código de delegación no se presenta aquí como un sistema multiagente operativo: su existencia no prueba conexión al daemon.
 
-## Glossary
+## Contribuir
 
-- **Daemon:** the background program that stays running on your PC and answers on Telegram.
-- **LLM provider:** the external service that runs the language model (default preset: OpenCode). The only paid part.
-- **Vault:** the local secrets store. DPAPI on Windows; a restricted-permissions portable file elsewhere.
-- **Panel:** the local web interface (chat, approvals, memory, status, audit), protected by a token and bound to loopback.
-- **Approvals:** decisions the agent asks for before acting. Nothing sensitive runs without your confirmation.
-- **Goals:** multi-day plans the agent proposes and only runs after your approval, step by step.
-- **browserd:** optional browser service used by the web tools.
-- **Watchdog ("Asistenta-vigilante"):** Windows task that restarts the daemon if it crashes.
+Propón cambios pequeños, explica el problema y añade una comprobación que lo reproduzca. Usa `npm run lint:check` para revisar sin reescribir archivos. No describas una prueba local como validación de una instalación ajena. Separa las funciones implementadas, la configuración pendiente y las propuestas del [roadmap](ROADMAP.md).
 
-## Contributing
+## Licencia
 
-Propose small changes, explain the problem and add a check that reproduces it. Use `npm run lint:check` to review without rewriting files. Do not describe a local test as validation of someone else's install. Keep implemented features, pending configuration and [roadmap](ROADMAP.md) proposals separate.
+MIT, la misma que declara `package.json`: texto completo en [LICENSE](LICENSE). Las dependencias conservan sus propias licencias; por ejemplo, `ffmpeg-static` trae un binario de ffmpeg (GPL-3.0 o posterior) y `lamejs` es LGPL-3.0.
 
-## License
+`pa autostart install` también registra un vigilante (tarea «Asistenta-vigilante», al iniciar sesión y cada 5 min) que vuelve a arrancar Asistenta si no está en marcha; si la paras con `pa stop`, la deja apagada hasta reiniciar el PC o `pa iniciar`. `PA_WATCHDOG=0` lo desactiva y `pa autostart status` dice cómo está.
 
-`package.json` declares MIT. This checkout does not include a `LICENSE` file; before redistributing code, confirm the applicable text and notices with the maintainer. This documentation neither adds nor changes a license.
+Asistenta también se actualiza sola desde `main` (`PA_AUTOUPDATE=1` por defecto): espera a estar libre, hace fast-forward, compila, se reinicia y te avisa por Telegram con las novedades; si algo falla vuelve sola a la versión anterior. `pa autoupdate status|now|off|on`. Detalles en [docs/windows-startup.md](docs/windows-startup.md#autoactualización-desde-main).
 
-`pa autostart install` also registers a watchdog ("Asistenta-vigilante" task, at logon and every 5 min) that restarts Asistenta if it is not running; if you stop it with `pa stop`, it stays off until the PC restarts or `pa iniciar`. `PA_WATCHDOG=0` disables it and `pa autostart status` tells you its state.
+## English
 
-Asistenta also self-updates from `main` (`PA_AUTOUPDATE=1` by default): it waits until idle, fast-forwards, builds, restarts and tells you on Telegram what's new; if anything fails it rolls back to the previous version by itself. `pa autoupdate status|now|off|on`. Details in [docs/windows-startup.md](docs/windows-startup.md#autoactualización-desde-main).
+**Asistenta** is an open-source personal assistant that runs on your own Windows PC and that you talk to through your private Telegram bot. It remembers context, proposes multi-day plans that only run after your approval, and can use tools: web browsing, desktop control, local voice dictation in any app, local OCR, mail from your own account, reminders and routines, your TV and an iPhone. A local web panel shows chat, approvals, memory, status and audit.
+
+- **Your machine, your keys:** only you (the owner) can talk to it, risky actions ask first, and secrets never go to the model.
+- **Cost:** free, except the LLM API key, billed by your provider per use.
+- **Quick start (Windows):** install Node 24+, clone this repo outside OneDrive, create a bot with @BotFather, double-click `instalar.bat`, then `levantar.bat`. Steps 1–9 of [Empieza aquí](#empieza-aquí-windows-10-minutos) are the full list.
+
+Full English documentation: [README.en.md](README.en.md). License: MIT ([LICENSE](LICENSE)).
