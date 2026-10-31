@@ -30,6 +30,10 @@ export const PROTECTED_PREFIXES: readonly string[] = [
   'vitest.projects',
   'vite.config',
   '.npmrc',
+  // vite carga postcss.config.* / .postcssrc* de la raíz al arrancar, sin CSS de por medio, y
+  // lo ejecuta en el proceso principal de vitest, el que escribe el informe (comprobado, 31 oct).
+  'postcss.config',
+  '.postcssrc',
   'biome.json',
   'package.json',
   'package-lock.json',
