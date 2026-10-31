@@ -1705,12 +1705,12 @@ ${renderFormatScript()}
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;
             var hora = new Date().toLocaleTimeString('es-ES');
-            if (!token) marca.textContent = 'Sin token';
+            if (!token) marca.textContent = 'Falta el token';
             else if (fallos === 0) marca.textContent = 'Actualizado · ' + hora;
-            else marca.textContent = fallos + (fallos === 1 ? ' sección' : ' secciones') + ' con error · ' + hora;
+            else marca.textContent = fallos + (fallos === 1 ? ' sección sin cargar · ' : ' secciones sin cargar · ') + hora;
           })
           .catch(function (error) {
-            marca.textContent = 'Error al actualizar';
+            marca.textContent = 'No he podido actualizar';
           })
           .finally(function () {
             boton.disabled = false;
