@@ -8,6 +8,8 @@ rem (que va al lado de node.exe) tambien se encuentre.
 set "NODE_EXE="
 rem NODE_OLD: version del primer Node demasiado viejo que encuentra (para decirlo claro).
 set "NODE_OLD="
+rem ASISTENTA_NODE_FUERA_PATH: el Node elegido no esta en el PATH (los avisos dan su ruta completa).
+set "ASISTENTA_NODE_FUERA_PATH="
 for %%N in ("%ASISTENTA_NODE%" "node" "%ProgramFiles%\nodejs\node.exe" "%LOCALAPPDATA%\Programs\nodejs\node.exe" "%NVM_SYMLINK%\node.exe" "%USERPROFILE%\scoop\apps\nodejs\current\node.exe" "%USERPROFILE%\.local\node24\node.exe") do (
     if not defined NODE_EXE call :probar %%N
 )
@@ -19,6 +21,7 @@ if "%~1"=="" exit /b 0
 if errorlevel 1 goto :viejo
 set "NODE_EXE=%~1"
 if /i not "%~1"=="node" set "PATH=%~dp1;%PATH%"
+if /i not "%~1"=="node" set "ASISTENTA_NODE_FUERA_PATH=1"
 exit /b 0
 
 :viejo
