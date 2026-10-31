@@ -21,6 +21,8 @@ export interface BoardTask {
   /** Hora local HH:MM, opcional. */
   time?: string;
   status: TaskStatus;
+  /** Día en que el resumen de la mañana avisó de que iba atrasada (se avisa una sola vez). */
+  lateNoticeDay?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -261,7 +263,23 @@ export class TaskBoard {
     return this.#update(id, (t) => {
       t.day = day;
       if (time) t.time = time;
+      // Con fecha nueva puede volver a atrasarse, y entonces se avisa otra vez (una).
+      delete t.lateNoticeDay;
     });
+  }
+
+  /** Apunta que hoy se avisó de estas tareas atrasadas; las ya apuntadas no cambian. */
+  noteLate(ids: readonly number[], day = this.today()): void {
+    if (ids.length === 0) return;
+    const data = this.#read();
+    let changed = false;
+    for (const t of data.tasks) {
+      if (ids.includes(t.id) && !t.lateNoticeDay) {
+        t.lateNoticeDay = day;
+        changed = true;
+      }
+    }
+    if (changed) this.#write(data);
   }
 
   remove(id: number): BoardTask | undefined {
@@ -284,20 +302,29 @@ export class TaskBoard {
   }
 }
 
-/** Para el resumen de la mañana: lo de hoy sin hacer y lo atrasado, como mucho `max`. */
+/**
+ * Para el resumen de la mañana: lo de hoy sin hacer y lo atrasado, como mucho `max`.
+ * Una tarea atrasada sale el primer día que se ve atrasada (y ese mismo día si el resumen
+ * se repite), no cada mañana: sigue en el tablero y en el panel, pero no se insiste.
+ */
 export function briefingTasks(
-  board: Pick<TaskBoard, 'all' | 'today'>,
+  board: Pick<TaskBoard, 'all' | 'today' | 'noteLate'>,
   scope: string,
   max = 8,
 ): Array<{ title: string; time?: string; late?: boolean }> {
   const today = board.today();
-  return board
+  const picked = board
     .all(scope)
     .filter((t) => t.status !== 'hecho' && t.day <= today)
-    .slice(0, max)
-    .map((t) => ({
-      title: t.title,
-      ...(t.day === today && t.time ? { time: t.time } : {}),
-      ...(t.day < today ? { late: true } : {}),
-    }));
+    .filter((t) => t.day === today || !t.lateNoticeDay || t.lateNoticeDay === today)
+    .slice(0, max);
+  board.noteLate(
+    picked.filter((t) => t.day < today).map((t) => t.id),
+    today,
+  );
+  return picked.map((t) => ({
+    title: t.title,
+    ...(t.day === today && t.time ? { time: t.time } : {}),
+    ...(t.day < today ? { late: true } : {}),
+  }));
 }
