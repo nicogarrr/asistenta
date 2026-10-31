@@ -1,4 +1,4 @@
-import { normalizeDomain } from '../gestor/login.js';
+import { normalizeDomain, siteKey } from '../gestor/login.js';
 import {
   type Account,
   AvisoCuenta,
@@ -78,6 +78,18 @@ export async function prepareSignup(
     throw new AvisoCuenta(
       `Ya tienes cuenta en ${domain} (${maskUser(existing.username)}); no creo otra.`,
     );
+  }
+  // Repetir «preparar» (p. ej. tras recargar la página) no cambia la contraseña: si no, la que ya
+  // se escribió en el formulario y la del gestor dejarían de coincidir y la cuenta quedaría sin
+  // acceso. Solo con reglas nuevas (la web rechazó la contraseña) se genera otra.
+  const sameRules = Object.values(rules).every((v) => v === undefined);
+  if (
+    existing?.status === 'pendiente' &&
+    existing.username === owner.email &&
+    sameRules &&
+    (await vault.get(siteKey(domain, 'password')))
+  ) {
+    return existing;
   }
   return saveAccount({ site: domain, username: owner.email, rules, status: 'pendiente' }, vault);
 }
