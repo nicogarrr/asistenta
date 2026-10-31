@@ -168,7 +168,7 @@ export async function instalar(d) {
         ? `No se ha podido compilar: Windows no deja escribir en esta carpeta del sistema. ${SISTEMA_MOVER}`
         : oneDrive
           ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
-          : 'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
+          : 'No se ha podido compilar. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y vuelve a abrir instalar.bat. Si no, descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
     );
   say('✓ Programa listo');
 
