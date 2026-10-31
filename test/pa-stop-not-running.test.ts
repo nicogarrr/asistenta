@@ -57,7 +57,7 @@ describe('pa stop when Asistenta is not running', () => {
       throw new Error('Control ocupado o flock no disponible; no se ha detenido ningún proceso.');
     });
     expect(r.code).toBe(1);
-    expect(r.err).toContain('No he podido parar Asistenta: Control ocupado');
+    expect(r.err).toContain('No he podido parar Asistenta: ahora mismo otra orden');
     expect(r.err).toContain('No he marcado nada');
     expect(r.out).toBe('');
     expect(marker(dir)).toBe(false);
