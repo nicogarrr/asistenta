@@ -1328,6 +1328,14 @@ export class Gate {
           ? 'escribe-local'
           : null;
       }
+      // Reglas y limpieza de correo: mirar el buzón o las reglas es lectura; guardar o borrar
+      // una regla escribe un JSON local. limpiar/baja (mover correo, darse de baja) quedan
+      // opacos: actúan fuera y piden un sí nuevo cada vez.
+      case 'correo_reglas': {
+        const a = argString(c.args, 'action');
+        if (['resumen', 'reglas', 'bajas', 'limpiar_vista', 'baja_vista'].includes(a)) return 'lee';
+        return a === 'crear' || a === 'borrar' ? 'escribe-local' : null;
+      }
       // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
       case 'tareas':
         return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
@@ -2219,6 +2227,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'tiempo',
   'cuentas',
   'tareas',
+  'correo_reglas',
   'fetch',
   'write',
   'edit',
