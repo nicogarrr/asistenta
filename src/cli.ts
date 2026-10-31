@@ -451,6 +451,7 @@ import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
+import { panelTareas } from './webui/tareas.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `personal-agent - a personal agent for your own PC
@@ -1640,6 +1641,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               return null;
             }
           },
+          // Tarjeta Tareas: el tablero de la semana, solo lectura y solo lo del dueño.
+          tareas: () =>
+            panelTareas(
+              new TaskBoard(join(paths.state, 'tareas.json')),
+              vigilanteOwnerId ?? undefined,
+            ),
           status: () => ({
             model: config.model,
             provider: config.provider,

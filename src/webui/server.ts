@@ -28,6 +28,8 @@ export interface WebUiDeps {
   goals?(): unknown | Promise<unknown>;
   /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
   routines?(): unknown | Promise<unknown>;
+  /** Tablero de tareas de la semana del dueño (solo lectura). Si falta o devuelve null, 503. */
+  tareas?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
@@ -87,6 +89,7 @@ const PAGE_CSP = [
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'routines' }
+  | { method: 'GET'; kind: 'tareas' }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
@@ -172,6 +175,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'goals' };
     case '/api/routines':
       return { method: 'GET', kind: 'routines' };
+    case '/api/tareas':
+      return { method: 'GET', kind: 'tareas' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
     case '/api/status':
@@ -239,6 +244,11 @@ async function respondApi(
         payload = deps.routines ? await deps.routines() : null;
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Rutinas aún no disponibles');
+        break;
+      case 'tareas':
+        payload = deps.tareas ? await deps.tareas() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Tareas aún no disponibles');
         break;
       case 'funciones':
         payload = panelFunciones();
