@@ -135,8 +135,14 @@ export async function findAccounts(query: string, vault: VaultOps = realVault): 
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const domain = normalizeDomain(q);
+  const all = await listAccounts(vault);
+  // Con un dominio («wallapop.es») solo esa web y sus subdominios: wallapop.es y
+  // es.wallapop.com son webs distintas, y «x.es» no es «fax.es».
+  if (domain?.includes('.') && !/\s/.test(q)) {
+    return all.filter((a) => a.domain === domain || a.domain.endsWith(`.${domain}`));
+  }
   const word = q.replace(/^www\./, '').split(/[./\s]/)[0] ?? q;
-  return (await listAccounts(vault)).filter(
+  return all.filter(
     (a) => a.domain === domain || a.domain.split('.').includes(word) || a.domain.includes(q),
   );
 }
