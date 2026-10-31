@@ -59,7 +59,7 @@ describe('pa doctor: Telegram', () => {
   it('pa doctor las incluye', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
     expect(src).toContain(
-      'if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet)));',
+      'if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));',
     );
   });
 
