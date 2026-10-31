@@ -719,7 +719,7 @@ function parseOne(text: string): TvIntent | null {
   // Apps: "abre X" acepta cualquier nombre; "pon X" solo nombres conocidos
   // (si no, "pon la 1" o "pon algo de musica" lanzarian apps inventadas).
   m =
-    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:la app de |la aplicacion de |el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
+    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:la app de |la aplicacion de |el |la |los |las )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
       t,
     );
   const abre = m?.[1] ? appName(m[1]) : '';
@@ -746,8 +746,11 @@ const LO_QUE_SE_VE =
  * «abre ya», «abre eso», «abre la app», «abre la tele»: no dicen qué app. Sin
  * nombre no se lanza nada (antes buscaba una app llamada «ya»); va al modelo.
  */
+/** «abre el menú (de netflix)»: el menú no es una app, y la tele no tiene tecla de menú aquí. */
+const MENU = '(?:el )?menu(?: de .+)?';
+
 const SIN_APP = new RegExp(
-  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV}|${LO_QUE_SE_VE})$`,
+  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV}|${LO_QUE_SE_VE}|${MENU})$`,
 );
 
 /**
