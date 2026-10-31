@@ -171,7 +171,7 @@ describe('runAutoupdate', () => {
   it('divergida (no es fast-forward): no toca nada', async () => {
     const f = fake({ ancestor: false });
     const out = await runAutoupdate(dir, f.deps, { env: {} });
-    expect(out.text).toContain('fast-forward');
+    expect(out.text).toContain('cambios propios');
     expect(f.calls.some((c) => c.startsWith('git merge --') || c.startsWith('git reset'))).toBe(
       false,
     );
@@ -193,7 +193,7 @@ describe('runAutoupdate', () => {
     expect(f.calls).toContain('restore');
     expect(f.calls.at(-1)).toBe('start');
     expect(f.sent).toEqual([
-      '⚠️ No he podido actualizarme: la compilación (npm run build) falló. Sigo con la versión anterior.\nDetalle: pa autoupdate status',
+      '⚠️ No he podido actualizarme: la versión nueva no se pudo preparar. Sigo con la versión anterior.\nDetalle: pa autoupdate status',
     ]);
   });
 
@@ -209,7 +209,7 @@ describe('runAutoupdate', () => {
     const out = await runAutoupdate(dir, f.deps, { env: {}, healthTimeoutMs: 20_000 });
     expect(out.kind).toBe('revertida');
     expect(f.calls).toContain('restore');
-    expect(f.sent[0]).toContain('no arrancó sana en 20 s');
+    expect(f.sent[0]).toContain('no arrancaba bien (esperé 20 s)');
   });
 
   it('ocupada o sin saberlo: aplaza sin parar el daemon, y vuelve a mirar en la próxima pasada', async () => {
