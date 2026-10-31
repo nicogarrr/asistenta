@@ -17,7 +17,7 @@ describe('assertNotRunning', () => {
   it('still refuses when another live process owns the pid file', () => {
     const d = dir();
     writeFileSync(join(d, 'serve.pid'), String(process.ppid));
-    expect(() => assertNotRunning(d, 'serve')).toThrow(/already running/);
+    expect(() => assertNotRunning(d, 'serve')).toThrow(/ya está en marcha/);
   });
 
   it('removes a pid file from a dead process', () => {
@@ -66,7 +66,7 @@ describe('processAlive', () => {
       expect(() => assertNotRunning(d, 'serve')).not.toThrow();
       expect(existsSync(join(d, 'serve.pid'))).toBe(false);
     } else {
-      expect(() => assertNotRunning(d, 'serve')).toThrow(/already running/);
+      expect(() => assertNotRunning(d, 'serve')).toThrow(/ya está en marcha/);
     }
   });
 });
