@@ -35,6 +35,8 @@ export interface Measurement {
   failingTests?: string[];
   /** Labels of the end-to-end checks that passed, when the probe printed them. */
   passingChecks?: string[];
+  /** Labels of the end-to-end checks that failed. */
+  failingChecks?: string[];
   /** Set when the run could not produce a number at all. */
   error?: string;
 }
@@ -141,6 +143,33 @@ export function judge(
         kind: 'discard',
         delta,
         reason: `regresión en las sondas: checks que pasaban ${kernel.checks}->${candidate.checks}${detail}. No entra al kernel.`,
+      };
+    }
+  }
+  {
+    // La sonda carga el código del intento, que puede imprimir sus propias líneas «PASA x»:
+    // cada una sumaba un check (+2). La sonda está protegida, así que sus checks son los del
+    // kernel: uno nuevo, repetido o que pasa y falla a la vez no lo imprimió la sonda.
+    const forged =
+      kernel.passingChecks && candidate.passingChecks
+        ? (() => {
+            const known = new Set([...kernel.passingChecks, ...(kernel.failingChecks ?? [])]);
+            const seen = new Set<string>();
+            const failing = new Set(candidate.failingChecks ?? []);
+            const bad = candidate.passingChecks.filter((c) => {
+              const dup = seen.has(c);
+              seen.add(c);
+              return dup || !known.has(c) || failing.has(c);
+            });
+            if (candidate.checks > candidate.passingChecks.length) bad.push('(cuenta)');
+            return bad;
+          })()
+        : [];
+    if (forged.length) {
+      return {
+        kind: 'discard',
+        delta,
+        reason: `la sonda del candidato imprimió checks que no son de la sonda (${forged.slice(0, 3).join('; ')}). No entra al kernel.`,
       };
     }
   }

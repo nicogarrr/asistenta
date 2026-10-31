@@ -281,7 +281,9 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const parsedChecks = parseChecks(`${probe.stdout}\n${probe.stderr}`);
   checks = parsedChecks.passed;
   checksFailed = parsedChecks.failed;
-  const passingChecks = checkNames(`${probe.stdout}\n${probe.stderr}`).passing;
+  const { passing: passingChecks, failing: failingChecks } = checkNames(
+    `${probe.stdout}\n${probe.stderr}`,
+  );
 
   rmSync(home, { recursive: true, force: true });
   if (suiteError) {
@@ -325,5 +327,6 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     passingTests: names.passing,
     failingTests: names.failing,
     passingChecks,
+    failingChecks,
   };
 }

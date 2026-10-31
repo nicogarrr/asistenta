@@ -41,7 +41,13 @@ describe('juez: regresión en las sondas', () => {
   });
 
   it('sigue promoviendo una mejora real que conserva los checks', () => {
-    const kernel = run({ checks: 2, passingChecks: ['abre', 'rellena'] });
+    // «envía» fallaba en el kernel (la sonda imprime siempre los mismos checks) y ahora pasa.
+    const kernel = run({
+      checks: 2,
+      checksFailed: 1,
+      passingChecks: ['abre', 'rellena'],
+      failingChecks: ['envía'],
+    });
     const v = judge(
       kernel,
       run({ passed: 120, failed: 0, checks: 3, passingChecks: ['abre', 'rellena', 'envía'] }),
