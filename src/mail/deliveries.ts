@@ -267,9 +267,14 @@ export function markDeliveryCollected(
   db: DatabaseSync,
   ref: string,
   now: number,
+  /** Only this one (an answer like «el segundo» to a «¿Cuál?» list). */
+  onlyKey?: string,
 ): { done: Delivery } | { matches: Delivery[] } {
   const q = foldRef(ref);
-  const open = activeDeliveries(db, now).filter((d) => d.status !== 'entregado');
+  const open = activeDeliveries(db, now).filter(
+    (d) => d.status !== 'entregado' && (onlyKey === undefined || d.key === onlyKey),
+  );
+  if (onlyKey !== undefined) return markOne(db, open[0], now) ?? { matches: [] };
   const exact = open.filter((d) => [d.tracking, d.orderRef].some((r) => r && foldRef(r) === q));
   const words = q.split(' ').filter((w) => w.length > 2 && !REF_STOP.has(w));
   const loose = open.filter((d) => {
@@ -278,7 +283,15 @@ export function markDeliveryCollected(
   });
   const matches = exact.length > 0 ? exact : loose;
   const one = matches.length === 1 ? matches[0] : open.length === 1 && !q ? open[0] : undefined;
-  if (!one) return { matches };
+  return markOne(db, one, now) ?? { matches };
+}
+
+function markOne(
+  db: DatabaseSync,
+  one: Delivery | undefined,
+  now: number,
+): { done: Delivery } | null {
+  if (!one) return null;
   db.prepare(
     "UPDATE deliveries SET status = 'entregado', status_at = ?, notified = 'entregado', updated_at = ? WHERE key = ?",
   ).run(now, now, one.key);
