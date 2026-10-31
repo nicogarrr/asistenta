@@ -172,17 +172,75 @@ function topicTag(topic: string | null): string | null {
   return slug ? `tema-${slug}` : null;
 }
 
+const UNITS: Record<string, string> = {
+  min: 'minutos',
+  mins: 'minutos',
+  minuto: 'minutos',
+  h: 'horas',
+  hr: 'horas',
+  hrs: 'horas',
+  hora: 'horas',
+  dia: 'dias',
+  seg: 'segundos',
+  segs: 'segundos',
+  segundo: 'segundos',
+  semana: 'semanas',
+};
+const ONES = 'cero uno dos tres cuatro cinco seis siete ocho nueve'.split(' ');
+const TEENS =
+  'diez once doce trece catorce quince dieciseis diecisiete dieciocho diecinueve veinte'.split(' ');
+const TENS: Record<string, number> = {
+  treinta: 30,
+  cuarenta: 40,
+  cincuenta: 50,
+  sesenta: 60,
+  setenta: 70,
+  ochenta: 80,
+  noventa: 90,
+};
+const NUM_WORDS = new Map<string, number>([
+  ...ONES.map((w, i): [string, number] => [w, i]),
+  ...TEENS.map((w, i): [string, number] => [w, 10 + i]),
+  ...ONES.slice(1).map((w, i): [string, number] => [`veinti${w}`, 21 + i]),
+  ['veintidos', 22],
+  ['veintitres', 23],
+  ['veintiseis', 26],
+  ['cien', 100],
+  ...Object.entries(TENS),
+]);
+
+/**
+ * «diez minutos» = «10 min»: números escritos con letra pasan a cifra («treinta y cinco»
+ * → 35, «una hora» → 1 horas) y las unidades abreviadas a una sola forma.
+ */
+function canon(text: string): string {
+  const unit = String.raw`(?=\s+(?:${Object.keys(UNITS).join('|')}|minutos|horas|dias|segundos|semanas)\b)`;
+  return norm(text)
+    .replace(new RegExp(String.raw`\b(un|una)${unit}`, 'g'), '1')
+    .replace(
+      new RegExp(
+        String.raw`\b(${Object.keys(TENS).join('|')}) y (${ONES.slice(1).join('|')})\b`,
+        'g',
+      ),
+      (_m, t: string, o: string) => String((TENS[t] ?? 0) + ONES.indexOf(o)),
+    )
+    .replace(/[a-z]+/g, (w) => {
+      const n = NUM_WORDS.get(w);
+      return n === undefined ? (UNITS[w] ?? w) : String(n);
+    });
+}
+
 function words(text: string): Set<string> {
   return new Set(
-    norm(text)
+    canon(text)
       .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2),
+      .filter((w) => w.length > 2 && !/^\d+$/.test(w)),
   );
 }
 
 /** Los números de la regla («10», «1,5»), sin orden ni repetidos. */
 function numbers(text: string): string {
-  return [...new Set(norm(text).match(/\d+(?:[.,]\d+)?/g) ?? [])].sort().join(' ');
+  return [...new Set(canon(text).match(/\d+(?:[.,]\d+)?/g) ?? [])].sort().join(' ');
 }
 
 // Palabras que no dicen de qué va la regla: «no», «nunca», «sin» le dan la vuelta y
@@ -201,9 +259,9 @@ function stem(w: string): string {
 
 function stems(text: string): Set<string> {
   return new Set(
-    norm(text)
+    canon(text)
       .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2 && !FLIP_STOP.has(w))
+      .filter((w) => w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w))
       .map(stem),
   );
 }
