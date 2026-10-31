@@ -178,7 +178,9 @@ describe('formatPreflight', () => {
     expect(plain).toMatch(/^Asistenta — comprobación de arranque/);
     expect(plain).toContain('❌ Telegram');
     expect(plain).toContain('⚠️ Tele');
-    expect(plain).toContain('→ pa vault set telegram:botToken');
+    expect(plain).toContain(
+      '→ Haz doble clic en instalar.bat (o pa vault set-stdin telegram:botToken)',
+    );
     expect(plain).toContain('1 problema impide arrancar y hay 1 aviso.');
     expect(plain).not.toContain('\x1b[');
     expect(formatPreflight(checks, { color: true })).toContain('\x1b[31m');

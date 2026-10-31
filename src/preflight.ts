@@ -98,7 +98,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Caja fuerte (vault)',
       status: 'fallo',
       detail: 'no existe todavía',
-      hint: 'pa vault init (o pa setup para el asistente guiado)',
+      hint: 'Haz doble clic en instalar.bat (o pa vault init)',
     });
   } else {
     try {
@@ -128,7 +128,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Telegram',
       status: 'fallo',
       detail: 'falta el token del bot',
-      hint: 'pa vault set telegram:botToken <token de @BotFather>',
+      hint: 'Haz doble clic en instalar.bat (o pa vault set-stdin telegram:botToken)',
     });
   } else if (deps.offline) {
     add({
@@ -168,7 +168,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
           label: 'Usuarios autorizados',
           status: 'fallo',
           detail: 'no hay ninguno',
-          hint: 'pa vault set telegram:allowedUserIds <tu id de Telegram>',
+          hint: 'Haz doble clic en instalar.bat: le mandas «hola» al bot y guarda tu ID (o pa vault set telegram:allowedUserIds <tu id>)',
         },
   );
 
@@ -210,7 +210,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Modelo',
       status: 'fallo',
       detail: deps.providerFailureMessage(error),
-      hint: 'pa vault set provider:apiKey <clave> (o pa llm-health para probar cada proveedor)',
+      hint: 'instalar.bat o pa vault set-stdin provider:apiKey (pa llm-health prueba cada proveedor)',
     });
   }
 

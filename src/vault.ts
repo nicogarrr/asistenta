@@ -223,7 +223,10 @@ async function loadMap(): Promise<Record<string, string>> {
     for (const [k, v] of Object.entries(map)) cache.set(k, v);
     return map;
   }
-  if (!existsSync(paths.vault)) throw new Error(`no vault at ${paths.vault}; run: pa vault init`);
+  if (!existsSync(paths.vault))
+    throw new Error(
+      `No hay caja fuerte de claves en ${paths.vault}. Haz doble clic en instalar.bat (o usa pa vault init).`,
+    );
   const file = JSON.parse(readFileSync(paths.vault, 'utf8')) as VaultFile;
   if (file.version !== 1) throw new Error(`unsupported vault version ${file.version}`);
   const dek = await dpapi(Buffer.from(file.wrappedDek, 'base64'), false);
