@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { formatApproval } from '../approval-text.js';
 import type { ApprovalChoice } from '../channels/telegram.js';
 import { THREAD_ALLOW_TOOLS } from '../core/toolset.js';
@@ -12,6 +12,7 @@ import {
   protectedRepoPaths,
 } from '../permissions.js';
 import { checkoutStageOf } from '../tools/checkout.js';
+import { portableSecretsFile } from '../vault.js';
 
 export function protectedPaths(): string[] {
   const home = process.env.USERPROFILE;
@@ -34,8 +35,15 @@ export function protectedPaths(): string[] {
  * paths to the cwd - this is the explicit wall for the in-cwd case (.env) and
  * defense in depth for the rest.
  */
+function secretsFilePath(): string {
+  const file = portableSecretsFile();
+  return isAbsolute(file) || /^[a-z]:[\\/]/i.test(file) ? file : resolve(file);
+}
+
 export function secretStatePaths(): string[] {
-  return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
+  // El fichero de secretos del vault portátil puede vivir fuera del estado
+  // (PA_SECRETS_FILE): leerlo o escribirlo es lo mismo que leer o plantar el vault.
+  return [paths.state, paths.vault, approvalsDbPath(), resolve('.env'), secretsFilePath()];
 }
 
 /**
