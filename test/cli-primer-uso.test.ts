@@ -10,7 +10,7 @@ import { cliFatalMessage, unknownCommandMessage } from '../src/cli-messages.js';
 describe('pa en la consola: mensajes de primer uso', () => {
   it('la clave que falta se explica en castellano; otros errores no cambian', () => {
     const sinClave = new Error('no API key: run `pa vault set provider:apiKey <key>` or set X');
-    expect(cliFatalMessage(sinClave)).toMatch(/^Falta la clave del proveedor/);
+    expect(cliFatalMessage(sinClave)).toMatch(/^Falta la clave del modelo/);
     expect(cliFatalMessage(new Error('no Gemini API key'))).toMatch(/^Falta la clave de Gemini/);
     expect(cliFatalMessage(new Error('Asistenta ya está en marcha'))).toBe(
       'Asistenta ya está en marcha',
@@ -36,7 +36,7 @@ describe('pa en la consola: mensajes de primer uso', () => {
             input: '',
           });
         const chat = pa('chat');
-        expect(chat.stderr).toMatch(/Falta la clave del proveedor/);
+        expect(chat.stderr).toMatch(/Falta la clave del modelo/);
         expect(chat.stderr).not.toMatch(/no API key|run `pa/);
 
         const mal = pa('versiom');

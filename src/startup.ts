@@ -2,11 +2,11 @@
 export function startupFailureMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : '';
   if (/no OpenRouter API key/i.test(text))
-    return 'Falta la clave de OpenRouter. Configura provider:openrouterKey en el vault y reinicia.';
+    return 'Falta la clave de OpenRouter. Guárdala con pa vault set-stdin provider:openrouterKey (o ponla en OPENROUTER_API_KEY) y reinicia.';
   if (/no Gemini API key/i.test(text))
-    return 'Falta la clave de Gemini. Configura provider:geminiKey en el vault y reinicia.';
+    return 'Falta la clave de Gemini. Guárdala con pa vault set-stdin provider:geminiKey (o ponla en GEMINI_API_KEY) y reinicia.';
   if (/no API key/i.test(text))
-    return 'Falta la clave del proveedor. Configúrala en el vault con pa vault set provider:apiKey y reinicia. Para un endpoint propio, revisa PA_API_KEY.';
+    return 'Falta la clave del modelo. Haz doble clic en instalar.bat (o usa pa vault set-stdin provider:apiKey) y reinicia. Para un endpoint propio, revisa PA_API_KEY.';
   return 'No he podido preparar la respuesta. Revisa pa doctor y vuelve a intentarlo.';
 }
 
