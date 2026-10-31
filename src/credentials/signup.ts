@@ -50,12 +50,19 @@ async function rawMeta(domain: string, vault: VaultOps): Promise<Record<string, 
   }
 }
 
-async function pendingOf(site: string, vault: VaultOps): Promise<Account | null> {
+async function pendingOf(site: string, vault: VaultOps, byName = false): Promise<Account | null> {
   const domain = normalizeDomain(site);
   if (!domain) return null;
-  return (
-    (await listAccounts(vault)).find((a) => a.domain === domain && a.status === 'pendiente') ?? null
-  );
+  const pending = (await listAccounts(vault)).filter((a) => a.status === 'pendiente');
+  const exact = pending.find((a) => a.domain === domain);
+  if (exact || !byName || domain.includes('.')) return exact ?? null;
+  // «descarta lo de wallapop»: el nombre a secas vale si solo encaja un registro a medias.
+  const hits = pending.filter((a) => a.domain.split('.').includes(domain));
+  if (hits.length > 1)
+    throw new AvisoCuenta(
+      `Tienes varios registros a medias con ese nombre (${hits.map((a) => a.domain).join(', ')}): dime cuál.`,
+    );
+  return hits[0] ?? null;
 }
 
 export async function prepareSignup(
@@ -117,7 +124,7 @@ export async function approveSignup(
 
 /** La web confirmó el alta: la cuenta pasa a activa. Solo si el dueño la había aprobado. */
 export async function finishSignup(site: string, vault: VaultOps = realVault): Promise<Account> {
-  const p = await pendingOf(site, vault);
+  const p = await pendingOf(site, vault, true);
   if (!p) throw new AvisoCuenta('No hay ningún registro pendiente para esa web.');
   const meta = await rawMeta(p.domain, vault);
   if (typeof meta.approvedAt !== 'number')
@@ -131,7 +138,7 @@ export async function finishSignup(site: string, vault: VaultOps = realVault): P
 
 /** El alta no salió: borra la pendiente. Nunca toca una cuenta activa. */
 export async function discardSignup(site: string, vault: VaultOps = realVault): Promise<boolean> {
-  const p = await pendingOf(site, vault);
+  const p = await pendingOf(site, vault, true);
   if (!p) return false;
   return deleteAccount(p.domain, vault);
 }
