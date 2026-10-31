@@ -22,7 +22,7 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { connectionOwner } from './probe-owner.js';
+import { connectionOwner, countsAsBrowser, ownerLookupWorks } from './probe-owner.js';
 import { pngColourShare, type Rgb } from './probe-png.js';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
@@ -45,7 +45,7 @@ const server = createServer((req, res) => {
   const url = req.url ?? '/';
   const ua = /Mozilla\//.test(req.headers['user-agent'] ?? '');
   const who = owner.get(req.socket);
-  seen.push({ url, browser: ua && who !== false, outsider: who === false });
+  seen.push({ url, browser: countsAsBrowser(ua, who, lookupWorks), outsider: who === false });
   if (url.startsWith('/evento?')) {
     res.writeHead(204);
     res.end();
@@ -119,6 +119,9 @@ const server = createServer((req, res) => {
   res.end(page('<p>ok</p>'));
 });
 
+// Si el sistema sabe decir de quién es una conexión, solo cuenta la que se demuestra del
+// navegador; una cuyo dueño ya no está (abre, escribe y se cierra) no demuestra nada.
+const lookupWorks = await ownerLookupWorks();
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
 // Un solo navegador, el que lanzó el agente: si habla un segundo (lanzado aparte por el

@@ -18,6 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { connect, createServer } from 'node:net';
 import { dirname, join, sep } from 'node:path';
 import { playwrightBrowsersPath } from '../src/evolve/browsers-path.js';
 
@@ -200,4 +201,49 @@ export function connectionOwner(
 
 export function connectionFromBrowser(clientPort: number, serverPort: number): boolean | null {
   return connectionOwner(clientPort, serverPort).browser;
+}
+
+/**
+ * Does the lookup work on this system? It asks about a connection of our own, which must
+ * come out as «not a browser». The probe only trusts the User-Agent where it can't.
+ */
+export async function ownerLookupWorks(
+  look: (clientPort: number, serverPort: number) => boolean | null = connectionFromBrowser,
+): Promise<boolean> {
+  const server = createServer();
+  let verdict: boolean | null = null;
+  try {
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    const judged = new Promise<void>((resolve) =>
+      server.once('connection', (s) => {
+        verdict = look(s.remotePort ?? 0, port);
+        s.destroy();
+        resolve();
+      }),
+    );
+    const client = connect(port, '127.0.0.1');
+    client.on('error', () => {});
+    await Promise.race([judged, new Promise((r) => setTimeout(r, 5000))]);
+    client.destroy();
+  } catch {
+    verdict = null;
+  } finally {
+    server.close();
+  }
+  return verdict === false;
+}
+
+/**
+ * Does a request count as the browser's? Where the lookup works, only a connection proven
+ * to be the browser's counts: one whose owner is already gone (opened, written and closed
+ * at once by a short-lived program) proves nothing. Elsewhere, the User-Agent as before.
+ */
+export function countsAsBrowser(
+  ua: boolean,
+  who: boolean | null | undefined,
+  lookupWorks: boolean,
+): boolean {
+  if (!ua) return false;
+  return lookupWorks ? who === true : who !== false;
 }

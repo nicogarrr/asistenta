@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 import {
   browserRoot,
   connectionFromBrowser,
+  countsAsBrowser,
   judgeProcess,
+  ownerLookupWorks,
   type ProcInfo,
 } from '../evolve/probe-owner.js';
 
@@ -126,5 +128,24 @@ describe('qué navegador abrió la conexión', () => {
 
   it('un «chrome» fuera de la carpeta de navegadores de Playwright no cuenta', () => {
     expect(judgeProcess(40, { agentPid: 10, folder: '/pw', proc }).browser).toBe(false);
+  });
+});
+
+describe('cuando el dueño de la conexión ya no está', () => {
+  it.runIf(process.platform === 'linux')('en Linux la sonda sabe mirar quién conecta', async () => {
+    expect(await ownerLookupWorks()).toBe(true);
+  });
+
+  it('si el sistema sabe mirar, solo cuenta una conexión demostrada del navegador', () => {
+    expect(countsAsBrowser(true, null, true)).toBe(false);
+    expect(countsAsBrowser(true, undefined, true)).toBe(false);
+    expect(countsAsBrowser(true, true, true)).toBe(true);
+    expect(countsAsBrowser(false, true, true)).toBe(false);
+  });
+
+  it('si no sabe mirar, vale el User-Agent como antes', async () => {
+    expect(await ownerLookupWorks(() => null)).toBe(false);
+    expect(countsAsBrowser(true, null, false)).toBe(true);
+    expect(countsAsBrowser(true, false, false)).toBe(false);
   });
 });
