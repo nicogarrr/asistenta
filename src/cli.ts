@@ -44,6 +44,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { loadCalendar } from './agenda/ics.js';
+import { fetchIcsText } from './agenda/ics-fetch.js';
 import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
@@ -2094,11 +2095,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ? readLocalCalendar(join(paths.state, 'calendar', 'local.ics'))
             : Promise.resolve(undefined),
         getUrl: () => vaultGet('calendar:icsUrl'),
-        fetchText: async (url) => {
-          const res = await fetch(url, { redirect: 'follow' });
-          if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-          return res.text();
-        },
+        fetchText: (url) => fetchIcsText(url),
       }),
       // «correo»: el buzón de Gmail, solo lectura y solo en el chat privado del dueño.
       createMailTool({
@@ -2896,16 +2893,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             const calendarSnapshot = await loadCalendar({
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
-              fetchText: async (url) => {
-                // Timeout duro: un servidor de calendario colgado no puede eternizar
-                // el barrido ni el drain del apagado.
-                const res = await fetch(url, {
-                  redirect: 'follow',
-                  signal: AbortSignal.timeout(15_000),
-                });
-                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-                return res.text();
-              },
+              fetchText: (url) => fetchIcsText(url),
               // Los mismos 35 días que pide la agenda de abajo (sin esto, el calendario
               // solo se leía 7 días y las caducidades a 30 días nunca llegaban de él).
               days: calendarDaysFor(VIGILANTE_AGENDA_DAYS),
@@ -3928,14 +3916,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           loadCalendar({
             readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
             getUrl: () => vaultGet('calendar:icsUrl'),
-            fetchText: async (url) => {
-              const response = await fetch(url, {
-                redirect: 'follow',
-                signal: AbortSignal.timeout(15_000),
-              });
-              if (!response.ok) throw new Error(`el calendario ha respondido ${response.status}`);
-              return response.text();
-            },
+            fetchText: (url) => fetchIcsText(url),
             days: window,
           }),
         followups: () => followups.forChat(chatKey(inbound), 200),
@@ -4378,14 +4359,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await loadCalendar({
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
-              fetchText: async (url) => {
-                const res = await fetch(url, {
-                  redirect: 'follow',
-                  signal: AbortSignal.timeout(15_000),
-                });
-                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-                return res.text();
-              },
+              fetchText: (url) => fetchIcsText(url),
               days: 1,
             })
           ).events,
