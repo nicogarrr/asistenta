@@ -265,7 +265,7 @@ import {
   stopBriefingVoice,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
-import { briefingHour, envOn } from './briefing-env.js';
+import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
 import {
   cacheFullReply,
@@ -955,6 +955,7 @@ async function doctorCommand(): Promise<number> {
   lines.push(
     `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );
+  lines.push(briefingDoctorLine());
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);
