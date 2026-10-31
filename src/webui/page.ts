@@ -565,13 +565,13 @@ export function renderPage(): string {
 
       <article class="tarjeta" aria-labelledby="titulo-sesiones">
         <header class="tarjeta-cabecera">
-          <h2 id="titulo-sesiones">Sesiones</h2>
+          <h2 id="titulo-sesiones">Conversaciones</h2>
           <div class="controles">
             <label class="buscador" for="buscar-sesiones">
               Buscar
               <input id="buscar-sesiones" type="search" placeholder="Texto…" autocomplete="off" spellcheck="false" />
             </label>
-            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Sesiones">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Conversaciones">Refrescar</button>
           </div>
         </header>
         <div id="panel-sesiones" class="tarjeta-cuerpo">
@@ -810,7 +810,7 @@ ${renderFormatScript()}
           fallo.estado = respuesta.status;
           throw fallo;
         }
-        if (!esJson) throw new Error('La respuesta del panel no es JSON válido.');
+        if (!esJson) throw new Error('El panel ha contestado algo que no entiendo. Recarga la página.');
         return datos;
       }
 
@@ -839,7 +839,7 @@ ${renderFormatScript()}
           return;
         }
         if (sesiones.length === 0) {
-          contenedor.appendChild(nodo('p', 'muted', 'No hay sesiones que coincidan.'));
+          contenedor.appendChild(nodo('p', 'muted', 'No hay conversaciones que coincidan.'));
           return;
         }
         contenedor.appendChild(
