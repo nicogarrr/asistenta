@@ -54,6 +54,7 @@ describe('Configurar Asistenta', () => {
     const doc = readFileSync('docs/app-windows.md', 'utf8');
     expect(doc).toContain('SmartScreen');
     expect(doc).toContain('Ejecutar de todas formas');
-    expect(readFileSync('README.md', 'utf8')).toContain('### Instalador .exe (recomendado)');
+    // La guía en castellano vive en README.es.md (README.md es la versión en inglés).
+    expect(readFileSync('README.es.md', 'utf8')).toContain('### Instalador .exe (recomendado)');
   });
 });
