@@ -395,6 +395,7 @@ import { GrillMe } from './skills/grill.js';
 import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
+import { repitchText, wantsRepitch } from './skills/wait-what.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
@@ -7472,6 +7473,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
+          // «no te entiendo», «¿cómo?» tras una respuesta: re-explicarlo en llano (skill wait-what).
+          if (thread.agent.messages.length > 0 && wantsRepitch(inbound.text)) {
+            inbound.text = repitchText(inbound.text);
+          }
           // "Dime más"/"sigue": sirve la respuesta completa cacheada sin gastar un turno.
           const full = cachedFullReply(inbound, thread.key, { isMoreRequest, takeFullReply });
           if (full) {
