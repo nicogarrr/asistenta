@@ -168,13 +168,40 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
 
   if (hour > 23 || minute > 59) return null;
 
+  // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
+  // them simply. Before, they became «every day»; now the caller asks.
+  if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
+  if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
+
+  // «cada mes el día 5», «el día 1 de cada mes», «todos los meses el 15».
+  if (/\b(?:cada mes|todos los meses|de cada mes|mensualmente)\b/.test(normalised)) {
+    const rest = normalised.replace(/\ba las? \S+/, '');
+    const said =
+      /\bel (?:dia )?(\d{1,2}|primero)\b/.exec(rest)?.[1] ??
+      /\b(\d{1,2}) de cada mes\b/.exec(rest)?.[1] ??
+      (/\bel primer dia\b/.test(rest) ? '1' : undefined);
+    const day = said === undefined ? Number.NaN : said === 'primero' ? 1 : Number(said);
+    if (!Number.isInteger(day) || day < 1 || day > 31) return null;
+    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} * *`, prompt: text.trim() };
+  }
+
   // Intervals beat fixed times: "cada 5 minutos" is a schedule on its own.
-  const everyN = /cada (\d{1,3}) (minutos?|horas?)/.exec(normalised);
+  // «cada media hora», «cada cuarto de hora», «cada dos horas», «cada 30 min».
+  if (/\bcada media hora\b/.test(normalised))
+    return { schedule: '*/30 * * * *', prompt: text.trim() };
+  if (/\bcada cuarto de hora\b/.test(normalised)) {
+    return { schedule: '*/15 * * * *', prompt: text.trim() };
+  }
+  const everyN = new RegExp(`cada (\\d{1,3}|${INTERVAL_WORDS}) (minutos?|min|horas?)\\b`).exec(
+    normalised,
+  );
   if (everyN) {
-    const n = Number(everyN[1]);
+    const n = /^\d+$/.test(everyN[1] ?? '')
+      ? Number(everyN[1])
+      : (INTERVAL_WORD_VALUE[everyN[1] ?? ''] ?? 0);
     if (!Number.isInteger(n) || n <= 0) return null;
     const unit = everyN[2] ?? '';
-    const schedule = unit.startsWith('minuto') ? `*/${n} * * * *` : `0 */${n} * * *`;
+    const schedule = unit.startsWith('min') ? `*/${n} * * * *` : `0 */${n} * * *`;
     return { schedule, prompt: text.trim() };
   }
   if (/cada hora\b/.test(normalised)) return { schedule: '0 * * * *', prompt: text.trim() };
@@ -232,3 +259,19 @@ function daysOfWeek(normalised: string): string | null {
   const days = [...new Set(said.map((d) => DAY_VALUE[d] as number))].sort((a, b) => a - b);
   return days.join(',');
 }
+
+/** «cada dos horas», «cada quince minutos»: numbers said in words in an interval. */
+const INTERVAL_WORD_VALUE: Record<string, number> = {
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  ocho: 8,
+  diez: 10,
+  doce: 12,
+  quince: 15,
+  veinte: 20,
+  treinta: 30,
+};
+const INTERVAL_WORDS = Object.keys(INTERVAL_WORD_VALUE).join('|');
