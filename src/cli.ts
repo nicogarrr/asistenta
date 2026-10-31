@@ -187,6 +187,7 @@ import {
   screenStatusText,
   setScreenEnabled,
 } from './ojo-screen.js';
+import { openGymCliError, openGymPaired } from './opengym/cli-text.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
@@ -793,9 +794,7 @@ async function openGymCommand(args: string[]): Promise<number> {
         return 2;
       }
       const host = await pairOpenGym(b ? a : undefined, code);
-      process.stdout.write(
-        `openGym emparejado (código canjeado en ${host}). El token está en el vault (opengym:token).\n`,
-      );
+      process.stdout.write(`${openGymPaired(host)}\n`);
       return 0;
     }
     if (sub === 'status') {
@@ -813,7 +812,7 @@ async function openGymCommand(args: string[]): Promise<number> {
       return 0;
     }
   } catch (err) {
-    process.stderr.write(`${err instanceof OpenGymError ? err.message : String(err)}\n`);
+    process.stderr.write(`${openGymCliError(err)}\n`);
     return 1;
   }
   process.stderr.write(`${OPENGYM_USAGE}\n`);
