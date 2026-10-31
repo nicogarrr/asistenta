@@ -23,12 +23,15 @@ import {
   tituloPestana,
 } from './client-format.js';
 
+// El logo de Asistenta (scripts/windows-app/icono.mjs: «A» blanca en placa grafito y punto azul).
 const ICON_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
-  '<rect width="180" height="180" rx="40" fill="#0b0f14"/>',
-  '<circle cx="90" cy="90" r="54" fill="none" stroke="#7dd3fc" stroke-width="9"/>',
-  '<path d="M66 116 90 64l24 52M74 101h32" fill="none" stroke="#e6edf3" stroke-width="9"',
-  ' stroke-linecap="round" stroke-linejoin="round"/>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">',
+  '<rect width="512" height="512" rx="112" fill="#111827"/>',
+  '<rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="#ffffff"',
+  ' stroke-opacity=".16" stroke-width="8"/>',
+  '<path d="M150 396 256 120l106 276" fill="none" stroke="#ffffff" stroke-width="58"',
+  ' stroke-linejoin="round"/>',
+  '<circle cx="256" cy="318" r="30" fill="#4f8cff"/>',
   '</svg>',
 ].join('');
 
