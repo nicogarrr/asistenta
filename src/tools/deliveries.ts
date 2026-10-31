@@ -36,9 +36,12 @@ const ORDINALS: Record<string, number> = {
   cuarta: 3,
 };
 
-/** «el segundo», «la última»: a place in the list just shown, or undefined. */
+/** «dos», «3»: a place said as a number («el 2», «el número dos»). */
+const CARDINALS: Record<string, number> = { uno: 0, una: 0, dos: 1, tres: 2, cuatro: 3, cinco: 4 };
+
+/** «el segundo», «la última», «el 2», «el número dos»: a place in the list just shown. */
 function chosenKey(db: DatabaseSync, said: string, now: number): string | undefined {
-  const word = /^(?:(?:el|la|lo)\s+)?([a-z]+)$/.exec(
+  const word = /^(?:(?:el|la|lo)\s+)?(?:(?:numero|n[ºo])\s*)?([a-z]+|\d{1,2})$/.exec(
     said
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -49,8 +52,9 @@ function chosenKey(db: DatabaseSync, said: string, now: number): string | undefi
   const shown = lastChoices.get(db);
   if (!word || !shown || now - shown.at > CHOICES_TTL_MS) return undefined;
   if (word === 'ultimo' || word === 'ultima') return shown.keys.at(-1);
-  const at = ORDINALS[word];
-  return at === undefined ? undefined : shown.keys[at];
+  if (word === 'penultimo' || word === 'penultima') return shown.keys.at(-2);
+  const at = /^\d+$/.test(word) ? Number(word) - 1 : (ORDINALS[word] ?? CARDINALS[word]);
+  return at === undefined || at < 0 ? undefined : shown.keys[at];
 }
 
 const choiceLabel = (d: Delivery): string =>
