@@ -112,10 +112,13 @@ export function createRoutineFire(
       if (isCommandRoutine(ctx.routine)) {
         // F4: un comando aprobado, sin modelo. Nunca se manda a runTask.
         const out = deps.fireCommand
-          ? await deps.fireCommand(ctx).catch((err: unknown) => ({
-              body: `No se pudo ejecutar el comando: ${String(err)}`,
-              failed: true,
-            }))
+          ? await deps.fireCommand(ctx).catch((err: unknown) => {
+              log.warn('command routine failed', { routine: ctx.routine.name, err });
+              return {
+                body: `No se pudo ejecutar el comando: ${commandFailure(err)}.`,
+                failed: true,
+              };
+            })
           : {
               body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
               failed: true,
@@ -254,4 +257,19 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
       if (r && (r.delivered || r.failed || r.invalid)) log.info('missed reminders', r);
     })
     .finally(() => deps.start());
+}
+
+/**
+ * Causa en castellano de un comando de rutina que no llegó a ejecutarse. Antes se
+ * mandaba al chat el error crudo («Error: spawn x ENOENT»); el detalle queda en el log.
+ */
+function commandFailure(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${(err as NodeJS.ErrnoException).code ?? ''} ${err.message}`
+      : String(err);
+  if (/ENOENT|not found|no such file/i.test(raw)) return 'no encuentro el programa';
+  if (/EACCES|EPERM|denied/i.test(raw)) return 'no tengo permiso para ejecutarlo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw)) return 'tardó demasiado';
+  return 'fallo interno (el detalle está en el registro)';
 }
