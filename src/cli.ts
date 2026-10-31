@@ -70,6 +70,7 @@ import {
   maybeSendBootNotice,
   telegramBotSend,
 } from './boot-notice.js';
+import { BoundedMap } from './bounded-map.js';
 import { BrowserService } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
@@ -1880,7 +1881,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
     }
   }
-  const messageThread = new Map<string, string>();
+  // chatKey:messageId -> thread key; bounded so it does not grow all day (robustez-12).
+  const messageThread = new BoundedMap<string, string>(5000);
 
   /**
    * Retire conversations nobody has used for a while.
