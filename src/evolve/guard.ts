@@ -221,6 +221,14 @@ export function checkPatch(diff: string): Violation[] {
       rule: 'añade un repositorio git anidado: su contenido se mediría sin revisarse',
     });
   }
+  // Un fichero que git ve como binario (basta un NUL en un comentario, o UTF-16) sale en el
+  // diff como «Binary files … differ»: su contenido se mediría sin pasar por las reglas.
+  if (/^(Binary files .* differ|GIT binary patch)$/m.test(diff)) {
+    v.push({
+      file: '(binario)',
+      rule: 'añade o cambia un fichero binario: el guard no puede leer su contenido',
+    });
+  }
   // Borrar tests tambien es cambiar la regla de medir.
   if (/^deleted file mode/m.test(diff) && /^diff --git "?a\/test\//m.test(diff)) {
     v.push({ file: 'test/', rule: 'borra tests' });
