@@ -6,6 +6,35 @@ El daemon corre en tu máquina. El panel web local ofrece chat, aprobaciones, se
 
 > **Estado:** proyecto en desarrollo. Tener una función en el código no garantiza que esté configurada ni validada en tu equipo. Los mensajes que recibe el proveedor LLM salen hacia ese proveedor. Los nombres de presets no garantizan cuota ni precio cero.
 
+## Empieza aquí (Windows, 10 minutos)
+
+En esta guía `pa` es lo mismo que `node dist\cli.js`, dentro de la carpeta de Asistenta.
+
+1. Instala Node 24 o más nuevo, gratis, desde https://nodejs.org.
+2. Descarga Asistenta (`git clone https://github.com/nicogarrr/asistenta` o «Code → Download ZIP») y descomprímela.
+3. En Telegram habla con @BotFather, crea tu bot con `/newbot` y copia el token que te da.
+4. Saca la clave del modelo en la web de tu proveedor (por defecto OpenCode). Es lo único de pago.
+5. Haz doble clic en `instalar.bat`. Comprueba Node, instala, compila y te pide el token y la clave (no se ven al pegarlos).
+6. Cuando te lo pida, mándale «hola» a tu bot y confirma en el PC que eres tú. Así solo tú podrás hablarle.
+7. Haz doble clic en `levantar.bat`. Si falta algo, verás una lista en verde y rojo con el arreglo de cada fallo.
+8. Escríbele a tu bot. Ya está.
+9. Opcional: para que arranque sola con Windows, `node dist\cli.js autostart install --start` ([detalles](docs/windows-startup.md)).
+
+Si algo se tuerce, `node dist\cli.js iniciar --solo-comprobar` dice qué falta sin arrancar nada.
+
+## Qué es gratis
+
+Lo único de pago es **la clave del modelo**: tu proveedor te cobra por uso según su plan. Todo lo demás es gratis y corre en tu PC:
+
+- el programa, el bot de Telegram y el panel web local;
+- la memoria, los recordatorios, las rutinas y los objetivos;
+- la búsqueda web (por defecto solo usa buscadores gratis: `PA_WEB_MAX_COST_EUR=0`);
+- la transcripción de voz y el OCR, que funcionan en local;
+- el control del PC y de la tele, el correo con tu propia cuenta y el calendario;
+- el arranque automático, el vigilante y la autoactualización.
+
+Ninguna otra función necesita una clave de pago.
+
 ## Qué puedes hacer
 
 | Área | Qué incluye | Condiciones |
@@ -28,6 +57,8 @@ Los objetivos se guardan en SQLite con su ámbito de conversación. El panel inc
 
 ## Contenido
 
+- [Empieza aquí](#empieza-aquí-windows-10-minutos)
+- [Qué es gratis](#qué-es-gratis)
 - [Antes de empezar](#antes-de-empezar)
 - [Preparar el código](#preparar-el-código)
 - [Configuración sin secretos](#configuración-sin-secretos)
@@ -40,6 +71,8 @@ Los objetivos se guardan en SQLite con su ámbito de conversación. El panel inc
 - [Seguridad y límites](#seguridad-y-límites)
 
 ## Antes de empezar
+
+Esto y lo que sigue es la instalación a mano (Linux o avanzada). En Windows basta con [Empieza aquí](#empieza-aquí-windows-10-minutos).
 
 - Node.js 24 o posterior y npm. El proyecto exige esa versión en `package.json`.
 - Git para obtener el código.
@@ -85,7 +118,7 @@ El preset por defecto del código es `opencode`. También existen `openrouter` y
 El almacén por defecto usa DPAPI en Windows, ligado al usuario y máquina. En otros sistemas utiliza un archivo portable con permisos restringidos; **no es cifrado DPAPI**. No cambies a portable en Windows para esquivar un fallo del vault.
 
 1. En Telegram abre BotFather desde su perfil verificado, crea un bot con `/newbot` y guarda el token en privado. No lo compartas con bots de terceros.
-2. Obtén tu propio identificador numérico de usuario mediante un método que controles. No es tu nombre `@usuario` ni el identificador del bot. La autodetección por `/start` todavía no está implementada.
+2. Obtén tu propio identificador numérico de usuario mediante un método que controles. No es tu nombre `@usuario` ni el identificador del bot. `instalar.bat` (o `node scripts/instalar.mjs`) lo detecta: le mandas «hola» a tu bot y confirmas en el PC que eres tú.
 3. Inicializa el almacén una sola vez:
 
    ```sh
@@ -133,9 +166,9 @@ Para detener un arranque en primer plano, usa Ctrl+C y espera al cierre. No mate
 
 - `status` y `watchdog --status` son consultas puntuales del PID y latido; no confirman salud Telegram/LLM ni supervisión instalada.
 - En Linux, solo en modo servidor, `node --env-file=.env dist/cli.js stop` usa control local autenticado y exige cierre limpio y propiedad liberada. Requiere `flock`, directorio de estado privado y un daemon arrancado con esta versión. No puede detener un daemon antiguo que no publique ese control. Un timeout o cierre no limpio es un fallo, no una invitación a matar por PID.
-- En Windows todavía no hay controlador `stop`/`restart`. No uses la cobertura Linux como prueba de tu PC Windows.
+- En Windows, `node dist\cli.js stop` la apaga y el vigilante no la vuelve a levantar hasta `iniciar` o el siguiente reinicio del PC.
 - `restart` se rechaza sin cambiar el daemon porque no se puede verificar si un supervisor lo relanzará.
-- La supervisión continua aún no está disponible. `setup` guía la configuración local parcial, sin activar vigilancia. El instalador de Windows cubre procesos que terminan, no cuelgues de procesos que siguen vivos. No se afirma que haya un watchdog instalado.
+- En Windows, `autostart install` deja además el vigilante «Asistenta-vigilante», que la vuelve a arrancar si se cae (ver [Arranque automático](#arranque-automático)). Cubre procesos que terminan, no cuelgues de procesos que siguen vivos.
 
 En Linux el nuevo controlador exige que el directorio de estado sea privado (700, propietario actual, sin symlink) y que la ruta del socket quepa en el límite Unix. Si una instalación antigua tiene permisos abiertos, el arranque falla cerrado: revisa primero su contenido y propietario antes de restringirlos. No cambia esos permisos silenciosamente. `PA_DESKTOP=on` no se admite en este camino Linux.
 
