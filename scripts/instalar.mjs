@@ -141,12 +141,18 @@ export async function instalar(d) {
     if (has('telegram:allowedUserIds') && !token) say('✓ Tu ID de Telegram ya estaba guardado');
     else {
       let id = '';
-      if (token) {
+      // Token recién pegado o, si ya estaba guardado, el de la caja fuerte (no se enseña).
+      const botToken =
+        token ||
+        (has('telegram:botToken') && d.vaultGet ? await d.vaultGet('telegram:botToken') : '');
+      if (botToken) {
         say('→ Abre Telegram y mándale «hola» a tu bot. Te espero un par de minutos…');
-        const got = await waitOwnerMessage(d.fetch, token);
+        const got = await waitOwnerMessage(d.fetch, botToken);
         if (got.error === 'token')
           return fail(
-            'Telegram dice que ese token no vale. Cópialo otra vez de @BotFather y repite.',
+            token
+              ? 'Telegram dice que ese token no vale. Cópialo otra vez de @BotFather y repite.'
+              : 'Telegram dice que el token guardado ya no vale. Vuelve a abrir instalar.bat y pega el token nuevo de @BotFather.',
           );
         if (got.error === 'ocupado')
           return fail(
@@ -218,6 +224,14 @@ export const realDeps = {
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
     return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : null;
+  },
+  // Lee una clave guardada por una tubería: nunca sale en pantalla.
+  vaultGet: async (key) => {
+    const r = spawnSync(process.execPath, cliArgs(['vault', 'get', key]), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return r.status === 0 ? r.stdout.trim() : '';
   },
   vaultSet: (key, value) =>
     new Promise((resolve) => {
