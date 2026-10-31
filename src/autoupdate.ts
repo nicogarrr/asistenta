@@ -242,6 +242,8 @@ export interface AutoupdateDeps {
   stopDaemon(): Promise<void>;
   /** Arranca la tarea del daemon, igual que el vigilante. */
   startDaemon(): Promise<boolean>;
+  /** Lo último del log del lanzador de Windows (launcher.stderr.log), o null si no hay. */
+  launcherLog?(): string | null;
   backupDist(): void;
   restoreDist(): void;
   dropBackup(): void;
@@ -266,27 +268,106 @@ const SKIPS: Record<string, string> = {
     'esta carpeta no viene de git (¿la bajaste en ZIP?) o git no está instalado: no puedo actualizarme sola. Para una versión nueva, baja el ZIP otra vez, o instala git y clona Asistenta (README, paso 2)',
 };
 
+/** Lo que dejó escrito el lanzador de Windows (log/launcher.stderr.log) desde un momento. */
+export interface LaunchSeen {
+  /** El lanzador abrió `serve` («inicio de serve») después de ese momento. */
+  started: boolean;
+  /** Y `serve` ya terminó (se cerró) sin quedarse en marcha. */
+  exited: boolean;
+  /** Su última línea útil, en llano: sin rutas, tokens ni claves largas. */
+  lastLine?: string;
+}
+
+/** Una línea del log apta para un aviso: sin fecha, rutas, tokens ni claves; corta. */
+export function plainLogLine(line: string): string {
+  let text = line
+    .replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '')
+    .replace(/^error del launcher:\s*/, '')
+    .replace(/\b(?:bot)?\d{6,}:[\w-]{20,}/g, '…')
+    .replace(/[A-Za-z]:\\[^\s"'«»]*/g, '…')
+    .replace(/(?:~|\/home|\/Users|\/tmp|\/var|\/root)\/[^\s"'«»]*/g, '…')
+    .replace(/[\w+/=-]{32,}/g, '…')
+    .replace(/[«»]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length > 160) text = `${text.slice(0, 159)}…`;
+  return text;
+}
+
+function stampMs(line: string): number {
+  const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:\d\d)?\s/.exec(line);
+  return m ? Date.parse(`${m[1]}${m[2] ?? ''}`) : Number.NaN;
+}
+
+/**
+ * Lee el log del lanzador: si abrió `serve` desde `sinceMs`, si ya se cerró y su última
+ * línea útil. Las líneas de `serve` no llevan fecha; las del lanzador sí.
+ */
+export function launchSince(text: string, sinceMs: number): LaunchSeen {
+  const lines = text.split(/\r?\n/);
+  let begin = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (/^\S+ inicio de serve/.test(line) && stampMs(line) >= sinceMs) {
+      begin = i;
+      break;
+    }
+  }
+  if (begin < 0) return { started: false, exited: false };
+  let exited = false;
+  let lastLine: string | undefined;
+  for (const line of lines.slice(begin + 1)) {
+    if (/^\S+ serve termino: exit=/.test(line)) {
+      exited = true;
+      break;
+    }
+    if (/^\S+ error del launcher:/.test(line)) exited = true;
+    if (!line.trim() || /^\s+at\s/.test(line) || /^\s*[{}]\s*$/.test(line)) continue;
+    const plain = plainLogLine(line);
+    if (plain) lastLine = plain;
+  }
+  return { started: true, exited, lastLine };
+}
+
 /**
  * Arranca la tarea del daemon y espera a que vuelva sana. Justo tras un cierre la tarea
  * puede seguir «en ejecución» unos segundos y Windows ignora el arranque, así que mientras
- * siga parada se vuelve a pedir cada 20 s.
+ * siga parada se vuelve a pedir cada 20 s. Si el lanzador dice que `serve` ya se cerró, no
+ * espera más; si falla, `why` dice por qué en llano.
  */
-async function startAndWait(deps: AutoupdateDeps, timeoutMs: number): Promise<boolean> {
+async function startAndWait(
+  deps: AutoupdateDeps,
+  timeoutMs: number,
+): Promise<{ ok: boolean; why: string }> {
+  const since = deps.now() - 5_000;
   const deadline = deps.now() + timeoutMs;
+  const secs = Math.round(timeoutMs / 1000);
+  const seen = (): LaunchSeen | null => {
+    const text = deps.launcherLog?.();
+    return typeof text === 'string' ? launchSince(text, since) : null;
+  };
   let nextKick = deps.now();
   while (deps.now() < deadline) {
     if (deps.daemonState() === 'running') {
       // Sigue viva un rato después: un arranque que se cae al momento no cuenta como sano.
       await deps.sleep(10_000);
-      return deps.daemonState() === 'running';
+      if (deps.daemonState() === 'running') return { ok: true, why: '' };
+      break;
     }
+    if (seen()?.exited) break;
     if (deps.now() >= nextKick) {
       await deps.startDaemon();
       nextKick = deps.now() + 20_000;
     }
     await deps.sleep(2_000);
   }
-  return false;
+  const last = seen();
+  const quote = last?.lastLine ? ` («${last.lastLine}»)` : '';
+  if (last?.exited) return { ok: false, why: `la versión nueva se cerró al arrancar${quote}` };
+  if (last?.started)
+    return { ok: false, why: `la versión nueva seguía arrancando a los ${secs} s${quote}` };
+  if (last) return { ok: false, why: `Windows no llegó a abrir la versión nueva en ${secs} s` };
+  return { ok: false, why: `la versión nueva no arrancaba bien (esperé ${secs} s)` };
 }
 
 export const INTERRUPTED_MESSAGE =
@@ -311,7 +392,7 @@ async function finishInterrupted(
   if (lockDiff.code !== 0 || lockDiff.out.trim() !== '')
     await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
   deps.restoreDist();
-  const back = await startAndWait(deps, health);
+  const back = (await startAndWait(deps, health)).ok;
   // Mismas palabras que la vuelta atrás de una actualización fallida: sin «git» ni «commit».
   const tail = [
     reset.code === 0
@@ -428,7 +509,7 @@ export async function runAutoupdate(
       if (lockChanged) await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
       deps.restoreDist();
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
-      const back = await startAndWait(deps, health);
+      const back = (await startAndWait(deps, health)).ok;
       const tail = [
         reset.code === 0
           ? ''
@@ -455,11 +536,10 @@ export async function runAutoupdate(
     }
     const build = await npm(['run', 'build'], 10 * 60_000);
     if (build.code !== 0) return await rollback('la versión nueva no se pudo preparar', build.out);
-    if (!(await startAndWait(deps, health))) {
+    const health1 = await startAndWait(deps, health);
+    if (!health1.ok) {
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
-      return await rollback(
-        `la versión nueva no arrancaba bien (esperé ${Math.round(health / 1000)} s)`,
-      );
+      return await rollback(health1.why);
     }
     deps.dropBackup();
     state.pending = undefined;
