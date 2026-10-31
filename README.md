@@ -14,7 +14,7 @@ En esta guía `pa` es lo mismo que `node dist\cli.js`, dentro de la carpeta de A
 2. Descarga Asistenta. Mejor con git, así se actualiza sola: `git clone https://github.com/nicogarrr/asistenta` (si Windows dice que «git» no se reconoce, instálalo gratis desde https://git-scm.com y abre otra ventana). También vale «Code → Download ZIP» (descomprímelo antes de abrir nada), pero entonces no se actualiza sola: para una versión nueva vuelve a bajar el ZIP. Ponla fuera de OneDrive (por ejemplo en `C:\Asistenta`): OneDrive bloquea archivos y la instalación falla.
 3. En Telegram habla con @BotFather, crea tu bot con `/newbot` y copia el token que te da.
 4. Saca la clave del modelo en la web de tu proveedor (por defecto OpenCode). Es lo único de pago.
-5. Haz doble clic en `instalar.bat`. Comprueba Node, instala, compila y te pide el token y la clave (no se ven al pegarlos). Si sale «Windows protegió su PC», pulsa «Más información» y luego «Ejecutar de todas formas».
+5. Con internet, haz doble clic en `instalar.bat`. Comprueba Node y npm, descarga las piezas, instala, compila y te pide el token y la clave (no se ven al pegarlos). Si sale «Windows protegió su PC», pulsa «Más información» y luego «Ejecutar de todas formas».
 6. Cuando te lo pida, mándale «hola» a tu bot y confirma en el PC que eres tú. Así solo tú podrás hablarle.
 7. Haz doble clic en `levantar.bat`. Si falta algo, verás una lista en verde y rojo con el arreglo de cada fallo.
 8. Escríbele a tu bot. Ya está.
