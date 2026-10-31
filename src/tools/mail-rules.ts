@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { log } from '../log.js';
 import {
   defaultBatchFile,
   describeSelection,
@@ -102,7 +103,26 @@ export interface MailRulesDeps {
   post?: (url: string) => Promise<number>;
 }
 
-const errText = (err: unknown) => (err instanceof Error ? err.message.slice(0, 120) : 'error');
+/**
+ * Fallo al leer el buzón → línea clara para el modelo/chat. El error crudo
+ * (IMAP, red, rutas) va solo al log.
+ */
+export function mailReadFailText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const code = String((err as { code?: unknown } | null)?.code ?? '');
+  log.warn('correo_reglas: no se pudo leer el correo', { err: raw.slice(0, 300) });
+  if (/AUTHENTICATIONFAILED|invalid credentials|authenticat/i.test(`${code} ${raw}`)) {
+    return 'No pude leer el correo: Gmail no acepta la contraseña de aplicación. Revisa que siga activa en myaccount.google.com/apppasswords.';
+  }
+  if (
+    /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timed? ?out|socket|network/i.test(
+      `${code} ${raw}`,
+    )
+  ) {
+    return 'No pude leer el correo: no hay conexión con el servidor de correo ahora mismo. Prueba en un rato.';
+  }
+  return 'No pude leer el correo ahora. Prueba en un rato.';
+}
 
 function top(list: ScannedMail[], n = 3): string {
   const counts = new Map<string, number>();
@@ -253,7 +273,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             const batch = saveUnsubBatch(picked, now);
             return `${picked.map((t) => describeTarget(t, all.indexOf(t) + 1)).join('\n')}\nNo he hecho nada. Si te parece bien, dime «sí» (lote ${batch.id}).`;
           } catch (err) {
-            return `No pude leer el correo ahora (${errText(err)}).`;
+            return mailReadFailText(err);
           }
         }
         if (args.action === 'limpiar_vista') {
@@ -290,7 +310,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             );
             return `${resumen}\nNo he tocado nada. Si te parece bien, dime «sí» y lo hago (lote ${batch.id}).`;
           } catch (err) {
-            return `No pude leer el correo ahora (${errText(err)}).`;
+            return mailReadFailText(err);
           }
         }
         try {
@@ -300,7 +320,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
           });
           return mails.length ? summarize(mails, file) : 'No hay correos en los últimos 30 días.';
         } catch (err) {
-          return `No pude leer el correo ahora (${errText(err)}).`;
+          return mailReadFailText(err);
         }
       };
       return { content: [{ type: 'text', text: await text() }], details: {} };
