@@ -1,6 +1,6 @@
 # REA: mirar cómo funciona una app por dentro
 
-[REA](https://github.com/morluto/rea) (licencia MIT, paquete npm `rea-agents`) es una herramienta para analizar apps: programas de Windows, apps de escritorio hechas con JavaScript/Electron, programas .NET y webs. Asistenta puede usarla como **extra opcional**. Viene **apagada**.
+[REA](https://github.com/morluto/rea) (licencia MIT, paquete npm `rea-agents`) es una herramienta para analizar apps: programas de Windows, apps de escritorio hechas con JavaScript/Electron, programas .NET y webs. Asistenta la usa si la tienes instalada: viene **encendida** (salvo `PA_REA=0`).
 
 Gracias al equipo de REA por publicarla con licencia MIT.
 
@@ -22,8 +22,8 @@ Asistenta te enseña lo que encuentra y de dónde lo saca.
 ## Cómo activarlo en Windows
 
 1. Node ya lo tienes (lo instaló `instalar.bat`).
-2. Opcional, para que arranque más rápido: abre PowerShell y escribe `npm install --global rea-agents`. Si no lo haces, Asistenta lo descarga sola la primera vez con `npx -y rea-agents mcp` (tarda un poco).
-3. En tu `.env` añade la línea `PA_REA=1`.
+2. Abre PowerShell y escribe `npm install --global rea-agents`. Sin esto Asistenta no descarga nada al arrancar: solo deja una línea en el registro diciendo cómo instalarlo.
+3. Si prefieres no instalarlo, pon `PA_REA=1` en tu `.env` y Asistenta lo bajará sola con `npx -y rea-agents mcp` (la primera vez tarda un poco).
 4. Apaga y enciende Asistenta (`levantar.bat`).
 
 ### Ghidra (opcional)
@@ -32,4 +32,4 @@ Para mirar programas nativos (.exe, .dll) a fondo REA puede usar [Ghidra](https:
 
 ## Para apagarlo
 
-Quita `PA_REA=1` del `.env` (o pon `PA_REA=0`) y reinicia Asistenta.
+Pon `PA_REA=0` en el `.env` y reinicia Asistenta.

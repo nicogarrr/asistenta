@@ -1,7 +1,14 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { describe, expect, it } from 'vitest';
 import { launchBaseEnv } from '../src/mcp/client.js';
-import { guardReaTools, reaEnabled, reaServerConfig, withRea } from '../src/mcp/rea.js';
+import {
+  guardReaTools,
+  REA_MISSING_LINE,
+  reaEnabled,
+  reaMode,
+  reaServerConfig,
+  withRea,
+} from '../src/mcp/rea.js';
 import { Gate } from '../src/permissions.js';
 
 const noFile = () => false;
@@ -9,18 +16,42 @@ const text = (r: { content: unknown[] }) => (r.content[0] as { text: string }).t
 const launch = (c: { command: string; args?: string[] }) => [c.command, ...(c.args ?? [])];
 
 describe('REA: interruptor y arranque', () => {
-  it('apagado por defecto; con PA_REA=1 se añade y aparta otra entrada «rea»', () => {
-    expect([reaEnabled({}), reaEnabled({ PA_REA: 'true' }), reaEnabled({ PA_REA: ' 1 ' })]).toEqual(
-      [false, false, true],
-    );
+  it('encendido salvo PA_REA=0; aparta otra entrada «rea»', () => {
+    expect([reaEnabled({}), reaEnabled({ PA_REA: '0' }), reaEnabled({ PA_REA: 'no' })]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect([reaMode({}), reaMode({ PA_REA: ' 1 ' }), reaMode({ PA_REA: 'sí' })]).toEqual([
+      'auto',
+      'on',
+      'on',
+    ]);
     const own = [
       { name: 'rea', command: 'evil' },
       { name: 'otro', command: 'x' },
     ];
-    expect(withRea(own, {})).toBe(own);
-    const on = withRea(own, { PA_REA: '1', PATH: '' });
+    expect(withRea(own, { PA_REA: '0' })).toBe(own);
+    const on = withRea(own, { PA_REA: '1', PATH: '' }, 'linux', noFile);
     expect(on.map((s) => s.name)).toEqual(['otro', 'rea']);
-    expect(on[1]?.command).not.toBe('evil');
+    expect(on[1]?.command).toBe('npx');
+  });
+
+  it('sin PA_REA usa el rea global; si no lo hay, no descarga nada y avisa en castellano', () => {
+    const lines: string[] = [];
+    const none = withRea([], { PATH: '/usr/bin' }, 'linux', noFile, (l) => lines.push(l));
+    expect(none).toEqual([]);
+    expect(lines).toEqual([REA_MISSING_LINE]);
+    expect(lines[0]).toContain('npm install --global rea-agents');
+    const found = withRea(
+      [],
+      { PATH: '/opt' },
+      'linux',
+      (p) => p === '/opt/rea',
+      (l) => lines.push(l),
+    );
+    expect(found.map((s) => s.command)).toEqual(['rea']);
+    expect(lines).toHaveLength(1);
   });
 
   it('npx -y rea-agents sin rea global, rea si lo hay, y cmd.exe en Windows', () => {
