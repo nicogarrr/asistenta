@@ -466,6 +466,7 @@ Usage:
   pa vault get <k>        print one secret
   pa vault list           list secret names (never values)
   pa vault rm <k>         delete a secret
+  pa cuentas listar|copiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa vigilancias [--json] qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
@@ -570,6 +571,8 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'vault':
       return vaultCommand(rest);
+    case 'cuentas':
+      return (await import('./credentials/export.js')).cuentasCommand(rest);
     case 'opengym':
       return openGymCommand(rest);
     case 'books':
