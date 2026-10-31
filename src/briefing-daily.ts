@@ -52,6 +52,8 @@ export interface DailyBriefingDeps {
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
   /** Tareas del tablero del dueño: hoy sin hacer y atrasadas. */
   tasks?: () => BriefingInput['tasks'] | Promise<BriefingInput['tasks']>;
+  /** Paquetes en camino, sacados de los correos de envío. */
+  deliveries?: () => BriefingInput['deliveries'] | Promise<BriefingInput['deliveries']>;
   /** Vigilancias de precio activas del dueño. */
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
   sourceTimeoutMs?: number;
@@ -116,7 +118,7 @@ export async function composeDailyBriefing(
 ): Promise<{ text: string; empty: boolean }> {
   const now = deps.now();
   const ms = deps.sourceTimeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS;
-  const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks] =
+  const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks, deliveries] =
     await Promise.all([
       within('agenda', deps.agenda, [], ms, deps.warn),
       within('rutinas', deps.routines, [], ms, deps.warn),
@@ -127,6 +129,7 @@ export async function composeDailyBriefing(
       within('objetivos', deps.goals, [], ms, deps.warn),
       within('precios', deps.watches, [], ms, deps.warn),
       within('tareas', deps.tasks, [], ms, deps.warn),
+      within('repartos', deps.deliveries, [], ms, deps.warn),
     ]);
   const input: BriefingInput = {
     greeting: greetingFor(now),
@@ -140,11 +143,14 @@ export async function composeDailyBriefing(
     goals: goals ?? [],
     watches: watches ?? [],
     tasks: tasks ?? [],
+    deliveries: deliveries ?? [],
   };
   const empty =
     !input.weather &&
     input.agenda.length === 0 &&
     (input.tasks?.length ?? 0) === 0 &&
+    // Un paquete «enviado» no justifica el mensaje; en reparto o con incidencia, sí.
+    !(input.deliveries ?? []).some((d) => d.notable) &&
     input.routines.length === 0 &&
     input.reminders.length === 0 &&
     input.followups.length === 0 &&

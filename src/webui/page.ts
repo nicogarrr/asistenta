@@ -532,6 +532,16 @@ export function renderPage(): string {
         </div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-repartos">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-repartos">Paquetes</h2>
+          <button class="mini" type="button" data-refrescar="repartos" aria-label="Refrescar Paquetes">Refrescar</button>
+        </header>
+        <div id="panel-repartos" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-funciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-funciones">Funciones</h2>
@@ -1515,6 +1525,31 @@ ${renderFormatScript()}
         return true;
       }
 
+      async function cargarRepartos(silencio) {
+        var contenedor = document.getElementById('panel-repartos');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/repartos');
+          if (!datos || !Array.isArray(datos.repartos)) throw new Error('Respuesta de paquetes inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: sale de tus correos de envío. Para preguntar, escribe en el chat.'));
+          if (!datos.repartos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay paquetes en camino.'));
+          else {
+            var lista = nodo('ul', 'tareas');
+            datos.repartos.forEach(function (r) {
+              var fila = nodo('li', 'texto', r.envio + ' · ' + r.titulo + ' (' + r.cuando + ') ');
+              fila.appendChild(insignia('', r.estado));
+              lista.appendChild(fila);
+            });
+            contenedor.appendChild(lista);
+          }
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarRepartos); return false;
+        }
+        return true;
+      }
+
       async function cargarRutinas(silencio) {
         var contenedor = document.getElementById('panel-rutinas');
         if (silencio !== true) pintarCarga(contenedor);
@@ -1616,6 +1651,7 @@ ${renderFormatScript()}
         objetivos: cargarObjetivos,
         rutinas: cargarRutinas,
         tareas: cargarTareas,
+        repartos: cargarRepartos,
         funciones: cargarFunciones,
         estado: cargarEstado,
         sesiones: cargarSesiones,
@@ -1640,7 +1676,8 @@ ${renderFormatScript()}
           cargarMemoria(),
           cargarAmbitos(),
           cargarAuditoria(),
-          cargarAprobaciones()
+          cargarAprobaciones(),
+          cargarRepartos()
         ])
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;

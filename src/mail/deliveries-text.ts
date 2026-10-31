@@ -38,3 +38,19 @@ export function deliveriesText(list: readonly Delivery[], timeZone?: string): st
     )
     .join('\n');
 }
+
+/**
+ * Paquetes para el resumen de la mañana: lo que sigue en camino (lo entregado ya no
+ * es noticia). «notable» = en reparto o con incidencia: eso sí justifica el resumen.
+ */
+export function briefingDeliveries(
+  list: readonly Delivery[],
+): Array<{ text: string; notable: boolean }> {
+  return list
+    .filter((d) => d.status !== 'entregado')
+    .slice(0, 5)
+    .map((d) => ({
+      text: `${who(d)}: ${DELIVERY_STATUS_LABEL[d.status]}`,
+      notable: d.status === 'en_reparto' || d.status === 'incidencia',
+    }));
+}
