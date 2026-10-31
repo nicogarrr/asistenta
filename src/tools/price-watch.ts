@@ -5,7 +5,7 @@ import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
 /**
  * «Avísame si baja de 400 € el precio de esto» como herramienta de chat.
  *
- * Hasta ahora solo había /vigila (comando) y pricewatch.json (fichero): el modelo no
+ * Hasta ahora solo había /vigila (comando): el modelo no
  * tenía forma de crear una vigilancia y acababa montando un objetivo que hacía fetch
  * cada hora gastando modelo en cada lectura. Esta herramienta escribe en el MISMO
  * registro que /vigila (PageWatchStore), así que /vigilando, /precio y

@@ -12,7 +12,9 @@
  * - 'archivo': nombre de un archivo nuevo en la carpeta de Descargas
  *   vigilada (/ojo descargas on). Evento GLOBAL: dispara en cualquier chat
  *   que tenga el trigger y la rutina recibe el aviso en su propio chat.
- * - 'precio': texto de un aviso del vigilante de precios. Global igual.
+ * - 'precio': texto de un aviso de precio. Global igual. Hoy no lo emite nadie: el
+ *   vigilante de precios automático se quitó (31-oct-2026); se conserva para no romper
+ *   disparadores ya guardados.
  *
  * Seguridad heredada: el prompt disparado es el de la rutina guardada
  * (procedurePrompt o buildMacroPrompt con sus args fijos validados); las

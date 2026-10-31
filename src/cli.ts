@@ -428,14 +428,6 @@ import {
   parseVigilaArgs,
   watchValueText,
 } from './watch/pages.js';
-import {
-  PRICE_MUTE_MS,
-  type PriceNotifyOpts,
-  PriceStore,
-  parseConfig as parsePricewatchConfig,
-} from './watch/pricewatch.js';
-import { startPricewatchLoop } from './watch/pricewatch-loop.js';
-import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
@@ -476,7 +468,6 @@ Usage:
   pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
-  pa precio [comprobar]          un ciclo del vigilante de precios ahora (avisos por pantalla) o valida pricewatch.json
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
   pa stop                 Linux: cierre graceful autenticado, sin matar por PID
   pa restart              no disponible sin verificar supervisor
@@ -547,7 +538,7 @@ const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey',
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
   // Todos los subcomandos (no solo `serve`) leen la hora en la zona de PA_TIMEZONE:
-  // `pa recordatorios`, `pa precio`… calculaban «hoy» y las próximas horas de croner en
+  // `pa recordatorios`… calculaban «hoy» y las próximas horas de croner en
   // la zona del sistema. `serve` vuelve a llamarlo y avisa si la zona no es válida.
   applyConfiguredTimeZone();
 
@@ -620,10 +611,6 @@ export async function main(argv: string[]): Promise<number> {
     case 'autostart-notify': {
       const { notifyAutostart } = await import('./autostart.js');
       return rest.length === 1 ? notifyAutostart(rest[0] ?? '') : 2;
-    }
-    case 'precio': {
-      const { pricewatchCommand } = await import('./watch/pricewatch-cli.js');
-      return pricewatchCommand(rest);
     }
     case 'watchdog': {
       if (rest[0] !== '--status') {
@@ -3943,43 +3930,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
-  // «🔕 Silenciar 1 día» / «🔔 Avisar otra vez» de un aviso del vigilante de precios
-  // (pricewatch): solo desde el chat al que avisa ese vigilante.
-  const cmdPrecioMute = async (
-    inbound: Inbound,
-    m: { action: 'silenciar' | 'avisar'; key: string },
-  ): Promise<void> => {
-    const cfgPath = process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json');
-    let chatId = '';
-    try {
-      chatId = parsePricewatchConfig(JSON.parse(readFileSync(cfgPath, 'utf8'))).telegram.chatId;
-    } catch {
-      chatId = '';
-    }
-    if (!chatId || chatId !== inbound.chatId) {
-      return void (await say(inbound, 'Ese aviso de precio no es de este chat.', { quote: true }));
-    }
-    const db = new DatabaseSync(join(paths.state, 'pricewatch.sqlite'));
-    let hit: { product: string; until: number } | null = null;
-    try {
-      const pw = new PriceStore(db);
-      if (m.action === 'silenciar') hit = pw.mute(m.key, PRICE_MUTE_MS);
-      else {
-        const product = pw.unmute(m.key);
-        hit = product ? { product, until: 0 } : null;
-      }
-    } finally {
-      db.close();
-    }
-    const reply = pricewatchMuteReply(m.action, m.key, hit);
-    await say(inbound, reply.text, {
-      quote: true,
-      ...(reply.buttons.length ? { buttons: reply.buttons } : {}),
-    });
-  };
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
-    const mute = precioMuteArgs(args);
-    if (mute) return void (await cmdPrecioMute(inbound, mute));
+    if (precioMuteArgs(args)) {
+      return void (await say(inbound, PRICE_SWEEP_REMOVED_TEXT, { quote: true }));
+    }
     const id = args.trim();
     const w = id
       ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
@@ -4542,39 +4496,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   pageWatchTimer.unref();
   // El resumen diario se comprueba cada minuto (antes, cada 2 h con las vigilancias).
   startDailyBriefingTimer(briefingDeps);
-
-  // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
-  // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
-  {
-    // Disparador 'precio': todo aviso del vigilante pasa por makeNotify; se
-    // envuelve UNA vez y además se emite el evento (global, scope '').
-    const pwLog = {
-      info: (m: string, f?: Record<string, unknown>) => log.info(m, f),
-      warn: (m: string, f?: Record<string, unknown>) => log.warn(m, f),
-    };
-    const pwPath = process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json');
-    const pwDeps = realDeps(pwPath, join(paths.state, 'pricewatch.sqlite'), pwLog, false, token);
-    const pwNotify = pwDeps.makeNotify;
-    pwDeps.makeNotify = (cfg) => {
-      const notify = pwNotify(cfg);
-      return async (text: string, opts?: PriceNotifyOpts) => {
-        void triggerEngine.emit({ type: 'precio', scope: '', text }).catch((err) => {
-          log.warn('trigger precio falló', { err: String(err) });
-        });
-        return notify(
-          text,
-          opts?.muteKey ? { ...opts, buttons: pricewatchMuteButtons(opts.muteKey) } : opts,
-        );
-      };
-    };
-    startPricewatchLoop({
-      mainBotToken: token,
-      configPath: pwPath,
-      stateDir: paths.state,
-      log: pwLog,
-      deps: pwDeps,
-    });
-  }
 
   // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
   // Ver docs/ocr-telegram.md.
@@ -7528,7 +7449,10 @@ export function vigilaSilenceReply(
   };
 }
 
-/** `/precio silenciar|avisar <clave>`: botones de un aviso del vigilante de precios. */
+/**
+ * `/precio silenciar|avisar <clave>`: botones de avisos del vigilante automático de precios
+ * (barrido de tiendas), que se quitó el 31-oct-2026. Solo se reconocen para contestar claro.
+ */
 export function precioMuteArgs(
   raw: string,
 ): { action: 'silenciar' | 'avisar'; key: string } | null {
@@ -7537,35 +7461,9 @@ export function precioMuteArgs(
   return { action: m[1] as 'silenciar' | 'avisar', key: m[2] };
 }
 
-/** «🔕 Silenciar 1 día» de un aviso de posible error de precio (= /precio silenciar <clave>). */
-export function pricewatchMuteButtons(key: string): Array<{ label: string; action: string }> {
-  const b = commandButton('🔕 Silenciar 1 día', 'precio', key, 'silenciar');
-  return b ? [b] : [];
-}
-
-/** Respuesta a /precio silenciar|avisar; ofrece el contrario («🔔 Avisar otra vez» / «🔕 Silenciar 1 día»). */
-export function pricewatchMuteReply(
-  action: 'silenciar' | 'avisar',
-  key: string,
-  hit: { product: string; until: number } | null,
-): { text: string; buttons: Array<{ label: string; action: string }> } {
-  if (!hit) {
-    return {
-      text:
-        action === 'silenciar'
-          ? 'No encuentro ese aviso de precio.'
-          : 'Ese producto no estaba silenciado.',
-      buttons: [],
-    };
-  }
-  if (action === 'avisar')
-    return { text: `🔔 Vuelvo a avisarte de ${hit.product}.`, buttons: pricewatchMuteButtons(key) };
-  const again = commandButton('🔔 Avisar otra vez', 'precio', key, 'avisar');
-  return {
-    text: `🔕 Silenciado 1 día: ${hit.product}. Sigo leyendo el precio, pero no te aviso de posibles errores de precio hasta ${fmtMuteUntil(hit.until)}. Para quitarlo antes: /precio avisar ${key}`,
-    buttons: again ? [again] : [],
-  };
-}
+/** Respuesta a un botón o una orden del vigilante automático de precios, que ya no existe. */
+export const PRICE_SWEEP_REMOVED_TEXT =
+  'El vigilante de precios automático se ha quitado; puedo vigilar un enlace concreto si me lo pasas.';
 
 /**
  * Respuesta de «no he podido …» para el chat: conserva un error ya en castellano, dice claro
@@ -7692,7 +7590,6 @@ export function watchListButtons(
 const OVERVIEW_SOURCE_NAMES: Record<string, string> = {
   páginas: 'páginas vigiladas',
   ojo: 'ojo de águila',
-  'pricewatch.json': 'vigilante de precios (pricewatch.json)',
   rutinas: 'rutinas',
 };
 

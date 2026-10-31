@@ -1,10 +1,10 @@
 /**
- * /compara <url>: el mismo producto en las 7 tiendas del vigilante, a petición del usuario.
+ * /compara <url>: el mismo producto en 7 tiendas españolas, a petición del usuario.
  *
  * Decisiones, y por qué:
  * - Nace de una ficha concreta: la identidad del producto sale de SU página (JSON-LD):
- *   EAN/GTIN si lo publica, código de modelo si lo tiene el título (modelKey, el mismo
- *   que usa el barrido) y, como mínimo, el título. No se busca por categorías.
+ *   EAN/GTIN si lo publica, código de modelo si lo tiene el título (modelKey) y, como
+ *   mínimo, el título. No se busca por categorías.
  * - El emparejamiento declara su fuerza: "ean" (verificado en la ficha de la otra
  *   tienda), "modelo" (mismo código de modelo en el título) o "titulo" (título muy
  *   parecido, se presenta como probable). Si la ficha candidata publica un EAN
@@ -14,15 +14,12 @@
  *   captcha, bloqueo o ausencia de precio = "no se pudo comprobar". El precio tachado
  *   no se usa.
  * - Es una acción manual y puntual: 1 petición de búsqueda + 1 ficha por tienda
- *   (máx. 13 peticiones), con una pausa de cortesía entre ellas. El barrido automático
- *   sigue teniendo sus propios límites (robots, presupuesto diario, backoff), que
- *   aquí no aplican porque no hay bucle.
+ *   (máx. 13 peticiones), con una pausa de cortesía entre ellas. No hay bucle.
  * - Este módulo no hace red: `fetchHtml` y `sleep` se inyectan (en producción, el
  *   mismo camino con control SSRF que la tool fetch).
  */
 
 import { OneTapIds } from '../one-tap-ids.js';
-import { type Card, extractCards, modelKey } from './listscan.js';
 import { eur } from './pages.js';
 import {
   type Extraction,
@@ -31,7 +28,8 @@ import {
   isBlockedPage,
   STORES,
   type StoreId,
-} from './pricewatch.js';
+} from './price-extract.js';
+import { type Card, extractCards, modelKey } from './store-cards.js';
 
 export interface ProductIdentity {
   title: string;
