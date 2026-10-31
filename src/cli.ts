@@ -5243,7 +5243,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         Number(inbound.chatId),
         bytes,
         `conversacion-${session.id.slice(0, 8)}.json`,
-        `Conversación "${session.title}" (${exported.turns.length} turnos)`,
+        `Aquí tienes la conversación «${session.title}».`,
       );
     } catch (err) {
       log.warn('session export send failed', { err });
@@ -5288,8 +5288,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return;
       }
       try {
-        const fact = profile.add(restText, { source: 'user' });
-        await say(inbound, `Guardado en tu perfil (${fact.id}).`, { quote: true });
+        profile.add(restText, { source: 'user' });
+        await say(inbound, 'Guardado en tu perfil.', { quote: true });
       } catch (err) {
         await say(inbound, ownerFailNote('perfil', err), { quote: true });
       }
@@ -5389,7 +5389,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const meta = await installSkill(md, async (text, m) => {
         skills.save(importedSkillDraft(text, m, url, skills.read(m.id)));
       });
-      await say(inbound, `Skill instalada: ${meta.name} (${meta.id}).`, { quote: true });
+      await say(inbound, `Hecho, ya tengo la skill «${meta.name}».`, { quote: true });
     } catch (err) {
       await say(inbound, ownerFailNote('skill', err), { quote: true });
     }

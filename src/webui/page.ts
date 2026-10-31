@@ -1260,7 +1260,7 @@ ${renderFormatScript()}
         validas.forEach(function (u, i) {
           var img = nodo('img', 'captura');
           img.src = u;
-          img.alt = 'Captura ' + (i + 1) + ' del turno';
+          img.alt = 'Captura ' + (i + 1);
           caja.appendChild(img);
         });
         turno.appendChild(caja);
