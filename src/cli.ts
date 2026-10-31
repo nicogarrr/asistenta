@@ -290,7 +290,7 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
-import { panelDoctorLines, panelTokenFromEnv } from './panel-doctor.js';
+import { panelDoctorLines, panelStartPlan } from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
@@ -1646,10 +1646,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
-  if (process.env.PA_WEB_PORT) {
-    const webToken = panelTokenFromEnv();
-    if (!webToken) log.warn('PA_WEB_PORT sin PA_WEB_TOKEN: panel web no arrancado');
-    else {
+  const panelPlan = panelStartPlan();
+  if (panelPlan.kind !== 'off') {
+    if (panelPlan.kind === 'problem') {
+      log.warn(panelPlan.message);
+      process.stderr.write(`${panelPlan.message}\n`);
+    } else {
+      const webToken = panelPlan.token;
       void startWebUi(
         {
           token: webToken,
@@ -1792,7 +1795,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             approvals.resolve(id, decision),
         },
         {
-          port: Number(process.env.PA_WEB_PORT),
+          port: panelPlan.port,
           allowedHosts: parseAllowedHosts(process.env.PA_WEB_ALLOWED_HOSTS),
         },
       )
