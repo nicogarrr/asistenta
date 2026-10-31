@@ -5,10 +5,13 @@ import {
   dayLabel,
   fold,
   normaliseTime,
+  REPEAT_LABEL,
   resolveDay,
+  resolveRepeat,
   resolveStatus,
   STATUS_LABEL,
   type TaskBoard,
+  type TaskRepeat,
 } from '../tasks/board.js';
 
 const Params = Type.Object({
@@ -20,8 +23,9 @@ const Params = Type.Object({
       Type.Literal('mover'),
       Type.Literal('borrar'),
       Type.Literal('renombrar'),
+      Type.Literal('repetir'),
     ],
-    { description: 'apuntar | ver | marcar | mover | borrar | renombrar' },
+    { description: 'apuntar | ver | marcar | mover | borrar | renombrar | repetir' },
   ),
   titulo: Type.Optional(
     Type.String({ description: 'apuntar/renombrar: what to do, short («llamar al banco»).' }),
@@ -46,6 +50,12 @@ const Params = Type.Object({
     }),
   ),
   estado: Type.Optional(Type.String({ description: 'marcar: pendiente | en curso | hecho.' })),
+  repetir: Type.Optional(
+    Type.String({
+      description:
+        'apuntar/repetir: «todos los lunes», «cada día», «de lunes a viernes», «cada mes»; «no» stops it.',
+    }),
+  ),
 });
 
 export interface TasksToolDeps {
@@ -54,7 +64,7 @@ export interface TasksToolDeps {
 }
 
 const line = (t: BoardTask): string =>
-  `${t.status === 'hecho' ? '✓ ' : ''}${t.title}${t.time ? ` (${t.time})` : ''}${t.status === 'en_curso' ? ', en curso' : ''} [${t.id}]`;
+  `${t.status === 'hecho' ? '✓ ' : ''}${t.title}${t.time ? ` (${t.time})` : ''}${t.repeat ? ` (${REPEAT_LABEL[t.repeat]})` : ''}${t.status === 'en_curso' ? ', en curso' : ''} [${t.id}]`;
 
 export function weekText(board: TaskBoard, scope: string | undefined, next = false): string {
   const base = next ? board.week(scope).to : board.today();
@@ -108,6 +118,7 @@ export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
       'apuntar: titulo + dia (+ hora). ver: semana esta|proxima. marcar: tarea + estado',
       '(pendiente|en curso|hecho). mover: tarea + dia and/or hora («pásalo a las 11»; hora «sin hora» removes it;',
       'tarea «lo atrasado» moves every overdue open task). renombrar: tarea + titulo.',
+      'repetir: tarea + repetir (also on apuntar, e.g. «todos los lunes sacar la basura»; «no» stops it).',
       'borrar: only when the owner explicitly asks.',
       'A task with a time does NOT remind by itself: offer a reminder and use the reminder tool if he says yes.',
       'For planning an event, apuntar one task per step, then ask him only what is really missing.',
@@ -129,6 +140,7 @@ type Args = {
   semana?: string;
   tarea?: string;
   estado?: string;
+  repetir?: string;
 };
 
 function pick(
@@ -150,6 +162,10 @@ function pick(
       .join('; ')}. ¿Cuál?`;
   }
   return found[0] as BoardTask;
+}
+
+function repeatHelp(said: string | undefined): string {
+  return `No entiendo cada cuánto «${said ?? ''}». Dime «cada día», «todos los lunes», «de lunes a viernes» o «cada mes».`;
 }
 
 /** «Pasa lo atrasado a hoy»: todas las pendientes de días pasados, al día pedido. */
@@ -181,16 +197,23 @@ function run(deps: TasksToolDeps, args: Args): string {
       if (!day) return `No entiendo el día «${args.dia}». Dímelo como «jueves» o «5/11».`;
       const time = normaliseTime(args.hora);
       if (time === null) return `No entiendo la hora «${args.hora}». Dímela como 10:30.`;
-      const t = board.add(deps.scopeOf(), title, day, time);
+      const rep = args.repetir?.trim() ? resolveRepeat(args.repetir) : 'no';
+      if (rep === null) return repeatHelp(args.repetir);
+      const repeat: TaskRepeat | undefined = rep === 'no' ? undefined : rep;
+      const t = board.add(deps.scopeOf(), title, day, time, repeat);
       const when = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
-      return `Apuntado para ${when}: ${t.title}${time ? ` a las ${time}` : ''}.${time ? ' ¿Te lo recuerdo a esa hora?' : ''}`;
+      const every = repeat ? ` (${REPEAT_LABEL[repeat]})` : '';
+      return `Apuntado para ${when}: ${t.title}${time ? ` a las ${time}` : ''}${every}.${time ? ' ¿Te lo recuerdo a esa hora?' : ''}`;
     }
     case 'marcar': {
       const status = resolveStatus(args.estado ?? 'hecho');
       if (!status) return `No entiendo el estado «${args.estado}»: pendiente, en curso o hecho.`;
       const t = pick(deps, args.tarea, status !== 'pendiente');
       if (typeof t === 'string') return t;
-      board.setStatus(t.id, status);
+      const r = board.setStatus(t.id, status);
+      if (status === 'hecho' && r?.next) {
+        return `Hecho: ${t.title} ✓ La próxima, el ${dayLabel(r.next.day)}.`;
+      }
       if (status === 'hecho') return `Hecho: ${t.title} ✓`;
       return `${t.title}: ${STATUS_LABEL[status]}.`;
     }
@@ -217,6 +240,15 @@ function run(deps: TasksToolDeps, args: Args): string {
       if (!day) return `Cambiado a las ${time} del ${label}: ${t.title}.`;
       return `Movido al ${label}: ${t.title}.`;
     }
+    case 'repetir': {
+      const rep = resolveRepeat(args.repetir ?? '');
+      if (rep === null) return repeatHelp(args.repetir);
+      const t = pick(deps, args.tarea, true);
+      if (typeof t === 'string') return t;
+      board.setRepeat(t.id, rep === 'no' ? undefined : rep);
+      if (rep === 'no') return `Ya no se repite: ${t.title}.`;
+      return `Ahora «${t.title}» se repite ${REPEAT_LABEL[rep]}.`;
+    }
     case 'renombrar': {
       const title = args.titulo?.trim();
       const t = pick(deps, args.tarea, true);
@@ -232,6 +264,6 @@ function run(deps: TasksToolDeps, args: Args): string {
       return `Borrada: ${t.title}.`;
     }
     default:
-      return 'Acción desconocida: apuntar, ver, marcar, mover, renombrar o borrar.';
+      return 'Acción desconocida: apuntar, ver, marcar, mover, renombrar, repetir o borrar.';
   }
 }

@@ -10,6 +10,14 @@ import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
  */
 
 export type TaskStatus = 'pendiente' | 'en_curso' | 'hecho';
+export type TaskRepeat = 'diario' | 'laborables' | 'semanal' | 'mensual';
+
+export const REPEAT_LABEL: Record<TaskRepeat, string> = {
+  diario: 'cada día',
+  laborables: 'de lunes a viernes',
+  semanal: 'cada semana',
+  mensual: 'cada mes',
+};
 
 export interface BoardTask {
   id: number;
@@ -20,6 +28,8 @@ export interface BoardTask {
   day: string;
   /** Hora local HH:MM, opcional. */
   time?: string;
+  /** Se repite: al hacerla (o si se pasa su día) salta a la siguiente. */
+  repeat?: TaskRepeat;
   status: TaskStatus;
   /** Día en que el resumen de la mañana avisó de que iba atrasada (se avisa una sola vez). */
   lateNoticeDay?: string;
@@ -125,6 +135,37 @@ function monthNameDay(text: string, now: Date): string | null | undefined {
     if (localDay(parseDay(day)) !== day) return null;
   }
   return day;
+}
+
+/** «todos los lunes», «cada día», «de lunes a viernes», «cada mes»; «no» = dejar de repetir. */
+export function resolveRepeat(input: string): TaskRepeat | 'no' | null {
+  const t = fold(input);
+  if (/^(?:no|nunca|ninguna|sin repetir|no repetir|dejar de repetir)$/.test(t)) return 'no';
+  if (/laborables|de lunes a viernes|entre semana/.test(t)) return 'laborables';
+  if (/^(?:diari[oa]|cada dia|todos los dias|a diario)$/.test(t)) return 'diario';
+  if (
+    /^(?:semanal|cada semana|todas las semanas|(?:todos los|cada) (?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?))$/.test(
+      t,
+    )
+  )
+    return 'semanal';
+  if (/^(?:mensual|cada mes|todos los meses)$/.test(t)) return 'mensual';
+  return null;
+}
+
+/** El siguiente día de una tarea que se repite. */
+export function nextOccurrence(day: string, repeat: TaskRepeat): string {
+  if (repeat === 'diario') return addDays(day, 1);
+  if (repeat === 'semanal') return addDays(day, 7);
+  if (repeat === 'laborables') {
+    let next = addDays(day, 1);
+    while ([0, 6].includes(parseDay(next).getDay())) next = addDays(next, 1);
+    return next;
+  }
+  const [y, m, d] = day.split('-').map(Number);
+  const at = new Date(y ?? 1970, m ?? 1, 1, 12); // día 1 del mes siguiente
+  const last = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate();
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(Math.min(d ?? 1, last))}`;
 }
 
 /** Lunes de la semana del día dado. */
@@ -268,6 +309,13 @@ export class TaskBoard {
       const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<BoardFile>;
       const tasks = Array.isArray(raw.tasks) ? raw.tasks : [];
       const maxId = tasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0);
+      // Una repetida sin hacer no se acumula atrasada: pasa a la próxima desde hoy.
+      const today = this.today();
+      for (const t of tasks) {
+        if (!t.repeat || !REPEAT_LABEL[t.repeat] || t.status === 'hecho') continue;
+        for (let i = 0; t.day < today && i < 400; i++) t.day = nextOccurrence(t.day, t.repeat);
+        delete t.lateNoticeDay;
+      }
       return { nextId: Math.max(Number(raw.nextId) || 1, maxId + 1), tasks };
     } catch {
       setAsideCorrupt(this.file);
@@ -284,7 +332,7 @@ export class TaskBoard {
     return localDay(this.now());
   }
 
-  add(scope: string, title: string, day: string, time?: string): BoardTask {
+  add(scope: string, title: string, day: string, time?: string, repeat?: TaskRepeat): BoardTask {
     const data = this.#read();
     const at = this.now().toISOString();
     const task: BoardTask = {
@@ -293,6 +341,7 @@ export class TaskBoard {
       title: title.trim().slice(0, 200),
       day,
       ...(time ? { time } : {}),
+      ...(repeat ? { repeat } : {}),
       status: 'pendiente',
       createdAt: at,
       updatedAt: at,
@@ -351,9 +400,29 @@ export class TaskBoard {
     });
   }
 
-  setStatus(id: number, status: TaskStatus): BoardTask | undefined {
-    return this.#update(id, (t) => {
+  /**
+   * Cambia el estado. Si una que se repite queda hecha, se apunta la siguiente (que
+   * devuelve en `next`) y la hecha deja de repetirse.
+   */
+  setStatus(id: number, status: TaskStatus): (BoardTask & { next?: BoardTask }) | undefined {
+    const done = this.#update(id, (t) => {
       t.status = status;
+    });
+    if (!done?.repeat || status !== 'hecho') return done;
+    const repeat = done.repeat;
+    this.#update(id, (t) => {
+      delete t.repeat;
+    });
+    let day = nextOccurrence(done.day, repeat);
+    while (day < this.today()) day = nextOccurrence(day, repeat);
+    const next = this.add(done.scope, done.title, day, done.time, repeat);
+    return { ...done, next };
+  }
+
+  setRepeat(id: number, repeat: TaskRepeat | undefined): BoardTask | undefined {
+    return this.#update(id, (t) => {
+      if (repeat) t.repeat = repeat;
+      else delete t.repeat;
     });
   }
 
