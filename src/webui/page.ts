@@ -639,10 +639,14 @@ ${renderFormatScript()}
         } catch (error) {}
       }
 
-      var token = '';
-      try {
-        token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
-      } catch (error) {}
+      // El de la URL vale ya en esta visita aunque el navegador no deje guardarlo
+      // (modo privado estricto, almacenamiento bloqueado).
+      var token = tokenDeUrl;
+      if (!token) {
+        try {
+          token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
+        } catch (error) {}
+      }
 
       var aviso = document.getElementById('aviso');
 
