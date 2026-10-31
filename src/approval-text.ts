@@ -20,6 +20,7 @@
  *    that is a secret without looking like one is indistinguishable from
  *    ordinary prose, and no formatter can tell them apart.
  */
+import { batchQuestion } from './mail/cleanup.js';
 import type { ToolCall } from './permissions.js';
 
 export interface ApprovalText {
@@ -131,6 +132,14 @@ export function formatApproval(
     // operation, so masking it hides nothing the click would do.
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');
+  }
+  if (call.tool === 'correo_reglas' && call.args.action === 'limpiar') {
+    // Lo que se aprueba es el lote guardado en la vista previa, con su lista exacta.
+    const question =
+      typeof call.args.lote === 'string' ? batchQuestion(call.args.lote, Date.now()) : null;
+    if (!question)
+      return { question: 'Ese lote de limpieza ya no existe: no se pregunta.', complete: false };
+    return withinBudget(question, question, 'correo_reglas');
   }
   const mailKind = call.tool === 'correo' ? MAIL_SEND_KIND[String(call.args.action)] : undefined;
   if (mailKind) return formatMailDraft(call, mailKind, reason);

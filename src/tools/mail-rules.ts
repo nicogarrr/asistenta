@@ -1,6 +1,14 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import {
+  defaultBatchFile,
+  describeSelection,
+  saveBatch,
+  selectForCleanup,
+  takeBatch,
+} from '../mail/cleanup.js';
+import { type ImapMover, MOVE_TARGET_LABEL, type MoveTarget, moveFromInbox } from '../mail/move.js';
+import {
   addRule,
   defaultRulesFile,
   deleteRule,
@@ -23,10 +31,12 @@ const Params = Type.Object({
       Type.Literal('reglas'),
       Type.Literal('crear'),
       Type.Literal('borrar'),
+      Type.Literal('limpiar_vista'),
+      Type.Literal('limpiar'),
     ],
     {
       description:
-        'resumen: clasifica el correo reciente (no mueve nada). reglas: lista. crear/borrar: una regla.',
+        'resumen: clasifica el correo reciente (no mueve nada). reglas: lista. crear/borrar: una regla. limpiar_vista: lista lo que se movería (no mueve). limpiar: mueve el lote aprobado.',
     },
   ),
   cuantos: Type.Optional(
@@ -42,7 +52,22 @@ const Params = Type.Object({
   ),
   categoria: Type.Optional(Type.Union(CATEGORIES.map((c) => Type.Literal(c)))),
   accion: Type.Optional(Type.Union(ACTIONS.map((a) => Type.Literal(a)))),
-  id: Type.Optional(Type.Integer({ minimum: 1, description: 'borrar: número de la regla.' })),
+  id: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      description: 'borrar: número de la regla. limpiar_vista: usar esa regla.',
+    }),
+  ),
+  destino: Type.Optional(
+    Type.Union(
+      (['limpieza', 'archivar', 'papelera'] as const).map((d) => Type.Literal(d)),
+      {
+        description:
+          'limpiar_vista: limpieza (por defecto), archivar, o papelera solo si dijo «borrar».',
+      },
+    ),
+  ),
+  lote: Type.Optional(Type.String({ description: 'limpiar: el id del lote de la vista previa.' })),
 });
 
 export const NO_MAIL_ACCOUNT =
@@ -53,7 +78,11 @@ export interface MailRulesDeps {
   imap?: (account: MailAccount) => ImapLike;
   rulesFile?: string;
   now?: () => number;
+  mover?: (account: MailAccount) => ImapMover;
+  batchFile?: string;
 }
+
+const errText = (err: unknown) => (err instanceof Error ? err.message.slice(0, 120) : 'error');
 
 function top(list: ScannedMail[], n = 3): string {
   const counts = new Map<string, number>();
@@ -110,7 +139,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
     name: 'correo_reglas',
     label: 'Reglas de correo',
     description:
-      'Mail triage and owner rules. resumen: classify recent inbox mail (importante/personal/notificación/publicidad/spam) by headers and show counts per sender plus suspected phishing; moves nothing. reglas: list saved rules. crear: save a rule from the owner\'s words (e.g. «lo de LinkedIn a la papelera» → remitente "linkedin", accion "papelera"; «lo de Amazon que no sea un pedido, archívalo» → remitente "amazon", excepto "pedido", accion "archivar"). borrar: delete rule by id. Rules never act alone.',
+      'Mail triage and owner rules. resumen: classify recent inbox mail (importante/personal/notificación/publicidad/spam) by headers and show counts per sender plus suspected phishing; moves nothing. reglas: list saved rules. crear: save a rule from the owner\'s words (e.g. «lo de LinkedIn a la papelera» → remitente "linkedin", accion "papelera"; «lo de Amazon que no sea un pedido, archívalo» → remitente "amazon", excepto "pedido", accion "archivar"). borrar: delete rule by id. Rules never act alone. limpiar_vista («limpia lo no importante», «limpia lo de LinkedIn», «aplica la regla 2»): shows what would move (default: ads and notifications to Asistenta/Limpieza; destino archivar, or papelera ONLY if Nico said «borrar»), moves nothing, and returns a lote id. limpiar (lote): moves exactly that previewed batch; only after Nico says yes to that preview — he is asked again every time. Never permanent delete.',
     parameters: Params,
     executionMode: 'sequential',
     execute: async (_id, args) => {
@@ -145,8 +174,64 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
           const gone = deleteRule(args.id, file);
           return gone ? `Regla borrada: ${describeRule(gone)}` : `No hay regla ${args.id}.`;
         }
+        const now = deps.now?.() ?? Date.now();
+        const batches = deps.batchFile ?? defaultBatchFile();
         const account = await deps.account();
         if (!account) return NO_MAIL_ACCOUNT;
+        if (args.action === 'limpiar') {
+          const batch = args.lote ? takeBatch(args.lote, now, batches) : null;
+          if (!batch || batch.account !== account.address)
+            return 'Ese lote ya no vale (caducó o ya se usó). Pídeme otra vez la vista previa.';
+          try {
+            const mover = deps.mover ?? ((a: MailAccount) => imapFor(a) as unknown as ImapMover);
+            const r = await moveFromInbox(
+              mover(account),
+              batch.uids,
+              batch.accion,
+              batch.uidValidity,
+            );
+            return `Hecho: ${r.moved} correos (${MOVE_TARGET_LABEL[batch.accion]}, carpeta «${r.folder}»). Nada se ha borrado para siempre.`;
+          } catch (err) {
+            return `No he movido nada: ${errText(err)}.`;
+          }
+        }
+        if (args.action === 'limpiar_vista') {
+          const rule = args.id ? loadRules(file).find((r) => r.id === args.id) : undefined;
+          if (args.id && !rule) return `No hay regla ${args.id}.`;
+          if (rule?.accion === 'leido' && !args.destino)
+            return 'Esa regla marca como leído; limpiar solo mueve. Dime a dónde: limpieza, archivar o papelera.';
+          try {
+            const box = { uidValidity: '' };
+            const mails = await scanInbox((deps.imap ?? imapFor)(account), {
+              limit: args.cuantos ?? 200,
+              since: now - 90 * 86_400_000,
+              box,
+            });
+            const { picked, accion } = selectForCleanup(mails, {
+              categoria: args.categoria,
+              remitente: args.remitente,
+              regla: rule,
+              accion: args.destino as MoveTarget | undefined,
+            });
+            if (picked.length === 0)
+              return `He mirado ${mails.length} correos: no hay nada que limpiar con eso.`;
+            const resumen = describeSelection(picked, accion);
+            const batch = saveBatch(
+              {
+                account: account.address,
+                uidValidity: box.uidValidity,
+                uids: picked.map((m) => m.uid).sort((a, b) => a - b),
+                accion,
+                resumen,
+              },
+              now,
+              batches,
+            );
+            return `${resumen}\nNo he tocado nada. Si te parece bien, dime «sí» y lo hago (lote ${batch.id}).`;
+          } catch (err) {
+            return `No pude leer el correo ahora (${errText(err)}).`;
+          }
+        }
         try {
           const mails = await scanInbox((deps.imap ?? imapFor)(account), {
             limit: args.cuantos ?? 100,
@@ -154,7 +239,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
           });
           return mails.length ? summarize(mails, file) : 'No hay correos en los últimos 30 días.';
         } catch (err) {
-          return `No pude leer el correo ahora (${err instanceof Error ? err.message.slice(0, 120) : 'error'}).`;
+          return `No pude leer el correo ahora (${errText(err)}).`;
         }
       };
       return { content: [{ type: 'text', text: await text() }], details: {} };

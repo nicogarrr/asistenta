@@ -1167,6 +1167,8 @@ export class Gate {
       ['confirmar_registro', 'codigo_registro'].includes(argString(c.args, 'action'))
     )
       return true;
+    // Limpiar correo (mover el lote exacto de la vista previa): un sí fresco cada vez.
+    if (c.tool === 'correo_reglas' && argString(c.args, 'action') === 'limpiar') return true;
     return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
   }
 
