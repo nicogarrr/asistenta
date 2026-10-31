@@ -1010,6 +1010,13 @@ async function doctorCommand(): Promise<number> {
   if (unknownKeysLine) lines.push(unknownKeysLine);
   const envLinesLine = envLinesDoctorLine();
   if (envLinesLine) lines.push(envLinesLine);
+  lines.push(
+    (await import('./dictado/doctor.js')).dictadoDoctorLine(
+      process.env,
+      process.platform,
+      desktopEnabled(),
+    ),
+  );
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);
