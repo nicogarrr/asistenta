@@ -216,7 +216,8 @@ const NUM_WORDS = new Map<string, number>([
 
 /**
  * «diez minutos» = «10 min»: números escritos con letra pasan a cifra («treinta y cinco»
- * → 35, «una hora» → 1 horas) y las unidades abreviadas a una sola forma.
+ * → 35) y las unidades abreviadas a una sola forma. Las horas van en minutos: «media
+ * hora» = «30 min», «una hora» = «60 minutos», «hora y media» = «90 min».
  */
 function canon(text: string): string {
   const unit = String.raw`(?=\s+(?:${Object.keys(UNITS).join('|')}|minutos|horas|dias|segundos|semanas)\b)`;
@@ -232,7 +233,18 @@ function canon(text: string): string {
     .replace(/[a-z]+/g, (w) => {
       const n = NUM_WORDS.get(w);
       return n === undefined ? (UNITS[w] ?? w) : String(n);
-    });
+    })
+    .replace(/\b(?:1 |un )?cuarto de horas\b/g, '15 minutos')
+    .replace(/\b3 cuartos de horas\b/g, '45 minutos')
+    .replace(/\bmedia horas\b/g, '30 minutos')
+    .replace(
+      /(?:\b(\d+(?:[.,]\d+)?) )?\bhoras y media\b/g,
+      (_m, n?: string) => `${(n ? Number(n.replace(',', '.')) : 1) * 60 + 30} minutos`,
+    )
+    .replace(
+      /\b(\d+(?:[.,]\d+)?) horas\b/g,
+      (_m, n: string) => `${Math.round(Number(n.replace(',', '.')) * 60)} minutos`,
+    );
 }
 
 function words(text: string): Set<string> {
