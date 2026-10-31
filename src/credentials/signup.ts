@@ -67,6 +67,12 @@ export async function prepareSignup(
   const domain = normalizeDomain(site);
   if (!domain)
     throw new AvisoCuenta('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
+  // «wallapop» a secas no es una web: la contraseña quedaría con una clave que el navegador
+  // nunca rellena en wallapop.es. Mejor preguntar el dominio exacto.
+  if (!domain.includes('.'))
+    throw new AvisoCuenta(
+      `¿En qué web exactamente? Dime el dominio completo, por ejemplo ${domain}.es o ${domain}.com.`,
+    );
   const existing = (await listAccounts(vault)).find((a) => a.domain === domain);
   if (existing?.status === 'activa') {
     throw new AvisoCuenta(
