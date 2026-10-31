@@ -140,6 +140,13 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   // Una herramienta MCP con una URL http(s): el servidor externo hará esa petición, y la
   // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
   if (tool.startsWith('mcp_')) return mcpEgressUrl(args);
+  // Una orden de shell (`curl`, `Invoke-WebRequest`, `start <url>`…) o un texto tecleado
+  // con `computer` (la barra de direcciones de un navegador del escritorio) con una URL:
+  // la petición sale igual, y fullControl o la ventana de 90 s no deben cubrirla.
+  if (tool === 'shell' && typeof args.command === 'string') return textEgressUrl(args.command);
+  if (tool === 'computer' && args.action === 'type' && typeof args.text === 'string') {
+    return textEgressUrl(args.text);
+  }
   const url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) return null;
   if (tool === 'fetch' || tool === 'download') return url;
@@ -153,6 +160,14 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   // La tele abre esa página en su navegador: la petición sale igual que un fetch.
   if (tool === 'tv' && args.action === 'url') return url;
   return null;
+}
+
+/** Las URL http(s) escritas en un texto; si hay varias, primero la que lleva datos. */
+function textEgressUrl(text: string): string | null {
+  const urls = (text.match(/https?:\/\/[^\s"'`<>()]+/gi) ?? []).map((u) =>
+    u.replace(/[.,;]+$/, ''),
+  );
+  return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
 }
 
 /** Nombres de argumento con los que una herramienta MCP suele pedir una dirección. */
