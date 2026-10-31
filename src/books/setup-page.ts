@@ -14,6 +14,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { envFileText } from '../env-text.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
@@ -94,20 +95,21 @@ input,button{font-size:1rem;padding:.5rem;margin:.25rem 0;width:100%}</style></h
  *   que una línea repetida más abajo no siga mandando con el valor viejo.
  */
 export function saveCredsToEnv(apiId: string, apiHash: string, envPath = ENV_PATH): void {
-  const raw = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+  // Como el arranque: un .env con BOM o en UTF-16 (PowerShell 5 «>») se lee bien
+  // y se reescribe en UTF-8; leído como utf8 se corrompía entero.
+  const raw = existsSync(envPath) ? envFileText(readFileSync(envPath)) : '';
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
   const lines = raw === '' ? [] : raw.split(/\r?\n/);
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   const set = (key: string, value: string) => {
     const isKey = (l: string) => {
-      const t = l.replace(/^\uFEFF/, '').trimStart();
+      const t = l.trimStart();
       return t.startsWith(`${key}=`) || t.startsWith(`export ${key}=`);
     };
     let found = false;
     for (let i = 0; i < lines.length; i++) {
       if (!isKey(lines[i] as string)) continue;
-      const bom = (lines[i] as string).startsWith('\uFEFF') ? '\uFEFF' : '';
-      lines[i] = found ? '' : `${bom}${key}=${value}`;
+      lines[i] = found ? '' : `${key}=${value}`;
       found = true;
     }
     if (!found) lines.push(`${key}=${value}`);
