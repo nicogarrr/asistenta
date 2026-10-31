@@ -3,7 +3,7 @@
  * `npm start`) with Node's own parser: KEY=VALUE, optional `export`, quotes
  * and comments. Variables already present in the process environment always
  * win (same rule as loadEnvFile), and a malformed file warns on stderr
- * instead of killing startup.
+ * (in plain Spanish) instead of killing startup.
  *
  * THIS MODULE MUST BE THE FIRST IMPORT OF THE ENTRYPOINT. paths.ts and
  * log.ts capture process.env (PA_STATE_DIR, PA_LOG_LEVEL) at module
@@ -17,18 +17,20 @@
  */
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
+import { envFileText } from './env-text.js';
 
-/** Texto de un .env tal como lo guarda Windows: sin BOM y, si viene en UTF-16, decodificado. */
-export function envFileText(buf: Buffer): string {
-  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
-    return buf.subarray(3).toString('utf8');
-  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
-  if (buf[0] === 0xfe && buf[1] === 0xff) {
-    const le = Buffer.from(buf.subarray(2));
-    le.swap16();
-    return le.toString('utf16le');
-  }
-  return buf.toString('utf8');
+export { envFileText };
+
+/** Aviso en castellano llano; el detalle técnico se queda en el código de error. */
+export function envReadWarning(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'EACCES' || code === 'EPERM')
+    return 'Aviso: no tengo permiso para leer el archivo .env. Arranco sin él.\n';
+  if (code === 'EBUSY')
+    return 'Aviso: el archivo .env está bloqueado por otro programa. Ciérralo y vuelve a arrancar; de momento sigo sin él.\n';
+  if (code === 'EISDIR') return 'Aviso: «.env» es una carpeta, no un archivo. Arranco sin él.\n';
+  if (code) return `Aviso: no pude leer el archivo .env (${code}). Arranco sin él.\n`;
+  return 'Aviso: no entiendo el archivo .env (cada línea debe ser CLAVE=valor). Arranco sin él.\n';
 }
 
 /** Carga `file` en `env` sin pisar lo que ya hay. */
@@ -38,9 +40,7 @@ export function loadDotEnv(file = '.env', env: NodeJS.ProcessEnv = process.env):
     buf = readFileSync(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      process.stderr.write(
-        `.env could not be read: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
+      process.stderr.write(envReadWarning(err));
     }
     return;
   }
@@ -48,10 +48,8 @@ export function loadDotEnv(file = '.env', env: NodeJS.ProcessEnv = process.env):
     for (const [key, value] of Object.entries(parseEnv(envFileText(buf)))) {
       if (env[key] === undefined) env[key] = value;
     }
-  } catch (err) {
-    process.stderr.write(
-      `.env could not be read: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+  } catch {
+    process.stderr.write(envReadWarning(undefined));
   }
 }
 
