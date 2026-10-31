@@ -202,8 +202,8 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
       };
     } catch (err) {
       log.warn('secret library search failed', { error: String(err) });
-      const msg = err instanceof Error ? err.message : String(err);
-      return { hits: [], tried: true, note: `(Biblioteca Secreta: ${msg}.)` };
+      // El error crudo («fetch failed», «FLOOD_WAIT_30») solo va al registro de arriba.
+      return { hits: [], tried: true, note: '(Biblioteca Secreta no responde ahora.)' };
     }
   }
 
