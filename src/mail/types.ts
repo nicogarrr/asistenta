@@ -43,6 +43,8 @@ export interface MailSearchQuery {
 
 export interface SendRequest {
   to: string[];
+  /** Copia visible. Solo lo que Nico aprobó en el borrador. */
+  cc?: string[];
   subject: string;
   text: string;
   inReplyTo?: string;

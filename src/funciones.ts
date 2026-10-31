@@ -227,7 +227,10 @@ export const TOOL_ABILITIES: Readonly<
   reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
-  correo: { area: 'correo', text: 'busco y leo tus correos de Gmail' },
+  correo: {
+    area: 'correo',
+    text: 'busco y leo tus correos; respondo, reenvío o escribo solo si apruebas el borrador exacto',
+  },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
   cuentas: {
     area: 'agenda',

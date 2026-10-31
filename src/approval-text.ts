@@ -116,6 +116,8 @@ export function formatApproval(
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');
   }
+  const mailKind = call.tool === 'correo' ? MAIL_SEND_KIND[String(call.args.action)] : undefined;
+  if (mailKind) return formatMailDraft(call, mailKind, reason);
   if (call.tool === 'shell') {
     const command = typeof call.args.command === 'string' ? call.args.command.trim() : '';
     // The mask is a change-detector here: if it would alter the command, the
@@ -334,6 +336,40 @@ function withGrantWindowNote(
       'no volverán a preguntar (los atajos del sistema como Win+R, Ctrl+Alt o Alt+F4 ' +
       'sí preguntan siempre).',
   };
+}
+
+const MAIL_SEND_KIND: Record<string, string | undefined> = {
+  responder: 'respuesta',
+  reenviar: 'reenvío',
+  nuevo: 'correo nuevo',
+};
+
+/** El borrador exacto de un correo: lo que se aprueba es lo que sale. */
+function formatMailDraft(call: ToolCall, kind: string, reason: string): ApprovalText {
+  const list = (v: unknown) =>
+    (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).map((x) => String(x).trim());
+  const text = (k: string) => (typeof call.args[k] === 'string' ? (call.args[k] as string) : '');
+  const to = list(call.args.para);
+  const cc = list(call.args.cc);
+  const oneLiners = [...to, ...cc, text('asunto'), text('ref')];
+  if (
+    [...oneLiners, text('cuerpo')].some(hasInvisible) ||
+    oneLiners.some((l) => /[\r\n\u2028\u2029]/u.test(l))
+  )
+    return deniedInvisible('correo');
+  const raw = [
+    `¿Envío exactamente este correo? (${kind})`,
+    text('ref') ? `Hilo: ${text('ref')}` : '',
+    `Para: ${to.join(', ') || '(nadie)'}`,
+    `CC: ${cc.join(', ') || 'nadie'}`,
+    `Asunto: ${text('asunto') || '(vacío)'}`,
+    `---\n${text('cuerpo') || '(vacío)'}\n---`,
+    call.args.action === 'reenviar' ? 'Debajo va el correo original del hilo, sin cambios.' : '',
+    `Motivo: ${redactSecrets(reason)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return withinBudget(raw, raw, 'correo');
 }
 
 function withinBudget(raw: string, shown: string, tool: string): ApprovalText {

@@ -2001,6 +2001,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         account: () => loadReadMailAccount(),
         search: (account, query, limit) => searchInbox(account, query, limit),
         read: (account, ref) => readReplyThread(account, ref),
+        // Enviar: la Gate enseña el borrador exacto y pregunta cada vez.
+        sendAccount: () => loadSendMailAccount(),
+        send: (account, req) => sendMail(account, req),
       }),
       // The machine itself: volume, mute, lock, and how it is doing.
       createSystemTool(),
