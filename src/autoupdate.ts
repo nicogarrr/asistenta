@@ -33,7 +33,18 @@ export const AUTOUPDATE_LOCK_FILE = 'en-curso.lock';
 export const MIN_GAP_MS = 30 * 60_000;
 /** Un candado más viejo que esto es de un proceso que murió. */
 export const LOCK_STALE_MS = 45 * 60_000;
-export const HEALTH_TIMEOUT_MS = 120_000;
+/**
+ * Cuánto espera a que la versión nueva vuelva sana. «Sana» = el daemon escribió su
+ * agent.pid, y eso pasa al FINAL del arranque (modelo, Telegram con reintentos, correo,
+ * OCR, herramientas): en un PC lento, con la compilación recién hecha, 120 s no daban.
+ * PA_AUTOUPDATE_SALUD_SEG lo cambia (de 60 a 600 s).
+ */
+export const HEALTH_TIMEOUT_MS = 300_000;
+
+export function autoupdateHealthMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number((env.PA_AUTOUPDATE_SALUD_SEG ?? '').trim() || HEALTH_TIMEOUT_MS / 1000);
+  return Number.isFinite(n) ? Math.min(600, Math.max(60, Math.round(n))) * 1000 : HEALTH_TIMEOUT_MS;
+}
 export const CHANGELOG_MAX = 8;
 /** Una versión que ya falló al instalarse no se reintenta antes de esto (salvo pa autoupdate now). */
 export const FAILED_RETRY_MS = 6 * 60 * 60_000;
@@ -344,7 +355,7 @@ export async function runAutoupdate(
       return await finishInterrupted(
         state.pending,
         deps,
-        opts.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
+        opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env),
         (t) => {
           state.pending = undefined;
           return done('revertida', t);
@@ -399,7 +410,7 @@ export async function runAutoupdate(
     const subjects = log.out.split('\n').filter((l) => l.trim());
     const lockDiff = await git(['diff', '--name-only', old, remote, '--', 'package-lock.json']);
     const lockChanged = lockDiff.code !== 0 || lockDiff.out.trim() !== '';
-    const health = opts.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
+    const health = opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env);
 
     deps.backupDist();
     try {
