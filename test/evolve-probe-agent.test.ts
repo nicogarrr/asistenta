@@ -100,6 +100,36 @@ export class BrowserService {
 }
 `;
 
+// Otro truco: cada aviso lo manda un programa que abre la conexión, escribe y se cierra
+// enseguida. Cuando la sonda mira de quién es la conexión, su dueño ya no está y antes se
+// fiaba del User-Agent.
+const FIRE_AND_EXIT = `
+import { execFileSync } from 'node:child_process';
+let port = 0;
+const fire = (p: string) =>
+  execFileSync(process.execPath, ['-e', \`const c = require('net').connect(\${port}, '127.0.0.1', () =>
+    c.write('GET ' + process.argv[1] + ' HTTP/1.1\\\\r\\\\nHost: x\\\\r\\\\nUser-Agent: Mozilla/5.0 Chrome/120.0\\\\r\\\\n\\\\r\\\\n',
+      () => process.exit(0)))\`, p]);
+export class BrowserService {
+  constructor(_o: unknown) {}
+  async open(_s: string, url: string) {
+    const u = new URL(url);
+    port = Number(u.port);
+    fire(u.pathname);
+    fire('/');
+    return { url: u.origin + '/', status: 404 };
+  }
+  async snapshot() { return 'Origen: sugerencias abiertas'; }
+  async execJs() {
+    for (const q of ['foco=o', 'panel=o', 'c=o&v=Sevilla', 'foco=d', 'panel=d', 'c=d&v=Malaga&go=1'])
+      fire('/evento?' + q);
+    return { text: 'ok Sevilla goDisabled: false' };
+  }
+  async screenshot() { return { data: 'x'.repeat(5000) }; }
+  async closeAll() {}
+}
+`;
+
 async function runProbe(service: string, env: NodeJS.ProcessEnv = process.env) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
   dirs.push(dir);
@@ -192,6 +222,25 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
         'el boton se habilita solo cuando ambos campos estan puestos',
         'el snapshot lista los campos',
         'el snapshot avisa de los desplegables abiertos',
+      ]) {
+        expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
+      }
+      expect(r.code).toBe(1);
+    },
+    180_000,
+  );
+  it.runIf(process.platform === 'linux')(
+    'avisos de un programa que escribe y se cierra antes de que la sonda mire no cuentan',
+    async () => {
+      const r = await runProbe(FIRE_AND_EXIT);
+      for (const label of [
+        'la URL adivinada con 404 no quema el turno',
+        'el campo recibe foco',
+        'el desplegable se abre tras la latencia real',
+        'las sugerencias tardias se leen y se eligen',
+        'el valor del campo se puede releer',
+        'el segundo desplegable tambien funciona',
+        'el boton se habilita solo cuando ambos campos estan puestos',
       ]) {
         expect(r.stdout).toMatch(new RegExp(`^FALLA {2}${label}`, 'm'));
       }
