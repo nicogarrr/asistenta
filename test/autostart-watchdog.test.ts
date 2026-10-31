@@ -221,7 +221,9 @@ describe('pa autostart con el vigilante (todo simulado)', () => {
     const d = tmp();
     await autostartCommand(['vigilar'], { stateDir: d, daemonState: () => 'running', bootAt: 0 });
     await autostartCommand(['vigilar'], { stateDir: d, daemonState: () => 'unknown', bootAt: 0 });
-    expect(execFile).not.toHaveBeenCalled();
+    // En marcha solo pone al día su propia tarea (una vez); no arranca nada.
+    expect(calls().map(([exe, a]) => [exe, a?.[0]])).toEqual([['schtasks.exe', '/Create']]);
+    execFile.mockClear();
     await autostartCommand(['vigilar'], { stateDir: d, daemonState: () => 'stopped', bootAt: 0 });
     expect(calls()).toEqual([['powershell.exe', startDaemonTaskArgs()]]);
     expect(out).toContain('la arranqué');

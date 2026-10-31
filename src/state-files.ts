@@ -93,6 +93,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'vigilante-tarea.json',
+    what: 'huella de la tarea del vigilante registrada en Windows (para ponerla al día tras actualizar)',
+    backup: 'file',
+  },
+  {
     name: 'autoupdate',
     what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada y el registro de cada fallo (*.log)',
     backup: false,
