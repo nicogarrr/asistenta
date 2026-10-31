@@ -195,6 +195,30 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           break;
         }
 
+        // El proponente es un programa cualquiera: nada le impide escribir fuera de su sandbox,
+        // en el árbol del kernel, o mover su rama desde el worktree (las ramas se comparten).
+        // Eso no pasa por el guard ni por la medición: se descarta y la semana para aquí,
+        // sin tocar lo que haya cambiado, para que una persona lo mire.
+        if (!isClean(root) || headCommit(root) !== kernel) {
+          const reason =
+            'el proponente cambió el árbol del kernel fuera de su sandbox: no se mide ni se promueve; revisa los cambios a mano';
+          archive.add({
+            week,
+            kind: 'verdict',
+            hypothesis,
+            verdict: 'discard',
+            reason,
+            unmeasured: true,
+            kernel,
+            candidate: sandbox.branch,
+            tries: attempt,
+          });
+          report.attempts.push({ hypothesis, try: attempt, verdict: 'discard', delta: 0, reason });
+          say(reason);
+          proposerDown = true;
+          break;
+        }
+
         // What is checked is what is measured: commit the working tree first.
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
         const touched = changedFiles(root, kernel, sandbox.branch);
