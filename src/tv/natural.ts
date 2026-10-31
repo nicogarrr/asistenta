@@ -185,17 +185,21 @@ const CAMBIA_A_LA_NUM = cambiaALa('\\d{1,2}');
 const CAMBIA_A_LA_PALABRA = cambiaALa('[a-z]+');
 
 const MULETILLA =
-  /^(?:(?:oye|oiga|eh|ey|hey|venga|vale|ok|okay) )?(?:(?:tele|tv|television|televisor) )?/;
+  /^(?:(?:oye|oiga|eh|ey|hey|venga|vale|ok|okay) )?(?:asistenta )?(?:(?:tele|tv|television|televisor) )?/;
 
 /** «… en la tele» al final no forma parte de la orden («abre Netflix en la tele»). */
 const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
 
 function normalizeOrder(text: string): string {
-  return normalizeTvText(text)
-    .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
-    .trim()
-    .replace(MULETILLA, '')
-    .replace(EN_LA_TELE, '');
+  return (
+    normalizeTvText(text)
+      .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
+      .trim()
+      // «pausa, gracias», «sube el volumen, muchas gracias»: el gracias no cambia la orden.
+      .replace(/(?:^| )(?:muchas )?gracias$/, '')
+      .replace(MULETILLA, '')
+      .replace(EN_LA_TELE, '')
+  );
 }
 
 /** Pregunta o queja sobre la tele, no una orden. */
