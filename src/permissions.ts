@@ -389,6 +389,19 @@ function isSecretFill(c: ToolCall): boolean {
 /** Órdenes de la CLI que imprimen o copian un secreto (ver la regla deny-secret-cli). */
 const SECRET_CLI = /\bvault\s+get\b|\bcuentas\s+(copiar|exportar)\b/i;
 
+/**
+ * Cargar el módulo del vault o del gestor de contraseñas con código propio
+ * («node -e "import('./dist/vault.js').then(v => v.vaultGet(…))"») hace lo mismo que
+ * `pa vault get` sin nombrarlo: también se deniega, solo cuando la orden ejecuta código.
+ */
+const RUNS_CODE = /\b(node|tsx|bun|deno|import|require)\b/i;
+const SECRET_MODULE_PATH =
+  /\b(dist|src)[\s/]+(vault|credentials[\s/]+(store|export))\b|\bvault\.[cm]?[jt]s\b/i;
+
+function loadsSecretModule(text: string): boolean {
+  return RUNS_CODE.test(text) && SECRET_MODULE_PATH.test(text);
+}
+
 /** Texto de una orden sin comillas ni escapes de shell, para que «"vault" get» no esquive la regla. */
 function cliText(text: string): string {
   return text.replace(/["'`^\\]/g, ' ').replace(/\s+/g, ' ');
@@ -759,7 +772,8 @@ export class Gate {
         reason:
           'muestra contraseñas o secretos del vault (pa vault get, pa cuentas copiar o exportar): solo Nico, en su terminal',
         match: (c) =>
-          (c.tool === 'shell' || c.tool === 'computer') && SECRET_CLI.test(cliText(blobOf(c))),
+          (c.tool === 'shell' || c.tool === 'computer') &&
+          (SECRET_CLI.test(cliText(blobOf(c))) || loadsSecretModule(cliText(blobOf(c)))),
       },
       {
         id: 'allow-tools',
