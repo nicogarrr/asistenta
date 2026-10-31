@@ -257,10 +257,10 @@ function pad2(n: number): string {
  */
 export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
   const due = dueOfOneShot(r.name);
-  const when = due
-    ? ((w) => `${pad2(w.day)}/${pad2(w.month)} ${pad2(w.hour)}:${pad2(w.minute)}`)(wallClock(due))
-    : 'una hora anterior';
-  return `⏰ Recordatorio pendiente con retraso (era para el ${when}): ${reminderText(r)}`;
+  if (!due) return `⏰ Te lo recuerdo con retraso: ${reminderText(r)}`;
+  const w = wallClock(due);
+  const when = `${pad2(w.day)}/${pad2(w.month)} a las ${pad2(w.hour)}:${pad2(w.minute)}`;
+  return `⏰ Te lo recuerdo con retraso, era para el ${when}: ${reminderText(r)}`;
 }
 
 /** Whether a fired one-shot is still stored. A job whose routine was deleted must not send again. */
