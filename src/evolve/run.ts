@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { loadConfig } from '../config.js';
@@ -80,12 +81,17 @@ export function readHypotheses(stateDir: string): string[] {
 /**
  * What the proposer inherits: the minimum to run, plus ONLY the variables the operator names
  * in PA_EVOLVE_PROPOSER_PASS (comma-separated, e.g. the model key it needs). Not the whole
- * environment, and not the user's home, so it does not inherit HOME or other keys
- * (it can still open absolute paths: same OS user). The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
+ * environment, and not the user's home: with `home` it gets that throwaway folder as HOME,
+ * USERPROFILE and APPDATA (without HOME, os.homedir() falls back to the real one, and with it
+ * the Asistenta state folder and the vault). Naming HOME in PA_EVOLVE_PROPOSER_PASS gives the
+ * real one back on purpose. It can still open absolute paths: same OS user. The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
  * untrusted input to the proposer; the guard checks what it writes, not what it was told.
  */
-export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const out = cleanEnv(env);
+export function proposerEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  home?: string,
+): NodeJS.ProcessEnv {
+  const out = cleanEnv(env, home);
   for (const name of (env.PA_EVOLVE_PROPOSER_PASS ?? '').split(',')) {
     const k = name.trim();
     if (k && env[k] !== undefined) out[k] = env[k];
@@ -93,25 +99,36 @@ export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
   return out;
 }
 
+/** Runs `fn` with a fresh empty home folder, removed afterwards whatever happens. */
+async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'pa-evolve-home-'));
+  try {
+    return await fn(home);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 export function proposerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): EvolveOptions['propose'] | null {
   const cmd = env.PA_EVOLVE_PROPOSER?.trim();
   if (!cmd) return null;
-  return async (dir, hypothesis, attempt) => {
-    await exec(cmd, [], {
-      cwd: dir,
-      timeout: 30 * 60_000,
-      windowsHide: true,
-      shell: false,
-      env: {
-        ...proposerEnv(env),
-        PA_EVOLVE_DIR: dir,
-        PA_EVOLVE_HYPOTHESIS: hypothesis,
-        PA_EVOLVE_ATTEMPT: String(attempt),
-      },
+  return (dir, hypothesis, attempt) =>
+    withTempHome(async (home) => {
+      await exec(cmd, [], {
+        cwd: dir,
+        timeout: 30 * 60_000,
+        windowsHide: true,
+        shell: false,
+        env: {
+          ...proposerEnv(env, home),
+          PA_EVOLVE_DIR: dir,
+          PA_EVOLVE_HYPOTHESIS: hypothesis,
+          PA_EVOLVE_ATTEMPT: String(attempt),
+        },
+      });
     });
-  };
 }
 
 const isStrList = (v: unknown): boolean =>
@@ -239,14 +256,16 @@ export function batteryRunnerFromEnv(
   return async (c, cwd) => {
     // Solo el evaluador del repo recibe la clave: es el que usa el almacén por variables.
     const key = raw ? {} : await modelKeyEnv(env, deps);
-    const { stdout } = await exec(file, args, {
-      cwd,
-      timeout: 10 * 60_000,
-      windowsHide: true,
-      shell: false,
-      maxBuffer: 4 * 1024 * 1024,
-      env: { ...proposerEnv(env), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
-    });
+    const { stdout } = await withTempHome((home) =>
+      exec(file, args, {
+        cwd,
+        timeout: 10 * 60_000,
+        windowsHide: true,
+        shell: false,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...proposerEnv(env, home), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
+      }),
+    );
     return parseTrace(String(stdout));
   };
 }
