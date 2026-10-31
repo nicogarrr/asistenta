@@ -276,7 +276,20 @@ const TELE_EN_MEDIO = new RegExp(
   `^(.+?) (?:(?:a|de) )?${TV}( (?:un |una )?(?:poco|poquito|momento|momentito|segundo|segundito|rato|ratito)| ahi| en pausa)$`,
 );
 
+/** «2.5», «12,5»: número con decimales (la tele solo entiende enteros). */
+const DECIMAL = /(\d{1,3})[.,](\d{1,2})(?!\d)/g;
+
 export function parseTvCommand(text: string): TvIntent | null {
+  // «vol 2.5» ponía 2 (se perdía lo de detrás del punto). En el volumen se redondea
+  // (2.5 → 3, 12,5 → 13); en cualquier otra orden un decimal no tiene sentido: al modelo.
+  if (DECIMAL.test(text)) {
+    DECIMAL.lastIndex = 0;
+    const redondeado = text.replace(DECIMAL, (_, ent: string, dec: string) =>
+      String(Math.round(Number(`${ent}.${dec}`))),
+    );
+    const intent = parseTvCommand(redondeado);
+    return intent?.action === 'volume' || intent?.action === 'volumeStep' ? intent : null;
+  }
   const direct = parseOne(text);
   if (direct) return direct;
   const t = normalizeOrder(text);
