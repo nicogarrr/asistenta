@@ -194,6 +194,31 @@ export function depsFingerprint(dir: string): string {
 }
 
 /**
+ * Huella del git del intento, leída del disco sin llamar a git: el fichero `.git` del
+ * worktree (a qué carpeta apunta) y, en esa carpeta privada, HEAD, commondir, gitdir y
+ * config.worktree. Si el proponente apunta su HEAD a la rama del kernel o su `.git` a otro
+ * repo, el commit del intento caería allí sin pasar por el guard.
+ */
+export function sandboxGitFingerprint(dir: string): string {
+  const h = createHash('sha256');
+  const gitFile = join(dir, '.git');
+  if (!existsSync(gitFile) || !lstatSync(gitFile).isFile()) return 'no-gitfile';
+  const text = readFileSync(gitFile, 'utf8');
+  h.update(text);
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
+  if (m?.[1]) {
+    const priv = isAbsolute(m[1]) ? m[1] : join(dir, m[1]);
+    for (const rel of ['HEAD', 'commondir', 'gitdir', 'config.worktree']) {
+      const p = join(priv, rel);
+      h.update(`\0${rel}\0`);
+      if (existsSync(p) && lstatSync(p).isFile()) h.update(readFileSync(p));
+      else h.update('-');
+    }
+  }
+  return h.digest('hex');
+}
+
+/**
  * Huella de lo que hace ejecutar código a git en el repo del kernel: su config (core.fsmonitor,
  * core.hooksPath, alias…) y la carpeta de hooks, compartidas por todos los worktrees. Se lee
  * del disco sin llamar a git, porque un fsmonitor plantado se ejecutaría con el propio

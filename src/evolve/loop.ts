@@ -24,6 +24,7 @@ import {
   isClean,
   repoRoot,
   type Sandbox,
+  sandboxGitFingerprint,
 } from './worktree.js';
 
 /**
@@ -173,6 +174,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       // Lo que el intento haga en su node_modules no entra en el diff: se compara la huella.
       const depsBefore = depsFingerprint(sandbox.dir);
       const gitBefore = gitControlFingerprint(root);
+      const sandboxGitBefore = sandboxGitFingerprint(sandbox.dir);
       try {
         try {
           await opts.propose(sandbox.dir, hypothesis, attempt);
@@ -202,11 +204,15 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // Eso no pasa por el guard ni por la medición: se descarta y la semana para aquí,
         // sin tocar lo que haya cambiado, para que una persona lo mire.
         // Primero los hooks y la config de git (se leen sin git): si cambiaron, ni un git status.
+        // Y el git del propio intento: el commit de abajo se hace con él.
         const gitChanged = gitControlFingerprint(root) !== gitBefore;
-        if (gitChanged || !isClean(root) || headCommit(root) !== kernel) {
+        const sandboxGitChanged = sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore;
+        if (gitChanged || sandboxGitChanged || !isClean(root) || headCommit(root) !== kernel) {
           const reason = gitChanged
             ? 'el proponente cambió la config o los hooks de git del kernel: no se mide ni se promueve; revisa .git a mano'
-            : 'el proponente cambió el árbol del kernel fuera de su sandbox: no se mide ni se promueve; revisa los cambios a mano';
+            : sandboxGitChanged
+              ? 'el proponente redirigió el git del intento (su .git o su HEAD): no se mide ni se promueve; revisa a mano'
+              : 'el proponente cambió el árbol del kernel fuera de su sandbox: no se mide ni se promueve; revisa los cambios a mano';
           archive.add({
             week,
             kind: 'verdict',
