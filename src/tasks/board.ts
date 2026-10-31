@@ -249,6 +249,14 @@ export function resolveDay(input: string, now: Date): string | null {
   if (/^(?:fin de semana|finde)$/.test(text)) {
     return now.getDay() === 0 ? today : addDays(today, (6 - now.getDay() + 7) % 7);
   }
+  // «el finde que viene», «el próximo fin de semana»: el sábado de la semana que viene (gaps9).
+  if (
+    /^(?:(?:fin de semana|finde)\s+(?:que viene|proximo|siguiente)|(?:proximo|siguiente)\s+(?:fin de semana|finde))$/.test(
+      text,
+    )
+  ) {
+    return addDays(weekStart(today), 12);
+  }
   // «jueves 12 (de noviembre)»: manda el número.
   const dated = text.replace(
     /^(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+(?=\d)/,
