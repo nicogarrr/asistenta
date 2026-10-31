@@ -1,4 +1,4 @@
-# serve-windows.ps1 — lanzador verificado del serve OpenCode enjaulado (PC Windows de Nico).
+﻿# serve-windows.ps1 — lanzador verificado del serve OpenCode enjaulado (PC Windows de Nico).
 # Versiones FIJADAS a lo medido en la VM (2026-10-15): imagen node por digest y
 # opencode-ai 1.19.0. Tras arrancar VERIFICA el despliegue real con docker inspect
 # (montajes exactos, puerto loopback, sin privileged, sin docker socket) y health
