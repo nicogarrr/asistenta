@@ -24,7 +24,7 @@ describe('installLifecycle: quien pierde la carrera del pid no deja nada', () =>
     const before = counts();
     expect(() =>
       installLifecycle({ name: 'agent', stateDir: dir, onShutdown: async () => {} }),
-    ).toThrow(/another instance won the race/);
+    ).toThrow(/ya se está abriendo/);
     expect(counts()).toEqual(before);
   });
 

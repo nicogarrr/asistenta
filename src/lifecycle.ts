@@ -115,7 +115,9 @@ export function assertNotRunning(
       // process that provably started at another moment is a stranger.
       const same = sameProcessAsRecorded(startFile, pid, opts.identityOf);
       if (same !== 'different') {
-        throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+        throw new Error(
+          `Asistenta ya está en marcha (proceso ${pid}): no hace falta abrirla otra vez. Para reiniciarla, párala antes con pa stop.`,
+        );
       }
       log.warn('pid file names a process that started at another time (pid reused); ignoring it', {
         pid,
@@ -236,8 +238,12 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   try {
     writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
   } catch (err) {
+    log.warn('pid file claimed by another instance (lost the start race)', {
+      pidFile,
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw new Error(
-      `could not claim ${pidFile} (another instance won the race): ${err instanceof Error ? err.message : String(err)}`,
+      'Asistenta ya se está abriendo en otra ventana: no hace falta abrirla otra vez.',
     );
   }
   // Record who we are next to the pid, so a later start (or the watchdog) can
