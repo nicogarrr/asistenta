@@ -3871,6 +3871,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         followups: () => followups.forChat(chatKey(inbound), 200),
         routines: () => scheduledAgenda(inbound),
         goals: () => goalStore.list().filter((goal) => inChatScope(goal.scope, chatKey(inbound))),
+        tasks: () => new TaskBoard(join(paths.state, 'tareas.json')).all(chatKey(inbound)),
       },
       days,
     );
