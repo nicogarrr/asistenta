@@ -1,6 +1,6 @@
 /**
  * `pa doctor`: claves PA_* del .env que Asistenta no conoce. Una errata
- * («PA_WEB_PROT=8787») se ignora sin aviso y el ajuste no se aplica. La lista
+ * («pa_web_prot=8787») se ignora sin aviso y el ajuste no se aplica. La lista
  * buena es .env.example (el instalador lo copia como .env; test/env-example
  * comprueba que documenta todo lo que se lee). Solo se nombra la clave.
  */

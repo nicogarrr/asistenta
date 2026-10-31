@@ -1,6 +1,6 @@
 /**
  * `pa doctor`: un «#» sin comillas dentro de un valor del .env lo corta ahí.
- * Node lee `PA_TELEGRAM_TOKEN=abc#def` como «abc» (el resto es comentario), así
+ * Node lee `CLAVE=abc#def` como «abc» (el resto es comentario), así
  * que un token o una contraseña con «#» deja de funcionar sin ningún aviso.
  * Aquí solo se nombra la clave: el valor nunca se muestra.
  */
