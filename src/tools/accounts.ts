@@ -8,6 +8,7 @@ import {
   MISSING_IDENTITY,
   type OwnerIdentity,
   ownerIdentity,
+  pendingOf,
   prepareSignup,
 } from '../credentials/signup.js';
 import { findSignupCode, type MailSearch, realSignupMail } from '../credentials/signup-code.js';
@@ -122,8 +123,10 @@ async function signupStep(
       const a = await finishSignup(sitio, vault);
       return `Cuenta de ${a.domain} creada y guardada en tu gestor de contraseñas (${maskUser(a.username)}).`;
     }
-    return (await discardSignup(sitio, vault))
-      ? `He descartado el registro a medias de ${sitio}; no queda nada guardado.`
+    // Con el nombre a secas se nombra la web de verdad («de wallapop.es», no «de wallapop»).
+    const p = await pendingOf(sitio, vault, true);
+    return p && (await discardSignup(p.domain, vault))
+      ? `He descartado el registro a medias de ${p.domain}; no queda nada guardado.`
       : `No había ningún registro a medias de ${sitio}.`;
   } catch (err) {
     return errText(err, args.action);

@@ -113,7 +113,15 @@ export async function approveSignup(
   vault: VaultOps = realVault,
 ): Promise<Account> {
   const p = await pendingOf(site, vault);
-  if (!p) throw new AvisoCuenta('No hay ningún registro preparado para esa web.');
+  if (!p) {
+    // El sí vale solo para la web exacta; con el nombre a secas se dice cuál es, sin aprobar nada.
+    const named = await pendingOf(site, vault, true);
+    if (named)
+      throw new AvisoCuenta(
+        `Para confirmar necesito la web exacta: vuelve a llamar con sitio=${named.domain}.`,
+      );
+    throw new AvisoCuenta('No hay ningún registro preparado para esa web.');
+  }
   // El correo no distingue mayúsculas en la práctica: «Nico@Gmail.com» es el mismo buzón.
   if (p.username.trim().toLowerCase() !== correo.trim().toLowerCase())
     throw new AvisoCuenta('Ese correo no es el del registro preparado; no sigo.');
