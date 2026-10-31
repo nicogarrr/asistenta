@@ -530,6 +530,7 @@ import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
 import { summarizeTranscript } from './daemon/transcript-summary.js';
 import { retentionIfDue } from './maintenance.js';
+import { missingPieceMessage } from './setup-missing.js';
 import { tvCommand } from './tv/tv-cli.js';
 
 export { ANTICIPATION_RULES, buildContextNote } from './daemon/context-note.js';
@@ -941,7 +942,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   const config = loadConfig();
 
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
@@ -1060,7 +1061,7 @@ async function runCommand(prompt: string): Promise<number> {
   ensureDirs();
   const config = loadConfig();
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
@@ -1289,14 +1290,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const desktop = desktopEnabled();
   if (!desktop) log.info('modo servidor: herramientas de escritorio Windows desactivadas');
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
 
   const token = await vaultGet('telegram:botToken');
   if (!token) {
-    process.stderr.write('no telegram token. run: pa vault set telegram:botToken <token>\n');
+    process.stderr.write(`${missingPieceMessage('token')}\n`);
     return 1;
   }
 
@@ -1305,7 +1306,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n > 0);
   if (!allowed?.length) {
-    process.stderr.write('no allowed users. run: pa vault set telegram:allowedUserIds <id1,id2>\n');
+    process.stderr.write(`${missingPieceMessage('owner')}\n`);
     return 1;
   }
 
