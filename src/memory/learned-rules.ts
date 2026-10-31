@@ -260,13 +260,28 @@ function stem(w: string): string {
   return m?.[1] ?? w;
 }
 
+// Imperativos irregulares: «pon» y «pongas», «haz» y «hagas», «di» y «digas» son el mismo
+// verbo, pero stem() no lo ve (y «di» es tan corto que ni contaba). También con pronombre
+// pegado («ponme», «dímelo»). Cada forma va a la raíz que stem() da al infinitivo.
+const PRON = '(?:me|te|se|nos|lo|la|le|los|las|les)*';
+const SUBJ = '(?:a|as|an|amos|ais)';
+const IRREGULAR: ReadonlyArray<readonly [RegExp, string]> = [
+  [new RegExp(`^(?:pon${PRON}|pong${SUBJ}|poner)$`), 'pon'],
+  [new RegExp(`^(?:haz${PRON}|hag${SUBJ}|hacer)$`), 'hac'],
+  [new RegExp(`^(?:di${PRON}|dig${SUBJ}|decir)$`), 'dec'],
+  [new RegExp(`^(?:ten${PRON}|teng${SUBJ}|tener)$`), 'ten'],
+  [new RegExp(`^(?:ven${PRON}|veng${SUBJ}|venir)$`), 'ven'],
+  [new RegExp(`^(?:sal${PRON}|salg${SUBJ}|salir)$`), 'sal'],
+];
+
 function stems(text: string): Set<string> {
-  return new Set(
-    canon(text)
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w))
-      .map(stem),
-  );
+  const out = new Set<string>();
+  for (const w of canon(text).split(/[^a-z0-9]+/)) {
+    const irregular = IRREGULAR.find(([re]) => re.test(w));
+    if (irregular) out.add(irregular[1]);
+    else if (w.length > 2 && !FLIP_STOP.has(w) && !/^\d+$/.test(w)) out.add(stem(w));
+  }
+  return out;
 }
 
 /**
