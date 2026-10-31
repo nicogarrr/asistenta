@@ -28,10 +28,19 @@ describe('planDelivery', () => {
     });
     expect(planDelivery(s, h, 'Precio: 9 €')).toMatchObject({ chat: true });
   });
-  it('un fallo se entrega siempre, aunque no cambie y aunque el destino sea ninguno', () => {
+  it('un fallo nuevo se entrega aunque el destino sea ninguno', () => {
     const s = { target: 'ninguno' as const, soloSiCambia: true };
     const body = 'No devolvió respuesta.';
-    expect(planDelivery(s, outputHash(body), body, true).chat).toBe(true);
+    expect(planDelivery(s, undefined, body, true).chat).toBe(true);
+    expect(planDelivery(s, outputHash('salida buena'), body, true).chat).toBe(true);
+  });
+  it('el mismo fallo seguido (p. ej. el modelo caído toda la noche) se avisa una vez, no en cada pasada', () => {
+    const s = { target: 'chat' as const, soloSiCambia: false };
+    const body = 'No devolvió respuesta.';
+    expect(planDelivery(s, outputHash(body), body, true)).toMatchObject({
+      chat: false,
+      skipped: 'fallo-repetido',
+    });
   });
   it('fichero y ninguno no mandan mensaje', () => {
     expect(planDelivery({ target: 'fichero', soloSiCambia: false }, undefined, 'x')).toMatchObject({

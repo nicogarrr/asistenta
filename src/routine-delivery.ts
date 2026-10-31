@@ -35,7 +35,7 @@ export interface DeliveryPlan {
   file: boolean;
   hash: string;
   /** Por qué no se entrega nada, si es el caso. */
-  skipped?: 'sin-cambios' | 'ninguno';
+  skipped?: 'sin-cambios' | 'ninguno' | 'fallo-repetido';
 }
 
 const key = (scope: string, name: string) => `${scope}\u0000${name}`;
@@ -52,7 +52,13 @@ export function planDelivery(
   failed = false,
 ): DeliveryPlan {
   const hash = outputHash(body);
-  if (failed) return { chat: true, file: setting.target === 'fichero', hash };
+  if (failed) {
+    // The same failure as the last thing delivered (the model down all night, an
+    // hourly routine) is told once, not every run: it is chatter, not news. The
+    // first failure after a good run is always told, whatever the target.
+    if (lastHash === hash) return { chat: false, file: false, hash, skipped: 'fallo-repetido' };
+    return { chat: true, file: setting.target === 'fichero', hash };
+  }
   if (setting.target === 'ninguno') return { chat: false, file: false, hash, skipped: 'ninguno' };
   if (setting.soloSiCambia && lastHash === hash) {
     return { chat: false, file: false, hash, skipped: 'sin-cambios' };
