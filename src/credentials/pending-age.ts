@@ -37,8 +37,12 @@ export function oldPendingOffer(all: Account[], now: number = Date.now(), cli = 
   const old = oldPending(all, now);
   const first = old[0];
   if (!first) return '';
-  const ask = cli ? 'pídeme en el chat' : 'dime';
+  // En la consola se descarta con su propia orden (pide teclear la web exacta).
+  const one = cli
+    ? `escribe pa cuentas descartar ${first.domain}`
+    : `dime «descarta lo de ${first.domain}» y la quito`;
+  const many = cli ? 'usa pa cuentas descartar <web> con cada una' : 'dime cuáles descarto';
   return old.length === 1
-    ? `El alta de ${first.domain} lleva a medias más de ${OLD_PENDING_DAYS} días: si ya no la quieres, ${ask} «descarta lo de ${first.domain}» y la quito.`
-    : `Hay ${old.length} altas a medias de hace más de ${OLD_PENDING_DAYS} días (${old.map((a) => a.domain).join(', ')}): si ya no las quieres, ${ask} cuáles descarto.`;
+    ? `El alta de ${first.domain} lleva a medias más de ${OLD_PENDING_DAYS} días: si ya no la quieres, ${one}.`
+    : `Hay ${old.length} altas a medias de hace más de ${OLD_PENDING_DAYS} días (${old.map((a) => a.domain).join(', ')}): si ya no las quieres, ${many}.`;
 }

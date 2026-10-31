@@ -3,8 +3,10 @@ import { writeFileSync } from 'node:fs';
 import { normalizeDomain } from '../gestor/login.js';
 import { logFile } from '../log.js';
 import { oldPendingOffer, pendingAge } from './pending-age.js';
+import { discardSignup, pendingOf } from './signup.js';
 import {
   type Account,
+  AvisoCuenta,
   deleteAccount,
   generatePassword,
   listAccounts,
@@ -162,6 +164,47 @@ async function cuentaDe(
   return null;
 }
 
+/** `pa cuentas descartar <web>`: quita un alta a medias, solo con el nombre exacto tecleado. */
+async function descartar(
+  site: string,
+  vault: VaultOps,
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+) {
+  let p: Account | null;
+  try {
+    p = await pendingOf(site, vault, true);
+  } catch (err) {
+    if (err instanceof AvisoCuenta) {
+      out(err.message);
+      return 1;
+    }
+    throw err;
+  }
+  if (!p) {
+    out(
+      `No hay ningún alta a medias de ${site}. Una cuenta ya terminada se quita con pa cuentas borrar <web>.`,
+    );
+    return 1;
+  }
+  if (!deps.ask && !(deps.isTty ?? process.stdin.isTTY)) {
+    out(NEEDS_TTY);
+    return 1;
+  }
+  const age = pendingAge(p);
+  out(
+    `Vas a descartar el alta a medias de ${p.domain}${age ? ` (${age})` : ''}: se borra la contraseña que preparé. Si la cuenta llegó a crearse en la web, allí sigue.`,
+  );
+  const typed = await (deps.ask ?? askLine)(`Escribe ${p.domain} para descartarla: `);
+  if (typed.trim().toLowerCase() !== p.domain) {
+    out('Cancelado: no he descartado nada.');
+    return 1;
+  }
+  await discardSignup(p.domain, vault);
+  out(`Descartada el alta a medias de ${p.domain}.`);
+  return 0;
+}
+
 async function borrar(
   site: string,
   vault: VaultOps,
@@ -238,7 +281,7 @@ async function cambiar(
 }
 
 export const CUENTAS_USO =
-  'No conozco esa orden. Usa: pa cuentas listar (tus cuentas), pa cuentas copiar <web> (copia la contraseña), pa cuentas borrar <web>, pa cuentas cambiar <web> o pa cuentas exportar keepass|bitwarden <fichero>.';
+  'No conozco esa orden. Usa: pa cuentas listar (tus cuentas), pa cuentas copiar <web> (copia la contraseña), pa cuentas borrar <web>, pa cuentas cambiar <web>, pa cuentas descartar <web> (un alta a medias) o pa cuentas exportar keepass|bitwarden <fichero>.';
 
 /** Como se dice de palabra: «pa cuentas lista», «copia wallapop», «borra …». */
 const ALIAS: Record<string, string> = {
@@ -248,6 +291,7 @@ const ALIAS: Record<string, string> = {
   borra: 'borrar',
   cambia: 'cambiar',
   exporta: 'exportar',
+  descarta: 'descartar',
 };
 
 export const CUENTAS_GESTOR_KO =
@@ -276,7 +320,7 @@ async function cuentasRun(
   const [rawSub = 'listar', a1, a2] = argv;
   const sub = ALIAS[rawSub.toLowerCase()] ?? rawSub.toLowerCase();
   // Una orden conocida a la que le falta la web no es «no conozco esa orden».
-  if (['copiar', 'borrar', 'cambiar'].includes(sub) && !a1) {
+  if (['copiar', 'borrar', 'cambiar', 'descartar'].includes(sub) && !a1) {
     out(`Falta la web: pa cuentas ${sub} <web>, por ejemplo pa cuentas ${sub} wallapop.es.`);
     return 2;
   }
@@ -334,6 +378,7 @@ async function cuentasRun(
   }
   if (sub === 'borrar' && a1) return borrar(a1, vault, deps, out);
   if (sub === 'cambiar' && a1) return cambiar(a1, vault, deps, out);
+  if (sub === 'descartar' && a1) return descartar(a1, vault, deps, out);
   out(CUENTAS_USO);
   return 2;
 }
