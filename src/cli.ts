@@ -9,7 +9,12 @@ import {
   modelSwitchWarnings,
   parseModelo,
 } from './model-choice.js';
-import { cleanProjectPath, ProjectContextStore } from './project-context.js';
+import {
+  cleanProjectPath,
+  ProjectContextStore,
+  projectLinkedReply,
+  projectStateReply,
+} from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
@@ -4690,12 +4695,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!arg || verb === 'estado') {
       const dir = projectContexts.get(thread.key);
       const ctx = projectContexts.load(thread.key);
-      const state = !dir
-        ? 'Sin carpeta de proyecto en esta conversación.'
-        : ctx?.ok
-          ? `Proyecto: ${ctx.dir} — cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno.`
-          : `Proyecto: ${dir} — ahora no cargo nada: ${ctx?.ok === false ? ctx.reason : 'sin fichero'}.`;
-      await say(inbound, `${state}\nUso: /proyecto <carpeta> · /proyecto quitar`, { quote: true });
+      await say(inbound, projectStateReply(dir, ctx), { quote: true });
       return;
     }
     const ctx = projectContexts.link(thread.key, arg);
@@ -4703,12 +4703,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, `No la ligo: ${ctx.reason}.`, { quote: true });
       return;
     }
-    const first = ctx.text.trim().split('\n')[0]?.slice(0, 80) ?? '';
-    await say(
-      inbound,
-      `Ligada ${ctx.dir}. Cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno de esta conversación${first ? `: «${first}»` : ''}.`,
-      { quote: true },
-    );
+    await say(inbound, projectLinkedReply(ctx), { quote: true });
   };
 
   // F7: /reintentar repite el último mensaje sin la respuesta anterior en el historial.

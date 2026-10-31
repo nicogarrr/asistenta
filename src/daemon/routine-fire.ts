@@ -158,7 +158,7 @@ export function createRoutineFire(
     }
     const text = reminder
       ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-      : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`;
+      : `⏰ ${ctx.routine.name}\n\n${body}`;
     const buttons = reminder
       ? deps.reminderButtons?.(ctx.scope, reminderText(ctx.routine))
       : undefined;

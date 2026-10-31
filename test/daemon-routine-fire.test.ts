@@ -74,7 +74,7 @@ describe('createRoutineFire (disparo de rutinas del daemon)', () => {
       routine: r,
     });
     expect(d.runTask).toHaveBeenCalledWith('resume el correo', expect.anything());
-    expect(d.send).toHaveBeenCalledWith('42', '⏰ Rutina "informe":\n\nhecho');
+    expect(d.send).toHaveBeenCalledWith('42', '⏰ informe\n\nhecho');
     expect(d.sync).not.toHaveBeenCalled();
   });
 
@@ -86,7 +86,7 @@ describe('createRoutineFire (disparo de rutinas del daemon)', () => {
     });
     const r = routine({});
     await createRoutineFire(d)('', { scope: r.scope, routine: r });
-    expect(d.send).toHaveBeenCalledWith('42', '⏰ Rutina "informe":\n\nNo devolvió respuesta.');
+    expect(d.send).toHaveBeenCalledWith('42', '⏰ informe\n\nNo devolvió respuesta.');
   });
 
   it('un recordatorio recurrente solo avisa, sin ejecutar nada', async () => {
