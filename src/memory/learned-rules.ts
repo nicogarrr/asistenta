@@ -174,6 +174,8 @@ export function saveLearnedRule(
   scope: string,
   rawRule: string,
   topic: string | null = null,
+  /** Lo que lee /aprendido en este chat: una regla igual en otro de estos ámbitos también se sustituye. */
+  readScopes: readonly string[] = [scope],
 ): LearnOutcome {
   const rule = rawRule.replace(/\s+/g, ' ').trim();
   if (!rule || rule.length > MAX_RULE_CHARS) return { status: 'invalid', rule };
@@ -182,7 +184,8 @@ export function saveLearnedRule(
   }
   const tTag = topicTag(topic);
   const tags = tTag ? [LEARNED_TAG, tTag] : [LEARNED_TAG];
-  const existing = learnedRules(memory, [scope]);
+  const looked = readScopes.includes(scope) ? readScopes : [scope, ...readScopes];
+  const existing = learnedRules(memory, looked);
   const matches = existing.filter(
     (e) => (tTag !== null && e.tags.includes(tTag)) || similar(e.text, rule),
   );
@@ -192,7 +195,7 @@ export function saveLearnedRule(
       // decían lo mismo: corregir en su sitio la dejaba con la fecha vieja, el tope la
       // olvidaba antes que reglas más viejas y otra parecida se quedaba duplicada.
       const e = memory.remember(scope, rule, { tags });
-      for (const m of matches) memory.forget(scope, m.id);
+      for (const m of matches) memory.forgetIn(looked, m.id);
       return { status: 'updated', rule, id: e.id };
     }
     const e = memory.remember(scope, rule, { tags });
@@ -231,7 +234,7 @@ export function learnFromTurn(opts: {
       outcome: null,
     };
   }
-  const outcome = saveLearnedRule(opts.memory, opts.scope, rule, topic);
+  const outcome = saveLearnedRule(opts.memory, opts.scope, rule, topic, opts.forgetScopes);
   if (outcome.status === 'saved' || outcome.status === 'updated') {
     const n = opts.forgetScopes
       ? learnedRules(opts.memory, opts.forgetScopes).findIndex((e) => e.id === outcome.id) + 1
