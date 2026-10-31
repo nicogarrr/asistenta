@@ -34,7 +34,7 @@ function norm(text: string): string {
 }
 
 const CORRECTION =
-  /(^|[\s,.!¡¿])(no,? asi no|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|prefiero|preferiria|a partir de ahora|de ahora en adelante|desde ahora|no vuelvas a|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|no me gusta que|quiero que siempre|siempre que te|te has (equivocado|confundido|colado)|te confundes|no es eso\b|no hace falta que|no necesito que|no quiero que (me )?(respondas|contestes|hables|escribas|pongas|digas|mandes|uses|llames|trates)|mejor no (me )?(pongas|uses|digas|mandes|hagas|escribas|respondas|contestes)|(recuerda|acuerdate de) que (siempre|nunca|prefiero)|cada vez que te (pida|diga|pregunte|escriba)|hablame de tu\b|tuteame|no me (hables|trates) de usted)/;
+  /(^|[\s,.!¡¿])(no,? asi no|no es asi|no era eso|te (he|lo he|habia) dicho|ya te (lo )?dije|te lo dije|no vuelvas a|nunca (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes)|no (me )?(hagas|pongas|digas|uses|respondas|mandes|escribas|contestes) (mas|nunca)|te equivocas|no me gusta que|quiero que siempre|siempre que te|te has (equivocado|confundido|colado)|te confundes|no es eso\b|no hace falta que|no necesito que|no quiero que (me )?(respondas|contestes|hables|escribas|pongas|digas|mandes|uses|llames|trates)|mejor no (me )?(pongas|uses|digas|mandes|hagas|escribas|respondas|contestes)|(recuerda|acuerdate de) que (siempre|nunca|prefiero)|cada vez que te (pida|diga|pregunte|escriba)|hablame de tu\b|tuteame|no me (hables|trates) de usted)/;
 
 /** Fin de frase: lo que sigue es nada o un signo (no «?»: «¿y eso no?» es una pregunta). */
 const END = String.raw`(?=\s*(?:$|[,.!;:]))`;
@@ -55,10 +55,35 @@ const LOOSE_CORRECTION = new RegExp(
   ].join('|'),
 );
 
+/** Cosas de cómo responde («prefiero respuestas cortas», «a partir de ahora sin emojis»). */
+const STYLE_NOUN = String.raw`(las |los |unas |unos )?(respuestas|mensajes|resumenes|explicaciones|textos|frases|listas|audios|notas|contestaciones|emojis|emoticonos)\b`;
+/** Lo que el dueño le pide a Asistenta («que me respondas», «no uses»). */
+const YOU_DO = String.raw`(no )?(me |te |lo |la |los |las |se |le |les )*(hagas|pongas|digas|uses|respondas|contestes|hables|escribas|mandes|envies|llames|trates|avises|preguntes|busques|repitas|tutees|seas|vayas|expliques|resumas|traduzcas|ensenes)\b`;
+const ORDER = String.raw`(hazlo|haz|hazme|pon|ponme|ponlo|usa|di|dime|dimelo|responde|respondeme|contesta|contestame|habla|hablame|escribe|escribeme|avisa|avisame|manda|mandame|llama|llamame|trata|tratame|tuteame|recuerda|acuerdate|pregunta|preguntame|busca|buscame|evita|intenta)\b`;
+/** Órdenes que no se confunden con la 3.ª persona («usa», «habla» sí: «mi hermano usa…»). */
+const ORDER_ME = String.raw`(haz|hazlo|hazme|pon|ponme|ponlo|di|dime|dimelo|respondeme|contestame|hablame|escribeme|avisame|mandame|llamame|tratame|tuteame|preguntame|buscame|acuerdate)\b`;
+const LANG = String.raw`(ingles|espanol|castellano|catalan|frances|aleman|italiano|portugues)\b`;
+const FROM_NOW = '(a partir de ahora|desde ahora|de ahora en adelante)';
+/**
+ * «prefiero» y «a partir de ahora» también son corrientes («no sé qué prefiero», «desde
+ * ahora hasta el viernes», «a partir de ahora estoy de vacaciones»): solo cuentan cuando
+ * hablan de cómo debe responder o hacer las cosas Asistenta.
+ */
+const PREFER_OR_FROM_NOW = new RegExp(
+  [
+    String.raw`(^|[\s,.!¡¿])(prefiero|preferiria) que ${YOU_DO}`,
+    String.raw`(^|[\s,.!¡¿])(prefiero|preferiria) (que (sean |me mandes |me pongas )?)?${STYLE_NOUN}`,
+    String.raw`(^|[\s,.!¡¿])(prefiero|preferiria) (algo |las cosas )?(mas )?(cort[oa]s?|breves?|resumid[oa]s?|direct[oa]s?|detallad[oa]s?|concis[oa]s?)\b`,
+    String.raw`(^|[\s,.!¡¿])(prefiero|preferiria) ((en |el )?${LANG}|el tuteo\b)`,
+    String.raw`(^|[\s,.!¡¿])${FROM_NOW},? (${ORDER}|${YOU_DO}|(siempre|nunca|mejor) (${ORDER}|${YOU_DO})|(quiero|prefiero|preferiria) que|(sin|solo|con) ${STYLE_NOUN}|sin (rodeos|tecnicismos|formalidades)\b|en ${LANG}|${STYLE_NOUN})`,
+    String.raw`(^|[\s,.!¡¿])(${ORDER_ME}|no ${YOU_DO})[^.!?]* ${FROM_NOW}${END}`,
+  ].join('|'),
+);
+
 /** ¿Parece el mensaje del dueño una corrección o una preferencia duradera? */
 export function looksLikeCorrection(text: string): boolean {
   const n = norm(text);
-  return CORRECTION.test(n) || LOOSE_CORRECTION.test(n);
+  return CORRECTION.test(n) || LOOSE_CORRECTION.test(n) || PREFER_OR_FROM_NOW.test(n);
 }
 
 export const LEARN_HINT =
