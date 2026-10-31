@@ -911,6 +911,7 @@ export class Gate {
   #isScopeBlockedForCall(c: ToolCall): boolean {
     const action = argString(c.args, 'action');
     if (c.tool === 'shell') return true;
+    if (this.#isMailSend(c)) return true;
     if (c.tool === 'browser' && action === 'exec_js') return true;
     if (
       c.tool === 'computer' &&
@@ -942,6 +943,7 @@ export class Gate {
   #isBlockedScopeTarget(tool: string, action: string | null): boolean {
     if (tool === 'shell') return true;
     if (action === null) return false;
+    if (tool === 'correo' && MAIL_SEND_ACTIONS.has(action)) return true;
     if (tool === 'browser' && action === 'exec_js') return true;
     // Un lote no se puede inspeccionar desde la clave: se trata como peligroso.
     if (tool === 'computer' && (COMPUTER_NEVER_SCOPED.has(action) || action === 'batch')) {
@@ -1046,6 +1048,15 @@ export class Gate {
    * the plan gets an explicit "sí" in the thread, and this ask is what keeps
    * the model from upgrading a conversation about a goal into an active one.
    */
+  /**
+   * Enviar un correo (tool `correo`: responder, reenviar, nuevo). Nico's rule: every
+   * outgoing mail is shown as the exact draft and sent only after his yes to THAT draft -
+   * never from the memo, a scope, an allow list, fullControl or the grant window.
+   */
+  #isMailSend(c: ToolCall): boolean {
+    return c.tool === 'correo' && MAIL_SEND_ACTIONS.has(argString(c.args, 'action'));
+  }
+
   #isGoalActivate(c: ToolCall): boolean {
     return c.tool === 'objetivo' && argString(c.args, 'action') === 'activar';
   }
@@ -1765,6 +1776,8 @@ export class Gate {
       (call.tool === 'servicio' && argString(call.args, 'action') === 'instalar');
     const goalActivate = this.#isGoalActivate(call);
     const gestionEjecutar = this.#isGestionEjecutar(call);
+    // Enviar correo: Nico ve el borrador exacto y lo aprueba cada vez.
+    const mailSend = this.#isMailSend(call);
     // The gestor's per-step effect guard: a reason string here forces the ask
     // path below, past every automatic allowance. Deny rules still win.
     // La puerta de exfiltración entra por el mismo camino que el guardia del gestor:
@@ -1785,6 +1798,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
+      !mailSend &&
       !noStanding
     ) {
       this.#markStarted(sessionId, fp, false);
@@ -1821,7 +1835,7 @@ export class Gate {
     // asking. Checked here rather than in the loop that honours allow rules, because
     // that loop only runs when no ask rule matched and a purchase flow trips the ask
     // rules on every single click.
-    if (!forced && !factoryInstall && this.#isPreflight(call)) {
+    if (!forced && !factoryInstall && !mailSend && this.#isPreflight(call)) {
       return this.#record(call, {
         verdict: 'allow',
         reason: 'pre-payment stage of a purchase flow',
@@ -1843,6 +1857,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
+      !mailSend &&
       !noStanding
     ) {
       // `#scopeLevelForCall` filtra ANTES las acciones que nunca admiten un
@@ -1877,6 +1892,7 @@ export class Gate {
         !factoryInstall &&
         !goalActivate &&
         !gestionEjecutar &&
+        !mailSend &&
         !noStanding
       ) {
         return this.#record(call, { verdict: 'allow', reason: 'full control' });
@@ -1888,6 +1904,7 @@ export class Gate {
       !factoryInstall &&
       !goalActivate &&
       !gestionEjecutar &&
+      !mailSend &&
       !noStanding &&
       this.#withinGrantWindow(sessionId, call)
     ) {
@@ -1919,6 +1936,7 @@ export class Gate {
         rule.verdict === 'allow' &&
         !confirmation &&
         !forced &&
+        !mailSend &&
         rule.match(call) &&
         askRule.id === 'ask-unlisted'
       ) {
@@ -2017,6 +2035,9 @@ const WEB_TOOLS = new Set(['browser', 'computer', 'shell', 'checkout']);
  * `browser`, `checkout`, `computer`, `tv`, `shell` and the booking tools are
  * decided in `classifyEffect`'s first switch, BEFORE any money signal.
  */
+/** `correo` actions that send mail: always asked (same set as src/tools/mail.ts). */
+const MAIL_SEND_ACTIONS = new Set(['responder', 'reenviar', 'nuevo']);
+
 const BOUNDED_EFFECT_TOOLS = new Set([
   'read',
   'list',
