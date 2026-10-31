@@ -22,7 +22,13 @@ esa página como imagen junto al PDF, en la carpeta `<nombre>-paginas/` (`pagina
 como mucho 10 por documento), y la enlaza al final del texto. Así siempre tienes el
 original a mano. Usa lo que ya trae Asistenta para leer PDFs; no instala nada más.
 
-Ejemplos: «pásame este PDF a texto», «resume este PDF».
+## Pedirlo con tus palabras
+
+Manda el PDF y escribe en el pie, por ejemplo, «pásame este PDF a texto», «sácame el
+texto» o «hazle OCR». Es lo mismo que el pie «/ocr md»: te devuelve el texto en Markdown
+y te avisa si una tabla no cuadra. Solo en tu chat privado; si la frase es una pregunta
+sobre el PDF («¿qué dice la página 3?», «resume este PDF»), contesta Asistenta como
+siempre.
 
 ## Créditos
 

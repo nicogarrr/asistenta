@@ -345,6 +345,7 @@ import {
   panelListenProblem,
   panelStartPlan,
 } from './panel-doctor.js';
+import { pdfToTextIntent } from './pdfmd/chat-intent.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
@@ -7328,6 +7329,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               }),
           });
           if (control === 'handled') return;
+          // «pásame este PDF a texto» con un PDF: el mismo trabajo que el pie «/ocr md».
+          if (isOwnerDm(inbound, vigilanteOwnerId) && pdfToTextIntent(inbound)) {
+            await cmdOcr(inbound, 'md');
+            return;
+          }
           // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
           if (inbound.chatId === briefingOwner() && closeLoop.answered(inbound.text)) {
             await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
