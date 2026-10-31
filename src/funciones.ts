@@ -241,6 +241,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'agenda',
     text: 'guardo tus cuentas y contraseñas fuertes en un gestor cifrado',
   },
+  correo_reglas: {
+    area: 'correo',
+    text: 'resumo tu correo por tipos (publicidad, avisos, estafas) y guardo tus reglas de correo',
+  },
   objetivo: { area: 'agenda', text: 'persigo un objetivo varios días y te aviso de los avances' },
   gestion: {
     area: 'agenda',

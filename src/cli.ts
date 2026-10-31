@@ -348,6 +348,7 @@ import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createMailTool } from './tools/mail.js';
+import { createMailRulesTool } from './tools/mail-rules.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
@@ -1968,6 +1969,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createWeatherTool(() => weatherConfigFromEnv()),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
+      createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,
