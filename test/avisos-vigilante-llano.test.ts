@@ -30,6 +30,6 @@ describe('avisos del vigilante en castellano llano', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(err).toBe('La autoactualización solo funciona en Windows.\n');
+    expect(err).toMatch(/^La autoactualización solo funciona en Windows\. Aquí actualízala a mano/);
   });
 });
