@@ -523,7 +523,7 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
-import { cliFatalMessage, unknownCommandMessage } from './cli-messages.js';
+import { cliFatalMessage, unknownCommandMessage, vaultListText } from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
   commandRoutineTag,
@@ -843,7 +843,7 @@ async function vaultCommand(args: string[]): Promise<number> {
     return 0;
   }
   if (sub === 'list') {
-    for (const k of await vaultList()) process.stdout.write(`${k}\n`);
+    process.stdout.write(vaultListText(await vaultList()));
     return 0;
   }
   if (sub === 'rm') {
