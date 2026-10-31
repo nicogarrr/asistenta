@@ -56,6 +56,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'preguntar', threadAllow: true },
   { name: 'memory', threadAllow: true },
   { name: 'reminder', threadAllow: true },
+  { name: 'tareas', threadAllow: true },
   { name: 'agenda', threadAllow: true },
   {
     name: 'cuentas',
