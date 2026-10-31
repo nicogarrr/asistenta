@@ -10,6 +10,7 @@ import {
   resolveRepeat,
   resolveStatus,
   STATUS_LABEL,
+  saysNextWeek,
   type TaskBoard,
   type TaskRepeat,
 } from '../tasks/board.js';
@@ -33,7 +34,7 @@ const Params = Type.Object({
   dia: Type.Optional(
     Type.String({
       description:
-        'apuntar/mover, or ver one day: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «5/11» or YYYY-MM-DD.',
+        'apuntar/mover, or ver one day: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «la semana que viene», «el mes que viene», «5/11» or YYYY-MM-DD.',
     }),
   ),
   hora: Type.Optional(
@@ -305,6 +306,10 @@ function run(deps: TasksToolDeps, args: Args): string {
   const now = new Date(`${board.today()}T12:00:00`);
   switch (args.action) {
     case 'ver': {
+      // «¿qué tengo la semana que viene?» con el día así dicho: la semana entera, no su lunes.
+      if (args.dia?.trim() && saysNextWeek(args.dia)) {
+        return weekText(board, deps.scopeOf(), true);
+      }
       if (args.dia?.trim() && args.semana !== 'proxima') {
         const day = resolveDay(args.dia.trim(), now);
         if (!day) return `No entiendo el día «${args.dia}». Dímelo como «jueves» o «5/11».`;

@@ -185,6 +185,16 @@ export function dayLabel(day: string): string {
   return `${WEEKDAY_LABEL[at.getDay()]} ${at.getDate()}`;
 }
 
+/** «la semana que viene», «la próxima semana», «para la semana siguiente». */
+export function saysNextWeek(input: string): boolean {
+  const t = fold(input)
+    .trim()
+    .replace(/^(?:para\s+)?(?:la\s+)?/, '');
+  return /^(?:semana que viene|proxima semana|semana proxima|siguiente semana|semana siguiente)$/.test(
+    t,
+  );
+}
+
 /**
  * Convierte lo que dice el dueño en un día: «hoy», «mañana», «pasado mañana», «jueves»,
  * «el jueves que viene», «próximo lunes», «5/11», «2026-11-05». Un día de la semana sin
@@ -204,10 +214,23 @@ export function resolveDay(input: string, now: Date): string | null {
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
   if (text === 'pasado manana') return addDays(today, 2);
-  const within = /^(?:dentro de|en)\s+(\w+)\s+(dias?|semanas?)$/.exec(text);
+  // «la semana que viene»: el lunes de esa semana; «el mes que viene»: su día 1 (gaps9).
+  if (saysNextWeek(text)) return addDays(weekStart(today), 7);
+  if (/^(?:mes que viene|proximo mes|mes proximo|siguiente mes|mes siguiente)$/.test(text)) {
+    const first = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12);
+    return `${first.getFullYear()}-${pad(first.getMonth() + 1)}-01`;
+  }
+  const within = /^(?:dentro de|en)\s+(\w+)\s+(dias?|semanas?|mes(?:es)?)$/.exec(text);
   if (within) {
     const n = smallNumber(within[1] ?? '');
     if (!Number.isInteger(n) || n < 0 || n > 366) return null;
+    if (within[2]?.startsWith('mes')) {
+      // «dentro de un mes»: el mismo día N meses después (el 31 se queda en el último día).
+      if (n > 24) return null;
+      const at = new Date(now.getFullYear(), now.getMonth() + n, 1, 12);
+      const last = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate();
+      return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(Math.min(now.getDate(), last))}`;
+    }
     return addDays(today, within[2]?.startsWith('semana') ? n * 7 : n);
   }
   if (/^(?:fin de semana|finde)$/.test(text)) {
