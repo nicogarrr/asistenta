@@ -287,6 +287,7 @@ import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { installDoctorLines } from './doctor-install.js';
 import { doctorLinesEs } from './doctor-labels.js';
 import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
+import { envSwitchesDoctorLine } from './env-flags.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -958,6 +959,8 @@ async function doctorCommand(): Promise<number> {
     `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );
   lines.push(briefingDoctorLine());
+  const switchesLine = envSwitchesDoctorLine();
+  if (switchesLine) lines.push(switchesLine);
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);

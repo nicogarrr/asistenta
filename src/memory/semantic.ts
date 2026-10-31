@@ -21,6 +21,7 @@
  *   secretos, pero no hace falta otra copia de nada).
  */
 import { createHash } from 'node:crypto';
+import { envSwitch } from '../env-flags.js';
 import { log } from '../log.js';
 
 /** Modelo multilingue pequeno (es/en), cuantizado q8, CPU. */
@@ -203,9 +204,9 @@ export function createLocalEmbedder(modelsDir: string, model = SEMANTIC_MODEL): 
 }
 
 /**
- * Embedder activado por entorno: sin PA_SEMANTIC_RECALL=1 devuelve undefined y
- * el recall queda exactamente como estaba (lexico puro).
+ * Embedder activado por entorno: sin PA_SEMANTIC_RECALL=1 (o sí/true/on) devuelve
+ * undefined y el recall queda exactamente como estaba (lexico puro).
  */
 export function semanticFromEnv(modelsDir: string, env = process.env): Embedder | undefined {
-  return env.PA_SEMANTIC_RECALL === '1' ? createLocalEmbedder(modelsDir) : undefined;
+  return envSwitch(env.PA_SEMANTIC_RECALL, false) ? createLocalEmbedder(modelsDir) : undefined;
 }
