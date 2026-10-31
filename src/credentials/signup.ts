@@ -109,7 +109,8 @@ export async function approveSignup(
 ): Promise<Account> {
   const p = await pendingOf(site, vault);
   if (!p) throw new AvisoCuenta('No hay ningún registro preparado para esa web.');
-  if (p.username !== correo.trim())
+  // El correo no distingue mayúsculas en la práctica: «Nico@Gmail.com» es el mismo buzón.
+  if (p.username.trim().toLowerCase() !== correo.trim().toLowerCase())
     throw new AvisoCuenta('Ese correo no es el del registro preparado; no sigo.');
   await vault.set(
     metaKey(p.domain),
