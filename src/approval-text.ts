@@ -88,6 +88,16 @@ export function formatApproval(
   const showArgs = opts.showArgs ?? true;
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
+  if (call.tool === 'cuentas' && call.args.action === 'confirmar_registro') {
+    const sitio = typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '';
+    const correo =
+      typeof call.args.correo === 'string' ? call.args.correo.trim().slice(0, 200) : '';
+    if (!sitio || !correo || hasInvisible(sitio + correo)) return deniedInvisible('cuentas');
+    const at = correo.indexOf('@');
+    const shown = at > 0 ? `${correo.charAt(0)}…${correo.slice(at)}` : correo;
+    const question = `Voy a crear tu cuenta en ${sitio} con tu correo ${shown}. ¿Confirmo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
   if (call.tool === 'browser' && target) {
     const [withCtx = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
     const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
