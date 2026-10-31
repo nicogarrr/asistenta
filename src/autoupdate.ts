@@ -208,7 +208,8 @@ const SKIPS: Record<string, string> = {
   reciente: 'ya me actualicé hace menos de 30 min',
   'en-curso': 'otra actualización está en curso',
   'cambios-locales': 'hay cambios locales sin guardar en git: no toco nada',
-  divergida: 'main local y origin/main se han separado (no es fast-forward): no toco nada',
+  divergida:
+    'tu copia tiene cambios propios que no están en la versión nueva: no toco nada para no perderlos',
   'no-en-marcha': 'Asistenta no está en marcha: espero a que vuelva',
   ocupada: 'Asistenta está haciendo algo o esperando tu permiso: lo dejo para luego',
   desconocido: 'no sé si Asistenta está ocupada: lo dejo para luego',
@@ -331,11 +332,12 @@ export async function runAutoupdate(
     if (branch !== 'main')
       return skip(`estás en la rama «${branch || '?'}»: solo me actualizo en main`);
     if ((await git(['fetch', '--quiet', 'origin', 'main'], 120_000)).code !== 0) {
-      return skip('no pude consultar GitHub (git fetch falló)', 'error');
+      return skip('no pude mirar si hay versión nueva (¿sin internet?)', 'error');
     }
     const old = (await git(['rev-parse', 'HEAD'])).out.trim();
     const remote = (await git(['rev-parse', 'origin/main'])).out.trim();
-    if (!old || !remote) return skip('git no me dijo en qué commit estoy', 'error');
+    if (!old || !remote)
+      return skip('no sé qué versión tengo instalada: prueba «pa doctor»', 'error');
     if (old === remote) return done('al-dia', `al día (${old.slice(0, 7)})`);
     const failedAt =
       state.failedRemote === remote && state.failedAt ? Date.parse(state.failedAt) : Number.NaN;
@@ -376,8 +378,10 @@ export async function runAutoupdate(
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
       const back = await startAndWait(deps, health);
       const tail = [
-        reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
-        back ? '' : ' (y no he vuelto a arrancar sana: mira pa autostart status)',
+        reset.code === 0
+          ? ''
+          : ' (y no he podido volver del todo a la versión anterior: prueba «pa doctor»)',
+        back ? '' : ' (y no he vuelto a arrancar bien: prueba «pa doctor»)',
       ].join('');
       // Un solo aviso por versión: si la misma vuelve a fallar, solo queda en pa autoupdate status.
       if (state.failedRemote !== remote)
@@ -391,16 +395,19 @@ export async function runAutoupdate(
     state.pending = { from: old, to: remote, at: new Date(deps.now()).toISOString() };
     writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), pending: state.pending });
     const merge = await git(['merge', '--ff-only', '--quiet', remote]);
-    if (merge.code !== 0) return await rollback('git merge --ff-only falló', merge.out);
+    if (merge.code !== 0) return await rollback('no pude aplicar los cambios nuevos', merge.out);
     if (lockChanged) {
       const ci = await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
-      if (ci.code !== 0) return await rollback('npm ci falló', ci.out);
+      if (ci.code !== 0)
+        return await rollback('no pude instalar las piezas nuevas (¿sin internet?)', ci.out);
     }
     const build = await npm(['run', 'build'], 10 * 60_000);
-    if (build.code !== 0) return await rollback('la compilación (npm run build) falló', build.out);
+    if (build.code !== 0) return await rollback('la versión nueva no se pudo preparar', build.out);
     if (!(await startAndWait(deps, health))) {
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
-      return await rollback(`no arrancó sana en ${Math.round(health / 1000)} s`);
+      return await rollback(
+        `la versión nueva no arrancaba bien (esperé ${Math.round(health / 1000)} s)`,
+      );
     }
     deps.dropBackup();
     state.pending = undefined;
