@@ -324,6 +324,7 @@ import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { formatServicesList, ServiceStore } from './services/store.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
+import { seedGeneralSkills } from './skills/general.js';
 import { fetchSkillMarkdown, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
 import { SkillStore } from './skills/store.js';
@@ -1406,6 +1407,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
   seedBuiltinSkills(skills);
+  seedGeneralSkills(skills);
   const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
   const adoptedServices = new ServiceStore({ dir: join(paths.state, 'services') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
