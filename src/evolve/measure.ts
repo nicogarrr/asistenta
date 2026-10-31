@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { linkBrowsers } from './browsers-path.js';
 import type { Measurement } from './score.js';
 
 /**
@@ -214,6 +215,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   let checksFailed = 0;
 
   const home = mkdtempSync(join(tmpdir(), 'evolve-home-'));
+  linkBrowsers(home);
   let names: { passing: string[]; failing: string[] } | null = null;
   let suiteError: string | null = null;
   try {
@@ -259,7 +261,10 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
 
   // The probes are the offline stand-in for the real flows. A failure here is worth more
   // than a failed unit test, and score.ts already prices it that way.
-  const probe = await exec('npx', ['tsx', 'evolve/probe-generic-flow.ts'], {
+  // vite-node viene con vitest (fijado en package-lock). `npx tsx` no es una dependencia: npx lo
+  // bajaba de internet en cada medición (con la casa desechable no hay caché), sin versión fija,
+  // y sin red la sonda no arrancaba. --no-install: nunca descarga nada.
+  const probe = await exec('npx', ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'], {
     cwd,
     timeout: timeoutMs,
     windowsHide: true,
