@@ -298,6 +298,7 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
+import { makeStrangerHint } from './owner-id-hint.js';
 import {
   type PanelListenProblem,
   panelBootFacts,
@@ -7101,6 +7102,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['help'], run: (inbound) => cmdHelp(inbound) },
   ]);
 
+  const strangerHint = makeStrangerHint();
   await registry.startAll({
     // Un canal caido avisa una vez por caida y reintenta solo (antes: una linea
     // de log y canal muerto hasta reinicio, sin aviso — auditoria, linea 120).
@@ -7215,7 +7217,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         (error) => log.error('inbound message failed', { error: startupFailureMessage(error) }),
       );
     },
-    log: (level, msg, fields) => log[level](msg, fields ?? {}),
+    log: (level, msg, fields) => {
+      log[level](msg, fields ?? {});
+      // ¿Un ID mal guardado al instalar? Que se vea en el PC, en castellano.
+      const hint = strangerHint(msg, fields);
+      if (hint) process.stderr.write(`${hint}\n`);
+    },
   });
 
   // F3: webhook local para lanzar una rutina (apagado por defecto; docs/webhook.md).
