@@ -28,7 +28,7 @@ const STATED: readonly RegExp[] = [
   /^soy\s+(?:alérgic|alergic|vegetarian|vegan|celíac|celiac|intolerante|diabétic|diabetic)/i,
   /^tengo\s+(?:un|una|dos|tres)\s+(?:perr|gat|hij|herman)/i,
   // preferencias sobre cómo tratarle
-  /^(?:no me (?:escribas|mandes|llames|hables|avises|despiertes)|prefiero|me gusta|no me gusta|me encanta|odio)\s+\S/i,
+  /^(?:no me (?:escribas|mandes|envíes|envies|llames|hables|avises|despiertes|molestes)|prefiero|me gusta|no me gusta|me encanta|odio)\s+\S/i,
 ];
 
 /**
@@ -43,7 +43,9 @@ export function statedFact(text: string): string | null {
     .replace(TRAILER, '')
     .replace(/[.!]+$/, '');
   if (one.length < 8 || one.length > 140) return null;
-  if (/[?¿]/.test(one) || /^si\s/i.test(one) || TEMPORARY.test(one)) return null;
+  // «antes de las 9 de la mañana» es una hora, no «mañana»: no la hace pasajera.
+  const timeless = one.replace(/(\d(?:\s+y\s+(?:media|cuarto))?)\s+de la ma(?:ñ|n)ana\b/gi, '$1');
+  if (/[?¿]/.test(one) || /^si\s/i.test(one) || TEMPORARY.test(timeless)) return null;
   // Otra frase detrás («…, ayúdame con…», «…. Mira esto») es otro pedido.
   if (/,|;|:|[.!]\s+\p{L}/u.test(one.replace(/\b(?:dr|dra|sr|sra|d|dña)\.\s/giu, ''))) return null;
   if (!STATED.some((re) => re.test(one))) return null;

@@ -8,7 +8,8 @@ import { DEFAULT_QUIET_HOURS, type QuietHours } from '../ojo.js';
 import { foldAccents } from '../text.js';
 import { SAID_PREFIX } from './owner-facts.js';
 
-const DONT = 'no me (?:escribas|mandes(?: nada| mensajes)?|hables|avises|despiertes|molestes)';
+const DONT =
+  'no me (?:escribas|(?:mandes|envies)(?: nada| mensajes)?|hables|avises|despiertes|molestes)';
 const HOUR = String.raw`(?:la|las) (\d{1,2})(?:(?::|\.)(\d{2})| y (?:media|cuarto))?`;
 const BEFORE = new RegExp(`${DONT} antes de ${HOUR}(?: de la (manana|tarde|noche))?`);
 const AFTER = new RegExp(
