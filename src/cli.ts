@@ -170,10 +170,19 @@ import {
   learnFromTurn,
 } from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
+import {
+  aboutMeText,
+  FACT_SAVED_LINE,
+  forgetRequest,
+  isAboutMeRequest,
+  RecentFacts,
+  SAID_PREFIX,
+  statedFact,
+} from './memory/owner-facts.js';
 import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import { SessionStore } from './memory/sessions.js';
-import { MemorySnapshot } from './memory/snapshot.js';
+import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
@@ -4678,6 +4687,37 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   setInterval(() => void closeLoop.tick().catch(() => null), 10 * 60 * 1000).unref();
 
+  // Lo que el dueño cuenta de sí mismo: se apunta al momento en su perfil, «¿qué sabes
+  // de mí?» lo enseña y «olvida eso» / «olvida lo de …» lo borra. Solo su chat privado.
+  const recentFacts = new RecentFacts();
+  const answerOwnerFacts = async (inbound: Inbound): Promise<boolean> => {
+    const text = inbound.text;
+    if (isAboutMeRequest(text)) {
+      const entries = snapshot.load().split(ENTRY_SEPARATOR);
+      await say(inbound, aboutMeText(entries.filter((e) => e.trim())), { quote: true });
+      return true;
+    }
+    const forget = forgetRequest(text);
+    if (forget) {
+      // «olvida eso» sin nada recién apuntado puede ser otra cosa: lo lleva el modelo.
+      const target = forget.kind === 'last' ? recentFacts.take(chatKey(inbound)) : forget.query;
+      if (!target) return false;
+      const removed = snapshot.removeEntries(target);
+      if (removed === 0 && forget.kind === 'match') return false;
+      await say(inbound, removed > 0 ? 'Hecho, lo he olvidado.' : 'Ya no lo tenía apuntado.', {
+        quote: true,
+      });
+      return true;
+    }
+    const fact = statedFact(text);
+    if (fact && !looksLikeCredential(fact)) {
+      const entry = `${SAID_PREFIX} ${fact}`;
+      if (snapshot.appendEntry(entry).ok) recentFacts.remember(chatKey(inbound), entry);
+    }
+    // El turno sigue: el modelo contesta con el dato ya en el perfil.
+    return false;
+  };
+
   // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
   // Ver docs/ocr-telegram.md.
   if (process.env.PA_OCR_WATCH_DIR?.trim()) {
@@ -6193,6 +6233,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       if (thread.generation !== generation) return;
 
+      // Lo que contó de sí mismo ya está en su perfil (se apuntó al llegar): que lo sepa.
+      const saidNow = recentFacts.peek(chatKey(inbound));
+      const factSaved =
+        saidNow !== null && saidNow === `${SAID_PREFIX} ${statedFact(inbound.text) ?? ''}`;
+      if (factSaved && !/apunt|guard|anot|record/i.test(result.text)) {
+        result = { ...result, text: `${result.text}\n\n${FACT_SAVED_LINE}`.trim() };
+      }
+
       // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la
       // memoria del chat y la respuesta lleva una línea «📝 Aprendido: …» (sin aprobación).
       const learnt = learnFromTurn({
@@ -6342,7 +6390,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // have to remember to ask: the moment they say "prefiero X" is the moment it
       // costs least to write it down.
       const nudge = detectMemoryWorthy(inbound.text);
-      if (nudge.worth) {
+      // Ya apuntado al llegar («mi dentista es…»): sin pregunta «¿lo guardo?».
+      if (nudge.worth && !factSaved) {
         // Modelo de usuario auto-enriquecido: el mismo hecho visto en
         // AUTOSAVE_DAYS días distintos deja de ser pregunta y se guarda solo,
         // marcado [auto], visible con action=profile y borrable con
@@ -7277,6 +7326,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
             return;
           }
+          if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
