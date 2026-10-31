@@ -271,5 +271,5 @@ function commandFailure(err: unknown): string {
   if (/ENOENT|not found|no such file/i.test(raw)) return 'no encuentro el programa';
   if (/EACCES|EPERM|denied/i.test(raw)) return 'no tengo permiso para ejecutarlo';
   if (/ETIMEDOUT|timed? ?out/i.test(raw)) return 'tardó demasiado';
-  return 'fallo interno (el detalle está en el registro)';
+  return 'algo ha fallado por mi parte';
 }
