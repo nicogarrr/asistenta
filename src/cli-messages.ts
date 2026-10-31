@@ -23,3 +23,8 @@ export function vaultListText(names: readonly string[]): string {
     return 'No hay ninguna clave guardada todavía. Para guardar una: pa vault set-stdin <nombre> (o vuelve a abrir instalar.bat)\n';
   return names.map((name) => `${name}\n`).join('');
 }
+
+/** `pa vault get|rm` de un nombre que no existe. */
+export function vaultMissingText(name: string): string {
+  return `No hay ninguna clave guardada con el nombre «${name}». Para verlas: pa vault list\n`;
+}
