@@ -10,7 +10,7 @@ node dist/cli.js autostart install --start
 
 O directamente `powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-all.ps1 -Start`.
 
-Requisitos ya preparados: Node >=24, vault DPAPI configurado con Telegram y allowlist, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
+Requisitos ya preparados: Node >=24 y la caja fuerte (vault DPAPI) con Telegram y tu ID — `instalar.bat` deja ambas cosas listas en un paso —, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
 
 ## Antes de instalar: `pa iniciar`
 
