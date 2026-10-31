@@ -2534,6 +2534,9 @@ export function externalReadSource(call: ToolCall): string | null {
       return 'documento';
     case 'ocr':
       return 'documento escaneado';
+    // El correo es privado y lo escriben terceros: tras leerlo, la sesión queda marcada.
+    case 'correo':
+      return 'correo';
     default:
       return tool.startsWith('mcp') ? `herramienta MCP ${tool}` : null;
   }
