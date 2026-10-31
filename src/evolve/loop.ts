@@ -232,6 +232,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
 
         // What is checked is what is measured: commit the working tree first.
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
+        const checkedHead = headCommit(sandbox.dir);
         const touched = changedFiles(root, kernel, sandbox.branch);
         const patch = diffText(root, kernel, sandbox.branch);
         const forbidden = [
@@ -328,6 +329,24 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
               ? { ...verdict, reason: `${verdict.reason}; ${bv.reason}` }
               : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
           }
+        }
+        // Lo medido tiene que ser lo revisado. Un proceso que el proponente dejó vivo, o el propio
+        // código del intento durante sus tests, puede cambiar la copia después del guard (un test,
+        // la config, node_modules o su git): los números serían de otro árbol que el parche.
+        if (
+          headCommit(sandbox.dir) !== checkedHead ||
+          !isClean(sandbox.dir) ||
+          depsFingerprint(sandbox.dir) !== depsBefore ||
+          sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore
+        ) {
+          unmeasured = true;
+          proposerDown = true;
+          verdict = {
+            kind: 'discard',
+            delta: verdict.delta,
+            reason:
+              'la copia del intento cambió después de revisarla (ficheros, dependencias o git): lo medido no es el parche; no se promueve',
+          };
         }
         // Medir también ejecuta código del intento (sus tests, la batería): el kernel tiene que
         // seguir igual después. Primero la huella de .git, que se lee sin llamar a git.
