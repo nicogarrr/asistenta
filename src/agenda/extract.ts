@@ -40,6 +40,7 @@
  * reads is never folded; only the copy the patterns run against.
  */
 
+import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { localTimeZone } from '../datecontext.js';
 import type { MailMessage } from '../mail/types.js';
 import { zonedAddDays, zonedDayKey, zonedParts, zonedTime } from './ics.js';
@@ -768,8 +769,12 @@ function fold(value: string): string {
     .trim();
 }
 
-const SPOKEN_TIME_RE =
-  /\b(a las|a la|sobre las|hacia las|desde las) (\d{1,2})(?:[:.](\d{2})(?!\d)| y (media|cuarto)| menos (cuarto))?(?: ?(?:h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?/g;
+// «y diez», «y veinte», «menos veinte», «y treinta y cinco», «y 15» (gaps8): before,
+// only media/cuarto were read and «a las 9 y diez» was 9:00.
+const SPOKEN_TIME_RE = new RegExp(
+  `\\b(a las|a la|sobre las|hacia las|desde las) (\\d{1,2})(?:[:.](\\d{2})(?!\\d)| y (${MINUTES_AFTER})(?![\\d:.])| menos (${MINUTES_BEFORE})(?![\\d:.]))?(?: ?(?:h|hs|hrs|horas)\\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?`,
+  'g',
+);
 
 /**
  * Spoken Spanish clocks, rewritten as "a las HH:MM" before anything else reads the text.
@@ -819,13 +824,14 @@ function spokenTimes(folded: string): string {
     (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
       let hour = Number(h);
       let minute = mm !== undefined ? Number(mm) : 0;
-      if (half === 'media') minute = 30;
-      else if (half === 'cuarto') minute = 15;
+      if (half) minute = minuteSaid(half);
       else if (less) {
+        const before = minuteSaid(less);
+        if (!(before >= 1 && before <= 30)) return whole;
         hour -= 1;
-        minute = 45;
+        minute = 60 - before;
       }
-      if (hour < 0 || hour > 23 || minute > 59) return whole;
+      if (hour < 0 || hour > 23 || !(minute >= 0 && minute <= 59)) return whole;
       const explicit = mm !== undefined || /h|hs|hrs|horas/.test(whole.slice(lead.length));
       if (part === 'de la manana' || part === 'de la madrugada') {
         if (hour === 12) hour = 0;
