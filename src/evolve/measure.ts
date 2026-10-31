@@ -206,8 +206,22 @@ export function probeUnfinished(output: string, code: number | string | null): s
   return `la sonda de extremo a extremo no terminó (salida ${code ?? 'sin código'}, sin «FLUJO GENERICO OK»): no medido`;
 }
 
+/**
+ * Cómo lanzar npx. En Windows es npx.cmd: execFile sin shell no lo encuentra (ENOENT) y, desde
+ * Node 18.20/20.12, un .cmd sin shell da EINVAL. Así en el PC de Nico la medición fallaba
+ * siempre y ninguna semana arrancaba. Los argumentos son fijos y sin espacios: la shell no
+ * recibe nada del intento.
+ */
+export function npxCommand(platform: NodeJS.Platform = process.platform): {
+  file: string;
+  shell: boolean;
+} {
+  return platform === 'win32' ? { file: 'npx.cmd', shell: true } : { file: 'npx', shell: false };
+}
+
 export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const cwd = opts.cwd;
+  const npx = npxCommand();
   const timeoutMs = opts.timeoutMs ?? 20 * 60_000;
   const started = Date.now();
   let passed = 0;
@@ -222,8 +236,9 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   try {
     // No --outputFile: the JSON report comes on vitest's own standard output (see
     // reportFromOutput), not as a file another process of the same user can rewrite.
-    const suite = await exec('npx', ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
+    const suite = await exec(npx.file, ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
       cwd,
+      shell: npx.shell,
       timeout: timeoutMs,
       windowsHide: true,
       env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
@@ -265,13 +280,18 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   // vite-node viene con vitest (fijado en package-lock). `npx tsx` no es una dependencia: npx lo
   // bajaba de internet en cada medición (con la casa desechable no hay caché), sin versión fija,
   // y sin red la sonda no arrancaba. --no-install: nunca descarga nada.
-  const probe = await exec('npx', ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'], {
-    cwd,
-    timeout: timeoutMs,
-    windowsHide: true,
-    env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
-    maxBuffer: 8 * 1024 * 1024,
-  })
+  const probe = await exec(
+    npx.file,
+    ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'],
+    {
+      cwd,
+      shell: npx.shell,
+      timeout: timeoutMs,
+      windowsHide: true,
+      env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  )
     .then((r) => ({ ...r, code: 0 as number | string | null }))
     .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
       stdout: err.stdout ?? '',
