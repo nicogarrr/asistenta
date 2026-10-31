@@ -290,6 +290,7 @@ import {
 } from './command-routine.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import { envHashDoctorLine } from './doctor-env-hash.js';
 import { installDoctorLines } from './doctor-install.js';
 import { doctorLinesEs } from './doctor-labels.js';
 import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
@@ -967,6 +968,8 @@ async function doctorCommand(): Promise<number> {
   if (switchesLine) lines.push(switchesLine);
   const numbersLine = envNumbersDoctorLine();
   if (numbersLine) lines.push(numbersLine);
+  const hashLine = envHashDoctorLine();
+  if (hashLine) lines.push(hashLine);
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);
