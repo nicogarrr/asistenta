@@ -37,14 +37,51 @@ export function autostartRepo(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL('..', moduleUrl));
 }
 
-type ExecResult = { error: Error | null; stdout: string };
+type ExecError = Error & { code?: unknown; killed?: boolean };
+type ExecResult = { error: ExecError | null; stdout: string; stderr: string };
 
 function runExe(exe: string, flags: string[], timeout = 120_000): Promise<ExecResult> {
   return new Promise<ExecResult>((resolve) => {
-    execFile(exe, flags, { windowsHide: true, timeout, maxBuffer: 64 * 1024 }, (error, stdout) =>
-      resolve({ error: error ?? null, stdout: String(stdout ?? '') }),
+    execFile(
+      exe,
+      flags,
+      { windowsHide: true, timeout, maxBuffer: 64 * 1024 },
+      (error, stdout, stderr) =>
+        resolve({
+          error: (error as ExecError | null) ?? null,
+          stdout: String(stdout ?? ''),
+          stderr: String(stderr ?? ''),
+        }),
     );
   });
+}
+
+const AUTOSTART_FAIL_HINTS: Record<string, string> = {
+  compilar: 'falta compilar Asistenta. Ejecuta instalar.bat (o npm run build) y repite.',
+  navegador:
+    'falta preparar el navegador de Asistenta. Ejecuta deploy\\browserd\\setup-browserd.ps1 y repite.',
+  archivos: 'faltan archivos de Asistenta. Vuelve a descargarla (o haz git pull) y repite.',
+  node: 'Asistenta necesita Node 24 o más nuevo. Instálalo desde nodejs.org y repite.',
+  parada: 'no pude parar Asistenta antes de quitar el autoarranque. Ejecuta pa stop y repite.',
+  permiso:
+    'Windows no dio permiso para crear las tareas programadas. Repite desde una terminal abierta como administrador.',
+};
+
+/** Frase clara (qué pasó y qué hacer) para un fallo del instalador; nunca vuelca su stderr. */
+export function autostartFailureMessage(error: ExecError, stderr: string): string {
+  const head = 'Autoarranque no completado: ';
+  if (error.code === 'ENOENT') {
+    return `${head}no encuentro Windows PowerShell en este PC, y sin él no puedo registrar el arranque.`;
+  }
+  if (error.killed) {
+    return `${head}el instalador tardó más de 2 minutos y lo paré. Vuelve a probar; si se repite, reinicia el PC y repite.`;
+  }
+  const motivo = /^MOTIVO=([a-z]+)\s*$/m.exec(stderr)?.[1] ?? '';
+  return (
+    head +
+    (AUTOSTART_FAIL_HINTS[motivo] ??
+      'algo falló al registrar las tareas. Repite el comando; si vuelve a fallar, ejecuta pa doctor para ver qué falta.')
+  );
 }
 
 function windowsExe(...parts: string[]): string {
@@ -184,7 +221,7 @@ export async function autostartCommand(
   const r = await runExe(windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'), flags);
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.error) {
-    process.stderr.write('Autoarranque no completado; revisa requisitos y permisos locales.\n');
+    process.stderr.write(`${autostartFailureMessage(r.error, r.stderr)}\n`);
     return 1;
   }
   // --start la deja encendida a propósito: igual que `pa iniciar`, quita la marca de

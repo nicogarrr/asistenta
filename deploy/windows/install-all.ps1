@@ -84,4 +84,9 @@ try{
  }
  Write-Output 'Instalación solicitada. No se reinicia una instancia ya activa. Consulta pa autostart status.'
  exit 0
-}catch{[Console]::Error.WriteLine('No se completó autoarranque; revisa requisitos/permisos locales. No se imprimen configuración ni secretos.');exit 1}
+}catch{
+ # Motivo corto y estable para pa autostart (sin rutas, configuracion ni secretos).
+ $m=[string]$_.Exception.Message;$h=$_.Exception.HResult
+ $motivo=if($m -like 'Falta requisito: dist\*'){'compilar'}elseif($m -like 'Falta requisito: browserd\*'){'navegador'}elseif($m -like 'Falta requisito:*'){'archivos'}elseif($m -like 'Se requiere Node24*'){'node'}elseif($m -like 'Parada limpia no confirmada*'){'parada'}elseif($_.Exception -is [UnauthorizedAccessException] -or $h -eq -2147024891){'permiso'}else{'otro'}
+ [Console]::Error.WriteLine('MOTIVO='+$motivo)
+ [Console]::Error.WriteLine('No se completó autoarranque; revisa requisitos/permisos locales. No se imprimen configuración ni secretos.');exit 1}
