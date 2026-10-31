@@ -35,7 +35,7 @@ describe('panel: estados de error y de token', () => {
     expect(html).toContain('type="password"');
     expect(html).toContain("'Reintentar'");
     expect(html).toContain('formato.mensajeDeError(respuesta.status, datos)');
-    expect(html).toContain("' con error · '");
+    expect(html).toContain("' secciones sin cargar · '");
     for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
       expect(() => new Function(m[1] ?? '')).not.toThrow();
     }
