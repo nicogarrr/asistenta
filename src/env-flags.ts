@@ -56,6 +56,10 @@ const ENV_NUMBERS: ReadonlyArray<{ name: string; ok: (v: string) => boolean; exa
   { name: 'PA_FILE_RETENTION_DAYS', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '30' },
   { name: 'PA_DOCUMENT_RETENTION_DAYS', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '90' },
   { name: 'PA_LOG_DAY_MAX_MB', ok: (v) => /^\d+(\.\d+)?$/.test(v), example: '20' },
+  // Webhook: «20 por minuto» o «0» dejaban el límite en 10 sin avisar.
+  { name: 'PA_WEBHOOK_PER_MINUTE', ok: (v) => /^\d+$/.test(v) && Number(v) >= 1, example: '10' },
+  // Computer Use: solo aviso; cómo se lee el ajuste no cambia (src/screen/windows.ts).
+  { name: 'PA_COMPUTER_PASTE_SETTLE_MS', ok: (v) => /^\d+$/.test(v), example: '400' },
   {
     name: 'PA_COMPACT_TOKENS',
     ok: (v) => /^\d+k?$/i.test(v.replace(/[\s._,]/g, '')),
