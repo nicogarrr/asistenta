@@ -472,7 +472,7 @@ Uso:
   pa run "<orden>"        una orden sin supervisión (solo lectura, sin preguntas)
   pa vault init           crear la caja fuerte cifrada de claves
   pa vault set <k> <v>    guardar una clave (mejor set-stdin: así no queda en el historial)
-  pa vault set-stdin <k>  guardar secreto desde pipe privado, sin valor en argv
+  pa vault set-stdin <k>  guardar un secreto: te lo pide sin que se vea (no queda en el historial)
   pa vault get <k>        enseñar una clave en pantalla
   pa vault list           ver los nombres de las claves (nunca los valores)
   pa vault rm <k>         borrar una clave
