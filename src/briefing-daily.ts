@@ -50,6 +50,8 @@ export interface DailyBriefingDeps {
   speak?: (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
   /** Objetivos activos o bloqueados del dueño. */
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
+  /** Tareas del tablero del dueño: hoy sin hacer y atrasadas. */
+  tasks?: () => BriefingInput['tasks'] | Promise<BriefingInput['tasks']>;
   /** Vigilancias de precio activas del dueño. */
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
   sourceTimeoutMs?: number;
@@ -114,8 +116,8 @@ export async function composeDailyBriefing(
 ): Promise<{ text: string; empty: boolean }> {
   const now = deps.now();
   const ms = deps.sourceTimeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS;
-  const [agenda, routines, reminders, followups, weather, mail, goals, watches] = await Promise.all(
-    [
+  const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks] =
+    await Promise.all([
       within('agenda', deps.agenda, [], ms, deps.warn),
       within('rutinas', deps.routines, [], ms, deps.warn),
       within('recordatorios', deps.reminders, [], ms, deps.warn),
@@ -124,8 +126,8 @@ export async function composeDailyBriefing(
       within('correo', deps.mail, [], ms, deps.warn),
       within('objetivos', deps.goals, [], ms, deps.warn),
       within('precios', deps.watches, [], ms, deps.warn),
-    ],
-  );
+      within('tareas', deps.tasks, [], ms, deps.warn),
+    ]);
   const input: BriefingInput = {
     greeting: greetingFor(now),
     today: now,
@@ -137,10 +139,12 @@ export async function composeDailyBriefing(
     mail: (mail ?? []).slice(0, MAX_MAIL),
     goals: goals ?? [],
     watches: watches ?? [],
+    tasks: tasks ?? [],
   };
   const empty =
     !input.weather &&
     input.agenda.length === 0 &&
+    (input.tasks?.length ?? 0) === 0 &&
     input.routines.length === 0 &&
     input.reminders.length === 0 &&
     input.followups.length === 0 &&

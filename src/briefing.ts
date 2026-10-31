@@ -24,6 +24,8 @@ export interface BriefingInput {
   followups: Array<{ subject: string; due?: string }>;
   reminders: Array<{ text: string; at?: string }>;
   agenda: Array<{ title: string; when: string }>;
+  /** Tareas del tablero para hoy sin hacer, y las atrasadas. */
+  tasks?: Array<{ title: string; time?: string; late?: boolean }>;
   /** Una línea ya redactada con el tiempo de hoy («Madrid: 12–21 °C, despejado»). */
   weather?: string;
   /** Correo sin leer que merece mirarse hoy. Solo remitente y asunto, nunca el cuerpo. */
@@ -49,6 +51,12 @@ function dayLabel(today: Date): string {
   if (Number.isNaN(today.getTime())) return 'hoy';
   const w = wallClock(today);
   return `${WEEKDAYS_ES[w.weekday] ?? 'día'} ${pad(w.day)}/${pad(w.month)}`;
+}
+
+function taskLine(item: { title: string; time?: string; late?: boolean }): string | null {
+  const title = oneLine(item.title, 160);
+  if (!title) return null;
+  return `${item.time ? `${item.time} ` : ''}${title}${item.late ? ' (atrasada)' : ''}`;
 }
 
 function agendaLine(item: { title: string; when: string }): string | null {
@@ -164,6 +172,10 @@ export function buildBriefing(input: BriefingInput): string {
     {
       title: 'Hoy',
       items: section(input.agenda.map(agendaLine)),
+    },
+    {
+      title: 'Tareas',
+      items: section((input.tasks ?? []).map(taskLine)),
     },
     {
       title: 'Correo',

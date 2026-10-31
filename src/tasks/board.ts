@@ -283,3 +283,21 @@ export class TaskBoard {
     return task;
   }
 }
+
+/** Para el resumen de la mañana: lo de hoy sin hacer y lo atrasado, como mucho `max`. */
+export function briefingTasks(
+  board: Pick<TaskBoard, 'all' | 'today'>,
+  scope: string,
+  max = 8,
+): Array<{ title: string; time?: string; late?: boolean }> {
+  const today = board.today();
+  return board
+    .all(scope)
+    .filter((t) => t.status !== 'hecho' && t.day <= today)
+    .slice(0, max)
+    .map((t) => ({
+      title: t.title,
+      ...(t.day === today && t.time ? { time: t.time } : {}),
+      ...(t.day < today ? { late: true } : {}),
+    }));
+}
