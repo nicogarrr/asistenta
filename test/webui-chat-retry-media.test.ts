@@ -108,7 +108,7 @@ describe('panel: las capturas de un turno se ven en el chat', () => {
       ['img', png],
       ['img', 'data:image/jpeg;base64,/9j/4AAQ'],
     ]);
-    expect(caja?.children[0]?.alt).toBe('Captura 1 del turno');
+    expect(caja?.children[0]?.alt).toBe('Captura 1');
   });
 
   it('como mucho 4 capturas, y ninguna caja si no hay', () => {
