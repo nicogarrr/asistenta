@@ -520,7 +520,7 @@ function parseOne(text: string): TvIntent | null {
   // Estado: preguntas, no ordenes.
   if (
     new RegExp(
-      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV}|^(?:a )?que volumen (?:tiene|esta|hay|lleva)|^que canal (?:tiene|esta|hay)(?: puesto)?)\\b`,
+      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV}|^(?:a )?que volumen (?:tiene|esta|hay|lleva)|^(?:a )?cuanto (?:volumen )?(?:tiene|esta|hay|lleva)(?: (?:el|de) volumen)?$|^(?:en )?que canal (?:tiene|esta|hay)(?: puesto)?|^que (?:app|aplicacion) (?:tiene|esta|hay)(?: (?:abierta|puesta))?$)\\b`,
     ).test(t)
   ) {
     return { action: 'status' };
