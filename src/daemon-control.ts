@@ -420,6 +420,27 @@ export async function requestDaemonControl(
   }
 }
 
+/** True when no process holds `owner.lock` (or it was never created). Probe only; holds nothing. */
+function ownerLockFree(dir: string): boolean {
+  const lock = join(dir, 'owner.lock');
+  let fd: number;
+  try {
+    ownedPrivate(lock, false);
+    fd = openSync(lock, constants.O_RDWR | constants.O_NOFOLLOW);
+  } catch (error) {
+    return isMissingFile(error);
+  }
+  try {
+    const probe = spawnSync('flock', ['--exclusive', '--nonblock', '4'], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ignore', fd],
+      timeout: 3000,
+    });
+    return !probe.error && probe.status === 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Stop and prove both graceful completion and release of OS ownership. */
 export async function stopDaemon(
   stateDir: string,
@@ -438,6 +459,13 @@ export async function stopDaemon(
   } catch (error) {
     // No ready record, or a record left behind with no control socket: nothing is running.
     if (isMissingFile(error)) throw new DaemonNotRunningError();
+    // A ready.json half-written by a power cut: if nobody holds the owner lock, nothing runs.
+    if (
+      error instanceof Error &&
+      /^Metadata de control (ilegible|inválida)\./.test(error.message) &&
+      ownerLockFree(dir)
+    )
+      throw new DaemonNotRunningError();
     throw error;
   }
   if (ack.instanceId !== original.instanceId)
