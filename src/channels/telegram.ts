@@ -1066,7 +1066,7 @@ export class TelegramChannel implements ChannelAdapter {
       withTimeout(
         this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
           message_thread_id: threadId ? Number(threadId) : undefined,
-          caption: fitCaption(`. ${Math.round(seconds)}s de microfono`),
+          caption: fitCaption(`. ${Math.round(seconds)}s de micrófono`),
         }),
         60_000,
         'sendVoice timed out',
