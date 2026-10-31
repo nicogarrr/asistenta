@@ -420,7 +420,23 @@ function cliTexts(text: string): string[] {
     .replace(/\\/g, ' ')
     .replace(/["'`^]/g, '')
     .replace(/\s+/g, ' ');
-  return [cliText(text), joined];
+  // «'pa va' + 'ult get'»: el texto que queda al pegar las piezas entre comillas.
+  const glued = text.replace(/(["'])\s*\+\s*(["'])/g, '');
+  return glued === text ? [cliText(text), joined] : [cliText(text), joined, ...cliTexts(glued)];
+}
+
+/** Ficheros que se ejecutan como órdenes al lanzarlos (`.\\x.ps1`, `x.bat`, `sh x.sh`). */
+const SCRIPT_FILE = /\.(ps1|psm1|bat|cmd|sh|vbs)$/i;
+
+/**
+ * La orden que hay que leer: lo que ejecuta el shell, lo que se teclea con `computer`
+ * o lo que se escribe en un script (escribir `pa vault get` en `x.ps1` y luego
+ * lanzarlo es lo mismo que ejecutarlo). `null` para cualquier otra llamada.
+ */
+function asCommand(c: ToolCall): ToolCall | null {
+  if (c.tool === 'shell' || c.tool === 'computer') return c;
+  if (c.tool !== 'write' || !SCRIPT_FILE.test(argString(c.args, 'path').trim())) return null;
+  return { ...c, tool: 'shell', args: { command: argString(c.args, 'content') } };
 }
 
 /**
@@ -847,16 +863,23 @@ export class Gate {
         verdict: 'deny',
         reason:
           'muestra contraseñas o secretos del vault (pa vault get, pa cuentas copiar o exportar): solo Nico, en su terminal',
-        match: (c) =>
-          (c.tool === 'shell' || c.tool === 'computer') &&
-          cliTexts(blobOf(c)).some((t) => SECRET_CLI.test(t) || loadsSecretModule(t)),
+        match: (c) => {
+          const cmd = asCommand(c);
+          return (
+            cmd !== null &&
+            cliTexts(blobOf(cmd)).some((t) => SECRET_CLI.test(t) || loadsSecretModule(t))
+          );
+        },
       },
       {
         id: 'deny-hidden-cli',
         verdict: 'deny',
         reason:
           'orden escondida (codificada, construida o con la orden en una variable): no se puede saber si saca secretos del vault; si hace falta, que la escriba Nico en su terminal',
-        match: (c) => (c.tool === 'shell' || c.tool === 'computer') && hidesSecretCli(c),
+        match: (c) => {
+          const cmd = asCommand(c);
+          return cmd !== null && hidesSecretCli(cmd);
+        },
       },
       {
         id: 'allow-tools',
