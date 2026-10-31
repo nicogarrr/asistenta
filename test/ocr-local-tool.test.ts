@@ -109,8 +109,8 @@ describe('sidecar (simulado)', () => {
       c.stdout.end('');
       c.emit('close', 1);
     });
-    await expect(runOcrSidecar({ ...base, spawnFn: bad.spawnFn })).rejects.toThrow(
-      /RuntimeError: boom/,
-    );
+    const err = await runOcrSidecar({ ...base, spawnFn: bad.spawnFn }).catch((e: Error) => e);
+    expect(String(err)).toMatch(/El OCR local falló: algo ha fallado por mi parte/);
+    expect(String(err)).not.toContain('RuntimeError');
   });
 });
