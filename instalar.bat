@@ -1,5 +1,12 @@
 @echo off
 setlocal
+rem Desde una carpeta de red (\\servidor\...) cmd no puede entrar en ella y
+rem acabaria en C:\Windows diciendo que falta todo: mejor avisarlo claro.
+if "%~d0"=="\\" (
+    echo [instalar] Asistenta esta en una carpeta de red. Copiala a tu PC, por ejemplo a C:\Asistenta, y abre instalar.bat desde alli.
+    pause
+    exit /b 1
+)
 cd /d "%~dp0"
 chcp 65001 >nul
 rem Abierto desde dentro del ZIP: Windows solo copia este .bat a una carpeta temporal.
