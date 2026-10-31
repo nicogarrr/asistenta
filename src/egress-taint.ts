@@ -160,14 +160,26 @@ const MCP_URL_KEYS = ['url', 'uri', 'href', 'link', 'endpoint'];
 
 /**
  * La URL http(s) que una herramienta MCP va a pedir, la nombre como la nombre el
- * servidor (`url`, `uri`, `href`…). Si hay varias, primero la que lleva datos.
+ * servidor (`url`, `uri`, `href`…), también dentro de un objeto o lista de los
+ * argumentos (`{ request: { url } }`, hasta 3 niveles). Si hay varias, primero la
+ * que lleva datos.
  */
 function mcpEgressUrl(args: Record<string, unknown>): string | null {
   const urls: string[] = [];
-  for (const key of MCP_URL_KEYS) {
-    const v = args[key];
-    if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) urls.push(v.trim());
-  }
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 3 || value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    const obj = value as Record<string, unknown>;
+    for (const key of MCP_URL_KEYS) {
+      const v = obj[key];
+      if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) urls.push(v.trim());
+    }
+    for (const v of Object.values(obj)) visit(v, depth + 1);
+  };
+  visit(args, 1);
   return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
 }
 
