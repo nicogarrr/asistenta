@@ -2,6 +2,7 @@
 
 import type { Followup } from '../alerts/followups.js';
 import type { Goal } from '../goals/store.js';
+import { type BoardTask, dayLabel, localDay } from '../tasks/board.js';
 import type { CalendarSnapshot } from './ics.js';
 import { buildAgenda, calendarDaysFor, formatAgenda } from './unified.js';
 
@@ -11,6 +12,8 @@ export interface AgendaOverviewDeps {
   followups: () => Followup[];
   routines: () => string;
   goals: () => Array<Pick<Goal, 'title' | 'status' | 'plan'>>;
+  /** Tablero de tareas de este chat (opcional): lo pendiente de estos días y lo atrasado. */
+  tasks?: () => Array<Pick<BoardTask, 'title' | 'day' | 'time' | 'status'>>;
   now?: () => number;
 }
 const labels: Record<Goal['status'], string> = {
@@ -42,6 +45,21 @@ export async function readAgendaOverview(
   const goals = deps.goals().filter((g) => g.status !== 'done' && g.status !== 'cancelled');
   const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
   const sections = [formatAgenda(agenda), deps.routines()];
+  const today = localDay(new Date(deps.now?.() ?? Date.now()));
+  const last = localDay(new Date(new Date(`${today}T12:00:00`).getTime() + days * 86_400_000));
+  const tasks = (deps.tasks?.() ?? [])
+    .filter((t) => t.status !== 'hecho' && t.day <= last)
+    .slice(0, 15);
+  if (tasks.length)
+    sections.push(
+      [
+        'Tareas',
+        ...tasks.map(
+          (t) =>
+            `- ${t.day < today ? 'atrasada' : dayLabel(t.day)}${t.time ? ` ${t.time}` : ''}: ${clean(t.title)}${t.status === 'en_curso' ? ' (en curso)' : ''}`,
+        ),
+      ].join('\n'),
+    );
   if (goals.length)
     sections.push(
       [
