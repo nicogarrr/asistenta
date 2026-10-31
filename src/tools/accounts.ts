@@ -71,13 +71,13 @@ async function signupStep(
       return [
         `Registro en ${a.domain} preparado (contraseña fuerte ya guardada en el vault).`,
         `Rellena el formulario: nombre «${me.name}», correo con browser fill secret_key=site:${a.domain}:username, contraseña (y su repetición) con secret_key=site:${a.domain}:password.`,
-        `NO pulses el botón de crear cuenta todavía: antes llama a cuentas confirmar_registro con sitio=${a.domain} y correo=${a.username}.`,
+        `NO pulses el botón de crear cuenta todavía: antes llama a cuentas confirmar_registro con sitio=${a.domain} y correo=${a.username}. Tras escribir la contraseña, el navegador no hace clic en esa página sin ese sí.`,
         'Nunca aceptes planes de pago ni metas tarjetas. Si sale un captcha o piden un código (SMS o correo), para y pídeselo al dueño.',
       ].join('\n');
     }
     if (args.action === 'confirmar_registro') {
       const a = await approveSignup(sitio, args.correo ?? '', vault);
-      return `Aprobado: pulsa ya el botón de crear cuenta en ${a.domain}. Cuando la web confirme el alta, llama a cuentas guardar; si falla, cuentas descartar.`;
+      return `Aprobado (vale 10 minutos): pulsa ya el botón de crear cuenta en ${a.domain}. Cuando la web confirme el alta, llama a cuentas guardar; si falla, cuentas descartar.`;
     }
     if (args.action === 'guardar') {
       const a = await finishSignup(sitio, vault);
