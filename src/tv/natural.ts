@@ -610,17 +610,36 @@ function parseOne(text: string): TvIntent | null {
   // Apps: "abre X" acepta cualquier nombre; "pon X" solo nombres conocidos
   // (si no, "pon la 1" o "pon algo de musica" lanzarian apps inventadas).
   m =
-    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:el |la |la app de |la aplicacion de )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
+    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:la app de |la aplicacion de |el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
       t,
     );
-  if (m?.[1]) return { action: 'launch', appId: m[1].trim() };
+  const abre = m?.[1] ? appName(m[1]) : '';
+  if (abre) return { action: 'launch', appId: abre };
   m =
     /\b(?:pon|ponme) (?:el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t) ??
-    /^(?:ve|vete|ir|vamos) a (?:el |la |la app de )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
-  if (m?.[1] && APP_ALIASES[m[1].trim()] !== undefined)
-    return { action: 'launch', appId: m[1].trim() };
+    /^(?:ve|vete|ir|vamos) a (?:la app de |el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(t);
+  const pon = m?.[1] ? appName(m[1]) : '';
+  if (pon && APP_ALIASES[pon] !== undefined) return { action: 'launch', appId: pon };
 
   return null;
+}
+
+/** Lo que va detrás del nombre de la app y no es parte de él. */
+const APP_COLA = new RegExp(
+  ` (?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|un (?:rato|ratito|momento|segundo)|en ${TV})$`,
+);
+
+/**
+ * «abre youtube ya», «abre netflix, que quiero ver una peli», «abre netflix en la
+ * tele un rato»: solo el nombre («youtube ya» no es ninguna app instalada).
+ */
+function appName(raw: string): string {
+  let s = raw.trim().replace(/ que .*$/, '');
+  for (let prev = ''; prev !== s; ) {
+    prev = s;
+    s = s.replace(APP_COLA, '').trim();
+  }
+  return s;
 }
 
 /** Como se entendio la orden, en castellano (para confirmar al usuario). */
