@@ -137,17 +137,38 @@ async function askHiddenLine(question: string): Promise<string> {
 const NEEDS_TTY =
   'Esto solo se hace a mano, desde una ventana de terminal en el PC (no por una tubería ni desde el chat).';
 
+/**
+ * La cuenta de la consola: la web exacta, o el nombre a secas («wallapop») si solo encaja
+ * una (la misma regla que en el chat). Con varias, pide la exacta; nunca mezcla dominios.
+ */
+async function cuentaDe(
+  site: string,
+  vault: VaultOps,
+  out: (s: string) => void,
+): Promise<Account | null> {
+  const all = await listAccounts(vault);
+  const domain = normalizeDomain(site);
+  const exact = all.find((a) => a.domain === domain);
+  if (exact) return exact;
+  const hits =
+    domain && !domain.includes('.') ? all.filter((a) => a.domain.split('.').includes(domain)) : [];
+  if (hits.length === 1) return hits[0] ?? null;
+  out(
+    hits.length > 1
+      ? `Tengo varias que encajan con «${site}»: ${hits.map((a) => a.domain).join(', ')}. Escribe la web exacta.`
+      : `No tengo ninguna cuenta guardada de ${site}.`,
+  );
+  return null;
+}
+
 async function borrar(
   site: string,
   vault: VaultOps,
   deps: CuentasCliDeps,
   out: (s: string) => void,
 ) {
-  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
-  if (!acc) {
-    out(`No tengo ninguna cuenta guardada de ${site}.`);
-    return 1;
-  }
+  const acc = await cuentaDe(site, vault, out);
+  if (!acc) return 1;
   if (!deps.ask && !(deps.isTty ?? process.stdin.isTTY)) {
     out(NEEDS_TTY);
     return 1;
@@ -171,8 +192,10 @@ async function cambiar(
   deps: CuentasCliDeps,
   out: (s: string) => void,
 ) {
-  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
-  if (!acc || acc.status !== 'activa') {
+  const found = await cuentaDe(site, vault, out);
+  if (!found) return 1;
+  const acc = found.status === 'activa' ? found : null;
+  if (!acc) {
     out(`No tengo ninguna cuenta guardada de ${site}.`);
     return 1;
   }
@@ -213,6 +236,9 @@ async function cambiar(
   return 0;
 }
 
+export const CUENTAS_USO =
+  'No conozco esa orden. Usa: pa cuentas listar (tus cuentas), pa cuentas copiar <web> (copia la contraseña), pa cuentas borrar <web>, pa cuentas cambiar <web> o pa cuentas exportar keepass|bitwarden <fichero>.';
+
 export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}): Promise<number> {
   const vault = deps.vault ?? realVault;
   const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
@@ -229,9 +255,11 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
     return 0;
   }
   if (sub === 'copiar' && a1) {
-    const pw = await revealPassword(a1, vault);
+    const acc = await cuentaDe(a1, vault, out);
+    const pw = acc ? await revealPassword(acc.domain, vault) : undefined;
+    if (!acc) return 1;
     if (!pw) {
-      out(`No tengo contraseña guardada de ${a1}.`);
+      out(`No tengo contraseña guardada de ${acc.domain}.`);
       return 1;
     }
     await (deps.copy ?? copyToClipboard)(pw, 30_000);
@@ -257,8 +285,6 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
   }
   if (sub === 'borrar' && a1) return borrar(a1, vault, deps, out);
   if (sub === 'cambiar' && a1) return cambiar(a1, vault, deps, out);
-  out(
-    'uso: pa cuentas [listar | copiar <web> | borrar <web> | cambiar <web> | exportar keepass|bitwarden <fichero>]',
-  );
+  out(CUENTAS_USO);
   return 2;
 }
