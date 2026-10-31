@@ -34,14 +34,23 @@ describe('preparar_registro dos veces para la misma web', () => {
     expect(JSON.parse(v.m.get('cuenta:wallapop.es') ?? '{}').approvedAt).toBeTypeOf('number');
   });
 
-  it('con reglas nuevas (la web rechazó la contraseña) genera otra y pide el sí de nuevo', async () => {
+  it('con reglas nuevas (la web rechazó la contraseña) genera otra', async () => {
     const v = memVault();
     await prepareSignup('wallapop.es', me, {}, v);
-    await approveSignup('wallapop.es', me.email, v);
     const first = v.m.get(PW);
     await prepareSignup('wallapop.es', me, { maxLength: 12 }, v);
     expect(v.m.get(PW)).not.toBe(first);
     expect((v.m.get(PW) ?? '').length).toBeLessThanOrEqual(12);
-    expect(JSON.parse(v.m.get('cuenta:wallapop.es') ?? '{}').approvedAt).toBeUndefined();
+  });
+
+  it('ya aprobado, con reglas nuevas no la cambia: antes hay que descartar', async () => {
+    const v = memVault();
+    await prepareSignup('wallapop.es', me, {}, v);
+    await approveSignup('wallapop.es', me.email, v);
+    const first = v.m.get(PW);
+    await expect(prepareSignup('wallapop.es', me, { maxLength: 12 }, v)).rejects.toThrow(
+      /descárta/,
+    );
+    expect(v.m.get(PW)).toBe(first);
   });
 });
