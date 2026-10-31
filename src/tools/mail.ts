@@ -57,6 +57,7 @@ export interface MailReadMessage {
   threadCount?: number;
   messageId?: string | null;
   references?: string[];
+  attachments?: Array<{ name: string; size: number }>;
 }
 
 export interface MailToolDeps {
@@ -168,6 +169,16 @@ export async function runMailTool(
         `Para: ${oneLine(m.to.join(', '), 300)}`,
         `Asunto: ${oneLine(m.subject, 300)}`,
         `Fecha: ${day(m.at)}${m.threadCount ? ` · hilo de ${m.threadCount}` : ''}`,
+        ...(m.attachments?.length
+          ? [
+              `Adjuntos: ${m.attachments
+                .slice(0, 10)
+                .map((f) => `${oneLine(f.name, 80)} (${Math.max(1, Math.round(f.size / 1024))} KB)`)
+                .join(
+                  ', ',
+                )}${m.attachments.length > 10 ? ` y ${m.attachments.length - 10} más` : ''}`,
+            ]
+          : []),
         '',
         body,
       ].join('\n');

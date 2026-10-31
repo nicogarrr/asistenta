@@ -12,6 +12,8 @@ export interface ReplyMessage extends MailMessage {
   authenticationResults: string;
   threadDigest: string;
   threadCount: number;
+  /** Names and sizes only (from BODYSTRUCTURE); the bytes are never downloaded here. */
+  attachments?: MailAttachment[];
 }
 export function parseHeaderMetadata(headers: Buffer | undefined) {
   const text = (headers?.toString('utf8') ?? '').replace(/\r?\n[ \t]+/g, ' ');
@@ -42,6 +44,7 @@ const QUERY = {
   source: { maxLength: 32768 },
   flags: true,
   threadId: true,
+  bodyStructure: true,
   headers: ['message-id', 'references', 'authentication-results'],
 } as const;
 async function withReader<T>(
@@ -71,6 +74,7 @@ function message(raw: FetchMessageObject): ReplyMessage {
     ...toMessage(raw as never, 'INBOX'),
     ...meta,
     replyTo: (raw.envelope?.replyTo ?? []).map((a) => a.address ?? '').filter(Boolean),
+    attachments: attachmentsOf(raw.bodyStructure as StructNode | undefined),
     threadDigest: '',
     threadCount: 0,
   };
@@ -216,4 +220,39 @@ export async function searchInbox(
     }
     return rows;
   });
+}
+
+export interface MailAttachment {
+  name: string;
+  size: number;
+}
+/** The subset of an IMAP BODYSTRUCTURE node this module reads. */
+export interface StructNode {
+  type?: string;
+  size?: number;
+  disposition?: string;
+  parameters?: Record<string, string>;
+  dispositionParameters?: Record<string, string>;
+  childNodes?: StructNode[];
+}
+/** Attachment names and sizes from BODYSTRUCTURE (max 20). Inline text bodies are not attachments. */
+export function attachmentsOf(root: StructNode | undefined): MailAttachment[] {
+  const out: MailAttachment[] = [];
+  const walk = (node: StructNode | undefined, depth: number) => {
+    if (!node || depth > 20 || out.length >= 20) return;
+    if (node.childNodes?.length) {
+      for (const child of node.childNodes) walk(child, depth + 1);
+      return;
+    }
+    const name = node.dispositionParameters?.filename ?? node.parameters?.name ?? '';
+    const isAttachment = node.disposition?.toLowerCase() === 'attachment' || Boolean(name);
+    if (!isAttachment) return;
+    const clean = name
+      .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    out.push({ name: clean || `(sin nombre, ${node.type ?? 'archivo'})`, size: node.size ?? 0 });
+  };
+  walk(root, 0);
+  return out;
 }
