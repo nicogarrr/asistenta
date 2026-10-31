@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { normalizeDomain } from '../gestor/login.js';
 import { logFile } from '../log.js';
+import { vaultExists } from '../vault.js';
 import { oldPendingOffer, pendingAge } from './pending-age.js';
 import { discardSignup, pendingOf } from './signup.js';
 import {
@@ -39,6 +40,8 @@ export interface CuentasCliDeps {
   isTty?: boolean;
   copy?: (secret: string, clearAfterMs: number) => Promise<void>;
   write?: (path: string, data: string) => void;
+  /** ¿Existe ya la caja fuerte de claves? (en una instalación nueva, todavía no). */
+  vaultExists?: () => boolean;
 }
 
 const CSV_HEADER = 'Group,Title,Username,Password,URL,Notes';
@@ -297,11 +300,21 @@ const ALIAS: Record<string, string> = {
 export const CUENTAS_GESTOR_KO =
   'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
 
+export const CUENTAS_SIN_CAJA =
+  'Todavía no tienes caja fuerte de claves, así que no hay cuentas guardadas. Se crea al instalar (doble clic en instalar.bat) o con pa vault init.';
+
 export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
   try {
     return await cuentasRun(argv, deps, out);
   } catch (err) {
+    // Instalación nueva sin caja fuerte: no es un fallo ni se arregla «probando otra vez».
+    const exists = deps.vaultExists ?? (deps.vault ? () => true : vaultExists);
+    if (!safeExists(exists)) {
+      out(CUENTAS_SIN_CAJA);
+      const sub = (argv[0] ?? 'listar').toLowerCase();
+      return sub === 'listar' || ALIAS[sub] === 'listar' ? 0 : 1;
+    }
     // Un fallo del gestor (vault ilegible, disco…): una línea llana; el detalle, solo al registro.
     logFile.warn('pa cuentas: fallo del gestor de contraseñas', {
       error: err instanceof Error ? err.message : String(err),
@@ -310,6 +323,14 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
     return 1;
   }
 }
+
+const safeExists = (exists: () => boolean): boolean => {
+  try {
+    return exists();
+  } catch {
+    return true;
+  }
+};
 
 async function cuentasRun(
   argv: string[],
