@@ -715,11 +715,11 @@ export async function main(argv: string[]): Promise<number> {
         writeErr: (text) => process.stderr.write(text),
       });
     }
-    case 'restart':
-      process.stderr.write(
-        'Restart no disponible: no se puede verificar si un supervisor volverá a lanzar el daemon. No se ha detenido ni arrancado ningún proceso.\n',
-      );
+    case 'restart': {
+      const { RESTART_TEXT } = await import('./stop-command.js');
+      process.stderr.write(`${RESTART_TEXT}\n`);
       return 2;
+    }
     case 'run':
       return runCommand(rest.join(' '));
     case '--help':

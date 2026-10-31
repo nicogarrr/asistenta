@@ -109,7 +109,7 @@ it(
       env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
     });
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('supervisor');
+    expect(result.stderr).toContain('pa stop y después levantar.bat');
     expect(readFileSync(join(dir, 'control', 'ready.json'))).toEqual(before);
     expect(child.exitCode).toBe(null);
     await stopDaemon(dir);
