@@ -2,6 +2,10 @@
 
 > Idioma: **Español** | [English](README.md)
 
+[![CI](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml)
+[![Windows](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Un asistente personal por Telegram, con memoria, objetivos de varios días y herramientas para trabajar en tu ordenador.**
 
 El daemon corre en tu máquina. El panel web local ofrece chat, aprobaciones, sesiones, memoria, estado y auditoría; comparte el flujo de permisos de Telegram. Las funciones de escritorio necesitan una sesión Windows interactiva.
@@ -60,6 +64,9 @@ Ninguna otra función necesita una clave de pago.
 | Objetivos | Plan propuesto, activación humana, pasos y ejecución programada | Límites de objetivos activos y de ejecuciones diarias |
 | Navegador y escritorio | Herramientas web y control del ordenador | Escritorio en Windows; sitios, acceso y permisos propios |
 | Aprobaciones | Decisiones pendientes en Telegram y en el panel | No sustituye la revisión del resultado ni autoriza cualquier acción |
+| Dictado por voz | Dictado pulsando una tecla en cualquier app de tu PC, todo en local | Apagado por defecto; Windows con sesión interactiva; `PA_DICTADO=1` |
+| Tareas y recordatorios recurrentes | «los lunes», «cada dos semanas», «la semana que viene», «el mes que viene» | Programación en lenguaje natural con recuperación tras apagado |
+| Pedir funciones hablando | Pídele una función nueva hablando; propone y valida los cambios ella misma | Solo se promueve con la checklist de verificación completa |
 | Funciones opcionales | Voz, correo, TV y control de iPhone | Requieren sus dependencias, equipos y configuración; no se activan al instalar el chat |
 
 ### Un objetivo, de principio a fin
@@ -222,6 +229,10 @@ Medido el 30-oct-2026 con 8 páginas en español (ticket, captura web, escaneo, 
 
 GLM-OCR descarga unos 2 GB de pesos la primera vez y necesita PyTorch (CPU). PP-OCRv5 es más flojo en capturas de webs con menús; GLM-OCR, en letra muy pequeña. Los PDF se leen hasta 20 páginas. Si el motor no está instalado, Asistenta te lo dice con el comando para instalarlo.
 
+## Dictado por voz en cualquier app (opcional)
+
+Mantén una tecla, habla y suelta: el texto aparece donde tengas el cursor (WhatsApp Web, Word, el navegador, el correo...). Todo pasa en tu PC con la misma voz local que las notas de voz: gratis, sin límite y sin claves. **Apagado por defecto**; actívalo con `PA_DICTADO=1` y comprueba el micrófono con `pa dictado prueba`. La tecla por defecto es Ctrl + Windows (`PA_DICTADO_TECLA` para cambiarla). Nunca escribe en campos de contraseña y no guarda ni audio ni texto. Guía completa: [`docs/dictado.md`](docs/dictado.md).
+
 ## Desarrollo y QA
 
 ```sh
@@ -231,7 +242,7 @@ npm run build
 npm test
 ```
 
-El runner ejecuta una fase general y una fase serial para pruebas de recursos. Las pruebas de navegador/escritorio requieren sus dependencias; las pruebas Linux no sustituyen la verificación de Windows. Un test con un proceso simulado no prueba que un daemon real se haya detenido.
+La suite tiene más de 1.200 archivos de test; el runner ejecuta una fase general y una fase serial para pruebas de recursos. CI corre en cada push en Linux (workflow `CI`) y en Windows (workflow `Windows`), y el workflow del instalador adjunta el `.exe` en cada release de GitHub. Las pruebas de navegador/escritorio requieren sus dependencias; las pruebas Linux no sustituyen la verificación de Windows. Un test con un proceso simulado no prueba que un daemon real se haya detenido.
 
 - [`ROADMAP.md`](ROADMAP.md): contexto de trabajo y deudas; puede contener planes aún no implementados.
 - [`docs/voz-piper.md`](docs/voz-piper.md): voz local de respaldo con Piper (opt-in `PA_PIPER_MODEL`).

@@ -2,6 +2,10 @@
 
 > Language: **English** | [Español](README.es.md)
 
+[![CI](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml)
+[![Windows](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **A personal assistant on Telegram, with memory, multi-day goals and tools that work on your computer.**
 
 Asistenta is a daemon that runs on your own PC. You talk to it through your private Telegram bot; it remembers context across conversations, proposes plans for multi-day goals that only run after your approval, and can use tools: browse the web, control the desktop, transcribe voice, run local OCR, send mail from your own account, control the TV and an iPhone. A local web panel shows chat, approvals, sessions, memory, status and audit, sharing the same permission flow as Telegram.
@@ -73,6 +77,9 @@ No other feature needs a key.
 | --- | --- | --- |
 | Chat | Telegram conversations with your assistant | Requires your own bot token and provider key |
 | Approvals | Pending decisions in Telegram and in the panel | Does not replace reviewing the result nor authorize any action |
+| Voice dictation | Push-to-talk dictation in any app on your PC, fully local | Off by default; Windows with an interactive session; `PA_DICTADO=1` |
+| Recurring tasks and reminders | "every Monday", "every two weeks", "next week", "next month" | Natural-language scheduling with grace-window catch-up |
+| Feature requests by voice | Ask Asistenta for a new feature by talking to it; it proposes and validates changes itself | Only promoted with the full verification checklist |
 | Optional features | Voice, mail, TV and iPhone control | Require their own dependencies, devices and configuration; they are not enabled by installing the chat |
 
 ### A goal, start to finish
@@ -236,6 +243,10 @@ Measured on 30-Oct-2026 with 8 Spanish pages (receipt, web screenshot, scan, tab
 
 GLM-OCR downloads about 2 GB of weights the first time and needs PyTorch (CPU). PP-OCRv5 is weaker on web screenshots with menus; GLM-OCR, on very small print. PDFs are read up to 20 pages. If the engine is not installed, Asistenta tells you with the command to install it.
 
+## Voice dictation anywhere (optional)
+
+Hold a key, speak, release: the text appears wherever your cursor is (WhatsApp Web, Word, the browser, mail...). It runs entirely on your PC with the same local voice stack as voice notes: free, unlimited and keyless. **Off by default**; enable with `PA_DICTADO=1` and check the mic with `pa dictado prueba`. Default key is Ctrl + Windows (`PA_DICTADO_TECLA` to change it). It never types into password fields and stores neither audio nor text. Full guide: [`docs/dictado.md`](docs/dictado.md).
+
 ## Development and QA
 
 ```sh
@@ -245,7 +256,7 @@ npm run build
 npm test
 ```
 
-The runner executes a general phase and a serial phase for resource tests. Browser/desktop tests require their dependencies; Linux tests do not replace Windows verification. A test with a simulated process does not prove a real daemon stopped.
+The suite has 1,200+ test files; the runner executes a general phase and a serial phase for resource tests. CI runs on every push on Linux (`CI` workflow) and Windows (`Windows` workflow), and the installer workflow attaches the `.exe` installer to each GitHub release. Browser/desktop tests require their dependencies; Linux tests do not replace Windows verification. A test with a simulated process does not prove a real daemon stopped.
 
 - [`ROADMAP.md`](ROADMAP.md): work context and debts; may contain plans not yet implemented.
 - [`docs/voz-piper.md`](docs/voz-piper.md): local fallback voice with Piper (opt-in `PA_PIPER_MODEL`).
