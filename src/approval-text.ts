@@ -106,6 +106,24 @@ export function formatApproval(
     const question = `Voy a crear tu cuenta en ${sitio} con tu correo ${shown}. ¿Confirmo?`;
     return withinBudget(question, question, 'cuentas');
   }
+  if (call.tool === 'objetivo' && call.args.action === 'activar' && target) {
+    // El objetivo guardado, palabra por palabra (gateHint de la herramienta): lo que se
+    // aprueba es lo que va a trabajar días, no un id.
+    if (hasInvisible(target)) return deniedInvisible('objetivo');
+    if (redactSecrets(target) !== target) return deniedAltered('objetivo');
+    const id = typeof call.args.id === 'string' ? call.args.id : '?';
+    const raw = [
+      '¿Activo este objetivo? Trabajará solo, varios días, con este plan:',
+      target,
+      `(id: ${id})`,
+      `Motivo: ${reason}`,
+    ].join('\n');
+    return withinBudget(
+      raw,
+      raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`),
+      'objetivo',
+    );
+  }
   if (call.tool === 'browser' && target) {
     const [withCtx = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
     const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
