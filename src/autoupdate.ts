@@ -34,6 +34,8 @@ export const MIN_GAP_MS = 30 * 60_000;
 export const LOCK_STALE_MS = 45 * 60_000;
 export const HEALTH_TIMEOUT_MS = 120_000;
 export const CHANGELOG_MAX = 8;
+/** Una versión que ya falló al instalarse no se reintenta antes de esto (salvo pa autoupdate now). */
+export const FAILED_RETRY_MS = 6 * 60 * 60_000;
 
 const OFF = ['0', 'false', 'no', 'off'];
 
@@ -56,6 +58,9 @@ export interface AutoupdateState {
   lastCheckAt?: string;
   lastUpdateAt?: string;
   last?: Outcome & { at: string };
+  /** origin/main que falló al instalarse y cuándo: no se repite el aviso por la misma versión. */
+  failedRemote?: string;
+  failedAt?: string;
 }
 
 const dir = (stateDir: string) => join(stateDir, AUTOUPDATE_DIR);
@@ -227,6 +232,8 @@ export async function runAutoupdate(
       ...fresh,
       lastCheckAt: kind === 'aplazada' ? prevCheck : state.lastCheckAt,
       lastUpdateAt: state.lastUpdateAt,
+      failedRemote: state.failedRemote,
+      failedAt: state.failedAt,
       last: { kind, text, at: new Date(deps.now()).toISOString() },
     });
     return { kind, text };
@@ -249,6 +256,12 @@ export async function runAutoupdate(
     const remote = (await deps.git(['rev-parse', 'origin/main'])).out.trim();
     if (!old || !remote) return skip('git no me dijo en qué commit estoy', 'error');
     if (old === remote) return done('al-dia', `al día (${old.slice(0, 7)})`);
+    const failedAt =
+      state.failedRemote === remote && state.failedAt ? Date.parse(state.failedAt) : Number.NaN;
+    if (!opts.force && deps.now() - failedAt < FAILED_RETRY_MS)
+      return skip(
+        `esta versión (${remote.slice(0, 7)}) ya falló al instalarse: lo reintento más tarde`,
+      );
     const status = await deps.git(['status', '--porcelain', '--untracked-files=no']);
     if (status.code !== 0 || status.out.trim()) return skip('cambios-locales');
     if ((await deps.git(['merge-base', '--is-ancestor', old, remote])).code !== 0) {
@@ -290,7 +303,11 @@ export async function runAutoupdate(
         reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
         back ? '' : ' (y no he vuelto a arrancar sana: mira pa autostart status)',
       ].join('');
-      await deps.notify(failureMessage(`${reason}${tail}`)).catch(() => {});
+      // Un solo aviso por versión: si la misma vuelve a fallar, solo queda en pa autoupdate status.
+      if (state.failedRemote !== remote)
+        await deps.notify(failureMessage(`${reason}${tail}`)).catch(() => {});
+      state.failedRemote = remote;
+      state.failedAt = new Date(deps.now()).toISOString();
       return done('revertida', `falló (${reason}); sigue en ${old.slice(0, 7)}${tail}`);
     };
 
@@ -308,6 +325,8 @@ export async function runAutoupdate(
     }
     deps.dropBackup();
     state.lastUpdateAt = new Date(deps.now()).toISOString();
+    state.failedRemote = undefined;
+    state.failedAt = undefined;
     await deps.notify(successMessage(subjects)).catch(() => {});
     return done(
       'actualizada',
