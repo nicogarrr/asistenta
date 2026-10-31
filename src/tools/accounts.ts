@@ -122,7 +122,7 @@ export function createAccountsTool(
     name: 'cuentas',
     label: 'Cuentas',
     description:
-      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
+      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on (buscar on one site also gives the full username, for «¿cuál es mi usuario en X?»). Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async (_id, args) => {
@@ -134,10 +134,15 @@ export function createAccountsTool(
         if (!q) text = '¿De qué web? Dime el nombre o el dominio.';
         else {
           const found = await findAccounts(q, vault);
+          // Una sola web: «¿cuál es mi usuario en X?» recibe el usuario entero (nunca la
+          // contraseña). Con varias, el usuario va tapado como en listar.
+          const one = found.length === 1 ? found[0] : undefined;
           text =
             found.length === 0
               ? `No tengo ninguna cuenta guardada de ${q}.`
-              : `Sí: ${found.map(line).join('; ')}. Puedo entrar con ella cuando haga falta.`;
+              : one
+                ? `Sí, en ${one.domain}: tu usuario es ${one.username || '(sin usuario guardado)'}${fecha(one.created)}${one.status === 'pendiente' ? ', alta sin terminar' : ''}. La contraseña no la enseño; entro con ella cuando haga falta.`
+                : `Sí: ${found.map(line).join('; ')}. Puedo entrar con ella cuando haga falta.`;
         }
       } else {
         const all = await listAccounts(vault);
