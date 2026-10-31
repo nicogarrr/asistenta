@@ -358,6 +358,7 @@ import { SkillStore } from './skills/store.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
+import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
@@ -891,6 +892,7 @@ async function doctorCommand(): Promise<number> {
     `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source}`,
   );
   if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));
+  lines.push(timeZoneDoctorLine());
   if (desktopEnabled()) {
     lines.push(
       `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (instala pwsh 7 para la sintaxis completa)'}`,
@@ -7282,7 +7284,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // El panel: su dirección en la consola si escucha; si no arranca, se avisa
       // también por Telegram (una vez, ver boot-notice).
       panelUrl: panel.url,
-      problems: panel.problems,
+      // PA_TIMEZONE mal escrita: antes solo una línea en inglés en la consola.
+      problems: withTimeZoneProblem(panel.problems),
     };
     process.stdout.write(`${bootBanner(facts)}\n`);
     const result = await maybeSendBootNotice({

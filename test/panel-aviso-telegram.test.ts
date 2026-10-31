@@ -92,6 +92,6 @@ describe('panel que no arranca: aviso por Telegram', () => {
   it('el daemon pasa el problema del panel al aviso de arranque', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
     expect(src).toContain('const panel = await panelBootFacts(panelPlan, panelStarted);');
-    expect(src).toContain('problems: panel.problems,');
+    expect(src).toContain('problems: withTimeZoneProblem(panel.problems),');
   });
 });

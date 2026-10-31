@@ -49,7 +49,8 @@ export type BootProblem =
   | 'panel-puerto'
   | 'panel-token'
   | 'panel-ocupado'
-  | 'panel-fallo';
+  | 'panel-fallo'
+  | 'zona-horaria';
 
 const PROBLEM_TEXT: Record<BootProblem, string> = {
   modelo:
@@ -64,6 +65,8 @@ const PROBLEM_TEXT: Record<BootProblem, string> = {
     'El panel web no se ha encendido: su puerto lo usa otro programa o Windows no deja usarlo. Cambia PA_WEB_PORT en el archivo .env (por ejemplo a 8788) y reinicia Asistenta.',
   'panel-fallo':
     'El panel web no se ha encendido por un fallo inesperado. Ejecuta «pa doctor» en el PC para ver qué pasa.',
+  'zona-horaria':
+    'La zona horaria del archivo .env (PA_TIMEZONE) no vale, así que uso la hora del PC y tus recordatorios podrían ir desfasados. Pon PA_TIMEZONE=Europe/Madrid y reinicia Asistenta.',
 };
 
 const yesNo = (on: boolean) => (on ? 'sí' : 'no');
