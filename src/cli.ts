@@ -114,7 +114,7 @@ import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { parseNatural } from './cron/scheduler.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
 import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
-import { CloseLoop } from './daemon/close-loop.js';
+import { CloseLoop, closedLine } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
@@ -179,8 +179,9 @@ import {
 import { detectMemoryWorthy } from './memory/nudges.js';
 import {
   aboutMeText,
-  FACT_SAVED_LINE,
+  factSavedLine,
   forgetRequest,
+  forgotLine,
   isAboutMeRequest,
   RecentFacts,
   SAID_PREFIX,
@@ -4767,9 +4768,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «olvida eso» sin nada recién apuntado puede ser otra cosa: lo lleva el modelo.
       const target = forget.kind === 'last' ? recentFacts.take(chatKey(inbound)) : forget.query;
       if (!target) return false;
+      const before = snapshot.load().split(ENTRY_SEPARATOR);
       const removed = snapshot.removeEntries(target);
       if (removed === 0 && forget.kind === 'match') return false;
-      await say(inbound, removed > 0 ? 'Hecho, lo he olvidado.' : 'Ya no lo tenía apuntado.', {
+      const left = new Set(snapshot.load().split(ENTRY_SEPARATOR));
+      await say(inbound, forgotLine(removed > 0 ? before.filter((e) => !left.has(e)) : []), {
         quote: true,
       });
       return true;
@@ -6332,7 +6335,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const factSaved =
         saidNow !== null && saidNow === `${SAID_PREFIX} ${statedFact(inbound.text) ?? ''}`;
       if (factSaved && !/apunt|guard|anot|record/i.test(result.text)) {
-        result = { ...result, text: `${result.text}\n\n${FACT_SAVED_LINE}`.trim() };
+        result = { ...result, text: `${result.text}\n\n${factSavedLine(saidNow)}`.trim() };
       }
 
       // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la
@@ -7421,8 +7424,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             return;
           }
           // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
-          if (inbound.chatId === briefingOwner() && closeLoop.answered(inbound.text)) {
-            await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
+          const closed =
+            inbound.chatId === briefingOwner() ? closeLoop.answered(inbound.text) : null;
+          if (closed) {
+            await say(inbound, closedLine(closed.subject), { quote: true });
             return;
           }
           const parcelAnswer =
