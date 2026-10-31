@@ -453,6 +453,30 @@ const FEEDS_SHELL =
 /** Código de programa (no órdenes de shell): solo se le aplica deny-secret-cli. */
 const CODE_FILE = /\.([cm]?[jt]s|py|pyw|json)$/i;
 const SCRIPT_MAX_BYTES = 1024 * 1024;
+/** Código que lanza procesos (child_process, subprocess, os.system…). */
+const SPAWNS_PROCESS =
+  /\b(child_process|spawn(Sync)?|exec(File)?(Sync)?|fork|subprocess|os\.(system|popen|exec[lv]p?e?)|Popen|Bun\.spawn|Deno\.Command)\b/;
+/** Texto literal entre comillas sin `${…}`: la orden o el script que el código lanza. */
+const STRING_LITERAL = /'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`$\\]*)`/g;
+
+/**
+ * Scripts que lanza un fichero de código (`spawn('powershell', ['-File', 'b.ps1'])`,
+ * `subprocess.run('cmd /c b.bat')`): se buscan en sus textos literales, solo si el código
+ * lanza procesos. Lo relativo se prueba desde la carpeta actual y desde la del script.
+ */
+function codeScriptRefs(text: string, from: string): string[] {
+  if (!SPAWNS_PROCESS.test(text)) return [];
+  const refs: string[] = [];
+  // Los textos de una misma línea van juntos: `spawn('node', ['b.mjs'])` es «node b.mjs».
+  for (const line of text.split('\n')) {
+    const literals = [...line.matchAll(STRING_LITERAL)].map((m) => m[1] ?? m[2] ?? m[3] ?? '');
+    for (const ref of scriptRefs(literals.join(' '), true)) {
+      refs.push(ref);
+      if (!isAbsolute(ref) && !/^[a-z]:/i.test(ref)) refs.push(join(dirname(from), ref));
+    }
+  }
+  return refs;
+}
 
 /**
  * Dentro de un script todo está escrito, así que no se deniega por llamar a una
@@ -481,7 +505,7 @@ const PACKAGE_SCRIPT =
   /^(run|run-script|rum|urn|test|t|tst|start|stop|restart|install|i|ci|add|exec)$/i;
 
 /** Palabras de una orden que pueden ser un script que se ejecuta. */
-function scriptRefs(command: string): string[] {
+function scriptRefs(command: string, fromCode = false): string[] {
   const feeds = FEEDS_SHELL.test(command);
   const refs: string[] = [];
   // `cd C:\\x; .\\a.ps1`: lo relativo se lee desde la carpeta a la que se cambió.
@@ -505,7 +529,10 @@ function scriptRefs(command: string): string[] {
       if (SCRIPT_RUNNER.test(word)) runner = true;
       const flag = word.startsWith('-') || /^\/[a-z?]{1,2}$/i.test(word);
       const fileLike = /[\\/]/.test(word) || /\.[a-z0-9]{1,5}$/i.test(word);
-      if (!flag && fileLike && (i === 0 || runner || feeds)) refs.push(at(word));
+      // En código, un nombre suelto (`'test/x.test.ts'`) no se ejecuta: hace falta un
+      // lanzador delante (`'node', 'b.mjs'`) o que sea un script de shell (`'b.bat'`).
+      const first = i === 0 && (!fromCode || SCRIPT_FILE.test(word));
+      if (!flag && fileLike && (first || runner || feeds)) refs.push(at(word));
     });
   }
   return refs;
@@ -2265,8 +2292,9 @@ export class Gate {
             (r.id === 'deny-hidden-cli' && !code && hidesSecretInScript(text)),
         );
         if (rule) return `el script ${name} ${rule.reason}`;
-        // Solo se siguen los scripts de shell: en código, «node»/«python» son palabras sueltas.
-        if (!code) next.push(...scriptRefs(script.text));
+        // En código, «node»/«python» sueltos no lanzan nada: solo los textos literales
+        // de un código que lanza procesos (codeScriptRefs).
+        next.push(...(code ? codeScriptRefs(script.text, path) : scriptRefs(script.text)));
       }
       pending = next;
     }
