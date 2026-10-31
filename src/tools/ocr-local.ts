@@ -70,9 +70,9 @@ export interface SidecarOptions {
   spawnFn?: (cmd: string, args: string[]) => ChildProcess;
 }
 
-const installHint = (model: OcrModel) =>
+export const ocrInstallHint = (model: OcrModel) =>
   `El OCR local (${model === 'glm' ? 'GLM-OCR' : 'PP-OCRv5'}) no está instalado. En la carpeta de Asistenta: ` +
-  `scripts\\ocr-sidecar\\setup.ps1 -Model ${model} (Windows) o scripts/ocr-sidecar/setup.sh ${model} (Linux). ` +
+  `powershell -ExecutionPolicy Bypass -File scripts\\ocr-sidecar\\setup.ps1 -Model ${model} (Windows) o scripts/ocr-sidecar/setup.sh ${model} (Linux). ` +
   'Ver «OCR local (opcional)» en el README.';
 
 /** Lanza el sidecar una vez, con tiempo máximo y tope de salida, y lee su JSON. */
@@ -94,7 +94,7 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
     try {
       child = spawnFn(o.python, args);
     } catch {
-      fail(new Error(installHint(o.model)));
+      fail(new Error(ocrInstallHint(o.model)));
       return;
     }
     const chunks: Buffer[] = [];
@@ -131,7 +131,7 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
     child.on('error', (e: NodeJS.ErrnoException) =>
       finish(
         e.code === 'ENOENT'
-          ? new Error(installHint(o.model))
+          ? new Error(ocrInstallHint(o.model))
           : new Error(`El OCR local no arrancó: ${e.message}`),
       ),
     );
@@ -158,7 +158,7 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
           pages: typeof parsed.pages === 'number' ? parsed.pages : 1,
         });
       } else if (parsed.error === 'missing_engine') {
-        finish(new Error(installHint(o.model)));
+        finish(new Error(ocrInstallHint(o.model)));
       } else {
         finish(
           new Error(

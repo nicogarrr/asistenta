@@ -191,8 +191,8 @@ Asistenta puede sacar el texto de una imagen o un PDF escaneado con un motor OCR
 Instalar (PowerShell, en la carpeta de Asistenta; necesita Python 3.10+ con el lanzador `py`):
 
 ```powershell
-scripts\ocr-sidecar\setup.ps1              # PP-OCRv5 (por defecto)
-scripts\ocr-sidecar\setup.ps1 -Model glm   # GLM-OCR (máxima calidad)
+powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1              # PP-OCRv5 (por defecto)
+powershell -ExecutionPolicy Bypass -File scripts\ocr-sidecar\setup.ps1 -Model glm   # GLM-OCR (máxima calidad)
 ```
 
 En Linux/WSL: `scripts/ocr-sidecar/setup.sh [ppocr|glm]`. Después, en `.env`: `PA_OCR_LOCAL=1` y, si quieres GLM-OCR, `PA_OCR_MODEL=glm`. Reinicia Asistenta.
