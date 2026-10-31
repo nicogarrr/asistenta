@@ -21,6 +21,7 @@
  *    ordinary prose, and no formatter can tell them apart.
  */
 import { batchQuestion } from './mail/cleanup.js';
+import { unsubQuestion } from './mail/unsubscribe.js';
 import type { ToolCall } from './permissions.js';
 
 export interface ApprovalText {
@@ -133,12 +134,18 @@ export function formatApproval(
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');
   }
-  if (call.tool === 'correo_reglas' && call.args.action === 'limpiar') {
+  if (
+    call.tool === 'correo_reglas' &&
+    (call.args.action === 'limpiar' || call.args.action === 'baja')
+  ) {
     // Lo que se aprueba es el lote guardado en la vista previa, con su lista exacta.
-    const question =
-      typeof call.args.lote === 'string' ? batchQuestion(call.args.lote, Date.now()) : null;
-    if (!question)
-      return { question: 'Ese lote de limpieza ya no existe: no se pregunta.', complete: false };
+    const lote = typeof call.args.lote === 'string' ? call.args.lote : '';
+    const question = !lote
+      ? null
+      : call.args.action === 'baja'
+        ? unsubQuestion(lote, Date.now())
+        : batchQuestion(lote, Date.now());
+    if (!question) return { question: 'Ese lote ya no existe: no se pregunta.', complete: false };
     return withinBudget(question, question, 'correo_reglas');
   }
   const mailKind = call.tool === 'correo' ? MAIL_SEND_KIND[String(call.args.action)] : undefined;
