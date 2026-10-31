@@ -59,7 +59,7 @@ function runExe(exe: string, flags: string[], timeout = 120_000): Promise<ExecRe
 const AUTOSTART_FAIL_HINTS: Record<string, string> = {
   compilar: 'falta compilar Asistenta. Ejecuta instalar.bat (o npm run build) y repite.',
   navegador:
-    'falta preparar el navegador de Asistenta. Ejecuta deploy\\browserd\\setup-browserd.ps1 y repite.',
+    'falta preparar el navegador de Asistenta. Ejecuta powershell -ExecutionPolicy Bypass -File deploy\\browserd\\setup-browserd.ps1 y repite.',
   archivos: 'faltan archivos de Asistenta. Vuelve a descargarla (o haz git pull) y repite.',
   node: 'Asistenta necesita Node 24 o más nuevo. Instálalo desde nodejs.org y repite.',
   parada: 'no pude parar Asistenta antes de quitar el autoarranque. Ejecuta pa stop y repite.',
@@ -186,6 +186,10 @@ async function watchdogStatus(stateDir: string): Promise<void> {
   process.stdout.write(`${line}\n${autoupdateStatusLine(stateDir)}\n`);
 }
 
+/** Fuera de Windows: qué usar en su lugar, no solo «no se puede». */
+export const AUTOSTART_NOT_WINDOWS =
+  'El arranque automático con el PC solo funciona en Windows. Aquí arráncala a mano con «pa serve», o con Docker (docker compose -f deploy/docker-compose.yml up -d), que vuelve a levantarla sola tras reiniciar.';
+
 /** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b [--x]». */
 export const AUTOSTART_USAGE =
   'No conozco esa orden. Usa: pa autostart install (que arranque sola al encender el PC), pa autostart status (cómo está) o pa autostart uninstall (quitarlo). Con install puedes añadir --start (arrancarla ya), --what-if (solo ver qué haría) o --no-local-llm (sin el modelo local).';
@@ -195,7 +199,7 @@ export async function autostartCommand(
   opts: AutostartOptions = {},
 ): Promise<number> {
   if (process.platform !== 'win32') {
-    process.stderr.write('Autoarranque completo disponible solo en Windows.\n');
+    process.stderr.write(`${AUTOSTART_NOT_WINDOWS}\n`);
     return 2;
   }
   const action = args[0] ?? 'status';
