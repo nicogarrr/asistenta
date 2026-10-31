@@ -16,7 +16,8 @@ describe('token del panel con espacios o \\r de Windows', () => {
 
   it('el daemon arranca el panel con el token recortado, no con el crudo', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli).toContain('const webToken = panelTokenFromEnv();');
+    // El token sale de panelStartPlan, que usa panelTokenFromEnv (recortado).
+    expect(cli).toContain('const webToken = panelPlan.token;');
     expect(cli).not.toMatch(/const webToken = process\.env\.PA_WEB_TOKEN;/);
   });
 });
