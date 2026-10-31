@@ -249,7 +249,7 @@ describe('offerApproval con askScope', () => {
     expect(message?.keyboard).toEqual([
       [
         { text: '✅ Una vez', callback_data: 'approve:once:req-1' },
-        { text: '🕒 Esta sesión', callback_data: 'approve:session:req-1' },
+        { text: '🕒 Por ahora', callback_data: 'approve:session:req-1' },
       ],
       [
         { text: '♾️ Siempre', callback_data: 'approve:always:req-1' },
@@ -278,7 +278,7 @@ describe('offerApproval con askScope', () => {
     await expect(session).resolves.toEqual({ approved: true, scope: sessionScope });
     await expect(always).resolves.toEqual({ approved: true, scope: 'always' });
     await expect(deny).resolves.toEqual({ approved: false, scope: 'once' });
-    expect(harness.answers).toContain('✅ Aprobado para esta sesión');
+    expect(harness.answers).toContain('✅ Aprobado por ahora');
     expect(harness.answers).toContain('✅ Aprobado siempre');
     expect(harness.answers).toContain('❌ Denegado');
   });
@@ -294,7 +294,7 @@ describe('offerApproval con askScope', () => {
       await expect(pending).resolves.toEqual({ approved: true, scope: 'session' });
       await vi.advanceTimersByTimeAsync(5_000);
       const edit = harness.edits.find((e) => e.messageId === messageId);
-      expect(edit?.text).toBe('✅ Aprobado para esta sesión');
+      expect(edit?.text).toBe('✅ Aprobado por ahora');
       expect(edit?.keyboard).toEqual([]);
     } finally {
       vi.useRealTimers();

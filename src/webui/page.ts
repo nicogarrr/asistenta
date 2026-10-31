@@ -904,7 +904,7 @@ ${renderFormatScript()}
 
       var DECISIONES = [
         { id: 'once', texto: 'Permitir una vez', clase: 'permitir', hecho: 'Permitido una vez' },
-        { id: 'session', texto: 'Permitir en esta sesión', clase: '', hecho: 'Permitido en esta sesión' },
+        { id: 'session', texto: 'Permitir por ahora', clase: '', hecho: 'Permitido por ahora' },
         { id: 'always', texto: 'Permitir siempre', clase: 'siempre', hecho: 'Permitido siempre' },
         { id: 'deny', texto: 'Denegar', clase: 'denegar', hecho: 'Denegado' }
       ];
