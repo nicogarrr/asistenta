@@ -253,7 +253,7 @@ import {
   takeFullReply,
   tooBigForBotDownload,
 } from './channels/telegram.js';
-import { helpText, startText } from './channels/telegram-help.js';
+import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
 import {
   CommandRoutineStore,
   commandRoutinesEnabled,
@@ -5694,6 +5694,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   const cmdStart = async (inbound: Inbound): Promise<void> => {
+    const chatKey = `${inbound.channel}:${inbound.chatId}:${inbound.threadId ?? ''}`;
+    if (!startWelcomeDue(chatKey, Date.now(), inbound.sentAt)) return;
     await say(inbound, startText(inbound.displayName), { quote: true });
   };
 

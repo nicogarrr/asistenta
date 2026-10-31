@@ -60,9 +60,8 @@ describe('aviso de arranque', () => {
     expect(send.mock.calls[0]?.[0]).toBe('42');
     const text = send.mock.calls[0]?.[1] ?? '';
     expect(text.split('\n')[0]).toBe('Asistenta lista ✅');
-    expect(text).toContain('Tele: sí');
-    expect(text).toContain('Correo: no');
-    expect(text).toContain('/funciones');
+    // Nico (31/10 00:43): una sola línea, sin estado ni pistas.
+    expect(text).toBe('Asistenta lista ✅');
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       lastSentAt: 1_000_000,
       lastResult: 'sent',

@@ -250,7 +250,7 @@ describe('recorrido de humo de punta a punta (núcleo con mocks)', () => {
     const t0 = performance.now();
     await drive(d.handle(inbound('/start')));
     expect(lastText()).toContain('¡Hola, Nico!');
-    expect(lastText()).toContain('/funciones');
+    expect(lastText()).toContain('/help');
 
     // /funciones: la vista por áreas; el dueño en su chat privado ve el área de la tele.
     await drive(d.handle(inbound('/funciones')));

@@ -48,7 +48,7 @@ const LOOSE_CORRECTION = new RegExp(
     String.raw`(^|[\s,.!¡¿])(eso|asi) no (es|era) (lo que|asi|correcto|cierto|verdad)\b`,
     String.raw`(^|[\s,.!¡¿])(eso|asi) no (lo|me) (quiero|queria|pedi|he pedido|gusta|sirve|vale)\b`,
     String.raw`(^|[\s,.!¡¿])(eso|esto|asi|todo eso) esta mal\b`,
-    String.raw`^esta mal${END}`,
+    `^esta mal${END}`,
     String.raw`(^|[\s,.!¡¿])esta mal (hecho|dicho|escrito|calculado|traducido|resumido)\b`,
     String.raw`(^|[,.;!¡¿]\s*|\by |\bpor favor,? |\bporfa,? |\boye,? )deja de\b`,
     String.raw`(^|[\s,.!¡¿])(para )?la proxima vez(,| no | (hazlo|haz|pon|ponme|usa|di|dime|pregunta|preguntame|avisame|mandame|escribe|escribeme|responde|contesta|intenta|recuerda|acuerdate|quiero|prefiero|mejor)\b| que (me |te )?(pida|diga|pregunte|preguntes|escriba|escribas|hables|respondas|contestes|hagas|pongas|mandes|busques)\b|${END})`,
