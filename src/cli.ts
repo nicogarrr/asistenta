@@ -131,6 +131,7 @@ import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/
 import { listReplyInbox, readReplyThread, resolveReplyCard, searchInbox } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
+import { mailAttentionText } from './mail/triage.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
@@ -2757,7 +2758,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const deliveries = messages.map((m) => ({
             source: 'mail' as const,
             id: `${scope}:${m.id}`,
-            text: `${m.subject}\n${m.text}`,
+            text: mailAttentionText(m),
             at: m.at,
           }));
           await attention.offer(deliveries);
