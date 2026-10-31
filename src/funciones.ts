@@ -229,6 +229,10 @@ export const TOOL_ABILITIES: Readonly<
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
   correo: { area: 'correo', text: 'busco y leo tus correos de Gmail' },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  cuentas: {
+    area: 'agenda',
+    text: 'guardo tus cuentas y contraseñas fuertes en un gestor cifrado',
+  },
   objetivo: { area: 'agenda', text: 'persigo un objetivo varios días y te aviso de los avances' },
   gestion: {
     area: 'agenda',

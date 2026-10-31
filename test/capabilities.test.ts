@@ -26,6 +26,7 @@ const BEFORE = {
     'memory',
     'reminder',
     'agenda',
+    'cuentas',
     'opengym',
     'book',
     'objetivo',
