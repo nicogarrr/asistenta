@@ -6,10 +6,12 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 /**
  * Isolating an attempt, so measuring it cannot disturb what is running.
@@ -188,5 +190,33 @@ export function depsFingerprint(dir: string): string {
     }
   };
   walk('');
+  return h.digest('hex');
+}
+
+/**
+ * Huella de lo que hace ejecutar código a git en el repo del kernel: su config (core.fsmonitor,
+ * core.hooksPath, alias…) y la carpeta de hooks, compartidas por todos los worktrees. Se lee
+ * del disco sin llamar a git, porque un fsmonitor plantado se ejecutaría con el propio
+ * `git status` que lo comprueba.
+ */
+export function gitControlFingerprint(root: string): string {
+  let common = git(root, ['rev-parse', '--git-common-dir']);
+  if (!isAbsolute(common)) common = join(root, common);
+  const h = createHash('sha256');
+  const add = (rel: string): void => {
+    const p = join(common, rel);
+    if (!existsSync(p)) {
+      h.update(`${rel}\0-\n`);
+      return;
+    }
+    if (statSync(p).isDirectory()) {
+      for (const n of readdirSync(p).sort()) add(`${rel}/${n}`);
+      return;
+    }
+    h.update(`${rel}\0`);
+    h.update(readFileSync(p));
+    h.update('\n');
+  };
+  for (const rel of ['config', 'config.worktree', 'hooks', 'info/attributes']) add(rel);
   return h.digest('hex');
 }
