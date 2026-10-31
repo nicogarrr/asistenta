@@ -219,6 +219,8 @@ const VUELVE_A = new RegExp(`^vuelve a (${Object.keys(IMPERATIVO).join('|')})(l[
 function normalizeOrder(text: string): string {
   return (
     normalizeTvText(text)
+      // «pausa.», «abre youtube.»: el punto final del móvil no es parte de la orden.
+      .replace(/[\s.]+$/, '')
       // «porfa», «porfi», «x favor», «xfa», «plis»: la cortesía no cambia la orden.
       .replace(
         /\bporf(?:a|i|is)(?:vor)?\b|\bpor favor\b|\bx ?fa(?:vor)?\b|\bplis\b|\bplease\b/g,
