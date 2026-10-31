@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
@@ -114,11 +123,30 @@ function lineHash(entry: Omit<CallAuditLine, 'h'>): string {
     .digest('hex');
 }
 
+/** How much of the ledger tail is read at a time to find the last line. */
+const TAIL_CHUNK = 64 * 1024;
+
+/**
+ * Hash of the last line. Reads only the end of the file (the ledger grows with
+ * every tool call; reading all of it on each call got slower every day).
+ */
 function lastHash(file: string): string {
   if (!existsSync(file)) return '';
+  let fd: number | undefined;
   try {
-    const raw = readFileSync(file, 'utf8');
-    const lines = raw.split('\n').filter(Boolean);
+    fd = openSync(file, 'r');
+    let start = fstatSync(fd).size;
+    let tail = Buffer.alloc(0);
+    while (start > 0) {
+      const len = Math.min(TAIL_CHUNK, start);
+      start -= len;
+      const chunk = Buffer.alloc(len);
+      readSync(fd, chunk, 0, len, start);
+      tail = Buffer.concat([chunk, tail]);
+      // Stop once a whole last line is in hand (a newline before it).
+      if (tail.toString('utf8').replace(/\n+$/, '').includes('\n')) break;
+    }
+    const lines = tail.toString('utf8').split('\n').filter(Boolean);
     const last = lines[lines.length - 1];
     if (!last) return '';
     const parsed = JSON.parse(last) as { h?: unknown };
@@ -126,6 +154,8 @@ function lastHash(file: string): string {
   } catch {
     // A corrupt tail must not stop new appends; the verifier will report it.
     return '';
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
