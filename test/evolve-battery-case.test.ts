@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -144,11 +145,28 @@ describe('evaluador de un caso de la batería (modelo simulado)', () => {
     expect(existsSync(join(dir, 'fuera.txt'))).toBe(false);
   });
 
-  it('con carpeta temporal propia no deja nada detrás', async () => {
-    const before = readdirSync(tmpdir()).filter((f) => f.startsWith('pa-battery-')).length;
-    await runBatteryCase(caso('hola'), { config: CONFIG, ...fake(fauxAssistantMessage('Hola.')) });
-    const after = readdirSync(tmpdir()).filter((f) => f.startsWith('pa-battery-')).length;
-    expect(after).toBe(before);
+  it('con carpeta temporal propia no deja nada detrás (aunque otro test cree pa-battery-* a la vez)', async () => {
+    // tmpdir() compartido: otros ficheros de test crean pa-battery-* en paralelo y
+    // contar ahí fallaba al azar en CI. Se cuenta en una carpeta privada (TMPDIR).
+    const own = mkdtempSync(join(tmpdir(), 'pa-bc-own-'));
+    const shared = tmpdir();
+    const prev = process.env.TMPDIR;
+    process.env.TMPDIR = own;
+    let foreign = '';
+    try {
+      const run = runBatteryCase(caso('hola'), {
+        config: CONFIG,
+        ...fake(fauxAssistantMessage('Hola.')),
+      });
+      foreign = mkdtempSync(join(shared, 'pa-battery-')); // «otro test» a la vez
+      await run;
+      expect(readdirSync(own).filter((f) => f.startsWith('pa-battery-'))).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = prev;
+      if (foreign) rmSync(foreign, { recursive: true, force: true });
+      rmSync(own, { recursive: true, force: true });
+    }
   });
 
   it('PA_BATTERY_CASE sin id o sin prompt es un error claro', () => {
