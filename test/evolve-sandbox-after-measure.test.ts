@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -71,6 +71,15 @@ describe('la copia medida es la revisada', () => {
     );
     expect(r.promoted).toBe(false);
     expect(r.attempts).toHaveLength(1);
+    expect(r.attempts[0]?.reason).toMatch(AFTER);
+  });
+  it('un test cambiado y devuelto a su texto durante la medición también', async () => {
+    const r = await week((dir) => {
+      const f = join(dir, 'test', 'b.test.ts');
+      const before = readFileSync(f, 'utf8');
+      writeFileSync(f, "it('b', () => expect(1).toBe(1));\n");
+      writeFileSync(f, before);
+    });
     expect(r.attempts[0]?.reason).toMatch(AFTER);
   });
   it('un commit nuevo en la copia durante la medición también', async () => {

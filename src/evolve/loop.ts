@@ -25,6 +25,7 @@ import {
   repoRoot,
   type Sandbox,
   sandboxGitFingerprint,
+  treeStatFingerprint,
 } from './worktree.js';
 
 /**
@@ -233,6 +234,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // What is checked is what is measured: commit the working tree first.
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
         const checkedHead = headCommit(sandbox.dir);
+        const checkedTree = treeStatFingerprint(sandbox.dir);
         const touched = changedFiles(root, kernel, sandbox.branch);
         const patch = diffText(root, kernel, sandbox.branch);
         const forbidden = [
@@ -336,6 +338,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         if (
           headCommit(sandbox.dir) !== checkedHead ||
           !isClean(sandbox.dir) ||
+          treeStatFingerprint(sandbox.dir) !== checkedTree ||
           depsFingerprint(sandbox.dir) !== depsBefore ||
           sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore
         ) {

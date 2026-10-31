@@ -245,3 +245,25 @@ export function gitControlFingerprint(root: string): string {
   for (const rel of ['config', 'config.worktree', 'hooks', 'info/attributes']) add(rel);
   return h.digest('hex');
 }
+
+/**
+ * Huella del disco de los ficheros versionados: tamaño, fechas e inodo de cada uno. `git status`
+ * compara contenido, así que un test cambiado durante la medición y devuelto a su texto después
+ * pasa por limpio; su ctime no se puede devolver. Medir (la suite y la sonda) no toca la ctime
+ * de ningún fichero versionado (comprobado en la suite completa, 31 oct).
+ */
+export function treeStatFingerprint(dir: string): string {
+  const h = createHash('sha256');
+  for (const f of git(dir, ['ls-files', '-z']).split('\0')) {
+    if (!f) continue;
+    let line: string;
+    try {
+      const st = lstatSync(join(dir, f));
+      line = `${f}\0${st.size}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}`;
+    } catch {
+      line = `${f}\0-`;
+    }
+    h.update(`${line}\n`);
+  }
+  return h.digest('hex');
+}
