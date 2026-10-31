@@ -129,7 +129,40 @@ async function runMailSend(
   const result = await deps.send(sender, req);
   return result.ok
     ? `Enviado a ${[...to, ...cc].length} destinatario(s) (el servidor lo aceptó; no confirma la entrega).`
-    : `No enviado: ${oneLine(result.error ?? 'error', 160)}. No lo reintento solo; mira Enviados antes de repetir.`;
+    : `No enviado: ${mailSendFailText(result.error ?? '', 'el servidor de correo no lo aceptó')}. No lo reintento solo; mira Enviados antes de repetir.`;
+}
+
+const EMAIL = /[\w.+-]+@[\w-]+\.[\w.]+/g;
+
+/**
+ * Motivo del servidor de correo (SMTP/IMAP) → frase llana para el chat. El texto crudo
+ * va solo al log: el modelo lo repetía tal cual («535-5.7.8 Username and Password…»).
+ */
+export function mailSendFailText(raw: string, fallback: string): string {
+  const why = oneLine(raw, 300);
+  if (/^falta (el destinatario|asunto o cuerpo)$/.test(why)) return why;
+  log.warn('correo: envío no hecho', { err: why.replace(EMAIL, '[email]') });
+  if (
+    /\bEAUTH\b|\b53[45]\b|invalid login|password not accepted|authenticat|badcredentials/i.test(why)
+  )
+    return 'Gmail no acepta la contraseña de aplicación; revisa que siga activa en myaccount.google.com/apppasswords';
+  if (
+    /ECONNECTION|ESOCKET|ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|greeting never received|timed? ?out|connection closed|network/i.test(
+      why,
+    )
+  )
+    return 'no hay conexión con el servidor de correo ahora mismo';
+  if (/\b552\b|\b5\.3\.4\b|too large|size limit|message size/i.test(why))
+    return 'el correo pesa demasiado para el servidor; quita o reduce los adjuntos';
+  if (/sending (quota|limit)|\b5\.4\.5\b/i.test(why))
+    return 'Gmail ha llegado al límite de envíos de hoy; prueba mañana';
+  if (
+    /EENVELOPE|\b5\.1\.\d\b|recipient address rejected|user unknown|does not exist|no recipients|mailbox unavailable|invalid (recipient|address)/i.test(
+      why,
+    )
+  )
+    return 'el servidor rechazó alguna dirección; revisa que estén bien escritas';
+  return fallback;
 }
 
 const oneLine = (s: string, max: number) =>
@@ -150,7 +183,7 @@ export async function runMailTool(
       return await runMailSend(args, deps);
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
-      return `No enviado: ${oneLine(why, 160).replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]')}`;
+      return `No enviado: ${mailSendFailText(why, 'no pude prepararlo ahora; prueba en un rato')}.`;
     }
   }
   let account: ReadMailAccount | null;
