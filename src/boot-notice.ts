@@ -44,7 +44,12 @@ export interface BootFacts {
 }
 
 /** Problemas de arranque que merecen un mensaje al dueño. */
-export type BootProblem = 'modelo' | 'panel-puerto' | 'panel-token';
+export type BootProblem =
+  | 'modelo'
+  | 'panel-puerto'
+  | 'panel-token'
+  | 'panel-ocupado'
+  | 'panel-fallo';
 
 const PROBLEM_TEXT: Record<BootProblem, string> = {
   modelo:
@@ -55,6 +60,10 @@ const PROBLEM_TEXT: Record<BootProblem, string> = {
     'El panel web no se ha encendido: el número de PA_WEB_PORT en el archivo .env no vale. Pon uno como 8787 y reinicia Asistenta.',
   'panel-token':
     'El panel web no se ha encendido: falta PA_WEB_TOKEN en el archivo .env. Añade esa línea con 24 o más letras y números al azar y reinicia Asistenta.',
+  'panel-ocupado':
+    'El panel web no se ha encendido: su puerto lo usa otro programa o Windows no deja usarlo. Cambia PA_WEB_PORT en el archivo .env (por ejemplo a 8788) y reinicia Asistenta.',
+  'panel-fallo':
+    'El panel web no se ha encendido por un fallo inesperado. Ejecuta «pa doctor» en el PC para ver qué pasa.',
 };
 
 const yesNo = (on: boolean) => (on ? 'sí' : 'no');
