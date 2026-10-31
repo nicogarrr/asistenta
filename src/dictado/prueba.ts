@@ -8,6 +8,7 @@ import { looksSilent, pcmToWavPcm16, WHISPER_SAMPLE_RATE } from '../voice/audio.
 import type { WakeCapture } from '../voice/wake.js';
 import { ajustesDictado } from './ajustes.js';
 import { limpiarDictado } from './limpiar.js';
+import type { TeclaDictado } from './tipos.js';
 
 export interface DepsPrueba {
   capture: WakeCapture;
@@ -18,7 +19,7 @@ export interface DepsPrueba {
 }
 
 export const DICTADO_USAGE =
-  'No conozco esa orden. Usa: pa dictado prueba (graba 5 segundos y te enseña el texto; puedes poner los segundos detrás, hasta 30).';
+  'No conozco esa orden. Usa: pa dictado prueba (graba 5 segundos y te enseña el texto; puedes poner los segundos detrás, hasta 30) o pa dictado tecla (comprueba que se nota la tecla).';
 
 /** Une los trozos que entrega la captura en un solo audio. */
 export function unirTrozos(trozos: Float32Array[]): Float32Array {
@@ -94,10 +95,59 @@ export async function dictadoPrueba(args: string[], deps: DepsPrueba): Promise<n
   return 0;
 }
 
+/** `pa dictado tecla`: comprueba que se nota la tecla (y se oyen los pitidos), sin grabar nada. */
+export async function dictadoTecla(deps: {
+  tecla: (vk: number[][]) => TeclaDictado;
+  esperar: (ms: number) => Promise<void>;
+  out: (linea: string) => void;
+  env?: NodeJS.ProcessEnv;
+  plataforma?: NodeJS.Platform;
+}): Promise<number> {
+  if ((deps.plataforma ?? process.platform) !== 'win32') {
+    deps.out('La tecla del dictado solo funciona en Windows.');
+    return 1;
+  }
+  const a = ajustesDictado(deps.env);
+  if (!a.tecla) {
+    deps.out(
+      `No entiendo PA_DICTADO_TECLA «${a.teclaTexto.slice(0, 30)}». Usa por ejemplo ctrl+win o ctrl+alt.`,
+    );
+    return 2;
+  }
+  const visto = { pulsada: false, soltada: false };
+  const tecla = deps.tecla(a.tecla);
+  await tecla.start(
+    () => {
+      visto.pulsada = true;
+    },
+    () => {
+      visto.soltada = visto.pulsada;
+    },
+  );
+  deps.out(`Mantén ${a.teclaTexto} un momento y suéltala (tienes 15 s)…`);
+  for (let i = 0; i < 150 && !visto.soltada; i++) await deps.esperar(100);
+  await tecla.stop();
+  if (!visto.soltada) {
+    deps.out(
+      'No he notado la tecla. Prueba otra con PA_DICTADO_TECLA (por ejemplo ctrl+alt o f9).',
+    );
+    return 1;
+  }
+  deps.out(
+    'Bien: la tecla funciona. Al pulsarla suena un pitido agudo y al soltarla uno más grave.',
+  );
+  return 0;
+}
+
 /** Entrada de `pa dictado …`. */
 export async function dictadoCommand(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   const out = (l: string) => process.stdout.write(`${l}\n`);
+  const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  if (sub === 'tecla') {
+    const { TeclaWindows } = await import('./windows.js');
+    return dictadoTecla({ tecla: (vk) => new TeclaWindows(vk), esperar, out });
+  }
   if (sub !== 'prueba') {
     out(DICTADO_USAGE);
     return 2;
@@ -106,7 +156,7 @@ export async function dictadoCommand(args: string[]): Promise<number> {
   return dictadoPrueba(rest, {
     capture: new FfmpegMicCapture(),
     transcribir: transcribirLocal,
-    esperar: (ms) => new Promise((r) => setTimeout(r, ms)),
+    esperar,
     out,
   });
 }
