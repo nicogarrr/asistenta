@@ -39,6 +39,10 @@ const PLAIN_REASONS: [RegExp, string][] = [
   ],
 ];
 
+/** `pa restart` no reinicia: lo dice claro y explica cómo hacerlo a mano. */
+export const RESTART_TEXT =
+  'pa restart no reinicia por sí solo, porque no puedo asegurar que Asistenta vuelva a arrancar. Para reiniciarla: pa stop y después levantar.bat (o pa iniciar). No he parado ni arrancado nada.';
+
 export function plainStopReason(reason: string): string {
   if (OTHER_OWNER.test(reason)) return reason;
   return PLAIN_REASONS.find(([re]) => re.test(reason))?.[1] ?? reason;
