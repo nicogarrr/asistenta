@@ -9,6 +9,7 @@ import {
   ownerIdentity,
   prepareSignup,
 } from '../credentials/signup.js';
+import { findSignupCode, type MailSearch, realSignupMail } from '../credentials/signup-code.js';
 import {
   type Account,
   findAccounts,
@@ -27,10 +28,11 @@ const Params = Type.Object({
       Type.Literal('confirmar_registro'),
       Type.Literal('guardar'),
       Type.Literal('descartar'),
+      Type.Literal('codigo_registro'),
     ],
     {
       description:
-        'listar = all saved accounts; buscar = is there an account for a site; preparar_registro / confirmar_registro / guardar / descartar = the sign-up steps.',
+        'listar = all saved accounts; buscar = is there an account for a site; preparar_registro / confirmar_registro / guardar / descartar = the sign-up steps; codigo_registro = read the verification code the site mailed for an approved sign-up.',
     },
   ),
   sitio: Type.Optional(Type.String({ description: 'Site or domain, e.g. wallapop.es.' })),
@@ -73,10 +75,12 @@ async function signupStep(
   },
   vault: VaultOps,
   owner: () => Promise<OwnerIdentity | null>,
+  mail: MailSearch = realSignupMail,
 ): Promise<string> {
   const sitio = (args.sitio ?? '').trim();
   if (!sitio) return '¿En qué web? Dime el nombre o el dominio.';
   try {
+    if (args.action === 'codigo_registro') return await findSignupCode(sitio, mail, vault);
     if (args.action === 'preparar_registro') {
       const me = await owner();
       if (!me) return MISSING_IDENTITY;
@@ -112,18 +116,19 @@ async function signupStep(
 export function createAccountsTool(
   vault: VaultOps = realVault,
   owner: () => Promise<OwnerIdentity | null> = () => ownerIdentity(process.env, vault),
+  mail: MailSearch = realSignupMail,
 ): AgentTool<typeof Params> {
   return {
     name: 'cuentas',
     label: 'Cuentas',
     description:
-      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. Hand CAPTCHAs and SMS/email codes to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
+      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async (_id, args) => {
       let text: string;
       if (args.action !== 'listar' && args.action !== 'buscar') {
-        text = await signupStep(args, vault, owner);
+        text = await signupStep(args, vault, owner, mail);
       } else if (args.action === 'buscar') {
         const q = (args.sitio ?? '').trim();
         if (!q) text = '¿De qué web? Dime el nombre o el dominio.';
