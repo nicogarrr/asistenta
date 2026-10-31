@@ -736,8 +736,16 @@ function appName(raw: string): string {
     prev = s;
     s = s.replace(APP_COLA, '').trim();
   }
+  // «abre la serie de netflix», «pon la peli en disney»: la app es lo de detrás.
+  const deApp = DE_APP.exec(s);
+  if (deApp?.[1])
+    return APP_ALIASES[deApp[1]] !== undefined && !SOLO_TV.test(deApp[1]) ? deApp[1] : '';
   return SIN_APP.test(s) ? '' : s;
 }
+
+/** «la serie de netflix», «la peli en disney». */
+const DE_APP = new RegExp(`^(?:${LO_QUE_SE_VE}) (?:de|en) (.+)$`);
+const SOLO_TV = new RegExp(`^${TV}$`);
 
 /** Como se entendio la orden, en castellano (para confirmar al usuario). */
 export function describeTvIntent(i: TvIntent): string {
