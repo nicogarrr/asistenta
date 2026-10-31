@@ -1225,6 +1225,9 @@ export class Gate {
         const a = argString(c.args, 'action');
         return a === 'listar' || a === 'buscar' ? 'lee' : null;
       }
+      // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
+      case 'tareas':
+        return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
         // GET/HEAD are reads. Anything else transmits to a third party whose
@@ -2057,6 +2060,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'cargar_herramienta',
   'tiempo',
   'cuentas',
+  'tareas',
   'fetch',
   'write',
   'edit',

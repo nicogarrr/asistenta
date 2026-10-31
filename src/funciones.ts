@@ -231,6 +231,7 @@ export const TOOL_ABILITIES: Readonly<
     area: 'correo',
     text: 'busco y leo tus correos; respondo, reenvío o escribo solo si apruebas el borrador exacto',
   },
+  tareas: { area: 'agenda', text: 'apunto tus tareas de la semana y te digo qué tienes' },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
   cuentas: {
     area: 'agenda',
