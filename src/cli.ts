@@ -474,7 +474,7 @@ Uso:
   pa vault get <k>        enseñar una clave en pantalla
   pa vault list           ver los nombres de las claves (nunca los valores)
   pa vault rm <k>         borrar una clave
-  pa cuentas listar|copiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
+  pa cuentas listar|copiar <web>|borrar <web>|cambiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa vigilancias [--json]  qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)

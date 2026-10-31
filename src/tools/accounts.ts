@@ -99,7 +99,7 @@ export function createAccountsTool(
     name: 'cuentas',
     label: 'Cuentas',
     description:
-      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. Hand CAPTCHAs and SMS/email codes to the owner; never paid plans or card data.",
+      "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on. Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. Hand CAPTCHAs and SMS/email codes to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
     parameters: Params,
     executionMode: 'parallel',
     execute: async (_id, args) => {
