@@ -740,7 +740,7 @@ export function createBrowserTool(
             if (stored === undefined) {
               throw new Error(
                 `El vault no tiene ningún secreto con la clave ${canonicalKey}. ` +
-                  `Nico lo guarda con: pa vault set ${canonicalKey} <valor>`,
+                  `Nico lo guarda con: pa vault set-stdin ${canonicalKey} (se escribe sin que se vea)`,
               );
             }
             value = stored;
