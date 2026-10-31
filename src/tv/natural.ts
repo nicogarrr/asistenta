@@ -143,6 +143,14 @@ const OTRO_APARATO =
 const COMPOUND =
   /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
 
+/**
+ * Dos órdenes seguidas sin «y» («sube el volumen pon netflix», «abre netflix sube el
+ * volumen»): el parser solo haría la mitad (o buscaría la app «netflix sube el volumen»).
+ * «más baja» no es otra orden.
+ */
+const DOS_ORDENES =
+  /^(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|quitale|cambia|cambiala|vuelve|dale|pausa|para|reanuda)\b.*(?<!\b(?:mas|muy|tan|menos)) (?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|quitale|cambia|cambiala)\b/;
+
 function num(s: string | undefined): number | null {
   return spanishNumber(s);
 }
@@ -369,7 +377,7 @@ function parseOne(text: string): TvIntent | null {
   // Dos ordenes encadenadas («enciende la tele y pon Netflix», «modo cine y sube»): el parser
   // solo ejecuta una, asi que haria la mitad en silencio. Mejor null y que
   // las atienda el modelo (o se pidan por separado). Va antes de modos y rutinas.
-  if (COMPOUND.test(t)) return null;
+  if (COMPOUND.test(t) || DOS_ORDENES.test(t)) return null;
   // La orden también va para otro aparato («apaga la tele y la luz»): la tele sola sería la mitad.
   if (OTRO_APARATO.test(t)) return null;
   let m: RegExpExecArray | null;
