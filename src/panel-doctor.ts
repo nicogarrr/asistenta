@@ -94,3 +94,56 @@ export function panelDoctorLines(env: NodeJS.ProcessEnv = process.env): string[]
   }
   return lines;
 }
+
+/** Lo que el panel no pudo hacer al escuchar en el puerto, ya en castellano. */
+export interface PanelListenProblem {
+  problem: 'panel-ocupado' | 'panel-fallo';
+  message: string;
+}
+
+/**
+ * Error al encender el panel (el puerto ya estaba bien escrito). En Windows es
+ * corriente que otro programa —o una segunda Asistenta— tenga el puerto, o que
+ * Windows lo reserve (EACCES). Antes solo quedaba «panel web no arrancó» en el log.
+ */
+export function panelListenProblem(err: unknown, port: number): PanelListenProblem {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'EADDRINUSE' || code === 'EACCES') {
+    const other = port < 65535 ? port + 1 : 8788;
+    return {
+      problem: 'panel-ocupado',
+      message: `El panel web no se ha encendido: el puerto ${port} lo está usando otro programa (¿Asistenta abierta dos veces?) o Windows no deja usarlo. Cambia PA_WEB_PORT en .env, por ejemplo a ${other}, y reinicia Asistenta.`,
+    };
+  }
+  return {
+    problem: 'panel-fallo',
+    message:
+      'El panel web no se ha encendido por un fallo inesperado. Ejecuta «pa doctor» en el PC para ver qué pasa.',
+  };
+}
+
+export type PanelProblem =
+  | Extract<PanelStart, { kind: 'problem' }>['problem']
+  | PanelListenProblem['problem'];
+
+/**
+ * Lo que el arranque cuenta del panel: su dirección si de verdad escucha (línea de
+ * consola) o el problema (aviso por Telegram, una vez). Espera poco al panel.
+ */
+export async function panelBootFacts(
+  plan: PanelStart,
+  started?: Promise<string | PanelListenProblem>,
+  waitMs = 5_000,
+): Promise<{ url?: string; problems: PanelProblem[] }> {
+  if (plan.kind === 'problem') return { problems: [plan.problem] };
+  if (plan.kind === 'off' || !started) return { problems: [] };
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), waitMs);
+    timer.unref?.();
+  });
+  const got = await Promise.race([started, late]).finally(() => clearTimeout(timer));
+  if (typeof got === 'string') return { url: got, problems: [] };
+  if (got) return { problems: [got.problem] };
+  return { problems: [] };
+}

@@ -297,7 +297,13 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
-import { panelDoctorLines, panelStartPlan } from './panel-doctor.js';
+import {
+  type PanelListenProblem,
+  panelBootFacts,
+  panelDoctorLines,
+  panelListenProblem,
+  panelStartPlan,
+} from './panel-doctor.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
 import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
@@ -1643,13 +1649,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
   const panelPlan = panelStartPlan();
+  let panelStarted: Promise<string | PanelListenProblem> | undefined;
   if (panelPlan.kind !== 'off') {
     if (panelPlan.kind === 'problem') {
       log.warn(panelPlan.message);
       process.stderr.write(`${panelPlan.message}\n`);
     } else {
       const webToken = panelPlan.token;
-      void startWebUi(
+      panelStarted = startWebUi(
         {
           token: webToken,
           goals: () => panelGoals.read(),
@@ -1795,8 +1802,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           allowedHosts: parseAllowedHosts(process.env.PA_WEB_ALLOWED_HOSTS),
         },
       )
-        .then((ui) => log.info('panel web listo', { url: ui.url }))
-        .catch((err: unknown) => log.warn('panel web no arrancó', { err }));
+        .then((ui) => {
+          log.info('panel web listo', { url: ui.url });
+          return ui.url;
+        })
+        .catch((err: unknown) => {
+          // Puerto ocupado o reservado por Windows: dicho en castellano en la consola
+          // y, desde el aviso de arranque, por Telegram una vez.
+          const problem = panelListenProblem(err, panelPlan.port);
+          log.warn('panel web no arrancó', { err });
+          process.stderr.write(`${problem.message}\n`);
+          return problem;
+        });
     }
   }
   const messageThread = new Map<string, string>();
@@ -7237,6 +7254,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Arranque: una sola línea clara en la consola. A Telegram no va nada si todo está
   // bien (se da por hecho); maybeSendBootNotice solo avisa de problemas, uno por vez.
   void (async () => {
+    const panel = await panelBootFacts(panelPlan, panelStarted);
     const facts = {
       model: config.model,
       tv: Boolean(await vaultGet('tv:host').catch(() => undefined)),
@@ -7245,8 +7263,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .then((m) => m.read === 'ok')
         .catch(() => false),
       threads: threads.size,
-      // El panel que no arranca se avisa también por Telegram (una vez, ver boot-notice).
-      problems: panelPlan.kind === 'problem' ? [panelPlan.problem] : [],
+      // El panel: su dirección en la consola si escucha; si no arranca, se avisa
+      // también por Telegram (una vez, ver boot-notice).
+      panelUrl: panel.url,
+      problems: panel.problems,
     };
     process.stdout.write(`${bootBanner(facts)}\n`);
     const result = await maybeSendBootNotice({
