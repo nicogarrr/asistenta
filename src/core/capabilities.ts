@@ -65,6 +65,7 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   { name: 'opengym', threadAllow: true },
   { name: 'book', threadAllow: true },
+  { name: 'repartos', threadAllow: true },
   {
     name: 'objetivo',
     threadAllow: true,

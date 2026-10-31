@@ -338,6 +338,7 @@ import { createCalendarTool } from './tools/calendar.js';
 import { createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import type { ActionGate } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
+import { createDeliveriesTool } from './tools/deliveries.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
@@ -1943,6 +1944,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         isFetchable: (url) => isFetchableResolved(url),
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
+      createDeliveriesTool({
+        db: memoryDb,
+        recentMail: async (since) => {
+          const account = await loadMailAccount();
+          return account ? searchMail(account, { since }, 60, 30_000) : null;
+        },
+      }),
       createWeatherTool(() => weatherConfigFromEnv()),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
