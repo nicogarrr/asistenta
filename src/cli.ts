@@ -706,6 +706,12 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'autoupdate': {
       const { autostartRepo } = await import('./autostart.js');
+      // Copia instalada con el .exe (sin git): la actualiza el instalador de GitHub.
+      const inst = await import('./actualizar-instalado.js');
+      if (inst.isInstalledLayout(autostartRepo())) {
+        const code = await inst.instaladoAutoupdateCommand(rest, autostartRepo());
+        if (code !== null) return code;
+      }
       const { autoupdateCommand } = await import('./autoupdate-cli.js');
       return autoupdateCommand(rest, { stateDir: paths.state, repo: autostartRepo() });
     }

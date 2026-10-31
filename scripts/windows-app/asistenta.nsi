@@ -81,6 +81,9 @@ Section "Asistenta"
     ; Solo el icono junto al reloj; a Asistenta la arranca su propia tarea.
     CreateShortcut "$SMSTARTUP\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"' "$INSTDIR\asistenta.ico"
   ${EndIf}
+  ; Actualización sin ventanas (pa autoupdate now, /S): al terminar vuelve a abrir Asistenta.
+  IfSilent 0 +2
+    Exec '"$SYSDIR\wscript.exe" "$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
 SectionEnd
 
 Function .onInit

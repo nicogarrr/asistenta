@@ -27,6 +27,16 @@ Verde: Asistenta está en marcha y conectada a Telegram. Ámbar: en marcha, pero
 
 Si el arranque automático está instalado, el icono enciende Asistenta por su tarea, así el vigilante la sigue cuidando. Doble clic en el icono = «Ver estado».
 
+## Actualizar
+
+La carpeta instalada no viene de git: se actualiza con el instalador que GitHub adjunta a cada versión publicada. En PowerShell:
+
+```
+& "$env:LOCALAPPDATA\Asistenta\node\node.exe" "$env:LOCALAPPDATA\Asistenta\app\dist\cli.js" autoupdate now
+```
+
+Si hay versión nueva y su huella SHA-256 coincide, la instala encima sin ventanas (tu `.env` y tus datos se quedan) y Asistenta vuelve sola. Sin internet no toca nada.
+
 ## Desinstalar
 
 Desde «Agregar o quitar programas» o «Desinstalar Asistenta». Quita el programa y el arranque con Windows. Tu `.env`, tus claves y tu memoria **se quedan**, salvo que marques «Borrar también mis datos, claves y configuración» (desmarcada de serie).
@@ -49,7 +59,6 @@ Sale `var/Asistenta-Instalador-<versión>.exe`. El script baja el Node portable 
 
 ## Lo que aún no hace
 
-- Actualizarse sola: la carpeta instalada no viene de git, así que `pa autoupdate` dice que no puede. Para una versión nueva, instala el `.exe` nuevo encima (conserva tus datos).
 - Dictado: mientras exista `dictado.grabando` en la carpeta de datos, el punto se pone naranja (gancho para el dictado por voz).
 
 `instalar.bat` y `levantar.bat` siguen funcionando igual para quien prefiera la carpeta con Node propio.
