@@ -27,8 +27,16 @@ import { fileURLToPath } from 'node:url';
 const page = (body: string) =>
   `<!doctype html><meta charset="utf-8"><title>Viajes Sur</title>${body}`;
 
+// Lo que el navegador pidió de verdad: ruta y si lo pidió un navegador (no un fetch de Node).
+const seen: Array<{ url: string; browser: boolean }> = [];
 const server = createServer((req, res) => {
   const url = req.url ?? '/';
+  seen.push({ url, browser: /Mozilla\//.test(req.headers['user-agent'] ?? '') });
+  if (url.startsWith('/evento?')) {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (url === '/') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(
@@ -39,6 +47,9 @@ const server = createServer((req, res) => {
         <ul id="sd" role="listbox" hidden></ul>
         <button id="go" disabled>Buscar</button>
         <script>
+          // Lo que pasa de verdad en el navegador vuelve al servidor de la sonda: los checks
+          // se juzgan con esto y no solo con lo que el código del intento dice que pasó.
+          const beacon = (q) => fetch('/evento?' + q, { keepalive: true }).catch(() => {});
           const data = {
             o: ['(TODAS)', 'Sevilla', 'Sevilla-Santa Justa', 'Cordoba'],
             d: ['(TODAS)', 'Malaga', 'Malaga-La Rosaleda', 'Granada'],
@@ -46,6 +57,7 @@ const server = createServer((req, res) => {
           for (const [id, key] of [['o','o'], ['d','d']]) {
             const input = document.getElementById(id);
             const list = document.getElementById(key === 'o' ? 'so' : 'sd');
+            input.addEventListener('focus', () => beacon('foco=' + id));
             input.addEventListener('input', () => {
               list.hidden = true;
               // The panel paints late. This is what broke the real run.
@@ -55,6 +67,7 @@ const server = createServer((req, res) => {
                   .map((v) => '<li role="option">' + v + '</li>')
                   .join('');
                 list.hidden = false;
+                beacon('panel=' + id);
               }, 450);
             });
             list.addEventListener('click', (e) => {
@@ -64,6 +77,7 @@ const server = createServer((req, res) => {
               list.hidden = true;
               const filled = document.getElementById('o').value && document.getElementById('d').value;
               document.getElementById('go').disabled = !filled;
+              beacon('c=' + id + '&v=' + encodeURIComponent(input.value) + (filled ? '&go=1' : ''));
             });
           }
         </script>`),
@@ -172,13 +186,26 @@ const check = (label: string, ok: boolean, extra = '') => {
   process.stdout.write(`${ok ? 'PASA' : 'FALLA'}  ${label}${extra ? ` — ${extra}` : ''}\n`);
   if (!ok) failures++;
 };
+// ¿Pidió el navegador algo así? Los avisos de la página llegan un poco después.
+const saw = async (pred: (url: string) => boolean, ms = 3000): Promise<boolean> => {
+  const end = Date.now() + ms;
+  for (;;) {
+    if (seen.some((r) => r.browser && pred(r.url))) return true;
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+const ev = (q: string) => (url: string) => url.startsWith('/evento?') && url.includes(q);
 
 try {
   // 1. The deep URL that a memory-guess produces must not cost the turn.
   const guessed = await service.open(scope, `${base}/inspirate/experiencias/rio`);
   check(
     'la URL adivinada con 404 no quema el turno',
-    guessed.url.endsWith('/') && !guessed.url.includes('inspirate'),
+    guessed.url.endsWith('/') &&
+      !guessed.url.includes('inspirate') &&
+      (await saw((u) => u.startsWith('/inspirate'))) &&
+      (await saw((u) => u === '/')),
     `-> ${guessed.url} (status ${String(guessed.status)})`,
   );
 
@@ -198,7 +225,11 @@ try {
      await o.click();
      return 'ok';`,
   );
-  check('el campo recibe foco', !picked.text.startsWith('error'), picked.text);
+  check(
+    'el campo recibe foco',
+    !picked.text.startsWith('error') && (await saw(ev('foco=o'))),
+    picked.text,
+  );
 
   // With the panel open, the scan has to say so. This is the fact that decides the next
   // action, so it is checked while it is true rather than on the empty page.
@@ -218,7 +249,7 @@ try {
   );
   check(
     'el desplegable se abre tras la latencia real',
-    !opened.text.includes('error'),
+    !opened.text.includes('error') && (await saw(ev('panel=o'))),
     opened.text.slice(0, 80),
   );
   const snapOpen = await service.snapshot(scope);
@@ -250,7 +281,9 @@ try {
   );
   check(
     'las sugerencias tardias se leen y se eligen',
-    !from.text.includes('error') && !from.text.includes('el panel no apareció'),
+    !from.text.includes('error') &&
+      !from.text.includes('el panel no apareció') &&
+      (await saw(ev('c=o&v=Sevilla'))),
     from.text.slice(0, 120),
   );
 
@@ -264,7 +297,7 @@ try {
   );
   check(
     'el valor del campo se puede releer',
-    readBack.text.includes('Sevilla'),
+    readBack.text.includes('Sevilla') && (await saw(ev('c=o&v=Sevilla'))),
     readBack.text.slice(0, 120),
   );
 
@@ -290,12 +323,14 @@ try {
   );
   check(
     'el segundo desplegable tambien funciona',
-    !dest.text.includes('error') && !dest.text.includes('no apareció'),
+    !dest.text.includes('error') &&
+      !dest.text.includes('no apareció') &&
+      (await saw(ev('c=d&v=Malaga'))),
     dest.text.slice(0, 140),
   );
   check(
     'el boton se habilita solo cuando ambos campos estan puestos',
-    dest.text.includes('goDisabled: false'),
+    dest.text.includes('goDisabled: false') && (await saw(ev('go=1'))),
     dest.text.slice(0, 140),
   );
 
