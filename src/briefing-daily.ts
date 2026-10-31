@@ -16,6 +16,7 @@
 
 import { type BriefingInput, briefingDue, buildBriefing, watchHit } from './briefing.js';
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { looksLikePhishing, phishingSignals } from './mail/triage.js';
 import type { MailMessage } from './mail/types.js';
 import { isReminder, reminderText } from './tools/reminder.js';
 
@@ -328,17 +329,32 @@ export function senderName(from: string): string {
  * Solo remitente y asunto: el cuerpo nunca entra en el mensaje.
  */
 export function pickImportantMail(
-  messages: ReadonlyArray<Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'>>,
+  messages: ReadonlyArray<
+    Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'> & { text?: string }
+  >,
   now: number,
   max = MAX_MAIL,
 ): Array<{ from: string; subject: string }> {
-  return messages
+  const recent = messages
     .filter((m) => !m.seen)
     .filter((m) => Number.isFinite(m.at) && m.at <= now + 60_000 && now - m.at <= DAY_MS)
+    .sort((a, b) => b.at - a.at);
+  // Lo que huele a estafa sale primero y avisado, aunque venga de un «no-reply»:
+  // solo se avisa, no se mueve ni se borra nada.
+  const suspicious = recent.flatMap((m) => {
+    const signals = phishingSignals({ from: m.from, subject: m.subject, text: m.text });
+    return looksLikePhishing(signals)
+      ? [{ from: senderName(m.from), subject: `⚠️ posible estafa (${signals[0]}): ${m.subject}` }]
+      : [];
+  });
+  const normal = recent
+    .filter(
+      (m) =>
+        !looksLikePhishing(phishingSignals({ from: m.from, subject: m.subject, text: m.text })),
+    )
     .filter((m) => !BULK_FROM.test(m.from) && !BULK_SUBJECT.test(m.subject))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, max)
     .map((m) => ({ from: senderName(m.from), subject: m.subject }));
+  return [...suspicious, ...normal].slice(0, max);
 }
 
 /** Códigos WMO de Open-Meteo, en español llano. */
