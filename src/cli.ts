@@ -278,7 +278,7 @@ import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { installDoctorLines } from './doctor-install.js';
 import { doctorLinesEs } from './doctor-labels.js';
-import { telegramDoctorLines } from './doctor-telegram.js';
+import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
 import {
   FUNCIONES_CALLBACK_PREFIX,
   findArea,
@@ -884,7 +884,7 @@ async function doctorCommand(): Promise<number> {
   lines.push(
     `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source}`,
   );
-  if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet)));
+  if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));
   if (desktopEnabled()) {
     lines.push(
       `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (instala pwsh 7 para la sintaxis completa)'}`,
