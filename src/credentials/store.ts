@@ -101,7 +101,7 @@ function parseMeta(domain: string, raw: string | undefined, username: string): A
 
 /**
  * Dominios tal como están en las claves `site:<d>:password`, agrupados por dominio normal
- * (sin www, en minúsculas): `pa vault set site:www.wallapop.es:password` y una cuenta de
+ * (sin www, en minúsculas): `pa vault set-stdin site:www.wallapop.es:password` y una cuenta de
  * wallapop.es son la misma web. El primero de cada lista es el que se lee (el exacto si lo hay).
  */
 async function keyDomains(vault: VaultOps): Promise<Map<string, string[]>> {

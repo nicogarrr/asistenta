@@ -326,7 +326,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
             } else {
               for (const field of missing) {
                 access.push(
-                  `- ${domain}: falta ${siteKey(domain, field)} - guárdala con: pa vault set ${siteKey(domain, field)} <valor>`,
+                  `- ${domain}: falta ${siteKey(domain, field)} - guárdala con: pa vault set-stdin ${siteKey(domain, field)}`,
                 );
               }
             }
