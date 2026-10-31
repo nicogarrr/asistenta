@@ -8,9 +8,20 @@ import type { MailMessage } from './types.js';
  * seguimiento, pedido, un título corto y el último estado.
  */
 
-export type DeliveryStatus = 'confirmado' | 'enviado' | 'en_reparto' | 'entregado' | 'incidencia';
+export type DeliveryStatus =
+  | 'confirmado'
+  | 'enviado'
+  | 'en_reparto'
+  | 'para_recoger'
+  | 'entregado'
+  | 'incidencia';
 
-const ALERT_STATUSES: readonly DeliveryStatus[] = ['en_reparto', 'entregado', 'incidencia'];
+const ALERT_STATUSES: readonly DeliveryStatus[] = [
+  'en_reparto',
+  'para_recoger',
+  'entregado',
+  'incidencia',
+];
 /** Un cambio más viejo que esto (p. ej. al leer el buzón por primera vez) no avisa. */
 export const DELIVERY_ALERT_MAX_AGE_MS = 2 * 86_400_000;
 const DELIVERED_KEEP_MS = 2 * 86_400_000;
@@ -30,6 +41,14 @@ const CARRIERS: ReadonlyArray<[string, RegExp]> = [
   ['Nacex', /\bnacex\b/i],
   ['CTT', /\bctt\b/i],
   ['FedEx', /fedex/i],
+  ['InPost', /inpost/i],
+  ['Paack', /\bpaack\b/i],
+  ['Celeritas', /celeritas/i],
+  ['Zeleris', /zeleris/i],
+  ['Envialia', /envialia/i],
+  ['Tipsa', /\btipsa\b|tip-sa\./i],
+  ['Mondial Relay', /mondial ?relay/i],
+  ['Vinted Go', /vinted ?go\b/i],
 ];
 
 const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
@@ -38,12 +57,16 @@ const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
     /incidencia|no (?:hemos )?podido entregar|intento de entrega|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
   ],
   [
+    'para_recoger',
+    /list[oa] para (?:su )?recog(?:er|ida)|disponible para (?:su )?recog(?:er|ida)|(?:ya )?puedes recoger(?:lo|la)?\b|te espera en|ready for (?:pick ?up|collection)|ready to collect|available for (?:pick ?up|collection)/i,
+  ],
+  [
     'entregado',
     /(?<!ser[aá] )(?<!sea )\b(?:entregado|entregada|se ha entregado|delivered)\b|ya (?:lo )?tienes|recogido en/i,
   ],
   [
     'en_reparto',
-    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|lo recibir[aá]s hoy|en ruta de entrega/i,
+    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|llegar[aá] hoy|lo recibir[aá]s hoy|en ruta de entrega|se entregar[aá] hoy|ser[aá] entregad[oa] hoy|entrega prevista (?:para )?hoy|arriving today/i,
   ],
   [
     'enviado',
