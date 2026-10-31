@@ -176,10 +176,13 @@ const DEFERRED = new RegExp(
  * Muletillas y vocativo delante de la orden: «oye, sube el volumen», «tele, baja
  * el volumen», «oye tele, apágala». No cambian la orden; se quitan antes de leerla.
  */
-/** «cambia a la 2», «pon la tele en la 1», «ponla en la 5», «cámbiala a la tres». */
+/**
+ * «cambia a la 2», «pon la tele en la 1», «ponla en la 5», «cámbiala a la tres»;
+ * también con «el»: «pon la tele en el 5», «ponla en el cinco».
+ */
 const cambiaALa = (cap: string): RegExp =>
   new RegExp(
-    `^(?:(?:cambia|cambiala|cambialo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? a|(?:pon|ponla|ponlo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? en) la (${cap})$`,
+    `^(?:(?:cambia|cambiala|cambialo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? a la|(?:pon|ponla|ponlo)(?: (?:(?:la|el) )?(?:tele|tv|television|televisor))? en (?:la|el)) (${cap})$`,
   );
 const CAMBIA_A_LA_NUM = cambiaALa('\\d{1,2}');
 const CAMBIA_A_LA_PALABRA = cambiaALa('[a-z]+');
