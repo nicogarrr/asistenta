@@ -1,6 +1,6 @@
 /**
  * Optional .env, loaded from the working directory (the repo root under
- * `npm start`) with Node's own parser: KEY=VALUE, optional `export`, quotes
+ * `npm start`) and then from the install folder, with Node's own parser: KEY=VALUE, optional `export`, quotes
  * and comments. Variables already present in the process environment always
  * win (same rule as loadEnvFile), and a malformed file warns on stderr
  * (in plain Spanish) instead of killing startup.
@@ -16,6 +16,8 @@
  * se perdía sin aviso (o el archivo entero, en UTF-16). Aquí se quita el BOM.
  */
 import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { envFileText } from './env-text.js';
 
@@ -53,4 +55,19 @@ export function loadDotEnv(file = '.env', env: NodeJS.ProcessEnv = process.env):
   }
 }
 
-loadDotEnv();
+/**
+ * Los .env que se leen: el de la carpeta actual y el de la instalación (junto a
+ * src/ y dist/). Antes solo el de la carpeta actual: `pa doctor` o `pa vault`
+ * lanzados desde otra carpeta no veían el token del bot ni el del panel y
+ * decían «falta» aunque estuvieran puestos. El de la carpeta actual gana.
+ */
+export function dotEnvFiles(
+  cwd: string = process.cwd(),
+  moduleUrl: string = import.meta.url,
+): string[] {
+  const here = resolve(cwd, '.env');
+  const install = join(fileURLToPath(new URL('..', moduleUrl)), '.env');
+  return here === resolve(install) ? [here] : [here, install];
+}
+
+for (const file of dotEnvFiles()) loadDotEnv(file);
