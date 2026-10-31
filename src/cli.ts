@@ -112,6 +112,7 @@ import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { parseNatural } from './cron/scheduler.js';
+import { briefingHourFor } from './daemon/briefing-quiet.js';
 import { CloseLoop } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
@@ -4394,7 +4395,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const briefingDeps: DailyBriefingDeps = {
     enabled: () => envOn(process.env.PA_BRIEFING),
     now: () => new Date(),
-    hour: briefingHour(process.env.PA_BRIEFING_HOUR),
+    // Si el dueño dijo «no me escribas antes de las 10», el de las 8 sale a las 10.
+    get hour() {
+      return briefingHourFor(
+        briefingHour(process.env.PA_BRIEFING_HOUR),
+        snapshot.load().split(ENTRY_SEPARATOR),
+      );
+    },
     lastSent: () => weeklyState.lastSent('briefing'),
     markSent: (at) => weeklyState.markSent('briefing', at),
     owner: briefingOwner,
