@@ -724,6 +724,13 @@ const AUTH_ERROR =
   /\b(?:401|unauthori[sz]ed|invalid[_ ]api[_ ]key|incorrect api key|authentication|permission[_ ]denied)\b/i;
 const OVERLOAD_ERROR =
   /\b(?:5\d\d|overloaded|service unavailable|bad gateway|internal server error)\b/i;
+/** Disco lleno o base de datos dañada / ocupada: llegaba al chat en inglés con la ruta. */
+const DISK_FULL_ERROR = /\bENOSPC\b|no space left on device|database or disk is full|SQLITE_FULL/i;
+const DATA_CORRUPT_ERROR =
+  /file is not a database|database disk image is malformed|SQLITE_CORRUPT|SQLITE_NOTADB/i;
+const DATA_BUSY_ERROR = /database is locked|SQLITE_BUSY|\bEBUSY\b/i;
+const FILE_DENIED_ERROR =
+  /\b(?:EPERM|EACCES)\b[^\n]*\b(?:open|mkdir|rename|unlink|scandir|copyfile)\b/;
 /** Fallos de programación: el texto es para el registro, no para el chat. */
 const BUG_ERROR =
   /\b(?:Cannot read propert|Cannot set propert|is not a function|is not defined|is not iterable|undefined is not|null is not|Maximum call stack|Unexpected token|ReferenceError|TypeError|SyntaxError|RangeError)\b/;
@@ -751,6 +758,18 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
     return 'Se me ha roto algo por dentro y no he podido terminar. Prueba otra vez o mira /estado.';
+  }
+  if (DISK_FULL_ERROR.test(probe)) {
+    return 'El disco del PC está lleno y no puedo guardar nada. Libera espacio y vuelve a pedírmelo.';
+  }
+  if (DATA_CORRUPT_ERROR.test(probe)) {
+    return 'Un fichero de datos mío está dañado. En el PC, con Asistenta parada: pa backup restaurar ultima';
+  }
+  if (DATA_BUSY_ERROR.test(probe)) {
+    return 'Otro programa está usando mis datos ahora mismo (¿OneDrive o el antivirus?). Prueba otra vez en un momento.';
+  }
+  if (FILE_DENIED_ERROR.test(probe)) {
+    return 'Windows no me deja abrir un fichero (permiso denegado o lo tiene otro programa). Prueba otra vez en un momento.';
   }
   if (RATE_LIMIT_ERROR.test(probe)) {
     return 'El modelo de IA me está limitando por exceso de peticiones. Espera un minuto y repítemelo.';
