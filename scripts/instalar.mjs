@@ -71,7 +71,7 @@ export async function instalar(d) {
   say('… Compilando.');
   if ((await d.run('npm', ['run', 'build'])) !== 0)
     return fail(
-      'No se ha podido compilar. Actualiza la carpeta del proyecto (git pull) y vuelve a abrir instalar.bat.',
+      'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
     );
   say('✓ Programa listo');
 
