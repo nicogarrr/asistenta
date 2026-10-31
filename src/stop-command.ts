@@ -16,6 +16,34 @@ export const STOPPED_TEXT =
   'Asistenta parada: ha cerrado bien, sin dejar nada a medias.\n' +
   'No la volveré a arrancar sola hasta que reinicies el PC o hagas `pa iniciar`.\n';
 
+/**
+ * The control layer speaks in technical terms («Metadata…», «flock», «Parada … no
+ * confirmada…»). The person gets what happened and what to do; unknown reasons pass as-is.
+ */
+const PLAIN_REASONS: [RegExp, string][] = [
+  [
+    /ocupado|flock no disponible/i,
+    'ahora mismo otra orden la está arrancando o parando. Prueba otra vez en un momento.',
+  ],
+  [
+    /no confirmada|no se confirma/i,
+    'le he pedido que se cierre, pero no ha terminado a tiempo. No he cerrado nada a la fuerza: prueba `pa stop` otra vez en un minuto.',
+  ],
+  [
+    /no (fue )?limpio/i,
+    'se ha cerrado, pero no he podido comprobar que lo hiciera sin dejar nada a medias.',
+  ],
+  [
+    /Metadata .*(ilegible|inválida|cambió|cambiada)/i,
+    'sus ficheros de control están dañados y parece que sigue en marcha. Reinicia el PC o ciérrala desde el Administrador de tareas.',
+  ],
+];
+
+export function plainStopReason(reason: string): string {
+  if (OTHER_OWNER.test(reason)) return reason;
+  return PLAIN_REASONS.find(([re]) => re.test(reason))?.[1] ?? reason;
+}
+
 /** The control files belong to another Windows/Linux account (or an elevated one). */
 const OTHER_OWNER = /propietario/i;
 const OTHER_OWNER_HINT =
@@ -37,7 +65,7 @@ export async function runStopCommand(deps: StopCommandDeps): Promise<number> {
     }
     const reason = error instanceof Error ? error.message : String(error);
     deps.writeErr(
-      `No he podido parar Asistenta: ${reason}\n` +
+      `No he podido parar Asistenta: ${plainStopReason(reason)}\n` +
         (OTHER_OWNER.test(reason) ? OTHER_OWNER_HINT : '') +
         'No he marcado nada: el vigilante sigue como estaba.\n',
     );

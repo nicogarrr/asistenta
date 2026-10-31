@@ -48,4 +48,33 @@ describe('pa stop habla claro', () => {
     expect(r.code).toBe(1);
     expect(r.err).not.toContain('otro usuario');
   });
+
+  it('los fallos técnicos salen en claro, sin «Metadata», «flock» ni «Windows»', async () => {
+    const cases: [string, string][] = [
+      ['Control ocupado o flock no disponible; no se ha detenido ningún proceso.', 'en un momento'],
+      [
+        'Parada Windows no confirmada limpia a tiempo; no se ha matado ni relanzado ningún proceso.',
+        'no ha terminado a tiempo',
+      ],
+      ['El cierre no fue limpio o no se pudo autenticar.', 'no he podido comprobar'],
+      ['Metadata Windows ilegible.', 'Administrador de tareas'],
+      ['Metadata de control ilegible.', 'Administrador de tareas'],
+    ];
+    for (const [raw, plain] of cases) {
+      const r = await run(async () => {
+        throw new Error(raw);
+      });
+      expect(r.code).toBe(1);
+      expect(r.marked).toBe(false);
+      expect(r.err).toContain(plain);
+      expect(r.err).not.toMatch(/Metadata|flock|Windows|autenticar/);
+    }
+  });
+
+  it('un motivo desconocido se enseña tal cual', async () => {
+    const r = await run(async () => {
+      throw new Error('Algo raro.');
+    });
+    expect(r.err).toContain('No he podido parar Asistenta: Algo raro.');
+  });
 });
