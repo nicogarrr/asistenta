@@ -874,7 +874,9 @@ async function doctorCommand(): Promise<number> {
   const lines: string[] = [];
   lines.push(`node            ${process.version}`);
   lines.push(`state dir       ${paths.state}`);
-  lines.push(`vault           ${vaultExists() ? 'creado' : 'FALTA (ejecuta: pa vault init)'}`);
+  lines.push(
+    `vault           ${vaultExists() ? 'creado' : 'FALTA (doble clic en instalar.bat, o pa vault init)'}`,
+  );
 
   const keySrc = await providerKeySource(loadConfig().baseUrl);
   lines.push(

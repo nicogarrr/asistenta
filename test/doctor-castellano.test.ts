@@ -25,7 +25,9 @@ it.skipIf(process.platform !== 'linux')(
       expect(out).toMatch(/^cron +0 tarea\(s\) programada\(s\) en PA_CRON$/m);
       expect(out).toMatch(/^verify actions +(activado \(2 capturas extra|desactivado)/m);
       expect(out).toMatch(/^browser +(chromium instalado|FALTA \(ejecuta: npx playwright)/m);
-      expect(out).toMatch(/^vault +(creado|FALTA \(ejecuta: pa vault init\))$/m);
+      expect(out).toMatch(
+        /^vault +(creado|FALTA \(doble clic en instalar\.bat, o pa vault init\))$/m,
+      );
       for (const ingles of [
         'unset (',
         'MISSING',
