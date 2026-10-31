@@ -12,6 +12,7 @@ import {
   statSync,
   watch,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, join, posix } from 'node:path';
 
 /**
@@ -225,7 +226,7 @@ export function sandboxGitFingerprint(dir: string): string {
  * del disco sin llamar a git, porque un fsmonitor plantado se ejecutaría con el propio
  * `git status` que lo comprueba.
  */
-export function gitControlFingerprint(root: string): string {
+export function gitControlFingerprint(root: string, home: string = homedir()): string {
   let common = git(root, ['rev-parse', '--git-common-dir']);
   if (!isAbsolute(common)) common = join(root, common);
   const h = createHash('sha256');
@@ -244,6 +245,22 @@ export function gitControlFingerprint(root: string): string {
     h.update('\n');
   };
   for (const rel of ['config', 'config.worktree', 'hooks', 'info/attributes']) add(rel);
+  // La config global del usuario también manda en el git del kernel: un core.fsmonitor puesto
+  // ahí hace que `git status` diga «limpio» con ficheros del kernel cambiados, y un
+  // core.attributesFile con «-diff» deja el diff del intento sin contenido.
+  const xdg = process.env.XDG_CONFIG_HOME || join(home, '.config');
+  const globals = [
+    process.env.GIT_CONFIG_GLOBAL,
+    join(home, '.gitconfig'),
+    join(xdg, 'git', 'config'),
+    join(xdg, 'git', 'attributes'),
+  ];
+  for (const p of globals) {
+    if (!p) continue;
+    h.update(`${p}\0`);
+    h.update(existsSync(p) && statSync(p).isFile() ? readFileSync(p) : '-');
+    h.update('\n');
+  }
   return h.digest('hex');
 }
 
