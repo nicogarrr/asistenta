@@ -103,28 +103,53 @@ export interface MailRulesDeps {
   post?: (url: string) => Promise<number>;
 }
 
+type MailFailKind = 'auth' | 'red' | 'otro';
+
+function mailFailKind(err: unknown): MailFailKind {
+  const raw = err instanceof Error ? err.message : String(err);
+  const code = String((err as { code?: unknown } | null)?.code ?? '');
+  if (/AUTHENTICATIONFAILED|invalid credentials|authenticat/i.test(`${code} ${raw}`)) return 'auth';
+  if (
+    /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timed? ?out|socket|network/i.test(
+      `${code} ${raw}`,
+    )
+  )
+    return 'red';
+  return 'otro';
+}
+
+const rawOf = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
+
 /**
  * Fallo al leer el buzón → línea clara para el modelo/chat. El error crudo
  * (IMAP, red, rutas) va solo al log.
  */
 export function mailReadFailText(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const code = String((err as { code?: unknown } | null)?.code ?? '');
-  log.warn('correo_reglas: no se pudo leer el correo', { err: raw.slice(0, 300) });
-  if (/AUTHENTICATIONFAILED|invalid credentials|authenticat/i.test(`${code} ${raw}`)) {
+  log.warn('correo_reglas: no se pudo leer el correo', { err: rawOf(err) });
+  const kind = mailFailKind(err);
+  if (kind === 'auth')
     return 'No pude leer el correo: Gmail no acepta la contraseña de aplicación. Revisa que siga activa en myaccount.google.com/apppasswords.';
-  }
-  if (
-    /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timed? ?out|socket|network/i.test(
-      `${code} ${raw}`,
-    )
-  ) {
+  if (kind === 'red')
     return 'No pude leer el correo: no hay conexión con el servidor de correo ahora mismo. Prueba en un rato.';
-  }
   return 'No pude leer el correo ahora. Prueba en un rato.';
 }
 
-const errText = (err: unknown) => (err instanceof Error ? err.message.slice(0, 120) : 'error');
+/** Avisos propios de mail/move.ts, ya en castellano llano: se dicen tal cual. */
+const MOVE_PLAIN =
+  /^(la bandeja ha cambiado desde la vista previa|no encuentro la (papelera|carpeta de archivo) del correo)/;
+
+/** Fallo al mover un lote → línea clara; el error crudo del servidor va solo al log. */
+export function mailMoveFailText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (MOVE_PLAIN.test(raw)) return `No he movido nada: ${raw.slice(0, 120)}.`;
+  log.warn('correo_reglas: no se pudo mover el correo', { err: rawOf(err) });
+  const kind = mailFailKind(err);
+  if (kind === 'auth')
+    return 'No he movido nada: Gmail no acepta la contraseña de aplicación. Revisa que siga activa en myaccount.google.com/apppasswords.';
+  if (kind === 'red')
+    return 'No he movido nada: no hay conexión con el servidor de correo ahora mismo. Prueba en un rato.';
+  return 'No he movido nada: el servidor de correo no me dejó moverlos. Prueba en un rato.';
+}
 
 function top(list: ScannedMail[], n = 3): string {
   const counts = new Map<string, number>();
@@ -234,7 +259,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             );
             return `Hecho: ${r.moved} correos (${MOVE_TARGET_LABEL[batch.accion]}, carpeta «${r.folder}»). Nada se ha borrado para siempre.`;
           } catch (err) {
-            return `No he movido nada: ${errText(err)}.`;
+            return mailMoveFailText(err);
           }
         }
         if (args.action === 'bajas') {
