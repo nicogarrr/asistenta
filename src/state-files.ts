@@ -64,7 +64,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   {
     name: 'boot-notice.json',
-    what: 'hora y resultado del último aviso «Asistenta lista» (PA_BOOT_NOTICE, uno cada 10 min; lo enseña pa autostart status)',
+    what: 'hora y resultado del último aviso de arranque (solo si algo falla, una vez por problema; PA_BOOT_NOTICE; lo enseña pa autostart status)',
     backup: 'file',
   },
   { name: 'voice.db', what: 'estado de voz', backup: 'db' },
