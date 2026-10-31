@@ -1143,6 +1143,8 @@ export class Gate {
   #isGestionEjecutar(c: ToolCall): boolean {
     // Crear una cuenta en nombre de Nico (cuentas confirmar_registro) va igual: un sí fresco cada vez.
     if (c.tool === 'cuentas' && argString(c.args, 'action') === 'confirmar_registro') return true;
+    // Limpiar correo (mover el lote exacto de la vista previa): un sí fresco cada vez.
+    if (c.tool === 'correo_reglas' && argString(c.args, 'action') === 'limpiar') return true;
     return c.tool === 'gestion' && argString(c.args, 'action') === 'ejecutar';
   }
 
