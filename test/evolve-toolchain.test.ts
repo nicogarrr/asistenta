@@ -113,3 +113,22 @@ describe('el git con el que el bucle se comprueba también cuenta', () => {
     }
   });
 });
+
+describe('las herramientas que buscan y matan los procesos del intento también cuentan', () => {
+  it('un ps o un lsof puesto antes en el PATH cambia la huella', () => {
+    for (const name of ['ps', 'lsof']) {
+      const t = fakeNode();
+      const before = t.fp();
+      writeFileSync(join(t.early, name), '#!/bin/sh\nexit 0');
+      expect(t.fp()).not.toBe(before);
+    }
+  });
+  it('en Windows, un powershell.exe, taskkill.exe o netstat.exe puesto antes en el PATH cambia la huella', () => {
+    for (const name of ['powershell.exe', 'taskkill.exe', 'netstat.exe']) {
+      const t = fakeNode(true);
+      const before = t.fp();
+      writeFileSync(join(t.early, name), 'MZ');
+      expect(t.fp()).not.toBe(before);
+    }
+  });
+});

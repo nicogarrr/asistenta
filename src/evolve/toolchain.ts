@@ -33,6 +33,9 @@ export function toolchainFingerprint(
   // `sh` falso antes en el PATH corría en la medición (comprobado con npm real, 31 oct).
   // Y `git`: el bucle mira con él si el kernel sigue limpio y en su commit; un `git` falso antes
   // en el PATH contestaba «limpio» con el árbol sucio (comprobado con git real, 31 oct).
+  // Y las herramientas con las que se buscan y se matan los procesos del intento (ps, lsof;
+  // en Windows PowerShell, taskkill, netstat): un `ps` falso antes en el PATH dejaba de ver
+  // un proceso vivo, y así sobrevivía a la recogida (comprobado con ps real, 31 oct).
   const names = win
     ? [
         'node.exe',
@@ -46,8 +49,11 @@ export function toolchainFingerprint(
         'cmd.exe',
         'git.exe',
         'git.cmd',
+        'powershell.exe',
+        'taskkill.exe',
+        'netstat.exe',
       ]
-    : ['node', 'npx', 'npm', 'sh', 'git'];
+    : ['node', 'npx', 'npm', 'sh', 'git', 'ps', 'lsof'];
   for (const dir of pathEnv.split(win ? ';' : delimiter).slice(0, 100)) {
     if (!dir) continue;
     // Solo los que existen: un fichero nuevo antes en el PATH añade una línea.
