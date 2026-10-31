@@ -62,6 +62,12 @@ export interface AutoupdateState {
   /** origin/main que falló al instalarse y cuándo: no se repite el aviso por la misma versión. */
   failedRemote?: string;
   failedAt?: string;
+  /**
+   * Actualización empezada y sin terminar: se escribe justo antes del `git merge` y se
+   * borra al acabar (bien o con vuelta atrás). Si sigue ahí en la revisión siguiente, el
+   * PC se apagó, se suspendió o se cortó a mitad: se vuelve a la versión anterior.
+   */
+  pending?: { from: string; to: string; at: string };
 }
 
 const dir = (stateDir: string) => join(stateDir, AUTOUPDATE_DIR);
@@ -233,6 +239,37 @@ async function startAndWait(deps: AutoupdateDeps, timeoutMs: number): Promise<bo
   return false;
 }
 
+export const INTERRUPTED_MESSAGE =
+  '⚠️ Una actualización se quedó a medias (¿se apagó o se suspendió el PC?). He vuelto a la versión anterior y lo reintentaré más tarde.';
+
+/**
+ * Deja Asistenta como estaba antes de una actualización cortada a mitad: vuelve al commit
+ * anterior, reinstala dependencias si habían cambiado, recupera la compilación guardada y
+ * arranca. Sin esto, la revisión siguiente veía HEAD ya en la versión nueva y decía «al
+ * día» con la compilación o las dependencias a medio hacer.
+ */
+async function finishInterrupted(
+  p: NonNullable<AutoupdateState['pending']>,
+  deps: AutoupdateDeps,
+  health: number,
+  finish: (text: string) => Outcome,
+): Promise<Outcome> {
+  deps.log?.(`actualización a medias (${p.from.slice(0, 7)} → ${p.to.slice(0, 7)}): vuelvo atrás`);
+  if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
+  const reset = await deps.git(['reset', '--keep', p.from]);
+  const lockDiff = await deps.git(['diff', '--name-only', p.from, p.to, '--', 'package-lock.json']);
+  if (lockDiff.code !== 0 || lockDiff.out.trim() !== '')
+    await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+  deps.restoreDist();
+  const back = await startAndWait(deps, health);
+  const tail = [
+    reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
+    back ? '' : ' (y no he vuelto a arrancar sana: prueba «pa doctor»)',
+  ].join('');
+  await deps.notify(`${INTERRUPTED_MESSAGE}${tail}`).catch(() => {});
+  return finish(`se quedó a medias; vuelve a ${p.from.slice(0, 7)}${tail}`);
+}
+
 export async function runAutoupdate(
   stateDir: string,
   deps: AutoupdateDeps,
@@ -251,6 +288,7 @@ export async function runAutoupdate(
       lastUpdateAt: state.lastUpdateAt,
       failedRemote: state.failedRemote,
       failedAt: state.failedAt,
+      pending: state.pending,
       last: { kind, text, at: new Date(deps.now()).toISOString() },
     });
     return { kind, text };
@@ -258,6 +296,22 @@ export async function runAutoupdate(
   const skip = (reason: string, kind: OutcomeKind = 'omitida') =>
     done(kind, SKIPS[reason] ?? reason);
 
+  if (state.pending) {
+    if (!tryLock(stateDir, deps.now())) return { kind: 'omitida', text: SKIPS['en-curso'] ?? '' };
+    try {
+      return await finishInterrupted(
+        state.pending,
+        deps,
+        opts.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
+        (t) => {
+          state.pending = undefined;
+          return done('revertida', t);
+        },
+      );
+    } finally {
+      unlock(stateDir);
+    }
+  }
   if (!autoupdateEnabled(stateDir, opts.env)) return skip('apagado');
   const lastUpdate = state.lastUpdateAt ? Date.parse(state.lastUpdateAt) : Number.NaN;
   if (!opts.force && deps.now() - lastUpdate < MIN_GAP_MS) return skip('reciente');
@@ -330,9 +384,12 @@ export async function runAutoupdate(
         await deps.notify(failureMessage(`${reason}${tail}`)).catch(() => {});
       state.failedRemote = remote;
       state.failedAt = new Date(deps.now()).toISOString();
+      state.pending = undefined;
       return done('revertida', `falló (${reason}); sigue en ${old.slice(0, 7)}${tail}`);
     };
 
+    state.pending = { from: old, to: remote, at: new Date(deps.now()).toISOString() };
+    writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), pending: state.pending });
     const merge = await git(['merge', '--ff-only', '--quiet', remote]);
     if (merge.code !== 0) return await rollback('git merge --ff-only falló', merge.out);
     if (lockChanged) {
@@ -346,6 +403,7 @@ export async function runAutoupdate(
       return await rollback(`no arrancó sana en ${Math.round(health / 1000)} s`);
     }
     deps.dropBackup();
+    state.pending = undefined;
     state.lastUpdateAt = new Date(deps.now()).toISOString();
     state.failedRemote = undefined;
     state.failedAt = undefined;
