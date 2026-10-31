@@ -36,6 +36,7 @@ describe.skipIf(process.platform === 'win32')('measure con la sonda', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'evolve-cwd-'));
     dirs.push(bin, cwd);
     const report = JSON.stringify({
+      numTotalTestSuites: 1,
       testResults: [
         { name: '/x/test/a.test.ts', assertionResults: [{ fullName: 'a', status: 'passed' }] },
       ],
@@ -47,9 +48,7 @@ describe.skipIf(process.platform === 'win32')('measure con la sonda', () => {
       [
         '#!/bin/sh',
         'if [ "$1" = vitest ]; then',
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: es sintaxis de sh, no de JS.
-        '  for a in "$@"; do case "$a" in --outputFile.json=*) cp report.json "${a#--outputFile.json=}";; esac; done',
-        "  echo ' Test Files  1 passed (1)'; echo '      Tests  1 passed (1)'; exit 0",
+        "  echo ' Test Files  1 passed (1)'; echo '      Tests  1 passed (1)'; cat report.json; echo; exit 0",
         'fi',
         `cat probe.out; exit ${probeCode}`,
         '',
