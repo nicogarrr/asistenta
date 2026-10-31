@@ -124,7 +124,7 @@ export interface SkillsToolDeps {
   /** S5: present only when PA_SEMANTIC_RECALL=1; failures fall back to lexical. */
   semantic?: Embedder;
   /** Para el auto-chequeo: qué hay configurado y qué herramientas hay cargadas. */
-  checkEnv?: () => SelfCheckEnv;
+  checkEnv?: () => SelfCheckEnv | Promise<SelfCheckEnv>;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
@@ -277,7 +277,7 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
               details: { id, found: false },
             };
           }
-          const result = checkSkill(skill, checkEnv?.() ?? {});
+          const result = checkSkill(skill, (await checkEnv?.()) ?? {});
           return {
             content: [{ type: 'text', text: result.summary }],
             details: { id, found: true, ...result },
