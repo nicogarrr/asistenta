@@ -16,6 +16,7 @@ import { FileWriteTracker } from './filewrites.js';
 import {
   compactHistory,
   compactionFor,
+  compactTokensFromEnv,
   DEFAULT_COMPACTION,
   estimateAll,
   extractionPrompt,
@@ -937,12 +938,12 @@ export class PersonalAgent {
    */
   /** Umbral y cola del resumen para el modelo que usa ahora esta conversación. */
   get compaction(): { triggerTokens: number; keepRecentTokens: number } {
-    const env = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const env = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     return compactionFor(env, this.#agent.state.model?.contextWindow);
   }
 
   async #compact(): Promise<void> {
-    const raw = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const raw = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     if (!this.#summarize || !Number.isFinite(raw) || raw <= 0) return;
     const trigger = this.compaction.triggerTokens;
     if (this.#summaryCooldown > 0) {
