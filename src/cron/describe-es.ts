@@ -10,6 +10,9 @@ const num = (field: string, max: number): number | null =>
 function daysEs(dow: string): string | null {
   if (dow === '*') return 'cada día';
   if (dow === '1-5') return 'de lunes a viernes';
+  const range = /^([1-6])-([1-6])$/.exec(dow);
+  if (range && Number(range[1]) < Number(range[2]))
+    return `de ${DAY[Number(range[1])]} a ${DAY[Number(range[2])]}`;
   const days = dow.split(',').map((d) => num(d, 7));
   if (days.some((d) => d === null)) return null;
   const names = [...new Set(days.map((d) => DAY[(d as number) % 7] as string))];
