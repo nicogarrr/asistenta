@@ -31,6 +31,10 @@ Si el arranque automático está instalado, el icono enciende Asistenta por su t
 
 Desde «Agregar o quitar programas» o «Desinstalar Asistenta». Quita el programa y el arranque con Windows. Tu `.env`, tus claves y tu memoria **se quedan**, salvo que marques «Borrar también mis datos, claves y configuración» (desmarcada de serie).
 
+## Descargar el .exe ya hecho
+
+Cada vez que se publica una versión en GitHub (pestaña «Releases» del repositorio), GitHub construye el instalador y lo adjunta a esa versión: descarga `Asistenta-Instalador-<versión>.exe` desde allí, sin compilar nada. Al lado va `Asistenta-Instalador.sha256` con su huella SHA-256 por si quieres comprobarlo. La etiqueta de la versión tiene que coincidir con la de `package.json` (por ejemplo `v0.2.0` y `0.2.0`); si no, GitHub no construye nada.
+
 ## Construir el .exe (para quien desarrolla)
 
 En Linux o Windows con NSIS (`sudo apt-get install nsis` en Debian/Ubuntu):
