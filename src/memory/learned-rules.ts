@@ -183,6 +183,43 @@ function numbers(text: string): string {
   return [...new Set(norm(text).match(/\d+(?:[.,]\d+)?/g) ?? [])].sort().join(' ');
 }
 
+// Palabras que no dicen de qué va la regla: «no», «nunca», «sin» le dan la vuelta y
+// «siempre», «con» o un artículo no la cambian. Fuera de la comparación por raíces.
+const FLIP_STOP = new Set(
+  'no nunca jamas sin con siempre mas muy nada las los del que por para una uno unas unos'.split(
+    ' ',
+  ),
+);
+
+/** Raíz barata: «usa», «uses», «usar» → «us»; «emojis» → «emoji». */
+function stem(w: string): string {
+  const m = /^(.{2,}?)(amos|emos|imos|ando|iendo|ar|er|ir|as|es|an|en|os|a|e|o|s)$/.exec(w);
+  return m?.[1] ?? w;
+}
+
+function stems(text: string): Set<string> {
+  return new Set(
+    norm(text)
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2 && !FLIP_STOP.has(w))
+      .map(stem),
+  );
+}
+
+/**
+ * «Usa emojis» y «No uses emojis» hablan de lo mismo con el signo cambiado: words() las
+ * veía distintas («usa» ≠ «uses») y se quedaban las dos, contradiciéndose. Si sus raíces
+ * coinciden (sin contar «no», «nunca», «sin»…), es la misma regla y gana la nueva.
+ */
+function sameOrOpposite(a: string, b: string): boolean {
+  const sa = stems(a);
+  const sb = stems(b);
+  if (!sa.size || !sb.size) return false;
+  let inter = 0;
+  for (const w of sa) if (sb.has(w)) inter++;
+  return inter / (sa.size + sb.size - inter) >= 0.7;
+}
+
 function similar(a: string, b: string): boolean {
   // «Avisar 10 min antes» y «Avisar 30 min antes» son reglas distintas: words() no ve
   // los números, así que se comparan aparte. Con el mismo tema, la nueva sigue ganando.
@@ -192,7 +229,7 @@ function similar(a: string, b: string): boolean {
   if (!wa.size || !wb.size) return norm(a) === norm(b);
   let inter = 0;
   for (const w of wa) if (wb.has(w)) inter++;
-  return inter / (wa.size + wb.size - inter) >= 0.7;
+  return inter / (wa.size + wb.size - inter) >= 0.7 || sameOrOpposite(a, b);
 }
 
 /** Reglas aprendidas activas del chat, de la más nueva a la más vieja. */
