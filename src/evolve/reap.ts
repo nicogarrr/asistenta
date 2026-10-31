@@ -29,11 +29,55 @@ export interface ProcInfo {
   marked?: boolean;
   /** Línea de órdenes, si se pudo leer. */
   cmd?: string;
+  /** Cuándo se creó (ms desde 1970), si el sistema lo dice (Windows). */
+  created?: number;
 }
+
+/**
+ * Los procesos que lanzamos nosotros para el intento (el proponente, la suite, la sonda).
+ * En Windows un huérfano no cambia de padre: su ParentProcessId sigue siendo el pid del
+ * proceso que lo lanzó, aunque ya haya terminado. Recordando nuestros pid (con cuándo
+ * empezaron y terminaron) se encuentran sus hijos aunque su orden no nombre la copia.
+ */
+export interface AttemptRoot {
+  pid: number;
+  /** Cuándo lo lanzamos. */
+  at: number;
+  /** Cuándo terminó, si ya terminó. */
+  end?: number;
+}
+
+const rootsByDir = new Map<string, AttemptRoot[]>();
+
+/** Apunta un proceso lanzado para el intento en `dir`; devuelve con qué marcar que terminó. */
+export function noteAttemptRoot(
+  dir: string,
+  pid: number | undefined,
+  now: () => number = Date.now,
+): () => void {
+  if (!pid) return () => {};
+  const root: AttemptRoot = { pid, at: now() };
+  const list = rootsByDir.get(dir) ?? [];
+  list.push(root);
+  rootsByDir.set(dir, list);
+  // Solo hacen falta los de las últimas copias.
+  while (rootsByDir.size > 20) rootsByDir.delete(rootsByDir.keys().next().value as string);
+  return () => {
+    root.end ??= now();
+  };
+}
+
+export function attemptRoots(dir: string): AttemptRoot[] {
+  return rootsByDir.get(dir) ?? [];
+}
+
+// Margen para relojes y redondeos al comparar fechas de creación.
+const SLACK_MS = 2000;
 
 const norm = (p: string, win: boolean): string => {
   const s = p.replace(/[\\/]+$/, '');
-  return win ? s.replace(/\//g, '\\').toLowerCase() : s;
+  // En Windows «C:/a/b», «C:\\a\\b» (escapado) y «C:\a\b» son la misma carpeta.
+  return win ? s.replace(/[\\/]+/g, '\\').toLowerCase() : s;
 };
 
 function inside(path: string, dirs: string[], win: boolean): boolean {
@@ -48,6 +92,7 @@ export function pickAttempt(
   dir: string,
   self: number = process.pid,
   win: boolean = process.platform === 'win32',
+  roots: AttemptRoot[] = [],
 ): number[] {
   const dirs = [...new Set([dir, safeReal(dir)].map((d) => norm(d, win)))];
   const parent = new Map(procs.map((p) => [p.pid, p.ppid]));
@@ -56,8 +101,29 @@ export function pickAttempt(
     protectedPids.add(p);
   }
   const chosen = new Set<number>();
+  // Nuestros procesos raíz (solo con fecha de creación, para no confundirlos con otro que
+  // haya heredado su pid): vivos son del intento; sus hijos, si nacieron mientras vivía.
+  const byPid = new Map(procs.map((p) => [p.pid, p]));
+  const anchors = new Map<number, AttemptRoot>();
+  for (const r of roots) {
+    const live = byPid.get(r.pid);
+    if (live) {
+      if (live.created === undefined || Math.abs(live.created - r.at) > SLACK_MS) continue;
+      chosen.add(r.pid);
+    }
+    anchors.set(r.pid, r);
+  }
+  const bornUnder = (p: ProcInfo): boolean => {
+    const r = anchors.get(p.ppid);
+    return (
+      !!r &&
+      p.created !== undefined &&
+      p.created >= r.at - SLACK_MS &&
+      p.created <= (r.end ?? Number.POSITIVE_INFINITY) + SLACK_MS
+    );
+  };
   for (const p of procs) {
-    const cmd = p.cmd ? (win ? p.cmd.toLowerCase() : p.cmd) : '';
+    const cmd = p.cmd ? (win ? norm(p.cmd, true) : p.cmd) : '';
     if (
       p.marked ||
       (p.cwd && inside(p.cwd, dirs, win)) ||
@@ -70,7 +136,7 @@ export function pickAttempt(
   for (let grew = true; grew; ) {
     grew = false;
     for (const p of procs) {
-      if (!chosen.has(p.pid) && chosen.has(p.ppid)) {
+      if (!chosen.has(p.pid) && (chosen.has(p.ppid) || bornUnder(p))) {
         chosen.add(p.pid);
         grew = true;
       }
@@ -118,23 +184,41 @@ function listLinux(dir: string): ProcInfo[] {
   return out;
 }
 
+type WinRow = {
+  ProcessId: number;
+  ParentProcessId: number;
+  CommandLine?: string | null;
+  CreationDate?: string | null;
+};
+
+/** «/Date(1698765432100)/» (PowerShell 5) o una fecha ISO (PowerShell 7). */
+function winDate(v: string | null | undefined): number | undefined {
+  if (!v) return undefined;
+  const m = /\/Date\((-?\d+)/.exec(v);
+  const t = m ? Number(m[1]) : Date.parse(v);
+  return Number.isFinite(t) ? t : undefined;
+}
+
+export function parseWindowsProcs(text: string): ProcInfo[] {
+  const rows = JSON.parse(text || '[]') as WinRow[] | WinRow;
+  return (Array.isArray(rows) ? rows : [rows]).map((r) => ({
+    pid: r.ProcessId,
+    ppid: r.ParentProcessId,
+    cmd: r.CommandLine ?? undefined,
+    created: winDate(r.CreationDate),
+  }));
+}
+
 function listWindows(): ProcInfo[] {
   const ps =
-    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress';
+    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress';
   const text = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: 60_000,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const rows = JSON.parse(text || '[]') as
-    | Array<{ ProcessId: number; ParentProcessId: number; CommandLine?: string | null }>
-    | { ProcessId: number; ParentProcessId: number; CommandLine?: string | null };
-  return (Array.isArray(rows) ? rows : [rows]).map((r) => ({
-    pid: r.ProcessId,
-    ppid: r.ParentProcessId,
-    cmd: r.CommandLine ?? undefined,
-  }));
+  return parseWindowsProcs(text);
 }
 
 function listPosix(): ProcInfo[] {
@@ -183,7 +267,13 @@ export function reapAttempt(
   for (let round = 0; round < 5; round++) {
     let pids: number[];
     try {
-      pids = pickAttempt(list(dir), dir);
+      pids = pickAttempt(
+        list(dir),
+        dir,
+        process.pid,
+        process.platform === 'win32',
+        attemptRoots(dir),
+      );
     } catch {
       return -1;
     }
