@@ -4,7 +4,18 @@
  * Telegram al dueño. La lógica está en autoupdate.ts; aquí solo se enchufa.
  */
 import { execFile, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type DaemonRunState, startDaemonTaskArgs } from './autostart-watchdog.js';
 import {
@@ -135,6 +146,24 @@ function npmInvocation(args: string[]): [string, string[]] {
   return existsSync(cli) ? [process.execPath, [cli, ...args]] : ['npm', args];
 }
 
+/** Los últimos 64 KB de un log, o null si no se puede leer. */
+export function readLogTail(file: string, max = 64 * 1024): string | null {
+  try {
+    const size = statSync(file).size;
+    const len = Math.min(size, max);
+    const fd = openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDeps {
   const run = async (exe: string, args: string[], timeout = 120_000): Promise<CmdResult> => {
     const r = await runExe(exe, args, timeout, repo);
@@ -152,6 +181,7 @@ export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDe
       await stopDaemon(stateDir);
     },
     startDaemon: startDaemonTask,
+    launcherLog: () => readLogTail(join(stateDir, 'log', 'launcher.stderr.log')),
     backupDist: () => {
       rmSync(prev, { recursive: true, force: true });
       if (existsSync(dist)) cpSync(dist, prev, { recursive: true });
