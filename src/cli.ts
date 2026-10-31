@@ -396,6 +396,7 @@ import { seedGeneralSkills } from './skills/general.js';
 import { GrillMe } from './skills/grill.js';
 import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
+import { RepeatTracker } from './skills/repeats.js';
 import { SkillStore } from './skills/store.js';
 import { repitchText, wantsRepitch } from './skills/wait-what.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
@@ -1530,6 +1531,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
+  const skillRepeats = new RepeatTracker(join(paths.state, 'habilidades-repetidas.json'));
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
   seedBuiltinSkills(skills);
   seedGeneralSkills(skills);
@@ -2122,6 +2125,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createSkillsTool({
         store: skills,
         semantic: semanticRecall,
+        repeats: skillRepeats,
         // Auto-chequeo con lo que hay de verdad (correo, calendario, herramientas).
         checkEnv: () =>
           detectSkillEnv({
@@ -6386,6 +6390,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // momento, sin esperar al evolve semanal. Solo anota; nunca reescribe.
       const refined = refineFromLessons(skills, learned, learnDay);
       if (refined.length) log.info('skills refined in use', { thread: thread.name, ids: refined });
+      // Receta repetida: solo al dueño, una línea al final; dice sí con skills accept.
+      if (result.error === null && isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
+        const offer = skillRepeats.observe(result.steps, skills.list());
+        if (offer) result = { ...result, text: `${result.text}\n\n${offer.line}`.trim() };
+      }
 
       log.info('task done', {
         thread: thread.name,
