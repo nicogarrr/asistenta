@@ -137,6 +137,9 @@ export function taintSourceOf(tool: string, args: Record<string, unknown>): stri
 
 /** La URL a la que una llamada va a enviar una petición, o null si no sale a la red. */
 export function egressUrlOf(tool: string, args: Record<string, unknown>): string | null {
+  // Una herramienta MCP con una URL http(s): el servidor externo hará esa petición, y la
+  // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
+  if (tool.startsWith('mcp_')) return mcpEgressUrl(args);
   const url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) return null;
   if (tool === 'fetch' || tool === 'download') return url;
@@ -149,10 +152,23 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   if (tool === 'checkout' && args.action === 'search') return url;
   // La tele abre esa página en su navegador: la petición sale igual que un fetch.
   if (tool === 'tv' && args.action === 'url') return url;
-  // Una herramienta MCP con `url` http(s): el servidor externo hará esa petición, y la
-  // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
-  if (tool.startsWith('mcp_') && /^https?:\/\//i.test(url)) return url;
   return null;
+}
+
+/** Nombres de argumento con los que una herramienta MCP suele pedir una dirección. */
+const MCP_URL_KEYS = ['url', 'uri', 'href', 'link', 'endpoint'];
+
+/**
+ * La URL http(s) que una herramienta MCP va a pedir, la nombre como la nombre el
+ * servidor (`url`, `uri`, `href`…). Si hay varias, primero la que lleva datos.
+ */
+function mcpEgressUrl(args: Record<string, unknown>): string | null {
+  const urls: string[] = [];
+  for (const key of MCP_URL_KEYS) {
+    const v = args[key];
+    if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) urls.push(v.trim());
+  }
+  return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
 }
 
 /**
