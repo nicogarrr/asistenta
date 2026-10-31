@@ -165,6 +165,37 @@ export function dockerFailText(res: RunResult): string {
   return 'Docker dio un error que no reconozco (el detalle técnico queda en el registro del PC)';
 }
 
+/**
+ * `tailscale serve` failures: Tailscale's own words (socket paths, node ids,
+ * operator hints for Linux) go to the log; the chat gets what happened and
+ * what Nico can do. The admin-console link Tailscale prints to enable Serve is
+ * kept: it is the one thing he needs to click.
+ */
+export function tailscaleServeFailText(res: RunResult): string {
+  const raw = `${res.stderr}\n${res.stdout}`;
+  if (/serve is not enabled|funnel is not enabled|not enabled on your tailnet/i.test(raw)) {
+    const link = /https:\/\/login\.tailscale\.com\/[^\s"'<>]+/i.exec(raw)?.[0];
+    return link
+      ? `tu tailnet no tiene activado Serve. Actívalo una vez aquí: ${link} y vuelve a pedírmelo`
+      : 'tu tailnet no tiene activado Serve. Actívalo en la consola de Tailscale (DNS → HTTPS y Serve) y vuelve a pedírmelo';
+  }
+  if (/needs ?login|logged out|not logged in|log in|login required/i.test(raw))
+    return 'Tailscale no tiene la sesión iniciada en este PC. Abre Tailscale, inicia sesión y vuelve a pedírmelo';
+  if (
+    /failed to connect to local tailscaled|tailscaled.*not running|is tailscaled running|service is not running|connection refused/i.test(
+      raw,
+    )
+  )
+    return 'Tailscale no está arrancado. Ábrelo, espera a que diga «Connected» y vuelve a pedírmelo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw))
+    return 'Tailscale tardó demasiado en contestar y lo he cortado. Vuelve a pedírmelo en un momento';
+  if (/access denied|permission denied|acceso denegado|--operator|operator/i.test(raw))
+    return 'Tailscale no me deja cambiar Serve con este usuario (permiso denegado). En Linux: `sudo tailscale set --operator=$USER`; en Windows, abre Tailscale con tu usuario';
+  if (/https certificates? (are|is) not enabled|enable https|certificate/i.test(raw))
+    return 'tu tailnet no tiene activados los certificados HTTPS. Actívalos en la consola de Tailscale (DNS → HTTPS) y vuelve a pedírmelo';
+  return 'Tailscale dio un error que no reconozco (el detalle técnico queda en el registro del PC)';
+}
+
 function dockerFail(step: string, service: string, res: RunResult): string {
   log.warn('docker compose failed', {
     step,
@@ -415,8 +446,13 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
         }
         const up = await run('tailscale', tailscaleServeArgs(s.port));
         if (up.code !== 0) {
+          log.warn('tailscale serve failed', {
+            service: s.name,
+            code: up.code,
+            detail: (up.stderr || up.stdout).slice(0, 500),
+          });
           return reply(
-            `\`tailscale serve\` falló: ${(up.stderr || up.stdout).slice(0, 500)}. No he expuesto nada.`,
+            `No pude servirlo en tu tailnet: ${tailscaleServeFailText(up)}. No he expuesto nada.`,
             true,
           );
         }
