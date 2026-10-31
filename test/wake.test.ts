@@ -489,7 +489,7 @@ describe('WakeWordListener failure paths', () => {
   it('surfaces a busy microphone once, in Spanish, without retrying', async () => {
     const capture = new FakeCapture();
     capture.startError = new Error(
-      'el microfono "Varios micrófonos" esta ocupado por otro programa; no hago reintentos automaticos',
+      'el micrófono «Varios micrófonos» está ocupado por otro programa (¿una llamada o una grabación?); no lo reintento solo',
     );
     const listener = new WakeWordListener({ capture, transcriber: async () => '' });
     await expect(listener.start()).rejects.toThrow(/ocupado por otro programa/);
