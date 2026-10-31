@@ -77,16 +77,23 @@ export const SISTEMA_MOVER =
 export async function waitOwnerMessage(fetchFn, token, { tries = 6 } = {}) {
   const base = `https://api.telegram.org/bot${token}`;
   for (let i = 0; i < tries; i++) {
-    const res = await fetchFn(`${base}/getUpdates?timeout=20&allowed_updates=%5B%22message%22%5D`);
-    if (res.status === 401 || res.status === 404) return { error: 'token' };
-    if (res.status === 409) return { error: 'ocupado' };
-    if (!res.ok) return { error: 'red' };
-    const body = await res.json();
+    let res;
+    let body;
+    // Sin internet fetch lanza (y un proxy puede devolver HTML): es «red», no la caja fuerte.
+    try {
+      res = await fetchFn(`${base}/getUpdates?timeout=20&allowed_updates=%5B%22message%22%5D`);
+      if (res.status === 401 || res.status === 404) return { error: 'token' };
+      if (res.status === 409) return { error: 'ocupado' };
+      if (!res.ok) return { error: 'red' };
+      body = await res.json();
+    } catch {
+      return { error: 'red' };
+    }
     const upd = (body.result ?? []).find(
       (u) => u.message?.chat?.type === 'private' && u.message.from,
     );
     if (upd) {
-      await fetchFn(`${base}/getUpdates?offset=${upd.update_id + 1}&timeout=0`);
+      await fetchFn(`${base}/getUpdates?offset=${upd.update_id + 1}&timeout=0`).catch(() => {});
       const f = upd.message.from;
       const name = [f.first_name, f.last_name].filter(Boolean).join(' ') || 'sin nombre';
       return { id: String(f.id), who: f.username ? `${name} (@${f.username})` : name };
@@ -254,6 +261,14 @@ export async function instalar(d) {
         if (got.error === 'ocupado')
           return fail(
             'Asistenta ya está encendida con este bot. Apágala (node dist\\cli.js stop) y repite.',
+          );
+        if (got.error === 'red')
+          say(
+            '⚠ No llego a Telegram: mira tu conexión a internet. Puedes escribir tu ID a mano o volver a abrir instalar.bat luego.',
+          );
+        if (got.error === 'tiempo')
+          say(
+            '⚠ No me ha llegado tu mensaje. Comprueba que se lo mandas a tu bot (el del token) o escribe tu ID a mano.',
           );
         if (got.id) {
           const yes = (await d.ask(`He recibido un mensaje de ${got.who}. ¿Eres tú? (s/n): `))
