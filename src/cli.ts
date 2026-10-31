@@ -894,13 +894,13 @@ async function doctorCommand(): Promise<number> {
 
   const keySrc = await providerKeySource(loadConfig().baseUrl);
   lines.push(
-    `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source}`,
+    `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source === 'vault' ? 'guardada en tus claves' : 'puesta en el .env'}`,
   );
   if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));
   lines.push(timeZoneDoctorLine());
   if (desktopEnabled()) {
     lines.push(
-      `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (instala pwsh 7 para la sintaxis completa)'}`,
+      `shell           ${hasPwsh() ? 'PowerShell 7' : 'PowerShell 5.1 (funciona; con PowerShell 7 va mejor)'}`,
     );
 
     const screen = new WindowsScreen();
@@ -908,7 +908,7 @@ async function doctorCommand(): Promise<number> {
       const size = await screen.screenSize();
       lines.push(`screen          ${size.width}x${size.height}`);
       const shot = await screen.screenshot();
-      lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
+      lines.push(`screenshot      funciona (${shot.width}x${shot.height})`);
     } catch (err) {
       lines.push(
         `screenshot      FALLA: no pude capturar la pantalla${(err as NodeJS.ErrnoException | undefined)?.code ? ` (${(err as NodeJS.ErrnoException).code})` : ''}`,
@@ -920,7 +920,7 @@ async function doctorCommand(): Promise<number> {
     // Screen recording is what makes /watch work, and its absence is invisible until
     // someone asks for a video of their screen.
     lines.push(
-      `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'FALTA ffmpeg-static (/watch no funcionará)'}`,
+      `screen video    ${ffmpegAvailable() ? 'funciona' : 'FALTA ffmpeg-static (/watch no funcionará)'}`,
     );
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
@@ -929,7 +929,7 @@ async function doctorCommand(): Promise<number> {
     lines.push(
       `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );
-    lines.push(`voice tts       windows SAPI (sin internet, gratis)`);
+    lines.push('voice tts       la voz de Windows (sin internet, gratis)');
 
     // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
     // user asks to be filmed is a much worse answer than this line.
@@ -939,13 +939,13 @@ async function doctorCommand(): Promise<number> {
       `microphone      ${devices.audio ?? 'NO ENCONTRADO (/mic y la palabra de activación no funcionarán)'}`,
     );
     lines.push(
-      `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
-        (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
+      `wake word       «${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'}» (${
+        (await vaultGet('agent:wake')) === 'off' ? 'apagada' : 'encendida'
       })`,
     );
   } else {
     lines.push(
-      'desktop         off (modo servidor, PA_DESKTOP=off): sin chequeos de escritorio Windows',
+      'desktop         off (modo servidor, PA_DESKTOP=off): no miro pantalla, cámara ni micrófono',
     );
   }
 
