@@ -197,6 +197,30 @@ export function settleOneShot(
 }
 
 /**
+ * A repeating reminder («cada día a las 9 la pastilla») whose send failed — no
+ * internet, Telegram down — lost that day's notice: nothing retried it, unlike a
+ * one-time reminder. Park a one-time copy pinned to this slot, five minutes ahead,
+ * so the one-time path retries it, delivers it late at startup, or drops and
+ * records it after RETRY_MAX_AGE_MS. Returns the parked name.
+ */
+export function parkFailedRepeating(
+  store: Pick<Store, 'saveRoutine'>,
+  routine: Pick<Routine, 'scope' | 'name' | 'prompt'>,
+  now = Date.now(),
+): string {
+  const text = reminderText(routine);
+  const name = nameFor(REMINDER_ONCE_PREFIX, text, ` @${stamp(new Date(now))}`);
+  store.saveRoutine({
+    scope: routine.scope,
+    name,
+    kind: 'schedule',
+    prompt: text,
+    schedule: onceCron(new Date(now + RETRY_MS)),
+  });
+  return name;
+}
+
+/**
  * One-time reminders whose time already passed when this runs (startup). The
  * scheduler never fires a past cron late: it would sit in the store and fire a YEAR
  * later (the pinned cron has no year), so the user would never hear about it. Every
