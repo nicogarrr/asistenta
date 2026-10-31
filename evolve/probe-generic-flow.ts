@@ -10,9 +10,16 @@
  * measures every candidate in a fresh git worktree: a probe that is not committed cannot
  * be measured there, and an unmeasured candidate can never be promoted.
  *
- * Run: npx tsx evolve/probe-generic-flow.ts
- */ import { createServer } from 'node:http';
-import { BrowserService } from '../src/browser/service.js';
+ * Run: npx vite-node evolve/probe-generic-flow.ts
+ *
+ * The code under test (BrowserService) runs in a separate process, evolve/probe-agent.ts,
+ * and this one only asks it to act and judges what comes back. When it ran here, the
+ * candidate's own code shared this process: it could patch process.stdout or process.exit
+ * and turn a FALLA into a PASA, or hide it, and the loop would score the forgery.
+ */ import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // A tiny travel-ish site with the exact three things that broke the real run:
 // a late-rendering autocomplete, a field that silently keeps its default, and a
@@ -88,17 +95,76 @@ await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const port = (server.address() as { port: number }).port;
 const base = `http://127.0.0.1:${port}`;
 
-const service = new BrowserService({
-  policy: {
-    autoApprove: true,
-    adSkipIntervalMs: 0,
-    approve: async () => true,
-    // The fixture server is on 127.0.0.1 and the browser refuses private addresses by
-    // default, which is the right default and useless here.
-    allowPrivateHosts: true,
+// The agent: the candidate's BrowserService in its own process. Its standard output goes
+// nowhere and its errors come back prefixed, so nothing it prints can look like a check.
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const agent = spawn(
+  process.execPath,
+  [
+    join(root, 'node_modules', 'vite-node', 'vite-node.mjs'),
+    join(root, 'evolve', 'probe-agent.ts'),
+  ],
+  {
+    cwd: root,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    serialization: 'advanced',
+    windowsHide: true,
   },
-  timeoutMs: 20_000,
+);
+agent.stderr?.setEncoding('utf8');
+agent.stderr?.on('data', (d: string) => {
+  for (const l of d.split('\n')) if (l.trim()) process.stderr.write(`[agente] ${l}\n`);
 });
+type Reply = { id?: number; ready?: boolean; ok?: boolean; value?: unknown; error?: string };
+const pending = new Map<number, (r: Reply) => void>();
+let seq = 0;
+const ready = new Promise<void>((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error('el agente de la sonda no arrancó')), 180_000);
+  agent.on('message', (m: Reply) => {
+    if (m?.ready) {
+      clearTimeout(t);
+      resolve();
+      return;
+    }
+    const done = typeof m?.id === 'number' ? pending.get(m.id) : undefined;
+    if (done && m.id !== undefined) {
+      pending.delete(m.id);
+      done(m);
+    }
+  });
+  agent.on('exit', (code) => {
+    clearTimeout(t);
+    reject(new Error(`el agente de la sonda terminó (${String(code)})`));
+    for (const done of pending.values())
+      done({ ok: false, error: 'el agente de la sonda terminó' });
+    pending.clear();
+  });
+});
+ready.catch(() => {});
+async function call<T>(method: string, ...args: unknown[]): Promise<T> {
+  await ready;
+  const r = await new Promise<Reply>((resolve) => {
+    const id = ++seq;
+    const t = setTimeout(() => {
+      pending.delete(id);
+      resolve({ ok: false, error: `${method}: sin respuesta del agente` });
+    }, 120_000);
+    pending.set(id, (m) => {
+      clearTimeout(t);
+      resolve(m);
+    });
+    agent.send({ id, method, args });
+  });
+  if (!r.ok) throw new Error(r.error ?? `${method} falló`);
+  return r.value as T;
+}
+const service = {
+  open: (s: string, url: string) => call<{ url: string; status?: number | null }>('open', s, url),
+  snapshot: (s: string) => call<string>('snapshot', s),
+  execJs: (s: string, code: string) => call<{ text: string }>('execJs', s, code),
+  screenshot: (s: string) => call<{ data: { length: number } }>('screenshot', s),
+  closeAll: () => call<void>('closeAll'),
+};
 
 const scope = 'generic-flow';
 let failures = 0;
@@ -237,7 +303,8 @@ try {
   const shot = await service.screenshot(scope);
   check('la captura devuelve bytes enviables', shot.data.length > 1000, `${shot.data.length} b64`);
 } finally {
-  await service.closeAll();
+  await service.closeAll().catch(() => {});
+  agent.kill();
   server.close();
 }
 
