@@ -851,15 +851,15 @@ async function doctorCommand(): Promise<number> {
   const lines: string[] = [];
   lines.push(`node            ${process.version}`);
   lines.push(`state dir       ${paths.state}`);
-  lines.push(`vault           ${vaultExists() ? 'present' : 'MISSING (pa vault init)'}`);
+  lines.push(`vault           ${vaultExists() ? 'creado' : 'FALTA (ejecuta: pa vault init)'}`);
 
   const keySrc = await providerKeySource(loadConfig().baseUrl);
   lines.push(
-    `provider key    ${keySrc.source === 'unset' ? `unset (${keySrc.hint})` : keySrc.source}`,
+    `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source}`,
   );
   if (desktopEnabled()) {
     lines.push(
-      `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
+      `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (instala pwsh 7 para la sintaxis completa)'}`,
     );
 
     const screen = new WindowsScreen();
@@ -869,7 +869,9 @@ async function doctorCommand(): Promise<number> {
       const shot = await screen.screenshot();
       lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
     } catch (err) {
-      lines.push(`screenshot      FAILED: ${err instanceof Error ? err.message : String(err)}`);
+      lines.push(
+        `screenshot      FALLA: no pude capturar la pantalla${(err as NodeJS.ErrnoException | undefined)?.code ? ` (${(err as NodeJS.ErrnoException).code})` : ''}`,
+      );
     } finally {
       await screen.dispose();
     }
@@ -877,22 +879,24 @@ async function doctorCommand(): Promise<number> {
     // Screen recording is what makes /watch work, and its absence is invisible until
     // someone asks for a video of their screen.
     lines.push(
-      `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'MISSING ffmpeg-static (/watch will not work)'}`,
+      `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'FALTA ffmpeg-static (/watch no funcionará)'}`,
     );
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
     // model is already cached. A cold cache means the first voice note pays a download.
     const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
     lines.push(
-      `voice stt       ${modelCached ? 'model cached' : 'model not downloaded yet (first voice note downloads it)'}`,
+      `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );
-    lines.push(`voice tts       windows SAPI (offline, free)`);
+    lines.push(`voice tts       windows SAPI (sin internet, gratis)`);
 
     // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
     // user asks to be filmed is a much worse answer than this line.
     const devices = await listCaptureDevices().catch(() => ({ video: null, audio: null }));
-    lines.push(`camera          ${devices.video ?? 'MISSING (/camera will not work)'}`);
-    lines.push(`microphone      ${devices.audio ?? 'MISSING (/mic, wake word will not work)'}`);
+    lines.push(`camera          ${devices.video ?? 'NO ENCONTRADA (/camera no funcionará)'}`);
+    lines.push(
+      `microphone      ${devices.audio ?? 'NO ENCONTRADO (/mic y la palabra de activación no funcionarán)'}`,
+    );
     lines.push(
       `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
         (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
@@ -911,17 +915,17 @@ async function doctorCommand(): Promise<number> {
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
-    `browser         ${existsSync(chromiumDir) ? 'chromium installed' : 'MISSING (run: npx playwright install chromium)'}`,
+    `browser         ${existsSync(chromiumDir) ? 'chromium instalado' : 'FALTA (ejecuta: npx playwright install chromium)'}`,
   );
-  lines.push(`cron            ${loadConfig().cron.length} schedule(s) from PA_CRON`);
+  lines.push(`cron            ${loadConfig().cron.length} tarea(s) programada(s) en PA_CRON`);
   lines.push(
-    `verify actions  ${loadConfig().verifyActions ? 'on (2 extra screenshots per input action)' : 'off'}`,
+    `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);
     lines.push(
-      `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'none detected'}`,
+      `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'ninguna detectada'}`,
     );
   }
 
