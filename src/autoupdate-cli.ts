@@ -220,13 +220,17 @@ export function maybeLaunchAutoupdate(
   }
 }
 
+/** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b». */
+export const AUTOUPDATE_USAGE =
+  'No conozco esa orden. Usa: pa autoupdate status (cómo está), pa autoupdate now (actualizar ya), pa autoupdate off (que no se actualice sola) o pa autoupdate on (que vuelva a hacerlo).';
+
 export async function autoupdateCommand(
   args: string[],
   opts: { stateDir: string; repo: string; deps?: AutoupdateDeps; env?: NodeJS.ProcessEnv },
 ): Promise<number> {
   const action = args[0] ?? 'status';
   if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar'].includes(action)) {
-    process.stderr.write('uso: pa autoupdate status|now|off|on\n');
+    process.stderr.write(`${AUTOUPDATE_USAGE}\n`);
     return 2;
   }
   const { stateDir, env = process.env } = opts;
