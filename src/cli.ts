@@ -125,6 +125,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
+import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
@@ -4708,6 +4709,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     enabled: () => briefingOwner() !== null,
   });
   setInterval(() => void closeLoop.tick().catch(() => null), 10 * 60 * 1000).unref();
+  // Paquete «en reparto» sin «entregado» por la noche: «¿Te llegó el paquete de…?», una vez.
+  const parcelCheckIn = new ParcelCheckIn({
+    db: memoryDb,
+    send: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) return false;
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+      return true;
+    },
+    now: Date.now,
+    quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+    enabled: () => briefingOwner() !== null,
+    timeZone: localTimeZone,
+  });
+  setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
 
   // Lo que el dueño cuenta de sí mismo: se apunta al momento en su perfil, «¿qué sabes
   // de mí?» lo enseña y «olvida eso» / «olvida lo de …» lo borra. Solo su chat privado.
@@ -7353,6 +7369,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
           if (inbound.chatId === briefingOwner() && closeLoop.answered(inbound.text)) {
             await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
+            return;
+          }
+          const parcelAnswer =
+            inbound.chatId === briefingOwner() ? parcelCheckIn.answered(inbound.text) : null;
+          if (parcelAnswer) {
+            await say(inbound, parcelAnswerReply(parcelAnswer), { quote: true });
             return;
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
