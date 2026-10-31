@@ -1,6 +1,6 @@
 # Entrada secreta por pipe
 
-`pa vault set-stdin <clave>` recibe el valor solo por stdin no-TTY. No acepta un valor en argumentos. La terminal con eco se rechaza antes de leer nada; prepara un pipe privado desde un gestor de secretos u otra fuente que controles. No escribas el secreto en una línea de shell tipo echo/printf: eso lo vuelve a poner en el historial. El pipe no protege frente a un administrador local, procesos hostiles de tu usuario ni terminal grabada en su origen.
+`pa vault set-stdin <clave>` no acepta un valor en argumentos. Abierto a mano en una consola (Windows o Linux) pide la clave con el eco apagado: no se ve al pegarla y no queda en el historial (Ctrl+C cancela). Una terminal sin modo oculto se rechaza antes de leer nada. Sin terminal, lee el valor por stdin; prepara un pipe privado desde un gestor de secretos u otra fuente que controles. No escribas el secreto en una línea de shell tipo echo/printf: eso lo vuelve a poner en el historial. El pipe no protege frente a un administrador local, procesos hostiles de tu usuario ni terminal grabada en su origen.
 
 Ejemplo de forma, NO un secreto literal:
 
