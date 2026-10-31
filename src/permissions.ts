@@ -2692,6 +2692,16 @@ export function externalReadSource(call: ToolCall): string | null {
     // El correo es privado y lo escriben terceros: tras leerlo, la sesión queda marcada.
     case 'correo':
       return 'correo';
+    // Un subagente que puede buscar en la web o abrir páginas trae ese texto en su
+    // resumen: inyectado o no, llega igual que si el padre hubiera leído la página.
+    // Un planner, o un explorer solo con ficheros locales, no lee nada de fuera.
+    case 'delegate': {
+      const role = argString(call.args, 'role') || 'explorer';
+      if (role !== 'explorer') return null;
+      const tools = call.args.tools;
+      if (Array.isArray(tools) && !tools.some((t) => t === 'fetch' || t === 'web')) return null;
+      return 'un subagente que busca en la web';
+    }
     default:
       return tool.startsWith('mcp') ? `herramienta MCP ${tool}` : null;
   }
