@@ -1,8 +1,8 @@
 /**
  * Vigilante del arranque automático en Windows (PA_WATCHDOG, encendido por defecto).
  *
- * `pa autostart install` registra además una tarea programada que corre cada 5 minutos
- * y al iniciar sesión: `pa autostart vigilar`. Si el daemon no está en marcha, arranca la
+ * `pa autostart install` registra además una tarea programada que corre cada 5 minutos,
+ * al iniciar sesión y al despertar el PC de la suspensión: `pa autostart vigilar`. Si el daemon no está en marcha, arranca la
  * tarea normal del daemon (la misma que lanza el inicio de sesión), así que nunca hay dos
  * copias: esa tarea no abre otra instancia si ya corre, y el propio daemon tiene su pid.
  * Ante la duda (no se puede saber si corre) no hace nada.
@@ -42,7 +42,15 @@ export function watchdogCommand(nodeExe: string, cliJs: string, systemRoot = 'C:
   };
 }
 
-/** XML de la tarea: al iniciar sesión y cada 5 min, una sola instancia, sin privilegios. */
+/**
+ * Evento de Windows «el PC ha vuelto de suspensión» (Power-Troubleshooter, id 1). Al
+ * despertar, la repetición de cada 5 min puede tardar en volver a tocar; con este
+ * disparador el vigilante revisa un minuto después de despertar (con Wi-Fi ya).
+ */
+export const RESUME_EVENT_QUERY =
+  '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=\'Microsoft-Windows-Power-Troubleshooter\'] and EventID=1]]</Select></Query></QueryList>';
+
+/** XML de la tarea: al iniciar sesión, al despertar y cada 5 min, una sola instancia, sin privilegios. */
 export function watchdogTaskXml(opts: { nodeExe: string; cliJs: string; systemRoot?: string }) {
   const { command, arguments: args } = watchdogCommand(opts.nodeExe, opts.cliJs, opts.systemRoot);
   // Sin carpeta de trabajo la tarea corre en System32 y el CLI no lee el `.env` del repo
@@ -66,6 +74,11 @@ export function watchdogTaskXml(opts: { nodeExe: string; cliJs: string; systemRo
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
     </TimeTrigger>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Subscription>${xmlEscape(RESUME_EVENT_QUERY)}</Subscription>
+      <Delay>PT1M</Delay>
+    </EventTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
