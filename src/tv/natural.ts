@@ -202,6 +202,10 @@ function normalizeOrder(text: string): string {
       .replace(/(?:^| )(?:muchas )?gracias$/, '')
       .replace(MULETILLA, '')
       .replace(EN_LA_TELE, '')
+      // «vol 20», «baja vol»: abreviatura de volumen.
+      .replace(/\bvol\b/g, 'volumen')
+      // «baja el sonido», «súbele el sonido»: es el volumen («quita el sonido» sigue siendo silencio).
+      .replace(/^((?:sube|baja)(?:le|lo)?) (?:el )?sonido\b/, '$1 el volumen')
   );
 }
 
@@ -401,7 +405,7 @@ function parseOne(text: string): TvIntent | null {
 
   // Sonido antes que energia: "apaga el sonido" es silenciar, no apagar la tele.
   if (
-    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon|vuelve a poner) (?:el )?sonido\b|\b(?:enciende|enciendele) (?:el )?(?:sonido|audio)\b|\bdesilencia|\bdesmute/.test(
+    /\b(?:quita|quitale|desactiva) (?:el )?(?:silencio|mute)\b|\b(?:activa|vuelve|devuelve|pon|vuelve a poner) (?:el )?sonido\b|\b(?:enciende|enciendele) (?:el )?(?:sonido|audio)\b|\bdesilencia|\bdesmute|\bunmute\b/.test(
       t,
     )
   ) {
@@ -544,10 +548,18 @@ function parseOne(text: string): TvIntent | null {
     }
   }
   // «más volumen», «un poco más de volumen», «volumen (para) arriba»; «menos volumen», «volumen abajo».
-  if (/^(?:(?:un poco )?mas (?:de )?volumen|volumen (?:(?:para )?arriba|mas))$/.test(t)) {
+  if (
+    /^(?:(?:(?:pon|ponme|ponle|dale|dame) )?(?:un poco )?mas (?:de )?volumen|volumen (?:(?:para )?arriba|mas))$/.test(
+      t,
+    )
+  ) {
     return { action: 'volumeStep', steps: DEFAULT_VOLUME_STEP };
   }
-  if (/^(?:(?:un poco )?menos (?:de )?volumen|volumen (?:(?:para )?abajo|menos))$/.test(t)) {
+  if (
+    /^(?:(?:(?:pon|ponme|ponle|dale|dame) )?(?:un poco )?menos (?:de )?volumen|volumen (?:(?:para )?abajo|menos))$/.test(
+      t,
+    )
+  ) {
     return { action: 'volumeStep', steps: -DEFAULT_VOLUME_STEP };
   }
   // «más alto», «pon la tele más baja», «ponla más fuerte», «más bajito».
