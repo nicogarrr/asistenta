@@ -204,7 +204,7 @@ const SKIPS: Record<string, string> = {
   'cambios-locales': 'hay cambios locales sin guardar en git: no toco nada',
   divergida: 'main local y origin/main se han separado (no es fast-forward): no toco nada',
   'no-en-marcha': 'Asistenta no está en marcha: espero a que vuelva',
-  ocupada: 'Asistenta está ocupada (un turno o una aprobación): lo dejo para luego',
+  ocupada: 'Asistenta está haciendo algo o esperando tu permiso: lo dejo para luego',
   desconocido: 'no sé si Asistenta está ocupada: lo dejo para luego',
   'sin-git':
     'esta carpeta no viene de git (¿la bajaste en ZIP?) o git no está instalado: no puedo actualizarme sola. Para una versión nueva, baja el ZIP otra vez, o instala git y clona Asistenta (README, paso 2)',

@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { formatBootNoticeResult } from '../src/boot-notice.js';
+import { taintEmailTurn } from '../src/channels/email.js';
 import { friendlyError } from '../src/channels/formatters.js';
 import type { Routine } from '../src/db.js';
+import { learnFromTurn } from '../src/memory/learned-rules.js';
 import {
   type ProjectContext,
   projectLinkedReply,
   projectStateReply,
 } from '../src/project-context.js';
 import { lateReminderText } from '../src/tools/reminder.js';
+import { mensajeDeError } from '../src/webui/client-format.js';
 
 // Nico (31 oct): que Asistenta hable como en un chat. Los textos fijos que le llegan
 // sin pasar por el modelo no deben llevar jerga interna, errores en crudo ni rutas.
@@ -100,5 +103,42 @@ describe('/proyecto y aviso de arranque en lenguaje natural', () => {
     expect(t).toContain('no pude enviártelo por Telegram');
     expect(t).toContain('pa doctor');
     expect(t).not.toMatch(JERGA);
+  });
+});
+
+describe('más textos fijos sin «turno» ni «registro»', () => {
+  it('regla aprendida tras leer algo de fuera: frase normal', () => {
+    const r = learnFromTurn({
+      memory: {} as Parameters<typeof learnFromTurn>[0]['memory'],
+      scope: 'telegram:dm:1#main',
+      reply: 'Vale.\n[[aprendido: Sin emojis]]',
+      hinted: true,
+      tainted: true,
+    });
+    expect(r.line).toBe(
+      '📝 No lo he guardado: acabo de leer algo de fuera (una web o un correo). Si quieres que lo aprenda, repítemelo.',
+    );
+    expect(r.line).not.toMatch(JERGA);
+  });
+
+  it('turno que llega por correo: la pregunta de permiso no dice «turno»', () => {
+    const sources: string[] = [];
+    taintEmailTurn(
+      {
+        markTainted: () => {},
+        taintSessionPrivate: (_s, source) => sources.push(source),
+      },
+      's1',
+    );
+    expect(sources).toEqual(['el correo que acaba de llegar']);
+    expect(sources[0]).not.toMatch(JERGA);
+  });
+
+  it('panel: un fallo del servidor se dice sin «error interno» ni «registro local»', () => {
+    for (const estado of [500, 502]) {
+      const t = mensajeDeError(estado, null);
+      expect(t).toBe('Algo ha fallado por mi parte. Vuelve a intentarlo en un momento.');
+      expect(t).not.toMatch(/interno|registro/i);
+    }
   });
 });

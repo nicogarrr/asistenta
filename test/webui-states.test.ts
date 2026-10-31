@@ -17,9 +17,9 @@ describe('panel: estados de error y de token', () => {
 
   it('un 500 explica qué hacer y no filtra detalles', () => {
     expect(mensajeDeError(500, { error: 'Error interno' })).toBe(
-      'Error interno del asistente. Revisa el registro local y vuelve a intentarlo.',
+      'Algo ha fallado por mi parte. Vuelve a intentarlo en un momento.',
     );
-    expect(mensajeDeError(502, null)).toContain('Error interno del asistente');
+    expect(mensajeDeError(502, null)).toContain('Algo ha fallado por mi parte');
   });
 
   it('401 pide el token y lo demás cae al código', () => {

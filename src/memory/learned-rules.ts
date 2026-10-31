@@ -317,7 +317,7 @@ export function learnFromTurn(opts: {
   if (opts.tainted) {
     return {
       text,
-      line: '📝 No lo he guardado: en este turno leí contenido de fuera. Si quieres que lo aprenda, repítemelo.',
+      line: '📝 No lo he guardado: acabo de leer algo de fuera (una web o un correo). Si quieres que lo aprenda, repítemelo.',
       outcome: null,
     };
   }

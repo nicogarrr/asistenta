@@ -167,7 +167,7 @@ export function mensajeDeError(estado: number, cuerpo: unknown): string {
       : '';
   if (estado === 401) return 'Token rechazado. Pega el token correcto arriba.';
   if (estado === 500 || (estado > 500 && !detalle)) {
-    return 'Error interno del asistente. Revisa el registro local y vuelve a intentarlo.';
+    return 'Algo ha fallado por mi parte. Vuelve a intentarlo en un momento.';
   }
   if (estado === 503) {
     return `${detalle || 'No disponible ahora mismo'}. Si el asistente está arrancando, reintenta en unos segundos.`;
