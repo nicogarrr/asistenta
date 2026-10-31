@@ -29,6 +29,7 @@ import {
 } from './autoupdate-cli.js';
 import { BOOT_NOTICE_FILE, formatBootNoticeResult, readBootNoticeResult } from './boot-notice.js';
 
+import { logFile } from './log.js';
 import { paths } from './paths.js';
 import { formatStartupRecord, readStartupRecord, STARTUP_RECORD_FILE } from './startup-record.js';
 import { unlock, vaultGet } from './vault.js';
@@ -145,7 +146,10 @@ async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
         Buffer.from(watchdogTaskXml({ nodeExe: process.execPath, cliJs }), 'utf16le'),
       ]),
     );
-  } catch {
+  } catch (err) {
+    logFile.warn('autostart: watchdog temp XML write failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
     removeQuietly(xmlPath);
     saveWatchdogLast(
       stateDir,
