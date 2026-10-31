@@ -456,22 +456,23 @@ import { parseAllowedHosts, startWebUi } from './webui/server.js';
 import { panelTareas } from './webui/tareas.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
-const USAGE = `personal-agent - a personal agent for your own PC
+const USAGE = `Asistenta (pa): tu asistente personal en tu propio PC
+En Windows, "pa" es "node dist\\cli.js" dentro de la carpeta de Asistenta.
 
-Usage:
+Uso:
   pa setup                configuración local guiada, sin red ni autostart
-  pa serve                run the daemon: Telegram, with approvals over chat
-  pa chat                 talk to the agent in the console
-  pa run "<prompt>"       run one prompt unattended (read-only tools, no prompts)
-  pa vault init           create the encrypted secret store
-  pa vault set <k> <v>    store a secret
+  pa serve                arrancar Asistenta: Telegram, con permisos que pides por chat
+  pa chat                 hablar con Asistenta en la consola
+  pa run "<orden>"        una orden sin supervisión (solo lectura, sin preguntas)
+  pa vault init           crear la caja fuerte cifrada de claves
+  pa vault set <k> <v>    guardar una clave (mejor set-stdin: así no queda en el historial)
   pa vault set-stdin <k>  guardar secreto desde pipe privado, sin valor en argv
-  pa vault get <k>        print one secret
-  pa vault list           list secret names (never values)
-  pa vault rm <k>         delete a secret
+  pa vault get <k>        enseñar una clave en pantalla
+  pa vault list           ver los nombres de las claves (nunca los valores)
+  pa vault rm <k>         borrar una clave
   pa cuentas listar|copiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
-  pa vigilancias [--json] qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
+  pa vigilancias [--json]  qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
   pa tv orden "<texto>"   dar una orden en palabras (p. ej. "apaga la tele", "volumen a 15")
   pa tv mac <MAC>|auto    guardar la MAC de la tele para poder encenderla (auto: la busca en la red)
@@ -484,23 +485,23 @@ Usage:
   pa tv off               apagar la tele
   pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]  probar que un audio suena en la tele
   pa voice enroll|verify|list|remove  voces del hogar: enrolar, puntuar un audio, listar, borrar
-  pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
-  pa opengym status       check the openGym connection
-  pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
-  pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]
+  pa opengym pair [url] <código>  emparejar openGym (registro del gimnasio, solo lectura)
+  pa opengym status       comprobar la conexión con openGym
+  pa evolve [--idea <texto>]  una vuelta de automejora sobre esta copia git (necesita PA_EVOLVE_PROPOSER)
+  pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]  arrancar sola al encender el PC
   pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa precio [comprobar]          un ciclo del vigilante de precios ahora (avisos por pantalla) o valida pricewatch.json
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
-  pa stop                 Linux: cierre graceful autenticado, sin matar por PID
-  pa restart              no disponible sin verificar supervisor
-  pa doctor               check the environment
+  pa stop                 parar Asistenta con un cierre limpio (Windows y Linux; no mata por PID)
+  pa restart              no disponible: para y vuelve a abrir levantar.bat (o pa iniciar)
+  pa doctor               revisar la configuración del PC
   pa backup [lista]       copias de seguridad; pa backup restaurar <AAAA-MM-DD|ultima> con el daemon parado
   pa auditoria [--tool <n>] [--verdict allow|deny] [--since 24h|7d] [--last N] [--json]  registro de llamadas (solo lectura)
   pa mcp serve            servidor MCP de solo lectura por stdio (Claude Desktop, Cursor)
   pa iniciar [--solo-comprobar] [--sin-red] [--json]  comprueba todo (verde/rojo) y arranca si está listo
-  pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
+  pa llm-health           probar cada modelo configurado (ok/clave/cuota/tiempo/sin clave)
 `;
 
 /**
