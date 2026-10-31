@@ -84,7 +84,17 @@ function readPortableFile(file: string): Record<string, string> {
   if (process.platform !== 'win32' && (statSync(file).mode & 0o077) !== 0) {
     throw new Error(`${file} es legible por otros usuarios; ejecuta: chmod 600 ${file}`);
   }
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+  // Bloc de notas de Windows guarda a veces con BOM: se quita antes de leer.
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // El error de JSON.parse cita un trozo del archivo: con claves dentro, nunca se repite.
+    throw new Error(
+      `${file} no es un JSON válido; revisa comillas y comas. Debe ser {"clave": "valor"}`,
+    );
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`${file} debe ser un objeto JSON {"clave": "valor"}`);
   }
