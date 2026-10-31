@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { linkBrowsers } from './browsers-path.js';
+import { SANDBOX_ENV } from './reap.js';
 import type { Measurement } from './score.js';
 
 /**
@@ -225,7 +226,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
       cwd,
       timeout: timeoutMs,
       windowsHide: true,
-      env: cleanEnv(process.env, home),
+      env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
       maxBuffer: 64 * 1024 * 1024,
     })
       .then((r) => ({ ...r, code: 0 as number | string | null }))
@@ -268,7 +269,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     cwd,
     timeout: timeoutMs,
     windowsHide: true,
-    env: cleanEnv(process.env, home),
+    env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
     maxBuffer: 8 * 1024 * 1024,
   })
     .then((r) => ({ ...r, code: 0 as number | string | null }))

@@ -9,6 +9,7 @@ import {
 } from './battery-gate.js';
 import { checkPatch } from './guard.js';
 import { measure as realMeasure } from './measure.js';
+import { reapAttempt } from './reap.js';
 import { checklistPasses, renderReceipt, verificationChecklist } from './receipt.js';
 import { comparable, judge, touchesForbidden } from './score.js';
 import {
@@ -70,6 +71,8 @@ export interface EvolveOptions {
    * si la aprueba sin regresiones; sin batería no se promueve nada (falla cerrado).
    */
   battery?: BatteryGate;
+  /** Cierra los procesos que el intento dejó en marcha (reap.ts). Inyectado en tests. */
+  reap?: (sandboxDir: string) => number;
 }
 
 export interface WeekReport {
@@ -99,6 +102,14 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
   const minGainPct = opts.minGainPct ?? 5;
   const say = opts.log ?? (() => {});
   const measure = opts.measure ?? realMeasure;
+  const reap = opts.reap ?? reapAttempt;
+  // Lo que el proponente o el código del intento dejan vivo podría cambiar la copia mientras
+  // se mide, o después: se cierra antes de revisar, después de medir y al tirar la copia.
+  const reapNow = (dir: string, when: string): void => {
+    const n = reap(dir);
+    if (n > 0) say(`se cerraron ${n} procesos que el intento dejó en marcha (${when})`);
+    if (n < 0) say(`no se pudieron listar los procesos del intento (${when})`);
+  };
   const week = isoWeek();
   const archive = new Archive(join(opts.stateDir, 'evolve', 'attempts.jsonl'));
 
@@ -179,7 +190,9 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       try {
         try {
           await opts.propose(sandbox.dir, hypothesis, attempt);
+          reapNow(sandbox.dir, 'tras el proponente');
         } catch (err) {
+          reapNow(sandbox.dir, 'tras el proponente');
           // Un fallo del proponente (modelo caído, sin clave...) es de la máquina, no de la
           // idea: queda archivado con veredicto y la semana para aquí, sin tumbar el ciclo.
           const reason = `el proponente falló: ${String((err as Error)?.message ?? err).slice(0, 200)}`;
@@ -332,6 +345,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
               : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
           }
         }
+        reapNow(sandbox.dir, 'tras medir');
         // Lo medido tiene que ser lo revisado. Un proceso que el proponente dejó vivo, o el propio
         // código del intento durante sus tests, puede cambiar la copia después del guard (un test,
         // la config, node_modules o su git): los números serían de otro árbol que el parche.
@@ -425,6 +439,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // retry: the idea is worth another attempt with the same hypothesis, so the
         // model is asked again with the attempt number to change its approach.
       } finally {
+        reapNow(sandbox.dir, 'al cerrar el intento');
         if (!report.promoted) dropSandbox(root, sandbox);
       }
       if (report.promoted) break;
