@@ -386,8 +386,11 @@ function isSecretFill(c: ToolCall): boolean {
   return c.tool === 'browser' && typeof c.args?.secret_key === 'string';
 }
 
-/** Órdenes de la CLI que imprimen o copian un secreto (ver la regla deny-secret-cli). */
-const SECRET_CLI = /\bvault\s+get\b|\bcuentas\s+(copiar|exportar)\b/i;
+/**
+ * Órdenes de la CLI que imprimen o copian un secreto, o que borran o cambian una
+ * contraseña guardada (ver la regla deny-secret-cli). Solo el dueño, en su terminal.
+ */
+const SECRET_CLI = /\bvault\s+get\b|\bcuentas\s+(copiar|exportar|borrar|cambiar)\b/i;
 
 /**
  * Cargar el módulo del vault o del gestor de contraseñas con código propio
