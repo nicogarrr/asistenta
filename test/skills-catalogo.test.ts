@@ -53,7 +53,9 @@ describe('/skills catalogo', () => {
     const f = vi.fn() as unknown as typeof fetch;
     const r = await skillsCatalogReply([], 'http://example.com/c.json', f);
     expect(r).toContain('No tienes skills instaladas.');
-    expect(r).toContain('No he podido leer el catálogo de skills (solo se puede descargar');
+    expect(r).toContain(
+      'No he podido leer el catálogo de skills (solo leo catálogos desde enlaces https)',
+    );
     expect(f).not.toHaveBeenCalled();
   });
 
