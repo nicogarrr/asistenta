@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../db.js';
+import { logFile } from '../log.js';
 import { paths } from '../paths.js';
 import {
   formatOverview,
@@ -63,6 +64,22 @@ export function readOjoRules(db: DatabaseSync): OjoRule[] {
     .all() as unknown as OjoRule[];
 }
 
+/**
+ * Por qué no se pudo leer una lista, en castellano. Antes salía el texto de SQLite
+ * tal cual («database is locked», «file is not a database»); el detalle va al registro.
+ */
+export function readFailText(source: string, err: unknown): string {
+  const raw = `${err instanceof Error ? err.message : String(err)} ${String((err as { code?: unknown } | null)?.code ?? '')}`;
+  logFile.warn('pa vigilancias: read failed', { source, err: raw.slice(0, 300) });
+  if (/database is locked|SQLITE_BUSY|database table is locked/i.test(raw))
+    return 'la base de datos está ocupada ahora mismo; vuelve a probar en unos segundos';
+  if (/not a database|malformed|SQLITE_CORRUPT|SQLITE_NOTADB/i.test(raw))
+    return 'el fichero de datos está dañado; con Asistenta parada, restaura una copia (pa backup restaurar ultima)';
+  if (/unable to open|SQLITE_CANTOPEN|EACCES|EPERM|permission denied|readonly/i.test(raw))
+    return 'no puedo abrir el fichero de datos (¿permiso o lo tiene otro programa?)';
+  return 'error inesperado (el detalle queda en el registro del PC)';
+}
+
 /** Lee todas las listas. Una fuente que falla se informa y no tumba las demás. */
 export function collectWatches(src: OverviewSources): {
   entries: OverviewEntry[];
@@ -78,7 +95,7 @@ export function collectWatches(src: OverviewSources): {
       db.exec('PRAGMA busy_timeout = 5000');
       entries.push(...fromPageWatches(new PageWatchStore(db).listAll()));
     } catch (err) {
-      errors.push(`páginas: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`páginas: ${readFailText('páginas', err)}`);
     }
     try {
       if (db) {
@@ -86,7 +103,7 @@ export function collectWatches(src: OverviewSources): {
         entries.push(...fromOjoRules(readOjoRules(db)));
       }
     } catch (err) {
-      errors.push(`ojo: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`ojo: ${readFailText('ojo', err)}`);
     } finally {
       db?.close();
     }
@@ -97,7 +114,7 @@ export function collectWatches(src: OverviewSources): {
       store = new Store(src.agentDb);
       entries.push(...fromRoutines(store.listRoutines()), ...fromTriggers(store.listTriggers()));
     } catch (err) {
-      errors.push(`rutinas: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`rutinas: ${readFailText('rutinas', err)}`);
     } finally {
       store?.close();
     }
