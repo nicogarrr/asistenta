@@ -221,6 +221,10 @@ export function maybeLaunchAutoupdate(
 }
 
 /** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b». */
+/** Fuera de Windows: cómo actualizar a mano, no solo «no se puede». */
+export const AUTOUPDATE_NOT_WINDOWS =
+  'La autoactualización solo funciona en Windows. Aquí actualízala a mano en la carpeta de Asistenta: git pull, npm ci y npm run build, y luego pa restart.';
+
 export const AUTOUPDATE_USAGE =
   'No conozco esa orden. Usa: pa autoupdate status (cómo está), pa autoupdate now (actualizar ya), pa autoupdate off (que no se actualice sola) o pa autoupdate on (que vuelva a hacerlo).';
 
@@ -239,7 +243,7 @@ export async function autoupdateCommand(
   }
   if (action === 'now' || action === 'aplicar') {
     if (process.platform !== 'win32' && !opts.deps) {
-      process.stderr.write('La autoactualización solo funciona en Windows.\n');
+      process.stderr.write(`${AUTOUPDATE_NOT_WINDOWS}\n`);
       return 2;
     }
     const out = await runAutoupdate(
