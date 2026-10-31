@@ -101,8 +101,25 @@ export function aboutMeText(entries: readonly string[], max = 15): string {
   return `Esto es lo que sé de ti:\n${last.map((e) => `• ${e}`).join('\n')}${more}\n\nPara borrar algo: «olvida lo de …».`;
 }
 
+/** La confirmación de «olvida…»: dice qué se ha borrado, no solo «hecho». */
+export function forgotLine(removed: readonly string[]): string {
+  const shown = removed.map(showEntry).filter(Boolean);
+  if (shown.length === 0) return 'Ya no lo tenía apuntado.';
+  if (shown.length === 1) return `Hecho, ya no recuerdo «${shown[0]}».`;
+  const list = shown.slice(0, 3).map((e) => `«${e}»`);
+  const more = shown.length > 3 ? ` y ${shown.length - 3} más` : '';
+  return `Hecho, he olvidado ${shown.length} cosas: ${list.join(', ')}${more}.`;
+}
+
 /** La línea que confirma que algo se apuntó, si la respuesta no lo dice ya. */
 export const FACT_SAVED_LINE = '📝 Apuntado. Si no quieres que lo recuerde, dime «olvida eso».';
+
+/** Igual, diciendo qué se apuntó: así se ve si lo entendió bien. */
+export function factSavedLine(entry: string): string {
+  const shown = showEntry(entry);
+  if (!shown) return FACT_SAVED_LINE;
+  return `📝 Apuntado: «${shown}». Si no quieres que lo recuerde, dime «olvida eso».`;
+}
 
 /** Cuánto vale un «olvida eso» después de apuntar algo. */
 export const FORGET_LAST_WINDOW_MS = 30 * 60_000;

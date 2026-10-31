@@ -75,7 +75,7 @@ export interface CloseLoopDeps {
 /** El estado de un día de preguntas: cuándo fue la última y por qué. */
 export class CloseLoop {
   #lastAt = 0;
-  #asked: { id: string; at: number } | null = null;
+  #asked: { id: string; subject: string; at: number } | null = null;
   readonly #deps: CloseLoopDeps;
 
   constructor(deps: CloseLoopDeps) {
@@ -96,20 +96,25 @@ export class CloseLoop {
     d.markAsked(f.id, now);
     this.#lastAt = now;
     if (!(await d.send(text).catch(() => false))) return null;
-    this.#asked = { id: f.id, at: now };
+    this.#asked = { id: f.id, subject: f.subject, at: now };
     return text;
   }
 
   /**
    * El dueño ha escrito: si es un «ya está» poco después de la pregunta, se cierra
-   * ese pendiente. Devuelve el id cerrado, o null.
+   * ese pendiente. Devuelve el cerrado (id y asunto), o null.
    */
-  answered(text: string, now = this.#deps.now()): string | null {
+  answered(text: string, now = this.#deps.now()): { id: string; subject: string } | null {
     const asked = this.#asked;
     if (!asked || now - asked.at > CHECKIN_ANSWER_WINDOW_MS) return null;
     if (!DONE_ANSWER.test(text.trim())) return null;
     this.#asked = null;
     this.#deps.resolve(asked.id);
-    return asked.id;
+    return { id: asked.id, subject: asked.subject };
   }
+}
+
+/** La confirmación nombra lo que se quita, para que se vea qué se ha hecho. */
+export function closedLine(subject: string): string {
+  return `Perfecto, quito «${shortSubject(subject)}» de pendientes.`;
 }
