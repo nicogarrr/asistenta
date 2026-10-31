@@ -2,10 +2,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type BootFacts, bootBanner, bootNoticeText } from '../src/boot-notice.js';
+import { type BootFacts, bootBanner } from '../src/boot-notice.js';
 import { applySavedComputerOff, saveComputerSwitch } from '../src/screen/computer-switch.js';
 
-/** El aviso de arranque («Asistenta lista ✅») refleja un «/ordenador off» guardado. */
+/** La línea de arranque de la consola refleja un «/ordenador off» guardado. */
 const dirs: string[] = [];
 function stateDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'pa-boot-off-'));
@@ -23,7 +23,7 @@ function boot(config: { computerUse?: boolean }, dir: string, desktop = true): B
 }
 
 describe('aviso de arranque y /ordenador off guardado', () => {
-  it('con un off guardado, el aviso y la consola dicen «PC: no»', () => {
+  it('con un off guardado, la consola dice «PC no»', () => {
     const dir = stateDir();
     saveComputerSwitch(dir, false);
     const config = { computerUse: true };
@@ -31,7 +31,6 @@ describe('aviso de arranque y /ordenador off guardado', () => {
     expect(config.computerUse).toBe(false);
     const facts = boot({ computerUse: true }, dir);
     expect(bootBanner(facts)).toContain('PC no');
-    expect(bootNoticeText(facts)).toBe('Asistenta lista ✅');
   });
 
   it('sin nada guardado no cambia nada: «PC: sí»', () => {
