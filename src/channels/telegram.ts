@@ -1963,7 +1963,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
-const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
+const TV_BUTTON_STALE =
+  'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 
