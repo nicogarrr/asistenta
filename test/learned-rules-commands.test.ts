@@ -37,7 +37,7 @@ describe('/aprendido y /olvida', () => {
     expect(text).toContain('1. Llamar al dueño Nico');
     expect(text).toContain('2. Responder corto');
     expect(text).not.toContain('talla');
-    expect(text).toContain('/olvida 2');
+    expect(text).toContain('Si quieres que olvide alguna, dime cuál.');
   });
 
   it('/olvida <n> borra esa regla y nada más', () => {

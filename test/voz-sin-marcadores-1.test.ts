@@ -51,7 +51,7 @@ describe('respuestas naturales, sin <marcadores> (1): recordatorios, aprendido, 
     } as Routine;
     const text = formatReminderRows([{ routine: taller, next: null }], new Date(2026, 10, 1, 9, 0));
     expect(text).not.toMatch(MARCADOR);
-    expect(text).toContain('/recordatorios borrar 2');
+    expect(text).toContain('Si quieres quitar alguno, dime cuál.');
   });
 
   it('/recordatorios borrar sin decir cuál: pregunta cuál, con ejemplo', () => {
@@ -68,7 +68,7 @@ describe('respuestas naturales, sin <marcadores> (1): recordatorios, aprendido, 
     saveLearnedRule(memory, SCOPE, 'Emojis solo en el correo', 'correo');
     const list = formatLearnedRules(learnedRules(memory, [SCOPE]));
     expect(list).not.toMatch(MARCADOR);
-    expect(list).toContain('/olvida 2');
+    expect(list).toContain('Si quieres que olvide alguna, dime cuál.');
     const mal = forgetLearnedRule(memory, [SCOPE], 'todo');
     expect(mal).toMatch(/^¿Cuál borro\?/);
     expect(mal).not.toMatch(MARCADOR);
@@ -84,7 +84,7 @@ describe('respuestas naturales, sin <marcadores> (1): recordatorios, aprendido, 
       { id: 'm3', text: 'No vive en Madrid' },
     ]);
     expect(r).not.toMatch(/<id>/);
-    expect(r).toContain('/memoria olvidar a1b2c3');
+    expect(r).toContain('dime cuál y la olvido');
   });
 
   it('/buscar, /memoria y /perfil en Telegram: preguntas normales con ejemplo', () => {
@@ -101,10 +101,6 @@ describe('respuestas naturales, sin <marcadores> (1): recordatorios, aprendido, 
     ]) {
       expect(cli).not.toContain(viejo);
     }
-    expect(cli).toContain("'¿Qué busco? Por ejemplo: /buscar presupuesto del taller.'");
-    expect(cli).toContain(
-      '¿Qué guardo? Por ejemplo: /perfil guardar soy alérgico a los frutos secos.',
-    );
     expect(cli).toContain('«recuérdame mañana a las 9 llamar al taller»');
   });
 });

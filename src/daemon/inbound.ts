@@ -148,6 +148,10 @@ export interface InboundControlDeps<I, C> {
   eraseCancelled: (inbound: I) => Promise<unknown>;
   parseCommand: (text: string) => C | null;
   runCommand: (inbound: I, command: C) => Promise<unknown>;
+  /** Respuesta en texto normal a la última pregunta de un comando (null si no hay). */
+  consumeAnswer?: (key: string, text: string) => C | null;
+  /** Un comando nuevo anula la pregunta pendiente de este chat. */
+  clearAnswer?: (key: string) => void;
 }
 
 /**
@@ -174,7 +178,13 @@ export async function routeInboundControl<I extends { text: string }, C>(
   if (erase === 'cancelled') await deps.eraseCancelled(inbound);
   const command = deps.parseCommand(inbound.text);
   if (command) {
+    deps.clearAnswer?.(key);
     await deps.runCommand(inbound, command);
+    return 'handled';
+  }
+  const answer = deps.consumeAnswer?.(key, inbound.text);
+  if (answer) {
+    await deps.runCommand(inbound, answer);
     return 'handled';
   }
   return 'continue';

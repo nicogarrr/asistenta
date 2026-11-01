@@ -9,6 +9,7 @@ import {
   WATCHDOG_USAGE,
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
+import { PreguntasPendientes } from './daemon/pregunta-pendiente.js';
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
 import {
   formatModelos,
@@ -1731,6 +1732,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threads = new Map<string, Thread>();
   const eraseConfirm = new EraseConfirm();
+  const preguntas = new PreguntasPendientes();
   /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
   // --- Integraciones opcionales del daemon -----------------------------------
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
@@ -3108,7 +3110,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'No te he entendido. Con /correo estado te digo cómo va el correo y con /correo lista te enseño los últimos. Para contestar uno, responde a su aviso con /correo responder y, en la línea de abajo, el texto exacto (hasta 2500 caracteres).',
+        'Para contestar un correo, responde a su aviso y escribe lo que quieres decir. Si quieres ver cómo va el correo o los últimos que han llegado, dímelo.',
         { quote: true },
       );
       return;
@@ -3141,11 +3143,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdOcr = async (inbound: Inbound, args: string): Promise<void> => {
     const mode = parseOcrMode(args);
     if (!mode) {
-      await say(
-        inbound,
-        'Mándame el PDF o la foto y escribe /ocr en el pie: te devuelvo el texto. Si lo quieres con formato, pon /ocr md, y /ocr todo para las dos cosas.',
-        { quote: true },
-      );
+      await say(inbound, 'Mándame el PDF o la foto y te saco el texto.', { quote: true });
       return;
     }
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -3564,7 +3562,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           `Conversaciones abiertas: ${open.length}`,
           ...open.map((t) => `- ${t.name}${t.name === current ? ' (activa)' : ''}: ${t.label}`),
           '',
-          'Para abrir otra, ponle nombre, por ejemplo /topic viaje. Con /topics las ves todas.',
+          '¿Quieres abrir otra? Dime cómo la llamo.',
         ].join('\n'),
         { quote: true },
       );
@@ -4108,9 +4106,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const rawUrl = parsed?.url;
     if (!parsed || !rawUrl) {
+      preguntas.ask(chatKey(inbound), 'vigila', { needsUrl: true });
       return void (await say(
         inbound,
-        '¿Qué página vigilo? Pásame el enlace, por ejemplo: /vigila https://tienda.es/producto objetivo=500€. Te aviso si cambia el precio o baja de tu objetivo; también vale baja=15% o palabra=agotado. Si cambias el objetivo de un enlace que ya vigilo, repite también baja= si quieres conservarlo. Con /vigilando ves la lista con el código de cada una: /precio a1b2 te da su histórico y /dejar_de_vigilar a1b2 la quita.',
+        '¿Qué página quieres que vigile? Pásame el enlace y te aviso si cambia el precio.',
         { quote: true },
       ));
     }
@@ -4188,9 +4187,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdCompara = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim().split(/\s+/)[0] ?? '';
     if (!url) {
+      preguntas.ask(chatKey(inbound), 'compara', { needsUrl: true });
       return void (await say(
         inbound,
-        '¿Qué producto comparo? Pásame el enlace de su ficha, por ejemplo: /compara https://tienda.es/producto. Lo busco en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
+        '¿Qué producto comparo? Pásame el enlace y lo busco en las tiendas grandes.',
         { quote: true },
       ));
     }
@@ -4262,11 +4262,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdInvestiga = async (inbound: Inbound, args: string): Promise<void> => {
     const question = args.trim();
     if (!question) {
-      return void (await say(
-        inbound,
-        '¿Qué investigo? Por ejemplo: /investiga ¿merece la pena la aerotermia en Madrid? Leo varias fuentes y te mando un informe con cada dato citado a su fuente. Lo que no pueda comprobar te lo marco.',
-        { quote: true },
-      ));
+      preguntas.ask(chatKey(inbound), 'investiga');
+      return void (await say(inbound, '¿Qué quieres que investigue?', { quote: true }));
     }
     const wide = /^amplio\b/i.test(question);
     if (wide) {
@@ -5064,7 +5061,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (args.trim()) {
         await say(
           inbound,
-          'No te he entendido. Con /recordatorios te enseño la lista, y para quitar uno escribe por ejemplo /recordatorios borrar 2. Para crear uno, dímelo sin más: «recuérdame mañana a las 9 llamar al taller».',
+          'No te he pillado. Si quieres un recordatorio nuevo, dímelo sin más, como «recuérdame mañana a las 9 llamar al taller».',
           { quote: true },
         );
         return;
@@ -5074,6 +5071,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         format: 'marks',
       });
       return;
+    }
+    if (!(m[2] ?? '').trim()) {
+      preguntas.ask(chatKey(inbound), 'recordatorios', { prefix: 'borrar ' });
     }
     const pick = pickReminder(rows(), m[2] ?? '');
     if (!pick.ok) {
@@ -5132,11 +5132,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
     if (days === null) {
-      await say(
-        inbound,
-        'No te he entendido. Prueba /consumo hoy, /consumo semana, /consumo mes o un número de días, como /consumo 10.',
-        { quote: true },
-      );
+      preguntas.ask(chatKey(inbound), 'consumo', { accepts: (t) => parseUsageDays(t) !== null });
+      await say(inbound, '¿De cuándo quieres ver el consumo? ¿De hoy, de la semana, del mes?', {
+        quote: true,
+      });
       return;
     }
     const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
@@ -5226,11 +5225,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdResolve = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim();
     if (!want) {
-      await say(
-        inbound,
-        '¿Cuál doy por resuelto? Mira /pendientes y dime su código o una palabra, por ejemplo /resolver factura.',
-        { quote: true },
-      );
+      preguntas.ask(chatKey(inbound), 'resolver');
+      await say(inbound, '¿Cuál doy por resuelto?', { quote: true });
       return;
     }
     const needle = want.toLowerCase();
@@ -5270,7 +5266,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSearch = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const query = args.trim();
     if (!query) {
-      await say(inbound, '¿Qué busco? Por ejemplo: /buscar presupuesto del taller.', {
+      preguntas.ask(chatKey(inbound), 'buscar');
+      await say(inbound, '¿Qué quieres que busque?', {
         quote: true,
       });
       return;
@@ -5309,7 +5306,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'buscar' || sub === 'search') {
       if (!restText) {
-        await say(inbound, '¿Qué busco en la memoria? Por ejemplo: /memoria buscar taller.', {
+        preguntas.ask(chatKey(inbound), 'memoria', { prefix: 'buscar ' });
+        await say(inbound, '¿Qué quieres que busque en lo que recuerdo?', {
           quote: true,
         });
         return;
@@ -5382,7 +5380,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'No te he entendido. Con /memoria te enseño lo que recuerdo; también puedo buscar (/memoria buscar taller), revisar contradicciones (/memoria revisar), olvidar algo (/memoria olvidar a1b2c3) o mandártela en un archivo (/memoria exportar).',
+      'No te he pillado. ¿Quieres ver lo que recuerdo, buscar algo u olvidar algo?',
       {
         quote: true,
       },
@@ -5454,20 +5452,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ? `Perfil (${facts.length}):\n${facts
               .map((f) => `- [${f.id}] (${f.updatedAt.slice(0, 10)}) ${f.text}`)
               .join('\n')}`
-          : 'El perfil está vacío. Guarda algo así: /perfil guardar soy alérgico a los frutos secos.',
+          : 'Aún no sé nada de ti. Cuéntame lo que quieras que recuerde.',
         { quote: true },
       );
       return;
     }
     if (sub === 'guardar' || sub === 'add') {
       if (!restText) {
-        await say(
-          inbound,
-          '¿Qué guardo? Por ejemplo: /perfil guardar soy alérgico a los frutos secos.',
-          {
-            quote: true,
-          },
-        );
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'guardar ' });
+        await say(inbound, '¿Qué quieres que recuerde de ti?', {
+          quote: true,
+        });
         return;
       }
       try {
@@ -5491,11 +5486,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'forget') {
       if (!restText) {
-        await say(
-          inbound,
-          '¿Qué borro? Dime el código entre corchetes o una palabra, por ejemplo /perfil olvidar frutos secos.',
-          { quote: true },
-        );
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'olvidar ' });
+        await say(inbound, '¿Qué quieres que olvide?', { quote: true });
         return;
       }
       const removed = profile.forget(restText);
@@ -5528,7 +5520,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'No te he entendido. Con /perfil te enseño lo que sé de ti; también puedo guardar algo (/perfil guardar soy alérgico a los frutos secos), buscar (/perfil buscar alergia), olvidar algo (/perfil olvidar frutos secos) o mandártelo en un archivo (/perfil exportar).',
+      'No te he pillado. ¿Quieres ver lo que sé de ti, guardar algo nuevo u olvidar algo?',
       { quote: true },
     );
   };
@@ -7348,6 +7340,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: async (inbound, args) => {
         const thread = await resolveThread(inbound);
         const reply = forgetLearnedRule(memory, memoryScopesFor(thread.key).read, args);
+        if (reply.startsWith('¿Cuál')) preguntas.ask(chatKey(inbound), 'olvida');
         await say(inbound, reply, { quote: true });
       },
     },
@@ -7466,6 +7459,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             eraseConfirmed: (m) => cmdBorrarChatConfirmado(m),
             eraseCancelled: (m) => say(m, 'Cancelado: no he borrado nada.', { quote: true }),
             parseCommand,
+            consumeAnswer: (key, text) => preguntas.consume(key, text),
+            clearAnswer: (key) => preguntas.clear(key),
             // Commands bypass the agent entirely: they are the user's hands on the
             // machine, not a task to delegate, and they must work even when every thread
             // is busy or the provider is down.
@@ -8120,7 +8115,7 @@ export function vigilanciasReply(
 
 export function formatWatchList(list: readonly PageWatch[]): string {
   if (!list.length)
-    return 'No vigilo ninguna página. Pásame un enlace, por ejemplo: /vigila https://tienda.es/producto';
+    return 'No estoy vigilando ninguna página. Pásame un enlace y te aviso si cambia el precio.';
   return [
     `Páginas vigiladas: ${list.length}`,
     ...list.map(

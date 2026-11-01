@@ -30,10 +30,10 @@ describe('system prompt: natural chat voice', () => {
 
     // Nico (1 nov): «conversaciones naturales, no usar cosas como <número o palabra>».
     it('never writes placeholders or command syntax unless asked', () => {
-      expect(p).toContain('Talk, never write like a manual');
+      expect(p).toContain('Talk like a friend on WhatsApp: short, natural sentences');
+      expect(p).toContain('no command syntax, no examples with a slash');
       expect(p).toContain('no placeholders like <número> or [opcional]');
-      expect(p).toContain('no "Uso: /cmd" syntax or command menus unless asked');
-      expect(p).toContain('Ask plainly, with one real example.');
+      expect(p).toContain('If you need something, just ask ("¿qué página quieres que vigile?")');
     });
   }
 

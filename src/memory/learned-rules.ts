@@ -497,7 +497,7 @@ export function formatLearnedRules(
     '📝 Reglas aprendidas (la más reciente primero):',
     ...lines,
     '',
-    'Para borrar una, dime cuál: por ejemplo /olvida 2 o /olvida emojis.',
+    'Si quieres que olvide alguna, dime cuál.',
   ].join('\n');
 }
 
@@ -535,13 +535,13 @@ export function forgetLearnedRule(
         `Hay ${found.length} reglas con «${arg.trim()}». ¿Cuál borro?`,
         ...found.map(({ r, i }) => `${i + 1}. ${r.text}`),
         '',
-        '¿Cuál de ellas? Escríbeme su número, por ejemplo /olvida 2.',
+        '¿Cuál de ellas? Dime su número.',
       ].join('\n');
     }
   }
   if (!/^\d+[.)]?$/.test(arg.trim()) || n < 1 || n > max) {
     return rules.length
-      ? `¿Cuál borro? Dime su número del 1 al ${max} (como salen en /aprendido) o una palabra de la regla, por ejemplo /olvida 2 o /olvida emojis.`
+      ? `¿Cuál borro? Dime su número (del 1 al ${max}) o una palabra de la regla.`
       : 'No hay reglas aprendidas que borrar.';
   }
   const target = rules[n - 1] as MemoryEntry;
