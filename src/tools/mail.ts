@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { wallDateMinute } from '../datecontext.js';
 import { log } from '../log.js';
 import type { ReadMailAccount } from '../mail/idle.js';
 import type { InboxQuery, InboxRow } from '../mail/reader.js';
@@ -170,8 +171,10 @@ const oneLine = (s: string, max: number) =>
     .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
     .trim()
     .slice(0, max);
-const day = (ms: number) =>
-  ms > 0 ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '?';
+// Hora local del usuario (PA_TIMEZONE), no UTC: un correo de las 9:30 se enseñaba
+// como «8:30» (o «7:30» en verano) en el listado, en «leer» y en la cabecera de un
+// reenvío. Mismo criterio que el registro de acciones y /disparadores (wallDateMinute).
+const day = (ms: number) => (ms > 0 ? wallDateMinute(new Date(ms)) || '?' : '?');
 
 export async function runMailTool(
   args: { action: string; [k: string]: unknown },
