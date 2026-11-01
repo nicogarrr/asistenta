@@ -6,7 +6,28 @@
  * la anula. Si la respuesta no encaja (varias líneas, muy larga, sin enlace cuando
  * hacía falta uno, o «déjalo») no se usa y el mensaje sigue su camino normal.
  */
+import { foldAccents } from '../text.js';
+
 export const PREGUNTA_TTL_MS = 10 * 60_000;
+
+/** «sí» dicho de cualquier forma corta, para las preguntas que esperan un sí. */
+export const SI_RESPUESTA = /^(?:s[ií]|vale|venga|ok|okay|claro|dale|hazlo|porfa|por favor)[.!]*$/i;
+
+/**
+ * La respuesta a «¿Cómo llamo a la rutina?» convertida en nombre: «Pedir cita» →
+ * «pedir-cita». Hasta cuatro palabras; una frase larga no es un nombre.
+ */
+export function learnNameAnswer(text: string): string | null {
+  const words = foldAccents(text)
+    .replace(/[«»"'.!?¡¿]/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length || words.length > 4) return null;
+  const name = words.join('-');
+  if (name === 'end' || !/^[a-z0-9][a-z0-9/_-]{0,39}$/.test(name)) return null;
+  return name;
+}
 
 export interface RespuestaComando {
   name: string;
