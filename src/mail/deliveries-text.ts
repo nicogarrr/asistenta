@@ -15,8 +15,29 @@ function who(d: Delivery): string {
   return `${d.carrier}${ref ? ` (${ref})` : ''}`;
 }
 
-export function formatDeliveryAlert(d: Delivery): string {
-  if (d.status === 'en_reparto') return `📦 Tu paquete de ${who(d)} está en reparto: llega hoy.`;
+/** «2026-11-02» del instante en la zona dada. */
+function dayIn(ms: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+}
+
+export function formatDeliveryAlert(d: Delivery, now = Date.now(), timeZone?: string): string {
+  if (d.status === 'en_reparto') {
+    // «llega hoy» solo si salió a reparto hoy: un aviso que sale al día siguiente (el PC
+    // estuvo apagado) no puede prometer «hoy».
+    const day = dayIn(d.statusAt, timeZone);
+    if (day === dayIn(now, timeZone))
+      return `📦 Tu paquete de ${who(d)} está en reparto: llega hoy.`;
+    const when =
+      day === dayIn(now - 86_400_000, timeZone) || day === dayIn(now - 82_800_000, timeZone)
+        ? 'ayer'
+        : `el ${day.slice(8, 10)}/${day.slice(5, 7)}`;
+    return `📦 Tu paquete de ${who(d)} salió a reparto ${when}: si no te ha llegado, mira el correo de la transportista.`;
+  }
   if (d.status === 'para_recoger')
     return `📦 Tu paquete de ${who(d)} está listo para recoger: «${d.title}».`;
   if (d.status === 'entregado') return `📦 Tu paquete de ${who(d)} ya está entregado.`;
