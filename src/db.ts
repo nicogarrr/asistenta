@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { paths } from './paths.js';
+import { loadDatabaseSync } from './sqlite.js';
 
 /**
  * Durable state, on `node:sqlite` (stable in Node 24, no native build step).
@@ -203,6 +204,7 @@ export class Store {
 
   constructor(file: string = paths.db) {
     mkdirSync(dirname(file), { recursive: true });
+    const DatabaseSync = loadDatabaseSync();
     this.#db = new DatabaseSync(file);
     this.#db.exec('PRAGMA journal_mode = WAL');
     this.#db.exec('PRAGMA foreign_keys = ON');

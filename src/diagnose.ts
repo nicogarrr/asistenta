@@ -25,11 +25,12 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { type ActionEntry, ActionLog } from './audit/log.js';
 import type { Config } from './config.js';
 import { wallHourMinute } from './datecontext.js';
 import { paths, REPO_DIR } from './paths.js';
+import { loadDatabaseSync } from './sqlite.js';
 import { formatDurationMs, readHeartbeat } from './watchdog.js';
 
 /** What the wake listener can tell us without being asked anything. */
@@ -403,6 +404,7 @@ function readApprovals(file: string): ApprovalsInfo {
   };
   if (!existsSync(file)) return { ...empty, problem: `no existe ${file}` };
   let db: DatabaseSync | null = null;
+  const DatabaseSync = loadDatabaseSync();
   try {
     db = new DatabaseSync(file, { readOnly: true });
     const rows = db

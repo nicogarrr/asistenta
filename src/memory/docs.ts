@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
+import { loadDatabaseSync } from '../sqlite.js';
 import { withTimeout } from '../utils.js';
 import { extractOfficeText, officeKind } from './office.js';
 
@@ -239,6 +240,7 @@ export class DocMemory {
 
   constructor(options: DocMemoryOptions) {
     mkdirSync(options.directory, { recursive: true });
+    const DatabaseSync = loadDatabaseSync();
     this.#db = new DatabaseSync(options.dbPath);
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS docs (
