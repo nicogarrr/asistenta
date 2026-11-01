@@ -262,6 +262,9 @@ import {
 import {
   CONVERSACION_OFF_HINT,
   conversacionOffAnswer,
+  corteAnswer,
+  corteAsk,
+  MIC_CLOSED_ASK,
   MIC_OFF_TEXT,
   WAKE_AGAIN_ASK,
 } from './wake-texts.js';
@@ -7280,9 +7283,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   };
 
+  /** Tras una pregunta de /conversacion, la respuesta normal completa el comando. */
+  const askConversacion = (inbound: Inbound, answer: (t: string) => string | null): void =>
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer });
+  const micOpenAnswer = (t: string): string | null => (SI_RESPUESTA.test(t) ? 'on' : null);
+
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
+      if (!currentWake()?.isRunning()) askConversacion(inbound, micOpenAnswer);
       const st = session?.stats();
       const bargeHist = bargeStats.totals();
       const bargeRate = bargeFalseRate(bargeHist);
@@ -7302,9 +7311,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 st.lastError ? ' La última vez algo falló al oírte.' : ''
               }`
             : `Ahora no estamos hablando${lastConversationEnd ? ` (la última conversación acabó ${lastConversationEnd})` : ''}.`) +
-          (currentWake()?.isRunning()
-            ? ''
-            : ' El micrófono está cerrado: /conversacion on lo abre.') +
+          (currentWake()?.isRunning() ? '' : MIC_CLOSED_ASK) +
           (bargeHist.bargeIns > 0
             ? ` En total me has cortado ${bargeHist.bargeIns} ${bargeHist.bargeIns === 1 ? 'vez' : 'veces'}${
                 bargeRate !== null
@@ -7319,11 +7326,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (want === 'corte') {
       const level = args.trim().split(/\s+/)[1]?.toLowerCase() ?? '';
       if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
-        await say(
-          inbound,
-          `Corte al interrumpirme: ${bargeLevel}. Para cambiarlo: /conversacion corte auriculares, /conversacion corte altavoces o /conversacion corte off (vale desde la próxima sesión).`,
-          { quote: true },
-        );
+        askConversacion(inbound, corteAnswer);
+        await say(inbound, corteAsk(bargeLevel), { quote: true });
         return;
       }
       bargeLevel = level;
