@@ -321,6 +321,7 @@ function delegateTool(config: Config): AgentTool {
   return delegateWiring.tool;
 }
 
+import { esSiCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
 import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
@@ -5878,7 +5879,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       return;
     }
-    const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
+    // «confirmado …»: la respuesta «sí» a apuntar una fecha que ya pasó.
+    const confirmed = /^confirmado\s/i.test(args.trim());
+    const m = /^(?:add|anadir|añadir|confirmado)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
     // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
     const natural = m ? null : parseFechaCalendario(args);
     if (!m && !natural) {
@@ -5903,6 +5906,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         'No entiendo esa fecha. Dímela de otra forma, por ejemplo «el 2 de noviembre a las 18:00».',
         { quote: true },
       );
+      return;
+    }
+    const pasado = confirmed ? null : preguntaFechaPasada(start, new Date());
+    if (pasado) {
+      preguntas.ask(chatKey(inbound), 'calendario', {
+        answer: (t) =>
+          esSiCalendario(t)
+            ? `confirmado ${start.toISOString()} | ${title}`
+            : parseFechaCalendario(t)
+              ? `add ${t}`
+              : null,
+      });
+      await say(inbound, pasado, { quote: true });
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
