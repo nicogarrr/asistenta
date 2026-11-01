@@ -329,6 +329,17 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   )
     return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
+  // «excepto festivos», «salvo los festivos», «los festivos a las 10»: un cron no sabe qué
+  // días son festivos y antes se ignoraba (sonaba también en Navidad). Se pregunta.
+  if (
+    /\b(?:excepto|menos|salvo|quitando|sin contar|que no sean?|no) (?:en )?(?:el |los )?(?:dias? )?festivos?\b/.test(
+      normalised,
+    ) ||
+    /^(?:los |todos los |cada )(?:dias )?festivos?\b|\b(?:los|todos los|cada) (?:dias )?festivos? a las?\b/.test(
+      normalised,
+    )
+  )
+    return null;
   // «cada segundo martes», «el primer lunes de mes», «el último viernes»: tampoco cabe en
   // un cron. Antes «cada segundo martes» sonaba todos los días.
   if (
