@@ -186,7 +186,16 @@ function clockOf(m: RegExpExecArray): { hour: number; minute: number } | null {
  * returns null, so a caller can fall back to asking rather than guessing at 3 a.m.
  */
 export function parseNatural(text: string): { schedule: string; prompt: string } | null {
-  const normalised = foldAccents(text).replace(/\s+/g, ' ').trim();
+  const normalised = foldAccents(text)
+    .replace(/\s+/g, ' ')
+    .trim()
+    // «a las 8 pm», «8:30 p.m.», «12 am»: antes se ignoraba y «8 pm» sonaba a las 8:00.
+    .replace(/\b(\d{1,2})(?:[:.](\d{2}))?\s?([ap])\.?\s?m\b\.?/g, (_m, h, min, ap) => {
+      let hour = Number(h);
+      if (ap === 'p' && hour >= 1 && hour < 12) hour += 12;
+      if (ap === 'a' && hour === 12) hour = 0;
+      return min ? `${hour}:${min}` : `${hour}`;
+    });
 
   // A time of day is the strongest signal. `a las 8`, `a las 8:30`, `a las 20h`.
   let hour = 0;
@@ -298,6 +307,14 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   // them simply. Before, they became «every day»; now the caller asks.
   if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
+  // «cada segundo martes», «el primer lunes de mes», «el último viernes»: tampoco cabe en
+  // un cron. Antes «cada segundo martes» sonaba todos los días.
+  if (
+    new RegExp(`\\b(?:primer|primero|segundo|tercer|tercero|cuarto|ultimo)s? (?:${DAY})\\b`).test(
+      normalised,
+    )
+  )
+    return null;
 
   // «cada 25 de diciembre», «todos los años el 6 de enero»: una vez al año. Antes una
   // fecha del año (o «cada año», «cada trimestre», «una vez al mes») caía en «todos
@@ -387,7 +404,11 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       prompt: text.trim(),
     };
   }
-  if (/cada dia|todos los dias|diariamente/.test(normalised) && !hasTime) {
+  if (
+    /cada dia|todos los dias|diariamente/.test(normalised) &&
+    !hasTime &&
+    !LABORABLES.test(normalised)
+  ) {
     return { schedule: '0 8 * * *', prompt: text.trim() };
   }
 
@@ -423,13 +444,14 @@ const DAY_VALUE: Record<string, number> = {
   domingos: 0,
 };
 const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
+/** «entre semana», «los días laborables», «cada día laborable», «los laborables». */
+const LABORABLES =
+  /\b(?:entre semana|(?:los |cada |todos los )?dias? laborables?|los laborables|de lunes a viernes)\b/;
 
 /** The cron day-of-week field for the days said, or null when no day is said. */
 function daysOfWeek(normalised: string): string | null {
-  if (/\b(?:entre semana|(?:los )?dias laborables|de lunes a viernes)\b/.test(normalised)) {
-    return '1-5';
-  }
-  if (/\b(?:los|cada|el) fin(?:es)? de semana\b/.test(normalised)) return '0,6';
+  if (LABORABLES.test(normalised)) return '1-5';
+  if (/\b(?:los|cada|el) (?:fin(?:es)? de semana|findes?)\b/.test(normalised)) return '0,6';
   const range = new RegExp(`\\bde (${DAY}) a (${DAY})\\b`).exec(normalised);
   const from = DAY_VALUE[range?.[1] ?? ''];
   const to = DAY_VALUE[range?.[2] ?? ''];
