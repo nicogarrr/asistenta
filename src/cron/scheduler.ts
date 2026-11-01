@@ -306,6 +306,15 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
   if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
+  // «durante una semana», «hasta el viernes», «hasta fin de mes»: un cron no tiene fin y la
+  // rutina sonaba para siempre. Se pregunta («hasta las 20» o «hasta el 25 de diciembre»
+  // dentro de la tarea no son un fin).
+  if (
+    new RegExp(
+      `\\bdurante (?:una?|unos|unas|\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince|veinte|treinta|varios|varias) (?:dias?|semanas?|mes(?:es)?|anos?)\\b|\\bhasta (?:el (?:${DAY})|(?:el )?(?:fin|final|finales) de (?:la |el )?(?:mes|semana|ano)|manana|pasado manana)\\b`,
+    ).test(normalised)
+  )
+    return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
   // «cada segundo martes», «el primer lunes de mes», «el último viernes»: tampoco cabe en
   // un cron. Antes «cada segundo martes» sonaba todos los días.
