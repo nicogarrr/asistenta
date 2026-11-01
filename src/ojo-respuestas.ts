@@ -19,3 +19,22 @@ export const SCREEN_OFF_TEXT =
 
 /** El ejemplo de la investigación amplia, dicho como se escribe en el chat. */
 export const WIDE_EXAMPLE = '«precio y garantía | iPhone 16, Pixel 9, Galaxy S25»';
+
+/** Con el ojo de Descargas o de Pantalla encendido: cómo se apaga, dicho como en un chat. */
+export const OJO_OFF_HINT = 'Si quieres que lo apague, dime «apágalo».';
+
+const APAGA = /^(?:ap[aá]ga(?:lo|la)?|qu[ií]ta(?:lo|la)|desact[ií]va(?:lo|la)?)[.!]*$/i;
+
+export function ojoOffAnswer(text: string): boolean {
+  return APAGA.test(text.trim());
+}
+
+/** /memoria olvidar sin código: pregunta cuál, sin mandar a «/memoria olvidar …». */
+export const MEMORIA_FORGET_ASK =
+  '¿Cuál olvido? Dime el código que sale entre corchetes en la lista de lo que recuerdo, por ejemplo «a1b2c3».';
+
+/** «a1b2c3» (o «[a1b2c3]») tras «¿Cuál olvido?» → `olvidar a1b2c3` para /memoria. */
+export function memoriaForgetAnswer(text: string): string | null {
+  const code = text.replace(/[«»"'[\]]/g, '').trim();
+  return /^[a-z0-9][a-z0-9-]{2,39}$/i.test(code) ? `olvidar ${code}` : null;
+}

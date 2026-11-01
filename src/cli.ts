@@ -225,6 +225,10 @@ import {
 } from './ojo-ignore.js';
 import {
   DOWNLOADS_OFF_TEXT,
+  MEMORIA_FORGET_ASK,
+  memoriaForgetAnswer,
+  OJO_OFF_HINT,
+  ojoOffAnswer,
   ojoOnAnswer,
   SCREEN_OFF_TEXT,
   WIDE_EXAMPLE,
@@ -3270,6 +3274,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     preguntas.ask(chatKey(inbound), 'ojo', {
       answer: (t) => (ojoOnAnswer(t) ? `${what} on` : null),
     });
+  /** «apágalo» tras «encendido… Si quieres que lo apague» apaga esa parte del ojo. */
+  const askOjoOff = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? `${what} off` : null),
+    });
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
@@ -3285,11 +3294,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const st = await downloadsCtl.apply();
       const on = getDownloadsEnabled(memoryDb);
       if (!on) askOjoOn(inbound, 'descargas');
+      if (on) askOjoOff(inbound, 'descargas');
       await say(
         inbound,
         on
           ? st.running
-            ? 'Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. /ojo descargas off lo apaga.'
+            ? `Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. ${OJO_OFF_HINT}`
             : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. Puedes fijar la carpeta en la bóveda con ojo:downloadsDir.`
           : DOWNLOADS_OFF_TEXT,
         { quote: true },
@@ -3307,10 +3317,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const want = pm[1];
       if (want === 'on' || want === 'off') setScreenEnabled(memoryDb, want === 'on');
       if (!getScreenEnabled(memoryDb)) askOjoOn(inbound, 'pantalla');
+      if (getScreenEnabled(memoryDb)) askOjoOff(inbound, 'pantalla');
       await say(
         inbound,
         getScreenEnabled(memoryDb)
-          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} /ojo pantalla off lo apaga.`
+          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} ${OJO_OFF_HINT}`
           : SCREEN_OFF_TEXT,
         { quote: true },
       );
@@ -5550,13 +5561,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
       if (!restText) {
-        await say(
-          inbound,
-          '¿Cuál olvido? Dime el código que sale entre corchetes en /memoria, por ejemplo /memoria olvidar a1b2c3.',
-          {
-            quote: true,
-          },
-        );
+        preguntas.ask(chatKey(inbound), 'memoria', { answer: memoriaForgetAnswer });
+        await say(inbound, MEMORIA_FORGET_ASK, {
+          quote: true,
+        });
         return;
       }
       const removed = memory.forgetIn(memoryScopesFor(thread.key).read, restText);
