@@ -528,6 +528,10 @@ function cutWithHint(text: string, budget: number): string {
     // rather than shipping half of it.
     const straddled = tokens.find((span) => limit > span.start && limit < span.end);
     cut = straddled ? straddled.start : limit;
+    // Sin hueco ninguno (una tira de emojis): no partir un emoji por la mitad, que deja
+    // medio par sustituto y Telegram lo enseña como «�» o rechaza el mensaje.
+    const high = text.charCodeAt(cut - 1);
+    if (cut > 0 && high >= 0xd800 && high <= 0xdbff) cut -= 1;
   }
   let body = text.slice(0, cut).trimEnd();
   // Una negrita **… partida por el corte se cierra: si no, telegramHtml no la
