@@ -1658,6 +1658,15 @@ ${renderFormatScript()}
             bloque.appendChild(cabeza);
             bloque.appendChild(nodo('p', 'texto', area.resumen));
             bloque.appendChild(nodo('p', 'muted', 'Ejemplo: «' + area.ejemplo + '»'));
+            var lineasHab = Array.isArray(area.habilidades) ? area.habilidades : [];
+            if (lineasHab.length > 0) {
+              var habilidades = nodo('ul', 'comandos habilidades');
+              lineasHab.forEach(function (h) {
+                habilidades.appendChild(nodo('li', null, h));
+              });
+              bloque.appendChild(nodo('p', 'muted', 'Pídemelo con tus palabras:'));
+              bloque.appendChild(habilidades);
+            }
             var lista = nodo('ul', 'comandos');
             (Array.isArray(area.comandos) ? area.comandos : []).forEach(function (c) {
               var fila = nodo('li', null);
