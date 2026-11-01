@@ -241,7 +241,10 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       extraHours.push(clock.hour);
     }
     const part = timeMatch[6];
-    if (!part && extraHours.length === 0 && /(tarde|noche)/.test(normalised) && hour < 12) {
+    // Solo la tarde o la noche como parte del día («por la tarde», «esta noche», «las
+    // tardes»): «no llegar tarde» o «el resumen de anoche» no mueven la hora doce horas.
+    const dayPart = /\b(?:la|las|esta|cada|de|por) (?:tarde|noche)s?\b/.test(normalised);
+    if (!part && extraHours.length === 0 && dayPart && hour < 12) {
       // "a las 6 … por la tarde" means six in the evening to a person, and a scheduler
       // that fires at 6 a.m. instead is the kind of bug that makes people stop using it.
       // Without a part of day next to the clock, the modifier counts anywhere.
