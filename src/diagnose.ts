@@ -31,6 +31,7 @@ import type { Config } from './config.js';
 import { wallHourMinute } from './datecontext.js';
 import { paths, REPO_DIR } from './paths.js';
 import { loadDatabaseSync } from './sqlite.js';
+import { sliceSafe } from './text.js';
 import { formatDurationMs, readHeartbeat } from './watchdog.js';
 
 /** What the wake listener can tell us without being asked anything. */
@@ -235,13 +236,15 @@ function defaultIsAlive(pid: number): boolean {
  * Digits shorter than two characters are left alone: `fatal` must not become `fatal`.
  */
 export function normalizeMessage(msg: string): string {
-  return msg
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
-    .replace(/0x[0-9a-f]+/gi, '0x#')
-    .replace(/\b\d{2,}\b/g, '#')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 240);
+  return sliceSafe(
+    msg
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
+      .replace(/0x[0-9a-f]+/gi, '0x#')
+      .replace(/\b\d{2,}\b/g, '#')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    240,
+  );
 }
 
 /** Group log lines by normalized message, biggest offender first. */

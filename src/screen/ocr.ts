@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 import { withTimeout } from '../utils.js';
 
 const execFileAsync = promisify(execFile);
@@ -289,7 +290,7 @@ export function firstStderrLine(stderr: string): string {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .find((l) => l.length > 0);
-  return line ? line.slice(0, 240) : '';
+  return line ? sliceSafe(line, 240) : '';
 }
 
 export function b64(value: string): string {

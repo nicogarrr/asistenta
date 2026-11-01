@@ -15,9 +15,11 @@
  *    lastTestOk. Any drift - tampering, hand edits, a test that rewrote the
  *    file - and the tool is skipped with an error log.
  */
+
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 import { runFactoryToolSandboxed } from './runner.js';
 import { listFactoryTools, readFactoryTool, sha256 } from './store.js';
 
@@ -80,7 +82,7 @@ export async function loadInstalledFactoryTools(
           const result = await runFactoryToolSandboxed(meta.id, args, { timeoutMs });
           if (result.ok) {
             return {
-              content: [{ type: 'text' as const, text: result.output.slice(0, 20_000) }],
+              content: [{ type: 'text' as const, text: sliceSafe(result.output, 20_000) }],
               details: { factory: meta.id, version: meta.version },
             };
           }
@@ -88,7 +90,7 @@ export async function loadInstalledFactoryTools(
             content: [
               {
                 type: 'text' as const,
-                text: `Error en ${meta.id} (${result.stage}): ${result.output}`.slice(0, 4000),
+                text: sliceSafe(`Error en ${meta.id} (${result.stage}): ${result.output}`, 4000),
               },
             ],
             details: { factory: meta.id, version: meta.version },

@@ -143,12 +143,7 @@ export function workspaceTools(root: string): AgentTool[] {
       const lines = readFileSync(inside(root, a.path), 'utf8').split('\n');
       const from = Math.max(1, Math.floor(a.offset ?? 1));
       const to = a.limit ? from - 1 + Math.floor(a.limit) : lines.length;
-      return text(
-        lines
-          .slice(from - 1, to)
-          .join('\n')
-          .slice(0, 22_000),
-      );
+      return text(sliceSafe(lines.slice(from - 1, to).join('\n'), 22_000));
     },
   };
   const write = {
