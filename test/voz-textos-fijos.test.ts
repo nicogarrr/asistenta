@@ -25,6 +25,7 @@ describe('textos fijos en lenguaje natural', () => {
   it('recordatorio con retraso: frase normal, con «a las»', () => {
     const t = lateReminderText(
       routine('recordatorio-1: comprar pan @2026-11-03 09:00', 'comprar pan'),
+      new Date('2026-11-05T12:00:00Z').getTime(),
     );
     expect(t).toBe('⏰ Te lo recuerdo con retraso, era para el 03/11 a las 09:00: comprar pan');
     expect(t).not.toMatch(JERGA);

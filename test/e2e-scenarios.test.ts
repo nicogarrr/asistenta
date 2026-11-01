@@ -433,7 +433,7 @@ describe('recordatorios cuando algo falla', () => {
     const telegram = new h.FakeTelegram();
     await bootLikeDaemon(dir, { telegram });
     expect(telegram.sent).toHaveLength(1);
-    expect(telegram.sent[0]?.text).toContain('era para el 03/11 a las 09:00');
+    expect(telegram.sent[0]?.text).toContain('era para hoy a las 09:00');
     expect(telegram.sent[0]?.text).toContain('tomar la pastilla');
     // Ni vuelve a la hora siguiente ni «al año que viene» (el cron no tiene año).
     await vi.advanceTimersByTimeAsync(24 * 3_600_000);

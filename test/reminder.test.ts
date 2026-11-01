@@ -287,7 +287,7 @@ describe('overdue one-time reminders at startup', () => {
     const r = await deliverMissedReminders({ store, send: flaky, now: NOW });
     expect(r).toEqual({ delivered: 1, failed: 1, invalid: 0 });
     const text = sent.find(([s]) => s === 'tg:1:2')?.[1] ?? '';
-    expect(text).toContain('05/10 a las 08:00');
+    expect(text).toContain('era para hoy a las 08:00');
     expect(text).toContain('apagar el horno');
     expect(text).not.toMatch(/apagad|no estaba en marcha/);
     expect(store.listRoutines().map((x) => x.name)).toEqual([

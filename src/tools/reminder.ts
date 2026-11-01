@@ -257,12 +257,20 @@ function pad2(n: number): string {
  * the time it was set for. It does not say why it was late (the app being off is not
  * proven by a past time).
  */
-export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
+export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>, now = Date.now()): string {
   const due = dueOfOneShot(r.name);
   if (!due) return `⏰ Te lo recuerdo con retraso: ${reminderText(r)}`;
   const w = wallClock(due);
-  const when = `${pad2(w.day)}/${pad2(w.month)} a las ${pad2(w.hour)}:${pad2(w.minute)}`;
-  return `⏰ Te lo recuerdo con retraso, era para el ${when}: ${reminderText(r)}`;
+  // «hoy» / «ayer» en vez de la fecha de hoy («era para el 01/11» el mismo 1 de noviembre).
+  const day = localDay(due);
+  const dayWord =
+    day === localDay(now)
+      ? 'hoy'
+      : day === localDay(now - 86_400_000) || day === localDay(now - 82_800_000)
+        ? 'ayer'
+        : `el ${pad2(w.day)}/${pad2(w.month)}`;
+  const when = `${dayWord} a las ${pad2(w.hour)}:${pad2(w.minute)}`;
+  return `⏰ Te lo recuerdo con retraso, era para ${when}: ${reminderText(r)}`;
 }
 
 /** Whether a fired one-shot is still stored. A job whose routine was deleted must not send again. */
@@ -298,7 +306,9 @@ export async function deliverMissedReminders(
   let delivered = 0;
   let failed = 0;
   for (const r of missed) {
-    const ok = await deps.send(r.scope, lateReminderText(r), reminderText(r)).catch(() => false);
+    const ok = await deps
+      .send(r.scope, lateReminderText(r, deps.now), reminderText(r))
+      .catch(() => false);
     if (ok) {
       deps.store.deleteRoutine(r.scope, r.name);
       delivered++;
