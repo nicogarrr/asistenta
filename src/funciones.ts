@@ -245,6 +245,7 @@ export const TOOL_ABILITIES: Readonly<
     text: 'te digo dónde están tus paquetes leyendo los correos de envío',
   },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  luz: { area: 'agenda', text: 'te digo las horas más baratas de la luz, hoy y mañana' },
   cuentas: {
     area: 'agenda',
     text: 'guardo tus cuentas y contraseñas fuertes en un gestor cifrado',

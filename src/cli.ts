@@ -476,6 +476,7 @@ import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.j
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
+import { createLuzTool } from './tools/luz.js';
 import { createMailTool } from './tools/mail.js';
 import { createMailRulesTool } from './tools/mail-rules.js';
 import { createMediaTool } from './tools/media.js';
@@ -2189,6 +2190,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }),
           ]
         : []),
+      createLuzTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
       createMailRulesTool({ account: () => loadMailAccount() }),

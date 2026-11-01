@@ -138,6 +138,10 @@ export const CAPABILITIES: readonly Capability[] = [
     name: 'casa',
     note: 'Home Assistant de la red de casa (solo con PA_HA_URL): mirar es lectura; encender o apagar pregunta siempre.',
   },
+  {
+    name: 'luz',
+    note: 'precio de la luz por horas (Red Eléctrica, sin clave): lectura por red; el aviso nocturno es una rutina local.',
+  },
 ];
 
 const names = (pick: (c: Capability) => boolean | undefined): string[] =>

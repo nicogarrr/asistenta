@@ -1655,6 +1655,10 @@ export class Gate {
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
         return 'lee';
+      // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
+      // El aviso de cada noche guarda (o quita) una rutina local del dueño.
+      case 'luz':
+        return argString(c.args, 'aviso') ? 'escribe-local' : 'lee';
       // Gestor de contraseñas: listar/buscar leen el vault sin devolver la contraseña.
       case 'cuentas': {
         const a = argString(c.args, 'action');
@@ -2653,6 +2657,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'repartos',
   'cargar_herramienta',
   'tiempo',
+  'luz',
   'cuentas',
   'tareas',
   'correo_reglas',
