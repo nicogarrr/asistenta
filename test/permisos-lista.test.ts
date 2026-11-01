@@ -44,7 +44,7 @@ describe('/permisos lista: herramienta, dónde vale y desde cuándo (solo lectur
       [
         'Permisos «siempre» (1):',
         '• exec — este chat — desde 30/10/2026',
-        'Para quitar uno escribe /permisos revocar <herramienta> (o … este chat).',
+        'Para quitar uno, dime cuál, por ejemplo /permisos revocar exec (o añade «este chat» para quitarlo solo aquí).',
       ].join('\n'),
     );
   });

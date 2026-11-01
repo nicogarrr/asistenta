@@ -180,7 +180,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   if (sub === 'entrega') {
     const parsed = parseDeliveryArgs(rest);
     if (!parsed || !deps.delivery) {
-      return 'Uso: /cron entrega <nombre> [chat|fichero|ninguno] [solo-si-cambia|siempre].';
+      return 'Dime qué rutina y cómo te la entrego, por ejemplo: /cron entrega resumen chat solo-si-cambia. Puede ir al chat, a un fichero o a ninguno, y llegar siempre o solo si cambia.';
     }
     const routine =
       deps.store.getRoutine(deps.threadKey, parsed.name) ??
@@ -211,7 +211,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     if ((restParts[0] ?? '').toLowerCase() === 'confirmar') {
       const name = restParts[1] ?? '';
       const code = restParts[2] ?? '';
-      if (!name || !code) return 'Uso: /cron comando confirmar <nombre> <código>.';
+      if (!name || !code)
+        return 'Me falta el nombre o el código. Escríbelo así: /cron comando confirmar copia 123456.';
       if (deps.store.getRoutine(deps.threadKey, name)) {
         return `Ya hay una rutina llamada "${name}". Vuelve a proponer el comando con /cron comando.`;
       }
@@ -264,7 +265,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
 
   if (sub === 'del' || sub === 'borra' || sub === 'rm') {
     const name = rest.trim();
-    if (!name) return 'Uso: /cron del <nombre>.';
+    if (!name)
+      return '¿Qué rutina borro? Mira /cron y dime su nombre, por ejemplo /cron del resumen.';
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -285,7 +287,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
     const resuming = sub === 'reanuda' || sub === 'reanudar';
     const name = rest.trim();
-    if (!name) return `Uso: /cron ${resuming ? 'reanudar' : 'pausa'} <nombre>.`;
+    if (!name)
+      return `¿Qué rutina ${resuming ? 'reanudo' : 'pauso'}? Dime su nombre, por ejemplo /cron ${resuming ? 'reanudar' : 'pausa'} resumen.`;
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -313,7 +316,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
 
   if (sub === 'probar' || sub === 'test' || sub === 'ahora') {
     const name = rest.trim();
-    if (!name) return 'Uso: /cron probar <nombre>.';
+    if (!name) return '¿Qué rutina pruebo? Dime su nombre, por ejemplo /cron probar resumen.';
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -363,7 +366,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
 
   if (sub === 'add') {
     if (!rest.trim()) {
-      return 'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.';
+      return '¿Qué hago y cuándo? Dímelo normal, por ejemplo: /cron add cada mañana a las 8 resumen del día.';
     }
     const parsed = parseCronAdd(rest, validateSchedule);
     if (!parsed.ok) return parsed.error;

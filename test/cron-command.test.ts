@@ -186,7 +186,7 @@ describe('/cron command (store + runner reales)', () => {
     expect(runCronCommand(deps(), 'pausa nada')).toContain('No tengo ninguna rutina programada');
     expect(runCronCommand(deps(), 'pausa macro-x')).toContain('No tengo ninguna rutina programada');
     expect(store.getRoutine(THREAD, 'macro-x')?.enabled).toBe(true);
-    expect(runCronCommand(deps(), 'pausa')).toContain('Uso:');
+    expect(runCronCommand(deps(), 'pausa')).toContain('¿Qué rutina pauso?');
   });
 
   it('probar runs the routine once now without touching its schedule', async () => {

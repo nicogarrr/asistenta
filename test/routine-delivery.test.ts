@@ -149,6 +149,8 @@ describe('/cron entrega', () => {
       'a un fichero diario en salidas/, solo si cambia',
     );
     expect(runCronCommand(deps(), 'entrega nada-de-nada chat')).toContain('No tengo ninguna');
-    expect(runCronCommand(deps(), 'entrega')).toContain('Uso: /cron entrega');
+    expect(runCronCommand(deps(), 'entrega')).toContain(
+      '/cron entrega resumen chat solo-si-cambia',
+    );
   });
 });

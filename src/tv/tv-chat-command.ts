@@ -12,7 +12,7 @@ import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from
 export const TV_CHAT_EXAMPLES =
   '/tv apaga la tele · /tv abre Netflix · /tv volumen a 15 · /tv silencio · /tv modo cine · /tv estado';
 
-export const TV_CHAT_USAGE = `Uso: /tv <orden>. Ejemplos: ${TV_CHAT_EXAMPLES}`;
+export const TV_CHAT_USAGE = `¿Qué hago con la tele? Dímelo con palabras, por ejemplo: ${TV_CHAT_EXAMPLES}`;
 
 export const TV_CHAT_MAX_LEN = 200;
 
