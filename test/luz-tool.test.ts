@@ -99,17 +99,31 @@ describe('tool luz: «¿a qué hora pongo la lavadora?»', () => {
     const tool = createLuzTool({ fetchFn: fake([], { '2026-11-01': ok(NOV1) }), now: at930 });
     const out = textOf(await tool.execute('t', { horas: 2 }));
     expect(out).toContain('Para 2 horas seguidas (lo que queda de hoy): de 10 a 12 h');
-    // A las 22:30 ya no caben 2 h baratas hoy: lo que queda es 22–24.
+    // A las 21:55 lo que queda es 22–24.
     const late = createLuzTool({
+      fetchFn: fake([], { '2026-11-01': ok(NOV1) }),
+      now: () => new Date('2026-11-01T20:55:00Z'),
+    });
+    expect(textOf(await late.execute('t', { horas: 2 }))).toContain('de 22 a 0 h');
+    // A las 22:30 ya no caben 2 h enteras hoy (la de las 22 ya va por la mitad).
+    const veryLate = createLuzTool({
       fetchFn: fake([], { '2026-11-01': ok(NOV1) }),
       now: () => new Date('2026-11-01T21:30:00Z'),
     });
-    expect(textOf(await late.execute('t', { horas: 2 }))).toContain('de 22 a 0 h');
-    const veryLate = createLuzTool({
-      fetchFn: fake([], { '2026-11-01': ok(NOV1) }),
-      now: () => new Date('2026-11-01T22:30:00Z'),
-    });
-    expect(textOf(await veryLate.execute('t', { horas: 2 }))).toContain('pregúntame por mañana');
+    // Ya son más de las 20:30: los de mañana ya se pueden mirar, sin «a partir de las 20:30».
+    const vl = textOf(await veryLate.execute('t', { horas: 2 }));
+    expect(vl).toContain('hoy ya no quedan tantas horas seguidas; pregúntame por las de mañana.');
+    expect(vl).not.toContain('a partir de las 20:30');
+  });
+
+  it('a las 10:50 no propone «de 10 a 12»: la hora en curso ya no da para el tramo entero', async () => {
+    const at = (iso: string) =>
+      createLuzTool({ fetchFn: fake([], { '2026-11-01': ok(NOV1) }), now: () => new Date(iso) });
+    const out = textOf(await at('2026-11-01T09:50:00Z').execute('t', { horas: 2 }));
+    expect(out).toContain('Para 2 horas seguidas (lo que queda de hoy): de 11 a 13 h');
+    // En los primeros minutos de la hora todavía cuenta.
+    const early = textOf(await at('2026-11-01T09:05:00Z').execute('t', { horas: 2 }));
+    expect(early).toContain('Para 2 horas seguidas (lo que queda de hoy): de 10 a 12 h');
   });
 
   it('mañana sin publicar (502 de Red Eléctrica): lo dice en llano, sin el error crudo', async () => {

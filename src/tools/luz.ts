@@ -170,6 +170,9 @@ export function cheapestBlock(hours: LuzHour[], n: number): { from: Date; avg: n
   return best;
 }
 
+/** Una hora ya empezada aún vale para el tramo si van menos de estos minutos. */
+const GRACE_MS = 10 * 60_000;
+
 /** El texto para el chat: hora actual, más barata, más cara, tramos baratos y media. */
 export function luzText(
   hours: LuzHour[],
@@ -194,8 +197,9 @@ export function luzText(
   lines.push(`• Media del día: ${euros(avg)}`);
   const n = opts.horas;
   if (n) {
-    // Hoy solo cuenta lo que queda (desde la hora en curso); mañana, el día entero.
-    const pool = opts.isToday ? hours.filter((h) => h.at.getTime() + 3_600_000 > nowMs) : hours;
+    // Hoy solo cuentan las horas que aún no han empezado (a las 10:50 la de las 10 ya no da
+    // para 2 h enteras); se perdonan los primeros minutos. Mañana, el día entero.
+    const pool = opts.isToday ? hours.filter((h) => h.at.getTime() >= nowMs - GRACE_MS) : hours;
     const block = cheapestBlock(pool, n);
     const what = n === 1 ? 'Para 1 hora' : `Para ${n} horas seguidas`;
     if (block) {
@@ -203,8 +207,15 @@ export function luzText(
         `• ${what}${opts.isToday ? ' (lo que queda de hoy)' : ''}: de ${hourOf(block.from)} a ${hourOf(new Date(block.from.getTime() + n * 3_600_000))} h, a ${euros(block.avg)} de media`,
       );
     } else {
+      // Los precios de mañana salen hacia las 20:30: pasada esa hora no hay que esperar.
+      const hm = new Intl.DateTimeFormat('es-ES', {
+        timeZone: MADRID,
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).format(opts.now);
       lines.push(
-        `• ${what}: hoy ya no quedan tantas horas seguidas; pregúntame por mañana a partir de las 20:30.`,
+        `• ${what}: hoy ya no quedan tantas horas seguidas; ${hm >= '20:30' ? 'pregúntame por las de mañana.' : 'pregúntame por mañana a partir de las 20:30.'}`,
       );
     }
   }
