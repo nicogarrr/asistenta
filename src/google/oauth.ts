@@ -164,7 +164,14 @@ export async function startLoopbackFlow(
   done.catch(() => {});
   let redirectUri = '';
   const server = createServer((req, res) => {
-    const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+    let u: URL;
+    try {
+      u = new URL(req.url ?? '/', 'http://127.0.0.1');
+    } catch {
+      // Una línea de petición malformada no debe tumbar la conexión en curso.
+      res.writeHead(400).end();
+      return;
+    }
     if (u.pathname !== '/') {
       res.writeHead(404).end();
       return;

@@ -136,7 +136,11 @@ export async function downloadBook(
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location');
       if (!loc) throw new Error('redirección sin destino');
-      current = new URL(loc, current).toString();
+      try {
+        current = new URL(loc, current).toString();
+      } catch {
+        throw new Error('la redirección apunta a una dirección que no entiendo; no sigo');
+      }
       continue;
     }
     if (!res.ok) throw new Error(`la descarga respondió ${res.status}`);

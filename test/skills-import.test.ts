@@ -210,6 +210,15 @@ describe('fetchSkillMarkdown', () => {
     ).rejects.toThrow(/https/);
   });
 
+  it('una redirección a una dirección rota se explica en castellano', async () => {
+    const fetchImpl = fakeFetch(() =>
+      responseOf('', { status: 302, headers: { location: 'http://[::1' } }),
+    );
+    await expect(fetchSkillMarkdown('https://example.com/SKILL.md', { fetchImpl })).rejects.toThrow(
+      /no entiendo/,
+    );
+  });
+
   it('limita las redirecciones a tres', async () => {
     let calls = 0;
     const fetchImpl = fakeFetch(() => {

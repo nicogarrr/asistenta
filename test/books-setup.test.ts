@@ -188,6 +188,14 @@ describe('setup server (adversarial)', () => {
     expect(flowCalls.saveMail).toBe(1);
   });
 
+  it('una línea de petición malformada: 403 y el servidor sigue vivo', async () => {
+    await boot();
+    const res = await raw(port, { path: 'http://[::1' });
+    expect(res.status).toBe(403);
+    const ok = await raw(port, { path: `/?k=${TOKEN}` });
+    expect(ok.status).toBe(200);
+  });
+
   it('GET sin token: 403', async () => {
     await boot();
     expect((await raw(port, {})).status).toBe(403);

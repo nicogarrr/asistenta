@@ -383,7 +383,13 @@ export async function fetchSkillMarkdown(
             `El enlace da demasiadas vueltas (más de ${MAX_REDIRECTS} redirecciones)`,
           );
         }
-        current = parseHttpsUrl(new URL(location, current).toString());
+        try {
+          current = parseHttpsUrl(new URL(location, current).toString());
+        } catch (err) {
+          if (err instanceof TypeError)
+            throw new Error('El enlace redirige a una dirección que no entiendo');
+          throw err;
+        }
         const body = response.body;
         if (body && typeof body.cancel === 'function') {
           await body.cancel().catch(() => undefined);

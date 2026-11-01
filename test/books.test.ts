@@ -165,6 +165,15 @@ describe('net', () => {
     ).rejects.toThrow(/fuera de las fuentes/);
   });
 
+  it('una redirección a una dirección rota se explica, no suelta un TypeError', async () => {
+    await expect(
+      downloadBook(
+        'https://www.gutenberg.org/e',
+        async () => new Response(null, { status: 302, headers: { location: 'http://[::1' } }),
+      ),
+    ).rejects.toThrow(/no entiendo/);
+  });
+
   it('rejects wrong content and oversize files', async () => {
     await expect(
       downloadBook('https://www.gutenberg.org/e', async () => res(Buffer.from('<html>'))),
