@@ -46,13 +46,30 @@ const MONTHS: Record<string, number> = {
 
 const MONTH_WORDS = Object.keys(MONTHS).join('|');
 
+/** «en dos días», «dentro de una semana»: cuántos, dicho en palabras. */
+const COUNT_WORD_VALUE: Record<string, number> = {
+  un: 1,
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  quince: 15,
+};
+const COUNT_WORDS = Object.keys(COUNT_WORD_VALUE).join('|');
+
 /**
  * Words that say "this has a date on it", matched against lowercase, accent-free text.
  * Closed list on purpose: a follow-up guessed from an ordinary sentence is a nudge the
  * user never asked for. A bare `1/2` is not a date ("tomo 1/2 pastilla"); `el 15/11` is.
  */
 export const DATE_SIGNALS = new RegExp(
-  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) \d{1,3} (?:dias?|semanas?)|(?:el|del|hasta el) \d{1,2}/\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
+  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:el|del|hasta el) \d{1,2}/\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
 );
 
 const DAY_MS = 86_400_000;
@@ -126,9 +143,12 @@ export function estimateDueAt(text: string, now: number): number {
   // "pasado mañana" is read first: both sentences contain the word "mañana".
   if (/\bpasado manana\b/.test(folded)) return plusDays(now, 2);
   if (/\bmanana\b/.test(folded)) return plusDays(now, 1);
-  const inN = /\b(?:en|dentro de) (\d{1,3}) (dias?|semanas?)\b/.exec(folded);
+  const inN = new RegExp(
+    String.raw`\b(?:en|dentro de) (\d{1,3}|${COUNT_WORDS}) (dias?|semanas?)\b`,
+  ).exec(folded);
   if (inN) {
-    const n = Number(inN[1]);
+    const said = inN[1] ?? '';
+    const n = /^\d+$/.test(said) ? Number(said) : (COUNT_WORD_VALUE[said] ?? 7);
     return plusDays(now, (inN[2] ?? '').startsWith('semana') ? 7 * n : n);
   }
   const slash = /\b(?:el|del|hasta el) (\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/.exec(folded);
@@ -163,6 +183,17 @@ export function estimateDueAt(text: string, now: number): number {
   const dayOfMonth = /\b(?:antes del|del|el) (?:dia )?(\d{1,2})(?![\d/])(?! de )/.exec(folded);
   if (dayOfMonth) {
     const at = nextDayOfMonth(now, Number(dayOfMonth[1]));
+    if (at !== null) return at;
+  }
+  // Sin un día nombrado: «vence hoy», «antes de esta noche»: hoy. Antes caía en «dentro de una semana» y el
+  // aviso llegaba siete días después del plazo.
+  if (/\b(?:hoy|esta (?:tarde|noche))\b/.test(folded)) return now;
+  // «a fin de mes», «antes de final de mes»: el último día de este mes. Antes, dicho el
+  // 28, el aviso salía a los siete días, ya pasado el plazo.
+  if (/\bfin(?:al)? de(?:l)? mes\b/.test(folded)) {
+    const w = wallClock(new Date(now));
+    const last = new Date(Date.UTC(w.year, w.month, 0)).getUTCDate();
+    const at = onDay(now, w.year, w.month, last);
     if (at !== null) return at;
   }
   return now + 7 * DAY_MS;
