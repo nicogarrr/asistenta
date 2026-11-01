@@ -271,6 +271,8 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   } else if (/\b(?:a )?medianoche\b/.test(normalised)) {
     hour = 0;
     hasTime = true;
+    // «al mediodía y a medianoche»: las dos (antes se perdía el mediodía).
+    if (/\bmediodia\b/.test(normalised)) extraHours.push(12);
   } else if (/\b(?:a(?:l)? )?mediodia\b/.test(normalised)) {
     hour = 12;
     hasTime = true;
@@ -302,6 +304,17 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   if (extraHours.some((h) => h > 23)) return null;
   // «9,21»: varias tomas al día con el mismo minuto.
   const hours = [...new Set([hour, ...extraHours])].sort((x, y) => x - y).join(',');
+  // «tres veces al día a las 8», «cada día dos veces»: con menos horas que veces, antes
+  // sonaba una sola vez. Se pregunta.
+  const times =
+    /\b(dos|tres|cuatro|cinco|seis|\d{1,2}) veces (?:al|cada|por) dia\b|\bcada dia (dos|tres|cuatro|cinco|seis|\d{1,2}) veces\b/.exec(
+      normalised,
+    );
+  if (times) {
+    const said = times[1] ?? times[2] ?? '';
+    const n = /^\d+$/.test(said) ? Number(said) : TIMES_WORD_VALUE[said];
+    if (!hasTime || hours.split(',').length !== n) return null;
+  }
 
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
@@ -533,6 +546,8 @@ function daysOfWeek(normalised: string): string | null {
   const days = [...new Set(said.map((d) => DAY_VALUE[d] as number))].sort((a, b) => a - b);
   return days.join(',');
 }
+
+const TIMES_WORD_VALUE: Record<string, number> = { dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6 };
 
 /** «en horario laboral», «en horario de oficina», «en horas de trabajo». */
 const WORKDAY = /\ben (?:horario|horas?) (?:laboral(?:es)?|de (?:oficina|trabajo))\b/;
