@@ -1,5 +1,6 @@
 import type { ActionLog } from '../audit/log.js';
 import type { AgentRunResult, PersonalAgent } from '../core/agent.js';
+import { GOAL_TICK_STOPPED } from '../goals/parado.js';
 import type { GoalTickResult } from '../goals/runner.js';
 import { type Goal, splitGoalScope } from '../goals/store.js';
 import type { SessionStore } from '../memory/sessions.js';
@@ -62,7 +63,7 @@ export function createGoalTickExecute<T extends TickThread>(
     const thread = await threadFor(goalChatKey, goalThreadName, threadLabel(goalThreadName));
     const gen = thread.generation;
     const tick = async (): Promise<GoalTickResult> => {
-      if (thread.generation !== gen) return { text: '', error: 'parado con /stop' };
+      if (thread.generation !== gen) return { text: '', error: GOAL_TICK_STOPPED };
       thread.active = true;
       let sessionId = '';
       safeRemember(() => {

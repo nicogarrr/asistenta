@@ -63,7 +63,7 @@ it('/stop durante la reproducción en el PC: corta el sonido y restaura el volum
   mock.playing = () => setTimeout(() => ac.abort(), 0);
   const r = await playAudioFile('a.mp3', { volume: 100, signal: ac.signal });
   expect(r.ok).toBe(false);
-  expect(r.detail).toContain('/stop');
+  expect(r.detail).toBe('lo paraste tú');
   expect(r.restoreStatus).toBe('restored');
   expect(r.volumeRestoredTo).toBe(35);
 });

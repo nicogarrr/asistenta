@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { chatIdOf } from '../channels/types.js';
 import { friendlyModelError } from '../core/friendly-error.js';
+import { GOAL_TICK_STOPPED, goalStoppedText } from './parado.js';
 import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
@@ -108,6 +109,7 @@ export function formatGoalMessage(kind: string, goal: Pick<Goal, 'title'>, reaso
     case 'hecho':
       return `🎯 Objetivo cumplido: "${goal.title}". ${r}`;
     case 'error':
+      if (r === GOAL_TICK_STOPPED) return goalStoppedText(goal.title);
       // El motivo es el error crudo del modelo («fetch failed»): dicho en claro.
       return `🎯 "${goal.title}" falló en su último intento: ${friendlyModelError(r)}\nLo reintento en el siguiente; si persiste, paúsalo o échame un ojo.`;
     default:

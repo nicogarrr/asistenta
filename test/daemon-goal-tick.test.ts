@@ -122,7 +122,7 @@ describe('createGoalTickExecute (tick de objetivo del daemon)', () => {
     expect(t.runs).toEqual([]);
     t.generation++;
     release();
-    expect(await p).toEqual({ text: '', error: 'parado con /stop' });
+    expect(await p).toEqual({ text: '', error: 'lo paraste tú antes de que empezara' });
     expect(t.runs).toEqual([]);
     expect(h.sessions.begun).toEqual([]);
   });
