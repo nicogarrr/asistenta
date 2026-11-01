@@ -7,15 +7,17 @@
 
 import {
   approvalCode,
+  COMMAND_ADD_USAGE,
   COMMAND_PROMPT_PREFIX,
   type CommandRoutineStore,
   commandRoutinesEnabled,
   displayArgv,
   isApproved,
   isCommandRoutine,
+  looksLikeCommandAdd,
   parseCommandAdd,
 } from '../command-routine.js';
-import { parseCronAdd } from '../cron/scheduler.js';
+import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
 import type { Routine, Store } from '../db.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
 import type { GoalStore } from '../goals/store.js';
@@ -325,8 +327,18 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
           : []),
       ].join('\n');
     }
-    const parsed = parseCommandAdd(restParts.join(' '), validateSchedule);
-    if (!parsed.ok) return parsed.error;
+    const parsed = parseCommandAdd(
+      restParts.join(' '),
+      validateSchedule,
+      (words) => parseNatural(words)?.schedule ?? null,
+    );
+    if (!parsed.ok) {
+      // La respuesta normal («cada día a las 8 ejecuta node saldo.js») completa la orden.
+      if (parsed.error === COMMAND_ADD_USAGE) {
+        deps.ask?.({ answer: (t) => (looksLikeCommandAdd(t) ? `comando ${t.trim()}` : null) });
+      }
+      return parsed.error;
+    }
     const program = (parsed.value.argv[0] ?? '').split(/[\\/]/).pop() ?? '';
     const name = uniqueRoutineName(
       deps.store,
