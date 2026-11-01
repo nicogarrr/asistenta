@@ -148,7 +148,7 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     name: 'trafico',
-    note: 'incidencias de tráfico de la DGT (feed DATEX II, sin clave): solo lectura por red.',
+    note: 'incidencias de tráfico de la DGT (feed DATEX II, sin clave): lectura por red; el aviso es una rutina local.',
   },
   {
     name: 'casa',

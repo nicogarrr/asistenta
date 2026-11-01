@@ -1691,9 +1691,12 @@ export class Gate {
         return argString(c.args, 'action') === 'estado' ? 'lee' : null;
       // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
       // «Ya lo he recogido» marca el envío como entregado en la base local.
-      // «¿Cómo está el tráfico?»: solo el feed fijo de la DGT; nunca escribe.
-      case 'trafico':
-        return 'lee';
+      // «¿Cómo está el tráfico?»: solo el feed fijo de la DGT. Encender o quitar el aviso
+      // guarda (o borra) una rutina local del dueño; verlos es lectura.
+      case 'trafico': {
+        const aviso = argString(c.args, 'aviso');
+        return aviso && aviso !== 'ver' ? 'escribe-local' : 'lee';
+      }
       case 'repartos':
         return argString(c.args, 'recogido') ? 'escribe-local' : 'lee';
       // «¿Dónde echo gasolina más barata?»: solo la API fija del Ministerio. El aviso
