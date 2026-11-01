@@ -370,7 +370,10 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
   if (query) {
     const area = findArea(query);
     if (!area || !areas.some((a) => a.id === area.id)) {
-      return `No conozco el área «${query.slice(0, 40)}». Prueba /funciones a secas para ver todas.`;
+      return [
+        `No conozco el área «${query.slice(0, 40)}». Tengo estas:`,
+        ...areas.map((a) => a.title),
+      ].join('\n');
     }
     const lines = visibleCommands(view)
       .filter((c) => c.area === area.id)
