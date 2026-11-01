@@ -466,7 +466,7 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         if (rows.length === 0) return reply('No hay recordatorios programados.');
         const lines = rows.map(({ routine: r, next }) => {
           const when = next
-            ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now())})`
+            ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now(), now())})`
             : 'sin próxima vez';
           const end = untilOfReminder(r.name);
           const said = r.schedule ? scheduleEs(r.schedule) : null;
@@ -683,13 +683,31 @@ export function fechaCortaEs(d: Date): string {
   return `${DIAS[w.weekday]} ${pad(w.day)}/${pad(w.month)} ${pad(w.hour)}:${pad(w.minute)}`;
 }
 
-/** «en 5 min», «en 3 h 10 min», «en 2 d». */
-export function dentroDeEs(ms: number): string {
+/** Días del calendario (hora local) entre dos instantes: hoy 0, mañana 1… */
+function diasDeCalendario(from: number, to: number): number {
+  const utc = (t: number): number => {
+    const [y, m, d] = localDay(t).split('-').map(Number);
+    return Date.UTC(y ?? 0, (m ?? 1) - 1, d ?? 1);
+  };
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
+}
+
+/**
+ * «en 5 min», «en 3 h 10 min»; pasado un día, con `now`, por días del calendario:
+ * «mañana», «pasado mañana», «en 3 d» (36 h que caen mañana no son «en 2 d»).
+ */
+export function dentroDeEs(ms: number, now?: number): string {
   if (!(ms >= 60_000)) return 'en menos de 1 min';
   const min = Math.round(ms / 60_000);
   if (min < 60) return `en ${min} min`;
   const h = Math.floor(min / 60);
   if (h < 24) return min % 60 ? `en ${h} h ${min % 60} min` : `en ${h} h`;
+  if (now !== undefined && Number.isFinite(now)) {
+    const dias = diasDeCalendario(now, now + ms);
+    if (dias === 1) return 'mañana';
+    if (dias === 2) return 'pasado mañana';
+    return `en ${dias} d`;
+  }
   return `en ${Math.round(h / 24)} d`;
 }
 
@@ -724,7 +742,7 @@ export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()):
   }
   const lines = rows.map(({ routine, next }, i) => {
     const when = next
-      ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime())})`
+      ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime(), now.getTime())})`
       : 'sin próxima vez';
     const said = routine.schedule ? scheduleEs(routine.schedule) : null;
     const kind = isOneShotReminder(routine) ? '' : ` · ${said ?? 'se repite'}`;

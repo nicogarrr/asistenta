@@ -31,7 +31,7 @@ export function panelScopeVisible(scope: string, ownerId?: string | number): boo
 }
 
 function cuando(next: Date, now: Date): string {
-  return `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime())})`;
+  return `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime(), now.getTime())})`;
 }
 
 /**
