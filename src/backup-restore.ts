@@ -65,8 +65,10 @@ export function restoreBackup(opts: {
   const available = listBackups(root);
   const wanted = !opts.date || opts.date === 'ultima' ? available[0] : opts.date;
   if (!wanted || !DAY_RE.test(wanted) || !available.includes(wanted)) {
-    const list = available.length ? available.join(', ') : 'ninguna';
-    throw new Error(`no hay copia de ${opts.date || 'ninguna fecha'}; copias disponibles: ${list}`);
+    if (!available.length) throw new Error('todavía no hay ninguna copia');
+    throw new Error(
+      `no hay copia de ${opts.date || 'ninguna fecha'}; copias disponibles: ${available.join(', ')}`,
+    );
   }
   const from = join(root, wanted);
   const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
@@ -128,6 +130,17 @@ export async function backupCommand(args: string[]): Promise<number> {
   }
   if (sub !== 'restaurar' && sub !== 'restore') {
     process.stderr.write('uso: pa backup [lista] | pa backup restaurar <AAAA-MM-DD|ultima>\n');
+    return 2;
+  }
+  if (!date) {
+    // Sin fecha no se restaura nada a ciegas: se pide y se enseñan las copias que hay.
+    const list = listBackups(root);
+    process.stderr.write(
+      'uso: pa backup restaurar <AAAA-MM-DD|ultima>\n' +
+        (list.length
+          ? `Copias (más reciente primero): ${list.join(', ')}\n`
+          : 'No hay copias todavía.\n'),
+    );
     return 2;
   }
   try {
