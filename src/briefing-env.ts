@@ -6,6 +6,7 @@
  */
 
 import { DEFAULT_BRIEFING_HOUR, weatherConfigFromEnv } from './briefing-daily.js';
+import { briefingHourFor } from './daemon/briefing-quiet.js';
 
 const SI = new Set(['1', 'si', 'true', 'yes', 'on', 'activado', 'activo']);
 
@@ -28,9 +29,14 @@ const shown = (v: string) => v.replace(/[^\p{L}\p{N} :.,_-]/gu, '').slice(0, 30)
 
 /**
  * Línea de `pa doctor` para el resumen de la mañana: si está encendido, a qué hora
- * y con el tiempo de dónde; si un valor del .env no se entiende, lo dice.
+ * y con el tiempo de dónde; si un valor del .env no se entiende, lo dice. Si el
+ * dueño dijo «no me escribas antes de las 10» (`entries`, su memoria), dice la
+ * hora a la que sale de verdad, no la del .env.
  */
-export function briefingDoctorLine(env: NodeJS.ProcessEnv = process.env): string {
+export function briefingDoctorLine(
+  env: NodeJS.ProcessEnv = process.env,
+  entries: readonly string[] = [],
+): string {
   const raw = (env.PA_BRIEFING ?? '').trim();
   if (!envOn(raw)) {
     const normal = NO.has(raw.toLowerCase());
@@ -40,7 +46,13 @@ export function briefingDoctorLine(env: NodeJS.ProcessEnv = process.env): string
   }
   const rawHour = (env.PA_BRIEFING_HOUR ?? '').trim();
   const hour = briefingHour(rawHour);
-  const parts = [`resumen         cada mañana a las ${hour ?? DEFAULT_BRIEFING_HOUR}:00`];
+  const base = hour ?? DEFAULT_BRIEFING_HOUR;
+  const real = briefingHourFor(hour, entries);
+  const parts = [
+    real === base
+      ? `resumen         cada mañana a las ${base}:00`
+      : `resumen         cada mañana a las ${real}:00 (no antes de las ${real}, como pediste)`,
+  ];
   if (rawHour && hour === undefined) {
     parts.push(`(PA_BRIEFING_HOUR «${shown(rawHour)}» no vale: pon una hora de 0 a 23)`);
   }

@@ -35,6 +35,19 @@ describe('pa doctor: resumen de la mañana', () => {
     );
   });
 
+  it('si el dueño dijo «no me escribas antes de las 10», dice la hora a la que sale de verdad', () => {
+    const said = ['[dicho] No me escribas antes de las 10'];
+    expect(briefingDoctorLine({ PA_BRIEFING: '1' }, said)).toMatch(
+      /^resumen +cada mañana a las 10:00 \(no antes de las 10, como pediste\), sin el tiempo/,
+    );
+    // Su hora ya está fuera del silencio: no cambia nada.
+    expect(briefingDoctorLine({ PA_BRIEFING: '1', PA_BRIEFING_HOUR: '11' }, said)).toMatch(
+      /^resumen +cada mañana a las 11:00, sin el tiempo/,
+    );
+    // Sin nada dicho, la de siempre.
+    expect(briefingDoctorLine({ PA_BRIEFING: '1' }, [])).toMatch(/a las 8:00, sin el tiempo/);
+  });
+
   it('hora o coordenadas que no valen: lo dice y usa lo de por defecto', () => {
     const line = briefingDoctorLine({ PA_BRIEFING: '1', PA_BRIEFING_HOUR: '25' });
     expect(line).toContain('cada mañana a las 8:00 (PA_BRIEFING_HOUR «25» no vale');
@@ -45,6 +58,8 @@ describe('pa doctor: resumen de la mañana', () => {
 
   it('cli.ts lo añade a pa doctor', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
-    expect(src).toContain('lines.push(briefingDoctorLine());');
+    expect(src).toMatch(
+      /lines\.push\(\s*briefingDoctorLine\(\s*process\.env,\s*new MemorySnapshot\(/,
+    );
   });
 });
