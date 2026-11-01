@@ -73,7 +73,7 @@ describe('casa (Home Assistant)', () => {
     });
     const tool = createCasaTool({ config: cfg, fetch: fn });
     const out = text(await tool.execute('3', { action: 'estado' }, undefined, undefined));
-    expect(out).toBe('Salón: encendido; switch.cafetera: apagado');
+    expect(out).toBe('Salón (light.salon): encendido; switch.cafetera: apagado');
     expect(calls[0]?.auth).toBe('Bearer tok-123');
     expect(out).not.toContain('tok-123');
   });
@@ -104,8 +104,46 @@ describe('casa (Home Assistant)', () => {
       undefined,
       undefined,
     );
-    expect(text(weird)).toContain('Solo puedo');
-    expect(calls).toHaveLength(1);
+    expect(text(weird)).toContain('No encuentro');
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+  });
+
+  it('acepta el nombre del aparato («la luz del salón») y pregunta si hay varios', async () => {
+    const { fn, calls } = fakeFetch({
+      '/api/states': [
+        { entity_id: 'light.salon', state: 'off', attributes: { friendly_name: 'Salón' } },
+        {
+          entity_id: 'light.cocina_techo',
+          state: 'on',
+          attributes: { friendly_name: 'Cocina techo' },
+        },
+        {
+          entity_id: 'light.cocina_isla',
+          state: 'unavailable',
+          attributes: { friendly_name: 'Cocina isla' },
+        },
+        { entity_id: 'lock.puerta', state: 'locked', attributes: { friendly_name: 'Puerta' } },
+      ],
+    });
+    const tool = createCasaTool({ config: cfg, fetch: fn });
+    const on = await tool.execute(
+      'n1',
+      { action: 'encender', entidad: 'la luz del Salón' },
+      undefined,
+      undefined,
+    );
+    expect(text(on)).toBe('Encendido: light.salon.');
+    expect(calls.at(-1)?.url).toBe('http://192.168.1.20:8123/api/services/light/turn_on');
+    const two = text(
+      await tool.execute('n2', { action: 'apagar', entidad: 'cocina' }, undefined, undefined),
+    );
+    expect(two).toContain('Hay varios');
+    expect(two).toContain('Cocina isla (light.cocina_isla): no disponible');
+    const door = text(
+      await tool.execute('n3', { action: 'apagar', entidad: 'puerta' }, undefined, undefined),
+    );
+    expect(door).toContain('No encuentro');
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
 
   it('un token malo o un fallo de red se dicen en castellano sin el error crudo', async () => {

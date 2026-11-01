@@ -29,7 +29,7 @@ const Params = Type.Object({
   entidad: Type.Optional(
     Type.String({
       description:
-        'Entity id de Home Assistant, p. ej. light.salon. Sin ella, estado lista luces, enchufes y ventiladores.',
+        'Entity id de Home Assistant (p. ej. light.salon) o su nombre («luz del salón»). Sin ella, estado lista luces, enchufes y ventiladores.',
     }),
   ),
 });
@@ -46,7 +46,7 @@ export interface CasaDeps {
 }
 
 export const CASA_NOT_SET =
-  'Falta configurar Home Assistant: pon PA_HA_URL en .env (p. ej. http://homeassistant.local:8123) y guarda el token con `pa vault set-stdin homeassistant:token`.';
+  'Todavía no tengo tu Home Assistant conectado. Me falta su dirección en casa (PA_HA_URL, p. ej. http://homeassistant.local:8123) y un token de acceso, que se guarda en el PC con «pa vault set-stdin homeassistant:token».';
 
 /** Solo la red de casa: IP privada, localhost o un nombre .local. */
 export function isHomeUrl(raw: string): boolean {
@@ -72,11 +72,69 @@ interface HaState {
   attributes?: { friendly_name?: unknown };
 }
 
-const label = (s: HaState): string => {
-  const name = typeof s.attributes?.friendly_name === 'string' ? s.attributes.friendly_name : '';
-  const state = s.state === 'on' ? 'encendido' : s.state === 'off' ? 'apagado' : String(s.state);
-  return `${name || String(s.entity_id)}: ${state}`;
+const STATE_WORDS: Readonly<Record<string, string>> = {
+  on: 'encendido',
+  off: 'apagado',
+  unavailable: 'no disponible',
+  unknown: 'sin datos',
 };
+
+const nameOf = (s: HaState): string =>
+  typeof s.attributes?.friendly_name === 'string' ? s.attributes.friendly_name.trim() : '';
+
+/** «Salón (light.salon): encendido»: el nombre para el dueño y el id para actuar. */
+const label = (s: HaState): string => {
+  const id = String(s.entity_id);
+  const name = nameOf(s);
+  const state = STATE_WORDS[String(s.state)] ?? String(s.state);
+  return `${name && name.toLowerCase() !== id ? `${name} (${id})` : id}: ${state}`;
+};
+
+const fold = (t: string): string =>
+  t
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+/** Palabras de relleno al nombrar un aparato: «la luz del salón» → «salon». */
+const FILLER = new Set([
+  'el',
+  'la',
+  'los',
+  'las',
+  'de',
+  'del',
+  'luz',
+  'luces',
+  'lampara',
+  'enchufe',
+  'ventilador',
+]);
+
+const core = (t: string): string =>
+  fold(t)
+    .split(' ')
+    .filter((w) => w && !FILLER.has(w))
+    .join(' ');
+
+/**
+ * Busca un aparato por su nombre («luz del salón») entre luces, enchufes y
+ * ventiladores. Devuelve los candidatos: uno = claro; varios = preguntar.
+ */
+export function findByName(states: HaState[], query: string): HaState[] {
+  const q = core(query);
+  if (!q) return [];
+  const mine = states.filter((s) => DOMAINS.has(String(s.entity_id).split('.')[0] ?? ''));
+  const keyOf = (s: HaState) => core(nameOf(s) || String(s.entity_id).split('.')[1] || '');
+  const exact = mine.filter((s) => keyOf(s) === q);
+  if (exact.length > 0) return exact;
+  return mine.filter((s) => {
+    const k = keyOf(s);
+    return k !== '' && (k.includes(q) || q.includes(k));
+  });
+}
 
 export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
   const doFetch = deps.fetch ?? fetch;
@@ -114,14 +172,26 @@ export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
           { configured: false },
         );
       }
-      const entity = String(args.entidad ?? '')
-        .trim()
-        .toLowerCase();
-      const match = ENTITY.exec(entity);
+      const asked = String(args.entidad ?? '').trim();
       try {
+        let entity = asked.toLowerCase();
+        let match = ENTITY.exec(entity);
+        if (asked && !match) {
+          // Por su nombre («la luz del salón»): se busca entre luces, enchufes y ventiladores.
+          const all = (await call(cfg, '/api/states')) as HaState[];
+          const found = findByName(Array.isArray(all) ? all : [], asked);
+          if (found.length === 0) {
+            return reply(`No encuentro «${asked}» entre tus luces, enchufes y ventiladores.`);
+          }
+          if (found.length > 1) {
+            const names = found.slice(0, 6).map(label).join('; ');
+            return reply(`Hay varios que encajan con «${asked}»: ${names}. ¿Cuál?`);
+          }
+          entity = String(found[0]?.entity_id);
+          match = ENTITY.exec(entity);
+        }
         if (args.action === 'estado') {
-          if (entity) {
-            if (!match) return reply(`«${entity}» no parece una entidad de Home Assistant.`);
+          if (entity && match) {
             return reply(label((await call(cfg, `/api/states/${entity}`)) as HaState));
           }
           const all = (await call(cfg, '/api/states')) as HaState[];
@@ -134,9 +204,7 @@ export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
           return reply(`${shown.join('; ')}${more}`, { count: mine.length });
         }
         if (!match || !DOMAINS.has(match[1] ?? '')) {
-          return reply(
-            'Solo puedo encender o apagar luces, enchufes y ventiladores (light., switch., fan.).',
-          );
+          return reply('Solo puedo encender o apagar luces, enchufes y ventiladores.');
         }
         const service = { encender: 'turn_on', apagar: 'turn_off', alternar: 'toggle' }[
           args.action
@@ -149,8 +217,8 @@ export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
       } catch (err) {
         log.warn('casa: home assistant failed', { err: String(err) });
         const why = String(err).includes('token')
-          ? 'Home Assistant no acepta el token; vuelve a guardarlo con `pa vault set-stdin homeassistant:token`.'
-          : 'No he podido hablar con Home Assistant; mira que esté encendido y en la misma red.';
+          ? 'Home Assistant no acepta el token: puede que haya caducado. Crea uno nuevo en tu perfil de Home Assistant y guárdalo en el PC con «pa vault set-stdin homeassistant:token».'
+          : 'No he podido hablar con Home Assistant: mira que esté encendido y en la misma red que el PC.';
         return reply(why, { ok: false });
       }
     },
