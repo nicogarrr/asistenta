@@ -504,13 +504,15 @@ const DAY_VALUE: Record<string, number> = {
 const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
 /** «entre semana», «los días laborables», «cada día laborable», «los laborables». */
 const LABORABLES =
-  /\b(?:entre semana|(?:los |cada |todos los )?dias? laborables?|los laborables|de lunes a viernes)\b/;
+  /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;
 
 /** The cron day-of-week field for the days said, or null when no day is said. */
 function daysOfWeek(normalised: string): string | null {
   if (LABORABLES.test(normalised)) return '1-5';
   if (/\b(?:los|cada|el) (?:fin(?:es)? de semana|findes?)\b/.test(normalised)) return '0,6';
-  const range = new RegExp(`\\bde (${DAY}) a (${DAY})\\b`).exec(normalised);
+  // «de lunes a viernes», «del lunes al viernes» y también «lunes a viernes» sin «de»
+  // (antes sonaba todos los días).
+  const range = new RegExp(`\\b(?:del? )?(${DAY}) al? (${DAY})\\b`).exec(normalised);
   const from = DAY_VALUE[range?.[1] ?? ''];
   const to = DAY_VALUE[range?.[2] ?? ''];
   if (from !== undefined && to !== undefined && from !== to) {
@@ -524,7 +526,7 @@ function daysOfWeek(normalised: string): string | null {
   }
   // «los lunes», «cada martes», «los lunes y miércoles», «los lunes, martes y jueves».
   const list = new RegExp(
-    `\\b(?:los|cada) (${DAY})((?:\\s*,\\s*(?:los )?(?:${DAY}))*(?:\\s+y\\s+(?:los )?(?:${DAY}))?)\\b`,
+    `\\b(?:los|cada) (${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
   ).exec(normalised);
   if (!list) return null;
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
