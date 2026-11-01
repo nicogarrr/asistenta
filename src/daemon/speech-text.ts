@@ -1,3 +1,5 @@
+import { sliceSafe } from '../text.js';
+
 /**
  * El texto que se va a decir en voz alta (nota de voz, altavoz, tele): sin
  * Markdown, sin emojis ni símbolos que la voz lee por su nombre, y cortado en un
@@ -47,5 +49,5 @@ export function trimForSpeech(text: string): string {
       : head.lastIndexOf(' ') >= 450
         ? head.lastIndexOf(' ')
         : 900;
-  return `${cleaned.slice(0, cut).trimEnd()}...`;
+  return `${sliceSafe(cleaned, cut).trimEnd()}...`;
 }

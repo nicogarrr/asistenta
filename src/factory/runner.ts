@@ -145,7 +145,7 @@ guest.on('close', (exitCode) => {
     sayOnce({
       ok: false,
       stage: STAGES.has(report.stage) ? report.stage : 'supervisor',
-      error: String(report.error ?? '').slice(0, 4000),
+      error: String(report.error ?? '').slice(0, 4000).replace(/[\\uD800-\\uDBFF]$/, ''),
     });
   }
   // Re-validate the self-declared contract instead of trusting ok blindly.
@@ -160,7 +160,7 @@ guest.on('close', (exitCode) => {
   sayOnce({
     ok: true,
     stage: 'run',
-    text: String(report.text ?? '').slice(0, 4000),
+    text: String(report.text ?? '').slice(0, 4000).replace(/[\\uD800-\\uDBFF]$/, ''),
     contract: { name: c.name, description: c.description, parameters: JSON.parse(JSON.stringify(c.parameters)) },
   });
 });
@@ -295,7 +295,7 @@ async function main(raw) {
     // stringified, never handed to host callers as live objects.
     const text = typeof result === 'string' ? result : (result && typeof result.text === 'string' ? result.text : JSON.stringify(result));
     finishWith({
-      ok: true, stage: 'run', text: String(text).slice(0, 4000),
+      ok: true, stage: 'run', text: String(text).slice(0, 4000).replace(/[\\uD800-\\uDBFF]$/, ''),
       contract: { name: String(ns.name), description: String(ns.description), parameters: JSON.parse(JSON.stringify(ns.parameters)) },
     });
   } catch (e) {
