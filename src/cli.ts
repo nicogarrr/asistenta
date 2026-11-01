@@ -467,6 +467,7 @@ import { backToMainAnswer, topicReadyText } from './temas.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
+import { createBoeTool } from './tools/boe.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
@@ -2178,6 +2179,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createGasolinerasTool({
+        store,
+        scopeOf: scope,
+        sync: () => routineRunner.sync(),
+        delivery: {
+          set: (s, name, setting) => routineDelivery.set(s, name, setting),
+          commit: (s, name, hash) => routineDelivery.commit(s, name, hash),
+        },
+      }),
+      // «Avísame si sale algo en el BOE sobre X»: rutina que solo escribe si sale algo.
+      createBoeTool({
         store,
         scopeOf: scope,
         sync: () => routineRunner.sync(),

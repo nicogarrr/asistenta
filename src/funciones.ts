@@ -263,6 +263,7 @@ export const TOOL_ABILITIES: Readonly<
   },
   web: { area: 'investigar', text: 'busco en internet' },
   fetch: { area: 'investigar', text: 'leo la página que me pases' },
+  boe: { area: 'investigar', text: 'miro el BOE y te aviso si sale algo de un tema' },
   browser: { area: 'investigar', text: 'navego por webs y relleno formularios' },
   delegate: { area: 'investigar', text: 'reparto búsquedas largas entre ayudantes que solo leen' },
   book: { area: 'investigar', text: 'busco y descargo libros de dominio público' },
