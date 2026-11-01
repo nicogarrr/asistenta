@@ -208,6 +208,9 @@ export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<typeof Pa
         const fecha = args.fecha?.trim();
         if (fecha !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(fecha))
           return 'Necesito el día como AAAA-MM-DD para mirarlo.';
+        // «2026-02-30» no es el 2 de marzo, y «2026-13-01» no es nada: no se adivina.
+        if (fecha !== undefined && calendarDay(new Date(`${fecha}T12:00:00Z`)) !== fecha)
+          return `Esa fecha no existe (${fecha}). Dime el día como AAAA-MM-DD.`;
         const target = fecha ?? today;
         const year = Number(target.slice(0, 4));
         let list: Festivo[];

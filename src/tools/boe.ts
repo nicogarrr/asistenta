@@ -360,6 +360,9 @@ export function createBoeTool(deps: BoeDeps = {}): AgentTool<typeof Params> {
         const day = args.fecha?.trim() || today;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(asDate(day).getTime()))
           return 'Dime la fecha como AAAA-MM-DD, por ejemplo 2026-10-30.';
+        // «2026-02-30» no es el 2 de marzo: no se adivina.
+        if (asDate(day).getUTCDate() !== Number(day.slice(8)))
+          return `Esa fecha no existe (${day}). Dime el día como AAAA-MM-DD.`;
         const rutina = args.rutina === true && !!args.buscar;
         const q =
           (rutina ? normTema(args.buscar ?? '') : args.buscar?.trim().replace(/\s+/g, ' ')) ?? '';
