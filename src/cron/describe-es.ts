@@ -72,12 +72,19 @@ function intervalEs(m: string, h: string, minute: number | null): string | null 
     const every = /^\*\/(\d{1,2})$/.exec(m);
     if (!every || (h !== '*' && (!range || range[3]))) return null;
     const base = `cada ${every[1]} min`;
-    return range ? `${base} de ${pad(from as number)}:00 a ${pad((to as number) + 1)}:00` : base;
+    // «*/30 16-23» acaba a medianoche: «a 00:00», no «a 24:00».
+    return range
+      ? `${base} de ${pad(from as number)}:00 a ${pad(((to as number) + 1) % 24)}:00`
+      : base;
   }
   const step = range ? range[3] : /^\*\/(\d{1,2})$/.exec(h)?.[1];
   const base = step ? `cada ${step} horas` : 'cada hora';
   if (!range) return h === '*' || step ? base : null;
-  return `${base} de ${pad(from as number)}:${pad(minute)} a ${pad(to as number)}:${pad(minute)}`;
+  // «0 8-23/2» suena por última vez a las 22: esa es la hora que se dice, no las 23.
+  const last =
+    (from as number) +
+    Math.floor(((to as number) - (from as number)) / Number(step ?? 1)) * Number(step ?? 1);
+  return `${base} de ${pad(from as number)}:${pad(minute)} a ${pad(last)}:${pad(minute)}`;
 }
 
 export function scheduleEs(schedule: string): string | null {
