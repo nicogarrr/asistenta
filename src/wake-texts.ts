@@ -21,3 +21,23 @@ const APAGALA =
 export function conversacionOffAnswer(text: string): string | null {
   return APAGALA.test(text.trim()) ? 'off' : null;
 }
+
+/** /conversacion estado con el micrófono cerrado: «sí» lo abre (como /conversacion on). */
+export const MIC_CLOSED_ASK = ' El micrófono está cerrado. ¿Lo abro? Dime «sí».';
+
+/** /conversacion corte sin nivel: cómo está y cómo se cambia, dicho como en un chat. */
+export function corteAsk(level: string): string {
+  return `Corte al interrumpirme: ${level}. ¿Lo cambio? Dime «con auriculares», «con altavoces» o «sin corte» (vale desde la próxima sesión).`;
+}
+
+/** «con auriculares» → `corte auriculares` para /conversacion; null si es otra cosa. */
+export function corteAnswer(text: string): string | null {
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, '');
+  if (/^(?:con\s+(?:los\s+)?)?auriculares$/.test(t)) return 'corte auriculares';
+  if (/^(?:con\s+(?:los\s+)?)?altavoces$/.test(t)) return 'corte altavoces';
+  if (/^(?:sin\s+corte|que\s+no\s+me\s+cortes|no\s+me\s+cortes|off)$/.test(t)) return 'corte off';
+  return null;
+}
