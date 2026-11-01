@@ -760,11 +760,15 @@ export function describeWatch(
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
   if (w.mutedUntil > now) {
     lines.push(
-      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)} (/vigila avisar ${w.id} para quitarlo).`,
+      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
     );
   }
   return lines.join('\n');
 }
+
+/** «avísame otra vez», «quita el silencio»… tras ver una vigilancia silenciada. */
+export const AVISAR_OTRA_VEZ =
+  /^(?:s[ií],?\s*)?(?:av[ií]same(?:\s+otra\s+vez|\s+ya)?|vuelve\s+a\s+avisarme|qu[ií]ta(?:le)?\s+el\s+silencio|qu[ií]talo)\s*[.!]*$/iu;
 
 export interface VigilaArgs {
   url: string;
