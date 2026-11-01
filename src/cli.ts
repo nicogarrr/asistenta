@@ -204,7 +204,8 @@ import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
-import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
+import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
+import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
 import { trackBusyIn } from './ocupada.js';
@@ -3200,6 +3201,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** `/ojo [on|off]`: interruptor general del ojo de águila y su estado. */
   let ocrBusy = false;
+  const ocrEspera = createOcrEspera();
+  /** «hazlo buscable» con el archivo, o el archivo que llega tras «/ocr» sin archivo. */
+  const ocrByWords = (inbound: Inbound): OcrMode | null => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) return null;
+    const mode = ocrWordsMode(inbound, ocrEspera.isArmed(inbound.chatId));
+    if (inbound.documentFileId || inbound.photoFileId) ocrEspera.clear(inbound.chatId);
+    return mode;
+  };
   const cmdOcr = async (inbound: Inbound, args: string): Promise<void> => {
     const mode = parseOcrMode(args);
     if (!mode) {
@@ -3214,13 +3223,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const fileId = inbound.documentFileId ?? inbound.photoFileId;
     if (!fileId) {
-      await say(
-        inbound,
-        'Mándame un PDF o una foto y escribe «/ocr» en el pie del archivo (también «/ocr md» o «/ocr todo»). Te devuelvo el PDF con el texto seleccionable y buscable.',
-        { quote: true },
-      );
+      ocrEspera.arm(inbound.chatId);
+      await say(inbound, OCR_SIN_ARCHIVO, { quote: true });
       return;
     }
+    ocrEspera.clear(inbound.chatId);
     if (ocrBusy) {
       await say(
         inbound,
@@ -7806,6 +7813,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // «pásame este PDF a texto» con un PDF: el mismo trabajo que el pie «/ocr md».
           if (isOwnerDm(inbound, vigilanteOwnerId) && pdfToTextIntent(inbound)) {
             await cmdOcr(inbound, 'md');
+            return;
+          }
+          // «hazlo buscable» con un PDF o una foto, o el archivo tras «/ocr» sin archivo.
+          const ocrMode = ocrByWords(inbound);
+          if (ocrMode) {
+            await cmdOcr(inbound, ocrMode);
             return;
           }
           // «para» con una vista en directo abierta en este chat: la para como /screen off.
