@@ -13,11 +13,20 @@ export interface RespuestaComando {
   args: string;
 }
 
+export interface PreguntaOpts {
+  prefix?: string;
+  needsUrl?: boolean;
+  accepts?: (text: string) => boolean;
+  answer?: (text: string) => string | null;
+}
+
 interface Pendiente {
   command: string;
   prefix: string;
   needsUrl: boolean;
   accepts?: (text: string) => boolean;
+  /** Convierte la respuesta en los argumentos exactos del comando, o null si no encaja. */
+  answer?: (text: string) => string | null;
   at: number;
 }
 
@@ -33,16 +42,13 @@ export class PreguntasPendientes {
   }
 
   /** Recuerda que en `key` se acaba de preguntar por los datos de /`command`. */
-  ask(
-    key: string,
-    command: string,
-    opts: { prefix?: string; needsUrl?: boolean; accepts?: (text: string) => boolean } = {},
-  ): void {
+  ask(key: string, command: string, opts: PreguntaOpts = {}): void {
     this.byChat.set(key, {
       command,
       prefix: opts.prefix ?? '',
       needsUrl: opts.needsUrl ?? false,
       accepts: opts.accepts,
+      answer: opts.answer,
       at: this.now(),
     });
   }
@@ -63,6 +69,10 @@ export class PreguntasPendientes {
     }
     if (p.needsUrl && !/https?:\/\/\S+/i.test(t)) return null;
     if (p.accepts && !p.accepts(t)) return null;
+    if (p.answer) {
+      const args = p.answer(t);
+      return args === null ? null : { name: p.command, args };
+    }
     return { name: p.command, args: `${p.prefix}${t}` };
   }
 }

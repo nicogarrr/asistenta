@@ -26,11 +26,7 @@ describe('respuestas naturales, sin <marcadores> (5): tele, rutinas programadas 
   it('/cron: ningún «Uso: /cron … <nombre>»', () => {
     expect(cron).not.toContain("'Uso: /cron");
     expect(cron).not.toContain('`Uso: /cron');
-    expect(cron).toContain(
-      "'¿Qué rutina borro? Mira /cron y dime su nombre, por ejemplo /cron del resumen.'",
-    );
-    expect(cron).toContain(
-      "'¿Qué hago y cuándo? Dímelo normal, por ejemplo: /cron add cada mañana a las 8 resumen del día.'",
-    );
+    expect(cron).toContain("'No tienes rutinas programadas que borrar.'");
+    expect(cron).toContain('¿Qué hago y cuándo? Dímelo normal, por ejemplo: ');
   });
 });

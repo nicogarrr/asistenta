@@ -3969,6 +3969,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           isOwner: isOwnerDm(inbound, vigilanteOwnerId),
           commandCwd: homedir(),
           goals: goalStore,
+          ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
         },
         args,
       ),

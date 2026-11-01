@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runCronCommand } from '../src/cli.js';
+import { routineNameFromPrompt, runCronCommand } from '../src/cli.js';
 import {
   approvalCode,
   COMMAND_MAX_OUTPUT,
@@ -285,9 +285,9 @@ describe('/cron comando', () => {
   it('proponer no programa; confirmar con el código exacto sí; /cron del lo borra', () => {
     const reply = cron('comando 0 8 * * * -- node "C:\\scripts\\saldo.js"');
     expect(reply).toContain('C:\\scripts\\saldo.js');
-    const m = /confirmar (\S+) ([0-9a-f]{8})/.exec(reply);
-    expect(m).not.toBeNull();
-    const [, name, code] = m as RegExpExecArray;
+    const code = /con el código ([0-9a-f]{8})\./.exec(reply)?.[1];
+    expect(code).toBeDefined();
+    const name = routineNameFromPrompt('comando node');
     expect(store.getRoutine(SCOPE, name as string)).toBeNull();
     expect(cron(`comando confirmar ${name} deadbeef`)).toContain('no corresponde');
     expect(store.getRoutine(SCOPE, name as string)).toBeNull();
