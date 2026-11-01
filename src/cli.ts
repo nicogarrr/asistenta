@@ -211,6 +211,7 @@ import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
   getDownloadsEnabled,
+  resolveDownloadsDir,
   setDownloadsEnabled,
 } from './ojo-downloads.js';
 import { AttentionQueue } from './ojo-events.js';
@@ -224,7 +225,11 @@ import {
   rulesAnswer,
 } from './ojo-ignore.js';
 import {
+  DOWNLOADS_DIR_ASK,
   DOWNLOADS_OFF_TEXT,
+  downloadsDirAnswer,
+  downloadsDirMissingText,
+  downloadsDirSavedText,
   MEMORIA_FORGET_ASK,
   memoriaForgetAnswer,
   OJO_OFF_HINT,
@@ -3279,8 +3284,36 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     preguntas.ask(chatKey(inbound), 'ojo', {
       answer: (t) => (ojoOffAnswer(t) ? `${what} off` : null),
     });
+  /** Descargas encendido sin carpeta: «D:\\Descargas» (o «apágalo») tras la pregunta. */
+  const askDownloadsDir = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? 'descargas off' : downloadsDirAnswer(t)),
+    });
+  /** Guarda la carpeta de Descargas que dice el dueño (solo si existe) y vuelve a vigilar. */
+  const setDownloadsDirByWords = async (inbound: Inbound, raw: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const dir = resolveDownloadsDir({ override: raw });
+    if (!dir) {
+      askDownloadsDir(inbound);
+      await say(inbound, downloadsDirMissingText(raw), { quote: true });
+      return;
+    }
+    await vaultSet('ojo:downloadsDir', dir);
+    const st = getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    await say(inbound, downloadsDirSavedText(dir, st), { quote: true });
+  };
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
+    const dirM = /^descargas\s+carpeta\s+(.+)$/i.exec(args.trim());
+    if (dirM?.[1]) {
+      await setDownloadsDirByWords(inbound, dirM[1]);
+      return;
+    }
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
     if (dm) {
       if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -3300,10 +3333,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         on
           ? st.running
             ? `Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. ${OJO_OFF_HINT}`
-            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. Puedes fijar la carpeta en la bóveda con ojo:downloadsDir.`
+            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. ${DOWNLOADS_DIR_ASK}`
           : DOWNLOADS_OFF_TEXT,
         { quote: true },
       );
+      if (on && !st.running) askDownloadsDir(inbound);
       return;
     }
     const pm = /^pantalla(?:\s+(on|off|estado))?$/.exec(arg);
