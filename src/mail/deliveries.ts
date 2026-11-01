@@ -14,13 +14,15 @@ export type DeliveryStatus =
   | 'en_reparto'
   | 'para_recoger'
   | 'entregado'
-  | 'incidencia';
+  | 'incidencia'
+  | 'retrasado';
 
 const ALERT_STATUSES: readonly DeliveryStatus[] = [
   'en_reparto',
   'para_recoger',
   'entregado',
   'incidencia',
+  'retrasado',
 ];
 /** Un cambio más viejo que esto (p. ej. al leer el buzón por primera vez) no avisa. */
 export const DELIVERY_ALERT_MAX_AGE_MS = 2 * 86_400_000;
@@ -55,6 +57,14 @@ const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
   [
     'incidencia',
     /incidencia|no (?:hemos )?podido entregar|intento de entrega|entrega fallida|no ha sido posible entregar|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
+  ],
+  [
+    'retrasado',
+    // «Lleva un retraso», «se retrasa», «delayed»: sin incidencia grave ni estado nuevo
+    // el correo del retraso no contaba y el paquete se quedaba «enviado» para siempre.
+    // Solo formas que afirman el retraso: «puedes retrasar la entrega» o «sin retrasos»
+    // no dicen que el paquete vaya tarde.
+    /(?:un|una|el|la|con)\s+(?:retrasos?|demoras?)\b|se retras(?:a|an|ar[aá]|[óo])(?=\s|$|[.,;:!?])|retrasad[oa]s?\b|\bdelayed\b|(?:a|the)\s+delay\b|m[aá]s tarde de lo previsto/i,
   ],
   [
     'para_recoger',
