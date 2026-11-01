@@ -28,7 +28,7 @@ const DAY =
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
   String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
   String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}))?(?:\s+de\s+(\d{4}))?)`;
-const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?`;
+const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?(?:\s*([ap])\.?\s?m\.?(?![a-z]))?`;
 const RE = new RegExp(
   String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?${DAY}\s*,?\s*${TIME}[\s,:|.-]+(\S.*)$`,
 );
@@ -143,7 +143,7 @@ export function parseFechaCalendario(
   if (!m) return null;
   // El título es el final del texto: se toma del original con su misma longitud (la hora
   // hablada que se reescribió va antes y no cambia el título).
-  const tail = (m[17] ?? '').length;
+  const tail = (m[18] ?? '').length;
   const title = original.slice(original.length - tail).trim();
   if (!title) return null;
   const today = wallClock(now, timeZone);
@@ -196,6 +196,9 @@ export function parseFechaCalendario(
   // quedaban a mediodía.
   if (h === 12 && part === 'noche') [y, mo, d] = addDays(y, mo, d, 1);
   if (h === 12 && (part === 'noche' || part === 'madrugada')) h = 0;
+  // «a las 8 pm», «9:30 p.m.», «12 am»: antes «pm» se ignoraba (8:00) y acababa en el título.
+  if (m[17] === 'p' && h >= 1 && h < 12) h += 12;
+  else if (m[17] === 'a' && h === 12) h = 0;
   if (h > 23 || mi > 59) return null;
   return { start: new Date(zonedTime(y, mo, d, h, mi, timeZone)), title };
 }
