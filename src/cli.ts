@@ -1030,7 +1030,13 @@ async function doctorCommand(): Promise<number> {
   lines.push(
     `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );
-  lines.push(briefingDoctorLine());
+  // La hora real del resumen: si el dueño dijo «no me escribas antes de las 10», sale a las 10.
+  lines.push(
+    briefingDoctorLine(
+      process.env,
+      new MemorySnapshot({ dir: join(paths.state, 'snapshot') }).load().split(ENTRY_SEPARATOR),
+    ),
+  );
   const switchesLine = envSwitchesDoctorLine();
   if (switchesLine) lines.push(switchesLine);
   const numbersLine = envNumbersDoctorLine();
