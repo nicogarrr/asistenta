@@ -127,7 +127,9 @@ export const minuteSaid = (said: string): number =>
 
 /** A clock hour with the part of the day said next to it, in 24h. */
 function withPartOfDay(hour: number, part: string): number {
-  if (part === 'manana' || part === 'madrugada') return hour === 12 ? 0 : hour;
+  // «a las 12 de la mañana» es mediodía en España; «las 12 de la madrugada», medianoche.
+  if (part === 'manana') return hour;
+  if (part === 'madrugada') return hour === 12 ? 0 : hour;
   if (part === 'tarde') return hour >= 1 && hour < 12 ? hour + 12 : hour;
   // «de la noche»: 12 is midnight, 1-4 are the small hours, 5-11 the evening.
   if (hour === 12) return 0;
@@ -245,7 +247,16 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       : (INTERVAL_WORD_VALUE[everyN[1] ?? ''] ?? 0);
     if (!Number.isInteger(n) || n <= 0) return null;
     const unit = everyN[2] ?? '';
-    const schedule = unit.startsWith('min') ? `*/${n} * * * *` : `0 */${n} * * *`;
+    // A cron step restarts every hour (minutes) or every day (hours): «*/45» fires at
+    // :00 and :45, so «cada 45 minutos» would come 45 and then 15 minutes apart, and
+    // «cada 7 horas» at 0, 7, 14 and 21. Only steps that divide evenly are honest;
+    // «cada 120 minutos» is «cada 2 horas». The rest are asked, like «cada 2 días».
+    const hours = unit.startsWith('min') ? n / 60 : n;
+    if (unit.startsWith('min') && 60 % n === 0) {
+      return { schedule: `*/${n} * * * *`, prompt: text.trim() };
+    }
+    if (!Number.isInteger(hours) || 24 % hours !== 0) return null;
+    const schedule = hours === 24 ? '0 0 * * *' : `0 */${hours} * * *`;
     return { schedule, prompt: text.trim() };
   }
   if (/cada hora\b/.test(normalised)) return { schedule: '0 * * * *', prompt: text.trim() };
