@@ -69,7 +69,7 @@ const COUNT_WORDS = Object.keys(COUNT_WORD_VALUE).join('|');
  * user never asked for. A bare `1/2` is not a date ("tomo 1/2 pastilla"); `el 15/11` is.
  */
 export const DATE_SIGNALS = new RegExp(
-  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) mes(?:es)?|mes que viene|proximo mes|fin(?:al)? del? mes|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
+  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) mes(?:es)?|mes que viene|proximo mes|fin(?:al(?:es)?)? del? mes|(?:a )?(?:principios|mediados|finales|fin) de (?:${MONTH_WORDS})|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) anos?|ano que viene|proximo ano|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
 );
 
 const DAY_MS = 86_400_000;
@@ -199,6 +199,41 @@ export function estimateDueAt(text: string, now: number): number {
     const at = nextDayMonth(now, MONTHS[named[2] ?? ''] ?? 0, Number(named[1]));
     if (at !== null) return at;
   }
+  // «a finales de diciembre», «a principios de enero», «a mediados de marzo»: el último
+  // día, el 1 o el 15 de ese mes. Antes no contaban como fecha y no había seguimiento.
+  const period = new RegExp(
+    String.raw`\b(principios|mediados|finales|fin) de (${MONTH_WORDS})\b`,
+  ).exec(folded);
+  if (period) {
+    const month = MONTHS[period[2] ?? ''] ?? 0;
+    const dayIn = (year: number): number =>
+      period[1] === 'principios'
+        ? 1
+        : period[1] === 'mediados'
+          ? 15
+          : new Date(Date.UTC(year, month, 0)).getUTCDate();
+    // Este año si ese día aún no ha pasado; si no, el año que viene.
+    const year = wallClock(new Date(now)).year;
+    const thisYear = onDay(now, year, month, dayIn(year));
+    const at =
+      thisYear !== null && thisYear >= startOfToday(now)
+        ? thisYear
+        : onDay(now, year + 1, month, dayIn(year + 1));
+    if (at !== null) return at;
+  }
+  // «dentro de un año», «en dos años»: el mismo día; «el año que viene»: el 1 de enero.
+  const inYears = new RegExp(String.raw`\b(?:en|dentro de) (\d{1,2}|${COUNT_WORDS}) anos?\b`).exec(
+    folded,
+  );
+  if (inYears || /\b(?:ano que viene|proximo ano)\b/.test(folded)) {
+    const w = wallClock(new Date(now));
+    const said = inYears?.[1] ?? '';
+    const ahead = inYears ? (/^\d+$/.test(said) ? Number(said) : (COUNT_WORD_VALUE[said] ?? 1)) : 1;
+    const month = inYears ? w.month : 1;
+    const last = new Date(Date.UTC(w.year + ahead, month, 0)).getUTCDate();
+    const at = onDay(now, w.year + ahead, month, inYears ? Math.min(w.day, last) : 1);
+    if (at !== null) return at;
+  }
   // «el lunes 9»: ese día 9 si cae en lunes. Antes ganaba el lunes más cercano y el aviso
   // llegaba una semana antes del día prometido.
   const dayAndNumber =
@@ -233,7 +268,7 @@ export function estimateDueAt(text: string, now: number): number {
   if (/\b(?:hoy|esta (?:tarde|noche))\b/.test(folded)) return now;
   // «a fin de mes», «antes de final de mes»: el último día de este mes. Antes, dicho el
   // 28, el aviso salía a los siete días, ya pasado el plazo.
-  if (/\bfin(?:al)? de(?:l)? mes\b/.test(folded)) {
+  if (/\bfin(?:al(?:es)?)? de(?:l)? mes\b/.test(folded)) {
     const w = wallClock(new Date(now));
     const last = new Date(Date.UTC(w.year, w.month, 0)).getUTCDate();
     const at = onDay(now, w.year, w.month, last);
