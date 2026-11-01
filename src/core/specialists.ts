@@ -94,6 +94,24 @@ export const SPECIALISTS: Readonly<Record<string, SpecialistSpec>> = Object.free
       'busca hueco para una cena',
     ],
   }),
+  notas: spec({
+    name: 'notas',
+    title: 'Notas',
+    prompt:
+      'Eres el especialista de notas y recordatorios de Asistenta. Buscas en las notas guardadas de este chat, apuntas lo que Nico quiere recordar y creas, listas o cancelas sus recordatorios. Antes de guardar o programar, mira si ya existe para no duplicar. Di la hora exacta de cada recordatorio en hora de Madrid. Guardar, borrar, crear o cancelar se lo preguntas a Nico una por una; si dice que no, para. Nunca guardes claves, códigos ni tarjetas, y no tocas su perfil.',
+    tools: ['memory', 'reminder'],
+    // Sin perfil (save_profile, forget_profile, profile), sin `history` (lo dicho en
+    // otras conversaciones) y sin `suggest_nudge`: solo notas de este chat.
+    actions: {
+      memory: ['recall', 'list', 'get', 'timeline', 'remember', 'forget'],
+      reminder: ['list', 'create', 'cancel'],
+    },
+    effectful: true,
+    examples: [
+      'apunta varias cosas y recuérdamelas',
+      'repasa mis recordatorios y quita los viejos',
+    ],
+  }),
   pc: spec({
     name: 'pc',
     title: 'PC',
@@ -166,6 +184,11 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   agenda: 'calendario',
   citas: 'calendario',
   festivos: 'calendario',
+  nota: 'notas',
+  apuntes: 'notas',
+  memoria: 'notas',
+  recordatorio: 'notas',
+  recordatorios: 'notas',
   ordenador: 'pc',
   computer: 'pc',
   windows: 'pc',

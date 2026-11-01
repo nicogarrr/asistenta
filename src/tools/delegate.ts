@@ -59,7 +59,7 @@ function specialistLine(): string {
     const spec = SPECIALISTS[name];
     return spec ? `${name} (${spec.examples.join('; ')})` : name;
   });
-  return `Especialistas: ${parts.join(', ')}. Usa specialist cuando la tarea tenga varios pasos en un area (revisar varios correos, buscar hueco en el calendario, comparar en la web, varios pasos en el PC, la tele o la casa); para una sola accion sencilla usa tu la herramienta directamente.`;
+  return `Especialistas: ${parts.join(', ')}. Usa specialist cuando la tarea tenga varios pasos en un area (revisar varios correos, buscar hueco en el calendario, apuntar y programar varias notas o recordatorios, comparar en la web, varios pasos en el PC, la tele o la casa); para una sola accion sencilla usa tu la herramienta directamente.`;
 }
 
 /**

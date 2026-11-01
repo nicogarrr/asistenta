@@ -121,7 +121,10 @@ describe('historial por caso de la batería', () => {
       }),
     );
     const hist = join(state, HISTORY_DIR);
+    // A mediodía (UTC): restar semanas de 7×24 h a las 23:xx de Madrid cruzaba de día
+    // al pasar por el cambio de hora y las tres semanas dejaban de ser seguidas.
     const now = new Date();
+    now.setUTCHours(12, 0, 0, 0);
     for (const back of [2, 1, 0])
       recordBaseWeek(hist, [res('T01', false)], new Date(now.getTime() - back * 7 * 86_400_000));
     expect(notCounting(state, file)).toBe(

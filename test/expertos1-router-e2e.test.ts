@@ -295,7 +295,7 @@ describe('la pista para elegir vive fuera del prompt principal', () => {
   it('cargar_herramienta anuncia los especialistas y «especialista» carga delegate', async () => {
     const { deferredSpecs } = await import('../src/core/capabilities.js');
     const spec = deferredSpecs().delegate;
-    expect(spec?.purpose).toMatch(/especialista \(correo, calendario, web, pc, tv, hogar\)/);
+    expect(spec?.purpose).toMatch(/especialista \(correo, calendario, notas, web, pc, tv, hogar\)/);
     expect(spec?.pattern.test('pídeselo al especialista de la tele')).toBe(true);
     const { SYSTEM_PROMPT } = await import('../src/core/prompt.js');
     expect(SYSTEM_PROMPT.length).toBeLessThan(9_700);
@@ -305,7 +305,7 @@ describe('la pista para elegir vive fuera del prompt principal', () => {
     const { TOOL_ABILITIES } = await import('../src/funciones.js');
     const d = TOOL_ABILITIES.delegate;
     expect(d?.area).toBe('investigar');
-    expect(d?.text).toMatch(/especialistas: correo, calendario, web, PC, tele y casa/);
+    expect(d?.text).toMatch(/especialistas: correo, calendario, notas, web, PC, tele y casa/);
     expect(Array.from(d?.text ?? '').length).toBeLessThan(90);
   });
 });
