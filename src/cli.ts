@@ -160,7 +160,7 @@ import { googleCalendarReader } from './google/calendar.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand, providerKeySource } from './llm-health.js';
-import { log, redact } from './log.js';
+import { log, logFile, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
 import { activeDeliveries } from './mail/deliveries.js';
@@ -669,6 +669,7 @@ import { booksSetupCommand } from './books/setup-cli.js';
 import {
   cliFatalMessage,
   unknownCommandMessage,
+  vaultEmptyValueText,
   vaultListText,
   vaultMissingText,
   vaultSplitValueText,
@@ -1000,6 +1001,11 @@ async function vaultCommand(args: string[]): Promise<number> {
       // Sin comillas, «pa vault set <nombre> abcd efgh ijkl mnop» llegaba en
       // trozos y se guardaba solo «abcd», sin avisar. Mejor no guardar nada.
       process.stderr.write(vaultSplitValueText(args.length - 2));
+      return 2;
+    }
+    if (!value.trim()) {
+      // «pa vault set <nombre> %VAR%» con la variable vacía guardaba una clave vacía.
+      process.stderr.write(vaultEmptyValueText());
       return 2;
     }
     await vaultSet(key, value);
@@ -8692,7 +8698,8 @@ if (isEntrypoint()) {
       process.exitCode = code;
     })
     .catch((err) => {
-      log.error('fatal', { err });
+      // Al registro, no a la consola: en la terminal solo la frase de cliFatalMessage.
+      logFile.error('fatal', { err });
       process.stderr.write(`${cliFatalMessage(err)}\n`);
       process.exitCode = 1;
     });
