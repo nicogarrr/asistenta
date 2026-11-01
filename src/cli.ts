@@ -322,7 +322,11 @@ function delegateTool(config: Config): AgentTool {
   return delegateWiring.tool;
 }
 
-import { esSiCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
+import {
+  confirmacionCalendario,
+  esSiCalendario,
+  preguntaFechaPasada,
+} from './agenda/calendario-pasado.js';
 import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
@@ -5934,15 +5938,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const file = join(paths.state, 'calendar', 'local.ics');
     await appendEvent(file, { title, start });
-    await say(
-      inbound,
-      'Añadido al calendario local (no a Google): ' +
-        title +
-        ' — ' +
-        start.toLocaleString('es-ES') +
-        '.',
-      { quote: true },
-    );
+    await say(inbound, confirmacionCalendario(title, start, new Date()), { quote: true });
   };
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();
