@@ -1,4 +1,5 @@
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { sliceSafe } from './text.js';
 /**
  * El resumen proactivo del día, en texto plano y en español.
  *
@@ -155,7 +156,7 @@ function section(items: Array<string | null>): string[] {
 function clamp(text: string): string {
   if (text.length <= MAX_BRIEFING_CHARS) return text;
   const room = MAX_BRIEFING_CHARS - 1;
-  const cut = text.slice(0, room);
+  const cut = sliceSafe(text, room);
   const lastBreak = cut.lastIndexOf('\n');
   // Cortar una lista por la mitad deja una línea a medias; un salto de línea cercano
   // al final es preferible, aunque se pierda algo de texto.

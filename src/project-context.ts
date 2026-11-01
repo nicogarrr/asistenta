@@ -9,6 +9,7 @@
  * Se relee cada turno para que una edición del fichero valga sin religar, y si
  * deja de ser válido simplemente no entra.
  */
+
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +22,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { screenUntrustedText } from './skills/import.js';
+import { sliceSafe } from './text.js';
 
 export const PROJECT_CONTEXT_MAX_BYTES = 4 * 1024;
 export const PROJECT_CONTEXT_FILES = ['ASISTENTA.md', 'AGENTS.md'] as const;
@@ -204,7 +206,7 @@ export function projectFolderName(dir: string): string {
 
 /** Respuesta de `/proyecto <carpeta>` cuando la carpeta queda ligada. */
 export function projectLinkedReply(ctx: Extract<ProjectContext, { ok: true }>): string {
-  const first = ctx.text.trim().split('\n')[0]?.slice(0, 80) ?? '';
+  const first = sliceSafe(ctx.text.trim().split('\n')[0] ?? '', 80);
   return `Hecho: en esta conversación tendré en cuenta ${ctx.name} de la carpeta «${projectFolderName(ctx.dir)}»${first ? ` («${first}»)` : ''}.`;
 }
 

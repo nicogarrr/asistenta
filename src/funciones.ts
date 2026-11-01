@@ -13,8 +13,10 @@
  * usuario autorizado) solo salen los comandos que ahí funcionan, y las áreas que
  * se quedan sin ninguno no se enseñan.
  */
+
 import { HELP_SECTIONS, type HelpEntry } from './channels/telegram-help.js';
 import { threadAllowToolNames } from './core/capabilities.js';
+import { sliceSafe } from './text.js';
 
 export type FuncionAreaId =
   | 'tele'
@@ -389,7 +391,7 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
     const area = findArea(query);
     if (!area || !areas.some((a) => a.id === area.id)) {
       return [
-        `No conozco el área «${query.slice(0, 40)}». Tengo estas:`,
+        `No conozco el área «${sliceSafe(query, 40)}». Tengo estas:`,
         ...areas.map((a) => a.title),
       ].join('\n');
     }

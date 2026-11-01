@@ -1,4 +1,5 @@
 import type { MailAccount, SendRequest, SendResult } from '../mail/types.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * Delivery to a Kindle by email.
@@ -77,7 +78,7 @@ export async function sendToKindle(
   if (!approved) return { status: 'declined' };
   const result = await deps.send(account, {
     to: [to],
-    subject: book.title.slice(0, 120),
+    subject: sliceSafe(book.title, 120),
     text: 'Libro enviado desde Asistenta.',
     attachments: [{ filename: safeFilename(book.title, book.kind), content: book.bytes }],
   });

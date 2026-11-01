@@ -16,7 +16,7 @@
  * - Sin red en los tests: todas las dependencias van inyectadas.
  */
 
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 import type { WebSearchItem } from '../web/router.js';
 import { bounded, DEFAULT_CALL_TIMEOUT_MS, mapLimit, RESEARCH_CONCURRENCY } from './limits.js';
 
@@ -215,7 +215,7 @@ export function extractQuotes(text: string, terms: string[], maxQuotes: number):
   scored.sort((a, b) => b.hits - a.hits || a.quote.length - b.quote.length);
   const picked: string[] = [];
   for (const { quote } of scored) {
-    const trimmed = quote.length > 280 ? `${quote.slice(0, 277).trimEnd()}...` : quote;
+    const trimmed = quote.length > 280 ? `${sliceSafe(quote, 277).trimEnd()}...` : quote;
     if (!picked.includes(trimmed)) picked.push(trimmed);
     if (picked.length >= maxQuotes) break;
   }

@@ -6,7 +6,9 @@
  * con el «sí» del dueño. Cuándo preguntar lo decide el código, sin modelo; el modelo
  * solo redacta (y sin modelo hay preguntas fijas).
  */
+
 import { detectFeatureRequest } from '../evolve/ask.js';
+import { sliceSafe } from '../text.js';
 
 /** «hazlo ya», «sin preguntas»…: el dueño no quiere entrevista. */
 const SKIP =
@@ -106,7 +108,7 @@ export function parseQuestions(raw: string): string[] | null {
     .split('\n')
     .map((l) => /^\s*\d+\s*[.)-]\s*(.+?)\s*$/.exec(l)?.[1])
     .filter((q): q is string => !!q)
-    .map((q) => q.replace(/\*\*/g, '').slice(0, 240));
+    .map((q) => sliceSafe(q.replace(/\*\*/g, ''), 240));
   return qs.length >= 3 ? qs.slice(0, 5) : null;
 }
 
@@ -116,7 +118,7 @@ function clip(lines: string, max: number): string {
     .map((l) => l.replace(/\*\*/g, '').trim())
     .filter(Boolean)
     .slice(0, max)
-    .map((l) => l.slice(0, 220))
+    .map((l) => sliceSafe(l, 220))
     .join('\n');
 }
 
@@ -183,7 +185,7 @@ export class GrillMe {
   }
 
   private async spec(p: Pending, deps: GrillDeps): Promise<string> {
-    const fallback = `Haré: ${p.request.slice(0, 200)}\nTeniendo en cuenta: ${p.answers.join(' / ').slice(0, 200)}`;
+    const fallback = `Haré: ${sliceSafe(p.request, 200)}\nTeniendo en cuenta: ${sliceSafe(p.answers.join(' / '), 200)}`;
     if (!deps.llm) return fallback;
     const qa = p.questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
     try {

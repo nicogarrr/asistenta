@@ -31,7 +31,7 @@ import {
   projectStateReply,
 } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
-import { foldAccents } from './text.js';
+import { foldAccents, sliceSafe } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
@@ -1403,7 +1403,7 @@ export function rememberUserRequest(thread: { userRequests?: string[] }, text: s
   const t = text.trim();
   if (!t) return;
   const list = thread.userRequests ?? [];
-  list.push(t.slice(0, 200));
+  list.push(sliceSafe(t, 200));
   thread.userRequests = list.slice(-6);
 }
 
@@ -3256,7 +3256,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
         const rows = await listReplyInbox(account);
         for (const row of rows) {
-          const clean = (text: string) => text.replace(/\s+/g, ' ').slice(0, 180);
+          const clean = (text: string) => sliceSafe(text.replace(/\s+/g, ' '), 180);
           const card = await say(
             inbound,
             `${row.ref}\nDe (no verificado): ${clean(row.from)}\nAsunto: ${clean(row.subject)}\nResponde a ESTE mensaje con "responde a ese" y, en nueva línea, tu texto exacto.`,
@@ -3544,7 +3544,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const lines = [
-      `Descartado «${res.title.slice(0, 80)}»: no te lo vuelvo a recordar. Excepción: un pago o plazo con hora a menos de 2 h te lo aviso una vez más.`,
+      `Descartado «${sliceSafe(res.title, 80)}»: no te lo vuelvo a recordar. Excepción: un pago o plazo con hora a menos de 2 h te lo aviso una vez más.`,
     ];
     if (res.noClass) {
       lines.push('Su título no da un patrón fiable, así que no cuenta para proponer reglas.');
@@ -5320,8 +5320,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(
         inbound,
         removed > 0
-          ? `Repito: «${last.text.slice(0, 80)}» (sin la respuesta anterior).`
-          : `Repito: «${last.text.slice(0, 80)}». El historial cambió desde entonces, así que la respuesta anterior se queda.`,
+          ? `Repito: «${sliceSafe(last.text, 80)}» (sin la respuesta anterior).`
+          : `Repito: «${sliceSafe(last.text, 80)}». El historial cambió desde entonces, así que la respuesta anterior se queda.`,
         { quote: true },
       );
       await runTurn(thread, { ...inbound, text: last.text, images: last.images }, last.text, {
@@ -5795,7 +5795,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.warn('memory export send failed', { err });
         await say(
           inbound,
-          `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+          `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
           { quote: true },
         );
       }
@@ -5847,7 +5847,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       log.warn('session export send failed', { err });
       await say(
         inbound,
-        `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+        `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
         { quote: true },
       );
     }
@@ -5935,7 +5935,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       } catch {
         await say(
           inbound,
-          `No pude enviar el archivo; aquí va:\n${bytes.toString('utf8').slice(0, 3500)}`,
+          `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
           { quote: true },
         );
       }
@@ -6451,10 +6451,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // happened, and /buscar must be able to find it.
     let sessionId = '';
     safeRemember(() => {
-      sessionId = sessions.begin(thread.key, inbound.text.slice(0, 80));
+      sessionId = sessions.begin(thread.key, sliceSafe(inbound.text, 80));
       // Las palabras del usuario también se guardan (acotadas): sin ellas /buscar
       // y la acción `history` no pueden recordar lo que se PIDIÓ, solo la respuesta.
-      if (sessionId) sessions.addTurn(sessionId, 'user', inbound.text.slice(0, 4000));
+      if (sessionId) sessions.addTurn(sessionId, 'user', sliceSafe(inbound.text, 4000));
     });
     /** Kept for the session summary the finally writes. */
     let result: AgentRunResult | null = null;
@@ -6949,7 +6949,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         action: 'reply',
         target: thread.name,
         result: result.error ? 'error' : 'ok',
-        detail: text2.slice(0, 80).replace(/\s+/g, ' '),
+        detail: sliceSafe(text2, 80).replace(/\s+/g, ' '),
       });
       // Disparador (a) del multi-agente (ROADMAP.md): builds grandes
       // multi-archivo de forma habitual. Un "build" es una peticion que acaba
@@ -7044,7 +7044,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       clearInterval(status);
       // The closing summary is what later searches read, so the session is closed
       // even when the turn was cancelled or produced no answer at all.
-      const summary = result?.text.slice(0, 200) ?? '';
+      const summary = result?.text ? sliceSafe(result.text, 200) : '';
       safeRemember(() => sessions.end(sessionId, summary));
       // The progress notes are scaffolding, not part of the conversation. Leaving
       // them turns a chat into a log of what the agent did instead of a dialogue, so
@@ -8250,7 +8250,7 @@ export function instinctsFromTurn(
   const out: Array<{ pattern: string; category: 'pref' | 'seq' }> = [];
   const said = userText.trim();
   if (said && PREFERENCE_MARKERS.test(said)) {
-    out.push({ pattern: said.slice(0, 200), category: 'pref' });
+    out.push({ pattern: sliceSafe(said, 200), category: 'pref' });
   }
   // One tool call is an action; two or more in a row is a way of working.
   if (toolNames.length >= 2) {
@@ -8278,7 +8278,7 @@ export function followupFromMessage(
   const first = nudge.suggestion.indexOf('"');
   const last = nudge.suggestion.lastIndexOf('"');
   const quoted = first >= 0 && last > first ? nudge.suggestion.slice(first + 1, last) : '';
-  const subject = (quoted || text.trim()).replace(/\s+/g, ' ').slice(0, 160);
+  const subject = sliceSafe((quoted || text.trim()).replace(/\s+/g, ' '), 160);
   return { subject, dueAt: estimateDueAt(text, now) };
 }
 
@@ -8663,7 +8663,7 @@ export async function skillsSearchReply(
  * summary the agent reported is used as the detail when there is one.
  */
 function summarizeToolUse(summary: string): string {
-  const detail = summary.replace(/\s+/g, ' ').slice(0, 120).trim();
+  const detail = sliceSafe(summary.replace(/\s+/g, ' '), 120).trim();
   // `redact` blanks any value that looks like a secret whatever the key is called,
   // so passing the summary under a neutral key still gets it scrubbed.
   return redact({ detail }).detail as string;
