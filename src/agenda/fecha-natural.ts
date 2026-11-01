@@ -24,7 +24,7 @@ const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 's
 
 const DAY =
   '(hoy|pasado manana|manana' +
-  String.raw`|(?:el\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
+  String.raw`|(?:el\s+)?(?:proximo\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
   String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
   String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}))?(?:\s+de\s+(\d{4}))?)`;
@@ -85,7 +85,9 @@ function horaHablada(text: string): string {
       // «a la una» es la hora de comer (13:00) salvo «de la madrugada/mañana/noche».
       (_w, word: string, at: number, all: string) =>
         word === 'una' &&
-        !/^\s+de\s+la\s+(?:madrugada|manana|noche)\b/.test(all.slice(at + _w.length))
+        !/^(?:\s+(?:y\s+media|y\s+cuarto|menos\s+cuarto))?\s+de\s+la\s+(?:madrugada|manana|noche)\b/.test(
+          all.slice(at + _w.length),
+        )
           ? 'a las 13'
           : `a las ${PALABRAS[word]}`,
     )
@@ -102,13 +104,42 @@ function horaHablada(text: string): string {
     );
 }
 
+const LEAD = String.raw`^(\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?)`;
+/** «esta noche a las 10 cena» → «hoy a las 10 de la noche cena» (y «esta tarde», «esta mañana»). */
+const ESTA = new RegExp(
+  `${LEAD}esta\\s+(manana|tarde|noche)\\s*,?\\s*(a\\s+las?\\s+(?:\\d{1,2}(?:[:.]\\d{2})?|${Object.keys(PALABRAS).join('|')})(?:\\s+y\\s+media|\\s+y\\s+cuarto|\\s+menos\\s+cuarto)?)\\b(?!\\s+de\\s+la\\b|\\s+y\\s+(?:media|cuarto)|\\s+menos\\s+cuarto)`,
+);
+/** «el viernes 6 (de noviembre)», «el lunes 9/11»: el día de la semana delante del número. */
+const DIA_Y_NUMERO = new RegExp(
+  `${LEAD}(?:el\\s+)?(${DIAS.join('|')})\\s*,?\\s+(?=(?:dia\\s+)?\\d{1,2}(?!\\d)(?![:.]\\d))`,
+);
+
+/**
+ * Formas de decir el día que se reescriben antes de leer: «esta noche a las 10» y «el
+ * viernes 6». Devuelve el texto y, si se dijo, el día de la semana, que tiene que cuadrar
+ * con la fecha (si no, se pregunta otra vez en vez de adivinar).
+ */
+function diaHablado(text: string): { text: string; weekday: number | null } {
+  const esta = text.replace(
+    ESTA,
+    (_w, lead: string, part: string, time: string) => `${lead}hoy ${time} de la ${part}`,
+  );
+  const m = DIA_Y_NUMERO.exec(esta);
+  if (!m) return { text: esta, weekday: null };
+  return {
+    text: `${m[1]}el ${esta.slice(m[0].length)}`,
+    weekday: DIAS.indexOf(m[2] as string),
+  };
+}
+
 export function parseFechaCalendario(
   text: string,
   now: Date = new Date(),
   timeZone?: string,
 ): { start: Date; title: string } | null {
   const original = text.normalize('NFC').trim();
-  const m = RE.exec(horaHablada(fold(original)));
+  const said = diaHablado(fold(original));
+  const m = RE.exec(horaHablada(said.text));
   if (!m) return null;
   // El título es el final del texto: se toma del original con su misma longitud (la hora
   // hablada que se reescribió va antes y no cambia el título).
@@ -151,6 +182,8 @@ export function parseFechaCalendario(
       [y, mo] = mo === 12 ? [y + 1, 1] : [y, mo + 1];
   }
   if (!exists(y, mo, d)) return null;
+  if (said.weekday !== null && new Date(Date.UTC(y, mo - 1, d)).getUTCDay() !== said.weekday)
+    return null;
   let h = Number(m[12] ?? m[14]);
   const mi = Number(m[13] ?? m[15] ?? 0);
   const part = m[16];
