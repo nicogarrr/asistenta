@@ -71,7 +71,7 @@ export function ffmpegAvailable(): boolean {
 export async function recordScreen(options: RecordingOptions): Promise<Recording> {
   if (!ffmpegAvailable() || !FFMPEG) {
     throw new Error(
-      'ffmpeg no esta disponible (falta ffmpeg-static). Usa /screen para una captura puntual.',
+      'No puedo grabar la pantalla porque falta ffmpeg (ffmpeg-static). Una captura puntual sí te la puedo mandar.',
     );
   }
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));

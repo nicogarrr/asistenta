@@ -131,7 +131,7 @@ const Params = Type.Object({
   macro: Type.Optional(
     Type.String({
       description:
-        'macro: the stored macro name, always with its namespace (macro/<nombre>). The user sees them with /routines.',
+        'macro: the stored macro name, always with its namespace (macro/<nombre>). If unsure, ask the user which routine they mean.',
     }),
   ),
   parametros: Type.Optional(
@@ -440,10 +440,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
       if (args.action === 'macro') {
         const name = args.macro?.trim() ?? '';
         if (!isMacroName(name)) {
-          return reply(
-            'macro necesita el nombre con su namespace: macro/<nombre> (las ves con /routines).',
-            true,
-          );
+          return reply('macro necesita el nombre con su namespace: macro/<nombre>.', true);
         }
         const routine = deps.routines.getRoutine(scope, name);
         if (!routine) {
