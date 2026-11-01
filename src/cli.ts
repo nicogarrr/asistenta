@@ -233,7 +233,13 @@ import {
 import { drainThreadTails } from './shutdown-drain.js';
 import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
-import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
+import {
+  fetchSkillIndex,
+  formatSkillSearch,
+  type SkillIndexEntry,
+  searchSkillIndex,
+  skillPickAnswer,
+} from './skills/search.js';
 import {
   checkTelegramToken,
   SERVE_TELEGRAM_RETRY_DELAYS_MS,
@@ -5720,9 +5726,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
   const cmdSkillsSearch = async (inbound: Inbound, args: string): Promise<void> => {
-    await say(inbound, await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL), {
-      quote: true,
-    });
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL, undefined, pick);
+    await say(inbound, reply, { quote: true });
   };
   const cmdSkillsCatalog = async (inbound: Inbound): Promise<void> => {
     await say(inbound, await skillsCatalogReply(skills.list(), process.env.PA_SKILLS_CATALOG_URL), {
@@ -8280,12 +8287,14 @@ export function formatWatchList(list: readonly PageWatch[]): string {
 
 /**
  * F15 `/skills buscar <texto>`: busca en el índice JSON de PA_SKILLS_INDEX_URL.
- * Solo lista nombre + URL; instalar sigue siendo `/skills instalar <url>`.
+ * Lista nombre + URL; «la 2» o el enlace como respuesta la instala (con su revisión).
  */
 export async function skillsSearchReply(
   query: string,
   indexUrl: string | undefined,
   fetchImpl?: typeof fetch,
+  /** Con resultados: «¿Instalo alguna?» espera el número como respuesta. */
+  onHits?: (hits: readonly SkillIndexEntry[]) => void,
 ): Promise<string> {
   const q = query.trim();
   if (!q) return '¿Qué habilidad busco?';
@@ -8294,7 +8303,9 @@ export async function skillsSearchReply(
   }
   try {
     const entries = await fetchSkillIndex(indexUrl.trim(), { fetchImpl });
-    return formatSkillSearch(q, searchSkillIndex(entries, q));
+    const hits = searchSkillIndex(entries, q);
+    if (hits.length) onHits?.(hits);
+    return formatSkillSearch(q, hits);
   } catch (err) {
     return failedReply('No he podido leer el índice de skills', err);
   }

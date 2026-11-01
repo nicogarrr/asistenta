@@ -528,7 +528,7 @@ export function forgetLearnedRule(
       const hit = found[0] as { r: MemoryEntry; i: number };
       return memory.forgetIn(scopes, hit.r.id)
         ? `🗑️ Olvidada: ${hit.r.text}`
-        : 'No he podido borrarla; mira /aprendido.';
+        : 'No he podido borrarla; puede que ya estuviera borrada.';
     }
     if (found.length > 1) {
       return [
@@ -546,7 +546,9 @@ export function forgetLearnedRule(
   }
   const target = rules[n - 1] as MemoryEntry;
   const ok = memory.forgetIn(scopes, target.id);
-  return ok ? `🗑️ Olvidada: ${target.text}` : 'No he podido borrarla; mira /aprendido.';
+  return ok
+    ? `🗑️ Olvidada: ${target.text}`
+    : 'No he podido borrarla; puede que ya estuviera borrada.';
 }
 
 /**
