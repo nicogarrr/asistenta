@@ -119,7 +119,7 @@ export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
   const extras: string[] = [];
   if (r.profile) extras.push('tu perfil');
   if (r.projects > 0) extras.push('la carpeta de proyecto ligada');
-  if (r.models > 0) extras.push('el modelo elegido con /modelo');
+  if (r.models > 0) extras.push('el modelo que elegiste');
   if (r.followups > 0) extras.push(`${r.followups} seguimiento(s)`);
   const tail = extras.length > 0 ? ` y ${extras.join(', ')}` : '';
   return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${tail}. Empezamos de cero.`;
