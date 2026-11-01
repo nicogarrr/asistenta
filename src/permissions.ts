@@ -1661,6 +1661,12 @@ export class Gate {
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
       case 'luz':
         return argString(c.args, 'aviso') ? 'escribe-local' : 'lee';
+      // «¿Ha salido algo en el BOE sobre X?»: solo la API fija del BOE. Encender o quitar
+      // el aviso guarda (o borra) una rutina local del dueño; verlos es lectura.
+      case 'boe': {
+        const aviso = argString(c.args, 'aviso');
+        return aviso && aviso !== 'ver' ? 'escribe-local' : 'lee';
+      }
       // Gestor de contraseñas: listar/buscar leen el vault sin devolver la contraseña.
       case 'cuentas': {
         const a = argString(c.args, 'action');
@@ -2677,6 +2683,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'reminder',
   'vigilar_precio',
   'gasolineras',
+  'boe',
 ]);
 
 /**
