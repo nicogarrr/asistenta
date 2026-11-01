@@ -91,6 +91,11 @@ export function scheduleEs(schedule: string): string | null {
     const days = daysEs(dow);
     return days ? `${days} ${at}` : null;
   }
+  // «0 9 1,15 * *»: varios días del mes («los días 1 y 15»). Antes salía el cron crudo.
+  const days = /^\d{1,2}(?:,\d{1,2})+$/.test(dom) ? dom.split(',').map((x) => num(x, 31)) : null;
+  if (days && mon === '*' && dow === '*' && days.every((x) => x !== null && x >= 1)) {
+    return `cada mes los días ${days.slice(0, -1).join(', ')} y ${days.at(-1)} ${at}`;
+  }
   const day = num(dom, 31);
   if (day === null || dow !== '*') return null;
   if (mon === '*') return `cada mes el día ${day} ${at}`;

@@ -341,6 +341,22 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   ) {
     return null;
   }
+  // «los días 1 y 15 de cada mes», «el 1 y el 15 de cada mes», «cada mes los días 5, 15 y
+  // 25»: antes solo quedaba el último día (el 15).
+  const severalDays =
+    /\bmes\b/.test(normalised) &&
+    /(?:\blos dias|\bel|\bcada) (\d{1,2}((?:\s*,\s*(?:el )?\d{1,2})*\s+y\s+(?:el )?\d{1,2}))\b(?! ?(?:h\b|horas?|minutos?|min\b|veces))/.exec(
+      normalised,
+    );
+  if (severalDays) {
+    const days = [...new Set((severalDays[1] ?? '').match(/\d{1,2}/g)?.map(Number) ?? [])];
+    if (days.some((d) => d < 1 || d > 31)) return null;
+    days.sort((a, b) => a - b);
+    return {
+      schedule: `${minute} ${hasTime ? hours : 8} ${days.join(',')} * *`,
+      prompt: text.trim(),
+    };
+  }
   // «cada día 5 a las 9»: el día 5 de cada mes, no todos los días.
   const dayEachMonth = /\bcada dia (\d{1,2})\b(?! (?:veces|minutos?|min|horas?))/.exec(normalised);
   if (dayEachMonth) {
