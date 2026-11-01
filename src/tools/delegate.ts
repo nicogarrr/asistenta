@@ -12,6 +12,7 @@
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { resolveSpecialist, SPECIALISTS, specialistNames } from '../core/specialists.js';
 import type { SubagentPool } from '../core/subagent.js';
 
 export const DELEGATE_TOOL_NAME = 'delegate';
@@ -28,6 +29,13 @@ const DelegateParams = Type.Object({
         'explorer: lee y resume. planner: plan por pasos. implementer: propone el cambio como texto/diff; no escribe.',
     }),
   ),
+  specialist: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 40,
+      description: `Especialista que hace la tarea con sus propias instrucciones y herramientas: ${specialistNames().join(', ')}. Si no existe, se usa un subagente genérico.`,
+    }),
+  ),
   tools: Type.Optional(
     Type.Array(Type.String({ minLength: 1 }), {
       maxItems: 32,
@@ -39,7 +47,19 @@ const DelegateParams = Type.Object({
 
 export interface DelegateDetails {
   depth: number;
+  /** Especialista que hizo la tarea (nombre canonico). */
+  specialist?: string;
+  /** Nombre pedido que no existe: lo hizo un subagente generico. */
+  unknownSpecialist?: string;
   error?: string;
+}
+
+function specialistLine(): string {
+  const parts = specialistNames().map((name) => {
+    const spec = SPECIALISTS[name];
+    return spec ? `${name} (${spec.examples.join('; ')})` : name;
+  });
+  return `Especialistas: ${parts.join(', ')}.`;
 }
 
 /**
@@ -58,13 +78,17 @@ export function createDelegateTool(
       'Usalo para trabajo paralelizable o de lectura larga (buscar, resumir, comparar fuentes) que ensuciaria este hilo.',
       'No lo uses para pagos, compras, mensajes a terceros, borrados, escrituras ni decisiones irreversibles: el hijo no hereda aprobaciones previas y esas acciones seguirian necesitando permiso.',
       'Pasa en tools solo herramientas sin efectos secundarios; el hijo no recibe el transcript del padre ni sus permisos, y devuelve un resumen en texto.',
+      specialistLine(),
     ].join(' '),
     parameters: DelegateParams,
     executionMode: 'parallel',
     execute: async (_toolCallId, args) => {
+      const specialist =
+        args.specialist === undefined ? undefined : resolveSpecialist(args.specialist);
       const result = await pool.run({
         task: args.task,
         parentDepth: depthOf(),
+        ...(specialist ? { specialist: specialist.name } : {}),
         ...(args.role ? { role: args.role } : {}),
         ...(args.tools ? { tools: args.tools } : {}),
       });
@@ -73,6 +97,8 @@ export function createDelegateTool(
       // detalle estructurado queda para quien consuma el resultado.
       const text = result.error ?? result.text;
       const details: DelegateDetails = { depth: result.depth };
+      if (specialist) details.specialist = specialist.name;
+      else if (args.specialist !== undefined) details.unknownSpecialist = args.specialist;
       if (result.error) details.error = result.error;
 
       return {

@@ -22,6 +22,13 @@
  *   su propio permiso por accion y worktree aislado; eso queda fuera a proposito.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import {
+  buildSpecialistPrompt,
+  resolveSpecialist,
+  type SpecialistSpec,
+  specialistAllowsCall,
+  specialistToolNames,
+} from './specialists.js';
 import type { SubagentBudget, SubagentDeps, SubagentRunRequest } from './subagent.js';
 
 export const SUBAGENT_ROLES = ['explorer', 'planner', 'implementer'] as const;
@@ -113,6 +120,39 @@ export function isolateTools(
     })) as AgentTool[];
 }
 
+/**
+ * Como `isolateTools`, pero para un especialista: solo su lista blanca y, en las
+ * herramientas acotadas por acciones, solo esas acciones. No amplia nada: si el
+ * especialista no tiene efectos, sus herramientas fuera de SUBAGENT_SAFE_TOOLS
+ * solo pasan con acciones de lectura listadas en `actions`.
+ */
+export function isolateSpecialistTools(
+  tools: readonly AgentTool[],
+  specialist: SpecialistSpec,
+  allowed: readonly string[],
+  signal?: AbortSignal,
+  maxCalls?: number,
+): AgentTool[] {
+  let used = 0;
+  const names = new Set(allowed.filter((n) => specialist.tools.includes(n)));
+  return tools
+    .filter((tool) => names.has(tool.name))
+    .map((tool) => ({
+      ...tool,
+      execute: async (...args: Parameters<AgentTool['execute']>) => {
+        if (!names.has(tool.name) || !specialistAllowsCall(specialist, tool.name, args[1]))
+          throw new Error(
+            `El especialista ${specialist.title} no puede usar ${tool.name} con esa acción.`,
+          );
+        if (signal?.aborted) throw new Error('Subagente abortado: no se ejecuta la herramienta.');
+        if (maxCalls !== undefined && used >= maxCalls)
+          throw new Error('Presupuesto de herramientas del subagente agotado.');
+        used++;
+        return tool.execute(...args);
+      },
+    })) as AgentTool[];
+}
+
 /** Lo que el ejecutor pide a la fabrica de hijos. No lleva historial del padre. */
 export interface ChildSpec {
   prompt: string;
@@ -126,6 +166,8 @@ export interface ChildSpec {
   toolset: AgentTool[];
   maxToolCalls: number;
   signal: AbortSignal;
+  /** Especialista resuelto, si el padre pidio uno conocido (su Gate depende de el). */
+  specialist?: SpecialistSpec;
 }
 
 export interface ChildHandle {
@@ -159,9 +201,17 @@ export function buildChildPrompt(role: SubagentRole, task: string): string {
 export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps {
   return {
     async run(request: SubagentRunRequest) {
+      const specialist =
+        request.specialist === undefined ? undefined : resolveSpecialist(request.specialist);
       const role = request.role ?? 'explorer';
-      if (!isSubagentRole(role)) {
+      if (!specialist && !isSubagentRole(role)) {
         return { text: '', error: `Rol de subagente desconocido: ${String(role)}.` };
+      }
+      if (specialist?.effectful) {
+        return {
+          text: '',
+          error: `El especialista ${specialist.title} actúa sobre aparatos o cuentas y aquí no tiene forma de pedirte permiso; no se ejecuta.`,
+        };
       }
       const budget = readBudget(request.budget);
       if (!budget) {
@@ -170,24 +220,49 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
           error: 'Falta el presupuesto del subagente; no se ejecuta sin limites.',
         };
       }
-      // Pedido del caller: request.tools (undefined = las del rol, [] = ninguna).
-      const { allowed } = resolveChildToolNames(role, request.tools);
       if (budget.signal.aborted) return { text: '', error: 'Subagente abortado antes de empezar.' };
-      const prompt = buildChildPrompt(role, request.task);
-      const toolset = isolateTools(
-        options.parentTools(),
-        allowed,
-        budget.signal,
-        budget.maxToolCalls,
-      );
-      const child = await options.makeChild({
-        prompt,
-        role,
-        tools: allowed,
-        toolset,
-        maxToolCalls: budget.maxToolCalls,
-        signal: budget.signal,
-      });
+      let child: ChildHandle;
+      let prompt: string;
+      if (specialist) {
+        // Un especialista solo recibe SU lista; `tools` del caller solo la estrecha.
+        const allowed = specialistToolNames(specialist, request.tools);
+        prompt = buildSpecialistPrompt(specialist, request.task);
+        const toolset = isolateSpecialistTools(
+          options.parentTools(),
+          specialist,
+          allowed,
+          budget.signal,
+          budget.maxToolCalls,
+        );
+        child = await options.makeChild({
+          prompt,
+          role: 'explorer',
+          tools: allowed,
+          toolset,
+          maxToolCalls: budget.maxToolCalls,
+          signal: budget.signal,
+          specialist,
+        });
+      } else {
+        const genericRole = role as SubagentRole;
+        // Pedido del caller: request.tools (undefined = las del rol, [] = ninguna).
+        const { allowed } = resolveChildToolNames(genericRole, request.tools);
+        prompt = buildChildPrompt(genericRole, request.task);
+        const toolset = isolateTools(
+          options.parentTools(),
+          allowed,
+          budget.signal,
+          budget.maxToolCalls,
+        );
+        child = await options.makeChild({
+          prompt,
+          role: genericRole,
+          tools: allowed,
+          toolset,
+          maxToolCalls: budget.maxToolCalls,
+          signal: budget.signal,
+        });
+      }
       // La fabrica pudo tardar mas que el timeout: si ya se aborto, no se ejecuta.
       if (budget.signal.aborted) {
         child.abort();
