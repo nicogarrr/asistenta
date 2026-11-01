@@ -596,15 +596,25 @@ const TIME_RULES: ReadonlyArray<{
     // "9:30h" and "18:00 hrs" are how Spanish mail writes a clock; the trailing letters
     // are part of it. 24:00-29:59 only come from spokenTimes() (or a mail that literally
     // says 24:00) and mean that hour of the night after the date.
-    re: /\b(?:a las |a la |at |desde las |@)?(\d{1,2}):(\d{2})(?:h|hs|hrs)?\b/,
+    // «3:00 PM», «9:30 a. m.»: la marca de detrás cuenta. Antes «at 3:00 PM» de un
+    // correo en inglés quedaba a las 03:00 de la madrugada.
+    re: /\b(?:a las |a la |at |desde las |@)?(\d{1,2}):(\d{2})(?:h|hs|hrs)?\b(?:\s?([ap])\.?\s?m\b\.?)?/,
     build: (m) => {
       const hour = Number(m[1]);
       if (hour >= 24 && hour <= 29) {
         const hit = clock24(hour - 24, Number(m[2]));
         return hit && { ...hit, nextDay: true };
       }
+      if (m[3] && hour >= 1 && hour <= 12) {
+        return clock24((hour % 12) + (m[3] === 'p' ? 12 : 0), Number(m[2]));
+      }
       return clock24(hour, Number(m[2]));
     },
+  },
+  {
+    // «17h30»: así se escribe la hora en muchos correos. Antes la cita quedaba sin hora.
+    re: /\b(\d{1,2})h(\d{2})\b/,
+    build: (m) => clock24(Number(m[1]), Number(m[2])),
   },
   {
     // "17.30 h": a dot clock only counts with its hour mark, so "12.50 €" never does.
@@ -612,7 +622,7 @@ const TIME_RULES: ReadonlyArray<{
     build: (m) => clock24(Number(m[1]), Number(m[2])),
   },
   {
-    re: /\b(\d{1,2})\s*(am|pm)\b/,
+    re: /(?<![:.\d])\b(\d{1,2})\s*(am|pm)\b/,
     build: (m) => clock24((Number(m[1]) % 12) + (m[2] === 'pm' ? 12 : 0), 0),
   },
   {
