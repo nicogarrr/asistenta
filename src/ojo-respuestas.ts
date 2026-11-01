@@ -38,3 +38,28 @@ export function memoriaForgetAnswer(text: string): string | null {
   const code = text.replace(/[«»"'[\]]/g, '').trim();
   return /^[a-z0-9][a-z0-9-]{2,39}$/i.test(code) ? `olvidar ${code}` : null;
 }
+
+/** Descargas encendido pero sin carpeta que vigilar: pregunta dónde está, sin claves de la bóveda. */
+export const DOWNLOADS_DIR_ASK =
+  'Si tu carpeta de Descargas está en otro sitio, dime dónde (por ejemplo «D:\\Descargas») y vigilo esa.';
+
+/** «D:\Descargas» o «/home/nico/Descargas» tras esa pregunta → `descargas carpeta …` para /ojo. */
+export function downloadsDirAnswer(text: string): string | null {
+  const dir = text.replace(/[«»"']/g, '').trim();
+  return /^(?:[a-z]:[\\/]|\\\\|\/|~[\\/])\S/i.test(dir) ? `descargas carpeta ${dir}` : null;
+}
+
+/** La carpeta que dijo no existe: lo dice y vuelve a preguntar. */
+export function downloadsDirMissingText(dir: string): string {
+  return `No encuentro la carpeta «${dir.trim()}». ¿Me dices otra vez dónde está, con la ruta entera?`;
+}
+
+/** Carpeta guardada: si ya la vigila, cómo se apaga; si no, por qué. */
+export function downloadsDirSavedText(
+  dir: string,
+  st: { running: boolean; reason?: string | undefined } | null,
+): string {
+  if (!st) return `Hecho, cuando enciendas las Descargas vigilo «${dir}».`;
+  if (st.running) return `Hecho, ahora vigilo «${dir}». ${OJO_OFF_HINT}`;
+  return `He guardado «${dir}», pero ${st.reason ?? 'no he podido empezar a vigilar'}.`;
+}
