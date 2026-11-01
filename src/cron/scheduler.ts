@@ -364,6 +364,20 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     return { schedule, prompt: text.trim() };
   }
   if (/cada hora\b/.test(normalised)) return { schedule: '0 * * * *', prompt: text.trim() };
+  // «todos los días excepto los domingos», «de lunes a viernes menos el miércoles»:
+  // antes los días quitados se leían como los días de la rutina (solo los domingos).
+  const except = exceptDays(normalised);
+  if (except) {
+    const base = daysOfWeek(normalised.slice(0, except.index));
+    const left = (base === null ? [0, 1, 2, 3, 4, 5, 6] : expandDays(base)).filter(
+      (d) => !except.days.includes(d),
+    );
+    if (left.length === 0) return null;
+    return {
+      schedule: `${minute} ${hasTime ? hours : 8} * * ${left.join(',')}`,
+      prompt: text.trim(),
+    };
+  }
   if (/cada dia|todos los dias|diariamente/.test(normalised) && !hasTime) {
     return { schedule: '0 8 * * *', prompt: text.trim() };
   }
@@ -427,6 +441,25 @@ function daysOfWeek(normalised: string): string | null {
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
   const days = [...new Set(said.map((d) => DAY_VALUE[d] as number))].sort((a, b) => a - b);
   return days.join(',');
+}
+
+/** Los días quitados con «excepto / menos / salvo / quitando», y dónde empieza la excepción. */
+function exceptDays(normalised: string): { index: number; days: number[] } | null {
+  const m = new RegExp(
+    `\\b(?:excepto|menos|salvo|quitando|sin contar) (?:el |los )?(${DAY})((?:\\s*,\\s*(?:el |los )?(?:${DAY}))*(?:\\s+(?:y|ni) (?:el |los )?(?:${DAY}))?)\\b`,
+  ).exec(normalised);
+  if (!m) return null;
+  const said = `${m[1]} ${m[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
+  return { index: m.index, days: said.map((d) => DAY_VALUE[d] as number) };
+}
+
+/** «1-5» o «1,3,5» → los días, en números. */
+function expandDays(field: string): number[] {
+  return field.split(',').flatMap((part) => {
+    const [a, b] = part.split('-').map(Number);
+    if (b === undefined) return [a as number];
+    return Array.from({ length: b - (a as number) + 1 }, (_, i) => (a as number) + i);
+  });
 }
 
 /** «cada dos horas», «cada quince minutos»: numbers said in words in an interval. */
