@@ -178,6 +178,7 @@ import { InstinctStore } from './memory/instincts.js';
 import {
   correctionHint,
   forgetLearnedRule,
+  forgetRuleWords,
   formatLearnedRules,
   learnCorrectionsEnabled,
   learnedRules,
@@ -3703,6 +3704,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     return true;
   };
 
+  /** «olvida la regla 2»: lo mismo que /olvida 2 (sigue siendo escrito, nunca un botón). */
+  const forgetRuleByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = forgetRuleWords(inbound.text);
+    if (!n) return false;
+    const thread = await resolveThread(inbound);
+    await say(inbound, forgetLearnedRule(memory, memoryScopesFor(thread.key).read, n), {
+      quote: true,
+    });
+    return true;
+  };
+
   const cmdTopics = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const open = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -6677,7 +6689,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         reply: result.text,
         hinted: learnHint !== null,
         tainted: thread.gate.taintOf(thread.key) !== null,
-        // «(/olvida N para borrarla)» solo donde /olvida existe (Telegram y el panel).
+        // «(si no la quieres, dime «olvida la regla N»)» solo donde eso funciona (Telegram y el panel).
         forgetScopes:
           opts.out && opts.panel !== true ? undefined : memoryScopesFor(thread.key).read,
       });
@@ -7783,6 +7795,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (await backToMainByWords(inbound)) return;
           // «sí» tras «¿La paro y lo borro todo?»: para la tarea y borra el chat.
           if (await stopAndEraseByWords(inbound)) return;
+          // «olvida la regla 2» tras «📝 Aprendido: …»: la borra como /olvida 2.
+          if (await forgetRuleByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);
