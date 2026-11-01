@@ -92,11 +92,11 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     name: 'delegate',
     threadAllow: true,
-    note: 'subagentes y especialistas con Gate propia; pc/tv/hogar preguntan cada accion.',
+    note: 'subagentes y especialistas con Gate propia; notas/pc/tv/hogar preguntan cada accion que cambia algo.',
     deferred: {
       pattern: /delega|subagente|sub-agente|especialista|en paralelo|multi-?agente|varios agentes/i,
       purpose:
-        'pasar una tarea larga a un especialista (correo, calendario, web, pc, tv, hogar) o a un subagente aislado',
+        'pasar una tarea larga a un especialista (correo, calendario, notas, web, pc, tv, hogar) o a un subagente aislado',
     },
   },
   { name: LOADER_TOOL_NAME, threadAllow: true },

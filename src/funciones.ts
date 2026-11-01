@@ -271,7 +271,7 @@ export const TOOL_ABILITIES: Readonly<
   browser: { area: 'investigar', text: 'navego por webs y relleno formularios' },
   delegate: {
     area: 'investigar',
-    text: 'paso tareas largas a especialistas: correo, calendario, web, PC, tele y casa',
+    text: 'paso tareas largas a especialistas: correo, calendario, notas, web, PC, tele y casa',
   },
   book: { area: 'investigar', text: 'busco y descargo libros de dominio público' },
   documents: { area: 'investigar', text: 'guardo tus documentos y busco dentro de ellos' },

@@ -91,16 +91,22 @@ export function createChildGate(options: ChildGateOptions = {}, specialist?: Spe
 
 /**
  * Acciones que la Gate del hilo deja pasar sin preguntar y que tocan a un
- * especialista con efectos (copia de las de createDaemonGate para computer;
+ * especialista con efectos (copia de las de createDaemonGate para computer; las
+ * de memory/reminder solo leen, y el hilo deja libres esas herramientas enteras;
  * test: nunca mas libres que las del hilo).
  */
 const EFFECTFUL_FREE_ACTIONS: readonly string[] = Object.freeze([
   'computer:screenshot',
   'computer:move',
+  'memory:recall',
+  'memory:list',
+  'memory:get',
+  'memory:timeline',
+  'reminder:list',
 ]);
 
 /**
- * Gate de un especialista CON efectos (pc, tv, hogar). Las mismas reglas que la
+ * Gate de un especialista CON efectos (notas, pc, tv, hogar). Las mismas reglas que la
  * del hilo para sus herramientas, pero mas estricta en todo lo demas:
  * - NUEVA: sin dbPath (no lee ni guarda «Siempre»), sin memo de aprobaciones del
  *   padre, sin fullControl, ventana de gracia 0 e importe maximo 0.
