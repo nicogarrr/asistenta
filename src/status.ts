@@ -79,7 +79,7 @@ export function conversationStatus(c: {
     : c.project?.ok
       ? `Proyecto: carpeta «${projectFolderName(c.project.dir)}» (tengo en cuenta ${c.project.name}).`
       : `Proyecto: carpeta «${projectFolderName(c.projectDir)}», pero ahora no puedo leer nada: ${c.project?.ok === false ? c.project.reason : 'no hay fichero'}.`;
-  const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (elegido con /modelo)'}.`;
+  const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (el que elegiste)'}.`;
   return [project, model];
 }
 

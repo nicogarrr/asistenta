@@ -22,6 +22,6 @@ describe('fallos internos sin «registro»', () => {
 
   it('chat: los avisos de fallo no hablan del registro', () => {
     expect(formatters).not.toContain('Queda apuntado en el registro');
-    expect(formatters).toContain('no he podido terminar. Prueba otra vez o mira /estado.');
+    expect(formatters).toContain('no he podido terminar. Vuelve a intentarlo en un momento.');
   });
 });
