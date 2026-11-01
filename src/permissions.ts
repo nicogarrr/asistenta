@@ -1149,6 +1149,14 @@ export class Gate {
         match: (c) => c.tool === 'cuentas' && argString(c.args, 'action') === 'codigo_registro',
       },
       {
+        // Home Assistant (src/tools/casa.ts): encender, apagar o alternar un aparato de
+        // casa pregunta cada vez: un sí fresco, nunca de una aprobación anterior.
+        id: 'ask-casa-accion',
+        verdict: 'ask',
+        reason: 'enciende, apaga o cambia un aparato de casa',
+        match: (c) => c.tool === 'casa' && argString(c.args, 'action') !== 'estado',
+      },
+      {
         id: 'ask-servicio-instalar',
         verdict: 'ask',
         reason: 'installs an adopted third-party service on this machine',
@@ -1480,6 +1488,8 @@ export class Gate {
       ['confirmar_registro', 'codigo_registro', 'descartar'].includes(argString(c.args, 'action'))
     )
       return true;
+    // Encender o apagar algo de casa (Home Assistant), igual: un sí cada vez.
+    if (c.tool === 'casa' && argString(c.args, 'action') !== 'estado') return true;
     // Limpiar correo o darse de baja (el lote exacto de la vista previa): un sí fresco cada vez.
     if (c.tool === 'correo_reglas' && ['limpiar', 'baja'].includes(argString(c.args, 'action')))
       return true;
@@ -1664,6 +1674,9 @@ export class Gate {
         if (['resumen', 'reglas', 'bajas', 'limpiar_vista', 'baja_vista'].includes(a)) return 'lee';
         return a === 'crear' || a === 'borrar' ? 'escribe-local' : null;
       }
+      // Casa (Home Assistant): mirar el estado es lectura; lo demás es opaco y pregunta.
+      case 'casa':
+        return argString(c.args, 'action') === 'estado' ? 'lee' : null;
       // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
       // «Ya lo he recogido» marca el envío como entregado en la base local.
       case 'repartos':
@@ -2643,6 +2656,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'cuentas',
   'tareas',
   'correo_reglas',
+  'casa',
   'fetch',
   'write',
   'edit',
