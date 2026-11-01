@@ -234,6 +234,7 @@ export const TOOL_ABILITIES: Readonly<
   download: { area: 'audio', text: 'descargo un vídeo, un PDF o solo el audio de un enlace' },
   reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
+  gasolineras: { area: 'agenda', text: 'te digo las gasolineras más baratas y te aviso si bajan' },
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
   correo: {
     area: 'correo',

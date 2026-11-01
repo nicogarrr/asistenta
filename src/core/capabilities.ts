@@ -127,6 +127,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio.',
   },
   {
+    name: 'gasolineras',
+    note: 'gasolineras más baratas (API del Ministerio, sin clave): lectura por red; el aviso es una rutina local.',
+  },
+  {
     name: 'ocr_local',
     note: 'OCR local opcional (PA_OCR_LOCAL=1): lee una imagen/PDF de las carpetas permitidas; la Gate decide.',
   },

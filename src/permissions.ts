@@ -1687,6 +1687,10 @@ export class Gate {
       // «Ya lo he recogido» marca el envío como entregado en la base local.
       case 'repartos':
         return argString(c.args, 'recogido') ? 'escribe-local' : 'lee';
+      // «¿Dónde echo gasolina más barata?»: solo la API fija del Ministerio. El aviso
+      // «si baja de X» guarda (o quita) una rutina local del dueño.
+      case 'gasolineras':
+        return argString(c.args, 'aviso') ? 'escribe-local' : 'lee';
       // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
       case 'tareas':
         return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
@@ -2672,6 +2676,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'fabrica',
   'reminder',
   'vigilar_precio',
+  'gasolineras',
 ]);
 
 /**
