@@ -69,7 +69,7 @@ const COUNT_WORDS = Object.keys(COUNT_WORD_VALUE).join('|');
  * user never asked for. A bare `1/2` is not a date ("tomo 1/2 pastilla"); `el 15/11` is.
  */
 export const DATE_SIGNALS = new RegExp(
-  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
+  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) mes(?:es)?|mes que viene|proximo mes|fin(?:al)? del? mes|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
 );
 
 const DAY_MS = 86_400_000;
@@ -123,7 +123,12 @@ function nextDayMonth(now: number, month: number, day: number): number | null {
   const year = wallClock(new Date(now)).year;
   const thisYear = onDay(now, year, month, day);
   if (thisYear !== null && thisYear >= startOfToday(now)) return thisYear;
-  return onDay(now, year + 1, month, day);
+  // «el 29/2» en un año que no es bisiesto: el próximo que lo tiene (antes, a los siete días).
+  for (let ahead = 1; ahead <= 8; ahead++) {
+    const at = onDay(now, year + ahead, month, day);
+    if (at !== null) return at;
+  }
+  return null;
 }
 
 /** A day of the month with no month: this month, or the next month that has that day. */
@@ -150,6 +155,31 @@ export function estimateDueAt(text: string, now: number): number {
     const said = inN[1] ?? '';
     const n = /^\d+$/.test(said) ? Number(said) : (COUNT_WORD_VALUE[said] ?? 7);
     return plusDays(now, (inN[2] ?? '').startsWith('semana') ? 7 * n : n);
+  }
+  // «dentro de un mes», «en dos meses»: el mismo día N meses después (el 31 se queda en el
+  // último día del mes). «el mes que viene»: el día 1; «el 15 del mes que viene»: ese día.
+  // Antes ni se reconocían como fecha y, con otra señal, caían a los siete días.
+  const inMonths = new RegExp(
+    String.raw`\b(?:en|dentro de) (\d{1,2}|${COUNT_WORDS}) mes(?:es)?\b`,
+  ).exec(folded);
+  const nextMonth = /\b(?:(?:el|del) (?:dia )?(\d{1,2}) del )?(?:mes que viene|proximo mes)\b/.exec(
+    folded,
+  );
+  if (inMonths || nextMonth) {
+    const w = wallClock(new Date(now));
+    const said = inMonths?.[1] ?? '';
+    const ahead = inMonths
+      ? /^\d+$/.test(said)
+        ? Number(said)
+        : (COUNT_WORD_VALUE[said] ?? 1)
+      : 1;
+    const first = new Date(Date.UTC(w.year, w.month - 1 + ahead, 1));
+    const year = first.getUTCFullYear();
+    const month = first.getUTCMonth() + 1;
+    const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const day = inMonths ? Math.min(w.day, last) : Number(nextMonth?.[1] ?? 1);
+    const at = onDay(now, year, month, day);
+    if (at !== null) return at;
   }
   // «el 15/11», «el 15-11-2026», «el 15.11.2026»: en España se escriben con barra, guion o
   // punto. Antes solo la barra: «te pago el 10-01-2027» caía en el día 10 de este mes.
