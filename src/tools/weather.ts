@@ -53,7 +53,7 @@ export function createWeatherTool(
           return 'No pude consultar el tiempo ahora: el servicio no responde. Prueba en un rato.';
         }
         if (days.length === 0) return 'El servicio del tiempo no ha devuelto datos ahora.';
-        const lines = days.map((d, i) => `${dayName(d.date, i)}: ${d.text}`);
+        const lines = days.map((d, i) => `${dayName(d.date, d.offset ?? i)}: ${d.text}`);
         return `Tiempo${cfg.label ? ` en ${cfg.label}` : ''}:\n${lines.join('\n')}`;
       };
       return { content: [{ type: 'text', text: await text() }], details: {} };
