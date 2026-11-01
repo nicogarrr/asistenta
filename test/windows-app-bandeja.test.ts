@@ -78,6 +78,23 @@ describe('icono de la bandeja', () => {
     expect(tray).not.toMatch(/Get-Content[^\n]*grabando/);
   });
 
+  it('primer arranque sin .env: abre «Configurar Asistenta» (o espera al ya abierto) antes de encenderla', () => {
+    const i = tray.indexOf("Join-Path $app '.env'");
+    expect(i).toBeGreaterThan(0);
+    const bloque = tray.slice(i, tray.indexOf('\n}\n', i));
+    expect(bloque).toContain("-like '*configurar.mjs*'");
+    expect(bloque).toContain(
+      'Start-Process -FilePath $node -ArgumentList "`"$configurar`"" -WorkingDirectory $app -PassThru',
+    );
+    expect(bloque).toContain('-not $p.HasExited');
+    expect(tray).toContain("$configurar = Join-Path $app 'scripts\\windows-app\\configurar.mjs'");
+    // Va antes de encenderla: si no, la primera vez solo se vería el punto rojo.
+    expect(i).toBeLessThan(tray.lastIndexOf('Start-Asistenta;'));
+    expect(i).toBeGreaterThan(tray.indexOf('function Show-Aviso'));
+    // Sin secretos: no lee ni pasa claves, solo abre el asistente.
+    expect(bloque).not.toMatch(/vault|token|Get-Content/i);
+  });
+
   it('lleva BOM UTF-8 (PowerShell 5.1)', () => {
     expect([...ps1.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
   });
