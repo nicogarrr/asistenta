@@ -5062,9 +5062,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const m = /^(borrar|cancelar|quitar|del)\b\s*(.*)$/i.exec(args.trim());
     if (!m) {
       if (args.trim()) {
-        await say(inbound, 'Uso: /recordatorios ⬦ /recordatorios borrar <número o palabra>', {
-          quote: true,
-        });
+        await say(
+          inbound,
+          'No te he entendido. Con /recordatorios te enseño la lista, y para quitar uno escribe por ejemplo /recordatorios borrar 2. Para crear uno, dímelo sin más: «recuérdame mañana a las 9 llamar al taller».',
+          { quote: true },
+        );
         return;
       }
       await say(inbound, marksWithTitles(formatReminderRows(rows()), isReminderTitle), {
@@ -5268,7 +5270,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSearch = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const query = args.trim();
     if (!query) {
-      await say(inbound, 'Uso: /buscar <texto> para buscar en conversaciones pasadas.', {
+      await say(inbound, '¿Qué busco? Por ejemplo: /buscar presupuesto del taller.', {
         quote: true,
       });
       return;
@@ -5307,7 +5309,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'buscar' || sub === 'search') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
+        await say(inbound, '¿Qué busco en la memoria? Por ejemplo: /memoria buscar taller.', {
+          quote: true,
+        });
         return;
       }
       const hits = memory
@@ -5328,9 +5332,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
-          quote: true,
-        });
+        await say(
+          inbound,
+          '¿Cuál olvido? Dime el código que sale entre corchetes en /memoria, por ejemplo /memoria olvidar a1b2c3.',
+          {
+            quote: true,
+          },
+        );
         return;
       }
       const removed = memory.forgetIn(memoryScopesFor(thread.key).read, restText);
@@ -5374,7 +5382,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'Uso: /memoria [listar | buscar <texto> | revisar | olvidar <id> | exportar]',
+      'No te he entendido. Con /memoria te enseño lo que recuerdo; también puedo buscar (/memoria buscar taller), revisar contradicciones (/memoria revisar), olvidar algo (/memoria olvidar a1b2c3) o mandártela en un archivo (/memoria exportar).',
       {
         quote: true,
       },
@@ -5446,14 +5454,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ? `Perfil (${facts.length}):\n${facts
               .map((f) => `- [${f.id}] (${f.updatedAt.slice(0, 10)}) ${f.text}`)
               .join('\n')}`
-          : 'El perfil está vacío. Guarda algo con /perfil guardar <texto>.',
+          : 'El perfil está vacío. Guarda algo así: /perfil guardar soy alérgico a los frutos secos.',
         { quote: true },
       );
       return;
     }
     if (sub === 'guardar' || sub === 'add') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil guardar <texto>', { quote: true });
+        await say(
+          inbound,
+          '¿Qué guardo? Por ejemplo: /perfil guardar soy alérgico a los frutos secos.',
+          {
+            quote: true,
+          },
+        );
         return;
       }
       try {
@@ -5477,7 +5491,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil olvidar <id|texto>', { quote: true });
+        await say(
+          inbound,
+          '¿Qué borro? Dime el código entre corchetes o una palabra, por ejemplo /perfil olvidar frutos secos.',
+          { quote: true },
+        );
         return;
       }
       const removed = profile.forget(restText);
@@ -5510,7 +5528,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'Uso: /perfil [listar | guardar <texto> | buscar <texto> | olvidar <id|texto> | migrar | exportar]',
+      'No te he entendido. Con /perfil te enseño lo que sé de ti; también puedo guardar algo (/perfil guardar soy alérgico a los frutos secos), buscar (/perfil buscar alergia), olvidar algo (/perfil olvidar frutos secos) o mandártelo en un archivo (/perfil exportar).',
       { quote: true },
     );
   };

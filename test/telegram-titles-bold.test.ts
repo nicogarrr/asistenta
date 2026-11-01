@@ -19,7 +19,7 @@ const reminderList = [
   '1. llamar al **dentista** — mañana 9:00 (en 18 h)',
   '2. revisar `npm` y ``` — 3 nov (en 4 días) · se repite (0 9 * * 1)',
   '',
-  'Para borrar uno: /recordatorios borrar <número o palabra>',
+  'Para quitar uno, dime cuál: por ejemplo /recordatorios borrar 2, o «quita el del taller».',
 ].join('\n');
 
 const agendaText = [
@@ -47,7 +47,7 @@ describe('títulos en negrita con texto del usuario literal', () => {
     expect(html).not.toContain('<b>dentista</b>');
     expect(html).not.toContain('<code>');
     expect(html).not.toContain('<pre>');
-    expect(html).toContain('&lt;número o palabra&gt;');
+    expect(html).toContain('/recordatorios borrar 2, o «quita el del taller».');
     // Sin formato (Telegram rechaza el HTML) se ve igual que antes.
     const plain = stripMarks(marksWithTitles(reminderList, isReminderTitle));
     expect(plain.replace(/\u2060/g, '').replace(/\u02CB/g, '`')).toBe(reminderList);

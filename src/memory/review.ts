@@ -279,6 +279,8 @@ export function contradictionsReply(entries: ReadonlyArray<{ id: string; text: s
     lines.push(`${i + 1}. [${a.id}] ${a.text}`, `   [${b.id}] ${b.text}`);
   });
   if (pairs.length > REVIEW_SHOWN) lines.push(`… y ${pairs.length - REVIEW_SHOWN} más`);
-  lines.push('Si una ya no vale: /memoria olvidar <id>. Yo no borro nada por mi cuenta.');
+  lines.push(
+    'Si una ya no vale, dime cuál con el código entre corchetes, por ejemplo /memoria olvidar a1b2c3. Yo no borro nada por mi cuenta.',
+  );
   return lines.join('\n');
 }
