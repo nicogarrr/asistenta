@@ -833,7 +833,9 @@ function spokenTimes(folded: string): string {
       }
       if (hour < 0 || hour > 23 || !(minute >= 0 && minute <= 59)) return whole;
       const explicit = mm !== undefined || /h|hs|hrs|horas/.test(whole.slice(lead.length));
-      if (part === 'de la manana' || part === 'de la madrugada') {
+      if (part === 'de la manana') {
+        // «a las 12 de la mañana» es mediodía en España, no medianoche.
+      } else if (part === 'de la madrugada') {
         if (hour === 12) hour = 0;
       } else if (part === 'de la tarde' || part === 'del mediodia') {
         if (hour >= 1 && hour < 12) hour += 12;
