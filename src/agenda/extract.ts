@@ -992,6 +992,43 @@ function isCancellation(folded: string): boolean {
   return CANCELLED_RE.test(folded) && !RESCHEDULED_RE.test(folded);
 }
 
+/** Lo que dice un correo de cancelación: quién, cuándo lo envió y qué día (y hora) anula. */
+interface Cancelled {
+  from: string;
+  sent: number;
+  day: string;
+  minute?: number;
+}
+
+/** «Clínica <citas@clinica.es>» y «citas@clinica.es» son el mismo remitente. */
+function senderKey(from: string | undefined): string {
+  const raw = (from ?? '').trim().toLowerCase();
+  return /<([^>]+)>/.exec(raw)?.[1]?.trim() ?? raw;
+}
+
+/**
+ * Una cancelación quita la cita que apuntó un correo ANTERIOR del mismo remitente para
+ * ese mismo día; si las dos dicen hora, tiene que ser la misma. Antes la cancelación ya no
+ * se apuntaba, pero la cita del primer correo seguía en la agenda y llegaba el aviso.
+ */
+function cancels(
+  x: Cancelled,
+  c: ExtractedCommitment,
+  booked: number | undefined,
+  timeZone: string,
+): boolean {
+  if (!x.from || x.from !== senderKey(c.source.from)) return false;
+  if (x.day !== zonedDayKey(c.at, timeZone)) return false;
+  if (Number.isFinite(x.sent) && booked !== undefined && Number.isFinite(booked)) {
+    if (x.sent < booked) return false;
+  }
+  if (x.minute !== undefined && c.timed) {
+    const p = zonedParts(c.at, timeZone);
+    if (p.hour * 60 + p.minute !== x.minute) return false;
+  }
+  return true;
+}
+
 export function extractCommitments(
   messages: readonly MailMessage[],
   opts: ExtractOptions = {},
@@ -1002,20 +1039,35 @@ export function extractCommitments(
   const horizon = now + (opts.horizonDays ?? DEFAULT_HORIZON_DAYS) * DAY_MS;
   const ctx: Context = { now, timeZone };
   const found: ExtractedCommitment[] = [];
+  const cancelled: Cancelled[] = [];
+  const sentAt = new Map<string, number>();
 
   for (const message of messages) {
     const raw = `${message.subject ?? ''} ${message.text ?? ''}`;
     const folded = withoutTimeOfDay(spokenTimes(fold(raw)));
     if (!folded) continue;
-    // Un correo que cancela una cita no es una cita: antes se apuntaba y llegaba el aviso.
-    if (isCancellation(folded)) continue;
-
     // «mañana», «el viernes», «hoy» se cuentan desde el día en que se escribió el correo,
     // no desde hoy: un correo del viernes que dice «le esperamos mañana a las 10» leído
     // el domingo apuntaba una cita el lunes. Sin fecha fiable (o del futuro), desde hoy.
     const sent = message.at;
     const written =
       Number.isFinite(sent) && sent > 0 && sent <= now ? { now: sent, timeZone } : ctx;
+
+    // Un correo que cancela una cita no es una cita: antes se apuntaba y llegaba el aviso.
+    // Se recuerda qué día (y hora) cancela, para quitar la cita que apuntó otro correo.
+    if (isCancellation(folded)) {
+      const day = bestDate(folded, written);
+      if (day) {
+        const clock = timeNear(day, folded);
+        cancelled.push({
+          from: senderKey(message.from),
+          sent,
+          day: zonedDayKey(day.at, timeZone),
+          ...(clock ? { minute: clock.hour * 60 + clock.minute } : {}),
+        });
+      }
+      continue;
+    }
 
     // Filter 1: no date, no commitment. This one rule is what keeps "tu pedido ha sido
     // enviado" - the archetypal false positive - out of the agenda.
@@ -1060,6 +1112,7 @@ export function extractCommitments(
     });
     if (confidence < minConfidence) continue;
 
+    sentAt.set(message.id, sent);
     found.push({
       subject: summarize(message, signal?.kind ?? (expiry ? 'deadline' : 'other')),
       at,
@@ -1080,6 +1133,9 @@ export function extractCommitments(
     });
   }
 
-  found.sort((a, b) => a.at - b.at || a.subject.localeCompare(b.subject));
-  return found;
+  const kept = found.filter(
+    (c) => !cancelled.some((x) => cancels(x, c, sentAt.get(c.source.messageId), timeZone)),
+  );
+  kept.sort((a, b) => a.at - b.at || a.subject.localeCompare(b.subject));
+  return kept;
 }
