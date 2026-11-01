@@ -185,7 +185,7 @@ function clockOf(m: RegExpExecArray): { hour: number; minute: number } | null {
  * day of the week, an interval. Anything without one of those is not a schedule and
  * returns null, so a caller can fall back to asking rather than guessing at 3 a.m.
  */
-export function parseNatural(text: string): { schedule: string; prompt: string } | null {
+function parseNaturalCore(text: string): { schedule: string; prompt: string } | null {
   const normalised = foldAccents(text)
     .replace(/\s+/g, ' ')
     .trim()
@@ -503,6 +503,34 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   return null;
 }
 
+/**
+ * Turn an ordinary Spanish sentence into a schedule; see parseNaturalCore.
+ *
+ * «cada lunes a las 9 en diciembre», «de enero a marzo», «los lunes de diciembre»: el
+ * mes dicho junto al horario va al campo de meses. Antes se ignoraba y la rutina sonaba
+ * todo el año. Si el mes puede ser parte de la tarea («recuérdame comprar turrón en
+ * diciembre») o es una estación («en verano»), se pregunta.
+ */
+export function parseNatural(text: string): { schedule: string; prompt: string } | null {
+  const normalised = foldAccents(text).replace(/\s+/g, ' ').trim();
+  const said = monthsSaid(normalised);
+  if (said === null) return null;
+  if (!said) return parseNaturalCore(text);
+  const parsed = parseNaturalCore(
+    `${normalised.slice(0, said.start)} ${normalised.slice(said.end)}`.replace(/\s+/g, ' '),
+  );
+  if (!parsed) return null;
+  const fields = parsed.schedule.split(' ');
+  // «cada 25 de diciembre … en enero»: ya tiene mes y no casa; se pregunta.
+  if (fields.length !== 5 || fields[3] !== '*') return null;
+  const first = said.months[0] as number;
+  fields[3] =
+    said.months.length > 2 && said.months.every((m, i) => m === first + i)
+      ? `${first}-${said.months.at(-1)}`
+      : said.months.join(',');
+  return { schedule: fields.join(' '), prompt: text.trim() };
+}
+
 const DAY_VALUE: Record<string, number> = {
   lunes: 1,
   martes: 2,
@@ -641,3 +669,50 @@ const INTERVAL_WORD_VALUE: Record<string, number> = {
   treinta: 30,
 };
 const INTERVAL_WORDS = Object.keys(INTERVAL_WORD_VALUE).join('|');
+
+const MONTH = MONTH_NAMES.join('|');
+const SEASON = /\b(?:en|durante|todo) (?:el |la )?(?:verano|invierno|primavera|otono)\b/;
+/** Lo que deja claro que lo que sigue aún es el horario: una hora, un día, un intervalo. */
+const SCHEDULE_TAIL = new RegExp(
+  `(?:^|^solo|^solamente|\\d|\\bh|\\bhoras?|\\bmin(?:utos)?|\\b(?:manana|tarde|noche|madrugada|mediodia|medianoche|punto|media|cuarto)|\\b(?:${DAY})|\\bdias|\\blaborables?|\\bhabiles|\\bsemana|\\bfind(?:e|es)|\\bdiario|\\bdiariamente|\\ba las? [a-z]+)$`,
+);
+
+/**
+ * El mes que restringe una rutina: { months, start, end } con el trozo a quitar;
+ * undefined si no se dice; null si no está claro (estación, o mes que puede ser tarea).
+ */
+function monthsSaid(
+  normalised: string,
+): { months: number[]; start: number; end: number } | null | undefined {
+  const month = (name: string | undefined): number => MONTH_NAMES.indexOf(name ?? '') + 1;
+  const ofDay = new RegExp(`\\b(?:${DAY}|dias|laborables) (de (${MONTH}))\\b`).exec(normalised);
+  if (ofDay?.[1]) {
+    const start = ofDay.index + ofDay[0].length - ofDay[1].length;
+    return { months: [month(ofDay[2])], start, end: start + ofDay[1].length };
+  }
+  const range = new RegExp(
+    `\\b(?:(?:de|desde) (${MONTH}) (?:a|hasta) (${MONTH})|entre (${MONTH}) y (${MONTH}))\\b`,
+  ).exec(normalised);
+  const list = new RegExp(
+    `\\b(?:(?:solo|solamente|unicamente) )?(?:en|durante|todo)(?: el mes de)? (${MONTH})(?:(?:, | y )(${MONTH}))?\\b`,
+  ).exec(normalised);
+  const found = range ?? list;
+  if (!found) return SEASON.test(normalised) ? null : undefined;
+  // «el 1 de enero a marzo …» empieza por una fecha; «a las 8 de enero a marzo», no.
+  const head = normalised.slice(0, found.index);
+  if (range && /\d $/.test(head) && !/\ba las? \d{1,2}(?:[:.]\d{2})? $/.test(head))
+    return undefined;
+  const before = normalised.slice(0, found.index).replace(/[\s,]+$/, '');
+  if (!SCHEDULE_TAIL.test(before) || SEASON.test(normalised)) return null;
+  let months: number[];
+  if (range) {
+    const from = month(range[1] ?? range[3]);
+    const to = month(range[2] ?? range[4]);
+    months = [];
+    for (let m = from; months.length < 12; m = (m % 12) + 1) {
+      months.push(m);
+      if (m === to) break;
+    }
+  } else months = [...new Set([month(found[1]), ...(found[2] ? [month(found[2])] : [])])];
+  return { months, start: found.index, end: found.index + found[0].length };
+}

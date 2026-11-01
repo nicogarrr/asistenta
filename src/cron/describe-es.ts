@@ -30,6 +30,38 @@ function daysEs(dow: string): string | null {
   return `los ${plural.slice(0, -1).join(', ')} y ${plural.at(-1)}`;
 }
 
+const MONTH = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+
+/** «en diciembre», «de enero a marzo», «en julio y agosto»; null si no se sabe decir. */
+function monthsEs(mon: string): string | null {
+  const range = /^(\d{1,2})-(\d{1,2})$/.exec(mon);
+  const list = range
+    ? Array.from(
+        { length: Number(range[2]) - Number(range[1]) + 1 },
+        (_, i) => Number(range[1]) + i,
+      )
+    : mon.split(',').map(Number);
+  if (list.length === 0 || list.some((x) => !Number.isInteger(x) || x < 1 || x > 12)) return null;
+  const names = list.map((x) => MONTH[x - 1] as string);
+  if (names.length === 1) return `en ${names[0]}`;
+  const inRow = list.every((x, i) => i === 0 || x === ((list[i - 1] as number) % 12) + 1);
+  if (inRow && names.length > 2) return `de ${names[0]} a ${names.at(-1)}`;
+  return `en ${names.slice(0, -1).join(', ')} y ${names.at(-1)}`;
+}
+
 /** «cada 30 min de 09:00 a 14:00», «cada 2 horas de 08:00 a 20:00»; null si no se sabe decir. */
 function intervalEs(m: string, h: string, minute: number | null): string | null {
   const range = /^(\d{1,2})-(\d{1,2})(?:\/(\d{1,2}))?$/.exec(h);
@@ -52,6 +84,12 @@ export function scheduleEs(schedule: string): string | null {
   const f = schedule.trim().split(/\s+/);
   if (f.length !== 5) return null;
   const [m = '', h = '', dom = '', mon = '', dow = ''] = f;
+  // «0 9 * 12 1»: rutina solo en unos meses («, en diciembre»). Antes salía el cron crudo.
+  if (mon !== '*' && dom === '*') {
+    const months = monthsEs(mon);
+    const rest = scheduleEs([m, h, dom, '*', dow].join(' '));
+    return months && rest ? `${rest}, ${months}` : null;
+  }
   const minute = num(m, 59);
   // «9,21»: varias tomas al día («a las 9 y a las 21»). Antes no se sabía decir y la
   // lista ponía «se repite con un horario propio».
