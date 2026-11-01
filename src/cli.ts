@@ -503,6 +503,7 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { LIVE_BUSY_TEXT, LIVE_STOPPED_TEXT, liveCaption, liveStopAnswer } from './vista-directo.js';
 import { createAloudSpeaker } from './voice/aloud.js';
 import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
@@ -5854,15 +5855,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   ): Promise<string> => {
     const chatId = inbound.chatId;
     const announce = opts.announce !== false;
-    const caption =
-      source === 'camera'
-        ? 'Camara en directo, se actualiza sola. /camera off para parar.'
-        : 'Pantalla en directo, se actualiza sola. /screen off para parar.';
+    const caption = liveCaption(source);
 
     if (liveViews.has(chatId)) {
       // A second request must not silently replace the first view: two loops writing
       // to two different messages both look like a broken feed.
-      const note = 'Ya hay una vista en directo. Para pararla, /screen off o /camera off.';
+      const note = LIVE_BUSY_TEXT;
       if (announce) await say(inbound, note, { quote: true });
       return note;
     }
@@ -5905,6 +5903,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     timer.unref();
     liveViews.set(chatId, { timer, messageId: id });
     return caption;
+  };
+
+  /** «para» mientras hay una vista en directo en el chat: la para sin pasar por el modelo. */
+  const stopLiveByWords = async (inbound: Inbound): Promise<boolean> => {
+    if (!liveViews.has(inbound.chatId) || !liveStopAnswer(inbound.text)) return false;
+    stopLiveView(inbound.chatId);
+    await say(inbound, LIVE_STOPPED_TEXT, { quote: true });
+    return true;
   };
 
   const stopLiveView = (chatId: string): void => {
@@ -7677,6 +7683,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await cmdOcr(inbound, 'md');
             return;
           }
+          // «para» con una vista en directo abierta en este chat: la para como /screen off.
+          if (await stopLiveByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);
