@@ -522,7 +522,7 @@ export async function runAutoupdate(
     await deps.notify(notice.text).catch(() => {});
     return done(
       'actualizada',
-      `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} cambios)`,
+      `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} ${subjects.length === 1 ? 'cambio' : 'cambios'})`,
     );
   } finally {
     unlock(stateDir);
