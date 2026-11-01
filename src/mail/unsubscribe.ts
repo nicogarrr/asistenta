@@ -90,7 +90,7 @@ export function describeTarget(t: UnsubTarget, n: number): string {
       : t.metodo === 'correo'
         ? `baja por correo a ${t.destino.split('?')[0]} (te enseñaré el borrador)`
         : 'solo enlace: te lo paso para que lo abras tú';
-  return `${n}. ${t.remitente} (${t.correos} correos): ${how}`;
+  return `${n}. ${t.remitente} (${t.correos} ${t.correos === 1 ? 'correo' : 'correos'}): ${how}`;
 }
 
 export function saveUnsubBatch(objetivos: UnsubTarget[], now: number): UnsubBatch {

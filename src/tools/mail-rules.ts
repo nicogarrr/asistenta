@@ -162,6 +162,9 @@ function top(list: ScannedMail[], n = 3): string {
     .join(', ');
 }
 
+/** «1 correo», «3 correos». */
+const correos = (n: number): string => `${n} ${n === 1 ? 'correo' : 'correos'}`;
+
 export function summarize(mails: ScannedMail[], rulesFile: string): string {
   const rules = loadRules(rulesFile);
   const by = new Map<MailCategory, ScannedMail[]>();
@@ -178,7 +181,9 @@ export function summarize(mails: ScannedMail[], rulesFile: string): string {
     const rule = matchRule(rules, { from: m.from, subject: m.subject, category: r.category });
     if (rule) ruled.set(rule.id, (ruled.get(rule.id) ?? 0) + 1);
   }
-  const lines = [`He mirado ${mails.length} correos recientes:`];
+  const lines = [
+    `He mirado ${mails.length === 1 ? '1 correo reciente' : `${mails.length} correos recientes`}:`,
+  ];
   for (const c of ['publicidad', 'notificacion', 'spam', 'personal', 'importante'] as const) {
     const list = by.get(c) ?? [];
     if (list.length === 0) continue;
@@ -189,7 +194,7 @@ export function summarize(mails: ScannedMail[], rulesFile: string): string {
   for (const s of suspects) lines.push(`⚠️ posible estafa: ${s}`);
   for (const rule of rules) {
     const n = ruled.get(rule.id);
-    if (n) lines.push(`Regla ${describeRule(rule)}: ${n} correos.`);
+    if (n) lines.push(`Regla ${describeRule(rule)}: ${correos(n)}.`);
   }
   lines.push('No he movido ni borrado nada.');
   return lines.join('\n');
@@ -257,7 +262,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
               batch.accion,
               batch.uidValidity,
             );
-            return `Hecho: ${r.moved} correos (${MOVE_TARGET_LABEL[batch.accion]}, carpeta «${r.folder}»). Nada se ha borrado para siempre.`;
+            return `Hecho: ${correos(r.moved)} (${MOVE_TARGET_LABEL[batch.accion]}, carpeta «${r.folder}»). Nada se ha borrado para siempre.`;
           } catch (err) {
             return mailMoveFailText(err);
           }
@@ -322,7 +327,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
               accion: args.destino as MoveTarget | undefined,
             });
             if (picked.length === 0)
-              return `He mirado ${mails.length} correos: no hay nada que limpiar con eso.`;
+              return `He mirado ${correos(mails.length)}: no hay nada que limpiar con eso.`;
             const resumen = describeSelection(picked, accion);
             const batch = saveBatch(
               {

@@ -95,7 +95,9 @@ export function formatStatus(s: StatusInfo): string {
   } else if (s.log.errors === 0 && s.log.warns === 0) {
     lines.push('Log de hoy: sin avisos ni errores.');
   } else {
-    lines.push(`Log de hoy: ${s.log.errors} errores, ${s.log.warns} avisos.`);
+    lines.push(
+      `Log de hoy: ${s.log.errors} ${s.log.errors === 1 ? 'error' : 'errores'}, ${s.log.warns} ${s.log.warns === 1 ? 'aviso' : 'avisos'}.`,
+    );
     for (const e of s.log.recentErrors) lines.push(`- ${e}`);
   }
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);
