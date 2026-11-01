@@ -19,6 +19,7 @@ import { PersonalAgent } from '../core/agent.js';
 import { Store } from '../db.js';
 import { MemoryStore } from '../memory.js';
 import { type Decision, Gate, type ToolCall as GateCall } from '../permissions.js';
+import { sliceSafe } from '../text.js';
 import { createCalendarTool } from '../tools/calendar.js';
 import { createMemoryTool } from '../tools/memory.js';
 import { createReminderTool } from '../tools/reminder.js';
@@ -91,7 +92,7 @@ export function argsText(args: unknown): string {
     const s = JSON.stringify(v) ?? '';
     if (s.length <= ARGS_TEXT_MAX) return s;
     const half = ARGS_TEXT_MAX / 2;
-    return `${s.slice(0, half)}…${s.slice(-half)}`;
+    return `${sliceSafe(s, half)}…${s.slice(-half)}`;
   } catch {
     return '';
   }

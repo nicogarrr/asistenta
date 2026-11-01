@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { STATE_DIR } from '../paths.js';
+import { sliceSafe } from '../text.js';
 import { MOVE_TARGET_LABEL, type MoveTarget } from './move.js';
 import { type MailRule, matchRule } from './rules.js';
 import type { ScannedMail } from './scan.js';
@@ -110,7 +111,7 @@ export function describeSelection(
     [...byCat.entries()].map(([c, n]) => `${CATEGORY_LABEL[c]} ${n}`).join(', ') || 'Nada.',
   );
   const text = lines.join('\n');
-  return text.length > MAX_SUMMARY ? `${text.slice(0, MAX_SUMMARY - 1)}…` : text;
+  return text.length > MAX_SUMMARY ? `${sliceSafe(text, MAX_SUMMARY - 1)}…` : text;
 }
 
 /** Guarda el lote para que «sí» actúe sobre esta lista exacta. Devuelve su id. */

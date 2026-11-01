@@ -19,6 +19,7 @@
  * memory action=get with the [id] on the row.
  */
 import type { MemoryEntry } from '../memory.js';
+import { sliceSafe } from '../text.js';
 
 /** Hard ceiling for a rendered timeline page, header and tail included. */
 export const TIMELINE_CAP = 3000;
@@ -62,7 +63,7 @@ export function isValidISODate(s: string): boolean {
 }
 
 const snip = (text: string) =>
-  text.length > TIMELINE_SNIPPET ? `${text.slice(0, TIMELINE_SNIPPET)}…` : text;
+  text.length > TIMELINE_SNIPPET ? `${sliceSafe(text, TIMELINE_SNIPPET)}…` : text;
 
 /**
  * Every row is bounded so one row + header + tail ALWAYS fits the cap (the
@@ -92,7 +93,7 @@ function timelineRow(e: MemoryEntry, budget: number): string {
   const hiddenTags = e.tags.length - tagsShown;
   const tagsNote = hiddenTags > 0 ? ` (+${hiddenTags} tags)` : '';
   const snipRoom = room - tagsLen;
-  const textPart = snipRoom > 8 ? ` ${snip(e.text).slice(0, snipRoom)}…` : '';
+  const textPart = snipRoom > 8 ? ` ${sliceSafe(snip(e.text), snipRoom)}…` : '';
   return `${prefix} ${tagPieces.slice(0, tagsShown).join(' ')}${tagsNote}${textPart} …${mark}`;
 }
 

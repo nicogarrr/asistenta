@@ -18,6 +18,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { log } from './log.js';
+import { sliceSafe } from './text.js';
 import { type FileEvent, FileWatcher } from './watch/files.js';
 
 const SETTING_KEY = 'downloads_enabled';
@@ -118,7 +119,7 @@ export function safeName(name: string): string {
     .replace(/[\p{C}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return clean.length > NAME_MAX ? `${clean.slice(0, NAME_MAX - 1)}…` : clean || '(sin nombre)';
+  return clean.length > NAME_MAX ? `${sliceSafe(clean, NAME_MAX - 1)}…` : clean || '(sin nombre)';
 }
 
 const NOISE_NAMES = new Set(['desktop.ini', 'thumbs.db', '.ds_store']);

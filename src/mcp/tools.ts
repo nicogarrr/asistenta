@@ -13,6 +13,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 import {
   McpClient,
   type McpPromptInfo,
@@ -567,7 +568,7 @@ function commandLine(text: string): string {
         : ch;
   }
   out = out.replace(/\s+/g, ' ').trim();
-  return out.length > MCP_COMMAND_TEXT ? `${out.slice(0, MCP_COMMAND_TEXT - 1)}…` : out;
+  return out.length > MCP_COMMAND_TEXT ? `${sliceSafe(out, MCP_COMMAND_TEXT - 1)}…` : out;
 }
 
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {

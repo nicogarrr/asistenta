@@ -14,6 +14,7 @@ import {
 } from '../agenda/sources.js';
 import { localTimeZone, wallClock } from '../datecontext.js';
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * Calendar agenda from the secret iCal address.
@@ -91,7 +92,7 @@ function clip(value: string | undefined, limit: number): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
+  return trimmed.length > limit ? `${sliceSafe(trimmed, limit - 1)}…` : trimmed;
 }
 
 const pad2 = (value: number): string => String(value).padStart(2, '0');

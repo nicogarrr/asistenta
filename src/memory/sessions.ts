@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { memoryScopesFor } from '../memory.js';
+import { sliceSafe } from '../text.js';
 
 /** One conversation. `endedAt` stays null while the session is still open. */
 export interface Session {
@@ -191,7 +192,7 @@ function matchQuery(query: string): string {
 function windowSnippet(text: string, needle: string): string {
   const lowered = needle.toLowerCase();
   const at = text.toLowerCase().indexOf(lowered);
-  if (at < 0) return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  if (at < 0) return text.length > 80 ? `${sliceSafe(text, 80)}…` : text;
   const start = Math.max(0, at - 30);
   const end = Math.min(text.length, at + needle.length + 30);
   return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;

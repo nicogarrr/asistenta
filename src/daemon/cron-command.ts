@@ -28,7 +28,7 @@ import {
   type RoutineDeliveryStore,
 } from '../routine-delivery.js';
 import { type RoutineRunner, validateSchedule } from '../routines.js';
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 import { isReminder } from '../tools/reminder.js';
 import type { PreguntaOpts } from './pregunta-pendiente.js';
 
@@ -568,7 +568,7 @@ export function commandRoutineTag(
   if (!spec || !isApproved(spec)) return ' ⚙️ comando, sin aprobar (no se ejecuta)';
   if (!enabled) return ' ⚙️ comando, apagado (PA_CRON_COMANDOS=1 para activarlo)';
   const shown = displayArgv(spec.argv);
-  return ` ⚙️ comando: ${shown.length > 60 ? `${shown.slice(0, 59)}…` : shown}`;
+  return ` ⚙️ comando: ${shown.length > 60 ? `${sliceSafe(shown, 59)}…` : shown}`;
 }
 
 export function nextRunLabel(

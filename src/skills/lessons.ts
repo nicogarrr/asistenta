@@ -11,6 +11,8 @@
  * agent as autonomous as possible) into the `lecciones` category, where they can be
  * read, edited or deleted like any skill; `lintSkill` flags the ones that look off.
  */
+
+import { sliceSafe } from '../text.js';
 import { plainInline } from '../utils.js';
 import { type SkillStore, slugify } from './store.js';
 import type { SkillDraft } from './types.js';
@@ -151,7 +153,7 @@ export function skillsIndex(
         .trim();
       const clipped =
         hint.length > SKILLS_INDEX_LINE_CHARS
-          ? `${hint.slice(0, SKILLS_INDEX_LINE_CHARS - 1)}…`
+          ? `${sliceSafe(hint, SKILLS_INDEX_LINE_CHARS - 1)}…`
           : hint;
       return `- ${s.id}: ${clipped}`;
     });

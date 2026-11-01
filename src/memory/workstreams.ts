@@ -19,6 +19,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { sliceSafe } from '../text.js';
 import { plainInline } from '../utils.js';
 
 export type WorkstreamStatus = 'active' | 'paused' | 'done' | 'forgotten';
@@ -129,7 +130,7 @@ export function fitItems(text: string, max: number): string {
 }
 
 function clip(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  return text.length <= max ? text : `${sliceSafe(text, max - 1)}…`;
 }
 
 /** One line per workstream in the prompt index: no embedded newlines. */
