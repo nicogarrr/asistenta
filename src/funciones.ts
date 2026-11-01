@@ -267,7 +267,10 @@ export const TOOL_ABILITIES: Readonly<
   fetch: { area: 'investigar', text: 'leo la página que me pases' },
   boe: { area: 'investigar', text: 'miro el BOE y te aviso si sale algo de un tema' },
   browser: { area: 'investigar', text: 'navego por webs y relleno formularios' },
-  delegate: { area: 'investigar', text: 'reparto búsquedas largas entre ayudantes que solo leen' },
+  delegate: {
+    area: 'investigar',
+    text: 'paso tareas largas a especialistas: correo, calendario, web, PC, tele y casa',
+  },
   book: { area: 'investigar', text: 'busco y descargo libros de dominio público' },
   documents: { area: 'investigar', text: 'guardo tus documentos y busco dentro de ellos' },
   renfe: { area: 'investigar', text: 'busco trenes de Renfe con horario y precio' },
