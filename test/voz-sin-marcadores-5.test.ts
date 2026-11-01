@@ -13,7 +13,7 @@ describe('respuestas naturales, sin <marcadores> (5): tele, rutinas programadas 
   it('/tv sin orden: pregunta qué hacer y da ejemplos', () => {
     expect(TV_CHAT_USAGE).not.toMatch(MARCADOR);
     expect(TV_CHAT_USAGE).toMatch(
-      /^¿Qué hago con la tele\? Dímelo con palabras, por ejemplo: \/tv apaga la tele/,
+      /^¿Qué hago con la tele\? Dímelo con palabras, por ejemplo: «apaga la tele»/,
     );
   });
 

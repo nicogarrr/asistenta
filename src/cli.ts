@@ -458,6 +458,7 @@ import { tvRequest } from './tv/lgtv.js';
 import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
+  isTvOrder,
   TV_BUTTONS_TITLE,
   tvButtonCommand,
   tvButtons,
@@ -3868,7 +3869,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
       const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
       if (!victim) {
-        await say(inbound, '¿Cuál quito? Dime su número.', { quote: true });
+        if (!scoped.length) {
+          await say(inbound, 'No tienes disparadores que quitar.', { quote: true });
+          return;
+        }
+        // La respuesta normal («el 2») completa el /disparador del (Nico, 1 nov).
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => {
+            const k = Number(/^(?:el\s+|la\s+)?(\d+)[.!]*$/i.exec(t.trim())?.[1]);
+            return Number.isInteger(k) && k >= 1 && k <= scoped.length ? `del ${k}` : null;
+          },
+        });
+        await say(inbound, `¿Cuál quito? Dime su número.\n${formatTriggerList(scoped)}`, {
+          quote: true,
+        });
         return;
       }
       store.deleteTrigger(victim.id);
@@ -3889,6 +3903,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const parsed = parseTriggerAdd(args.trim());
     if (!parsed.ok) {
+      preguntas.ask(chatKey_, 'disparador', { accepts: (t) => parseTriggerAdd(t).ok });
       await say(inbound, parsed.error, { quote: true });
       return;
     }
@@ -3899,7 +3914,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!routine) {
       await say(
         inbound,
-        `No tengo ninguna rutina llamada "${routineName}". Grábala primero con /learn ${routineName}.`,
+        `No tengo ninguna rutina llamada "${routineName}". Enséñamela primero y luego la engancho a este disparador.`,
         { quote: true },
       );
       return;
@@ -3927,11 +3942,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createdAt: '',
     });
     if (!probe.ok) {
+      if (isMacroName(routineName)) {
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${args.trim()} ${t}` : null),
+        });
+      }
       await say(
         inbound,
         `Esa rutina no se puede disparar por evento: ${probe.error}. ` +
           (isMacroName(routineName)
-            ? `Pasa sus parámetros fijos: /disparador ${args.trim()} clave=valor.`
+            ? 'Dime sus parámetros fijos como clave=valor, por ejemplo «fichero=documentos», y lo guardo.'
             : ''),
         { quote: true },
       );
@@ -3948,7 +3968,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       `Disparador guardado: cuando [${event}] contenga "${match}", disparo "${routine.name}" ` +
-        `(mínimo cada ${saved.cooldownSeconds}s). Lo ves con /disparadores.`,
+        `(mínimo cada ${saved.cooldownSeconds}s). Lo verás en la lista de disparadores.`,
       { quote: true },
     );
   };
@@ -5022,21 +5042,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const key = chatKey(inbound);
     const parsed = parseAltavozArgs(args);
+    // La respuesta normal («por la tele», «apágalo») completa el /altavoz (Nico, 1 nov).
+    const askAltavoz = () =>
+      preguntas.ask(key, 'altavoz', { accepts: (t) => parseAltavozArgs(t).kind === 'set' });
     if (parsed.kind === 'error') {
+      askAltavoz();
       await say(inbound, ALTAVOZ_USAGE, { quote: true });
       return;
     }
     if (parsed.kind === 'set') {
       if (parsed.mode === 'tele' && !audioTeleEnabled()) {
+        askAltavoz();
         await say(
           inbound,
-          'La tele no está activada para audio. Pon PA_AUDIO_TELE=1 en el .env y reinicia; mientras, /altavoz pc.',
+          'La tele no está activada para audio: hace falta PA_AUDIO_TELE=1 en el .env y reiniciar. Mientras, si quieres, te hablo por el PC: dime «por el PC».',
           { quote: true },
         );
         return;
       }
       altavoz.set(key, parsed.mode);
     }
+    askAltavoz();
     await say(inbound, altavozStatusText(altavoz.get(key)), { quote: true });
   };
 
@@ -5113,6 +5139,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const reply = await tvChatCommand(args, { isOwner, run: runTvOrder });
+    // Si no la entendió, la siguiente orden dicha normal («bájale el volumen») completa el /tv.
+    if (isOwner && reply.startsWith('No he entendido «')) {
+      preguntas.ask(chatKey(inbound), 'tv', { accepts: isTvOrder });
+    }
     await say(inbound, reply, { quote: true });
   };
 
@@ -5127,6 +5157,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
       save: (on) => saveComputerSwitch(paths.state, on),
       offSaved: () => computerOffSaved(paths.state),
+      ask: (opts) => preguntas.ask(chatKey(inbound), 'ordenador', opts),
     });
     await say(inbound, reply, { quote: true });
   };

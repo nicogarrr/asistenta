@@ -31,7 +31,7 @@ describe('natural.ts: órdenes con hora no se ejecutan al momento', () => {
     expect(parseTvCommand(text)).toBeNull();
   });
 
-  it('/tv con hora no toca la tele y explica que se pida sin /tv', async () => {
+  it('/tv con hora no toca la tele y explica que se pida como mensaje normal', async () => {
     let ran = 0;
     const out = await tvChatCommand('apaga la tele en 10 minutos', {
       isOwner: true,
@@ -42,7 +42,7 @@ describe('natural.ts: órdenes con hora no se ejecutan al momento', () => {
     });
     expect(ran).toBe(0);
     expect(out).toContain('lleva hora');
-    expect(out).toContain('sin /tv');
+    expect(out).toContain('Escríbemelo como un mensaje normal');
   });
 
   it.each([

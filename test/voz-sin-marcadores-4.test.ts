@@ -20,7 +20,7 @@ describe('respuestas naturales, sin <marcadores> (4): avisos, rutinas, habilidad
     for (const t of [ALTAVOZ_USAGE, MCP_COMMAND_USAGE, COMPUTER_SWITCH_USAGE]) {
       expect(t).not.toMatch(MARCADOR);
     }
-    expect(COMPUTER_SWITCH_USAGE).toContain('/ordenador on me deja');
+    expect(COMPUTER_SWITCH_USAGE).toContain('Dime «enciéndelo» o «apágalo»');
   });
 
   it('/disparador mal escrito: pide lo que falta con dos ejemplos', () => {
@@ -28,7 +28,7 @@ describe('respuestas naturales, sin <marcadores> (4): avisos, rutinas, habilidad
     expect(r.ok).toBe(false);
     const error = r.ok ? '' : r.error;
     expect(error).not.toMatch(MARCADOR);
-    expect(error).toContain('/disparador archivo .pdf | macro/archiva fichero=documentos');
+    expect(error).toContain('«archivo .pdf | macro/archiva fichero=documentos»');
   });
 
   it('/skills buscar: el pie no enseña <url>', () => {
