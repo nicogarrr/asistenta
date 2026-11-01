@@ -127,7 +127,7 @@ describe('«reprodúcelo en la tele»: /stop mientras la tele abre el audio', ()
         volumeSet: 100,
         volumeRestoredTo: 35,
         restoreStatus: 'restored',
-        detail: 'parado con /stop',
+        detail: 'lo paraste tú',
       };
     });
     const res = await tool({}).execute('c', { action: 'play' }, ac.signal);

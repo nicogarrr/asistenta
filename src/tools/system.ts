@@ -189,8 +189,8 @@ export function playbackRestoreText(
   return `He dejado el volumen como estaba (${result.volumeRestoredTo}%).`;
 }
 
-/** Motivo cuando /stop corta la reproducción en el PC. */
-const STOPPED_DETAIL = 'parado con /stop';
+/** Motivo cuando Nico para el chat y se corta la reproducción en el PC (sin nombrar comandos). */
+export const STOPPED_DETAIL = 'lo paraste tú';
 
 export async function playAudioFile(
   file: string,
