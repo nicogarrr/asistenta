@@ -15,6 +15,7 @@ import { Gate } from '../permissions.js';
 import { createDelegateTool } from '../tools/delegate.js';
 import type { AgentRunResult } from './agent.js';
 import { PersonalAgent } from './agent.js';
+import type { SpecialistSpec } from './specialists.js';
 import { SubagentPool, type SubagentPoolOptions } from './subagent.js';
 import {
   type ChildHandle,
@@ -56,10 +57,25 @@ export interface ChildGateOptions {
 /**
  * Gate del hijo. Sin `approver`: `ask` termina en deny. Sin `dbPath`: no lee los
  * "Siempre" del padre. Sin fullControl. Importe maximo 0.
+ *
+ * Con un especialista sin efectos: permite sus herramientas sin acciones que
+ * esten en SUBAGENT_SAFE_TOOLS y, de las acotadas por acciones, solo esos pares
+ * `herramienta:accion`. Todo lo demas sigue en `deny` o acaba en deny (sin approver).
  */
-export function createChildGate(options: ChildGateOptions = {}): Gate {
+export function createChildGate(options: ChildGateOptions = {}, specialist?: SpecialistSpec): Gate {
+  const allow = specialist
+    ? specialist.tools.filter(
+        (name) => specialist.actions?.[name] === undefined && SUBAGENT_SAFE_TOOLS.includes(name),
+      )
+    : [...SUBAGENT_SAFE_TOOLS];
+  const allowActions = specialist
+    ? Object.entries(specialist.actions ?? {}).flatMap(([tool, actions]) =>
+        specialist.tools.includes(tool) ? actions.map((action) => `${tool}:${action}`) : [],
+      )
+    : [];
   return new Gate({
-    allow: [...SUBAGENT_SAFE_TOOLS],
+    allow,
+    ...(allowActions.length > 0 ? { allowActions } : {}),
     deny: [...SUBAGENT_DENIED_TOOLS],
     protectedPaths: options.protectedPaths ?? [],
     secretPaths: options.secretPaths ?? [],
@@ -97,7 +113,7 @@ export function createChildFactory(
     options.createAgent ??
     ((config, tools, gate, actor, opts) => PersonalAgent.create(config, tools, gate, actor, opts));
   return async (spec) => {
-    const gate = createChildGate(options);
+    const gate = createChildGate(options, spec.specialist);
     const config: Config = {
       ...options.config,
       maxToolCalls: Math.max(0, Math.min(spec.maxToolCalls, options.config.maxToolCalls)),
