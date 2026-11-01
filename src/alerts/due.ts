@@ -69,7 +69,7 @@ const COUNT_WORDS = Object.keys(COUNT_WORD_VALUE).join('|');
  * user never asked for. A bare `1/2` is not a date ("tomo 1/2 pastilla"); `el 15/11` is.
  */
 export const DATE_SIGNALS = new RegExp(
-  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:el|del|hasta el) \d{1,2}/\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
+  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
 );
 
 const DAY_MS = 86_400_000;
@@ -151,11 +151,13 @@ export function estimateDueAt(text: string, now: number): number {
     const n = /^\d+$/.test(said) ? Number(said) : (COUNT_WORD_VALUE[said] ?? 7);
     return plusDays(now, (inN[2] ?? '').startsWith('semana') ? 7 * n : n);
   }
-  const slash = /\b(?:el|del|hasta el) (\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/.exec(folded);
+  // «el 15/11», «el 15-11-2026», «el 15.11.2026»: en España se escriben con barra, guion o
+  // punto. Antes solo la barra: «te pago el 10-01-2027» caía en el día 10 de este mes.
+  const slash = /\b(?:el|del|hasta el) (\d{1,2})([/.-])(\d{1,2})(?:\2(\d{2,4}))?\b/.exec(folded);
   if (slash) {
     const day = Number(slash[1]);
-    const month = Number(slash[2]);
-    const rawYear = slash[3] ? Number(slash[3]) : undefined;
+    const month = Number(slash[3]);
+    const rawYear = slash[4] ? Number(slash[4]) : undefined;
     const at =
       rawYear === undefined
         ? nextDayMonth(now, month, day)
@@ -180,7 +182,7 @@ export function estimateDueAt(text: string, now: number): number {
     return plusDays(now, delta);
   }
   // Not the day of a dd/mm or «N de <mes>» that did not parse (31/11, 30 de febrero).
-  const dayOfMonth = /\b(?:antes del|del|el) (?:dia )?(\d{1,2})(?![\d/])(?! de )/.exec(folded);
+  const dayOfMonth = /\b(?:antes del|del|el) (?:dia )?(\d{1,2})(?!\d|[/.-]\d)(?! de )/.exec(folded);
   if (dayOfMonth) {
     const at = nextDayOfMonth(now, Number(dayOfMonth[1]));
     if (at !== null) return at;
