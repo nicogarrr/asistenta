@@ -6609,7 +6609,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }
           }
         } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
-          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), imágenes con texto y audios (notas de voz, mp3, m4a, wav). Los formatos antiguos (doc, xls, ppt) no.]`;
+          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), libros EPUB, imágenes con texto y audios (notas de voz, mp3, m4a, wav). Los formatos antiguos (doc, xls, ppt) no.]`;
         } else {
           try {
             const bytes = await telegram.downloadFile(inbound.documentFileId);

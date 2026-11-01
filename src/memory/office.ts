@@ -34,6 +34,7 @@ export const OFFICE_MIME = {
   odt: 'application/vnd.oasis.opendocument.text',
   ods: 'application/vnd.oasis.opendocument.spreadsheet',
   odp: 'application/vnd.oasis.opendocument.presentation',
+  epub: 'application/epub+zip',
 } as const;
 export type OfficeKind = keyof typeof OFFICE_MIME;
 
@@ -44,7 +45,7 @@ export function officeKind(mimeType?: string, fileName?: string): OfficeKind | n
   const mime = (mimeType ?? '').toLowerCase();
   for (const [kind, m] of Object.entries(OFFICE_MIME)) if (mime === m) return kind as OfficeKind;
   if (GENERIC_MIME.has(mime)) {
-    const ext = /\.(docx|xlsx|pptx|odt|ods|odp)$/i.exec(fileName ?? '')?.[1]?.toLowerCase();
+    const ext = /\.(docx|xlsx|pptx|odt|ods|odp|epub)$/i.exec(fileName ?? '')?.[1]?.toLowerCase();
     if (ext) return ext as OfficeKind;
   }
   return null;
@@ -381,6 +382,112 @@ function xlsxText(z: Reader, b: Budget): string {
   return out.join('\n\n');
 }
 
+/** HTML/XHTML block tags that end a line of text. */
+const HTML_BLOCK = new Set([
+  'p',
+  'div',
+  'br',
+  'li',
+  'tr',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'section',
+  'article',
+  'pre',
+  'dt',
+  'dd',
+  'figcaption',
+  'hr',
+]);
+/** HTML elements whose content is not reading text. */
+const HTML_SKIP = new Set(['head', 'script', 'style', 'svg', 'math']);
+
+/** Text of an (X)HTML chapter: block tags become newlines, head/script/style are dropped. */
+function htmlText(html: string, b: Budget): string {
+  const out: string[] = [];
+  let pos = 0;
+  let size = 0;
+  while (pos < html.length) {
+    b.tick();
+    const lt = html.indexOf('<', pos);
+    const chunk = html.slice(pos, lt < 0 ? html.length : lt);
+    out.push(chunk);
+    size += chunk.length;
+    if (size > MAX_OFFICE_CHARS * 2 || lt < 0) break;
+    const gt = html.indexOf('>', lt + 1);
+    if (gt < 0) break;
+    const m = /^<(\/?)([A-Za-z][\w:-]*)/.exec(html.slice(lt, Math.min(gt + 1, lt + 64)));
+    const name = (m?.[2] ?? '').toLowerCase().replace(/^.*:/, '');
+    if (m && !m[1] && HTML_SKIP.has(name) && html[gt - 1] !== '/') {
+      const close = html.toLowerCase().indexOf(`</${name}`, gt + 1);
+      if (close < 0) break;
+      pos = html.indexOf('>', close);
+      if (pos < 0) break;
+      pos += 1;
+      continue;
+    }
+    if (m && HTML_BLOCK.has(name)) out.push('\n');
+    pos = gt + 1;
+  }
+  return decodeEntities(out.join('').replace(/&nbsp;/g, ' '))
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Resolve `href` (relative to the OPF file) to a zip entry name. */
+function zipPath(base: string, href: string): string {
+  const parts = base.split('/').slice(0, -1);
+  for (const seg of decodeURIComponent(href.split('#')[0] ?? '').split('/')) {
+    if (seg === '..') parts.pop();
+    else if (seg && seg !== '.') parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+/**
+ * EPUB (a zip of XHTML chapters): the chapters in reading order (the OPF spine). Without a
+ * usable spine, every (x)html part in name order. Same zip limits as the office formats.
+ */
+function epubText(z: Reader, b: Budget): string {
+  let chapters: string[] = [];
+  const container = z.read('META-INF/container.xml');
+  const opfPath = /full-path\s*=\s*"([^"]+)"/.exec(container)?.[1];
+  if (opfPath && z.has(opfPath)) {
+    const opf = z.read(opfPath);
+    const manifest = new Map<string, string>();
+    for (const item of opf.match(/<(?:\w+:)?item\b[^>]*>/g) ?? []) {
+      b.tick();
+      const id = /\bid\s*=\s*"([^"]+)"/.exec(item)?.[1];
+      const href = /\bhref\s*=\s*"([^"]+)"/.exec(item)?.[1];
+      if (id && href) manifest.set(id, zipPath(opfPath, decodeEntities(href)));
+    }
+    for (const ref of opf.match(/<(?:\w+:)?itemref\b[^>]*>/g) ?? []) {
+      const idref = /\bidref\s*=\s*"([^"]+)"/.exec(ref)?.[1];
+      const path = idref ? manifest.get(idref) : undefined;
+      if (path && z.has(path) && !chapters.includes(path)) chapters.push(path);
+    }
+  }
+  if (chapters.length === 0)
+    chapters = [...z.entries.keys()].filter((n) => /\.x?html?$/i.test(n)).sort();
+  if (chapters.length === 0) throw new OfficeError('el libro no tiene capítulos que pueda leer');
+  const out: string[] = [];
+  let chars = 0;
+  for (const c of chapters) {
+    const text = htmlText(z.read(c), b);
+    if (!text) continue;
+    out.push(text);
+    chars += text.length;
+    if (chars > MAX_OFFICE_CHARS) break;
+  }
+  return out.join('\n\n');
+}
+
 /** Extract the text of an office document. Throws OfficeError (Spanish) when it cannot. */
 export function extractOfficeText(bytes: Buffer, kind: OfficeKind): string {
   const b = new Budget(OFFICE_TIME_BUDGET_MS);
@@ -395,6 +502,9 @@ export function extractOfficeText(bytes: Buffer, kind: OfficeKind): string {
       break;
     case 'xlsx':
       text = xlsxText(z, b);
+      break;
+    case 'epub':
+      text = epubText(z, b);
       break;
     default:
       text = z.has('content.xml') ? xmlText(z.read('content.xml'), b) : '';
