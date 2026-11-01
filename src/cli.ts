@@ -9,7 +9,7 @@ import {
   WATCHDOG_USAGE,
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
-import { PreguntasPendientes } from './daemon/pregunta-pendiente.js';
+import { learnNameAnswer, PreguntasPendientes, SI_RESPUESTA } from './daemon/pregunta-pendiente.js';
 import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
 import {
   formatModelos,
@@ -3609,6 +3609,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * demonstration is the only version of "it learns" that is reliable: asking a model
    * to invent steps it never performed produces plausible fiction.
    */
+  /** La respuesta normal («pedir cita») pone nombre a la rutina y empieza a grabar (Nico, 1 nov). */
+  const askLearnName = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'learn', { answer: learnNameAnswer });
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
@@ -3623,12 +3626,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const ended = learning.end(inbound.chatId, thread.key, thread.agent);
       if (!ended.ok) {
+        if (ended.reason !== 'other-thread') askLearnName(inbound);
         const text =
           ended.reason === 'none'
             ? 'No estaba grabando ninguna rutina. Si quieres enseñarme una, dime cómo la llamo.'
             : ended.reason === 'other-thread'
-              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí, por ejemplo /learn pedir-cita.`
-              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo, por ejemplo /learn pedir-cita.';
+              ? `Estoy grabando "${ended.name}" en otra conversación. Termínala allí, o empieza una nueva aquí diciéndome cómo la llamo.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empecemos de nuevo: dime cómo la llamo.';
         await say(inbound, text, { quote: true });
         return;
       }
@@ -3712,6 +3716,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     }
     if (!name) {
+      askLearnName(inbound);
       await say(inbound, '¿Cómo llamo a la rutina? Dímelo y empiezo a grabar.', {
         quote: true,
       });
@@ -3728,7 +3733,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdRoutine = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim().split(/\s+/)[0] ?? '';
     if (!name) {
-      await say(inbound, '¿Qué rutina repito? Dime su nombre.', { quote: true });
+      const names = store
+        .listRoutines()
+        .filter(
+          (r) =>
+            (r.scope === thread.key || r.scope === `${thread.chatKey}#main`) &&
+            r.kind === 'procedure',
+        )
+        .map((r) => r.name);
+      if (!names.length) {
+        await say(
+          inbound,
+          'Aún no me has enseñado ninguna rutina. Si quieres, dime cómo la llamo y te miro mientras la haces.',
+          { quote: true },
+        );
+        askLearnName(inbound);
+        return;
+      }
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => names.find((n) => n.toLowerCase() === t.trim().toLowerCase()) ?? null,
+      });
+      await say(inbound, `¿Qué rutina repito? Tienes: ${names.slice(0, 10).join(', ')}.`, {
+        quote: true,
+      });
       return;
     }
     const routine =
@@ -3758,7 +3785,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             `Rutina "${created.name}" programada con horario ${created.schedule}.`,
             `Tarea: ${created.prompt}`,
             `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-            'La ves con /agenda; la repito cuando quieras con /routine.',
+            'La verás en tu agenda.',
           ].join('\n'),
           { quote: true },
         );
@@ -3777,18 +3804,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // valid contract the steps would reach the model with raw {placeholders}.
       await say(
         inbound,
-        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Habría que enseñármela otra vez.`,
         { quote: true },
       );
       return;
     } else if (routine.params?.length) {
       const parsed = parseMacroArgs(tokens);
       if (!parsed.ok) {
+        preguntas.ask(chatKey(inbound), 'routine', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${routine.name} ${t}` : null),
+        });
         await say(
           inbound,
-          `${parsed.error} Pásame cada dato así: /routine ${routine.name} ${routine.params
-            .map((p) => `${p.name}=...`)
-            .join(' ')}.`,
+          `${parsed.error} Dime los datos así: «${routine.params.map((p) => `${p.name}=...`).join(' ')}».`,
           { quote: true },
         );
         return;
@@ -3800,9 +3828,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       prompt = built.prompt;
     } else if (tokens.length) {
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" no tiene parámetros: se repite tal cual con /routine ${routine.name}.`,
+        `"${routine.name}" no tiene parámetros: se repite tal cual. ¿La repito? Dime «sí».`,
         { quote: true },
       );
       return;
@@ -3812,9 +3843,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // F4: una rutina de comando jamás se manda al modelo.
     if (isCommandRoutine(routine)) {
+      preguntas.ask(chatKey(inbound), 'cron', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `probar ${routine.name}` : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" es una rutina de comando: pruébala con /cron probar ${routine.name}.`,
+        `"${routine.name}" es una rutina de comando: no la hago con el modelo. ¿La pruebo ahora? Dime «sí».`,
         { quote: true },
       );
       return;
