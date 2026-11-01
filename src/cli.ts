@@ -149,7 +149,7 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
-import { LearnRecorder } from './learn.js';
+import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -3683,14 +3683,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         params: macro ? params : null,
         steps,
       });
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
         [
           macro
-            ? `Macro "${routine.name}" guardada. La ejecutas con /routine ${routine.name} ${params
-                .map((p) => `${p.name}=...`)
-                .join(' ')}.`
-            : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+            ? `Macro "${routine.name}" guardada. ¿La pruebo ahora? Dime «sí» y te pido los datos.`
+            : `Rutina "${routine.name}" guardada. ¿La repito ahora? Dime «sí».`,
           ...(macro
             ? [
                 '',
@@ -3725,7 +3726,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     learning.start(inbound.chatId, name, thread.key, thread.agent);
     await say(
       inbound,
-      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
+      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, dime «ya está».`,
       { quote: true },
     );
   };
@@ -7560,6 +7561,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (isOwnerDm(inbound, vigilanteOwnerId) && pdfToTextIntent(inbound)) {
             await cmdOcr(inbound, 'md');
             return;
+          }
+          // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
+          if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
+            const learnThread = await resolveThread(inbound);
+            if (learning.isRecording(inbound.chatId) || webDemo.isRecording(learnThread.key)) {
+              await cmdLearn(learnThread, inbound, 'end');
+              return;
+            }
           }
           // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
           const closed =
