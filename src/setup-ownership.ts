@@ -15,7 +15,7 @@ import { join, resolve, sep } from 'node:path';
 function linux(): void {
   if (process.platform !== 'linux')
     throw new Error(
-      'El wizard con cambios solo está disponible en Linux/servidor; Windows es solo guía.',
+      'La configuración automática solo funciona en Linux; en Windows sigue la guía (instalar.bat).',
     );
 }
 function optionalStat(path: string): Stats | undefined {
@@ -23,7 +23,7 @@ function optionalStat(path: string): Stats | undefined {
     return lstatSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw new Error('No se puede comprobar el estado; no se reclama ni se borra nada.');
+    throw new Error('No puedo comprobar la carpeta de datos, así que no toco nada.');
   }
 }
 function privateOwner(stat: Stats, directory: boolean): void {
@@ -33,7 +33,7 @@ function privateOwner(stat: Stats, directory: boolean): void {
     (stat.mode & 0o077) !== 0 ||
     (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1)
   )
-    throw new Error('Estado con propietario, permisos o tipo ambiguos; no se cambia.');
+    throw new Error('La carpeta de datos tiene un dueño o unos permisos raros; no la toco.');
 }
 /** Read-only check. Unknown evidence is a refusal, never a stale-reclaim signal. */
 export function inspectSetupOwnership(stateDir: string): void {
@@ -43,7 +43,7 @@ export function inspectSetupOwnership(stateDir: string): void {
   for (const component of state.split(sep).filter(Boolean)) {
     ancestor = join(ancestor, component);
     if (optionalStat(ancestor)?.isSymbolicLink())
-      throw new Error('Estado bajo un enlace simbólico; no se cambia.');
+      throw new Error('La carpeta de datos es un acceso directo (enlace simbólico); no la toco.');
   }
   const stat = optionalStat(state);
   if (!stat) return;
@@ -51,7 +51,7 @@ export function inspectSetupOwnership(stateDir: string): void {
   for (const name of ['agent.pid', 'agent.pid.stale']) {
     if (optionalStat(join(state, name)))
       throw new Error(
-        'Hay evidencia de daemon previa; setup no sondea ni borra PID/stale, requiere revisión.',
+        'Parece que Asistenta ya se ha ejecutado aquí antes. No toco nada: párala con «pa stop» y vuelve a probar.',
       );
   }
   const control = join(state, 'control');
@@ -62,9 +62,11 @@ export function inspectSetupOwnership(stateDir: string): void {
     // Persistent lock and final proof names may remain after a clean close. Their
     // presence is not used as evidence of a clean exit or permission to reclaim.
     if (name !== 'owner.lock' && !/^[a-f0-9]{64}\.stopped$/.test(name))
-      throw new Error('Metadata de control presente o ambigua; setup no la reclama ni la limpia.');
+      throw new Error(
+        'Quedan restos de una ejecución anterior de Asistenta; no los toco ni los borro.',
+      );
     const entry = optionalStat(join(control, name));
-    if (!entry) throw new Error('El estado cambió durante la revisión; no se continúa.');
+    if (!entry) throw new Error('La carpeta de datos cambió mientras la revisaba; paro aquí.');
     privateOwner(entry, false);
   }
 }
@@ -85,10 +87,10 @@ export function acquireSetupOwnership(stateDir: string): SetupOwnership {
   let released = false;
   const initial = fstatSync(fd);
   const check = () => {
-    if (released) throw new Error('Propiedad de setup liberada; no se puede guardar.');
+    if (released) throw new Error('La configuración ya había terminado; no puedo guardar.');
     const current = optionalStat(file);
     if (!current || current.ino !== initial.ino || current.dev !== initial.dev)
-      throw new Error('Cambió la propiedad de setup; no se puede guardar.');
+      throw new Error('Otra configuración se ha puesto en medio; no guardo nada.');
     privateOwner(current, false);
     inspectSetupOwnership(state);
   };
@@ -99,9 +101,7 @@ export function acquireSetupOwnership(stateDir: string): SetupOwnership {
       timeout: 3000,
     });
     if (result.error || result.status !== 0)
-      throw new Error(
-        'Daemon u otro setup mantiene la propiedad, o flock no está disponible; no se cambia el almacén.',
-      );
+      throw new Error('Asistenta u otra configuración ya está en marcha; no cambio nada.');
     check();
   } catch (error) {
     closeSync(fd);

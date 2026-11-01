@@ -34,7 +34,7 @@ it.each(['agent.pid', 'agent.pid.stale'])(
     writeFileSync(file, 'not-a-PID');
     const kill = vi.spyOn(process, 'kill');
     try {
-      expect(() => acquireSetupOwnership(dir)).toThrow('evidencia');
+      expect(() => acquireSetupOwnership(dir)).toThrow('ya se ha ejecutado aquí');
       expect(kill).not.toHaveBeenCalled();
       expect(readFileSync(file, 'utf8')).toBe('not-a-PID');
       expect(readdirSync(dir)).toEqual([name]);
@@ -50,7 +50,7 @@ it.each(['ready.json', 'corrupt.tmp', 'unknown.sock'])(
     mkdirSync(control, { mode: 0o700 });
     const file = join(control, name);
     writeFileSync(file, 'corrupt-synthetic', { mode: 0o600 });
-    expect(() => acquireSetupOwnership(dir)).toThrow('ambigua');
+    expect(() => acquireSetupOwnership(dir)).toThrow('restos de una ejecución anterior');
     expect(readFileSync(file, 'utf8')).toBe('corrupt-synthetic');
     expect(readdirSync(control)).toEqual([name]);
   },
@@ -58,7 +58,7 @@ it.each(['ready.json', 'corrupt.tmp', 'unknown.sock'])(
 it('wizard wins ownership and blocks both daemon start and another wizard, without publishing control', async () => {
   const owner = acquireSetupOwnership(dir);
   try {
-    expect(() => acquireSetupOwnership(dir)).toThrow('propiedad');
+    expect(() => acquireSetupOwnership(dir)).toThrow('ya está en marcha');
     await expect(openDaemonControl(dir, () => {})).rejects.toThrow('ocupado');
     expect(readdirSync(join(dir, 'control'))).toEqual(['owner.lock']);
     owner.assert();
@@ -83,7 +83,7 @@ it('revalidates legacy markers created during the wizard without removing them',
   const owner = acquireSetupOwnership(dir);
   try {
     writeFileSync(join(dir, 'agent.pid'), 'synthetic');
-    expect(() => owner.assert()).toThrow('evidencia');
+    expect(() => owner.assert()).toThrow('ya se ha ejecutado aquí');
     expect(readFileSync(join(dir, 'agent.pid'), 'utf8')).toBe('synthetic');
   } finally {
     owner.release();
@@ -98,6 +98,6 @@ it('release is idempotent and never deletes or publishes metadata', () => {
   const owner = acquireSetupOwnership(dir);
   owner.release();
   owner.release();
-  expect(() => owner.assert()).toThrow('liberada');
+  expect(() => owner.assert()).toThrow('ya había terminado');
   expect(readdirSync(join(dir, 'control'))).toEqual(['owner.lock']);
 });

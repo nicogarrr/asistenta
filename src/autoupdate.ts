@@ -23,8 +23,11 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonRunState } from './autostart-watchdog.js';
+import { buildUpdateNotice, savePendingNovedades } from './autoupdate-novedades.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { BUSY_DIR, type BusyState } from './ocupada.js';
+
+export { cleanSubject, formatChangelog, successMessage } from './autoupdate-novedades.js';
 
 export const AUTOUPDATE_DIR = BUSY_DIR;
 export const AUTOUPDATE_STATE_FILE = 'estado.json';
@@ -33,8 +36,18 @@ export const AUTOUPDATE_LOCK_FILE = 'en-curso.lock';
 export const MIN_GAP_MS = 30 * 60_000;
 /** Un candado más viejo que esto es de un proceso que murió. */
 export const LOCK_STALE_MS = 45 * 60_000;
-export const HEALTH_TIMEOUT_MS = 120_000;
-export const CHANGELOG_MAX = 8;
+/**
+ * Cuánto espera a que la versión nueva vuelva sana. «Sana» = el daemon escribió su
+ * agent.pid, y eso pasa al FINAL del arranque (modelo, Telegram con reintentos, correo,
+ * OCR, herramientas): en un PC lento, con la compilación recién hecha, 120 s no daban.
+ * PA_AUTOUPDATE_SALUD_SEG lo cambia (de 60 a 600 s).
+ */
+export const HEALTH_TIMEOUT_MS = 300_000;
+
+export function autoupdateHealthMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number((env.PA_AUTOUPDATE_SALUD_SEG ?? '').trim() || HEALTH_TIMEOUT_MS / 1000);
+  return Number.isFinite(n) ? Math.min(600, Math.max(60, Math.round(n))) * 1000 : HEALTH_TIMEOUT_MS;
+}
 /** Una versión que ya falló al instalarse no se reintenta antes de esto (salvo pa autoupdate now). */
 export const FAILED_RETRY_MS = 6 * 60 * 60_000;
 
@@ -62,6 +75,12 @@ export interface AutoupdateState {
   /** origin/main que falló al instalarse y cuándo: no se repite el aviso por la misma versión. */
   failedRemote?: string;
   failedAt?: string;
+  /**
+   * Actualización empezada y sin terminar: se escribe justo antes del `git merge` y se
+   * borra al acabar (bien o con vuelta atrás). Si sigue ahí en la revisión siguiente, el
+   * PC se apagó, se suspendió o se cortó a mitad: se vuelve a la versión anterior.
+   */
+  pending?: { from: string; to: string; at: string };
 }
 
 const dir = (stateDir: string) => join(stateDir, AUTOUPDATE_DIR);
@@ -95,16 +114,54 @@ export function autoupdateDue(state: AutoupdateState, now: number, intervalMin: 
   return Number.isNaN(last) || now - last >= intervalMin * 60_000 || last > now;
 }
 
-export function lockHeld(stateDir: string, now: number = Date.now()): boolean {
+/** ¿Sigue vivo el proceso? `kill(pid, 0)` no envía nada: solo pregunta (EPERM = vive, de otro usuario). */
+export function pidAlive(pid: number): boolean {
   try {
-    return now - statSync(join(dir(stateDir), AUTOUPDATE_LOCK_FILE)).mtimeMs < LOCK_STALE_MS;
-  } catch {
-    return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
+/**
+ * ¿Hay una actualización en curso? Un candado caducado no cuenta, y tampoco uno cuyo
+ * proceso ya no existe: tras apagar o reiniciar el PC a mitad de actualizar, el candado
+ * se quedaba ahí y el vigilante no arrancaba Asistenta («actualizando») hasta 45 min.
+ */
+export function lockHeld(
+  stateDir: string,
+  now: number = Date.now(),
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
+  const file = join(dir(stateDir), AUTOUPDATE_LOCK_FILE);
+  try {
+    if (now - statSync(file).mtimeMs >= LOCK_STALE_MS) return false;
+  } catch {
+    return false;
+  }
+  try {
+    const pid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: unknown }).pid;
+    if (
+      typeof pid === 'number' &&
+      Number.isInteger(pid) &&
+      pid > 0 &&
+      pid !== process.pid &&
+      !alive(pid)
+    )
+      return false;
+  } catch {
+    // Recién creado y aún vacío, o ilegible: se respeta mientras no caduque.
+  }
+  return true;
+}
+
 /** Candado exclusivo (O_EXCL): dos revisiones nunca se pisan. Uno caducado se reemplaza. */
-export function tryLock(stateDir: string, now: number = Date.now()): boolean {
+export function tryLock(
+  stateDir: string,
+  now: number = Date.now(),
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
   const file = join(dir(stateDir), AUTOUPDATE_LOCK_FILE);
   for (let i = 0; i < 2; i++) {
     try {
@@ -113,7 +170,7 @@ export function tryLock(stateDir: string, now: number = Date.now()): boolean {
       writeFileSync(file, JSON.stringify({ pid: process.pid, at: new Date(now).toISOString() }));
       return true;
     } catch {
-      if (lockHeld(stateDir, now)) return false;
+      if (lockHeld(stateDir, now, alive)) return false;
       rmSync(file, { force: true });
     }
   }
@@ -138,38 +195,6 @@ export function refreshLock(stateDir: string, now: number = Date.now()): void {
   }
 }
 
-/** «feat(tele): sube a tope (#712)» → «Sube a tope». */
-export function cleanSubject(subject: string): string {
-  let s = subject
-    .trim()
-    .replace(/^[a-z]+(\([^)]*\))?!?:\s*/i, '')
-    .replace(/\s*\(#\d+\)\s*$/, '')
-    .trim();
-  if (s.length > 110) s = `${s.slice(0, 109).trimEnd()}…`;
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-export function formatChangelog(subjects: string[], max: number = CHANGELOG_MAX): string[] {
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const raw of subjects) {
-    const s = cleanSubject(raw);
-    if (!s || /^merge (pull request|branch|remote-tracking)/i.test(s)) continue;
-    if (seen.has(s.toLowerCase())) continue;
-    seen.add(s.toLowerCase());
-    items.push(s);
-  }
-  if (!items.length) return ['• Cambios internos'];
-  const lines = items.slice(0, max).map((s) => `• ${s}`);
-  const rest = items.length - max;
-  if (rest > 0) lines.push(`y ${rest} ${rest === 1 ? 'cambio' : 'cambios'} más`);
-  return lines;
-}
-
-export function successMessage(subjects: string[]): string {
-  return ['🆕 Me he actualizado', ...formatChangelog(subjects)].join('\n');
-}
-
 export function failureMessage(reason: string): string {
   return `⚠️ No he podido actualizarme: ${reason}. Sigo con la versión anterior.\nDetalle: pa autoupdate status`;
 }
@@ -187,6 +212,8 @@ export interface AutoupdateDeps {
   stopDaemon(): Promise<void>;
   /** Arranca la tarea del daemon, igual que el vigilante. */
   startDaemon(): Promise<boolean>;
+  /** Lo último del log del lanzador de Windows (launcher.stderr.log), o null si no hay. */
+  launcherLog?(): string | null;
   backupDist(): void;
   restoreDist(): void;
   dropBackup(): void;
@@ -202,33 +229,149 @@ const SKIPS: Record<string, string> = {
   reciente: 'ya me actualicé hace menos de 30 min',
   'en-curso': 'otra actualización está en curso',
   'cambios-locales': 'hay cambios locales sin guardar en git: no toco nada',
-  divergida: 'main local y origin/main se han separado (no es fast-forward): no toco nada',
+  divergida:
+    'tu copia tiene cambios propios que no están en la versión nueva: no toco nada para no perderlos',
   'no-en-marcha': 'Asistenta no está en marcha: espero a que vuelva',
-  ocupada: 'Asistenta está ocupada (un turno o una aprobación): lo dejo para luego',
+  ocupada: 'Asistenta está haciendo algo o esperando tu permiso: lo dejo para luego',
   desconocido: 'no sé si Asistenta está ocupada: lo dejo para luego',
+  'sin-git':
+    'esta carpeta no viene de git (¿la bajaste en ZIP?) o git no está instalado: no puedo actualizarme sola. Para una versión nueva, baja el ZIP otra vez, o instala git y clona Asistenta (README, paso 2)',
 };
+
+/** Lo que dejó escrito el lanzador de Windows (log/launcher.stderr.log) desde un momento. */
+export interface LaunchSeen {
+  /** El lanzador abrió `serve` («inicio de serve») después de ese momento. */
+  started: boolean;
+  /** Y `serve` ya terminó (se cerró) sin quedarse en marcha. */
+  exited: boolean;
+  /** Su última línea útil, en llano: sin rutas, tokens ni claves largas. */
+  lastLine?: string;
+}
+
+/** Una línea del log apta para un aviso: sin fecha, rutas, tokens ni claves; corta. */
+export function plainLogLine(line: string): string {
+  let text = line
+    .replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '')
+    .replace(/^error del launcher:\s*/, '')
+    .replace(/\b(?:bot)?\d{6,}:[\w-]{20,}/g, '…')
+    .replace(/[A-Za-z]:\\[^\s"'«»]*/g, '…')
+    .replace(/(?:~|\/home|\/Users|\/tmp|\/var|\/root)\/[^\s"'«»]*/g, '…')
+    .replace(/[\w+/=-]{32,}/g, '…')
+    .replace(/[«»]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length > 160) text = `${text.slice(0, 159)}…`;
+  return text;
+}
+
+function stampMs(line: string): number {
+  const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:\d\d)?\s/.exec(line);
+  return m ? Date.parse(`${m[1]}${m[2] ?? ''}`) : Number.NaN;
+}
+
+/**
+ * Lee el log del lanzador: si abrió `serve` desde `sinceMs`, si ya se cerró y su última
+ * línea útil. Las líneas de `serve` no llevan fecha; las del lanzador sí.
+ */
+export function launchSince(text: string, sinceMs: number): LaunchSeen {
+  const lines = text.split(/\r?\n/);
+  let begin = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (/^\S+ inicio de serve/.test(line) && stampMs(line) >= sinceMs) {
+      begin = i;
+      break;
+    }
+  }
+  if (begin < 0) return { started: false, exited: false };
+  let exited = false;
+  let lastLine: string | undefined;
+  for (const line of lines.slice(begin + 1)) {
+    if (/^\S+ serve termino: exit=/.test(line)) {
+      exited = true;
+      break;
+    }
+    if (/^\S+ error del launcher:/.test(line)) exited = true;
+    if (!line.trim() || /^\s+at\s/.test(line) || /^\s*[{}]\s*$/.test(line)) continue;
+    const plain = plainLogLine(line);
+    if (plain) lastLine = plain;
+  }
+  return { started: true, exited, lastLine };
+}
 
 /**
  * Arranca la tarea del daemon y espera a que vuelva sana. Justo tras un cierre la tarea
  * puede seguir «en ejecución» unos segundos y Windows ignora el arranque, así que mientras
- * siga parada se vuelve a pedir cada 20 s.
+ * siga parada se vuelve a pedir cada 20 s. Si el lanzador dice que `serve` ya se cerró, no
+ * espera más; si falla, `why` dice por qué en llano.
  */
-async function startAndWait(deps: AutoupdateDeps, timeoutMs: number): Promise<boolean> {
+async function startAndWait(
+  deps: AutoupdateDeps,
+  timeoutMs: number,
+): Promise<{ ok: boolean; why: string }> {
+  const since = deps.now() - 5_000;
   const deadline = deps.now() + timeoutMs;
+  const secs = Math.round(timeoutMs / 1000);
+  const seen = (): LaunchSeen | null => {
+    const text = deps.launcherLog?.();
+    return typeof text === 'string' ? launchSince(text, since) : null;
+  };
   let nextKick = deps.now();
   while (deps.now() < deadline) {
     if (deps.daemonState() === 'running') {
       // Sigue viva un rato después: un arranque que se cae al momento no cuenta como sano.
       await deps.sleep(10_000);
-      return deps.daemonState() === 'running';
+      if (deps.daemonState() === 'running') return { ok: true, why: '' };
+      break;
     }
+    if (seen()?.exited) break;
     if (deps.now() >= nextKick) {
       await deps.startDaemon();
       nextKick = deps.now() + 20_000;
     }
     await deps.sleep(2_000);
   }
-  return false;
+  const last = seen();
+  const quote = last?.lastLine ? ` («${last.lastLine}»)` : '';
+  if (last?.exited) return { ok: false, why: `la versión nueva se cerró al arrancar${quote}` };
+  if (last?.started)
+    return { ok: false, why: `la versión nueva seguía arrancando a los ${secs} s${quote}` };
+  if (last) return { ok: false, why: `Windows no llegó a abrir la versión nueva en ${secs} s` };
+  return { ok: false, why: `la versión nueva no arrancaba bien (esperé ${secs} s)` };
+}
+
+export const INTERRUPTED_MESSAGE =
+  '⚠️ Una actualización se quedó a medias (¿se apagó o se suspendió el PC?). He vuelto a la versión anterior y lo reintentaré más tarde.';
+
+/**
+ * Deja Asistenta como estaba antes de una actualización cortada a mitad: vuelve al commit
+ * anterior, reinstala dependencias si habían cambiado, recupera la compilación guardada y
+ * arranca. Sin esto, la revisión siguiente veía HEAD ya en la versión nueva y decía «al
+ * día» con la compilación o las dependencias a medio hacer.
+ */
+async function finishInterrupted(
+  p: NonNullable<AutoupdateState['pending']>,
+  deps: AutoupdateDeps,
+  health: number,
+  finish: (text: string) => Outcome,
+): Promise<Outcome> {
+  deps.log?.(`actualización a medias (${p.from.slice(0, 7)} → ${p.to.slice(0, 7)}): vuelvo atrás`);
+  if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
+  const reset = await deps.git(['reset', '--keep', p.from]);
+  const lockDiff = await deps.git(['diff', '--name-only', p.from, p.to, '--', 'package-lock.json']);
+  if (lockDiff.code !== 0 || lockDiff.out.trim() !== '')
+    await deps.npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+  deps.restoreDist();
+  const back = (await startAndWait(deps, health)).ok;
+  // Mismas palabras que la vuelta atrás de una actualización fallida: sin «git» ni «commit».
+  const tail = [
+    reset.code === 0
+      ? ''
+      : ' (y no he podido volver del todo a la versión anterior: prueba «pa doctor»)',
+    back ? '' : ' (y no he vuelto a arrancar bien: prueba «pa doctor»)',
+  ].join('');
+  await deps.notify(`${INTERRUPTED_MESSAGE}${tail}`).catch(() => {});
+  return finish(`se quedó a medias; he vuelto a la versión anterior${tail}`);
 }
 
 export async function runAutoupdate(
@@ -249,6 +392,7 @@ export async function runAutoupdate(
       lastUpdateAt: state.lastUpdateAt,
       failedRemote: state.failedRemote,
       failedAt: state.failedAt,
+      pending: state.pending,
       last: { kind, text, at: new Date(deps.now()).toISOString() },
     });
     return { kind, text };
@@ -256,6 +400,22 @@ export async function runAutoupdate(
   const skip = (reason: string, kind: OutcomeKind = 'omitida') =>
     done(kind, SKIPS[reason] ?? reason);
 
+  if (state.pending) {
+    if (!tryLock(stateDir, deps.now())) return { kind: 'omitida', text: SKIPS['en-curso'] ?? '' };
+    try {
+      return await finishInterrupted(
+        state.pending,
+        deps,
+        opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env),
+        (t) => {
+          state.pending = undefined;
+          return done('revertida', t);
+        },
+      );
+    } finally {
+      unlock(stateDir);
+    }
+  }
   if (!autoupdateEnabled(stateDir, opts.env)) return skip('apagado');
   const lastUpdate = state.lastUpdateAt ? Date.parse(state.lastUpdateAt) : Number.NaN;
   if (!opts.force && deps.now() - lastUpdate < MIN_GAP_MS) return skip('reciente');
@@ -269,15 +429,18 @@ export async function runAutoupdate(
     return deps.npm(args, t);
   };
   try {
-    const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim();
+    const head = await git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (head.code !== 0) return skip('sin-git');
+    const branch = head.out.trim();
     if (branch !== 'main')
       return skip(`estás en la rama «${branch || '?'}»: solo me actualizo en main`);
     if ((await git(['fetch', '--quiet', 'origin', 'main'], 120_000)).code !== 0) {
-      return skip('no pude consultar GitHub (git fetch falló)', 'error');
+      return skip('no pude mirar si hay versión nueva (¿sin internet?)', 'error');
     }
     const old = (await git(['rev-parse', 'HEAD'])).out.trim();
     const remote = (await git(['rev-parse', 'origin/main'])).out.trim();
-    if (!old || !remote) return skip('git no me dijo en qué commit estoy', 'error');
+    if (!old || !remote)
+      return skip('no sé qué versión tengo instalada: prueba «pa doctor»', 'error');
     if (old === remote) return done('al-dia', `al día (${old.slice(0, 7)})`);
     const failedAt =
       state.failedRemote === remote && state.failedAt ? Date.parse(state.failedAt) : Number.NaN;
@@ -298,7 +461,7 @@ export async function runAutoupdate(
     const subjects = log.out.split('\n').filter((l) => l.trim());
     const lockDiff = await git(['diff', '--name-only', old, remote, '--', 'package-lock.json']);
     const lockChanged = lockDiff.code !== 0 || lockDiff.out.trim() !== '';
-    const health = opts.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
+    const health = opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env);
 
     deps.backupDist();
     try {
@@ -316,36 +479,47 @@ export async function runAutoupdate(
       if (lockChanged) await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
       deps.restoreDist();
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
-      const back = await startAndWait(deps, health);
+      const back = (await startAndWait(deps, health)).ok;
       const tail = [
-        reset.code === 0 ? '' : ' (y git no pudo volver al commit anterior: revísalo a mano)',
-        back ? '' : ' (y no he vuelto a arrancar sana: mira pa autostart status)',
+        reset.code === 0
+          ? ''
+          : ' (y no he podido volver del todo a la versión anterior: prueba «pa doctor»)',
+        back ? '' : ' (y no he vuelto a arrancar bien: prueba «pa doctor»)',
       ].join('');
       // Un solo aviso por versión: si la misma vuelve a fallar, solo queda en pa autoupdate status.
       if (state.failedRemote !== remote)
         await deps.notify(failureMessage(`${reason}${tail}`)).catch(() => {});
       state.failedRemote = remote;
       state.failedAt = new Date(deps.now()).toISOString();
+      state.pending = undefined;
       return done('revertida', `falló (${reason}); sigue en ${old.slice(0, 7)}${tail}`);
     };
 
+    state.pending = { from: old, to: remote, at: new Date(deps.now()).toISOString() };
+    writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), pending: state.pending });
     const merge = await git(['merge', '--ff-only', '--quiet', remote]);
-    if (merge.code !== 0) return await rollback('git merge --ff-only falló', merge.out);
+    if (merge.code !== 0) return await rollback('no pude aplicar los cambios nuevos', merge.out);
     if (lockChanged) {
       const ci = await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
-      if (ci.code !== 0) return await rollback('npm ci falló', ci.out);
+      if (ci.code !== 0)
+        return await rollback('no pude instalar las piezas nuevas (¿sin internet?)', ci.out);
     }
     const build = await npm(['run', 'build'], 10 * 60_000);
-    if (build.code !== 0) return await rollback('la compilación (npm run build) falló', build.out);
-    if (!(await startAndWait(deps, health))) {
+    if (build.code !== 0) return await rollback('la versión nueva no se pudo preparar', build.out);
+    const health1 = await startAndWait(deps, health);
+    if (!health1.ok) {
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
-      return await rollback(`no arrancó sana en ${Math.round(health / 1000)} s`);
+      return await rollback(health1.why);
     }
     deps.dropBackup();
+    state.pending = undefined;
     state.lastUpdateAt = new Date(deps.now()).toISOString();
     state.failedRemote = undefined;
     state.failedAt = undefined;
-    await deps.notify(successMessage(subjects)).catch(() => {});
+    // Lo que no cabe en el aviso queda apuntado: un «sí» del dueño lo trae (daemon).
+    const notice = buildUpdateNotice(subjects);
+    savePendingNovedades(stateDir, notice.rest, deps.now());
+    await deps.notify(notice.text).catch(() => {});
     return done(
       'actualizada',
       `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} cambios)`,

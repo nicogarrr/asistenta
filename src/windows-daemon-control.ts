@@ -1,6 +1,13 @@
 /** DACL-private local mailbox. No PID signals, HTTP, credentials or unauthenticated stop. */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { lstatSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { type DaemonControl, DaemonNotRunningError, isMissingFile } from './daemon-control.js';
 import { windowsNative, windowsOwnership } from './windows-control-native.js';
@@ -97,6 +104,50 @@ function removeOwned(state: string, leaf: string) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 }
+/** Pruebas de parada y temporales de más de 10 min: `pa stop` solo espera 30 s por la suya. */
+export const CONTROL_LEFTOVER_MS = 10 * 60_000;
+const LEFTOVER = /^[a-f0-9]{64}\.(stopped|tmp)$/;
+/**
+ * Cada parada limpia deja `<id>.stopped` y nadie lo borraba: uno más por cada `pa stop`.
+ * Al arrancar se quitan los viejos, nunca el `.stopped` más reciente ni uno que un
+ * `pa stop` en curso pueda estar leyendo. Un fallo aquí nunca impide arrancar.
+ */
+export function pruneControlLeftovers(
+  controlDir: string,
+  remove: (leaf: string) => void,
+  now: number = Date.now(),
+): string[] {
+  let found: { leaf: string; at: number }[] = [];
+  try {
+    found = readdirSync(controlDir)
+      .filter((leaf) => LEFTOVER.test(leaf))
+      .map((leaf) => {
+        try {
+          const st = lstatSync(join(controlDir, leaf));
+          return { leaf, at: st.isFile() ? st.mtimeMs : Number.NaN };
+        } catch {
+          return { leaf, at: Number.NaN };
+        }
+      })
+      .filter((f) => Number.isFinite(f.at));
+  } catch {
+    return [];
+  }
+  const newest = found
+    .filter((f) => f.leaf.endsWith('.stopped'))
+    .sort((a, b) => b.at - a.at)[0]?.leaf;
+  const removed: string[] = [];
+  for (const f of found) {
+    if (f.leaf === newest || now - f.at < CONTROL_LEFTOVER_MS) continue;
+    try {
+      remove(f.leaf);
+      removed.push(f.leaf);
+    } catch {
+      // Sin permiso o bloqueado: se intenta en el próximo arranque.
+    }
+  }
+  return removed;
+}
 export async function openWindowsDaemonControl(
   input: string,
   onStop: () => void,
@@ -113,6 +164,7 @@ export async function openWindowsDaemonControl(
   try {
     removeOwned(state, 'ready.json');
     removeOwned(state, 'request.json');
+    pruneControlLeftovers(dir(state), (leaf) => removeOwned(state, leaf));
   } catch (error) {
     await ownership.release();
     throw error;

@@ -109,8 +109,10 @@ describe('/learn web (F11 paso 3)', () => {
   it('/learn web sin URL válida explica el uso y no abre nada', async () => {
     const rec = new WebDemoRecorder();
     const browser = fakeBrowser(demo);
-    expect(await rec.start('c1', 'file:///etc/passwd', { browser, env: ON })).toContain('Uso:');
-    expect(await rec.start('c1', '', { browser, env: ON })).toContain('Uso:');
+    expect(await rec.start('c1', 'file:///etc/passwd', { browser, env: ON })).toContain(
+      '¿En qué web te miro?',
+    );
+    expect(await rec.start('c1', '', { browser, env: ON })).toContain('¿En qué web te miro?');
     expect(browser.opened).toEqual([]);
   });
 

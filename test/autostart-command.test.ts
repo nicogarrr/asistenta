@@ -37,7 +37,7 @@ describe('pa autostart', () => {
     setPlatform('linux');
     expect(await autostartCommand(['install'])).toBe(2);
     expect(execFile).not.toHaveBeenCalled();
-    expect(err).toMatch(/solo en Windows/);
+    expect(err).toMatch(/solo funciona en Windows/);
   });
 
   it.each([[['borrar']], [['install', '--force']], [['status', '; rm -rf /']]])(
@@ -46,7 +46,7 @@ describe('pa autostart', () => {
       setPlatform('win32');
       expect(await autostartCommand(args)).toBe(2);
       expect(execFile).not.toHaveBeenCalled();
-      expect(err).toMatch(/^uso: pa autostart/);
+      expect(err).toMatch(/^No conozco esa orden\. Usa: pa autostart install/);
     },
   );
 

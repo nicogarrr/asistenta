@@ -104,7 +104,7 @@ describe('pa status is evidence only', () => {
       out += s;
     });
     expect(out).toContain('no inicia ni reinicia');
-    expect(out).toContain('no comprueba si hay supervisor instalado');
+    expect(out).toContain('no comprueba si el autoarranque está instalado');
   });
 });
 

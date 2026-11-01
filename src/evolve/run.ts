@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 import { loadConfig } from '../config.js';
 import { isGoogleEndpoint, isOpenCodeEndpoint, isOpenRouterEndpoint } from '../core/provider.js';
 import { wallClock } from '../datecontext.js';
+import { EVOLVE_HOW } from '../palabras-vigilancia.js';
 import { envSecretName, vaultGet } from '../vault.js';
-
 import { Archive, isoWeek } from './archive.js';
 import {
   BATTERY_FILE,
@@ -22,7 +22,7 @@ import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history
 import { loadBattery, type Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
-import { SANDBOX_ENV } from './reap.js';
+import { noteAttemptRoot, SANDBOX_ENV } from './reap.js';
 import { repoRoot } from './worktree.js';
 
 /**
@@ -110,6 +110,21 @@ async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Cómo lanzar un comando del operador (PA_EVOLVE_PROPOSER, PA_EVOLVE_BATTERY). En Windows un
+ * .cmd/.bat sin shell da EINVAL (Node 18.20/20.12+), igual que npx en #1253: se lanza con
+ * shell y la ruta entre comillas (puede tener espacios). Una ruta con comillas o % se rechaza:
+ * cmd.exe la reinterpretaría. Sin argumentos extra: la shell no recibe nada más.
+ */
+export function operatorCommand(
+  cmd: string,
+  platform: NodeJS.Platform = process.platform,
+): { file: string; shell: boolean } {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(cmd)) return { file: cmd, shell: false };
+  if (/["%]/.test(cmd)) throw new Error(`Ruta de comando no válida para cmd.exe: ${cmd}`);
+  return { file: `"${cmd}"`, shell: true };
+}
+
 export function proposerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): EvolveOptions['propose'] | null {
@@ -117,11 +132,12 @@ export function proposerFromEnv(
   if (!cmd) return null;
   return (dir, hypothesis, attempt) =>
     withTempHome(async (home) => {
-      await exec(cmd, [], {
+      const run = operatorCommand(cmd);
+      const child = exec(run.file, [], {
         cwd: dir,
         timeout: 30 * 60_000,
         windowsHide: true,
-        shell: false,
+        shell: run.shell,
         env: {
           ...proposerEnv(env, home),
           PA_EVOLVE_DIR: dir,
@@ -131,6 +147,13 @@ export function proposerFromEnv(
           PA_EVOLVE_ATTEMPT: String(attempt),
         },
       });
+      // Su pid, para encontrar después a sus hijos huérfanos en Windows (reap.ts).
+      const ended = noteAttemptRoot(dir, child.child?.pid);
+      try {
+        await child;
+      } finally {
+        ended();
+      }
     });
 }
 
@@ -255,7 +278,10 @@ export function batteryRunnerFromEnv(
 ): BatteryRunner | null {
   const raw = env.PA_EVOLVE_BATTERY?.trim() ?? '';
   if (/^(off|0|no|false)$/i.test(raw)) return null;
-  const [file, args] = raw ? [raw, [] as string[]] : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
+  const custom = raw ? operatorCommand(raw) : null;
+  const [file, args] = custom
+    ? [custom.file, [] as string[]]
+    : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
   return async (c, cwd) => {
     // Solo el evaluador del repo recibe la clave: es el que usa el almacén por variables.
     const key = raw ? {} : await modelKeyEnv(env, deps);
@@ -264,7 +290,7 @@ export function batteryRunnerFromEnv(
         cwd,
         timeout: 10 * 60_000,
         windowsHide: true,
-        shell: false,
+        shell: custom?.shell ?? false,
         maxBuffer: 4 * 1024 * 1024,
         env: { ...proposerEnv(env, home), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
       }),
@@ -343,7 +369,7 @@ export function describeLast(stateDir: string): string {
     notCounting(stateDir),
     heavyThisWeek(stateDir),
     ...lines,
-    'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
+    EVOLVE_HOW,
   ].join('\n');
 }
 

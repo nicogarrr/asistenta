@@ -37,9 +37,9 @@ const MAX = 160;
 /** Frase en castellano para el dueño a partir del fallo crudo de voz. */
 export function plainVoiceError(err: unknown): string {
   const raw = (err instanceof Error ? err.message : String(err)).trim();
-  if (!raw) return 'fallo interno (el detalle está en el registro)';
+  if (!raw) return 'algo ha fallado por mi parte';
   if (!TECHNICAL.some((p) => p.test(raw)))
     return raw.length > MAX ? `${raw.slice(0, MAX - 1)}…` : raw;
   for (const [p, text] of RULES) if (p.test(raw)) return text;
-  return 'fallo interno (el detalle está en el registro)';
+  return 'algo ha fallado por mi parte';
 }

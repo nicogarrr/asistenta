@@ -32,8 +32,21 @@ function isRealMessage(m: unknown): boolean {
   return role === 'user' || role === 'assistant' || role === 'toolResult';
 }
 
+/**
+ * «ya está», «listo», «he terminado»… dicho suelto mientras se graba cierra la
+ * grabación igual que `/learn end` (Nico, 1 nov: hablar normal, sin comandos).
+ * Solo frases cortas y enteras: «ya está el correo enviado» sigue siendo demo.
+ */
+export const LEARN_END_RESPUESTA =
+  /^(?:ya\s+est[áa]|list[oa]|fin|(?:ya\s+)?(?:he\s+)?(?:terminado|acabado)|(?:ya\s+)?(?:termin[ée]|acab[ée])|(?:para|deja)\s+de\s+grabar)\s*[.!¡]*\s*$/iu;
+
 export class LearnRecorder {
   readonly #byChat = new Map<string, Recording>();
+
+  /** ¿Hay una grabación en curso en este chat? */
+  isRecording(chatId: string): boolean {
+    return this.#byChat.has(chatId);
+  }
 
   start(chatId: string, name: string, threadKey: string, agent: LearnTranscriptSource): void {
     let boundary: unknown = null;

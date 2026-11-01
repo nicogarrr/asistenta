@@ -173,6 +173,22 @@ export function judge(
       };
     }
   }
+  // Todo check que la versión actual imprime (pase o falle) tiene que salir también en la
+  // salida del intento. Uno que fallaba y desaparece restaba un fallo de «checksFailed» y
+  // sumaba puntos: un check que se esfuma es un descarte, no una mejora.
+  if (kernel.passingChecks) {
+    const seen = new Set([...(candidate.passingChecks ?? []), ...(candidate.failingChecks ?? [])]);
+    const gone = [...kernel.passingChecks, ...(kernel.failingChecks ?? [])].filter(
+      (c) => !seen.has(c),
+    );
+    if (gone.length) {
+      return {
+        kind: 'discard',
+        delta,
+        reason: `faltan checks de la sonda en la salida del candidato (${gone.slice(0, 3).join('; ')}). No entra al kernel.`,
+      };
+    }
+  }
   if (candidate.failed > kernel.failed || candidate.checksFailed > kernel.checksFailed) {
     return {
       kind: 'discard',

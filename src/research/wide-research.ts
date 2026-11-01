@@ -182,8 +182,10 @@ export async function wideResearch(
   deps: WideDeps,
 ): Promise<WideReport> {
   const q = question.trim();
-  if (!q) throw new Error('Falta la pregunta: /investiga amplio <pregunta> | a, b, c');
-  if (items.length === 0) throw new Error('Falta la lista: /investiga amplio <pregunta> | a, b, c');
+  if (!q)
+    throw new Error('Falta la pregunta. Por ejemplo: «precio y garantía | iPhone 16, Pixel 9».');
+  if (items.length === 0)
+    throw new Error('Falta de qué cosas. Por ejemplo: «precio y garantía | iPhone 16, Pixel 9».');
   if (items.length > WIDE_MAX_ITEMS) {
     throw new Error(
       `Como mucho ${WIDE_MAX_ITEMS} elementos por investigacion amplia (has puesto ${items.length}).`,

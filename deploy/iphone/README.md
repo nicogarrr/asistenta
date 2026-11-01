@@ -57,7 +57,7 @@ AssistiveTouch esta activado: eso solo lo ve la persona.
    (o una regla concreta para 7300 y 8890).
 4. Dentro de Ubuntu: `bash deploy/iphone/install-wsl.sh`, y despues pega tu clave en `~/esp32-iphone-agent/server/.env`
    (`LLM_API_KEY`, la de Gemini AI Studio; permisos 600; jamas por chat ni en el repo).
-5. En Windows, graba la ESP32 (cuando la tengas a mano): `deploy\iphone\flash.ps1 -WifiSsid ... -ServerHost <IP LAN del PC> -Port COMx`.
+5. En Windows, graba la ESP32 (cuando la tengas a mano): `powershell -ExecutionPolicy Bypass -File deploy\iphone\flash.ps1 -WifiSsid ... -ServerHost <IP LAN del PC> -Port COMx`.
 6. En el vault de Asistenta: `iphone:url` = `http://127.0.0.1:8890` (con WSL2 mirrored) o la IP del servidor.
    (Alternativa: variable `PA_IPHONE_URL`.)
 

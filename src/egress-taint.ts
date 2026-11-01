@@ -140,6 +140,13 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   // Una herramienta MCP con una URL http(s): el servidor externo hará esa petición, y la
   // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
   if (tool.startsWith('mcp_')) return mcpEgressUrl(args);
+  // Una orden de shell (`curl`, `Invoke-WebRequest`, `start <url>`…) o un texto tecleado
+  // con `computer` (la barra de direcciones de un navegador del escritorio) con una URL:
+  // la petición sale igual, y fullControl o la ventana de 90 s no deben cubrirla.
+  if (tool === 'shell' && typeof args.command === 'string') return textEgressUrl(args.command);
+  if (tool === 'computer' && args.action === 'type' && typeof args.text === 'string') {
+    return textEgressUrl(args.text);
+  }
   const url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) return null;
   if (tool === 'fetch' || tool === 'download') return url;
@@ -153,6 +160,14 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   // La tele abre esa página en su navegador: la petición sale igual que un fetch.
   if (tool === 'tv' && args.action === 'url') return url;
   return null;
+}
+
+/** Las URL http(s) escritas en un texto; si hay varias, primero la que lleva datos. */
+function textEgressUrl(text: string): string | null {
+  const urls = (text.match(/https?:\/\/[^\s"'`<>()]+/gi) ?? []).map((u) =>
+    u.replace(/[.,;]+$/, ''),
+  );
+  return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
 }
 
 /** Nombres de argumento con los que una herramienta MCP suele pedir una dirección. */
@@ -222,6 +237,9 @@ export function urlCarriesData(url: string): boolean {
     return true;
   }
   if (u.search.length > 1) return true;
+  // `#…` no viaja en la petición, pero la página abierta en el navegador (o en la tele)
+  // lo lee con location.hash y puede mandarlo donde quiera.
+  if (u.hash.length > 1) return true;
   if (u.username || u.password) return true;
   const path = decodeSafe(u.pathname);
   if (path.replace(/^\/+|\/+$/g, '').length > LONG_PATH_CHARS) return true;
@@ -241,5 +259,5 @@ function decodeSafe(s: string): string {
 
 /** El motivo que se enseña en la pregunta (la URL completa la añade el formateador). */
 export function egressTaintReason(source: string, host: string): string {
-  return `Este turno ya ha leído contenido privado (${source}) y ahora quiere enviar una petición con datos a un dominio nuevo (${host}). Revisa la URL completa: si no la esperabas, puede ser una página intentando sacar tus datos.`;
+  return `Acabo de leer contenido privado (${source}) y ahora iba a mandar datos a una web nueva (${host}). Mira la dirección completa: si no te la esperabas, puede ser una página intentando sacar tus datos.`;
 }

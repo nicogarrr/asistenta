@@ -187,7 +187,7 @@ describe('Watchdog.check', () => {
     expect(verdict.action).toBe('report');
     expect(verdict.gaveUp).toBe(false);
     expect(verdict.pid).toBeNull();
-    expect(verdict.reason).toContain('pid');
+    expect(verdict.reason).toContain('proceso');
     expect(killed).toEqual([]);
     expect(restarts).toBe(0);
     expect(wd.summary(verdict)).toContain('no toco nada');
@@ -218,7 +218,7 @@ describe('Watchdog.check', () => {
     expect(verdict.action).toBe('report');
     expect(killed).toBe(0);
     expect(restarts).toBe(0);
-    expect(wd.summary(verdict)).toContain('Modo consulta');
+    expect(wd.summary(verdict)).toContain('modo consulta');
   });
 
   it('a restart that throws becomes a report, and the failure is kept', async () => {
@@ -236,7 +236,7 @@ describe('Watchdog.check', () => {
     const verdict = await wd.check();
 
     expect(verdict.action).toBe('report');
-    expect(verdict.reason).toContain('schtasks.exe devolvió 1');
+    expect(verdict.reason).toBe('intenté reiniciarla y no pude');
     expect(wd.stats().lastError).toContain('schtasks');
   });
 
@@ -300,9 +300,9 @@ describe('Watchdog.check', () => {
 
     expect(sent).toHaveLength(1);
     expect(text).toContain('Asistenta lleva 3 minutos sin responder');
-    expect(text).toContain('Último turno: abrió el correo y bajó dos adjuntos');
+    expect(text).toContain('Lo último que hizo: abrió el correo y bajó dos adjuntos');
     expect(text).toContain('La reinicio');
-    expect(text).toContain(beat());
+    expect(text).not.toContain(beat());
   });
 
   it('reset() clears the budget, for after a human fixed it', async () => {

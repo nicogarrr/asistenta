@@ -262,7 +262,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: 'apagado (PA_COMPUTER_USE=0)',
-      hint: 'Actívalo desde Telegram con /ordenador on.',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
     });
   } else if (offSavedOrUnknown(deps) !== false) {
     const unknown = offSavedOrUnknown(deps) === undefined;
@@ -271,9 +271,9 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: unknown
-        ? 'no he podido mirar si hay un /ordenador off guardado'
-        : 'apagado con /ordenador off (guardado: arrancará apagado)',
-      hint: 'Actívalo desde Telegram con /ordenador on.',
+        ? 'no he podido mirar si lo dejaste apagado desde Telegram'
+        : 'lo apagaste desde Telegram (guardado: arrancará apagado)',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
     });
   } else {
     add({

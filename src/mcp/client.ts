@@ -28,6 +28,14 @@ export interface McpServerConfig {
   allowedTools?: string[];
   /** Si es true, `callTool` reinicia el proceso una vez y reintenta la llamada. */
   reconnect?: boolean;
+  /**
+   * Si se define, el proceso solo hereda estas variables del entorno (sin
+   * distinguir mayúsculas) más `env`, en vez de todo `process.env`. Solo lo usa
+   * la integración REA (src/mcp/rea.ts); PA_MCP_SERVERS no lo lee.
+   */
+  envAllowlist?: string[];
+  /** Si es true, solo se publican las tools que el servidor marca como de solo lectura. */
+  readOnlyOnly?: boolean;
 }
 
 /** Herramienta tal como la anuncia `tools/list`. */
@@ -35,6 +43,8 @@ export interface McpToolInfo {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  /** Pistas MCP (ToolAnnotations) tal como las anuncia el servidor. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
 /** Resultado normalizado de `tools/call`. */
@@ -150,6 +160,12 @@ export function parseToolList(server: string, result: unknown): McpToolInfo[] {
     const info: McpToolInfo = { name: item.name };
     if (typeof item.description === 'string') info.description = item.description;
     if (isRecord(item.inputSchema)) info.inputSchema = item.inputSchema;
+    if (isRecord(item.annotations)) {
+      const { readOnlyHint, destructiveHint } = item.annotations;
+      info.annotations = {};
+      if (typeof readOnlyHint === 'boolean') info.annotations.readOnlyHint = readOnlyHint;
+      if (typeof destructiveHint === 'boolean') info.annotations.destructiveHint = destructiveHint;
+    }
     tools.push(info);
   }
   return tools;
@@ -357,6 +373,41 @@ export function parseMcpServers(raw: string | undefined): McpServerConfig[] {
     servers.push(server);
   }
   return servers;
+}
+
+/**
+ * Entorno base de un servidor MCP: todo `process.env` (lo de siempre) o, con
+ * `allowlist`, solo esas variables. En Windows los nombres no distinguen
+ * mayúsculas (`Path`/`PATH`), así que se compara en minúsculas.
+ */
+export function launchBaseEnv(
+  env: NodeJS.ProcessEnv,
+  allowlist: string[] | undefined,
+): NodeJS.ProcessEnv {
+  if (!allowlist) return { ...env };
+  const wanted = new Set(allowlist.map((key) => key.toLowerCase()));
+  const picked: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && wanted.has(key.toLowerCase())) picked[key] = value;
+  }
+  return picked;
+}
+
+/**
+ * Línea en castellano llano cuando no arranca un servidor MCP. Sin el texto
+ * crudo del sistema (va al log): solo qué pasa y qué hacer.
+ */
+export function mcpStartFailureText(name: string, command: string, error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  const program = command.trim().split(/\s+/)[0] ?? command;
+  const head = `No se pudo arrancar el servidor MCP "${name}"`;
+  if (code === 'ENOENT') {
+    return `${head}: no encuentro el programa «${program}». Revisa que esté instalado o corrige PA_MCP_SERVERS.`;
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return `${head}: no hay permiso para ejecutar «${program}».`;
+  }
+  return `${head}. Revisa su configuración en PA_MCP_SERVERS.`;
 }
 
 /**
@@ -612,7 +663,7 @@ export class McpClient {
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(this.#config.command, this.#config.args ?? [], {
-        env: { ...process.env, ...this.#config.env },
+        env: { ...launchBaseEnv(process.env, this.#config.envAllowlist), ...this.#config.env },
         windowsHide: true,
       });
     } catch (error) {
@@ -677,9 +728,9 @@ export class McpClient {
     });
     child.on('error', (error) => {
       if (this.#child !== child) return;
-      this.#fail(
-        new Error(`No se pudo arrancar el servidor MCP "${this.#config.name}": ${error.message}`),
-      );
+      // El error crudo (spawn ENOENT, rutas…) solo al log; al modelo, una línea clara.
+      log.warn('No arranca el servidor MCP', { server: this.#config.name, err: error.message });
+      this.#fail(new Error(mcpStartFailureText(this.#config.name, this.#config.command, error)));
     });
     child.on('exit', (code, signal) => {
       if (this.#closed || this.#child !== child) return;
@@ -688,8 +739,12 @@ export class McpClient {
     });
     child.stdin.on('error', (error) => {
       if (this.#child !== child) return;
+      log.warn('Se cortó la entrada del servidor MCP', {
+        server: this.#config.name,
+        err: error.message,
+      });
       this.#fail(
-        new Error(`Se perdio la entrada del servidor MCP "${this.#config.name}": ${error.message}`),
+        new Error(`Se ha perdido la conexión con el servidor MCP "${this.#config.name}".`),
       );
     });
   }

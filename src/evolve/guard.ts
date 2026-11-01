@@ -30,6 +30,10 @@ export const PROTECTED_PREFIXES: readonly string[] = [
   'vitest.projects',
   'vite.config',
   '.npmrc',
+  // vite carga postcss.config.* / .postcssrc* de la raíz al arrancar, sin CSS de por medio, y
+  // lo ejecuta en el proceso principal de vitest, el que escribe el informe (comprobado, 31 oct).
+  'postcss.config',
+  '.postcssrc',
   'biome.json',
   'package.json',
   'package-lock.json',
@@ -219,6 +223,14 @@ export function checkPatch(diff: string): Violation[] {
     v.push({
       file: '(submódulo)',
       rule: 'añade un repositorio git anidado: su contenido se mediría sin revisarse',
+    });
+  }
+  // Un fichero que git ve como binario (basta un NUL en un comentario, o UTF-16) sale en el
+  // diff como «Binary files … differ»: su contenido se mediría sin pasar por las reglas.
+  if (/^(Binary files .* differ|GIT binary patch)$/m.test(diff)) {
+    v.push({
+      file: '(binario)',
+      rule: 'añade o cambia un fichero binario: el guard no puede leer su contenido',
     });
   }
   // Borrar tests tambien es cambiar la regla de medir.

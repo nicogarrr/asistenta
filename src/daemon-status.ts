@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from './paths.js';
+import { readTelegramEstado } from './telegram-estado.js';
 import { staleThresholdMs } from './watchdog.js';
 
 export interface DaemonStatusDeps {
@@ -90,6 +91,7 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
     modifiedAt,
     ageMs,
     staleAfterMs,
+    telegram: readTelegramEstado(dir, now, staleAfterMs),
     pidFile,
     heartbeatFile,
     supervisionInstalled: null,
@@ -98,10 +100,57 @@ export function daemonStatus(deps: DaemonStatusDeps = {}) {
 
 /** Sin PID legible: por qué, en castellano (antes «PID no disponible (missing)»). */
 const PID_SIN_ARCHIVO = {
-  missing: 'No hay archivo de PID: Asistenta no parece estar en marcha.',
-  invalid: 'El archivo de PID está dañado: no sé qué proceso es Asistenta.',
-  unreadable: 'No pude leer el archivo de PID (¿permisos?).',
+  missing: 'No encuentro Asistenta en marcha.',
+  invalid: 'No sé si Asistenta está en marcha: el archivo que lo apunta está dañado.',
+  unreadable: 'No he podido comprobar si Asistenta está en marcha (¿permisos?).',
 } as const;
+
+const segundos = (ms: number | null) => {
+  const s = Math.floor((ms ?? 0) / 1000);
+  return s < 120 ? `${s} s` : `${Math.floor(s / 60)} min`;
+};
+
+/** `pa status` en castellano llano: primero si está en marcha y qué hacer; luego los límites. */
+function humanStatus(report: ReturnType<typeof daemonStatus>): string[] {
+  const lines: string[] = [];
+  const beat = report.heartbeatState;
+  if (report.pid === null) {
+    lines.push(PID_SIN_ARCHIVO[report.pidState as Exclude<typeof report.pidState, 'valid'>]);
+    if (report.pidState === 'missing') lines.push('Para arrancarla: levantar.bat o pa iniciar.');
+  } else if (report.processState === 'dead') {
+    lines.push('Asistenta no está en marcha: se cerró sin avisar.');
+    lines.push('Para arrancarla: levantar.bat o pa iniciar.');
+  } else if (report.processState === 'unknown') {
+    lines.push('No pude comprobar si Asistenta está en marcha.');
+  } else if (beat === 'fresh') {
+    lines.push(`Asistenta está en marcha: dio señal de vida hace ${segundos(report.ageMs)}.`);
+  } else if (beat === 'stale') {
+    lines.push(
+      `Asistenta está abierta, pero lleva ${segundos(report.ageMs)} sin dar señal de vida: puede estar colgada.`,
+    );
+    lines.push('Si sigue así: pa stop y vuelve a arrancarla (levantar.bat o pa iniciar).');
+  } else {
+    lines.push('Asistenta está abierta, pero no puedo confirmar que responda.');
+  }
+  if (beat === 'future') lines.push('Su señal de vida tiene fecha futura: revisa la hora del PC.');
+  else if (beat === 'unverified')
+    lines.push(
+      'El archivo de señal de vida cambió, pero su contenido no es verificable; no confirma que responda.',
+    );
+  else if (beat === 'invalid')
+    lines.push('El archivo de señal de vida es inválido o ilegible; no confirma que responda.');
+  else if (beat === 'missing' && report.processState === 'alive')
+    lines.push('Todavía no hay señal de vida.');
+  if (report.processState === 'alive' && report.telegram === 'conectada')
+    lines.push('Telegram: conectada.');
+  else if (report.processState === 'alive' && report.telegram === 'desconectada')
+    lines.push('Telegram: sin conexión ahora mismo; Asistenta reintenta sola.');
+  lines.push('Que esté en marcha no garantiza que Telegram y el modelo respondan (pa doctor).');
+  lines.push(
+    'Esto solo mira: no inicia ni reinicia nada, y no comprueba si el autoarranque está instalado (pa autostart status).',
+  );
+  return lines;
+}
 
 export function statusCommand(
   args: string[],
@@ -121,25 +170,7 @@ export function statusCommand(
   if (args[0] === '--json') {
     write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
-    const pidText =
-      report.pid === null
-        ? PID_SIN_ARCHIVO[report.pidState as Exclude<typeof report.pidState, 'valid'>]
-        : `PID ${report.pid}: ${report.processState === 'alive' ? 'el proceso existe' : report.processState === 'dead' ? 'el proceso no existe' : 'no se pudo comprobar el proceso'}.`;
-    const beatText =
-      report.heartbeatState === 'fresh'
-        ? `Latido con timestamp legible: hace ${Math.floor((report.ageMs ?? 0) / 1000)} s.`
-        : report.heartbeatState === 'stale'
-          ? `Latido atrasado: hace ${Math.floor((report.ageMs ?? 0) / 1000)} s.`
-          : report.heartbeatState === 'future'
-            ? 'Latido con fecha futura: revisar el reloj; no prueba salud.'
-            : report.heartbeatState === 'unverified'
-              ? 'Archivo de latido modificado, pero su contenido no es verificable; no confirma un latido.'
-              : report.heartbeatState === 'invalid'
-                ? 'Archivo de latido inválido o ilegible; no confirma un latido.'
-                : 'No hay latido legible.';
-    write(
-      `${pidText}\n${beatText}\nUmbral de latido: ${report.staleAfterMs / 1000} s.\nUn PID vivo y un latido reciente no prueban que Telegram o el LLM funcionen.\nConsulta puntual: no vigila, no inicia ni reinicia el daemon; no comprueba si hay supervisor instalado.\nPID: ${report.pidFile}\nLatido: ${report.heartbeatFile}\n`,
-    );
+    write(`${humanStatus(report).join('\n')}\n`);
   }
   return 0;
 }

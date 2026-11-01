@@ -14,11 +14,18 @@ describe('sidecar y documentación', () => {
   });
 
   it('el README explica el OCR local con sus licencias y .env.example sus variables', () => {
-    const readme = readFileSync('README.md', 'utf8');
-    const sec = readme.slice(readme.indexOf('## OCR local (opcional)'));
-    expect(sec).toMatch(/Apache-2\.0/);
-    expect(sec).toMatch(/MIT/);
-    expect(sec).toMatch(/94,5 %.*1,3.*0,8 GB/);
+    // README.md en inglés y README.es.md en castellano (Nico, 1 nov): la misma tabla.
+    for (const [f, titulo, cifras] of [
+      ['README.es.md', '## OCR local (opcional)', /94,5 %.*1,3.*0,8 GB/],
+      ['README.md', '## Local OCR (optional)', /94\.5 %.*1\.3.*0\.8 GB/],
+    ] as const) {
+      const readme = readFileSync(f, 'utf8');
+      expect(readme.indexOf(titulo), f).toBeGreaterThan(-1);
+      const sec = readme.slice(readme.indexOf(titulo));
+      expect(sec).toMatch(/Apache-2\.0/);
+      expect(sec).toMatch(/MIT/);
+      expect(sec).toMatch(cifras);
+    }
     const env = readFileSync('.env.example', 'utf8');
     expect(env).toMatch(/^# PA_OCR_LOCAL=1/m);
     expect(env).toMatch(/^# PA_OCR_MODEL=ppocr/m);

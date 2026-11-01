@@ -101,6 +101,24 @@ export const GENERAL_SKILLS: readonly SkillDraft[] = [
     outward: false,
     needs: ['notas-voz'],
   },
+  // Adaptada de to-questionnaire de Matt Pocock (github.com/mattpocock/skills, MIT,
+  // Copyright (c) 2026 Matt Pocock), con redacción propia: docs/skills-matt.md.
+  {
+    name: 'Cuestionario para otra persona',
+    description: 'Prepara las preguntas para quien sabe lo que tú no: gestor, casero, médico.',
+    category: CATEGORY,
+    whenToUse:
+      'prepárame las preguntas para el gestor, qué le pregunto al casero, cuestionario para el médico',
+    steps: [
+      'Preguntar al dueño solo dos cosas: a quién va y qué necesita saber o decidir con sus respuestas',
+      'Escribir las preguntas de más a menos importante, una idea por pregunta, por temas si son muchas',
+      'Empezar con una línea de contexto y para qué son, y acabar con «¿Algo más que deba saber?»',
+      'Enseñárselo al dueño con hueco para responder; no enviarlo a nadie sin que él lo apruebe',
+    ],
+    notes: ['Adaptada de to-questionnaire de Matt Pocock (licencia MIT).'],
+    outward: false,
+    needs: [],
+  },
 ];
 
 export function seedGeneralSkills(

@@ -49,7 +49,7 @@ Que hace, en orden:
    `PROMPT="...\nBROWSER_ENGINE=inside\n..."`); el detector
    `Test-MultilineQuoted.ps1` lo reconoce (conservador: una comilla impar
    tambien rechaza) y el script pide edicion manual. Fixtures del detector:
-   `powershell -File deploy\browserd\test-envfile-detector.ps1`.
+   `powershell -ExecutionPolicy Bypass -File deploy\browserd\test-envfile-detector.ps1`.
 
 Los flags son independientes: `-Start` y `-Bench` se pueden repetir aunque la
 instalacion ya este hecha (los pasos 1-5 son idempotentes y rapidos).
@@ -108,7 +108,7 @@ powershell -ExecutionPolicy Bypass -File deploy\browserd\install-browserd-autost
 Registra una tarea en el Planificador de tareas (disparador `AtLogOn`, carpeta del
 propio usuario, sin elevación) que lanza `python -m browserd` a través de
 `start-browserd-hidden.vbs`: sin ventana de consola y con la misma configuración
-explícita que `setup-browserd.ps1 -Start` (loopback, puerto 7701, token vacío).
+explícita que `powershell -ExecutionPolicy Bypass -File deploy\browserd\setup-browserd.ps1 -Start` (loopback, puerto 7701, token vacío).
 Logs en `browserd\logs\` (se añaden, no se sobrescriben).
 
 Si el proceso muere, la tarea lo reintenta cada minuto (hasta 999 veces). Si sigue
@@ -133,11 +133,11 @@ Detalles que conviene saber:
   venv (módulo exacto: `-m browserd_backup` no se toca). Eso incluye una
   instancia manual arrancada desde el mismo venv: no se puede distinguir de
   una huérfana de la tarea, y dejarla viva mantendría el puerto ocupado.
-  Cada parada se anuncia por consola; rearranca con `setup-browserd.ps1 -Start`.
+  Cada parada se anuncia por consola; rearranca con `powershell -ExecutionPolicy Bypass -File deploy\browserd\setup-browserd.ps1 -Start`.
 - `-Force` respalda la tarea vieja en XML antes de tocarla y la restaura si el
   registro nuevo falla.
 - La lógica testeable vive en `Select-BrowserdProcess.ps1` con canarios en
-  `test-autostart-canaries.ps1` (`pwsh -File ...`, exit != 0 si falla alguno).
+  `test-autostart-canaries.ps1` (`pwsh -ExecutionPolicy Bypass -File ...`, exit != 0 si falla alguno).
 
 Estado de verificación: script y launcher revisados estáticamente (parse de
 PowerShell superado); su primera ejecución real es en el PC del usuario, igual
@@ -158,7 +158,7 @@ probarse en Windows y queda declarado como pendiente:
 3. **Árbol de procesos**: `-Uninstall` (o `-Force`) debe dejar cero procesos
    `python.exe -m browserd` del venv vivos (`Get-CimInstance Win32_Process`).
 4. **Adopción de instancia manual**: con un browserd arrancado a mano
-   (`setup-browserd.ps1 -Start`), lanzar la tarea y comprobar que termina con
+   (`powershell -ExecutionPolicy Bypass -File deploy\browserd\setup-browserd.ps1 -Start`), lanzar la tarea y comprobar que termina con
    código 0 sin crear otro proceso (esa instancia manual NO queda supervisada;
    la supervisión cubre solo instancias arrancadas por la tarea).
 5. **Puerto ocupado por otro proceso**: con 127.0.0.1:7701 sirviendo algo que

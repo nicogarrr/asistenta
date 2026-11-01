@@ -44,11 +44,29 @@ export interface BootFacts {
 }
 
 /** Problemas de arranque que merecen un mensaje al dueño. */
-export type BootProblem = 'modelo';
+export type BootProblem =
+  | 'modelo'
+  | 'panel-puerto'
+  | 'panel-token'
+  | 'panel-ocupado'
+  | 'panel-fallo'
+  | 'zona-horaria';
 
 const PROBLEM_TEXT: Record<BootProblem, string> = {
   modelo:
     'No puedo contestarte: falta la clave del modelo o no vale. Revísala en el PC con «pa iniciar».',
+  // El panel web no se enciende: antes solo se decía en la consola del PC, que en
+  // Windows casi nunca está a la vista. Aquí se avisa una vez, no en cada reinicio.
+  'panel-puerto':
+    'El panel web no se ha encendido: el número de PA_WEB_PORT en el archivo .env no vale. Pon uno como 8787 y reinicia Asistenta.',
+  'panel-token':
+    'El panel web no se ha encendido: falta PA_WEB_TOKEN en el archivo .env. Añade esa línea con 24 o más letras y números al azar y reinicia Asistenta.',
+  'panel-ocupado':
+    'El panel web no se ha encendido: su puerto lo usa otro programa o Windows no deja usarlo. Cambia PA_WEB_PORT en el archivo .env (por ejemplo a 8788) y reinicia Asistenta.',
+  'panel-fallo':
+    'El panel web no se ha encendido por un fallo inesperado. Ejecuta «pa doctor» en el PC para ver qué pasa.',
+  'zona-horaria':
+    'La zona horaria del archivo .env (PA_TIMEZONE) no vale, así que uso la hora del PC y tus recordatorios podrían ir desfasados. Pon PA_TIMEZONE=Europe/Madrid y reinicia Asistenta.',
 };
 
 const yesNo = (on: boolean) => (on ? 'sí' : 'no');
@@ -171,7 +189,7 @@ const RESULT_TEXT: Record<BootNoticeResult, string> = {
   'no-owner':
     '❌ no enviado: no sé cuál es tu chat privado. Mira «pa iniciar --solo-comprobar» (línea «Dueño»)',
   'rate-limited': 'no enviado: ya se había mandado hace menos de 10 min',
-  failed: '❌ falló al enviarlo por Telegram. Mira el log del daemon',
+  failed: '❌ no pude enviártelo por Telegram. Prueba «pa doctor» para ver qué falla',
 };
 
 /** Una línea para `pa autostart status`. */

@@ -15,7 +15,7 @@ describe('errores de cámara, micro, audio y palabra en castellano y sin texto t
     const r = failedReply('No he podido usar la cámara', err);
     expect(r).not.toMatch(/dshow|ffmpeg|Users/);
     expect(r).toBe(
-      'No he podido usar la cámara (error interno). Prueba otra vez; si se repite, mira /estado.',
+      'No he podido usar la cámara. Algo ha fallado por mi parte; vuelve a intentarlo en un momento.',
     );
   });
 
@@ -33,7 +33,9 @@ describe('errores de cámara, micro, audio y palabra en castellano y sin texto t
   });
 
   it('valores que no son Error tampoco salen crudos', () => {
-    expect(failedReply('No pude resumir el historial', { a: 1 })).toContain('(error interno)');
+    expect(failedReply('No pude resumir el historial', { a: 1 })).toContain(
+      'Algo ha fallado por mi parte',
+    );
     expect(failedReply('No la he anotado', 'idea vacía')).toBe('No la he anotado: idea vacía');
   });
 });

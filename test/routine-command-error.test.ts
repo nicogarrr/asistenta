@@ -68,7 +68,7 @@ describe('rutina de comando que no llega a ejecutarse: el aviso va en castellano
 
   it('cualquier otro fallo no enseña el texto en inglés', async () => {
     const text = await fireWith(new TypeError("Cannot read properties of undefined (reading 'x')"));
-    expect(text).toContain('fallo interno');
+    expect(text).toContain('algo ha fallado por mi parte');
     expect(text).not.toMatch(/Cannot read|undefined/);
   });
 });

@@ -27,6 +27,14 @@ describe('system prompt: natural chat voice', () => {
     it('asks at most one short question', () => {
       expect(p).toContain('At most one short question');
     });
+
+    // Nico (1 nov): «conversaciones naturales, no usar cosas como <número o palabra>».
+    it('never writes placeholders or command syntax unless asked', () => {
+      expect(p).toContain('Talk like a friend on WhatsApp: short, natural sentences');
+      expect(p).toContain('no command syntax, no examples with a slash');
+      expect(p).toContain('no placeholders like <número> or [opcional]');
+      expect(p).toContain('If you need something, just ask ("¿qué página quieres que vigile?")');
+    });
   }
 
   it('keeps the safety rules untouched', () => {

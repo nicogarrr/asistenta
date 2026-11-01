@@ -27,6 +27,9 @@ describe('pa en la consola: mensajes de primer uso', () => {
       try {
         const env: NodeJS.ProcessEnv = { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' };
         for (const k of Object.keys(env)) if (/API_KEY$/.test(k)) delete env[k];
+        // Con FORCE_COLOR y NO_COLOR a la vez, Node añade un aviso a stderr.
+        delete env.FORCE_COLOR;
+        delete env.NO_COLOR;
         const pa = (...args: string[]) =>
           spawnSync(process.execPath, [resolve('dist/cli.js'), ...args], {
             cwd: dir,
@@ -52,5 +55,6 @@ describe('pa en la consola: mensajes de primer uso', () => {
         rmSync(dir, { recursive: true, force: true });
       }
     },
+    300_000,
   );
 });

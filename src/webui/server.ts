@@ -307,7 +307,7 @@ async function respondApi(
         if (answer === 'con-fotos') {
           throw new HttpError(
             409,
-            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Repítelo en Telegram con /reintentar',
+            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Mándamelo otra vez por Telegram, con las fotos.',
           );
         }
         if (!isRecord(answer) || typeof answer.text !== 'string')

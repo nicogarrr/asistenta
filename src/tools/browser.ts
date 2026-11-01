@@ -9,7 +9,12 @@ import {
   type WaitResult,
 } from '../browser/service.js';
 import { UNREADABLE_TARGET } from '../browser/target.js';
-import { signupPasswordDomain, signupSubmitBlock } from '../credentials/signup-guard.js';
+import {
+  armDesktopSignup,
+  signupEmailDomains,
+  signupPasswordDomain,
+  signupSubmitBlock,
+} from '../credentials/signup-guard.js';
 import { normalizeDomain, parseSiteKey, siteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
@@ -736,7 +741,7 @@ export function createBrowserTool(
             if (stored === undefined) {
               throw new Error(
                 `El vault no tiene ningún secreto con la clave ${canonicalKey}. ` +
-                  `Nico lo guarda con: pa vault set ${canonicalKey} <valor>`,
+                  `Nico lo guarda con: pa vault set-stdin ${canonicalKey} (se escribe sin que se vea)`,
               );
             }
             value = stored;
@@ -1057,10 +1062,21 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
       action === 'fill'
         ? signupPasswordDomain((a[1] as { secret_key?: unknown }).secret_key)
         : null;
-    if (signupDomain && !(result as { isError?: boolean }).isError) {
+    const filledOk = action === 'fill' && !(result as { isError?: boolean }).isError;
+    const signupDomains = !filledOk
+      ? []
+      : signupDomain
+        ? [signupDomain]
+        : await signupEmailDomains(
+            (a[1] as { text?: unknown }).text,
+            pageUrlOf(service, scope),
+          ).catch(() => []);
+    if (signupDomains.length > 0) {
       const set = signupFills.get(scope) ?? new Set<string>();
-      set.add(signupDomain);
+      for (const d of signupDomains) set.add(d);
       signupFills.set(scope, set);
+      // La ventana del navegador también se ve en el escritorio: un clic de `computer` cuenta.
+      armDesktopSignup(signupDomains);
     }
     return withPageUrl(service, scopeOf(), action, result);
   };

@@ -108,9 +108,9 @@ describe('validateSchedule', () => {
   it('rejects a wrong field count with a message that names the two shapes', () => {
     const result = validateSchedule('every 5 minutes');
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toMatch(/5 fields/);
-    expect(!result.ok && result.error).toMatch(/6 with seconds first/);
-    expect(!result.ok && result.error).toMatch(/got 3/);
+    expect(!result.ok && result.error).toMatch(/necesita 5/);
+    expect(!result.ok && result.error).toMatch(/6 con los segundos delante/);
+    expect(!result.ok && result.error).toMatch(/tiene 3 partes/);
     expect(!result.ok && result.error).toMatch(/every 5 minutes/);
   });
 
@@ -127,7 +127,7 @@ describe('validateSchedule', () => {
   it('refuses a pattern that parses but never fires', () => {
     const result = validateSchedule('0 0 30 2 *');
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toMatch(/never fires/);
+    expect(!result.ok && result.error).toMatch(/nunca llega/);
   });
 
   it('refuses a zero step rather than silently accepting it', () => {

@@ -71,7 +71,7 @@ it('native private ACL plus actual CLI stop drains a separate lifecycle and rele
     env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
   });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain('cierre limpio confirmado');
+  expect(result.stdout).toContain('Asistenta parada: ha cerrado bien');
   expect(readFileSync(join(dir, 'drained'), 'utf8')).toBe('yes');
   expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
   expect(windowsNative(dir, 'confirm')).toBe('free');

@@ -15,7 +15,8 @@ describe('menú de Telegram: descripciones completas', () => {
 
   it('/tv dice que solo abre el mando y sigue dando el ejemplo sin gastar', () => {
     expect(desc('tv')).toContain('/tv solo abre el mando');
-    expect(desc('tv')).toContain('/tv apaga la tele');
+    expect(desc('tv')).toContain('dime «apaga la tele»');
+    expect(desc('tv')).not.toContain('/tv apaga');
   });
 
   it('todas caben en el límite de Telegram', () => {

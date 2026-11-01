@@ -11,6 +11,14 @@ import { vaultDelete, vaultGet, vaultList, vaultSet } from '../vault.js';
  * `revealPassword`, que usa la CLI local (portapapeles / exportar), la lee.
  */
 
+/**
+ * Aviso del gestor o del registro, ya escrito en castellano llano para el dueño.
+ * Cualquier otro error (lectura/escritura del vault, disco…) es técnico: solo va al log.
+ */
+export class AvisoCuenta extends Error {
+  override name = 'AvisoCuenta';
+}
+
 export interface VaultOps {
   get(key: string): Promise<string | undefined>;
   set(key: string, value: string): Promise<void>;
@@ -99,18 +107,33 @@ function parseMeta(domain: string, raw: string | undefined, username: string): A
   };
 }
 
-/** Todas las cuentas con contraseña guardada, por dominio. Sin contraseñas. */
-export async function listAccounts(vault: VaultOps = realVault): Promise<Account[]> {
-  const keys = await vault.list();
-  const domains = new Set<string>();
-  for (const k of keys) {
-    const m = /^site:([^:]+):password$/.exec(k);
-    if (m?.[1]) domains.add(m[1]);
+/**
+ * Dominios tal como están en las claves `site:<d>:password`, agrupados por dominio normal
+ * (sin www, en minúsculas): `pa vault set-stdin site:www.wallapop.es:password` y una cuenta de
+ * wallapop.es son la misma web. El primero de cada lista es el que se lee (el exacto si lo hay).
+ */
+async function keyDomains(vault: VaultOps): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  for (const k of await vault.list()) {
+    const raw = /^site:([^:]+):password$/.exec(k)?.[1];
+    const domain = raw ? normalizeDomain(raw) : null;
+    if (!raw || !domain) continue;
+    const list = out.get(domain) ?? [];
+    if (raw === domain) list.unshift(raw);
+    else list.push(raw);
+    out.set(domain, list);
   }
+  return out;
+}
+
+/** Todas las cuentas con contraseña guardada, una por web. Sin contraseñas. */
+export async function listAccounts(vault: VaultOps = realVault): Promise<Account[]> {
   const out: Account[] = [];
-  for (const domain of [...domains].sort()) {
-    const username = (await vault.get(siteKey(domain, 'username'))) ?? '';
-    out.push(parseMeta(domain, await vault.get(metaKey(domain)), username));
+  const groups = await keyDomains(vault);
+  for (const domain of [...groups.keys()].sort()) {
+    const raw = groups.get(domain)?.[0] ?? domain;
+    const username = (await vault.get(siteKey(raw, 'username'))) ?? '';
+    out.push(parseMeta(domain, await vault.get(metaKey(raw)), username));
   }
   return out;
 }
@@ -120,8 +143,14 @@ export async function findAccounts(query: string, vault: VaultOps = realVault): 
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const domain = normalizeDomain(q);
+  const all = await listAccounts(vault);
+  // Con un dominio («wallapop.es») solo esa web y sus subdominios: wallapop.es y
+  // es.wallapop.com son webs distintas, y «x.es» no es «fax.es».
+  if (domain?.includes('.') && !/\s/.test(q)) {
+    return all.filter((a) => a.domain === domain || a.domain.endsWith(`.${domain}`));
+  }
   const word = q.replace(/^www\./, '').split(/[./\s]/)[0] ?? q;
-  return (await listAccounts(vault)).filter(
+  return all.filter(
     (a) => a.domain === domain || a.domain.split('.').includes(word) || a.domain.includes(q),
   );
 }
@@ -140,9 +169,10 @@ export interface SaveInput {
 /** Guarda (o actualiza) una cuenta. Devuelve la cuenta SIN contraseña. */
 export async function saveAccount(input: SaveInput, vault: VaultOps = realVault): Promise<Account> {
   const domain = normalizeDomain(input.site);
-  if (!domain) throw new Error('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
+  if (!domain)
+    throw new AvisoCuenta('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
   const username = input.username.trim();
-  if (!username) throw new Error('Falta el usuario o correo de la cuenta.');
+  if (!username) throw new AvisoCuenta('Falta el usuario o correo de la cuenta.');
   const password = input.password ?? generatePassword(input.rules);
   const prev = parseMeta(domain, await vault.get(metaKey(domain)), username);
   const account: Account = {
@@ -161,13 +191,16 @@ export async function saveAccount(input: SaveInput, vault: VaultOps = realVault)
   return account;
 }
 
-/** Borra la cuenta del gestor (las tres claves). */
+/** Borra la cuenta del gestor (las tres claves; también las de www.<web> si las hay). */
 export async function deleteAccount(site: string, vault: VaultOps = realVault): Promise<boolean> {
   const domain = normalizeDomain(site);
   if (!domain) return false;
-  const had = await vault.delete(siteKey(domain, 'password'));
-  await vault.delete(siteKey(domain, 'username'));
-  await vault.delete(metaKey(domain));
+  let had = false;
+  for (const raw of new Set([domain, ...((await keyDomains(vault)).get(domain) ?? [])])) {
+    if (await vault.delete(siteKey(raw, 'password'))) had = true;
+    await vault.delete(siteKey(raw, 'username'));
+    await vault.delete(metaKey(raw));
+  }
   return had;
 }
 
@@ -180,7 +213,9 @@ export async function revealPassword(
   vault: VaultOps = realVault,
 ): Promise<string | undefined> {
   const domain = normalizeDomain(site);
-  return domain ? vault.get(siteKey(domain, 'password')) : undefined;
+  if (!domain) return undefined;
+  const raw = (await keyDomains(vault)).get(domain)?.[0] ?? domain;
+  return vault.get(siteKey(raw, 'password'));
 }
 
 /** n…@gmail.com: el correo reconocible sin escribirlo entero en el chat. */

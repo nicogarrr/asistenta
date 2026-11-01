@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 
 /**
@@ -10,6 +11,15 @@ import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
  */
 
 export type TaskStatus = 'pendiente' | 'en_curso' | 'hecho';
+export type TaskRepeat = 'diario' | 'laborables' | 'semanal' | 'quincenal' | 'mensual';
+
+export const REPEAT_LABEL: Record<TaskRepeat, string> = {
+  diario: 'cada día',
+  laborables: 'de lunes a viernes',
+  semanal: 'cada semana',
+  quincenal: 'cada dos semanas',
+  mensual: 'cada mes',
+};
 
 export interface BoardTask {
   id: number;
@@ -20,6 +30,8 @@ export interface BoardTask {
   day: string;
   /** Hora local HH:MM, opcional. */
   time?: string;
+  /** Se repite: al hacerla (o si se pasa su día) salta a la siguiente. */
+  repeat?: TaskRepeat;
   status: TaskStatus;
   /** Día en que el resumen de la mañana avisó de que iba atrasada (se avisa una sola vez). */
   lateNoticeDay?: string;
@@ -64,6 +76,13 @@ function parseDay(day: string): Date {
   return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12);
 }
 
+/** ¿Existe ese día en el calendario? «2026-02-29» no, «2028-02-29» sí. */
+function realDay(day: string): boolean {
+  const [y, m, d] = day.split('-').map(Number);
+  const at = parseDay(day);
+  return at.getFullYear() === y && at.getMonth() + 1 === m && at.getDate() === d;
+}
+
 function addDays(day: string, n: number): string {
   const at = parseDay(day);
   at.setDate(at.getDate() + n);
@@ -104,6 +123,10 @@ const NUMBER_WORDS = [
 function smallNumber(word: string): number {
   if (/^\d+$/.test(word)) return Number(word);
   if (word === 'un' || word === 'uno') return 1;
+  // «dentro de quince días»: lo que se dice de verdad (gaps8).
+  if (word === 'quince') return 15;
+  if (word === 'veinte') return 20;
+  if (word === 'treinta') return 30;
   const i = NUMBER_WORDS.indexOf(word);
   return i === -1 ? Number.NaN : i;
 }
@@ -127,6 +150,49 @@ function monthNameDay(text: string, now: Date): string | null | undefined {
   return day;
 }
 
+/**
+ * «todos los lunes», «los lunes», «cada día», «de lunes a viernes», «cada dos semanas»,
+ * «cada mes»; «no» = dejar de repetir.
+ */
+export function resolveRepeat(input: string): TaskRepeat | 'no' | null {
+  const t = fold(input);
+  if (/^(?:no|nunca|ninguna|sin repetir|no repetir|dejar de repetir)$/.test(t)) return 'no';
+  if (/laborables|de lunes a viernes|entre semana/.test(t)) return 'laborables';
+  if (/^(?:diari[oa]|cada dia|todos los dias|a diario)$/.test(t)) return 'diario';
+  if (
+    /^(?:semanal|cada semana|todas las semanas|(?:todos los|cada) (?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?))$/.test(
+      t,
+    ) ||
+    // «los lunes» sin «todos»/«cada» (gaps9): en plural es cada semana.
+    /^los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos)$/.test(t)
+  )
+    return 'semanal';
+  if (
+    /^(?:quincenal|cada (?:dos|2) semanas|cada (?:quince|15) dias|(?:una )?semana si,? (?:y )?(?:otra|semana) no)$/.test(
+      t,
+    )
+  )
+    return 'quincenal';
+  if (/^(?:mensual|cada mes|todos los meses)$/.test(t)) return 'mensual';
+  return null;
+}
+
+/** El siguiente día de una tarea que se repite. */
+export function nextOccurrence(day: string, repeat: TaskRepeat): string {
+  if (repeat === 'diario') return addDays(day, 1);
+  if (repeat === 'semanal') return addDays(day, 7);
+  if (repeat === 'quincenal') return addDays(day, 14);
+  if (repeat === 'laborables') {
+    let next = addDays(day, 1);
+    while ([0, 6].includes(parseDay(next).getDay())) next = addDays(next, 1);
+    return next;
+  }
+  const [y, m, d] = day.split('-').map(Number);
+  const at = new Date(y ?? 1970, m ?? 1, 1, 12); // día 1 del mes siguiente
+  const last = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate();
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(Math.min(d ?? 1, last))}`;
+}
+
 /** Lunes de la semana del día dado. */
 export function weekStart(day: string): string {
   const dow = parseDay(day).getDay();
@@ -139,6 +205,16 @@ export function dayLabel(day: string): string {
   return `${WEEKDAY_LABEL[at.getDay()]} ${at.getDate()}`;
 }
 
+/** «la semana que viene», «la próxima semana», «para la semana siguiente». */
+export function saysNextWeek(input: string): boolean {
+  const t = fold(input)
+    .trim()
+    .replace(/^(?:para\s+)?(?:la\s+)?/, '');
+  return /^(?:semana que viene|proxima semana|semana proxima|siguiente semana|semana siguiente)$/.test(
+    t,
+  );
+}
+
 /**
  * Convierte lo que dice el dueño en un día: «hoy», «mañana», «pasado mañana», «jueves»,
  * «el jueves que viene», «próximo lunes», «5/11», «2026-11-05». Un día de la semana sin
@@ -146,19 +222,49 @@ export function dayLabel(day: string): string {
  */
 export function resolveDay(input: string, now: Date): string | null {
   const today = localDay(now);
-  const text = fold(input).replace(/^(el|este|esta|para el|para)\s+/, '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Number.isNaN(parseDay(text).getTime()) ? null : text;
+  const said = fold(input).trim();
+  // «esta mañana», «esta tarde», «esta noche» son hoy: antes, «esta mañana» quedaba
+  // en «mañana» y la tarea se iba al día siguiente (gaps8).
+  if (/^(?:para\s+)?esta\s+(?:manana|tarde|noche)$/.test(said)) return today;
+  // «mañana por la tarde», «hoy por la noche»: la parte del día no cambia el día.
+  const part = /^(.+?)\s+(?:por|a|de)\s+la\s+(?:manana|tarde|noche)$/.exec(said);
+  if (part?.[1] && /^(?:hoy|manana|pasado manana)$/.test(part[1])) return resolveDay(part[1], now);
+  const text = said.replace(/^(el|este|esta|para el|para)\s+/, '');
+  // «2026-02-30» o «2026-13-01»: Date los pasa al mes siguiente sin avisar, y la tarea
+  // quedaba guardada en un día que no existe y no salía en ninguna vista.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return realDay(text) ? text : null;
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
   if (text === 'pasado manana') return addDays(today, 2);
-  const within = /^(?:dentro de|en)\s+(\w+)\s+(dias?|semanas?)$/.exec(text);
+  // «la semana que viene»: el lunes de esa semana; «el mes que viene»: su día 1 (gaps9).
+  if (saysNextWeek(text)) return addDays(weekStart(today), 7);
+  if (/^(?:mes que viene|proximo mes|mes proximo|siguiente mes|mes siguiente)$/.test(text)) {
+    const first = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12);
+    return `${first.getFullYear()}-${pad(first.getMonth() + 1)}-01`;
+  }
+  const within = /^(?:dentro de|en)\s+(\w+)\s+(dias?|semanas?|mes(?:es)?)$/.exec(text);
   if (within) {
     const n = smallNumber(within[1] ?? '');
     if (!Number.isInteger(n) || n < 0 || n > 366) return null;
+    if (within[2]?.startsWith('mes')) {
+      // «dentro de un mes»: el mismo día N meses después (el 31 se queda en el último día).
+      if (n > 24) return null;
+      const at = new Date(now.getFullYear(), now.getMonth() + n, 1, 12);
+      const last = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate();
+      return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(Math.min(now.getDate(), last))}`;
+    }
     return addDays(today, within[2]?.startsWith('semana') ? n * 7 : n);
   }
   if (/^(?:fin de semana|finde)$/.test(text)) {
     return now.getDay() === 0 ? today : addDays(today, (6 - now.getDay() + 7) % 7);
+  }
+  // «el finde que viene», «el próximo fin de semana»: el sábado de la semana que viene (gaps9).
+  if (
+    /^(?:(?:fin de semana|finde)\s+(?:que viene|proximo|siguiente)|(?:proximo|siguiente)\s+(?:fin de semana|finde))$/.test(
+      text,
+    )
+  ) {
+    return addDays(weekStart(today), 12);
   }
   // «jueves 12 (de noviembre)»: manda el número.
   const dated = text.replace(
@@ -168,25 +274,38 @@ export function resolveDay(input: string, now: Date): string | null {
   if (dated !== text) return resolveDay(dated, now);
   const named = monthNameDay(text, now);
   if (named !== undefined) return named;
-  const dm = /^(?:dia\s+)?(\d{1,2})(?:\/(\d{1,2})(?:\/(\d{2,4}))?)?$/.exec(text);
+  // «15/11», «15-11-2026», «15.11.2026»: barra, guion o punto (el mismo en toda la fecha).
+  const dm = /^(?:dia\s+)?(\d{1,2})(?:([/.-])(\d{1,2})(?:\2(\d{2,4}))?)?$/.exec(text);
   if (dm) {
     const d = Number(dm[1]);
-    let m = dm[2] ? Number(dm[2]) : now.getMonth() + 1;
-    let y = dm[3] ? Number(dm[3]) : now.getFullYear();
+    let m = dm[3] ? Number(dm[3]) : now.getMonth() + 1;
+    let y = dm[4] ? Number(dm[4]) : now.getFullYear();
     if (y < 100) y += 2000;
     if (m < 1 || m > 12 || d < 1 || d > 31) return null;
     let day = `${y}-${pad(m)}-${pad(d)}`;
-    if (localDay(parseDay(day)) !== day) return null;
-    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene.
-    if (!dm[2] && day < today) {
-      m += 1;
-      if (m > 12) {
-        m = 1;
+    const real = (value: string) => localDay(parseDay(value)) === value;
+    // «el 1/1» dicho en noviembre sin año: el que viene, como «el 1 de enero». Antes la
+    // tarea quedaba en el 1 de enero que ya pasó. «29/2» sin año en un año que no es
+    // bisiesto: el próximo 29 de febrero (antes se rechazaba).
+    if (dm[3] && !dm[4]) {
+      for (let i = 0; i < 8 && (day < today || !real(day)); i++) {
         y += 1;
+        day = `${y}-${pad(m)}-${pad(d)}`;
       }
-      day = `${y}-${pad(m)}-${pad(d)}`;
-      if (localDay(parseDay(day)) !== day) return null;
     }
+    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene. «el 31» en un mes
+    // de 30 días: el próximo mes que lo tenga (antes se rechazaba).
+    if (!dm[3]) {
+      for (let i = 0; i < 12 && (day < today || !real(day)); i++) {
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+        day = `${y}-${pad(m)}-${pad(d)}`;
+      }
+    }
+    if (!real(day)) return null;
     return day;
   }
   const next = /^(?:proximo\s+)?(\w+)(\s+que viene|\s+de la semana que viene)?$/.exec(text);
@@ -221,9 +340,15 @@ export function normaliseTime(input: string | undefined): string | undefined | n
   const pm = period ? period[1] === 'tarde' || period[1] === 'noche' || period[2] === 'p' : false;
   if (period) t = t.slice(0, period.index).trim();
   let extra = 0;
-  const frac = /\s+(y media|y cuarto|menos cuarto)$/.exec(t);
+  t = t.replace(/\s+en punto$/, '');
+  // «8 y media», «8 y diez», «8 y 15», «9 menos veinte», «9 y treinta y cinco»: before,
+  // only media/cuarto were read and «a las 8 y diez» was refused (gaps8).
+  const frac = new RegExp(`\\s+(?:y\\s+(${MINUTES_AFTER})|menos\\s+(${MINUTES_BEFORE}))$`).exec(t);
   if (frac) {
-    extra = frac[1] === 'y media' ? 30 : frac[1] === 'y cuarto' ? 15 : -15;
+    const said = minuteSaid(frac[1] ?? frac[2] ?? '');
+    if (frac[2] !== undefined ? !(said >= 1 && said <= 30) : !(said >= 0 && said <= 59))
+      return null;
+    extra = frac[2] !== undefined ? -said : said === 0 ? 60 : said;
     t = t.slice(0, frac.index);
   }
   const word = /^[a-z]+$/.test(t) ? smallNumber(t) : Number.NaN;
@@ -234,10 +359,13 @@ export function normaliseTime(input: string | undefined): string | undefined | n
   let min = Number(m[2] ?? '0');
   if (h > 23 || min > 59) return null;
   if (period && h > 12) return pm ? `${pad(h)}:${pad(min)}` : null;
-  if (pm && h < 12) h += 12;
+  const night = period?.[1] === 'noche' || period?.[1] === 'madrugada';
+  // «12 de la noche» / «12am» es medianoche; «la una de la noche» es la 1:00, no las 13:00.
+  if (h === 12 && (night || period?.[2] === 'a')) h = 0;
+  else if (pm && h < 12 && !(night && h <= 4)) h += 12;
   if (extra) {
     if (m[2]) return null;
-    min = extra > 0 ? extra : 45;
+    min = extra === 60 ? 0 : extra > 0 ? extra : 60 + extra;
     if (extra < 0) h = (h + 23) % 24;
   }
   return `${pad(h)}:${pad(min)}`;
@@ -268,6 +396,13 @@ export class TaskBoard {
       const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<BoardFile>;
       const tasks = Array.isArray(raw.tasks) ? raw.tasks : [];
       const maxId = tasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0);
+      // Una repetida sin hacer no se acumula atrasada: pasa a la próxima desde hoy.
+      const today = this.today();
+      for (const t of tasks) {
+        if (!t.repeat || !REPEAT_LABEL[t.repeat] || t.status === 'hecho') continue;
+        for (let i = 0; t.day < today && i < 400; i++) t.day = nextOccurrence(t.day, t.repeat);
+        delete t.lateNoticeDay;
+      }
       return { nextId: Math.max(Number(raw.nextId) || 1, maxId + 1), tasks };
     } catch {
       setAsideCorrupt(this.file);
@@ -284,7 +419,7 @@ export class TaskBoard {
     return localDay(this.now());
   }
 
-  add(scope: string, title: string, day: string, time?: string): BoardTask {
+  add(scope: string, title: string, day: string, time?: string, repeat?: TaskRepeat): BoardTask {
     const data = this.#read();
     const at = this.now().toISOString();
     const task: BoardTask = {
@@ -293,6 +428,7 @@ export class TaskBoard {
       title: title.trim().slice(0, 200),
       day,
       ...(time ? { time } : {}),
+      ...(repeat ? { repeat } : {}),
       status: 'pendiente',
       createdAt: at,
       updatedAt: at,
@@ -351,9 +487,29 @@ export class TaskBoard {
     });
   }
 
-  setStatus(id: number, status: TaskStatus): BoardTask | undefined {
-    return this.#update(id, (t) => {
+  /**
+   * Cambia el estado. Si una que se repite queda hecha, se apunta la siguiente (que
+   * devuelve en `next`) y la hecha deja de repetirse.
+   */
+  setStatus(id: number, status: TaskStatus): (BoardTask & { next?: BoardTask }) | undefined {
+    const done = this.#update(id, (t) => {
       t.status = status;
+    });
+    if (!done?.repeat || status !== 'hecho') return done;
+    const repeat = done.repeat;
+    this.#update(id, (t) => {
+      delete t.repeat;
+    });
+    let day = nextOccurrence(done.day, repeat);
+    while (day < this.today()) day = nextOccurrence(day, repeat);
+    const next = this.add(done.scope, done.title, day, done.time, repeat);
+    return { ...done, next };
+  }
+
+  setRepeat(id: number, repeat: TaskRepeat | undefined): BoardTask | undefined {
+    return this.#update(id, (t) => {
+      if (repeat) t.repeat = repeat;
+      else delete t.repeat;
     });
   }
 

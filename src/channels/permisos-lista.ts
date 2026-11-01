@@ -44,7 +44,7 @@ export function formatPermisosLista(
   return [
     `Permisos «siempre» (${rows.length}):`,
     ...lines,
-    'Para quitar uno escribe /permisos revocar <herramienta> (o … este chat).',
+    `Para quitar uno, dime cuál, por ejemplo /permisos revocar ${sorted[0]?.tool ?? 'shell'} (o añade «este chat» para quitarlo solo aquí).`,
   ].join('\n');
 }
 

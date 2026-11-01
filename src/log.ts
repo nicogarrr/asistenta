@@ -86,7 +86,12 @@ const dayCap = new DayCap();
  * loses it is worse than one that has no logs; `npm`/NSSM capture both, so we
  * write both. Scrub at this final boundary too: callers may pass raw errors.
  */
-function write(level: LogLevel, msg: string, fields: Record<string, unknown>): void {
+function write(
+  level: LogLevel,
+  msg: string,
+  fields: Record<string, unknown>,
+  toConsole = true,
+): void {
   if (LEVEL_ORDER[level] < threshold) return;
   const ts = new Date().toISOString();
   let line: string;
@@ -101,7 +106,7 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
       note: 'fields were not serializable',
     });
   }
-  process.stdout.write(`${line}\n`);
+  if (toConsole) process.stdout.write(`${line}\n`);
   try {
     mkdirSync(paths.log, { recursive: true });
     const day = localDay();
@@ -132,6 +137,17 @@ export const log = {
   info: (msg: string, fields: Record<string, unknown> = {}) => write('info', msg, fields),
   warn: (msg: string, fields: Record<string, unknown> = {}) => write('warn', msg, fields),
   error: (msg: string, fields: Record<string, unknown> = {}) => write('error', msg, fields),
+};
+
+/**
+ * Solo al archivo diario del registro, nunca a la consola: para órdenes `pa …` que
+ * enseñan una línea llana a la persona y guardan el detalle técnico (el error en crudo)
+ * donde `pa doctor` o soporte lo pueden mirar. Mismo tapado de secretos y rutas que `log`.
+ */
+export const logFile = {
+  info: (msg: string, fields: Record<string, unknown> = {}) => write('info', msg, fields, false),
+  warn: (msg: string, fields: Record<string, unknown> = {}) => write('warn', msg, fields, false),
+  error: (msg: string, fields: Record<string, unknown> = {}) => write('error', msg, fields, false),
 };
 
 const SECRET_KEY =

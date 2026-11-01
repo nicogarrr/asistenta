@@ -37,7 +37,7 @@ export interface EmailTurnGate {
  */
 export function taintEmailTurn(gate: EmailTurnGate, sessionId: string, text = ''): void {
   gate.markTainted(sessionId, EMAIL_TAINT_SOURCE);
-  gate.taintSessionPrivate(sessionId, 'el correo que inició este turno');
+  gate.taintSessionPrivate(sessionId, 'el correo que acaba de llegar');
   // El texto del correo también se apunta: un recuerdo o recordatorio que lo copie pregunta.
   if (text) gate.recordExternalText?.(sessionId, text);
 }

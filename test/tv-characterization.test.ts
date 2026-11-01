@@ -193,7 +193,7 @@ describe('caracterizacion tool tv', () => {
     const { d, calls } = toolDeps();
     const r = await run(d, { action: 'launch', appId: '  netflix ' });
     expect(calls).toEqual(['launch:netflix']);
-    expect(text(r)).toBe('He lanzado netflix en la tele.');
+    expect(text(r)).toBe('He abierto Netflix en la tele.');
     await expect(run(d, { action: 'launch' })).rejects.toThrow(/necesita appId/);
   });
 

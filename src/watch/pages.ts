@@ -13,7 +13,7 @@
  *   completo (hash).
  * - En fichas de las 7 tiendas del vigilante (Amazon.es, MediaMarkt, PcComponentes,
  *   Carrefour, El Corte Inglés, Fnac, Worten) la lectura es estructurada: el MISMO
- *   extractor con consenso de pricewatch (JSON-LD/meta/selectores). Si las fuentes
+ *   extractor con consenso de price-extract (JSON-LD/meta/selectores). Si las fuentes
  *   discrepan, la página muestra un captcha o no hay precio claro, la lectura es
  *   "no se pudo comprobar": cuenta como fallo, nunca se inventa un número.
  * - Cada lectura fiable se guarda en `watch_readings` (histórico propio, retención de
@@ -38,7 +38,7 @@ import {
   parseMachinePrice,
   STORES,
   type StoreId,
-} from './pricewatch.js';
+} from './price-extract.js';
 
 export interface PageWatch {
   id: string;
@@ -519,7 +519,7 @@ export class PageWatchStore {
    * Lee la página, compara con la referencia y la actualiza. No lanza: devuelve el resultado.
    * `fetchHtml` (opcional) devuelve el HTML crudo; se usa solo en fichas de las 7 tiendas
    * del vigilante, donde la lectura es estructurada con el extractor de consenso de
-   * pricewatch. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
+   * price-extract. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
    */
   async check(
     w: PageWatch,
@@ -710,7 +710,7 @@ export function readFailureCause(message: string): string {
   ) {
     return message.slice(0, 120);
   }
-  return 'no sé por qué; queda en el registro';
+  return 'no sé bien por qué';
 }
 
 const fmtDay = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
@@ -760,11 +760,49 @@ export function describeWatch(
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
   if (w.mutedUntil > now) {
     lines.push(
-      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)} (/vigila avisar ${w.id} para quitarlo).`,
+      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
     );
   }
   return lines.join('\n');
 }
+
+/**
+ * Id que no existe: en vez de «Mira /vigilando», las vigilancias que hay, dichas por
+ * su nombre (Nico, 1 nov: hablar normal, sin comandos).
+ */
+export function watchNotFound(
+  list: ReadonlyArray<Pick<PageWatch, 'id' | 'label' | 'url'>>,
+): string {
+  if (list.length === 0) return 'No encuentro esa vigilancia: ahora no vigilo ninguna página.';
+  const names = list.slice(0, 8).map((w) => `${w.label || w.url} (${w.id})`);
+  return `No encuentro esa vigilancia. Las que tengo: ${names.join(', ')}${list.length > 8 ? '…' : ''}.`;
+}
+
+/** «la de la tele», «Tele 55» o el código: qué vigilancia nombra una respuesta suelta. */
+export function watchFromAnswer<T extends Pick<PageWatch, 'id' | 'label' | 'url'>>(
+  list: readonly T[],
+  answer: string,
+): T | null {
+  const said = foldSaid(answer.replace(/^(?:la|el)\s+(?:de\s+(?:la|el|los|las)\s+)?/i, ''));
+  if (!said) return null;
+  const byId = list.find((w) => w.id.toLowerCase() === said);
+  if (byId) return byId;
+  const hits = list.filter((w) => w.label && foldSaid(w.label).includes(said));
+  return hits.length === 1 ? (hits[0] as T) : null;
+}
+
+function foldSaid(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[«»"'.!?¿¡]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/** «avísame otra vez», «quita el silencio»… tras ver una vigilancia silenciada. */
+export const AVISAR_OTRA_VEZ =
+  /^(?:s[ií],?\s*)?(?:av[ií]same(?:\s+otra\s+vez|\s+ya)?|vuelve\s+a\s+avisarme|qu[ií]ta(?:le)?\s+el\s+silencio|qu[ií]talo)\s*[.!]*$/iu;
 
 export interface VigilaArgs {
   url: string;

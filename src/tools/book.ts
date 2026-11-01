@@ -17,6 +17,7 @@ import {
   searchWikisource,
 } from '../books/sources.js';
 import { log } from '../log.js';
+import { mailSendFailText } from './mail.js';
 
 /** Where a Wikisource hit is read from. Kept next to the search so they cannot drift. */
 const WIKISOURCE_BASE = 'https://es.wikisource.org/wiki';
@@ -171,7 +172,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
           'no-address': 'Falta tu dirección de Kindle (@kindle.com). Pásamela y la guardo.',
           'no-mail-account':
             'BLOQUEO: no hay correo configurado para enviar. Te lo he dejado en el chat; puedes reenviarlo a tu Kindle desde ahí o configurar un correo.',
-          error: `No he podido enviarlo por correo: ${r.status === 'error' ? r.message : ''}`,
+          error: kindleSendFailLine(r.status === 'error' ? r.message : ''),
         }[r.status],
       );
     }
@@ -357,4 +358,12 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
       }
     },
   };
+}
+
+/**
+ * The mail server's own words (SMTP codes, English) go to the log; the chat gets
+ * the same plain line as any other failed send.
+ */
+export function kindleSendFailLine(raw: string): string {
+  return `No he podido enviarlo por correo: ${mailSendFailText(raw, 'el servidor de correo no lo aceptó')}.`;
 }

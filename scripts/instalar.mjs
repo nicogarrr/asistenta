@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 
 export const NODE_MIN = 24;
 const TOKEN_RE = /^\d{5,}:[A-Za-z0-9_-]{30,}$/;
@@ -18,10 +19,108 @@ export function nodeMajor(version) {
   return Number.isInteger(n) ? n : 0;
 }
 
-/** Preset del modelo escrito en .env (o el de por defecto). */
-export function presetFromEnv(text) {
-  const m = /^\s*PA_PROVIDER_PRESET\s*=\s*["']?([\w-]+)/m.exec(text ?? '');
-  return m?.[1] ?? 'opencode';
+/**
+ * Preset del modelo con las mismas reglas que al arrancar (src/config.ts): la
+ * variable del sistema gana al .env, en el .env gana la última línea, vacío es
+ * «opencode» y da igual mayúsculas. Antes, `PA_PROVIDER_PRESET=` vacío se comía la
+ * línea siguiente y «OpenCode-Local» pedía la clave de pago.
+ */
+export function presetFromEnv(text, env = {}) {
+  let v = String(env.PA_PROVIDER_PRESET ?? '').trim();
+  if (!v) {
+    try {
+      v = String(parseEnv(text ?? '').PA_PROVIDER_PRESET ?? '').trim();
+    } catch {
+      v = '';
+    }
+  }
+  return v.toLowerCase() || 'opencode';
+}
+
+/**
+ * Texto del .env como lo lee Asistenta (src/env-text.ts): el Bloc de notas guarda a
+ * menudo con BOM o en UTF-16. Vacío si no existe o no se puede leer.
+ */
+export function envText(file = '.env') {
+  let buf;
+  try {
+    buf = readFileSync(file);
+  } catch {
+    return '';
+  }
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf)
+    return buf.subarray(3).toString('utf8');
+  if (buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+  if (buf[0] === 0xfe && buf[1] === 0xff)
+    return Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
+  return buf.toString('utf8');
+}
+
+/**
+ * ¿La carpeta está dentro de OneDrive? OneDrive bloquea archivos mientras los sube y
+ * `npm ci` / la compilación fallan con EPERM o EBUSY. Mira las variables que pone
+ * Windows (OneDrive, OneDriveConsumer, OneDriveCommercial) y, si faltan, el nombre.
+ */
+export function enOneDrive(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!d) return false;
+  for (const k of ['OneDrive', 'OneDriveConsumer', 'OneDriveCommercial']) {
+    const r = norm(env[k]);
+    if (r && (d === r || d.startsWith(`${r}\\`))) return true;
+  }
+  return /\\onedrive( - [^\\]+)?(\\|$)/.test(d);
+}
+
+export const ONEDRIVE_MOVER =
+  'Mueve la carpeta de Asistenta fuera de OneDrive, por ejemplo a C:\\Asistenta, y abre instalar.bat desde allí.';
+
+/**
+ * ¿La carpeta es del sistema (Archivos de programa, Windows)? Sin permisos de
+ * administrador no se puede escribir ahí: `npm ci` falla con EPERM y luego las
+ * actualizaciones tampoco. Mira las variables de Windows y, si faltan, la ruta.
+ */
+export function enCarpetaSistema(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!d) return false;
+  for (const k of ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'SystemRoot', 'windir']) {
+    const r = norm(env[k]);
+    if (r && (d === r || d.startsWith(`${r}\\`))) return true;
+  }
+  return /^[a-z]:\\(program files( \(x86\))?|windows)(\\|$)/.test(d);
+}
+
+export const SISTEMA_MOVER =
+  'Mueve la carpeta de Asistenta a C:\\Asistenta (o dentro de tu carpeta de usuario) y abre instalar.bat desde allí.';
+
+/**
+ * ¿La carpeta es temporal? Abrir instalar.bat «desde dentro» del ZIP con WinRAR, 7-Zip
+ * o el Explorador saca los archivos a %TEMP% (Rar$EXa…, 7zO…, Temp1_x.zip) y Windows
+ * los borra al cerrar: la instalación desaparecería. Solo rutas de Windows (en Linux
+ * /tmp es donde corren los tests).
+ */
+export function enCarpetaTemporal(dir, env = {}) {
+  const norm = (p) =>
+    String(p ?? '')
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  const d = norm(dir);
+  if (!/^[a-z]:\\/.test(d)) return false;
+  for (const k of ['TEMP', 'TMP']) {
+    const r = norm(env[k]);
+    if (/^[a-z]:\\/.test(r) && d.startsWith(`${r}\\`)) return true;
+  }
+  return /\\appdata\\local\\temp\\/.test(d);
 }
 
 /**
@@ -31,16 +130,23 @@ export function presetFromEnv(text) {
 export async function waitOwnerMessage(fetchFn, token, { tries = 6 } = {}) {
   const base = `https://api.telegram.org/bot${token}`;
   for (let i = 0; i < tries; i++) {
-    const res = await fetchFn(`${base}/getUpdates?timeout=20&allowed_updates=%5B%22message%22%5D`);
-    if (res.status === 401 || res.status === 404) return { error: 'token' };
-    if (res.status === 409) return { error: 'ocupado' };
-    if (!res.ok) return { error: 'red' };
-    const body = await res.json();
+    let res;
+    let body;
+    // Sin internet fetch lanza (y un proxy puede devolver HTML): es «red», no la caja fuerte.
+    try {
+      res = await fetchFn(`${base}/getUpdates?timeout=20&allowed_updates=%5B%22message%22%5D`);
+      if (res.status === 401 || res.status === 404) return { error: 'token' };
+      if (res.status === 409) return { error: 'ocupado' };
+      if (!res.ok) return { error: 'red' };
+      body = await res.json();
+    } catch {
+      return { error: 'red' };
+    }
     const upd = (body.result ?? []).find(
       (u) => u.message?.chat?.type === 'private' && u.message.from,
     );
     if (upd) {
-      await fetchFn(`${base}/getUpdates?offset=${upd.update_id + 1}&timeout=0`);
+      await fetchFn(`${base}/getUpdates?offset=${upd.update_id + 1}&timeout=0`).catch(() => {});
       const f = upd.message.from;
       const name = [f.first_name, f.last_name].filter(Boolean).join(' ') || 'sin nombre';
       return { id: String(f.id), who: f.username ? `${name} (@${f.username})` : name };
@@ -49,13 +155,27 @@ export async function waitOwnerMessage(fetchFn, token, { tries = 6 } = {}) {
   return { error: 'tiempo' };
 }
 
+/**
+ * Orden de `pa` para escribir en una ventana nueva dentro de la carpeta. Si Node no
+ * está en el PATH (scripts\node24.cmd lo encontró en otra carpeta y lo marca con
+ * ASISTENTA_NODE_FUERA_PATH), «node» no se reconoce allí: va la ruta completa.
+ */
+export function ordenPa(args, env = {}, execPath) {
+  const exe = env.ASISTENTA_NODE_FUERA_PATH && execPath ? `"${execPath}"` : 'node';
+  return `${exe} dist\\cli.js ${args}`;
+}
+
 /** Pasos del instalador. Todo lo que toca el sistema llega en `d` (tests). */
+const encendida = (parar) =>
+  `Asistenta sigue encendida y así Windows no deja cambiar sus archivos. Apágala (cierra la ventana de levantar.bat o escribe ${parar}) y vuelve a abrir instalar.bat.`;
+
 export async function instalar(d) {
   const say = (s) => d.write(`${s}\n`);
   const fail = (s) => {
     say(`✗ ${s}`);
     return 1;
   };
+  const parar = ordenPa('stop', d.env ?? {}, d.execPath);
 
   if (nodeMajor(d.nodeVersion) < NODE_MIN)
     return fail(
@@ -63,15 +183,92 @@ export async function instalar(d) {
     );
   say(`✓ Node ${d.nodeVersion}`);
 
+  // Un node.exe suelto (sin el instalador oficial) no trae npm: sin esto, «npm ci»
+  // fallaba y el mensaje hablaba de la conexión a internet.
+  if (d.npm && !(await d.npm()))
+    return fail(
+      'No encuentro npm, que viene con Node. Instala Node 24 LTS desde https://nodejs.org con el instalador oficial (trae npm) y vuelve a abrir instalar.bat.',
+    );
+
+  // «Ejecutar como administrador» con un usuario sin permisos pide la cuenta de otro
+  // (el administrador): la caja fuerte y los datos se guardarían en SU perfil y luego
+  // levantar.bat, con tu usuario, no encontraría nada.
+  if (d.elevado && (await d.elevado())) {
+    say(
+      '⚠ Has abierto instalar.bat como administrador. No hace falta y, si Windows te ha pedido la contraseña de otra cuenta, las claves se guardarían en esa cuenta y no en la tuya.',
+    );
+    const sigo = (await d.ask('¿Sigo de todas formas? (s/n): ')).trim().toLowerCase();
+    if (!sigo.startsWith('s'))
+      return fail(
+        'Cierra esta ventana y abre instalar.bat con doble clic normal (sin «Ejecutar como administrador»).',
+      );
+  }
+
+  if (enCarpetaTemporal(d.cwd, d.env))
+    return fail(
+      `Asistenta está en una carpeta temporal (${d.cwd}): pasa al abrir instalar.bat sin sacarlo del ZIP, y Windows la borrará. Cierra esto, haz clic derecho en el ZIP, «Extraer todo», mueve la carpeta a C:\\Asistenta y abre instalar.bat desde allí.`,
+    );
+
+  const sistema = enCarpetaSistema(d.cwd, d.env);
+  if (sistema)
+    say(
+      `⚠ Asistenta está en una carpeta del sistema (${d.cwd}). Sin permisos de administrador Windows no deja escribir ahí y la instalación falla. ${SISTEMA_MOVER}`,
+    );
+  const oneDrive = enOneDrive(d.cwd, d.env);
+  if (oneDrive)
+    say(
+      `⚠ Asistenta está dentro de OneDrive (${d.cwd}). OneDrive bloquea archivos mientras sincroniza y la instalación suele fallar. ${ONEDRIVE_MOVER}`,
+    );
+
+  // npm ci borra node_modules antes de descargar: sin conexión, repetir la instalación
+  // rompería una que funcionaba. Se pregunta (un proxy puede engañar a esta prueba).
+  if (d.internet && !(await d.internet())) {
+    say(
+      `⚠ No llego a internet (registry.npmjs.org) y para instalar hay que descargar piezas.${d.exists('node_modules') ? ' Si sigo sin conexión, npm borrará la carpeta node_modules que ya tienes y Asistenta no arrancará hasta repetir.' : ''}`,
+    );
+    const sigo = (await d.ask('¿Pruebo igualmente? (s/n): ')).trim().toLowerCase();
+    if (!sigo.startsWith('s'))
+      return fail('Conéctate a internet y vuelve a abrir instalar.bat. No he tocado nada.');
+  }
+
+  // Segunda pasada sobre una instalación en marcha: npm ci borra node_modules y Windows
+  // no deja tocar archivos que Asistenta tiene abiertos (EBUSY/EPERM a mitad).
+  if (d.encendida && (await d.encendida())) {
+    const si = (
+      await d.ask(
+        'Asistenta está encendida y para reinstalar hay que apagarla. ¿La apago ahora? (s/n): ',
+      )
+    )
+      .trim()
+      .toLowerCase();
+    const parada = si.startsWith('s') && ((await d.cli(['stop'])) === 0 || !(await d.encendida()));
+    if (!parada) return fail(encendida(parar));
+    say('✓ Asistenta apagada. Cuando termine, enciéndela otra vez con levantar.bat.');
+  }
+
   say('… Instalando dependencias (npm ci). Tarda unos minutos.');
   if ((await d.run('npm', ['ci', '--no-audit', '--no-fund'])) !== 0)
     return fail(
-      'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si se repite, borra la carpeta node_modules y prueba otra vez.',
+      sistema
+        ? `No se han podido instalar las dependencias: Windows no deja escribir en esta carpeta del sistema. ${SISTEMA_MOVER}`
+        : oneDrive
+          ? `No se han podido instalar las dependencias: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+          : 'No se han podido instalar las dependencias. Mira tu conexión a internet y vuelve a abrir instalar.bat. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y prueba otra vez. Si se repite, borra la carpeta node_modules y prueba otra vez.',
     );
   say('… Compilando.');
   if ((await d.run('npm', ['run', 'build'])) !== 0)
     return fail(
-      'No se ha podido compilar. Descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
+      sistema
+        ? `No se ha podido compilar: Windows no deja escribir en esta carpeta del sistema. ${SISTEMA_MOVER}`
+        : oneDrive
+          ? `No se ha podido compilar: OneDrive tenía archivos bloqueados. ${ONEDRIVE_MOVER}`
+          : 'No se ha podido compilar. Si arriba pone EPERM o EBUSY, otro programa (el antivirus, un editor u otra ventana de Asistenta) tiene archivos abiertos: ciérralo y vuelve a abrir instalar.bat. Si no, descarga Asistenta otra vez (o haz git pull si la clonaste) y vuelve a abrir instalar.bat.',
+    );
+  // El antivirus a veces aparta un archivo de node_modules justo después de instalar:
+  // sin esto se decía «✓ Programa listo» y luego se culpaba a la caja fuerte.
+  if (d.arranca && !(await d.arranca()))
+    return fail(
+      'Asistenta se ha instalado pero no arranca: suele ser el antivirus, que ha apartado algún archivo de node_modules. Mira si te ha avisado y restaura el archivo (o pon la carpeta de Asistenta en sus excepciones), borra la carpeta node_modules y vuelve a abrir instalar.bat.',
     );
   say('✓ Programa listo');
 
@@ -119,7 +316,8 @@ export async function instalar(d) {
       say('✓ Token de Telegram guardado');
     }
 
-    if (presetFromEnv(d.readEnv()) === 'opencode-local') say('✓ Modelo local: no hace falta clave');
+    if (presetFromEnv(d.readEnv(), d.env) === 'opencode-local')
+      say('✓ Modelo local: no hace falta clave');
     else {
       const key = (
         await d.ask(
@@ -155,8 +353,14 @@ export async function instalar(d) {
               : 'Telegram dice que el token guardado ya no vale. Vuelve a abrir instalar.bat y pega el token nuevo de @BotFather.',
           );
         if (got.error === 'ocupado')
-          return fail(
-            'Asistenta ya está encendida con este bot. Apágala (node dist\\cli.js stop) y repite.',
+          return fail(`Asistenta ya está encendida con este bot. Apágala (${parar}) y repite.`);
+        if (got.error === 'red')
+          say(
+            '⚠ No llego a Telegram: mira tu conexión a internet. Puedes escribir tu ID a mano o volver a abrir instalar.bat luego.',
+          );
+        if (got.error === 'tiempo')
+          say(
+            '⚠ No me ha llegado tu mensaje. Comprueba que se lo mandas a tu bot (el del token) o escribe tu ID a mano.',
           );
         if (got.id) {
           const yes = (await d.ask(`He recibido un mensaje de ${got.who}. ¿Eres tú? (s/n): `))
@@ -205,25 +409,70 @@ function ask(question, { secret = false } = {}) {
 }
 
 const win = process.platform === 'win32';
-const run = (cmd, args) =>
-  new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: 'inherit', shell: win });
-    p.on('error', () => resolve(1));
-    p.on('close', (code) => resolve(code ?? 1));
-  });
+// `shell` solo hace falta para npm (npm.cmd en Windows). Con shell, una ruta con
+// espacios sin comillas se rompe: «C:\Program Files\nodejs\node.exe» → «'C:\Program'
+// no se reconoce…». Por eso node (process.execPath) va siempre sin shell.
+export const makeRun =
+  (spawnFn = spawn, isWin = win) =>
+  (cmd, args, { shell = isWin } = {}) =>
+    new Promise((resolve) => {
+      const p = spawnFn(cmd, args, { stdio: 'inherit', shell });
+      p.on('error', () => resolve(1));
+      p.on('close', (code) => resolve(code ?? 1));
+    });
+const run = makeRun();
 const cliArgs = (args) => ['dist/cli.js', ...args];
+export const cliWith =
+  (runFn, exe = process.execPath) =>
+  (args) =>
+    runFn(exe, cliArgs(args), { shell: false });
 
 export const realDeps = {
   nodeVersion: process.version,
+  execPath: process.execPath,
+  cwd: process.cwd(),
+  env: process.env,
   write: (s) => process.stdout.write(s),
   run,
   exists: existsSync,
   copy: copyFileSync,
-  readEnv: () => (existsSync('.env') ? readFileSync('.env', 'utf8') : ''),
-  cli: (args) => run(process.execPath, cliArgs(args)),
+  // `net session` solo funciona en una consola con permisos de administrador.
+  elevado: async () =>
+    win && spawnSync('net', ['session'], { stdio: 'ignore', windowsHide: true }).status === 0,
+  npm: async () =>
+    spawnSync('npm', ['--version'], { shell: win, stdio: 'ignore', timeout: 30_000 }).status === 0,
+  internet: async () => {
+    try {
+      const r = await fetch('https://registry.npmjs.org/-/ping', {
+        signal: AbortSignal.timeout(10_000),
+      });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  },
+  readEnv: () => envText('.env'),
+  // `pa --help` carga el programa compilado; la ayuda no se enseña.
+  arranca: async () =>
+    spawnSync(process.execPath, cliArgs(['--help']), { stdio: 'ignore', timeout: 60_000 })
+      .status === 0,
+  cli: cliWith(run),
   vaultList: async () => {
     const r = spawnSync(process.execPath, cliArgs(['vault', 'list']), { encoding: 'utf8' });
     return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : null;
+  },
+  // Solo si ya hubo una instalación: `pa status --json` dice si el proceso vive.
+  encendida: async () => {
+    if (!existsSync('dist/cli.js')) return false;
+    const r = spawnSync(process.execPath, cliArgs(['status', '--json']), {
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    try {
+      return JSON.parse(r.stdout).processState === 'alive';
+    } catch {
+      return false;
+    }
   },
   // Lee una clave guardada por una tubería: nunca sale en pantalla.
   vaultGet: async (key) => {

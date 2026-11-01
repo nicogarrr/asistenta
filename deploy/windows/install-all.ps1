@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
  [ValidateSet('install','status','uninstall')][string]$Action='install',

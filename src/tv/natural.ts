@@ -17,7 +17,7 @@
  *   "que esta viendo" / "esta encendida" -> status
  *   "modo cine (con Netflix)"  -> scene cine
  */
-import { APP_ALIASES, normalizeTvText } from './apps.js';
+import { APP_ALIASES, APP_NAMES, normalizeTvText } from './apps.js';
 
 export type TvIntent =
   | { action: 'power'; on: boolean }
@@ -143,6 +143,14 @@ const OTRO_APARATO =
 const COMPOUND =
   /\by (?:luego |despues )?(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|cambia|vuelve|dale|pausa|para|reanuda|cambiala)\b/;
 
+/**
+ * Dos órdenes seguidas sin «y» («sube el volumen pon netflix», «abre netflix sube el
+ * volumen»): el parser solo haría la mitad (o buscaría la app «netflix sube el volumen»).
+ * «más baja» no es otra orden.
+ */
+const DOS_ORDENES =
+  /^(?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|quitale|cambia|cambiala|vuelve|dale|pausa|para|reanuda)\b.*(?<!\b(?:mas|muy|tan|menos)) (?:pon|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|enciende|enciendela|silencia|quita|quitale|cambia|cambiala)\b/;
+
 function num(s: string | undefined): number | null {
   return spanishNumber(s);
 }
@@ -193,15 +201,46 @@ const MULETILLA =
 /** «… en la tele» al final no forma parte de la orden («abre Netflix en la tele»). */
 const EN_LA_TELE = / en (?:la |el )?(?:tele|tv|television|televisor|pantalla)$/;
 
+/** «vuelve a <infinitivo>» → la orden en imperativo. */
+const IMPERATIVO: Record<string, string> = {
+  subir: 'sube',
+  bajar: 'baja',
+  poner: 'pon',
+  encender: 'enciende',
+  apagar: 'apaga',
+  abrir: 'abre',
+  quitar: 'quita',
+  silenciar: 'silencia',
+  pausar: 'pausa',
+  cambiar: 'cambia',
+};
+const VUELVE_A = new RegExp(`^vuelve a (${Object.keys(IMPERATIVO).join('|')})(l[aeo]s?)?\\b`);
+
 function normalizeOrder(text: string): string {
   return (
     normalizeTvText(text)
-      .replace(/\bporfa(?:vor)?\b|\bpor favor\b/g, '')
+      // «pausa.», «abre youtube.»: el punto final del móvil no es parte de la orden.
+      .replace(/[\s.]+$/, '')
+      // «porfa», «porfi», «x favor», «xfa», «plis»: la cortesía no cambia la orden.
+      .replace(
+        /\bporf(?:a|i|is)(?:vor)?\b|\bpor favor\b|\bx ?fa(?:vor)?\b|\bplis\b|\bplease\b/g,
+        '',
+      )
       .trim()
       // «pausa, gracias», «sube el volumen, muchas gracias»: el gracias no cambia la orden.
       .replace(/(?:^| )(?:muchas )?gracias$/, '')
       .replace(MULETILLA, '')
       .replace(EN_LA_TELE, '')
+      // «sube el volumen otra vez», «otra vez atrás», «pon otra vez netflix»: repetir
+      // es la misma orden. «otra vez» a secas sigue sin orden (al modelo).
+      .replace(/^(?:otra vez|de nuevo) /, '')
+      .replace(/^([a-z]+) (?:otra vez|de nuevo) /, '$1 ')
+      .replace(/ (?:otra vez|de nuevo)$/, '')
+      // «vuelve a subir el volumen», «vuelve a ponerla»: el infinitivo es la orden.
+      .replace(
+        VUELVE_A,
+        (_, verbo: string, cl?: string) => `${IMPERATIVO[verbo] ?? verbo}${cl ?? ''}`,
+      )
       // «vol 20», «baja vol»: abreviatura de volumen.
       .replace(/\bvol\b/g, 'volumen')
       // «baja el sonido», «súbele el sonido»: es el volumen («quita el sonido» sigue siendo silencio).
@@ -264,7 +303,43 @@ const TELE_EN_MEDIO = new RegExp(
   `^(.+?) (?:(?:a|de) )?${TV}( (?:un |una )?(?:poco|poquito|momento|momentito|segundo|segundito|rato|ratito)| ahi| en pausa)$`,
 );
 
+/** «2.5», «12,5»: número con decimales (la tele solo entiende enteros). */
+const DECIMAL = /(\d{1,3})[.,](\d{1,2})(?!\d)/g;
+
+/**
+ * «si me duermo, apaga la tele», «apaga la tele si me duermo», «en cuanto me duerma,
+ * apágala»: es una condición, no una orden para ahora; nunca se ejecuta al momento
+ * (va al modelo). «sí, apaga la tele» (la coma se pierde: «si apaga la tele») sigue
+ * siendo la orden: tras el «sí» viene el verbo y delante solo hay muletillas.
+ */
+const CONDICION =
+  /\b(?:en cuanto|por si|en caso de|cada vez que|siempre que|a no ser que|salvo que)\b/;
+const SI_Y_ORDEN =
+  /^(?:pon|ponla|ponlo|ponme|abre|abreme|lanza|arranca|sube|subele|baja|bajale|apaga|apagala|apagalo|enciende|enciendela|silencia|mutea|quita|quitale|cambia|cambiala|vuelve|dale|pausa|para|reanuda|si)\b/;
+const SOLO_MULETILLAS = /^(?:(?:ya|venga|vale|bueno|pues|ok|okay|oye|si)(?: |$))*$/;
+
+function esCondicion(t: string): boolean {
+  if (CONDICION.test(t)) return true;
+  for (const m of t.matchAll(/(?<=^| )si (?=\S)/g)) {
+    const antes = t.slice(0, m.index).trim();
+    const despues = t.slice(m.index + m[0].length);
+    if (!SOLO_MULETILLAS.test(antes) || !SI_Y_ORDEN.test(despues)) return true;
+  }
+  return false;
+}
+
 export function parseTvCommand(text: string): TvIntent | null {
+  if (esCondicion(normalizeOrder(text))) return null;
+  // «vol 2.5» ponía 2 (se perdía lo de detrás del punto). En el volumen se redondea
+  // (2.5 → 3, 12,5 → 13); en cualquier otra orden un decimal no tiene sentido: al modelo.
+  if (DECIMAL.test(text)) {
+    DECIMAL.lastIndex = 0;
+    const redondeado = text.replace(DECIMAL, (_, ent: string, dec: string) =>
+      String(Math.round(Number(`${ent}.${dec}`))),
+    );
+    const intent = parseTvCommand(redondeado);
+    return intent?.action === 'volume' || intent?.action === 'volumeStep' ? intent : null;
+  }
   const direct = parseOne(text);
   if (direct) return direct;
   const t = normalizeOrder(text);
@@ -274,8 +349,58 @@ export function parseTvCommand(text: string): TvIntent | null {
   const v = VOLUMEN_DE_TELE.exec(t);
   if (v?.[1] && v[2]) return parseOne(`${v[1]}${v[2]}`);
   const s = SUBE_LA_TELE.exec(t);
-  return s?.[1] && s[2] ? parseOne(`${s[1]} el volumen${s[2]}`) : null;
+  if (s?.[1] && s[2]) return parseOne(`${s[1]} el volumen${s[2]}`);
+  // «sube el volumen que no se oye», «pausa que voy al baño»: el motivo no cambia la orden.
+  const r = MOTIVO.exec(t);
+  if (
+    r?.[1] &&
+    r[2] &&
+    !DEFERRED.test(t) &&
+    !PREGUNTA.test(t) &&
+    !MOTIVO_NO.test(r[2]) &&
+    // «pon la tele que empieza el partido»: «pon la tele» solo enciende dicha sola (Nico, 30-oct).
+    !PON_LA_TELE.test(r[1]) &&
+    parseTvCommand(r[2]) === null
+  ) {
+    return parseTvCommand(r[1]);
+  }
+  // «sube el volumen, no se oye» o «… . no se oye»: la coma (o el punto) separa la
+  // orden de su motivo, como «que». «no, sube el volumen»: la coletilla de delante sobra.
+  const c = COMA.exec(text);
+  if (c?.[1] && c[2] && COLETILLA.test(normalizeTvText(c[1]))) {
+    return c[2].includes('?') ? null : parseTvCommand(c[2]);
+  }
+  if (
+    c?.[1] &&
+    c[2] &&
+    !c[2].includes('?') &&
+    !DEFERRED.test(t) &&
+    !PREGUNTA.test(t) &&
+    !COMPOUND.test(t) &&
+    !MOTIVO_NO.test(normalizeOrder(c[2])) &&
+    !PON_LA_TELE.test(normalizeOrder(c[1])) &&
+    parseTvCommand(c[2]) === null
+  ) {
+    return parseOne(c[1]);
+  }
+  return null;
 }
+
+/** «<orden>, <motivo>» (la primera coma, punto, punto y coma o exclamación). */
+const COMA = /^((?:[^,.;!?]|\.(?=\d))+)[,.;!]+(.+)$/;
+/** «no, …», «sí, …», «perdona, …»: delante de la orden no cambian nada. */
+const COLETILLA = /^(?:no|si|vale|bueno|pues|perdona|perdon|gracias|ok|venga|oye|asistenta)$/;
+
+const PON_LA_TELE = new RegExp(`^(?:pon|ponme|ponnos)${YA} ${TV}`);
+
+/** «<orden> que/porque <motivo>». */
+const MOTIVO = /^(.+?) (?:que|porque|pq|xq) (.+)$/;
+/**
+ * El «que…» no es un motivo si señala algo («el volumen que tenía antes», «la peli que
+ * estaba viendo») o trae otra orden («… que pongas netflix»): entonces va al modelo.
+ */
+const MOTIVO_NO =
+  /\b(?:antes|estaba|estabamos|estaria|tenia|teniamos|habia|dije|dicho|puse|pusiste|pusimos|ultimo|ultima|mismo|misma|anterior|pon|pongas|ponga|ponme|ponla|sube|subas|baja|bajes|apaga|apagues|enciende|enciendas|abre|abras|cambia|cambies|quita|quites|silencia|pausa|pauses|dale|vuelve|vuelvas)\b/;
 
 /** «el volumen de la tele …»: la tele sobra, el volumen es el de la tele. */
 const VOLUMEN_DE_TELE = new RegExp(`^(.*\\bvolumen) de ${TV}( .+)$`);
@@ -283,6 +408,27 @@ const VOLUMEN_DE_TELE = new RegExp(`^(.*\\bvolumen) de ${TV}( .+)$`);
 const SUBE_LA_TELE = new RegExp(
   `^((?:sube|baja)(?:le|lo|la)?) ${TV}( (?:(?:a|al|hasta(?: el)?) )?(?:\\d{1,3}|[a-z]+))$`,
 );
+
+/**
+ * Delante de «apaga la tele» no puede haber otra orden, un motivo ni un «no»:
+ * «pausa que voy a apagar la tele» es una pausa, no apagar.
+ */
+const DELANTE_NO =
+  /\b(?:que|porque|pq|xq|cuando|antes|despues|sin|para|hasta|no|voy|vas|vamos|iba|ibamos|pausa|pon|ponme|sube|subele|baja|bajale|quita|dale|abre|cambia|silencia|vuelve|reanuda)\b/;
+/** «puedes / me podrías / quiero / hay que apagar la tele»: el infinitivo es la orden. */
+const PIDE =
+  '^(?:(?:ya|venga|vale|bueno|pues|ahora|ok|oye|hey) )*(?:(?:me|nos) )?(?:puedes|podrias|quiero|quisiera|necesito|hay que)(?: (?:me|nos))?$';
+
+function esOrdenDeEnergia(t: string, verbos: string): boolean {
+  if (/\bno (?:apagar|encender|prender)\b/.test(t)) return false;
+  if (new RegExp(`${ANTES_DEL_VERBO}(?:${verbos})(?:${YA} ${TV})?${YA}$`).test(t)) return true;
+  const m = new RegExp(`\\b(${verbos}) ${TV}\\b`).exec(t);
+  if (!m?.[1]) return false;
+  const delante = t.slice(0, m.index).trim();
+  if (!delante) return true;
+  if (m[1].endsWith('r')) return new RegExp(PIDE).test(delante);
+  return !DELANTE_NO.test(delante);
+}
 
 function parseOne(text: string): TvIntent | null {
   const t = normalizeOrder(text);
@@ -294,7 +440,7 @@ function parseOne(text: string): TvIntent | null {
   // Dos ordenes encadenadas («enciende la tele y pon Netflix», «modo cine y sube»): el parser
   // solo ejecuta una, asi que haria la mitad en silencio. Mejor null y que
   // las atienda el modelo (o se pidan por separado). Va antes de modos y rutinas.
-  if (COMPOUND.test(t)) return null;
+  if (COMPOUND.test(t) || DOS_ORDENES.test(t)) return null;
   // La orden también va para otro aparato («apaga la tele y la luz»): la tele sola sería la mitad.
   if (OTRO_APARATO.test(t)) return null;
   let m: RegExpExecArray | null;
@@ -397,7 +543,7 @@ function parseOne(text: string): TvIntent | null {
   // Estado: preguntas, no ordenes.
   if (
     new RegExp(
-      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV}|^(?:a )?que volumen (?:tiene|esta|hay|lleva)|^que canal (?:tiene|esta|hay)(?: puesto)?)\\b`,
+      `\\b(?:que (?:esta|estan|hay) (?:viendo|puesto|poniendo)|^que hay$|que (?:estoy|estamos) viendo|que se ve|esta ${TV} (?:encendida|apagada)|esta encendida|esta apagada|estado de ${TV}|^(?:a )?que volumen (?:tiene|esta|hay|lleva)|^(?:a )?cuanto (?:volumen )?(?:tiene|esta|hay|lleva)(?: (?:el|de) volumen)?$|^(?:en )?que canal (?:tiene|esta|hay)(?: puesto)?|^que (?:app|aplicacion) (?:tiene|esta|hay)(?: (?:abierta|puesta))?$)\\b`,
     ).test(t)
   ) {
     return { action: 'status' };
@@ -422,19 +568,14 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'mute', on: true };
   }
 
-  if (
-    new RegExp(
-      `${ANTES_DEL_VERBO}(?:apaga|apagar|apagame|apagala|apagalo)(?:${YA} ${TV})?${YA}$`,
-    ).test(t) ||
-    new RegExp(`\\b(?:apaga|apagar) ${TV}\\b`).test(t)
-  ) {
+  if (esOrdenDeEnergia(t, 'apaga|apagar|apagame|apagala|apagalo')) {
     return { action: 'power', on: false };
   }
   if (
-    new RegExp(
-      `${ANTES_DEL_VERBO}(?:enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela)(?:${YA} ${TV})?${YA}$`,
-    ).test(t) ||
-    new RegExp(`\\b(?:enciende|encender|prende) ${TV}\\b`).test(t)
+    esOrdenDeEnergia(
+      t,
+      'enciende|encender|enciendeme|enciendela|enciendelo|prende|prender|prendela',
+    )
   ) {
     return { action: 'power', on: true };
   }
@@ -460,19 +601,19 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'volumeHalf' };
   }
 
-  // "sube a tope", "volumen al maximo": 100. Nico lo decidio el 30-oct-2026
+  // "sube a tope", "volumen al maximo", "sube del todo": 100. Nico lo decidio el 30-oct-2026
   // («a tope es a tope»); antes era un tope de seguridad de 50.
   if (
-    /^(?:sube(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|pon(?:me)?(?:lo|la)?(?: (?:la tele|la tv))?|(?:pon(?:me)? )?el volumen|volumen) (?:a|al) (?:tope|maximo|full)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^(?:sube(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))?|pon(?:me)?(?:lo|la)?(?: (?:la tele|la tv))?|(?:pon(?:me)? )?el volumen|volumen) (?:(?:a|al) (?:tope|maximo|full)|del todo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
     return { action: 'volume', level: VOLUME_TOPE };
   }
-  // «bájala a tope», «baja el volumen al máximo»: bajar todo lo posible es el mínimo
+  // «bájala a tope», «baja el volumen al máximo» o «del todo»: bajar todo lo posible es el mínimo
   // (VOLUME_MINIMO, 1), nunca 0 ni silencio.
   if (
-    /^baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))? (?:a|al) (?:tope|maximo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
+    /^baja(?:le|lo|la)?(?: (?:el volumen|la tele|la tv))? (?:(?:a|al) (?:tope|maximo)|del todo)(?: (?:(?:a|de) )?(?:la )?(?:tele|tv))?$/.test(
       t,
     )
   ) {
@@ -628,14 +769,14 @@ function parseOne(text: string): TvIntent | null {
       '',
     );
   if (
-    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la)? pausa|pon(?:la|lo|le)? en pausa|(?:dale (?:al?)|pulsa|presiona|toca) (?:pausa|pause)|dale a la pausa|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
+    /^(?:pausa|pause|pausala|pausalo|para|deten|detenla|detenlo|pon(?:le)?(?: la| el)? (?:pausa|pause)|pon(?:la|lo|le)? en pausa|(?:dale(?: al?| el| la)?|pulsa|presiona|toca)(?: (?:el )?boton(?: de)?)? (?:pausa|pause)|dale a la pausa|(?:pausa|para|deten) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))(?: (?:un )?(?:momento|momentito|segundo|segundito|rato|ratito)| ahi)?$/.test(
       sinTele,
     )
   ) {
     return { action: 'media', command: 'pause' };
   }
   if (
-    /^(?:play|dale (?:al|a) play|(?:pulsa|presiona|toca) play|dale a reproducir|(?:dale|pon) play|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita(?:le)? la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
+    /^(?:play|(?:dale(?: al?| el)?|pon(?:le)?(?: el)?|pulsa|presiona|toca)(?: (?:el )?boton(?: de)?)? play|dale a reproducir|(?:sigue|continua) reproduciendo|reanuda|continua|sigue|quita(?:le)? la pausa|(?:reanuda|continua|sigue con) (?:la (?:peli|pelicula|serie|cancion|musica)|el (?:video|capitulo|episodio|partido|programa)))$/.test(
       sinTele,
     )
   ) {
@@ -649,7 +790,7 @@ function parseOne(text: string): TvIntent | null {
   // Apps: "abre X" acepta cualquier nombre; "pon X" solo nombres conocidos
   // (si no, "pon la 1" o "pon algo de musica" lanzarian apps inventadas).
   m =
-    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:la app de |la aplicacion de |el |la )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
+    /\b(?:abre|abreme|abrir|lanza|arranca|entra en|quiero ver) (?:la app de |la aplicacion de |el |la |los |las )?([a-z0-9][a-z0-9 .+-]{0,40})$/.exec(
       t,
     );
   const abre = m?.[1] ? appName(m[1]) : '';
@@ -668,12 +809,19 @@ const APP_COLA = new RegExp(
   ` (?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|un (?:rato|ratito|momento|segundo)|en ${TV})$`,
 );
 
+/** Lo que se está viendo, no una app: «abre la peli», «abre la serie». */
+const LO_QUE_SE_VE =
+  '(?:la |una |esa |esta )?(?:peli|pelicula|serie|cancion|musica)|(?:el |un |ese |este )?(?:video|capitulo|episodio|partido|programa)';
+
 /**
  * «abre ya», «abre eso», «abre la app», «abre la tele»: no dicen qué app. Sin
  * nombre no se lanza nada (antes buscaba una app llamada «ya»); va al modelo.
  */
+/** «abre el menú (de netflix)»: el menú no es una app, y la tele no tiene tecla de menú aquí. */
+const MENU = '(?:el )?menu(?: de .+)?';
+
 const SIN_APP = new RegExp(
-  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV})$`,
+  `^(?:ya|ahora(?: mismo)?|otra vez|de nuevo|gracias|eso|esto|esa|esta|algo|alguna|(?:una |alguna |esa |esta )?(?:app|apps|aplicacion|aplicaciones)|${TV}|${LO_QUE_SE_VE}|${MENU})$`,
 );
 
 /**
@@ -686,10 +834,23 @@ function appName(raw: string): string {
     prev = s;
     s = s.replace(APP_COLA, '').trim();
   }
+  // «abre la serie de netflix», «pon la peli en disney»: la app es lo de detrás.
+  const deApp = DE_APP.exec(s);
+  if (deApp?.[1])
+    return APP_ALIASES[deApp[1]] !== undefined && !SOLO_TV.test(deApp[1]) ? deApp[1] : '';
   return SIN_APP.test(s) ? '' : s;
 }
 
+/** «la serie de netflix», «la peli en disney». */
+const DE_APP = new RegExp(`^(?:${LO_QUE_SE_VE}) (?:de|en) (.+)$`);
+const SOLO_TV = new RegExp(`^${TV}$`);
+
 /** Como se entendio la orden, en castellano (para confirmar al usuario). */
+/** «youtube» → «YouTube», «disney» → «Disney+»: el nombre de la app como se escribe. */
+function appLabel(appId: string): string {
+  return APP_NAMES[APP_ALIASES[appId] ?? appId] ?? appId;
+}
+
 export function describeTvIntent(i: TvIntent): string {
   switch (i.action) {
     case 'power':
@@ -711,7 +872,7 @@ export function describeTvIntent(i: TvIntent): string {
           ? 'volver al canal anterior'
           : `poner el canal ${i.channel}`;
     case 'launch':
-      return `abrir ${i.appId}`;
+      return `abrir ${appLabel(i.appId)}`;
     case 'media':
       return MEDIA_NAMES[i.command];
     case 'input':
@@ -720,7 +881,7 @@ export function describeTvIntent(i: TvIntent): string {
       return 'mirar el estado de la tele';
     case 'scene':
       if (i.scene === 'apagar-todo') return 'apagarlo todo';
-      return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
+      return `activar el modo ${i.scene}${i.appId ? ` con ${appLabel(i.appId)}` : ''}`;
     case 'key':
       return KEY_NAMES[i.name];
     case 'picture':

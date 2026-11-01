@@ -17,9 +17,9 @@ describe('panel: estados de error y de token', () => {
 
   it('un 500 explica qué hacer y no filtra detalles', () => {
     expect(mensajeDeError(500, { error: 'Error interno' })).toBe(
-      'Error interno del asistente. Revisa el registro local y vuelve a intentarlo.',
+      'Algo ha fallado por mi parte. Vuelve a intentarlo en un momento.',
     );
-    expect(mensajeDeError(502, null)).toContain('Error interno del asistente');
+    expect(mensajeDeError(502, null)).toContain('Algo ha fallado por mi parte');
   });
 
   it('401 pide el token y lo demás cae al código', () => {
@@ -35,7 +35,7 @@ describe('panel: estados de error y de token', () => {
     expect(html).toContain('type="password"');
     expect(html).toContain("'Reintentar'");
     expect(html).toContain('formato.mensajeDeError(respuesta.status, datos)');
-    expect(html).toContain("' con error · '");
+    expect(html).toContain("' secciones sin cargar · '");
     for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
       expect(() => new Function(m[1] ?? '')).not.toThrow();
     }

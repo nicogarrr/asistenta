@@ -32,7 +32,7 @@ describe('aviso de copia de seguridad fallida en castellano y sin texto técnico
       new Error('TypeError: x is not a function\n    at run (C:\\a\\b.js:1:2)'),
     );
     expect(r).toBe(
-      'No he podido hacer la copia de seguridad de hoy (detalles en el registro). Lo reintento en unos minutos.',
+      'No he podido hacer la copia de seguridad de hoy: algo ha fallado por mi parte. Lo reintento en unos minutos.',
     );
   });
 

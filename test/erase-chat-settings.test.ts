@@ -55,7 +55,7 @@ describe('/borrar_chat también quita los ajustes del chat', () => {
     });
     expect(new ModelChoiceStore(modelsFile).get('telegram:dm:1#viaje')).toBeUndefined();
     expect(eraseSummary(r)).toContain('carpeta de proyecto');
-    expect(eraseSummary(r)).toContain('/modelo');
+    expect(eraseSummary(r)).toContain('el modelo que elegiste');
   });
 
   it('sin ajustes guardados no toca los ficheros y el resumen no los menciona', () => {
@@ -71,7 +71,7 @@ describe('/borrar_chat también quita los ajustes del chat', () => {
     expect(r.models).toBe(0);
     expect(r.projects).toBe(0);
     expect(eraseSummary(r)).not.toContain('proyecto');
-    expect(eraseSummary(r)).not.toContain('/modelo');
+    expect(eraseSummary(r)).not.toContain('el modelo que elegiste');
   });
 
   it('isKeyOfChat no confunde chats que comparten prefijo', () => {

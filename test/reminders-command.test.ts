@@ -56,11 +56,11 @@ describe('/recordatorios', () => {
     expect(text).toContain('1. Apagar el horno — vie 30/10 12:15 (en 15 min)');
     expect(text).toContain('2. Llamar al dentista — sáb 31/10 09:00 (en 21 h)');
     expect(text).toContain(
-      '3. Revisar los correos — lun 02/11 08:30 (en 3 d) · se repite (30 8 * * 1)',
+      '3. Revisar los correos — lun 02/11 08:30 (en 3 d) · cada lunes a las 08:30',
     );
     expect(text).toContain('4. Uno roto — sin próxima vez');
     expect(text).not.toContain('backup');
-    expect(text).toContain('/recordatorios borrar');
+    expect(text).toContain('Si quieres quitar alguno, dime cuál.');
   });
 
   it('sin recordatorios explica cómo crearlos', () => {

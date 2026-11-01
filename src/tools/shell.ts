@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { childEnv } from '../child-env.js';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { buildSandboxSpawn, sandboxMode, sandboxSpawnError } from './shell-sandbox.js';
@@ -159,6 +160,13 @@ const ShellParams = Type.Object({
   ),
 });
 
+/** Entorno del shell del modelo: el del daemon sin credenciales (ver child-env.ts). */
+export function shellEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const keep: Record<string, string> = { NO_COLOR: '1' };
+  if (base.PA_SECRETS_FILE) keep.PA_SECRETS_FILE = base.PA_SECRETS_FILE;
+  return childEnv(keep, base);
+}
+
 export function createShellTool(
   config: Config,
   deps: { spawn?: typeof spawn; env?: NodeJS.ProcessEnv } = {},
@@ -212,7 +220,11 @@ export function createShellTool(
         const child = spawnImpl(target.file, target.args, {
           cwd: process.cwd(),
           windowsHide: true,
-          env: { ...process.env, NO_COLOR: '1' },
+          // El shell del modelo no hereda credenciales: con el vault portátil los secretos
+          // viven en variables PA_SECRET_*, y un `printenv` o `Get-ChildItem env:` los
+          // imprimiría en el chat. Se quitan las variables con nombre de credencial; la
+          // ruta del fichero de secretos no es un secreto y se conserva para `pa vault list`.
+          env: shellEnv(),
         });
 
         const stdout = new OutputCollector();

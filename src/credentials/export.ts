@@ -1,8 +1,13 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { normalizeDomain } from '../gestor/login.js';
+import { logFile } from '../log.js';
+import { vaultExists } from '../vault.js';
+import { oldPendingOffer, pendingAge } from './pending-age.js';
+import { discardSignup, pendingOf } from './signup.js';
 import {
   type Account,
+  AvisoCuenta,
   deleteAccount,
   generatePassword,
   listAccounts,
@@ -35,6 +40,8 @@ export interface CuentasCliDeps {
   isTty?: boolean;
   copy?: (secret: string, clearAfterMs: number) => Promise<void>;
   write?: (path: string, data: string) => void;
+  /** ¿Existe ya la caja fuerte de claves? (en una instalación nueva, todavía no). */
+  vaultExists?: () => boolean;
 }
 
 const CSV_HEADER = 'Group,Title,Username,Password,URL,Notes';
@@ -136,17 +143,79 @@ async function askHiddenLine(question: string): Promise<string> {
 const NEEDS_TTY =
   'Esto solo se hace a mano, desde una ventana de terminal en el PC (no por una tubería ni desde el chat).';
 
+/**
+ * La cuenta de la consola: la web exacta, o el nombre a secas («wallapop») si solo encaja
+ * una (la misma regla que en el chat). Con varias, pide la exacta; nunca mezcla dominios.
+ */
+async function cuentaDe(
+  site: string,
+  vault: VaultOps,
+  out: (s: string) => void,
+): Promise<Account | null> {
+  const all = await listAccounts(vault);
+  const domain = normalizeDomain(site);
+  const exact = all.find((a) => a.domain === domain);
+  if (exact) return exact;
+  const hits =
+    domain && !domain.includes('.') ? all.filter((a) => a.domain.split('.').includes(domain)) : [];
+  if (hits.length === 1) return hits[0] ?? null;
+  out(
+    hits.length > 1
+      ? `Tengo varias que encajan con «${site}»: ${hits.map((a) => a.domain).join(', ')}. Escribe la web exacta.`
+      : `No tengo ninguna cuenta guardada de ${site}.`,
+  );
+  return null;
+}
+
+/** `pa cuentas descartar <web>`: quita un alta a medias, solo con el nombre exacto tecleado. */
+async function descartar(
+  site: string,
+  vault: VaultOps,
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+) {
+  let p: Account | null;
+  try {
+    p = await pendingOf(site, vault, true);
+  } catch (err) {
+    if (err instanceof AvisoCuenta) {
+      out(err.message);
+      return 1;
+    }
+    throw err;
+  }
+  if (!p) {
+    out(
+      `No hay ningún alta a medias de ${site}. Una cuenta ya terminada se quita con pa cuentas borrar <web>.`,
+    );
+    return 1;
+  }
+  if (!deps.ask && !(deps.isTty ?? process.stdin.isTTY)) {
+    out(NEEDS_TTY);
+    return 1;
+  }
+  const age = pendingAge(p);
+  out(
+    `Vas a descartar el alta a medias de ${p.domain}${age ? ` (${age})` : ''}: se borra la contraseña que preparé. Si la cuenta llegó a crearse en la web, allí sigue.`,
+  );
+  const typed = await (deps.ask ?? askLine)(`Escribe ${p.domain} para descartarla: `);
+  if (typed.trim().toLowerCase() !== p.domain) {
+    out('Cancelado: no he descartado nada.');
+    return 1;
+  }
+  await discardSignup(p.domain, vault);
+  out(`Descartada el alta a medias de ${p.domain}.`);
+  return 0;
+}
+
 async function borrar(
   site: string,
   vault: VaultOps,
   deps: CuentasCliDeps,
   out: (s: string) => void,
 ) {
-  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
-  if (!acc) {
-    out(`No tengo ninguna cuenta guardada de ${site}.`);
-    return 1;
-  }
+  const acc = await cuentaDe(site, vault, out);
+  if (!acc) return 1;
   if (!deps.ask && !(deps.isTty ?? process.stdin.isTTY)) {
     out(NEEDS_TTY);
     return 1;
@@ -170,8 +239,10 @@ async function cambiar(
   deps: CuentasCliDeps,
   out: (s: string) => void,
 ) {
-  const acc = (await listAccounts(vault)).find((a) => a.domain === normalizeDomain(site));
-  if (!acc || acc.status !== 'activa') {
+  const found = await cuentaDe(site, vault, out);
+  if (!found) return 1;
+  const acc = found.status === 'activa' ? found : null;
+  if (!acc) {
     out(`No tengo ninguna cuenta guardada de ${site}.`);
     return 1;
   }
@@ -212,21 +283,97 @@ async function cambiar(
   return 0;
 }
 
+export const CUENTAS_USO =
+  'No conozco esa orden. Usa: pa cuentas listar (tus cuentas), pa cuentas copiar <web> (copia la contraseña), pa cuentas borrar <web>, pa cuentas cambiar <web>, pa cuentas descartar <web> (un alta a medias) o pa cuentas exportar keepass|bitwarden <fichero>.';
+
+/** Como se dice de palabra: «pa cuentas lista», «copia wallapop», «borra …». */
+const ALIAS: Record<string, string> = {
+  lista: 'listar',
+  ver: 'listar',
+  copia: 'copiar',
+  borra: 'borrar',
+  cambia: 'cambiar',
+  exporta: 'exportar',
+  descarta: 'descartar',
+};
+
+export const CUENTAS_GESTOR_KO =
+  'Ahora mismo no puedo leer tu gestor de contraseñas. Prueba otra vez en un momento; si sigue igual, `pa doctor` te dice qué le pasa.';
+
+export const CUENTAS_SIN_CAJA =
+  'Todavía no tienes caja fuerte de claves, así que no hay cuentas guardadas. Se crea al instalar (doble clic en instalar.bat) o con pa vault init.';
+
 export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}): Promise<number> {
-  const vault = deps.vault ?? realVault;
   const out = deps.out ?? ((s: string) => process.stdout.write(`${s}\n`));
-  const [sub = 'listar', a1, a2] = argv;
+  try {
+    return await cuentasRun(argv, deps, out);
+  } catch (err) {
+    // Instalación nueva sin caja fuerte: no es un fallo ni se arregla «probando otra vez».
+    const exists = deps.vaultExists ?? (deps.vault ? () => true : vaultExists);
+    if (!safeExists(exists)) {
+      out(CUENTAS_SIN_CAJA);
+      const sub = (argv[0] ?? 'listar').toLowerCase();
+      return sub === 'listar' || ALIAS[sub] === 'listar' ? 0 : 1;
+    }
+    // Un fallo del gestor (vault ilegible, disco…): una línea llana; el detalle, solo al registro.
+    logFile.warn('pa cuentas: fallo del gestor de contraseñas', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    out(CUENTAS_GESTOR_KO);
+    return 1;
+  }
+}
+
+const safeExists = (exists: () => boolean): boolean => {
+  try {
+    return exists();
+  } catch {
+    return true;
+  }
+};
+
+async function cuentasRun(
+  argv: string[],
+  deps: CuentasCliDeps,
+  out: (s: string) => void,
+): Promise<number> {
+  const vault = deps.vault ?? realVault;
+  const [rawSub = 'listar', a1, a2] = argv;
+  const sub = ALIAS[rawSub.toLowerCase()] ?? rawSub.toLowerCase();
+  // Una orden conocida a la que le falta la web no es «no conozco esa orden».
+  if (['copiar', 'borrar', 'cambiar', 'descartar'].includes(sub) && !a1) {
+    out(`Falta la web: pa cuentas ${sub} <web>, por ejemplo pa cuentas ${sub} wallapop.es.`);
+    return 2;
+  }
+  if (sub === 'exportar' && a1 !== 'keepass' && a1 !== 'bitwarden') {
+    out(
+      '¿A qué formato? Usa: pa cuentas exportar keepass <fichero> o pa cuentas exportar bitwarden <fichero>.',
+    );
+    return 2;
+  }
+  if (sub === 'exportar' && !a2) {
+    out(
+      `Falta el fichero: pa cuentas exportar ${a1} <fichero>, por ejemplo ${a1 === 'keepass' ? 'cuentas.csv' : 'cuentas.json'}.`,
+    );
+    return 2;
+  }
   if (sub === 'listar') {
     const all = await listAccounts(vault);
     if (all.length === 0) out('No hay cuentas guardadas.');
     for (const a of all)
-      out(`${a.domain}  ${a.username}${a.status === 'pendiente' ? '  (sin terminar)' : ''}`);
+      out(
+        `${a.domain}  ${a.username}${a.status === 'pendiente' ? `  (sin terminar${pendingAge(a) ? `, ${pendingAge(a)}` : ''})` : ''}`,
+      );
+    const offer = oldPendingOffer(all, Date.now(), true);
+    if (offer) out(offer);
     return 0;
   }
   if (sub === 'copiar' && a1) {
-    const pw = await revealPassword(a1, vault);
+    const acc = await cuentaDe(a1, vault, out);
+    const pw = acc ? await revealPassword(acc.domain, vault) : undefined;
+    if (!acc) return 1;
     if (!pw) {
-      out(`No tengo contraseña guardada de ${a1}.`);
+      out(`No tengo contraseña guardada de ${acc.domain}.`);
       return 1;
     }
     await (deps.copy ?? copyToClipboard)(pw, 30_000);
@@ -252,8 +399,7 @@ export async function cuentasCommand(argv: string[], deps: CuentasCliDeps = {}):
   }
   if (sub === 'borrar' && a1) return borrar(a1, vault, deps, out);
   if (sub === 'cambiar' && a1) return cambiar(a1, vault, deps, out);
-  out(
-    'uso: pa cuentas [listar | copiar <web> | borrar <web> | cambiar <web> | exportar keepass|bitwarden <fichero>]',
-  );
+  if (sub === 'descartar' && a1) return descartar(a1, vault, deps, out);
+  out(CUENTAS_USO);
   return 2;
 }

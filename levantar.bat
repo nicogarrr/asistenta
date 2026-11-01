@@ -1,5 +1,12 @@
 @echo off
 setlocal
+rem Desde una carpeta de red (\\servidor\...) cmd no puede entrar en ella y
+rem acabaria en C:\Windows diciendo que falta todo: mejor avisarlo claro.
+if "%~d0"=="\\" (
+    echo [levantar] Asistenta esta en una carpeta de red. Copiala a tu PC, por ejemplo a C:\Asistenta, y abre levantar.bat desde alli.
+    pause
+    exit /b 1
+)
 cd /d "%~dp0"
 rem UTF-8 para que la lista de pa iniciar (tildes y simbolos) se lea bien en la consola.
 chcp 65001 >nul
@@ -17,9 +24,24 @@ if not exist dist\cli.js (
     exit /b 1
 )
 
+rem npm escribe node_modules\.package-lock.json al terminar: sin el, la instalacion
+rem quedo a medias (npm ci fallido o node_modules borrada) y Node soltaria un error en ingles.
+if not exist node_modules\.package-lock.json (
+    echo [levantar] La instalacion de Asistenta esta incompleta ^(faltan piezas en node_modules^).
+    echo [levantar] Haz doble clic en instalar.bat para completarla y vuelve a abrir este archivo.
+    pause
+    exit /b 1
+)
+
 rem Node 24 o mas nuevo: lo busca scripts\node24.cmd (PATH y carpetas habituales).
 call scripts\node24.cmd
 if not defined NODE_EXE (
+    if defined NODE_OLD (
+        echo [levantar] Tienes Node %NODE_OLD%, pero Asistenta necesita la version 24 o mas nueva.
+        echo [levantar] Descarga la 24 LTS gratis de https://nodejs.org, instalala encima de la que tienes y vuelve a abrir este archivo.
+        pause
+        exit /b 1
+    )
     echo [levantar] No encuentro Node 24 o mas nuevo. Descargalo gratis de https://nodejs.org ^(version 24 LTS^), instalalo y vuelve a abrir este archivo.
     echo [levantar] Si ya lo tienes en otra carpeta, pon su ruta en la variable ASISTENTA_NODE, por ejemplo C:\node24\node.exe.
     pause

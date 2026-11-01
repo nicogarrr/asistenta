@@ -219,10 +219,13 @@ export async function createMcpTools(
       liveClients.push(client);
       liveServers.push({ name: server.name, allowedTools: server.allowedTools, client });
       const allowed = server.allowedTools;
-      const selected =
+      const listed =
         allowed === undefined
           ? remoteTools
           : remoteTools.filter((remote) => allowed.includes(remote.name));
+      // `readOnlyOnly` (REA): fuera lo que no se declare de solo lectura o no destructivo.
+      const selected =
+        'readOnlyOnly' in server && server.readOnlyOnly ? listed.filter(isReadOnlyTool) : listed;
       for (const remote of selected) {
         tools.push(createAgentTool(server, remote, client));
       }
@@ -291,6 +294,18 @@ function createAgentTool(
       }
     },
   };
+}
+
+/**
+ * Una tool cuenta como de solo lectura si el servidor lo dice (`readOnlyHint`)
+ * o la marca expresamente como no destructiva. Sin pistas, no: el valor por
+ * defecto de MCP para una tool sin `readOnlyHint` es «puede destruir».
+ */
+export function isReadOnlyTool(tool: McpToolInfo): boolean {
+  const hints = tool.annotations;
+  if (!hints) return false;
+  if (hints.destructiveHint === true) return false;
+  return hints.readOnlyHint === true || hints.destructiveHint === false;
 }
 
 /** Recorta el texto que vuelve al modelo y lo dice. */
@@ -536,7 +551,7 @@ async function answers(
 }
 
 /** Uso de `/mcp` en Telegram. */
-export const MCP_COMMAND_USAGE = 'Uso: /mcp recursos o /mcp prompts';
+export const MCP_COMMAND_USAGE = 'No te he pillado. ¿Quieres ver los recursos o los prompts?';
 const MCP_COMMAND_ITEMS = 20;
 const MCP_COMMAND_TEXT = 80;
 const MCP_COMMAND_TIMEOUT_MS = 10_000;

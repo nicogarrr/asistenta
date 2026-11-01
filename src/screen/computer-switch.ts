@@ -13,6 +13,7 @@
  */
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PreguntaOpts } from '../daemon/pregunta-pendiente.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { foldAccents } from '../text.js';
 
@@ -59,6 +60,19 @@ export interface ComputerSwitchDeps {
   save?: (on: boolean) => void;
   /** True when an «off» is saved on disk; absent = /ordenador estado says nothing about it. */
   offSaved?: () => boolean;
+  /**
+   * Nico (1 nov): «como estamos hablando nosotros». Tras preguntar, la siguiente
+   * respuesta normal del chat («apágalo», «enciéndelo») completa el /ordenador.
+   */
+  ask?: (opts: PreguntaOpts) => void;
+}
+
+/** La respuesta normal convertida en «on»/«off», o null si no es ninguna de las dos. */
+function switchAnswer(text: string, want?: 'on' | 'off'): string | null {
+  const w = switchWord(text);
+  if (want !== 'on' && OFF.has(w)) return 'off';
+  if (want !== 'off' && ON.has(w)) return 'on';
+  return null;
 }
 
 /** Second line of /ordenador estado: whether the state survives a restart. */
@@ -128,26 +142,28 @@ function switchWord(args: string): string {
   return foldAccents(args.trim()).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
 }
 
-export const COMPUTER_SWITCH_USAGE = 'Uso: /ordenador ⬦ /ordenador on ⬦ /ordenador off';
+export const COMPUTER_SWITCH_USAGE =
+  '¿Enciendo o apago el control de tu PC? Dime «enciéndelo» o «apágalo».';
 
 export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): string {
   if (!deps.isOwner) {
     return 'Solo el dueño, en su chat privado, puede encender o apagar el control del ordenador.';
   }
   const word = switchWord(args);
-  if (word === '' && args.trim() !== '') return COMPUTER_SWITCH_USAGE;
+  if (word === '' && args.trim() !== '') return usage(deps);
   if (word === '' || word === 'estado') {
     const enabled = deps.enabled();
+    deps.ask?.({ answer: (t) => switchAnswer(t, enabled ? 'off' : 'on') });
     const head = enabled
-      ? `🖥️ Control del ordenador: ACTIVADO. Apágalo con /ordenador off.`
-      : `🛑 Control del ordenador: DESACTIVADO. Enciéndelo con /ordenador on.`;
+      ? '🖥️ Control del ordenador: ACTIVADO. Si quieres quitármelo, dime «apágalo».'
+      : '🛑 Control del ordenador: DESACTIVADO. Si quieres que pueda usarlo, dime «enciéndelo».';
     return `${head}${savedNote(deps, enabled)}`;
   }
   if (OFF.has(word)) {
     deps.set(false);
     const saved = trySave(deps, false);
     const head =
-      '🛑 Control del ordenador desactivado: no veo ni toco el escritorio (ni capturas) hasta /ordenador on.';
+      '🛑 Control del ordenador desactivado: no veo ni toco el escritorio (ni capturas) hasta que me lo vuelvas a encender.';
     if (saved === true) return `${head} Sigue apagado aunque se reinicie el asistente.`;
     if (saved === false) {
       return `${head} No he podido guardarlo en disco: si el asistente se reinicia, vuelve a lo que diga el .env.`;
@@ -164,5 +180,10 @@ export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): s
     }
     return `${head} Al reiniciar vuelve a lo que diga el .env.`;
   }
+  return usage(deps);
+}
+
+function usage(deps: ComputerSwitchDeps): string {
+  deps.ask?.({ answer: (t) => switchAnswer(t) });
   return COMPUTER_SWITCH_USAGE;
 }

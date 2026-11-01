@@ -37,7 +37,7 @@ describe('/skills catalogo', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it('con catálogo: marca lo instalado y da el comando para lo demás', async () => {
+  it('con catálogo: marca lo instalado y da el enlace de lo demás', async () => {
     const r = await skillsCatalogReply(
       installed,
       'https://example.com/c.json',
@@ -45,15 +45,17 @@ describe('/skills catalogo', () => {
     );
     expect(r).toContain('Catálogo (2):');
     expect(r).toContain('• Resumen de email ✓ instalada');
-    expect(r).not.toContain('/skills instalar https://example.com/a/SKILL.md');
-    expect(r).toContain('/skills instalar https://example.com/b/SKILL.md');
+    expect(r).not.toContain('https://example.com/a/SKILL.md');
+    expect(r).toContain('https://example.com/b/SKILL.md');
   });
 
   it('URL que no es https: no descarga nada', async () => {
     const f = vi.fn() as unknown as typeof fetch;
     const r = await skillsCatalogReply([], 'http://example.com/c.json', f);
     expect(r).toContain('No tienes skills instaladas.');
-    expect(r).toContain('No he podido leer el catálogo de skills (solo se puede descargar');
+    expect(r).toContain(
+      'No he podido leer el catálogo de skills (solo leo catálogos desde enlaces https)',
+    );
     expect(f).not.toHaveBeenCalled();
   });
 

@@ -1,0 +1,64 @@
+name: Instalador Windows
+
+# Al publicar una versión en GitHub (Releases), construye el instalador .exe en Linux
+# (NSIS) y lo adjunta a esa versión con su SHA-256, para descargarlo sin compilar.
+# `pa autoupdate` en la copia instalada busca justo estos dos ficheros.
+# Este workflow nunca crea etiquetas ni versiones: solo añade ficheros a una ya publicada.
+# A mano (workflow_dispatch) solo construye y lo deja como artefacto, sin publicar nada.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instalador-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  instalador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: La etiqueta coincide con package.json
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "La etiqueta $TAG no coincide con la versión de package.json ($VERSION)."
+            exit 1
+          fi
+      - name: Instalar NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:instalador
+      - name: SHA-256 del instalador
+        working-directory: var
+        run: sha256sum Asistenta-Instalador-*.exe | tee Asistenta-Instalador.sha256
+      - name: Adjuntar a la versión
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" var/Asistenta-Instalador-*.exe var/Asistenta-Instalador.sha256 --clobber
+      - name: Guardar como artefacto
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asistenta-Instalador
+          path: |
+            var/Asistenta-Instalador-*.exe
+            var/Asistenta-Instalador.sha256
+          retention-days: 7

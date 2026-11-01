@@ -15,6 +15,10 @@ export const ERASE_PROMPT =
   '⚠️ Esto borra la memoria, el historial de conversaciones, el perfil y los seguimientos pendientes de este chat (todos sus temas). Los objetivos aprobados se quedan. No se puede deshacer.\n' +
   `Escribe ${ERASE_WORD} (en mayúsculas) en los próximos 2 minutos para confirmar. Cualquier otro mensaje lo cancela.`;
 
+/** /borrar_chat con una tarea en marcha: no borra y pregunta (Nico, 1 nov: sin «Usa /stop»). */
+export const ERASE_BUSY_ASK =
+  'Hay una tarea en marcha en este chat, así que no he borrado nada. ¿La paro y lo borro todo? Dime «sí».';
+
 export type EraseDecision = 'confirmed' | 'cancelled';
 
 export class EraseConfirm {
@@ -119,7 +123,7 @@ export function eraseSummary(r: ReturnType<typeof eraseChat>): string {
   const extras: string[] = [];
   if (r.profile) extras.push('tu perfil');
   if (r.projects > 0) extras.push('la carpeta de proyecto ligada');
-  if (r.models > 0) extras.push('el modelo elegido con /modelo');
+  if (r.models > 0) extras.push('el modelo que elegiste');
   if (r.followups > 0) extras.push(`${r.followups} seguimiento(s)`);
   const tail = extras.length > 0 ? ` y ${extras.join(', ')}` : '';
   return `🗑️ Hecho. Borré ${r.sessions} conversación(es) guardada(s), ${r.memoryFiles} fichero(s) de memoria${tail}. Empezamos de cero.`;

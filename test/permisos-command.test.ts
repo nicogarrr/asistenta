@@ -34,7 +34,7 @@ describe('/permisos command', () => {
   it('listing with no grants says so and points at the ephemeral ones', () => {
     const msg = runPermisosCommand([gateWith()], dbPath, '');
     expect(msg).toContain('ningún permiso "siempre"');
-    expect(msg).toContain('esta sesión');
+    expect(msg).toContain('por ahora');
   });
 
   it('listing names every standing grant', () => {

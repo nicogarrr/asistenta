@@ -54,7 +54,7 @@ const CARRIERS: ReadonlyArray<[string, RegExp]> = [
 const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
   [
     'incidencia',
-    /incidencia|no (?:hemos )?podido entregar|intento de entrega|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
+    /incidencia|no (?:hemos )?podido entregar|intento de entrega|entrega fallida|no ha sido posible entregar|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
   ],
   [
     'para_recoger',
@@ -62,11 +62,14 @@ const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
   ],
   [
     'entregado',
-    /(?<!ser[aá] )(?<!sea )\b(?:entregado|entregada|se ha entregado|delivered)\b|ya (?:lo )?tienes|recogido en/i,
+    // «aún no ha sido entregado», «pendiente de ser entregado», «will be delivered», «has not
+    // been delivered»: dicen lo contrario. Antes se leían como entregado y el paquete
+    // desaparecía de los repartos activos sin haber llegado.
+    /(?<!(?:\bno|\bnot|n't|\bser|\bser[aá]|\bsea|\bbe)\s+(?:(?:ha|han|se|sido|fue|been|yet|a[uú]n)\s+){0,3})\b(?:entregado|entregada|se ha entregado|delivered|recogido en)\b|ya (?:lo )?tienes/i,
   ],
   [
     'en_reparto',
-    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|llegar[aá] hoy|lo recibir[aá]s hoy|en ruta de entrega|se entregar[aá] hoy|ser[aá] entregad[oa] hoy|entrega prevista (?:para )?hoy|arriving today/i,
+    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|llegar[aá] hoy|lo recibir[aá]s hoy|en ruta de entrega|se entregar[aá] hoy|ser[aá] entregad[oa] hoy|entrega prevista (?:para )?hoy|arriving today|(?:will|to) be delivered today/i,
   ],
   [
     'enviado',
@@ -256,4 +259,66 @@ export function markDeliveriesNotified(db: DatabaseSync, alerts: readonly Delive
   initDeliveryStore(db);
   const upd = db.prepare('UPDATE deliveries SET notified = ? WHERE key = ? AND status = ?');
   for (const a of alerts) upd.run(a.status, a.key, a.status);
+}
+
+/**
+ * «Ya lo he recogido»: marca como entregado el envío que nombra el dueño (número,
+ * transportista o palabras del asunto), para que deje de salir en el panel y el resumen.
+ * Devuelve el envío marcado, los candidatos si hay varios, o [] si no hay ninguno.
+ */
+export function markDeliveryCollected(
+  db: DatabaseSync,
+  ref: string,
+  now: number,
+  /** Only this one (an answer like «el segundo» to a «¿Cuál?» list). */
+  onlyKey?: string,
+): { done: Delivery } | { matches: Delivery[] } {
+  const q = foldRef(ref);
+  const open = activeDeliveries(db, now).filter(
+    (d) => d.status !== 'entregado' && (onlyKey === undefined || d.key === onlyKey),
+  );
+  if (onlyKey !== undefined) return markOne(db, open[0], now) ?? { matches: [] };
+  const exact = open.filter((d) => [d.tracking, d.orderRef].some((r) => r && foldRef(r) === q));
+  const words = q.split(' ').filter((w) => w.length > 2 && !REF_STOP.has(w));
+  const loose = open.filter((d) => {
+    const hay = foldRef(`${d.carrier} ${d.title} ${d.tracking ?? ''} ${d.orderRef ?? ''}`);
+    return words.length > 0 && words.some((w) => hay.includes(w));
+  });
+  const matches = exact.length > 0 ? exact : loose;
+  const one = matches.length === 1 ? matches[0] : open.length === 1 && !q ? open[0] : undefined;
+  return markOne(db, one, now) ?? { matches };
+}
+
+function markOne(
+  db: DatabaseSync,
+  one: Delivery | undefined,
+  now: number,
+): { done: Delivery } | null {
+  if (!one) return null;
+  db.prepare(
+    "UPDATE deliveries SET status = 'entregado', status_at = ?, notified = 'entregado', updated_at = ? WHERE key = ?",
+  ).run(now, now, one.key);
+  return { done: { ...one, status: 'entregado', statusAt: now, notified: 'entregado' } };
+}
+
+const REF_STOP = new Set([
+  'paquete',
+  'pedido',
+  'envio',
+  'del',
+  'las',
+  'los',
+  'que',
+  'ese',
+  'este',
+  'ya',
+]);
+
+function foldRef(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }

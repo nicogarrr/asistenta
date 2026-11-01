@@ -9,14 +9,15 @@ describe('token del panel con espacios o \\r de Windows', () => {
     );
     expect(panelTokenFromEnv({ PA_WEB_TOKEN: '   ' })).toBe('');
     expect(panelTokenFromEnv({})).toBe('');
-    expect(panelDoctorLines({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: ' \r' })[0]).toContain(
-      'falta PA_WEB_TOKEN',
+    expect(panelDoctorLines({ PA_WEB_PORT: '8787', PA_WEB_TOKEN: ' \r' })[1]).toContain(
+      'panel token     automático',
     );
   });
 
   it('el daemon arranca el panel con el token recortado, no con el crudo', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli).toContain('const webToken = panelTokenFromEnv();');
+    // El token sale de panelStartPlan, que usa panelTokenFromEnv (recortado).
+    expect(cli).toContain('const webToken = panelPlan.token;');
     expect(cli).not.toMatch(/const webToken = process\.env\.PA_WEB_TOKEN;/);
   });
 });

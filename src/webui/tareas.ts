@@ -1,4 +1,10 @@
-import { type BoardTask, dayLabel, STATUS_LABEL, type TaskBoard } from '../tasks/board.js';
+import {
+  type BoardTask,
+  dayLabel,
+  REPEAT_LABEL,
+  STATUS_LABEL,
+  type TaskBoard,
+} from '../tasks/board.js';
 import { panelScopeVisible } from './next-up.js';
 
 export interface PanelTarea {
@@ -6,6 +12,8 @@ export interface PanelTarea {
   hora?: string;
   titulo: string;
   estado: string;
+  /** «cada semana», «cada día»… si la tarea se repite. */
+  repite?: string;
 }
 
 export interface PanelTareas {
@@ -18,6 +26,7 @@ const fila = (t: BoardTask): PanelTarea => ({
   ...(t.time ? { hora: t.time } : {}),
   titulo: t.title,
   estado: STATUS_LABEL[t.status],
+  ...(t.repeat && REPEAT_LABEL[t.repeat] ? { repite: REPEAT_LABEL[t.repeat] } : {}),
 });
 
 /**

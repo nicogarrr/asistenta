@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { linkBrowsers } from './browsers-path.js';
-import { SANDBOX_ENV } from './reap.js';
+import { noteAttemptRoot, SANDBOX_ENV } from './reap.js';
 import type { Measurement } from './score.js';
 
 /**
@@ -54,6 +54,12 @@ export function cleanEnv(env: NodeJS.ProcessEnv = process.env, home?: string): N
     out.LOCALAPPDATA = join(home, 'AppData', 'Local');
     out.XDG_CONFIG_HOME = join(home, '.config');
     out.XDG_CACHE_HOME = join(home, '.cache');
+    // npm lee además su config global de <prefijo de Node>/etc/npmrc, fuera del HOME: en un Node
+    // del usuario (nvm en Linux/mac) el intento puede escribirla, y un node-options ahí carga
+    // código en el `npx vitest` de la medición (comprobado con npm real, 31 oct). Las dos
+    // configs de npm salen de la casa desechable (no existen: npm usa sus valores por defecto).
+    out.npm_config_globalconfig = join(home, '.npm-global-rc');
+    out.npm_config_userconfig = join(home, '.npmrc');
   }
   return out;
 }
@@ -236,14 +242,18 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   try {
     // No --outputFile: the JSON report comes on vitest's own standard output (see
     // reportFromOutput), not as a file another process of the same user can rewrite.
-    const suite = await exec(npx.file, ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
+    const suiteRun = exec(npx.file, ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
       cwd,
       shell: npx.shell,
       timeout: timeoutMs,
       windowsHide: true,
       env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
       maxBuffer: 64 * 1024 * 1024,
-    })
+    });
+    // Su pid, para encontrar después a sus hijos huérfanos en Windows (reap.ts).
+    const suiteEnded = noteAttemptRoot(cwd, suiteRun.child?.pid);
+    const suite = await suiteRun
+      .finally(suiteEnded)
       .then((r) => ({ ...r, code: 0 as number | string | null }))
       .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
         stdout: err.stdout ?? '',
@@ -280,18 +290,17 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   // vite-node viene con vitest (fijado en package-lock). `npx tsx` no es una dependencia: npx lo
   // bajaba de internet en cada medición (con la casa desechable no hay caché), sin versión fija,
   // y sin red la sonda no arrancaba. --no-install: nunca descarga nada.
-  const probe = await exec(
-    npx.file,
-    ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'],
-    {
-      cwd,
-      shell: npx.shell,
-      timeout: timeoutMs,
-      windowsHide: true,
-      env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
-      maxBuffer: 8 * 1024 * 1024,
-    },
-  )
+  const probeRun = exec(npx.file, ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'], {
+    cwd,
+    shell: npx.shell,
+    timeout: timeoutMs,
+    windowsHide: true,
+    env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  const probeEnded = noteAttemptRoot(cwd, probeRun.child?.pid);
+  const probe = await probeRun
+    .finally(probeEnded)
     .then((r) => ({ ...r, code: 0 as number | string | null }))
     .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
       stdout: err.stdout ?? '',

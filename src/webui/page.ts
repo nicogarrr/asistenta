@@ -23,12 +23,15 @@ import {
   tituloPestana,
 } from './client-format.js';
 
+// El logo de Asistenta (scripts/windows-app/icono.mjs: «A» blanca en placa grafito y punto azul).
 const ICON_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
-  '<rect width="180" height="180" rx="40" fill="#0b0f14"/>',
-  '<circle cx="90" cy="90" r="54" fill="none" stroke="#7dd3fc" stroke-width="9"/>',
-  '<path d="M66 116 90 64l24 52M74 101h32" fill="none" stroke="#e6edf3" stroke-width="9"',
-  ' stroke-linecap="round" stroke-linejoin="round"/>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">',
+  '<rect width="512" height="512" rx="112" fill="#111827"/>',
+  '<rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="#ffffff"',
+  ' stroke-opacity=".16" stroke-width="8"/>',
+  '<path d="M150 396 256 120l106 276" fill="none" stroke="#ffffff" stroke-width="58"',
+  ' stroke-linejoin="round"/>',
+  '<circle cx="256" cy="318" r="30" fill="#4f8cff"/>',
   '</svg>',
 ].join('');
 
@@ -298,6 +301,7 @@ export function renderPage(): string {
     .buscador input::placeholder { color: #8191a5; }
     .buscador input:focus-visible,
     .buscador select:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .copiable { user-select: all; cursor: pointer; }
     .buscador textarea {
       width: 100%;
       min-height: 82px;
@@ -564,13 +568,13 @@ export function renderPage(): string {
 
       <article class="tarjeta" aria-labelledby="titulo-sesiones">
         <header class="tarjeta-cabecera">
-          <h2 id="titulo-sesiones">Sesiones</h2>
+          <h2 id="titulo-sesiones">Conversaciones</h2>
           <div class="controles">
             <label class="buscador" for="buscar-sesiones">
               Buscar
               <input id="buscar-sesiones" type="search" placeholder="Texto…" autocomplete="off" spellcheck="false" />
             </label>
-            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Sesiones">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Conversaciones">Refrescar</button>
           </div>
         </header>
         <div id="panel-sesiones" class="tarjeta-cuerpo">
@@ -639,10 +643,14 @@ ${renderFormatScript()}
         } catch (error) {}
       }
 
-      var token = '';
-      try {
-        token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
-      } catch (error) {}
+      // El de la URL vale ya en esta visita aunque el navegador no deje guardarlo
+      // (modo privado estricto, almacenamiento bloqueado).
+      var token = tokenDeUrl;
+      if (!token) {
+        try {
+          token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
+        } catch (error) {}
+      }
 
       var aviso = document.getElementById('aviso');
 
@@ -805,7 +813,7 @@ ${renderFormatScript()}
           fallo.estado = respuesta.status;
           throw fallo;
         }
-        if (!esJson) throw new Error('La respuesta del panel no es JSON válido.');
+        if (!esJson) throw new Error('El panel ha contestado algo que no entiendo. Recarga la página.');
         return datos;
       }
 
@@ -834,7 +842,7 @@ ${renderFormatScript()}
           return;
         }
         if (sesiones.length === 0) {
-          contenedor.appendChild(nodo('p', 'muted', 'No hay sesiones que coincidan.'));
+          contenedor.appendChild(nodo('p', 'muted', 'No hay conversaciones que coincidan.'));
           return;
         }
         contenedor.appendChild(
@@ -899,7 +907,7 @@ ${renderFormatScript()}
 
       var DECISIONES = [
         { id: 'once', texto: 'Permitir una vez', clase: 'permitir', hecho: 'Permitido una vez' },
-        { id: 'session', texto: 'Permitir en esta sesión', clase: '', hecho: 'Permitido en esta sesión' },
+        { id: 'session', texto: 'Permitir por ahora', clase: '', hecho: 'Permitido por ahora' },
         { id: 'always', texto: 'Permitir siempre', clase: 'siempre', hecho: 'Permitido siempre' },
         { id: 'deny', texto: 'Denegar', clase: 'denegar', hecho: 'Denegado' }
       ];
@@ -1255,7 +1263,7 @@ ${renderFormatScript()}
         validas.forEach(function (u, i) {
           var img = nodo('img', 'captura');
           img.src = u;
-          img.alt = 'Captura ' + (i + 1) + ' del turno';
+          img.alt = 'Captura ' + (i + 1);
           caja.appendChild(img);
         });
         turno.appendChild(caja);
@@ -1495,7 +1503,7 @@ ${renderFormatScript()}
 
       // silencio = true: recarga al volver a la pestaña, sin «Cargando…» y sin tapar lo que ya se ve si falla.
       function filaTarea(t) {
-        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo;
+        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo + (t.repite ? ' (' + t.repite + ')' : '');
         var fila = nodo('li', 'texto', texto + ' ');
         fila.appendChild(insignia('', t.estado));
         return fila;
@@ -1528,6 +1536,25 @@ ${renderFormatScript()}
         return true;
       }
 
+      function filaReparto(r) {
+        var fila = nodo('li', 'texto', r.envio + ' ');
+        if (r.seguimiento) {
+          // El número va aparte: un toque lo selecciona entero y lo copia.
+          var codigo = nodo('code', 'copiable', r.seguimiento);
+          codigo.title = 'Toca para copiar';
+          codigo.addEventListener('click', function () {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(r.seguimiento).then(function () { codigo.title = 'Copiado'; }, function () {});
+            }
+          });
+          fila.appendChild(codigo);
+          fila.appendChild(document.createTextNode(' '));
+        }
+        fila.appendChild(document.createTextNode('· ' + r.titulo + ' (' + r.cuando + ') '));
+        fila.appendChild(insignia('', r.estado));
+        return fila;
+      }
+
       async function cargarRepartos(silencio) {
         var contenedor = document.getElementById('panel-repartos');
         if (silencio !== true) pintarCarga(contenedor);
@@ -1538,11 +1565,7 @@ ${renderFormatScript()}
           if (!datos.repartos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay paquetes en camino.'));
           else {
             var lista = nodo('ul', 'tareas');
-            datos.repartos.forEach(function (r) {
-              var fila = nodo('li', 'texto', r.envio + ' · ' + r.titulo + ' (' + r.cuando + ') ');
-              fila.appendChild(insignia('', r.estado));
-              lista.appendChild(fila);
-            });
+            datos.repartos.forEach(function (r) { lista.appendChild(filaReparto(r)); });
             contenedor.appendChild(lista);
           }
           finCarga(contenedor, true);
@@ -1563,7 +1586,7 @@ ${renderFormatScript()}
           // «Reintentar») y desaparece, va al título de la tarjeta y no al principio de la página.
           var foco = document.activeElement;
           var focoDentro = silencio === true && !!foco && foco !== contenedor && contenedor.contains(foco);
-          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, pídemelo en el chat, por ejemplo «cada mañana a las 8 el resumen del día».'));
           if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
           rutinas.forEach(function (rutina) {
             var tarjeta = nodo('section', 'sesion rutina');
@@ -1685,12 +1708,12 @@ ${renderFormatScript()}
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;
             var hora = new Date().toLocaleTimeString('es-ES');
-            if (!token) marca.textContent = 'Sin token';
+            if (!token) marca.textContent = 'Falta el token';
             else if (fallos === 0) marca.textContent = 'Actualizado · ' + hora;
-            else marca.textContent = fallos + (fallos === 1 ? ' sección' : ' secciones') + ' con error · ' + hora;
+            else marca.textContent = fallos + (fallos === 1 ? ' sección sin cargar · ' : ' secciones sin cargar · ') + hora;
           })
           .catch(function (error) {
-            marca.textContent = 'Error al actualizar';
+            marca.textContent = 'No he podido actualizar';
           })
           .finally(function () {
             boton.disabled = false;
@@ -1734,7 +1757,7 @@ ${renderFormatScript()}
         try {
           ambitos = await pedir('/api/memory/scopes');
         } catch (error) {
-          return;
+          return false;
         }
         // Sin ámbito, /api/memory lee el ámbito por defecto (el privado del dueño si
         // está configurado): la primera opción lo dice en vez de «Local».
@@ -1743,7 +1766,7 @@ ${renderFormatScript()}
           porDefecto = typeof ambitos.porDefecto === 'string' ? ambitos.porDefecto : '';
           ambitos = ambitos.ambitos;
         }
-        if (!Array.isArray(ambitos)) return;
+        if (!Array.isArray(ambitos)) return false;
         var elegido = lista.value;
         var opciones = [nodo('option', null, formato.etiquetaAmbitoPorDefecto(porDefecto))];
         opciones[0].value = '';
@@ -1756,6 +1779,8 @@ ${renderFormatScript()}
         lista.replaceChildren.apply(lista, opciones);
         lista.value = elegido;
         if (lista.value !== elegido) lista.value = '';
+        // «Actualizar» cuenta como sección sin cargar todo lo que no devuelva true.
+        return true;
       }
 
       var formularioChat = document.getElementById('form-chat');

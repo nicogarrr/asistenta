@@ -44,6 +44,19 @@ export const APP_ALIASES: Record<string, string> = {
   'la tele': 'com.webos.app.livetv',
 };
 
+/** Nombre para enseñar a la persona de los ids de APP_ALIASES («youtube.leanback.v4» -> «YouTube»). */
+export const APP_NAMES: Record<string, string> = {
+  netflix: 'Netflix',
+  'youtube.leanback.v4': 'YouTube',
+  amazon: 'Prime Video',
+  'com.disney.disneyplus-prod': 'Disney+',
+  'spotify-beehive': 'Spotify',
+  'com.apple.appletv': 'Apple TV',
+  'com.webos.app.browser': 'el navegador',
+  'com.webos.app.home': 'el inicio',
+  'com.webos.app.livetv': 'la TDT',
+};
+
 export interface ResolvedApp {
   id: string;
   /** Como se resolvio: para explicarlo y para tests. */

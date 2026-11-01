@@ -11,10 +11,10 @@ describe('/vigilancias: qué lista falló', () => {
   it('nombra cada lista que falló, sin el detalle (rutas) del error', () => {
     const note = vigilanciasErrorNote([
       'páginas: SQLITE_BUSY: database is locked',
-      'pricewatch.json: ENOENT C:\\Users\\nico\\pricewatch.json',
+      'rutinas: ENOENT C:\\Users\\nico\\agent.db',
     ]);
     expect(note).toContain('páginas vigiladas');
-    expect(note).toContain('vigilante de precios (pricewatch.json)');
+    expect(note).toContain('rutinas');
     expect(note).not.toContain('C:\\Users');
     expect(note).not.toContain('SQLITE_BUSY');
     expect(note).toContain('pa vigilancias');
