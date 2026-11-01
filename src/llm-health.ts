@@ -176,7 +176,7 @@ async function probe(
       }
       if (!isValidChatResponse(parsed)) {
         status = 'error';
-        detail = 'http 2xx sin choices de contenido (respuesta vacia o no-JSON)';
+        detail = 'contestó, pero sin texto (respuesta vacía o rara)';
       }
     } else {
       try {
@@ -254,7 +254,13 @@ export async function providerKeySource(
   if (vaultKey && (await getKey(vaultKey).catch(() => undefined)))
     return { source: 'vault', hint: '' };
   if (envNames.some((n) => env[n]?.trim())) return { source: 'env', hint: '' };
-  const hint = vaultKey ? `pa vault set ${vaultKey} <clave>` : `${envNames[0]} en .env`;
+  // Nunca `pa vault set <clave> <valor>`: la clave quedaría en el historial de la consola.
+  const hint =
+    vaultKey === 'provider:apiKey'
+      ? 'doble clic en instalar.bat, o pa vault set-stdin provider:apiKey'
+      : vaultKey
+        ? `pa vault set-stdin ${vaultKey}: te la pide sin que se vea`
+        : `${envNames[0]} en .env`;
   return { source: 'unset', hint };
 }
 
@@ -307,7 +313,8 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
       // (PA_CRON, PA_PROVIDER_PRESET, ...) y ese valor puede ser un secreto
       // que ningun provider llego a cargar -> irredactable. Diagnostico
       // generico; el detalle real esta en stderr al arrancar el daemon.
-      detail: 'loadConfig fallo (sin detalle: puede citar valores de env)',
+      detail:
+        'no he podido leer la configuración (no muestro el detalle: podría llevar datos privados)',
     });
   }
 
@@ -361,7 +368,8 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
         model: plan.model,
         status: 'error',
         latencyMs: 0,
-        detail: 'key lookup fallo (sin detalle: puede citar secretos)',
+        detail:
+          'no he podido leer la clave guardada (no muestro el detalle: podría llevar secretos)',
       });
     } else if (!key) {
       statuses.push({
@@ -381,12 +389,26 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
   return [...probed, ...statuses];
 }
 
+/** Cada estado en castellano llano para `pa llm-health` (el código interno no cambia). */
+const STATUS_TEXT: Record<LlmStatus, string> = {
+  ok: 'funciona',
+  auth: 'clave rechazada',
+  cuota: 'sin cuota o demasiadas peticiones',
+  timeout: 'no contesta a tiempo',
+  red: 'no hay conexión',
+  'sin-key': 'sin clave guardada',
+  error: 'falla',
+};
+
 export function formatLlmHealth(statuses: LlmProviderStatus[]): string {
   return statuses
     .map((s) => {
-      const http = s.http === undefined ? '-' : String(s.http);
-      const detail = s.detail ? ` :: ${s.detail}` : '';
-      return `${s.provider}/${s.model}: ${s.status} (http ${http}, ${s.latencyMs}ms)${detail}`;
+      const extra: string[] = [];
+      if (s.http !== undefined && s.http >= 300) extra.push(`error ${s.http}`);
+      if (s.latencyMs > 0) extra.push(`${s.latencyMs} ms`);
+      const paren = extra.length ? ` (${extra.join(', ')})` : '';
+      const detail = s.detail ? ` — ${s.detail}` : '';
+      return `${s.provider} · ${s.model}: ${STATUS_TEXT[s.status] ?? s.status}${paren}${detail}`;
     })
     .join('\n');
 }

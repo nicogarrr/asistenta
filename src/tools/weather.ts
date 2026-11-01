@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { fetchWeatherDays, type WeatherConfig } from '../briefing-daily.js';
+import { log } from '../log.js';
 
 const Params = Type.Object({
   dias: Type.Optional(
@@ -47,7 +48,9 @@ export function createWeatherTool(
         try {
           days = await fetchWeatherDays(cfg, args.dias ?? 3, fetchFn);
         } catch (err) {
-          return `No pude consultar el tiempo ahora (${err instanceof Error ? err.message : String(err)}).`;
+          // El texto crudo («fetch failed», «HTTP 503») solo al registro: el modelo lo repetía.
+          log.warn('tiempo: fallo al consultar', { err: String(err) });
+          return 'No pude consultar el tiempo ahora: el servicio no responde. Prueba en un rato.';
         }
         if (days.length === 0) return 'El servicio del tiempo no ha devuelto datos ahora.';
         const lines = days.map((d, i) => `${dayName(d.date, i)}: ${d.text}`);

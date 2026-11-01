@@ -541,13 +541,13 @@ describe('createCalendarTool', () => {
 
     await expect(tool.execute('call-3', { action: 'agenda' })).rejects.toThrow(/401/);
     const error = await failure(tool.execute('call-3', { action: 'agenda' }));
-    expect(error.message).toMatch(/secret address/i);
+    expect(error.message).toMatch(/dirección secreta/i);
     expect(error.message).toContain(ICS_URL_KEY);
     expect(error.message).not.toContain('SUPERSECRET');
     expect(error.message).not.toContain(SECRET_URL);
   });
 
-  it('redacts the address out of any other fetch failure', async () => {
+  it('keeps the raw error and the address out of any other fetch failure', async () => {
     const tool = createCalendarTool({
       fetchText: async () => {
         throw new Error(`socket hang up while reading ${SECRET_URL}`);
@@ -556,8 +556,8 @@ describe('createCalendarTool', () => {
     });
     const error = await failure(tool.execute('call-4', { action: 'agenda' }));
 
-    expect(error.message).toContain('socket hang up');
-    expect(error.message).toContain('[redacted]');
+    expect(error.message).toMatch(/No he podido leer el calendario remoto/);
+    expect(error.message).not.toContain('socket hang up');
     expect(error.message).not.toContain('SUPERSECRET');
   });
 
@@ -570,7 +570,7 @@ describe('createCalendarTool', () => {
     });
     const error = await failure(tool.execute('call-5', { action: 'agenda' }));
 
-    expect(error.message).toMatch(/not a public http\(s\) URL/);
+    expect(error.message).toMatch(/no es un enlace http\(s\) público/);
     expect(error.message).not.toContain('127.0.0.1');
   });
 

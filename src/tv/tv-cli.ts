@@ -333,7 +333,7 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey });
       // El protocolo del socket de input no confirma la pulsacion: se
       // reporta el envio, no el efecto en la tele.
-      process.stdout.write(`Tecla ${name} enviada (sin confirmacion de la tele).\n`);
+      process.stdout.write(`Tecla ${name} enviada (sin confirmación de la tele).\n`);
       return 0;
     }
     case 'mac': {

@@ -28,6 +28,10 @@ export interface WebUiDeps {
   goals?(): unknown | Promise<unknown>;
   /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
   routines?(): unknown | Promise<unknown>;
+  /** Tablero de tareas de la semana del dueño (solo lectura). Si falta o devuelve null, 503. */
+  tareas?(): unknown | Promise<unknown>;
+  /** Paquetes en camino según los correos de envío (solo lectura). Si falta o devuelve null, 503. */
+  repartos?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
@@ -87,6 +91,8 @@ const PAGE_CSP = [
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'routines' }
+  | { method: 'GET'; kind: 'tareas' }
+  | { method: 'GET'; kind: 'repartos' }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
@@ -172,6 +178,10 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'goals' };
     case '/api/routines':
       return { method: 'GET', kind: 'routines' };
+    case '/api/tareas':
+      return { method: 'GET', kind: 'tareas' };
+    case '/api/repartos':
+      return { method: 'GET', kind: 'repartos' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
     case '/api/status':
@@ -240,6 +250,16 @@ async function respondApi(
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Rutinas aún no disponibles');
         break;
+      case 'tareas':
+        payload = deps.tareas ? await deps.tareas() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Tareas aún no disponibles');
+        break;
+      case 'repartos':
+        payload = deps.repartos ? await deps.repartos() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Paquetes aún no disponibles');
+        break;
       case 'funciones':
         payload = panelFunciones();
         break;
@@ -287,7 +307,7 @@ async function respondApi(
         if (answer === 'con-fotos') {
           throw new HttpError(
             409,
-            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Repítelo en Telegram con /reintentar',
+            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Mándamelo otra vez por Telegram, con las fotos.',
           );
         }
         if (!isRecord(answer) || typeof answer.text !== 'string')

@@ -57,6 +57,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   { name: 'memory.db', what: 'memoria semántica', backup: 'db' },
   { name: 'goals.db', what: 'objetivos', backup: 'db' },
+  { name: 'tareas.json', what: 'tablero semanal de tareas', backup: 'file' },
   {
     name: 'correo-canal.json',
     what: 'cursor del canal de correo (correos ya leídos)',
@@ -64,14 +65,20 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   {
     name: 'boot-notice.json',
-    what: 'hora y resultado del último aviso «Asistenta lista» (PA_BOOT_NOTICE, uno cada 10 min; lo enseña pa autostart status)',
+    what: 'hora y resultado del último aviso de arranque (solo si algo falla, una vez por problema; PA_BOOT_NOTICE; lo enseña pa autostart status)',
     backup: 'file',
   },
   { name: 'voice.db', what: 'estado de voz', backup: 'db' },
   { name: 'approvals.db', what: 'aprobaciones guardadas', backup: 'db' },
-  { name: 'pricewatch.sqlite', what: 'historial de precios vigilados', backup: 'db' },
   // Ficheros sueltos (backup.ts además copia cualquier otro *.json de la raíz).
-  { name: 'pricewatch.json', what: 'tus alertas de precio', backup: 'file' },
+  { name: 'mail-rules.json', what: 'tus reglas de correo', backup: 'file' },
+  { name: 'mail-cleanup.json', what: 'limpiezas de correo esperando tu OK', backup: 'file' },
+  { name: 'mail-unsub-batches.json', what: 'bajas de correo esperando tu OK', backup: 'file' },
+  {
+    name: 'mail-unsubscribed.json',
+    what: 'de qué listas de correo te diste de baja',
+    backup: 'file',
+  },
   { name: 'modelos.json', what: 'modelo elegido con /modelo en cada conversación', backup: 'file' },
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
@@ -86,8 +93,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'vigilante-tarea.json',
+    what: 'huella de la tarea del vigilante registrada en Windows (para ponerla al día tras actualizar)',
+    backup: 'file',
+  },
+  {
     name: 'autoupdate',
-    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada y el registro de cada fallo (*.log)',
+    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada, los cambios aún por enseñar tras el aviso y el registro de cada fallo (*.log)',
     backup: false,
     why: 'se regenera: el interruptor vuelve a encendido y el resto es diagnóstico',
     retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
@@ -120,6 +132,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'memory', what: 'memoria a largo plazo (markdown por ámbito)', backup: 'dir' },
   { name: 'snapshot', what: 'instantáneas de memoria', backup: 'dir' },
   { name: 'skills', what: 'habilidades aprendidas', backup: 'dir' },
+  {
+    name: 'habilidades-repetidas.json',
+    what: 'recetas repetidas y la oferta pendiente de guardarlas como habilidad',
+    backup: 'file',
+  },
   { name: 'playbooks', what: 'playbooks', backup: 'dir' },
   { name: 'undo', what: 'deshacer de memoria', backup: 'dir' },
   { name: 'calendar', what: 'agenda local (sin Google)', backup: 'dir' },
@@ -153,6 +170,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     growth: 'no crece: un solo fichero que se reescribe',
   },
   {
+    name: 'panel-token',
+    what: 'token del panel web cuando no hay PA_WEB_TOKEN (se crea solo, solo lo lee el usuario)',
+    backup: false,
+    why: 'si falta se crea otro; copiarlo solo multiplica dónde vive un secreto',
+    growth: 'no crece: una sola línea',
+  },
+  {
     name: 'agent.pid',
     what: 'pid del daemon',
     backup: false,
@@ -169,6 +193,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   {
     name: 'agent.heartbeat',
     what: 'latido del daemon',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada latido',
+  },
+  {
+    name: 'telegram.estado',
+    what: 'si Telegram está conectada (lo lee pa status y el icono de la bandeja)',
     backup: false,
     why: 'estado de ejecución',
     growth: 'no crece: se reescribe en cada latido',
@@ -192,7 +223,8 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'registros y consumo',
     backup: false,
     why: 'diagnóstico; crece y se regenera',
-    retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
+    retention:
+      'diarios 30 días y consumo 400 (PA_LOG_RETENTION_DAYS, maintenance.ts, 04:00); PA_FILE_RETENTION_DAYS',
     // Solo los ficheros diarios (AAAA-MM-DD.jsonl y usage-AAAA-MM-DD.jsonl).
     prune: { match: /^(usage-)?\d{4}-\d{2}-\d{2}\.jsonl$/ },
     // web-metrics.jsonl no es diario: un solo fichero que crece por añadido.
@@ -239,6 +271,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
     // Solo capturas con marca de tiempo; speaker-profiles.json y demás se quedan.
     prune: { match: /^(ocr|rec|cam|camvid|camav|mic)-\d+\.[a-z0-9]+$/ },
+  },
+  {
+    name: 'ocr-progreso',
+    what: 'progreso de PDFs largos a medias (/ocr), para seguir por donde iba',
+    backup: false,
+    why: 'temporal: se rehace mandando el PDF otra vez',
+    retention: 'se borra al terminar; lo que queda a medias, a los 7 días (src/pdfmd/progress.ts)',
   },
   {
     name: 'sessions',

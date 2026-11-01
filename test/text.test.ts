@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hostOf as browserHostOf } from '../src/browser/service.js';
 import { foldAccents, normalizeHostname } from '../src/text.js';
-import { hostOf as priceHostOf } from '../src/watch/pricewatch.js';
+import { hostOf as priceHostOf } from '../src/watch/price-extract.js';
 
 describe('foldAccents', () => {
   it('quita tildes y diéresis y pasa a minúsculas', () => {

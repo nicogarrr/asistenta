@@ -36,6 +36,12 @@ export interface SetupDeps {
 export function builtCliPath(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL('../dist/cli.js', moduleUrl));
 }
+/** `pa setup algo`: qué hacer, en castellano llano (antes «uso: pa setup (terminal local…)»). */
+export function setupArgsText(platform: NodeJS.Platform): string {
+  return platform === 'win32'
+    ? '«pa setup» no lleva opciones. En Windows se instala con instalar.bat (doble clic). Para ver cómo está todo, escribe «pa doctor».\n'
+    : '«pa setup» no lleva opciones: escribe solo «pa setup» y te irá preguntando lo que falta (las claves nunca van en la orden). Para ver cómo está todo, escribe «pa doctor».\n';
+}
 const yes = (s: string) => /^(si|sí)$/i.test(s.trim());
 export async function setupCommand(
   args: string[],
@@ -43,7 +49,8 @@ export async function setupCommand(
 ): Promise<number> {
   const write = partial.write ?? ((s) => process.stdout.write(s));
   if (args.length) {
-    write('uso: pa setup (terminal local, sin argumentos secretos)\n');
+    // Sin eco de lo escrito: podría ser una clave pegada en la orden.
+    write(setupArgsText(partial.platform ?? process.platform));
     return 2;
   }
   const deps: SetupDeps = {
@@ -65,7 +72,9 @@ export async function setupCommand(
   // Windows guide-only, before TTY, paths, vault, ACL or prompts.
   if (deps.platform !== 'linux') {
     write(
-      'Guía solamente en esta plataforma. El wizard con cambios requiere Linux/servidor; Windows aún necesita mutex/DACL y prueba TTY nativa. Consulta README. No se ha creado estado ni abierto el almacén.\n',
+      deps.platform === 'win32'
+        ? 'En Windows se instala con instalar.bat (doble clic) o con node scripts\\instalar.mjs: comprueba Node, instala, compila y guarda el token y la clave sin enseñarlos. Este asistente solo cambia cosas en Linux; no he tocado nada.\n'
+        : 'En este sistema usa node scripts/instalar.mjs: comprueba Node, instala, compila y guarda el token y la clave sin enseñarlos. Este asistente solo cambia cosas en Linux; no he tocado nada.\n',
     );
     return 2;
   }

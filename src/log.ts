@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { localDay } from './datecontext.js';
 import { paths } from './paths.js';
@@ -31,11 +31,67 @@ if (parsedLevel.invalid !== undefined) {
 }
 
 /**
+ * Tope por día del registro (log/AAAA-MM-DD.jsonl). Un bucle de errores podía
+ * llenar el disco en un solo día: la poda por antigüedad viene apagada
+ * (PA_FILE_RETENTION_DAYS=0) y no había tope de tamaño. Al llegar al tope se
+ * escribe una sola línea de aviso y el resto del día solo va a la consola.
+ */
+const DEFAULT_DAY_MAX_MB = 50;
+
+function dayMaxBytes(): number {
+  const mb = Number(process.env.PA_LOG_DAY_MAX_MB ?? DEFAULT_DAY_MAX_MB);
+  return Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024 : DEFAULT_DAY_MAX_MB * 1024 * 1024;
+}
+
+function dayCapMarker(ts: string): string {
+  return JSON.stringify({
+    ts,
+    level: 'warn',
+    msg: 'log del día lleno: no se escriben más líneas en este fichero hasta mañana',
+    maxMb: dayMaxBytes() / (1024 * 1024),
+  });
+}
+
+class DayCap {
+  #day = '';
+  #bytes = 0;
+  #full = false;
+
+  /** 'write', 'full-now' (escribe el aviso una vez) o 'skip'. */
+  room(day: string, file: string, lineBytes: number): 'write' | 'full-now' | 'skip' {
+    if (day !== this.#day) {
+      this.#day = day;
+      this.#full = false;
+      // Tras un reinicio el fichero de hoy ya puede traer bytes.
+      try {
+        this.#bytes = statSync(file).size;
+      } catch {
+        this.#bytes = 0;
+      }
+    }
+    if (this.#full) return 'skip';
+    if (this.#bytes + lineBytes > dayMaxBytes()) {
+      this.#full = true;
+      return 'full-now';
+    }
+    this.#bytes += lineBytes;
+    return 'write';
+  }
+}
+
+const dayCap = new DayCap();
+
+/**
  * JSONL to stdout plus a daily file. A daemon that only logs to stderr and
  * loses it is worse than one that has no logs; `npm`/NSSM capture both, so we
  * write both. Scrub at this final boundary too: callers may pass raw errors.
  */
-function write(level: LogLevel, msg: string, fields: Record<string, unknown>): void {
+function write(
+  level: LogLevel,
+  msg: string,
+  fields: Record<string, unknown>,
+  toConsole = true,
+): void {
   if (LEVEL_ORDER[level] < threshold) return;
   const ts = new Date().toISOString();
   let line: string;
@@ -50,11 +106,14 @@ function write(level: LogLevel, msg: string, fields: Record<string, unknown>): v
       note: 'fields were not serializable',
     });
   }
-  process.stdout.write(`${line}\n`);
+  if (toConsole) process.stdout.write(`${line}\n`);
   try {
     mkdirSync(paths.log, { recursive: true });
     const day = localDay();
-    appendFileSync(join(paths.log, `${day}.jsonl`), `${line}\n`);
+    const file = join(paths.log, `${day}.jsonl`);
+    const room = dayCap.room(day, file, Buffer.byteLength(line) + 1);
+    if (room === 'write') appendFileSync(file, `${line}\n`);
+    else if (room === 'full-now') appendFileSync(file, `${dayCapMarker(ts)}\n`);
   } catch {
     // Never let logging be the reason a turn dies.
   }
@@ -80,7 +139,21 @@ export const log = {
   error: (msg: string, fields: Record<string, unknown> = {}) => write('error', msg, fields),
 };
 
-const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
+/**
+ * Solo al archivo diario del registro, nunca a la consola: para órdenes `pa …` que
+ * enseñan una línea llana a la persona y guardan el detalle técnico (el error en crudo)
+ * donde `pa doctor` o soporte lo pueden mirar. Mismo tapado de secretos y rutas que `log`.
+ */
+export const logFile = {
+  info: (msg: string, fields: Record<string, unknown> = {}) => write('info', msg, fields, false),
+  warn: (msg: string, fields: Record<string, unknown> = {}) => write('warn', msg, fields, false),
+  error: (msg: string, fields: Record<string, unknown> = {}) => write('error', msg, fields, false),
+};
+
+const SECRET_KEY =
+  /(key|token|secret|password|passwd|passphrase|pwd|authorization|cookie|cvv|card|contrase(?:ñ|n)a|clave)/i;
+/** Nombres cortos que solo son credencial como nombre completo (`pass`, `pin`, `otp`). */
+const SECRET_EXACT_KEY = /^(?:pass|pin|otp)$/i;
 /**
  * Nombres que contienen esas letras sin ser credenciales: se tapaban y el registro
  * perdía diagnóstico (teclado de Telegram, tokens consumidos, «discard»). Lista cerrada
@@ -88,7 +161,8 @@ const SECRET_KEY = /(key|token|secret|password|authorization|cookie|cvv|card)/i;
  */
 const INNOCENT_KEY =
   /^(?:keyboards?|discard(?:ed|s)?|cardinality|(?:input|output|total|max|prompt|completion|cached|reasoning|context)[_-]?tokens|tokens?[_-]?(?:count|used|total|limit))$/i;
-const isSecretKey = (key: string): boolean => SECRET_KEY.test(key) && !INNOCENT_KEY.test(key);
+const isSecretKey = (key: string): boolean =>
+  SECRET_EXACT_KEY.test(key) || (SECRET_KEY.test(key) && !INNOCENT_KEY.test(key));
 /**
  * Para un valor del registro (mensaje o campo): un error de execFile/exec copiado a texto
  * o re-envuelto en otro Error ya no lleva `cmd`. Tras «Command failed:» va la orden (un
@@ -115,9 +189,10 @@ export function scrubLogText(text: string): string {
       // clave de Google/Gemini (`AIza…`): fuera de una URL no los tapaba nada.
       .replace(/\b\d{6,12}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
       .replace(/\bAIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/g, '[redacted]')
+      // También en castellano: «contraseña: …», «clave=…».
       .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.:-]+/gi, '$1 [redacted]')
       .replace(
-        /\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+        /\b(password|passwd|passphrase|pwd|token|secret|api[_-]?key|authorization|cookie|set-cookie|contrase(?:ñ|n)a|clave)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
         '$1=[redacted]',
       )
   );

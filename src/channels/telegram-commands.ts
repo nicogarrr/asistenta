@@ -42,7 +42,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'tv',
-    description: 'Mando de la tele: /tv solo abre el mando; /tv apaga la tele (sin gastar)',
+    description: 'Mando de la tele: /tv solo abre el mando; o dime «apaga la tele» (sin gastar)',
   },
   {
     command: 'buscar',
@@ -211,7 +211,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'learn',
-    description: 'Aprender una rutina; /learn end para acabar',
+    description: 'Aprender una rutina mirándote; al acabar dime «ya está»',
   },
   // Ajustes y diagnóstico.
   {

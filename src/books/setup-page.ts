@@ -14,7 +14,9 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { envFileText } from '../env-text.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
+import { log } from '../log.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
 const ENV_PATH = process.env.BOOKS_ENV_PATH ?? '.env';
@@ -94,20 +96,21 @@ input,button{font-size:1rem;padding:.5rem;margin:.25rem 0;width:100%}</style></h
  *   que una línea repetida más abajo no siga mandando con el valor viejo.
  */
 export function saveCredsToEnv(apiId: string, apiHash: string, envPath = ENV_PATH): void {
-  const raw = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+  // Como el arranque: un .env con BOM o en UTF-16 (PowerShell 5 «>») se lee bien
+  // y se reescribe en UTF-8; leído como utf8 se corrompía entero.
+  const raw = existsSync(envPath) ? envFileText(readFileSync(envPath)) : '';
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
   const lines = raw === '' ? [] : raw.split(/\r?\n/);
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   const set = (key: string, value: string) => {
     const isKey = (l: string) => {
-      const t = l.replace(/^\uFEFF/, '').trimStart();
+      const t = l.trimStart();
       return t.startsWith(`${key}=`) || t.startsWith(`export ${key}=`);
     };
     let found = false;
     for (let i = 0; i < lines.length; i++) {
       if (!isKey(lines[i] as string)) continue;
-      const bom = (lines[i] as string).startsWith('\uFEFF') ? '\uFEFF' : '';
-      lines[i] = found ? '' : `${bom}${key}=${value}`;
+      lines[i] = found ? '' : `${key}=${value}`;
       found = true;
     }
     if (!found) lines.push(`${key}=${value}`);
@@ -243,11 +246,26 @@ export function makeSetupHandler(deps: SetupDeps) {
             render(res, 'Ruta desconocida.', 404);
           }
         } catch (err) {
-          render(res, `Error: ${err instanceof Error ? err.message : String(err)}`, 500);
+          // El error crudo de Telegram («PHONE_CODE_INVALID», «FLOOD_WAIT_60») solo al registro.
+          log.warn('books setup: paso fallido', { err: String(err) });
+          render(res, setupFailureText(err), 500);
         }
       });
     });
   };
+}
+
+/** Motivo llano de un paso fallido de la página; nunca el texto crudo del error. */
+export function setupFailureText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/PHONE_CODE_(INVALID|EXPIRED|EMPTY)/i.test(raw)) {
+    return 'El código no es válido o ha caducado. Pide otro y vuelve a intentarlo.';
+  }
+  if (/PASSWORD|SRP/i.test(raw)) {
+    return 'Falta la contraseña de verificación en dos pasos de Telegram, o no es correcta.';
+  }
+  if (/FLOOD/i.test(raw)) return 'Telegram pide esperar un rato antes de volver a intentarlo.';
+  return 'No se pudo completar este paso con Telegram. Inténtalo de nuevo en un momento.';
 }
 
 export function startSetupServer(port = 8377): {

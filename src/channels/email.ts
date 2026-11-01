@@ -25,6 +25,7 @@ export const EMAIL_TAINT_SOURCE = 'correo';
 export interface EmailTurnGate {
   markTainted(sessionId: string, source: string): void;
   taintSessionPrivate(sessionId: string, source: string): void;
+  recordExternalText?(sessionId: string, text: string): void;
 }
 
 /**
@@ -34,9 +35,11 @@ export interface EmailTurnGate {
  * pregunta, F2) y es privado (es tu buzón → una salida a la red con datos
  * pregunta, #376/#492). Solo endurece.
  */
-export function taintEmailTurn(gate: EmailTurnGate, sessionId: string): void {
+export function taintEmailTurn(gate: EmailTurnGate, sessionId: string, text = ''): void {
   gate.markTainted(sessionId, EMAIL_TAINT_SOURCE);
-  gate.taintSessionPrivate(sessionId, 'el correo que inició este turno');
+  gate.taintSessionPrivate(sessionId, 'el correo que acaba de llegar');
+  // El texto del correo también se apunta: un recuerdo o recordatorio que lo copie pregunta.
+  if (text) gate.recordExternalText?.(sessionId, text);
 }
 export const EMAIL_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_AUTHSERV = 'mx.google.com';

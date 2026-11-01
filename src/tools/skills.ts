@@ -18,6 +18,8 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
 import { decideToSave } from '../skills/autocreate.js';
+import type { RepeatTracker } from '../skills/repeats.js';
+import { checkSkill, type SelfCheckEnv } from '../skills/selfcheck.js';
 import { type SkillStore, scoreSkill } from '../skills/store.js';
 
 export const SKILLS_TOOL_NAME = 'skills';
@@ -30,10 +32,16 @@ const SkillsParams = Type.Object({
     Type.Literal('improve'),
     Type.Literal('search'),
     Type.Literal('suggest'),
+    Type.Literal('disable'),
+    Type.Literal('enable'),
+    Type.Literal('remove'),
+    Type.Literal('check'),
+    Type.Literal('accept'),
   ]),
   id: Type.Optional(
     Type.String({
-      description: 'For read and improve: the skill id (the slug of its name, see list).',
+      description:
+        'For read, improve, disable, enable and remove: the skill id (the slug of its name, see list).',
     }),
   ),
   name: Type.Optional(
@@ -65,6 +73,23 @@ const SkillsParams = Type.Object({
         description: 'For save: one imperative line per step, in the order that worked.',
       }),
     ),
+  ),
+  outward: Type.Optional(
+    Type.Boolean({
+      description:
+        'For save: true if following it sends, books, buys, posts or switches something outside (default true when unsure). Permissions still ask as always.',
+    }),
+  ),
+  needs: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          'For save: what must be set up, e.g. correo, calendario, navegador, contactos, casa, notas-voz.',
+      }),
+    ),
+  ),
+  tool: Type.Optional(
+    Type.String({ description: 'For save: the factory tool it relies on (fab_<id>), if any.' }),
   ),
   newSteps: Type.Optional(
     Type.Array(
@@ -100,10 +125,14 @@ export interface SkillsToolDeps {
   store: SkillStore;
   /** S5: present only when PA_SEMANTIC_RECALL=1; failures fall back to lexical. */
   semantic?: Embedder;
+  /** Para el auto-chequeo: qué hay configurado y qué herramientas hay cargadas. */
+  checkEnv?: () => SelfCheckEnv | Promise<SelfCheckEnv>;
+  /** Recetas repetidas: la oferta «¿la guardo como habilidad?» pendiente de un sí. */
+  repeats?: RepeatTracker;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
-  const { store, semantic } = deps;
+  const { store, semantic, checkEnv, repeats } = deps;
   return {
     name: SKILLS_TOOL_NAME,
     label: 'Skills',
@@ -124,6 +153,15 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
       'it deserves to become a skill, with a draft ready to save. Call suggest right after a',
       'complex, novel task succeeded (several different tools, an outcome the user may ask',
       'for again); if it reports worth=true, follow with action=save using its draft.',
+      'When the owner asks for a new ability ("quiero que puedas…"), save it as a skill with',
+      'outward=true unless it only reads, plus needs and tool if any.',
+      'action=disable when the owner says to drop one ("quita la de X"); action=enable brings it',
+      'back; action=remove only when the owner explicitly asks to delete it (it goes to a',
+      'recoverable trash). Disabled skills are not followed.',
+      'action=check runs the self-check of one skill (steps, needs set up, factory tool',
+      'installed). Run it right after saving a new ability and tell the owner what is missing.',
+      'action=accept only when the owner says yes to your «🔁 … ¿Lo guardo como habilidad?»',
+      'offer: it saves that offered recipe (it will ask before acting outward).',
     ].join('\n'),
     parameters: SkillsParams,
     executionMode: 'sequential',
@@ -144,7 +182,7 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
                 text: skills
                   .map(
                     (skill) =>
-                      `- ${skill.id} (v${skill.version}): ${skill.name} -> ${skill.whenToUse}`,
+                      `- ${skill.id} (v${skill.version}${skill.disabled ? ', desactivada' : ''}${skill.outward ? ', pide permiso' : ''}): ${skill.name} -> ${skill.whenToUse}`,
                   )
                   .join('\n'),
               },
@@ -183,12 +221,36 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
             category: String(args.category ?? '').trim(),
             whenToUse,
             steps,
+            // Ante la duda, pide permiso: solo un false explícito lo quita.
+            outward: args.outward !== false,
+            needs: (args.needs ?? []).map((need) => String(need)),
+            ...(args.tool ? { tool: String(args.tool) } : {}),
           });
           return {
             content: [
               { type: 'text', text: `Skill guardado: ${id} (v${store.read(id)?.version ?? 1}).` },
             ],
             details: { id, version: store.read(id)?.version ?? 1 },
+          };
+        }
+
+        case 'accept': {
+          const draft = repeats?.takePending() ?? null;
+          if (!draft) {
+            return {
+              content: [{ type: 'text', text: 'No tengo ninguna habilidad pendiente de guardar.' }],
+              details: { saved: false },
+            };
+          }
+          const id = store.save(draft);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Guardada como habilidad «${draft.name}». Antes de enviar, reservar o gastar nada te pediré permiso.`,
+              },
+            ],
+            details: { saved: true, id },
           };
         }
 
@@ -208,6 +270,43 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
               },
             ],
             details: { id, version: store.read(id)?.version ?? 1, steps: newSteps },
+          };
+        }
+
+        case 'disable':
+        case 'enable':
+        case 'remove': {
+          const id = String(args.id ?? '').trim();
+          if (!id) throw new Error(`la acción ${args.action} necesita id`);
+          const ok =
+            args.action === 'remove'
+              ? store.remove(id)
+              : store.setDisabled(id, args.action === 'disable');
+          const done = {
+            disable: `Hecho, ya no uso «${id}». Si la quieres de vuelta, dímelo.`,
+            enable: `Hecho, vuelvo a usar «${id}».`,
+            remove: `Borrada «${id}». Queda en la papelera de habilidades por si acaso.`,
+          }[args.action];
+          return {
+            content: [{ type: 'text', text: ok ? done : `No tengo ninguna habilidad «${id}».` }],
+            details: { id, action: args.action, found: ok },
+          };
+        }
+
+        case 'check': {
+          const id = String(args.id ?? '').trim();
+          if (!id) throw new Error('la acción check necesita id');
+          const skill = store.read(id);
+          if (!skill) {
+            return {
+              content: [{ type: 'text', text: `No tengo ninguna habilidad «${id}».` }],
+              details: { id, found: false },
+            };
+          }
+          const result = checkSkill(skill, (await checkEnv?.()) ?? {});
+          return {
+            content: [{ type: 'text', text: result.summary }],
+            details: { id, found: true, ...result },
           };
         }
 

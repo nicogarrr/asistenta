@@ -8,7 +8,7 @@ import {
   searchUrl,
   titleOverlap,
 } from '../src/watch/compare.js';
-import { STORES, type StoreId } from '../src/watch/pricewatch.js';
+import { STORES, type StoreId } from '../src/watch/price-extract.js';
 
 const SEED_URL = 'https://www.amazon.es/dp/B0ABC12345';
 

@@ -407,6 +407,13 @@ function redactSecret(message: string, secret: string): string {
 
 function fetchFailureMessage(err: unknown, secret: string): string {
   const status = httpStatus(err);
+  // The raw error (redacted) goes to the log only: the model repeats tool text to
+  // the owner, and «socket hang up» or an English stack line is not an answer.
+  const detail = err instanceof Error ? err.message : String(err);
+  log.warn('calendar: remote feed unavailable', {
+    status,
+    err: redactSecret(detail, secret),
+  });
 
   // Google answers 404 or 401 for a secret address that was reset (the address is
   // rotated every time the "Secret address" button is pressed) or belongs to a
@@ -414,21 +421,18 @@ function fetchFailureMessage(err: unknown, secret: string): string {
   // gets its own message instead of being buried in a generic fetch failure.
   if (status === 401 || status === 403 || status === 404) {
     return [
-      `The calendar feed answered ${status}.`,
-      'That almost always means the stored secret iCal address is wrong or was reset:',
-      'Google rotates it every time the "Secret address in iCal format" button is',
-      `pressed, so open the calendar again and replace the ${ICS_URL_KEY} entry in the`,
-      'vault with the current URL. (It is not printed here on purpose - that URL is a',
-      'password that grants read access to every event on the calendar, private ones',
-      'included.)',
+      `El calendario remoto ha respondido ${status}.`,
+      'Casi siempre es que la dirección secreta iCal guardada ha cambiado: Google la',
+      'cambia cada vez que se pulsa «Dirección secreta en formato iCal». Abre el',
+      `calendario y pon la dirección nueva en la entrada ${ICS_URL_KEY} de la bóveda.`,
+      '(No se muestra aquí a propósito: esa dirección es una contraseña que deja leer',
+      'todos los eventos, también los privados.)',
     ].join(' ');
   }
-
-  const detail = err instanceof Error ? err.message : String(err);
-  return `Could not read the calendar feed${status ? ` (HTTP ${status})` : ''}: ${redactSecret(
-    detail,
-    secret,
-  )}`;
+  if (status !== undefined && status >= 500) {
+    return `No he podido leer el calendario remoto: su servidor falla ahora mismo (${status}). Prueba más tarde.`;
+  }
+  return 'No he podido leer el calendario remoto: no hay conexión o no responde. Prueba más tarde.';
 }
 
 const CalendarParams = Type.Object({
@@ -482,7 +486,7 @@ export function createCalendarTool(deps: CalendarSources): AgentTool<typeof Cale
       if (source.localError) warnings.push(source.localError);
       if (source.invalidUrl) {
         const message =
-          'The stored calendar address is not a public http(s) URL, so it was refused. Check the vault entry.';
+          'La dirección del calendario guardada no es un enlace http(s) público, así que la he rechazado. Revisa la entrada de la bóveda.';
         if (!source.local) throw new Error(message);
         warnings.push(message);
       }

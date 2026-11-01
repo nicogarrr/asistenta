@@ -239,7 +239,7 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
     const fromEnv = process.env.OPENROUTER_API_KEY;
     if (fromEnv) return fromEnv;
     throw new Error(
-      'no OpenRouter API key: run `pa vault set provider:openrouterKey <key>` or set OPENROUTER_API_KEY',
+      'no OpenRouter API key: run `pa vault set-stdin provider:openrouterKey` or set OPENROUTER_API_KEY',
     );
   }
   if (isGoogleEndpoint(baseUrl)) {
@@ -250,7 +250,7 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
     const fromEnv = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
     if (fromEnv) return fromEnv;
     throw new Error(
-      'no Gemini API key: run `pa vault set provider:geminiKey <key>` or set GEMINI_API_KEY',
+      'no Gemini API key: run `pa vault set-stdin provider:geminiKey` or set GEMINI_API_KEY',
     );
   }
   if (!isOpenCodeEndpoint(baseUrl)) {
@@ -268,7 +268,7 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
   const fromEnv = process.env.OPENCODE_GO_API_KEY;
   if (fromEnv) return fromEnv;
   throw new Error(
-    'no API key: run `pa vault set provider:apiKey <key>` or set OPENCODE_GO_API_KEY',
+    'no API key: double-click instalar.bat or run `pa vault set-stdin provider:apiKey` or set OPENCODE_GO_API_KEY',
   );
 }
 

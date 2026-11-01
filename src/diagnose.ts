@@ -737,29 +737,29 @@ function renderText(data: DiagnoseData): string {
   const stateLines: string[] = [];
   stateLines.push(
     state.pid === null
-      ? 'pid: no hay fichero de pid legible; el daemon puede no haber arrancado nunca'
-      : `pid: ${state.pid} (${state.alive === true ? 'vivo' : state.alive === false ? 'MUERTO' : 'estado desconocido'})`,
+      ? 'en marcha: no lo sé; puede que Asistenta no haya arrancado nunca'
+      : `en marcha: ${state.alive === true ? 'sí' : state.alive === false ? 'no, se ha parado' : 'no lo sé'} (proceso ${state.pid})`,
   );
   if (state.startedAt) {
     stateLines.push(
-      `arrancado: ${state.startedAt} (hace ${formatDurationMs(state.uptimeMs ?? 0)}); el fichero de pid se escribe al arrancar`,
+      `arrancada: ${state.startedAt} (hace ${formatDurationMs(state.uptimeMs ?? 0)})`,
     );
   }
   stateLines.push(
     state.heartbeatAt
-      ? `heartbeat: ${state.heartbeatAt} (hace ${formatDurationMs(state.heartbeatAgeMs ?? 0)})`
-      : 'heartbeat: no existe, el daemon no está escribiendo',
+      ? `última señal de vida: ${state.heartbeatAt} (hace ${formatDurationMs(state.heartbeatAgeMs ?? 0)})`
+      : 'última señal de vida: ninguna, Asistenta no está dando señales de vida',
   );
   stateLines.push(`versión: ${state.version ?? 'desconocida'} · node ${state.node}`);
   stateLines.push(
-    `hilos activos: ${context.threads === null ? 'no informado (esta vista no ve al daemon en marcha)' : context.threads}`,
+    `hilos activos: ${context.threads === null ? 'no informado (desde aquí no veo a Asistenta en marcha)' : context.threads}`,
   );
   if (context.wake === null) {
-    stateLines.push('wake word: no informado desde aquí');
+    stateLines.push('palabra de activación: desde aquí no lo veo');
   } else {
     const w = context.wake;
     stateLines.push(
-      `wake word: ${w.running ? 'escuchando' : `parado${w.detail ? ` (${w.detail})` : ''}`}${
+      `palabra de activación: ${w.running ? 'escuchando' : `parado${w.detail ? ` (${w.detail})` : ''}`}${
         w.wakeCount === undefined
           ? ''
           : `, ${w.wakeCount} activaciones${w.lastWakeAt ? `, última ${w.lastWakeAt}` : ''}`
@@ -781,7 +781,7 @@ function renderText(data: DiagnoseData): string {
   errorLines.push(
     `${log.warn} ${plural(log.warn, 'aviso', 'avisos')} y ${log.error} ${plural(log.error, 'error', 'errores')} en las últimas ${hours} h, leídos ${log.scanned} líneas de ${log.files.length === 0 ? 'ningún log' : log.files.join(', ')}`,
   );
-  if (log.grouped.length === 0) errorLines.push('no hay ni un warn ni un error en la ventana');
+  if (log.grouped.length === 0) errorLines.push('ningún aviso ni error en ese tiempo');
   for (const group of log.grouped) {
     errorLines.push(
       `  ${group.count}x ${group.level} — ${group.example} (primera ${hhmm(group.firstSeen)}, última ${hhmm(group.lastSeen)})`,
@@ -790,7 +790,7 @@ function renderText(data: DiagnoseData): string {
 
   const healthLines: string[] = [];
   if (actions.toolHealth.length === 0)
-    healthLines.push('sin acciones en la ventana, nada que comparar');
+    healthLines.push('sin acciones en ese tiempo, nada que comparar');
   for (const h of actions.toolHealth.slice(0, 8)) {
     healthLines.push(
       `  ${h.action}: ${h.total} ${plural(h.total, 'acción', 'acciones')}, ${h.errors} con error (${percent(h.errorRate)}), ${h.blocked} bloqueadas — última ${h.lastAt ?? '?'}${h.lastTarget ? ` sobre ${h.lastTarget}` : ''}`,
@@ -838,7 +838,7 @@ function renderText(data: DiagnoseData): string {
   const parts: string[] = [];
   if (state.pid === null && actions.read === 0 && log.scanned === 0 && !approvals.present) {
     parts.push(
-      `Diagnóstico de Asistenta — generado ${data.generatedAt}. No hay estado que leer: parece que el daemon nunca ha arrancado o que ${stateDirHint(data)} no existe.`,
+      `Diagnóstico de Asistenta — generado ${data.generatedAt}. No hay estado que leer: parece que Asistenta nunca ha arrancado o que ${stateDirHint(data)} no existe.`,
     );
   } else {
     parts.push(

@@ -46,7 +46,9 @@ describe('/vigilando con cabecera en negrita', () => {
   });
 
   it('sin páginas: el mismo aviso de siempre, sin cabecera', () => {
-    expect(formatWatchList([])).toBe('No vigilo ninguna página. Prueba /vigila <enlace>.');
+    expect(formatWatchList([])).toBe(
+      'No estoy vigilando ninguna página. Pásame un enlace y te aviso si cambia el precio.',
+    );
   });
 
   it('en HTML: solo la cabecera en <b>, etiquetas y URLs escapadas', () => {

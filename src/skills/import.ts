@@ -11,6 +11,7 @@
  */
 import { looksLikeSecret } from '../memory/snapshot.js';
 import { foldAccents } from '../text.js';
+import type { Skill, SkillDraft } from './types.js';
 
 export const SKILL_MAX_BYTES = 64 * 1024;
 
@@ -145,7 +146,7 @@ function splitFrontmatter(markdown: string): FrontmatterOk | SkillParseError {
   let start = 0;
   while (start < lines.length && (lines[start] ?? '').trim() === '') start++;
   if ((lines[start] ?? '').trim() !== '---') {
-    return { ok: false, reason: 'falta el frontmatter YAML entre ---' };
+    return { ok: false, reason: 'no parece una skill: falta la cabecera entre líneas ---' };
   }
   let end = -1;
   for (let index = start + 1; index < lines.length; index++) {
@@ -155,7 +156,7 @@ function splitFrontmatter(markdown: string): FrontmatterOk | SkillParseError {
     }
   }
   if (end < 0) {
-    return { ok: false, reason: 'el frontmatter YAML no tiene la línea de cierre ---' };
+    return { ok: false, reason: 'la cabecera de la skill no se cierra con una línea ---' };
   }
   const meta = new Map<string, string>();
   for (let index = start + 1; index < end; index++) {
@@ -176,33 +177,33 @@ function splitFrontmatter(markdown: string): FrontmatterOk | SkillParseError {
  */
 export function parseSkillMarkdown(md: string): SkillParseResult {
   if (typeof md !== 'string') {
-    return { ok: false, reason: 'el contenido del skill no es texto' };
+    return { ok: false, reason: 'la skill no es un archivo de texto' };
   }
   if (Buffer.byteLength(md, 'utf8') > SKILL_MAX_BYTES) {
     return {
       ok: false,
-      reason: `el skill supera el límite de ${Math.floor(SKILL_MAX_BYTES / 1024)} KB`,
+      reason: `la skill es demasiado grande (máximo ${Math.floor(SKILL_MAX_BYTES / 1024)} KB)`,
     };
   }
   const front = splitFrontmatter(md);
   if (!front.ok) return front;
   const name = oneLine(front.meta.get('name') ?? '');
-  if (!name) return { ok: false, reason: 'el frontmatter no tiene un name válido' };
+  if (!name) return { ok: false, reason: 'a la skill le falta un nombre válido' };
   const description = oneLine(front.meta.get('description') ?? '');
   if (!description) {
-    return { ok: false, reason: 'el frontmatter no tiene una description válida' };
+    return { ok: false, reason: 'a la skill le falta una descripción válida' };
   }
   if (!front.body.trim()) {
-    return { ok: false, reason: 'el skill no tiene cuerpo Markdown' };
+    return { ok: false, reason: 'la skill no trae instrucciones, solo la cabecera' };
   }
   const secret = looksLikeSecret(md);
   if (secret) {
-    return { ok: false, reason: `el skill parece contener ${secret} y no se importa` };
+    return { ok: false, reason: `la skill parece contener ${secret} y no la instalo` };
   }
   if (EXFILTRATION_QUERY.test(md)) {
     return {
       ok: false,
-      reason: 'el skill contiene una URL con credenciales en la query (token/key)',
+      reason: 'la skill trae un enlace con una clave dentro y no la instalo',
     };
   }
   // Se colapsan los espacios para que una frase partida en varias líneas no
@@ -212,13 +213,13 @@ export function parseSkillMarkdown(md: string): SkillParseResult {
   if (injection) {
     return {
       ok: false,
-      reason: `el skill contiene instrucciones sospechosas ("${injection}")`,
+      reason: `la skill contiene instrucciones sospechosas ("${injection}")`,
     };
   }
   const rawId = (front.meta.get('id') ?? '').trim() || name;
   const id = sanitizeId(rawId);
   if (!id) {
-    return { ok: false, reason: 'no se puede derivar un id válido del name del skill' };
+    return { ok: false, reason: 'no puedo sacar un nombre válido para la skill' };
   }
   return { ok: true, id, name, description };
 }
@@ -228,10 +229,10 @@ function parseHttpsUrl(raw: string): URL {
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error('La URL del skill no es válida');
+    throw new Error('Ese enlace no es válido');
   }
   if (parsed.protocol !== 'https:') {
-    throw new Error('Solo se pueden importar skills desde una URL https');
+    throw new Error('Solo instalo skills desde enlaces https');
   }
   return parsed;
 }
@@ -261,7 +262,9 @@ function assertContentType(response: Response): void {
   const [head] = raw.split(';');
   const type = (head ?? '').trim().toLowerCase();
   if (!ALLOWED_CONTENT_TYPES.has(type)) {
-    throw new Error(`El servidor devolvió un content-type no permitido: ${type || raw}`);
+    throw new Error(
+      'Ese enlace no lleva a un archivo de texto (parece una web u otro tipo de archivo)',
+    );
   }
 }
 
@@ -274,7 +277,7 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
   const declaredRaw = headerValue(response.headers, 'content-length');
   const declared = declaredRaw === null ? Number.NaN : Number(declaredRaw);
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new Error(`El skill supera el límite de ${maxBytes} bytes`);
+    throw new Error(`La skill es demasiado grande (máximo ${sizeText(maxBytes)})`);
   }
   const body = response.body;
   if (body && typeof body.getReader === 'function') {
@@ -288,7 +291,7 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new Error(`El skill supera el límite de ${maxBytes} bytes`);
+        throw new Error(`La skill es demasiado grande (máximo ${sizeText(maxBytes)})`);
       }
       chunks.push(value);
     }
@@ -297,22 +300,36 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
   if (typeof response.arrayBuffer === 'function') {
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.byteLength > maxBytes) {
-      throw new Error(`El skill supera el límite de ${maxBytes} bytes`);
+      throw new Error(`La skill es demasiado grande (máximo ${sizeText(maxBytes)})`);
     }
     return buffer.toString('utf8');
   }
   if (typeof response.text === 'function') {
     const text = await response.text();
     if (Buffer.byteLength(text, 'utf8') > maxBytes) {
-      throw new Error(`El skill supera el límite de ${maxBytes} bytes`);
+      throw new Error(`La skill es demasiado grande (máximo ${sizeText(maxBytes)})`);
     }
     return text;
   }
-  throw new Error('La respuesta del skill no tiene un cuerpo legible');
+  throw new Error('El enlace no ha devuelto nada que pueda leer');
+}
+
+/** Tamaño legible para el dueño («100 bytes», «64 KB», «2 MB»). */
+export function sizeText(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} bytes`;
+}
+
+/** Espera legible para el dueño: «15 s» en vez de «15000 ms». */
+export function secondsText(ms: number): string {
+  return ms >= 1000 ? `${Math.round(ms / 1000)} s` : 'un segundo';
 }
 
 function timeoutError(timeoutMs: number): Error {
-  return new Error(`La descarga del skill superó el tiempo límite (timeout) de ${timeoutMs} ms`);
+  return new Error(
+    `El enlace ha tardado demasiado en responder (más de ${secondsText(timeoutMs)})`,
+  );
 }
 
 /**
@@ -359,10 +376,12 @@ export async function fetchSkillMarkdown(
       if (isRedirect(response.status)) {
         const location = headerValue(response.headers, 'location');
         if (!location) {
-          throw new Error('La redirección no incluye una cabecera Location');
+          throw new Error('El enlace redirige a otra dirección sin decir cuál');
         }
         if (redirects >= MAX_REDIRECTS) {
-          throw new Error(`Demasiadas redirecciones (máximo ${MAX_REDIRECTS})`);
+          throw new Error(
+            `El enlace da demasiadas vueltas (más de ${MAX_REDIRECTS} redirecciones)`,
+          );
         }
         current = parseHttpsUrl(new URL(location, current).toString());
         const body = response.body;
@@ -372,7 +391,11 @@ export async function fetchSkillMarkdown(
         continue;
       }
       if (!response.ok) {
-        throw new Error(`El servidor respondió con estado ${response.status}`);
+        throw new Error(
+          response.status === 404
+            ? 'No hay nada en ese enlace (error 404)'
+            : `El servidor no me ha dado la skill (error ${response.status})`,
+        );
       }
       assertContentType(response);
       return await readCapped(response, maxBytes);
@@ -407,4 +430,39 @@ export async function installSkill(
     description: parsed.description,
   });
   return { id: parsed.id, name: parsed.name };
+}
+
+/**
+ * Lo que se guarda de un skill importado. Siempre `outward: true`: un fichero
+ * descargado no puede declararse inofensivo, así que antes de enviar, reservar
+ * o gastar nada se pide permiso. No pisa una habilidad propia (sembrada,
+ * aprendida o del dueño) con el mismo nombre: quedaría con pasos de fuera.
+ */
+export function importedSkillDraft(
+  md: string,
+  meta: SkillMeta,
+  url: string,
+  existing: Skill | null = null,
+): SkillDraft {
+  // Solo se puede re-importar encima de otra importada; nunca encima de una
+  // sembrada, aprendida o del dueño.
+  if (existing && (existing.trust !== 'community' || existing.category !== 'importadas')) {
+    throw new SkillImportError(
+      `ya tengo una habilidad propia llamada «${existing.name}»; no la sustituyo por una de fuera`,
+    );
+  }
+  const steps = md
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('---') && !/^(name|description):/.test(l))
+    .slice(0, 40);
+  return {
+    name: meta.name,
+    description: meta.description,
+    category: 'importadas',
+    whenToUse: 'Cuando la tarea encaje con la descripción de la skill.',
+    steps,
+    notes: [`Importada de ${url}`],
+    outward: true,
+  };
 }

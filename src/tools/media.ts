@@ -189,6 +189,23 @@ function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
 }
 
+/**
+ * Motivo llano de una reproducción fallida. El texto crudo («spawn …/ffplay ENOENT»)
+ * se iba al modelo y acababa en el chat; ahora solo queda en el registro.
+ */
+export function playbackFailureText(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${(err as NodeJS.ErrnoException).code ?? ''} ${err.message}`
+      : String(err);
+  if (/ENOENT/.test(raw)) return 'No he podido reproducirlo: falta el programa de audio en el PC.';
+  if (/EACCES|EPERM/.test(raw))
+    return 'No he podido reproducirlo: no tengo permiso para usar el audio.';
+  if (/timed? ?out|tiempo agotado|ETIMEDOUT/i.test(raw))
+    return 'No he podido reproducirlo: tardó demasiado.';
+  return 'No he podido reproducirlo por un fallo del reproductor.';
+}
+
 export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
   const clamp = (value: unknown, fallback: number, min: number, max: number): number => {
     const n = Number(value);
@@ -321,7 +338,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
           }
           if (!deps.live) {
             return ok(
-              'La vista en directo no está disponible en este canal; usa /screen live o /camera on.',
+              'La vista en directo no está disponible en este canal; solo va en el chat de Telegram.',
             );
           }
           const interval = clamp(args.intervalSeconds, 5, 2, 30);
@@ -456,7 +473,7 @@ async function playReceived(
     // the harness surfacing a raw stack to somebody holding a phone.
     const why = err instanceof Error ? err.message : String(err);
     log.warn('media playback failed', { err });
-    return ok(`No he podido reproducirlo: ${why}`, { played: false, reason: why });
+    return ok(playbackFailureText(err), { played: false, reason: why });
   } finally {
     // The playable copy is scratch. The original lives in Telegram and can be
     // fetched again, so leaving an mp3 behind would only accumulate.

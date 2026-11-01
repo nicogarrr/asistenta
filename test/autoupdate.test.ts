@@ -17,6 +17,7 @@ import {
   unlock,
   writeAutoupdateState,
 } from '../src/autoupdate.js';
+import { answerPendingNovedades } from '../src/autoupdate-novedades.js';
 
 const OLD = 'a'.repeat(40);
 const NEW = 'b'.repeat(40);
@@ -68,6 +69,8 @@ function fake(
     healthy?: boolean;
     /** Cuántos arranques ignora Windows (la tarea aún figuraba en marcha). */
     ignoredStarts?: number;
+    /** Salida de `git log` (asuntos de los cambios nuevos). */
+    logOut?: string;
   } = {},
 ) {
   const calls: string[] = [];
@@ -87,7 +90,8 @@ function fake(
       if (args[0] === 'log') {
         return {
           code: 0,
-          out: 'feat(tele): sube a tope (#712)\nfix: algo roto (#713)\nfix: algo roto\n',
+          out:
+            o.logOut ?? 'feat(tele): sube a tope (#712)\nfix: algo roto (#713)\nfix: algo roto\n',
         };
       }
       if (args[0] === 'diff') return { code: 0, out: o.lockChanged ? 'package-lock.json\n' : '' };
@@ -125,6 +129,16 @@ function fake(
 }
 
 describe('runAutoupdate', () => {
+  it('muchos cambios: el aviso pregunta y el resto queda apuntado para un «sí»', async () => {
+    const logOut = Array.from({ length: 40 }, (_, i) => `feat: cosa ${i + 1}`).join('\n');
+    const f = fake({ logOut });
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('actualizada');
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]).toContain('Hay otros 30 cambios. ¿Quieres verlos? Dime «sí» y te los paso.');
+    const parts = answerPendingNovedades(dir, 'sí', Date.parse('2026-10-30T19:00:00Z'));
+    expect(parts?.join('\n')).toContain('• Cosa 40');
+  });
+
   it('al día: no toca nada ni avisa', async () => {
     const f = fake({ head: NEW });
     const out = await runAutoupdate(dir, f.deps, { env: {} });
@@ -171,7 +185,7 @@ describe('runAutoupdate', () => {
   it('divergida (no es fast-forward): no toca nada', async () => {
     const f = fake({ ancestor: false });
     const out = await runAutoupdate(dir, f.deps, { env: {} });
-    expect(out.text).toContain('fast-forward');
+    expect(out.text).toContain('cambios propios');
     expect(f.calls.some((c) => c.startsWith('git merge --') || c.startsWith('git reset'))).toBe(
       false,
     );
@@ -193,7 +207,7 @@ describe('runAutoupdate', () => {
     expect(f.calls).toContain('restore');
     expect(f.calls.at(-1)).toBe('start');
     expect(f.sent).toEqual([
-      '⚠️ No he podido actualizarme: la compilación (npm run build) falló. Sigo con la versión anterior.\nDetalle: pa autoupdate status',
+      '⚠️ No he podido actualizarme: la versión nueva no se pudo preparar. Sigo con la versión anterior.\nDetalle: pa autoupdate status',
     ]);
   });
 
@@ -209,7 +223,7 @@ describe('runAutoupdate', () => {
     const out = await runAutoupdate(dir, f.deps, { env: {}, healthTimeoutMs: 20_000 });
     expect(out.kind).toBe('revertida');
     expect(f.calls).toContain('restore');
-    expect(f.sent[0]).toContain('no arrancó sana en 20 s');
+    expect(f.sent[0]).toContain('no arrancaba bien (esperé 20 s)');
   });
 
   it('ocupada o sin saberlo: aplaza sin parar el daemon, y vuelve a mirar en la próxima pasada', async () => {
@@ -217,6 +231,12 @@ describe('runAutoupdate', () => {
       const f = fake({ busy });
       const out = await runAutoupdate(dir, f.deps, { env: {} });
       expect(out.kind).toBe('aplazada');
+      expect(out.text).not.toMatch(/turno/);
+      if (busy === 'ocupada') {
+        expect(out.text).toBe(
+          'Asistenta está haciendo algo o esperando tu permiso: lo dejo para luego',
+        );
+      }
       expect(f.calls).not.toContain('stop');
       expect(readAutoupdateState(dir).lastCheckAt).toBeUndefined();
     }
@@ -257,18 +277,68 @@ describe('runAutoupdate', () => {
   });
 });
 
+describe('una versión que falla', () => {
+  it('avisa una sola vez y no la reintenta cada 30 min', async () => {
+    const f = fake({ build: 1 });
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('revertida');
+    expect(f.sent).toHaveLength(1);
+    await f.deps.sleep(31 * 60_000);
+    const calls = f.calls.length;
+    const again = await runAutoupdate(dir, f.deps, { env: {} });
+    expect(again.kind).toBe('omitida');
+    expect(again.text).toContain('ya falló');
+    expect(f.calls.slice(calls)).not.toContain('stop');
+    expect(f.sent).toHaveLength(1);
+    await f.deps.sleep(7 * 60 * 60_000);
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('revertida');
+    expect(f.sent).toHaveLength(1);
+  });
+
+  it('pa autoupdate now la reintenta ya, y una versión nueva se prueba normal', async () => {
+    const f = fake({ build: 1 });
+    await runAutoupdate(dir, f.deps, { env: {} });
+    expect((await runAutoupdate(dir, f.deps, { env: {}, force: true })).kind).toBe('revertida');
+    writeAutoupdateState(dir, { ...readAutoupdateState(dir), failedRemote: 'c'.repeat(40) });
+    const ok = fake();
+    expect((await runAutoupdate(dir, ok.deps, { env: {} })).kind).toBe('actualizada');
+    expect(readAutoupdateState(dir).failedRemote).toBeUndefined();
+  });
+});
+
+describe('candado durante una actualización larga', () => {
+  it('sigue cogido aunque npm ci y la compilación tarden más de 45 min', async () => {
+    const f = fake({ build: 1, lockChanged: true });
+    let now = Date.now();
+    const held: boolean[] = [];
+    const deps: AutoupdateDeps = {
+      ...f.deps,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      npm: async (args, timeoutMs) => {
+        held.push(lockHeld(dir, now));
+        now += 30 * 60_000;
+        return f.deps.npm(args, timeoutMs);
+      },
+    };
+    expect((await runAutoupdate(dir, deps, { env: {} })).kind).toBe('revertida');
+    expect(held).toEqual([true, true, true]);
+  });
+});
+
 describe('changelog', () => {
-  it('quita prefijos y números de PR, deduplica y corta en 8 con «y N cambios más»', () => {
+  it('quita prefijos y números de PR, deduplica y enseña todos si caben (sin «y N más»)', () => {
     expect(cleanSubject('feat(arranque)!: vigilante de Windows (#746)')).toBe(
       'Vigilante de Windows',
     );
     expect(cleanSubject('refactor: x')).toBe('X');
     const many = Array.from({ length: 11 }, (_, i) => `fix: cambio ${i}`);
     const lines = formatChangelog([...many, 'fix: cambio 0', 'Merge branch main']);
-    expect(lines).toHaveLength(9);
+    expect(lines).toHaveLength(11);
     expect(lines[0]).toBe('• Cambio 0');
-    expect(lines.at(-1)).toBe('y 3 cambios más');
-    expect(formatChangelog(['a', 'b', 'c'], 2).at(-1)).toBe('y 1 cambio más');
+    expect(lines.at(-1)).toBe('• Cambio 10');
+    expect(lines.join('\n')).not.toMatch(/cambios? más/);
     expect(successMessage([])).toBe('🆕 Me he actualizado\n• Cambios internos');
   });
 

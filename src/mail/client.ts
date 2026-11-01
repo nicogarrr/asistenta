@@ -272,6 +272,7 @@ export async function sendMail(account: MailAccount, req: SendRequest): Promise<
     const info = await transport.sendMail({
       from: account.address,
       to: to.join(', '),
+      ...(req.cc?.length ? { cc: req.cc.join(', ') } : {}),
       subject: req.subject,
       text: req.text,
       ...(req.attachments?.length ? { attachments: req.attachments } : {}),

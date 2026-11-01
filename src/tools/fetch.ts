@@ -3,6 +3,11 @@ import { BlockList, isIP } from 'node:net';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log, logHost } from '../log.js';
+import {
+  fetchYoutubeTranscript,
+  isYoutubeVideoUrl,
+  type TranscriptResult,
+} from '../media/transcript.js';
 import { normalizeHostname } from '../text.js';
 
 /**
@@ -461,12 +466,21 @@ export async function fetchPage(
   }
 }
 
-export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof FetchParams> {
+export interface FetchToolDeps {
+  /** Subtítulos de un vídeo de YouTube; por defecto yt-dlp (inyectable en tests). */
+  transcript?: (url: string) => Promise<TranscriptResult>;
+}
+
+export function createFetchTool(
+  defaultMaxChars = 20_000,
+  deps: FetchToolDeps = {},
+): AgentTool<typeof FetchParams> {
   return {
     name: 'fetch',
     label: 'Fetch',
     description:
-      'Download a web page and return its text content. Use this when the user shares a link or asks about a page. Returns text only: no images, no scripts, no interaction.',
+      'Download a web page and return its text content. Use this when the user shares a link or asks about a page. Returns text only: no images, no scripts, no interaction. ' +
+      'For a YouTube video link it returns the video transcript (subtitles) instead of the page: use it for "resúmeme este vídeo" / "de qué va este vídeo".',
     parameters: FetchParams,
     executionMode: 'parallel',
     execute: async (_id, args) => {
@@ -475,6 +489,31 @@ export function createFetchTool(defaultMaxChars = 20_000): AgentTool<typeof Fetc
         throw new Error(
           `refusing to fetch ${url}: only public http(s) URLs are allowed, not local or private addresses`,
         );
+      }
+      if (
+        isYoutubeVideoUrl(url) &&
+        isHostAllowed(new URL(url).hostname, parseAllowedHosts(process.env.PA_FETCH_ALLOWED_HOSTS))
+      ) {
+        const subs = await (deps.transcript ?? fetchYoutubeTranscript)(url).catch(
+          (): TranscriptResult => ({ ok: false, reason: 'error leyendo subtítulos' }),
+        );
+        if (subs.ok) {
+          const limit = args.maxChars ?? defaultMaxChars;
+          const text =
+            subs.text.length > limit
+              ? `${subs.text.slice(0, limit)}\n\n[truncated at ${limit} chars]`
+              : subs.text;
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Transcript of the YouTube video "${subs.title}" (subtitles, ${subs.lang})\n\n<fetched_content source="${url}">\n${text}\n</fetched_content>`,
+              },
+            ],
+            details: { url, transcript: true, lang: subs.lang, chars: subs.text.length },
+          };
+        }
+        log.info('youtube transcript unavailable, reading the page', { reason: subs.reason });
       }
       const page = await fetchPage(url, {
         format: args.format,

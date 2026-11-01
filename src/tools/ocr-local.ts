@@ -7,6 +7,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
 import { childEnv } from '../child-env.js';
+import { log } from '../log.js';
 
 export type OcrModel = 'ppocr' | 'glm';
 
@@ -70,9 +71,9 @@ export interface SidecarOptions {
   spawnFn?: (cmd: string, args: string[]) => ChildProcess;
 }
 
-const installHint = (model: OcrModel) =>
+export const ocrInstallHint = (model: OcrModel) =>
   `El OCR local (${model === 'glm' ? 'GLM-OCR' : 'PP-OCRv5'}) no está instalado. En la carpeta de Asistenta: ` +
-  `scripts\\ocr-sidecar\\setup.ps1 -Model ${model} (Windows) o scripts/ocr-sidecar/setup.sh ${model} (Linux). ` +
+  `powershell -ExecutionPolicy Bypass -File scripts\\ocr-sidecar\\setup.ps1 -Model ${model} (Windows) o scripts/ocr-sidecar/setup.sh ${model} (Linux). ` +
   'Ver «OCR local (opcional)» en el README.';
 
 /** Lanza el sidecar una vez, con tiempo máximo y tope de salida, y lee su JSON. */
@@ -94,7 +95,7 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
     try {
       child = spawnFn(o.python, args);
     } catch {
-      fail(new Error(installHint(o.model)));
+      fail(new Error(ocrInstallHint(o.model)));
       return;
     }
     const chunks: Buffer[] = [];
@@ -131,8 +132,8 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
     child.on('error', (e: NodeJS.ErrnoException) =>
       finish(
         e.code === 'ENOENT'
-          ? new Error(installHint(o.model))
-          : new Error(`El OCR local no arrancó: ${e.message}`),
+          ? new Error(ocrInstallHint(o.model))
+          : new Error(`El OCR local no arrancó: ${ocrFailText(e.message, o.model)}.`),
       ),
     );
     child.on('close', (code) => {
@@ -149,7 +150,7 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
         parsed = JSON.parse(out.split('\n').pop() ?? '');
       } catch {
         const why = stderr.trim().split('\n').pop()?.slice(0, 300) || `código ${code}`;
-        finish(new Error(`El OCR local falló: ${why}`));
+        finish(new Error(`El OCR local falló: ${ocrFailText(why, o.model)}.`));
         return;
       }
       if (parsed.ok === true && typeof parsed.text === 'string') {
@@ -158,14 +159,35 @@ export function runOcrSidecar(o: SidecarOptions): Promise<SidecarResult> {
           pages: typeof parsed.pages === 'number' ? parsed.pages : 1,
         });
       } else if (parsed.error === 'missing_engine') {
-        finish(new Error(installHint(o.model)));
+        finish(new Error(ocrInstallHint(o.model)));
       } else {
         finish(
           new Error(
-            `El OCR local falló: ${String(parsed.detail ?? parsed.error ?? 'sin detalle').slice(0, 300)}`,
+            `El OCR local falló: ${ocrFailText(String(parsed.detail ?? parsed.error ?? ''), o.model)}.`,
           ),
         );
       }
     });
   });
+}
+
+/**
+ * The sidecar's own words (a Python traceback line, an errno) go to the log;
+ * the chat gets one plain reason in Spanish and what to do about it.
+ */
+export function ocrFailText(raw: string, model: SidecarOptions['model']): string {
+  log.warn('ocr local failed', { model, detail: raw.slice(0, 300) });
+  if (/MemoryError|out of memory|bad_alloc|Cannot allocate memory|ENOMEM/i.test(raw))
+    return 'el PC se quedó sin memoria; cierra otros programas o prueba con una imagen más pequeña';
+  if (/ModuleNotFoundError|No module named|ImportError|DLL load failed/i.test(raw))
+    return `le falta una pieza. ${ocrInstallHint(model)}`;
+  if (
+    /cannot identify image|UnidentifiedImageError|PdfReadError|FileDataError|broken document|not a PDF|truncated/i.test(
+      raw,
+    )
+  )
+    return 'no he podido abrir la imagen o el PDF (puede estar dañado); prueba con otra copia';
+  if (/PermissionError|EACCES|EPERM|EBUSY|Permission denied|Access is denied/i.test(raw))
+    return 'Windows no me deja leer el archivo (quizá lo tiene abierto otro programa o el antivirus); prueba otra vez en un momento';
+  return 'algo ha fallado por mi parte (el detalle queda en el registro del PC)';
 }

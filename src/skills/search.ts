@@ -134,6 +134,19 @@ export function formatSkillSearch(query: string, hits: SkillIndexEntry[]): strin
     ...hits.map(
       (h, n) => `${n + 1}. ${h.name}${h.description ? ` — ${h.description}` : ''}\n   ${h.url}`,
     ),
-    'Para instalar una: /skills instalar <url> (se revisa antes de guardarla).',
+    '¿Instalo alguna? Dime su número (la reviso antes de guardarla).',
   ].join('\n');
+}
+
+/**
+ * La respuesta a «¿Instalo alguna?»: «la 2», «2» o el enlace → `instalar <url>`.
+ * Null si no se refiere a ninguna de la lista.
+ */
+export function skillPickAnswer(hits: readonly SkillIndexEntry[], text: string): string | null {
+  const t = text.trim();
+  const url = /https?:\/\/\S+/i.exec(t)?.[0];
+  if (url) return `instalar ${url}`;
+  const n = /^(?:(?:la|el|instala(?:\s+la)?)\s+)?(\d{1,2})[.!]*$/i.exec(t);
+  const hit = n ? hits[Number(n[1]) - 1] : undefined;
+  return hit ? `instalar ${hit.url}` : null;
 }

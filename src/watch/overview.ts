@@ -2,7 +2,7 @@
  * Vista única de vigilancias (paso P3 del plan de cohesión, versión de solo lectura).
  *
  * Cada tipo de vigilancia guarda su lista en su sitio: páginas y precios por URL en
- * `memory.db` (page_watches), el vigilante de precios por tienda en `pricewatch.json`,
+ * `memory.db` (page_watches),
  * las rutinas programadas y los disparadores en `agent.db`. Nadie podía responder de una
  * vez a «¿qué está vigilando Asistenta?».
  *
@@ -13,16 +13,8 @@
 
 import type { Routine, RoutineTrigger } from '../db.js';
 import type { PageWatch } from './pages.js';
-import type { WatchConfig } from './pricewatch.js';
 
-export type OverviewKind =
-  | 'pagina'
-  | 'precio'
-  | 'tiendas'
-  | 'rutina'
-  | 'disparador'
-  | 'ojo'
-  | 'silencio';
+export type OverviewKind = 'pagina' | 'precio' | 'rutina' | 'disparador' | 'ojo' | 'silencio';
 
 export interface OverviewEntry {
   kind: OverviewKind;
@@ -40,20 +32,11 @@ export interface OverviewEntry {
   detail?: string;
 }
 
-const KIND_ORDER: OverviewKind[] = [
-  'pagina',
-  'precio',
-  'tiendas',
-  'rutina',
-  'disparador',
-  'ojo',
-  'silencio',
-];
+const KIND_ORDER: OverviewKind[] = ['pagina', 'precio', 'rutina', 'disparador', 'ojo', 'silencio'];
 
 const KIND_TITLE: Record<OverviewKind, string> = {
   pagina: 'Páginas vigiladas',
   precio: 'Precios por URL',
-  tiendas: 'Vigilante de precios (pricewatch.json)',
   rutina: 'Rutinas programadas',
   disparador: 'Disparadores',
   ojo: 'Ojo de águila (avisos sin modelo)',
@@ -90,19 +73,6 @@ export function fromPageWatches(list: readonly PageWatch[]): OverviewEntry[] {
       detail: bits.length ? bits.join(', ') : undefined,
     };
   });
-}
-
-/** pricewatch.json: un producto por entrada, con sus tiendas. */
-export function fromPriceConfig(cfg: WatchConfig | null): OverviewEntry[] {
-  if (!cfg) return [];
-  return cfg.products.map((p) => ({
-    kind: 'tiendas' as const,
-    id: p.name,
-    label: p.label ?? p.name,
-    target: Object.keys(p.urls).join(', '),
-    scope: cfg.telegram.chatId,
-    enabled: cfg.enabled,
-  }));
 }
 
 /** Solo las rutinas con cron: las de tipo procedimiento no vigilan nada por sí solas. */

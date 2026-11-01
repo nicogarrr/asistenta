@@ -1,14 +1,17 @@
-# Consulta puntual del daemon
+# `pa status`: cómo está Asistenta, sin tocar nada
 
-`pa status [--json]` y `pa watchdog --status [--json]` muestran PID y latido sin iniciar, matar ni reiniciar procesos. Solo se lee `agent.pid` y `agent.heartbeat`; la sonda de existencia usa señal0, no una señal de parada. No se abre configuración, bóveda, base de datos, logs ni red. No se crea el directorio de estado si falta.
+`pa status` dice en castellano llano si Asistenta está en marcha y, si no, qué hacer. Ejemplos de lo que puede salir:
 
-Se distinguen PID ausente/inválido/ilegible, proceso existente/inexistente/desconocido y latido reciente/atrasado/ausente/futuro. Un error de permisos no se presenta como proceso muerto. Umbral120s, consistente con el módulo watchdog. PIDvivo ylatido reciente no prueban que Telegram o el modelo respondan. El estado del supervisor instalado se informa como desconocido; estos comandos NO instalan vigilancia ni reinician automáticamente. `pa watchdog` sin `--status` muestra ese límite y no hace nada.
+- En marcha y respondiendo: lo dice en la primera línea.
+- «No hay archivo de PID: Asistenta no parece estar en marcha.» → «Para arrancarla: levantar.bat o pa iniciar.»
+- «Asistenta no está en marcha: se cerró sin avisar.» → la misma pista para arrancarla.
+- Latido atrasado → «Si sigue así: pa stop y vuelve a arrancarla (levantar.bat o pa iniciar).»
+- «No pude comprobar si Asistenta está en marcha.» cuando un permiso impide mirarlo (no se da por muerta).
 
-Las docs y la descripción del instalador Windows dejan de afirmar que ese script instala un watchdog o cubre cuelgues: actualmente instala solo la tarea del daemon. El módulo de vigilancia existe, pero cablear un supervisor continuo y controlador segurostop/restart queda pendiente. No se cambia la tarea instalada de Nico ni su daemon.
+Siempre añade que estar en marcha no garantiza que Telegram y el modelo respondan (para eso, `pa doctor`), y que esta orden solo mira: no inicia ni reinicia nada y no comprueba el autoarranque (para eso, `pa autostart status`, que también enseña la última revisión del vigilante).
 
-50pruebas dirigidas pasan, incluyendo comandos compilados reales con estado temporal sin credenciales. Typecheck, build y Biome de todoelárbol verdes. Casos negativos: PID0/negativo/fraccionario/exponente/desbordado/no numérico, error de permisos, umbral exacto, fecha futura, estadoausente sincrearlo, bytesPIDintactos, directoriosinarchivosnuevos y opciones rechazadas sinlectura. Las pruebas existentes de watchdog y lifecycle siguen verdes. No se afirma prueba nativa Windows ni integración Telegram/LLM.
+`pa status --json` no cambia: es para scripts y conserva los campos técnicos (pidState, heartbeatSource, ageMs…).
 
-Suitecompleta nueva en contenedor Linux aislado con Node24,Git,Xvfb,xauth, rednormal y estado temporal, sin cuenta/sesiónNico: pendientealpublicar borrador, no se presenta verde sinresultado. Se usa fasegeneral2workers y fase recursos serial habitual sinrelajarumbrales. Comandos compilados están en la fase recursos existente junto al de diagnose.
+Qué lee: solo `agent.pid` y `agent.heartbeat` del directorio de estado; la comprobación del proceso usa la señal 0. No abre configuración, bóveda, base de datos, registros ni red, y no crea el directorio de estado si falta. Un latido que solo se puede deducir de la fecha del archivo se marca como no verificado, nunca como reciente.
 
-
-Corrección tras auditoría: la consulta NO usa la caída a mtime del módulo watchdog para confirmar latidos. Expone heartbeatSource; contenido timestamp legible usa content, texto inválido/ vacío/NaN/Infinity/exponente/negativo devuelve mtime y estado unverified, con ageMs=null y fecha de modificación separada. Un directorio o error de lectura devuelve invalid, nunca fresh. Tests negativos impiden etiquetar el mtime como latido confirmado. La política del módulo watchdog NO cambia. La primera suite completa del head anterior no prueba esta revisión; se vuelve a ejecutar la revisión nueva.
+`pa restart` para Asistenta con una parada limpia y la vuelve a arrancar; si no puede confirmarlo, lo dice y no mata ningún proceso.

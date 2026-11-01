@@ -23,11 +23,18 @@ export function parseAltavozArgs(args: string): AltavozArgs {
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.!¡]+$/g, '')
+    .replace(/^(?:por|en)\s+(?:el|la)\s+|^(?:por|en)\s+/, '')
+    .trim();
   if (!a || a === 'estado') return { kind: 'show' };
   if (/^(on|si|pc|ordenador|enciende|activa|activar)$/.test(a)) return { kind: 'set', mode: 'pc' };
   if (/^(tele|tv|television)$/.test(a)) return { kind: 'set', mode: 'tele' };
-  if (/^(off|no|apaga|apagar|desactiva|desactivar|para)$/.test(a)) {
+  if (
+    /^(off|no|apaga|apagar|apagalo|desactiva|desactivar|para|ninguno|ninguna|ningun sitio|ningun lado)$/.test(
+      a,
+    )
+  ) {
     return { kind: 'set', mode: 'off' };
   }
   return { kind: 'error' };
@@ -36,11 +43,11 @@ export function parseAltavozArgs(args: string): AltavozArgs {
 export function altavozStatusText(mode: AltavozMode): string {
   switch (mode) {
     case 'pc':
-      return '🔊 Altavoz activado: tus notas de voz sonarán en el PC al llegar. /altavoz off para quitarlo.';
+      return '🔊 Altavoz activado: tus notas de voz sonarán en el PC al llegar. Si quieres quitarlo, dime «apágalo».';
     case 'tele':
-      return '📺 Altavoz activado en la tele: tus notas de voz sonarán en la tele al llegar. /altavoz off para quitarlo.';
+      return '📺 Altavoz activado en la tele: tus notas de voz sonarán en la tele al llegar. Si quieres quitarlo, dime «apágalo».';
     default:
-      return '🔇 Altavoz apagado. /altavoz pc o /altavoz tele para que tus notas de voz suenen solas.';
+      return '🔇 Altavoz apagado. Si quieres que tus notas de voz suenen solas, dime «por el PC» o «por la tele».';
   }
 }
 
@@ -52,8 +59,7 @@ export function stopReplyText(threads: number, notes: number): string {
   return parts.length ? `Detenido. ${parts.join('; ')}.` : 'No había nada en curso.';
 }
 
-export const ALTAVOZ_USAGE =
-  'Uso: /altavoz pc · /altavoz tele · /altavoz off · /altavoz (ver estado)';
+export const ALTAVOZ_USAGE = '¿Por dónde te hablo: por el PC, por la tele, o lo apago?';
 
 export class AltavozStore {
   #file: string;

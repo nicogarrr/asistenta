@@ -48,7 +48,17 @@ describe('tool tiempo: «¿qué tiempo hace mañana?»', () => {
   it('un fallo del servicio se cuenta sin romper el turno', async () => {
     const down = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
     const tool = createWeatherTool(() => ({ latitude: 1, longitude: 2 }), down);
-    expect(textOf(await tool.execute('t', {}))).toContain('503');
+    const text = textOf(await tool.execute('t', {}));
+    expect(text).toContain('No pude consultar el tiempo');
+    expect(text).not.toMatch(/503|HTTP|fetch failed/);
+  });
+
+  it('un fallo de red no repite el error crudo al modelo', async () => {
+    const off = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+    const tool = createWeatherTool(() => ({ latitude: 1, longitude: 2 }), off);
+    expect(textOf(await tool.execute('t', {}))).not.toContain('fetch failed');
   });
 
   it('la puerta la trata como lectura (no pregunta por consultar el tiempo)', () => {

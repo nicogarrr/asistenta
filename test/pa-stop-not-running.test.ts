@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { markStoppedOnPurpose, STOPPED_ON_PURPOSE_FILE } from '../src/autostart-watchdog.js';
 import { DaemonNotRunningError, stopDaemon } from '../src/daemon-control.js';
-import { NOT_RUNNING_TEXT, runStopCommand } from '../src/stop-command.js';
+import { NOT_RUNNING_TEXT, runStopCommand, STOPPED_TEXT } from '../src/stop-command.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -57,7 +57,7 @@ describe('pa stop when Asistenta is not running', () => {
       throw new Error('Control ocupado o flock no disponible; no se ha detenido ningún proceso.');
     });
     expect(r.code).toBe(1);
-    expect(r.err).toContain('No he podido parar Asistenta: Control ocupado');
+    expect(r.err).toContain('No he podido parar Asistenta: ahora mismo otra orden');
     expect(r.err).toContain('No he marcado nada');
     expect(r.out).toBe('');
     expect(marker(dir)).toBe(false);
@@ -67,7 +67,7 @@ describe('pa stop when Asistenta is not running', () => {
     const dir = stateDir();
     const r = await run(dir, async () => ({ instanceId: 'abcdef0123456789abcd' }));
     expect(r.code).toBe(0);
-    expect(r.out).toBe('Instancia abcdef012345 detenida con cierre limpio confirmado.\n');
+    expect(r.out).toBe(STOPPED_TEXT);
     expect(marker(dir)).toBe(true);
   });
 });

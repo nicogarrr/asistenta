@@ -98,7 +98,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Caja fuerte (vault)',
       status: 'fallo',
       detail: 'no existe todavía',
-      hint: 'pa vault init (o pa setup para el asistente guiado)',
+      hint: 'Haz doble clic en instalar.bat (o pa vault init)',
     });
   } else {
     try {
@@ -128,7 +128,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Telegram',
       status: 'fallo',
       detail: 'falta el token del bot',
-      hint: 'pa vault set telegram:botToken <token de @BotFather>',
+      hint: 'Haz doble clic en instalar.bat (o pa vault set-stdin telegram:botToken)',
     });
   } else if (deps.offline) {
     add({
@@ -168,11 +168,11 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
           label: 'Usuarios autorizados',
           status: 'fallo',
           detail: 'no hay ninguno',
-          hint: 'pa vault set telegram:allowedUserIds <tu id de Telegram>',
+          hint: 'Haz doble clic en instalar.bat: le mandas «hola» al bot y guarda tu ID (o pa vault set telegram:allowedUserIds <tu id>)',
         },
   );
 
-  // Dueño: el chat privado al que van avisos, vigilantes y «Asistenta lista ✅».
+  // Dueño: el chat privado al que van avisos, vigilantes y el aviso de arranque si algo falla.
   // Misma regla que el daemon (resolveOwnerUserId): el elegido si está autorizado,
   // o el único usuario autorizado.
   if (allowed?.length) {
@@ -210,7 +210,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Modelo',
       status: 'fallo',
       detail: deps.providerFailureMessage(error),
-      hint: 'pa vault set provider:apiKey <clave> (o pa llm-health para probar cada proveedor)',
+      hint: 'instalar.bat o pa vault set-stdin provider:apiKey (pa llm-health prueba cada proveedor)',
     });
   }
 
@@ -262,7 +262,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: 'apagado (PA_COMPUTER_USE=0)',
-      hint: 'Actívalo desde Telegram con /ordenador on.',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
     });
   } else if (offSavedOrUnknown(deps) !== false) {
     const unknown = offSavedOrUnknown(deps) === undefined;
@@ -271,9 +271,9 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: unknown
-        ? 'no he podido mirar si hay un /ordenador off guardado'
-        : 'apagado con /ordenador off (guardado: arrancará apagado)',
-      hint: 'Actívalo desde Telegram con /ordenador on.',
+        ? 'no he podido mirar si lo dejaste apagado desde Telegram'
+        : 'lo apagaste desde Telegram (guardado: arrancará apagado)',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
     });
   } else {
     add({

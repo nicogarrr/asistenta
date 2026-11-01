@@ -4,10 +4,12 @@
  *
  * Sin PA_OCR_LOCAL=1 no aporta ninguna tool: nada se ofrece al modelo ni se arranca.
  */
-import { join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { REPO_DIR } from '../paths.js';
+import { renderPdfPages, type SavedPage } from '../pdfmd/render.js';
+import { checkPages, splitPages, tableNote } from '../pdfmd/verify.js';
 import {
   type OcrModel,
   resolveOcrPath,
@@ -36,6 +38,34 @@ export interface OcrLocalDeps {
   env?: NodeJS.ProcessEnv;
   roots: () => string[];
   run: (model: OcrModel, file: string) => Promise<SidecarResult>;
+  /** Guarda páginas del PDF como PNG (por defecto pdfjs); inyectable en tests. */
+  renderPages?: (pdf: string, pages: number[], outDir: string) => Promise<SavedPage[]>;
+}
+
+/**
+ * Nada se pierde (idea de pdf2md, MIT): las páginas de un PDF sin texto o con una tabla
+ * sin comprobar se guardan como imagen junto al PDF y se enlazan al final del texto.
+ */
+async function keepEvidence(
+  file: string,
+  body: string,
+  badPages: number[],
+  render: NonNullable<OcrLocalDeps['renderPages']>,
+): Promise<string> {
+  if (extname(file).toLowerCase() !== '.pdf') return '';
+  const parts = splitPages(body);
+  const empty = parts.length > 1 ? parts.filter((p) => !p.text.trim()).map((p) => p.page) : [];
+  const pages = [...new Set([...badPages, ...empty])].sort((a, b) => a - b);
+  if (pages.length === 0) return '';
+  const folder = `${basename(file, extname(file))}-paginas`;
+  const saved = await render(file, pages, join(dirname(file), folder));
+  if (saved.length === 0) return '';
+  const list = saved.map((p) => `![Página ${p.page} del original](${folder}/${basename(p.file)})`);
+  const which = saved.map((p) => p.page).join(', ');
+  return [
+    `He guardado como imagen ${saved.length === 1 ? 'la página' : 'las páginas'} ${which} junto al PDF, para que no se pierda nada:`,
+    ...list,
+  ].join('\n');
 }
 
 const Params = Type.Object({
@@ -75,7 +105,26 @@ export function createOcrLocalTool(deps: OcrLocalDeps): AgentTool<typeof Params>
       const cut = body.length > OCR_MAX_TEXT_CHARS;
       const shown = cut ? body.slice(0, OCR_MAX_TEXT_CHARS) : body;
       const note = cut ? `\n\n[recortado: ${OCR_MAX_TEXT_CHARS} de ${body.length} caracteres]` : '';
-      return { content: [text(shown + note)], details: { model, pages: r.pages, truncated: cut } };
+      // Tablas comprobadas sin IA (idea de pdf2md, MIT): si no cuadran, se avisa.
+      const check = checkPages(body);
+      const warn = tableNote(check.issues, splitPages(body).length > 1);
+      const kept = await keepEvidence(
+        file,
+        body,
+        check.issues.map((x) => x.page),
+        deps.renderPages ?? renderPdfPages,
+      );
+      const tail = [warn, kept].filter(Boolean).join('\n\n');
+      return {
+        content: [text(shown + note + (tail ? `\n\n${tail}` : ''))],
+        details: {
+          model,
+          pages: r.pages,
+          truncated: cut,
+          tables: check.tables,
+          tablesUnverified: check.issues.length,
+        },
+      };
     },
   };
 }

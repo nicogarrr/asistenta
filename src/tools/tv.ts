@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { type Static, Type } from 'typebox';
 import { log } from '../log.js';
-import { needsAppLookup, resolveAppId } from '../tv/apps.js';
+import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
 import { describeTvIntent, parseTvCommand, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
@@ -440,9 +440,10 @@ async function runTvAction(
       const resolved = resolveAppId(asked, installed);
       const appId = resolved.id;
       await enqueueTvMutation(() => deps.launch(appId));
-      const label = appId === asked ? appId : `${resolved.title ?? asked} (${appId})`;
+      // A la persona, el nombre de la app; el id técnico (youtube.leanback.v4) va en details.
+      const label = resolved.title ?? APP_NAMES[appId] ?? asked;
       return {
-        content: [{ type: 'text' as const, text: `He lanzado ${label} en la tele.` }],
+        content: [{ type: 'text' as const, text: `He abierto ${label} en la tele.` }],
         details: {
           appId,
           verified: false,
@@ -470,7 +471,7 @@ async function runTvAction(
         content: [
           {
             type: 'text' as const,
-            text: `Volumen ${steps > 0 ? 'subido' : 'bajado'} ${n} paso${n === 1 ? '' : 's'} (sin confirmacion de la tele).`,
+            text: `Volumen ${steps > 0 ? 'subido' : 'bajado'} ${n} paso${n === 1 ? '' : 's'} (sin confirmación de la tele).`,
           },
         ],
         details: { steps, verified: false },
@@ -551,7 +552,7 @@ async function runTvAction(
               text:
                 presses < want
                   ? `Volumen bajado ${presses} pasos con el mando (de ${current} a unos ${to}); para seguir bajando dime "baja N" o "volumen a ${target}".`
-                  : `Volumen bajado a la mitad con el mando: de ${current} a ${target} (sin confirmacion de la tele).`,
+                  : `Volumen bajado a la mitad con el mando: de ${current} a ${target} (sin confirmación de la tele).`,
             },
           ],
           details: { from: current, to, via, presses, verified: false },
@@ -577,7 +578,7 @@ async function runTvAction(
             : `canal ${Number(raw)}`;
       return {
         content: [
-          { type: 'text' as const, text: `He puesto el ${what} (sin confirmacion de la tele).` },
+          { type: 'text' as const, text: `He puesto el ${what} (sin confirmación de la tele).` },
         ],
         details: { channel: raw, keys, verified: false },
       };
@@ -668,7 +669,7 @@ async function runTvAction(
         content: [
           {
             type: 'text' as const,
-            text: `He enviado la tecla ${name} (sin confirmacion de la tele).`,
+            text: `He enviado la tecla ${name} (sin confirmación de la tele).`,
           },
         ],
         details: { name },

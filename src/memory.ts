@@ -11,7 +11,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { localDay } from './datecontext.js';
+import { localDay, localTimeZone } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
@@ -42,6 +42,12 @@ export interface MemoryEntry {
   id: string;
   /** `YYYY-MM-DD`, the day the fact was written down. */
   date: string;
+  /**
+   * `HH:MM:SS` hora local, solo en las entradas que la piden (reglas aprendidas): con el
+   * día solo, dos reglas del mismo día en ámbitos distintos no tenían orden. Opcional y
+   * en su propio campo, así un fichero viejo se lee igual y uno nuevo no rompe a nadie.
+   */
+  time?: string;
   text: string;
   tags: string[];
   /** Ids of the entries this one replaces. */
@@ -67,6 +73,8 @@ export interface RememberOptions {
   id?: string;
   /** Ids this fact replaces. They are marked superseded, not deleted. */
   supersedes?: string[];
+  /** Guardar también la hora local (`time`), para ordenar dentro del mismo día. */
+  stampTime?: boolean;
 }
 
 /**
@@ -75,6 +83,11 @@ export interface RememberOptions {
  * mode is silent truncation of the system prompt in the middle of a run.
  */
 export const MAX_MEMORY_BYTES = 64 * 1024;
+/**
+ * Tags whose entries are evicted last when a scope hits its cap. `aprendido` is
+ * learned-rules.ts's LEARNED_TAG (not imported: that module imports this one).
+ */
+export const PINNED_MEMORY_TAGS: readonly string[] = ['aprendido'];
 const MAX_ENTRY_CHARS = 2_000;
 const DEFAULT_RECALL = 10;
 const MAX_RECALL = 50;
@@ -231,6 +244,7 @@ function parseBullet(line: string): MemoryEntry | null {
     if (key === 'tags') entry.tags = value.split(/\s+/).filter(Boolean);
     else if (key === 'supersedes') entry.supersedes = value.split(/\s+/).filter(Boolean);
     else if (key === 'superseded-by') entry.supersededBy = value;
+    else if (key === 'time' && /^\d{2}:\d{2}(:\d{2})?$/.test(value)) entry.time = value;
     // Unknown metadata is dropped rather than fatal: a hand-written field must
     // not make the whole file unreadable.
   }
@@ -264,6 +278,7 @@ export function serializeMemory(doc: MemoryDoc): string {
   for (const entry of doc.entries) {
     const meta = [
       entry.date,
+      entry.time ? `time: ${entry.time}` : null,
       entry.tags.length > 0 ? `tags: ${entry.tags.join(' ')}` : null,
       entry.supersedes.length > 0 ? `supersedes: ${entry.supersedes.join(' ')}` : null,
       entry.supersededBy ? `superseded-by: ${entry.supersededBy}` : null,
@@ -285,6 +300,25 @@ export function emptyMemoryDoc(scope: string): string {
 
 function today(): string {
   return localDay();
+}
+
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Hora local `HH:MM:SS` en la misma zona que `localDay()`. */
+function nowTime(): string {
+  const zone = localTimeZone();
+  let fmt = timeFormatters.get(zone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    timeFormatters.set(zone, fmt);
+  }
+  return fmt.format(new Date());
 }
 
 /**
@@ -534,6 +568,7 @@ export class MemoryStore {
     const entry: MemoryEntry = {
       id,
       date: today(),
+      ...(opts.stampTime ? { time: nowTime() } : {}),
       text: clean,
       tags,
       supersedes,
@@ -717,8 +752,11 @@ export class MemoryStore {
       droppedNotes = true;
       text = serializeMemory(doc);
     }
+    // Las reglas aprendidas (/aprendido) suelen ser lo más antiguo del archivo y
+    // tienen su propio tope pequeño: se echan los hechos normales antes que ellas.
     while (over() && doc.entries.length > 1) {
-      doc.entries.shift();
+      const idx = doc.entries.findIndex((e) => !e.tags.some((t) => PINNED_MEMORY_TAGS.includes(t)));
+      doc.entries.splice(idx < 0 ? 0 : idx, 1);
       evicted++;
       text = serializeMemory(doc);
     }

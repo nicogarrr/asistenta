@@ -16,6 +16,7 @@
 
 import { type BriefingInput, briefingDue, buildBriefing, watchHit } from './briefing.js';
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { looksLikePhishing, phishingSignals } from './mail/triage.js';
 import type { MailMessage } from './mail/types.js';
 import { isReminder, reminderText } from './tools/reminder.js';
 
@@ -49,6 +50,10 @@ export interface DailyBriefingDeps {
   speak?: (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
   /** Objetivos activos o bloqueados del dueño. */
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
+  /** Tareas del tablero del dueño: hoy sin hacer y atrasadas. */
+  tasks?: () => BriefingInput['tasks'] | Promise<BriefingInput['tasks']>;
+  /** Paquetes en camino, sacados de los correos de envío. */
+  deliveries?: () => BriefingInput['deliveries'] | Promise<BriefingInput['deliveries']>;
   /** Vigilancias de precio activas del dueño. */
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
   sourceTimeoutMs?: number;
@@ -113,8 +118,8 @@ export async function composeDailyBriefing(
 ): Promise<{ text: string; empty: boolean }> {
   const now = deps.now();
   const ms = deps.sourceTimeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS;
-  const [agenda, routines, reminders, followups, weather, mail, goals, watches] = await Promise.all(
-    [
+  const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks, deliveries] =
+    await Promise.all([
       within('agenda', deps.agenda, [], ms, deps.warn),
       within('rutinas', deps.routines, [], ms, deps.warn),
       within('recordatorios', deps.reminders, [], ms, deps.warn),
@@ -123,8 +128,9 @@ export async function composeDailyBriefing(
       within('correo', deps.mail, [], ms, deps.warn),
       within('objetivos', deps.goals, [], ms, deps.warn),
       within('precios', deps.watches, [], ms, deps.warn),
-    ],
-  );
+      within('tareas', deps.tasks, [], ms, deps.warn),
+      within('repartos', deps.deliveries, [], ms, deps.warn),
+    ]);
   const input: BriefingInput = {
     greeting: greetingFor(now),
     today: now,
@@ -136,10 +142,15 @@ export async function composeDailyBriefing(
     mail: (mail ?? []).slice(0, MAX_MAIL),
     goals: goals ?? [],
     watches: watches ?? [],
+    tasks: tasks ?? [],
+    deliveries: deliveries ?? [],
   };
   const empty =
     !input.weather &&
     input.agenda.length === 0 &&
+    (input.tasks?.length ?? 0) === 0 &&
+    // Un paquete «enviado» no justifica el mensaje; en reparto o con incidencia, sí.
+    !(input.deliveries ?? []).some((d) => d.notable) &&
     input.routines.length === 0 &&
     input.reminders.length === 0 &&
     input.followups.length === 0 &&
@@ -328,17 +339,32 @@ export function senderName(from: string): string {
  * Solo remitente y asunto: el cuerpo nunca entra en el mensaje.
  */
 export function pickImportantMail(
-  messages: ReadonlyArray<Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'>>,
+  messages: ReadonlyArray<
+    Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'> & { text?: string }
+  >,
   now: number,
   max = MAX_MAIL,
 ): Array<{ from: string; subject: string }> {
-  return messages
+  const recent = messages
     .filter((m) => !m.seen)
     .filter((m) => Number.isFinite(m.at) && m.at <= now + 60_000 && now - m.at <= DAY_MS)
+    .sort((a, b) => b.at - a.at);
+  // Lo que huele a estafa sale primero y avisado, aunque venga de un «no-reply»:
+  // solo se avisa, no se mueve ni se borra nada.
+  const suspicious = recent.flatMap((m) => {
+    const signals = phishingSignals({ from: m.from, subject: m.subject, text: m.text });
+    return looksLikePhishing(signals)
+      ? [{ from: senderName(m.from), subject: `⚠️ posible estafa (${signals[0]}): ${m.subject}` }]
+      : [];
+  });
+  const normal = recent
+    .filter(
+      (m) =>
+        !looksLikePhishing(phishingSignals({ from: m.from, subject: m.subject, text: m.text })),
+    )
     .filter((m) => !BULK_FROM.test(m.from) && !BULK_SUBJECT.test(m.subject))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, max)
     .map((m) => ({ from: senderName(m.from), subject: m.subject }));
+  return [...suspicious, ...normal].slice(0, max);
 }
 
 /** Códigos WMO de Open-Meteo, en español llano. */

@@ -43,6 +43,8 @@ export interface WatcherOptions {
   now?: () => number;
   /** Tope de lectura: más grande que esto va a errores sin leerse entera. */
   maxBytes?: number;
+  /** Carpeta del registro de páginas hechas: un PDF largo que se corta sigue por ahí. */
+  progressDir?: string;
 }
 
 export interface ScanSummary {
@@ -214,7 +216,12 @@ export class OcrFolderWatcher {
       return false;
     }
     if (detectKind(bytes) !== 'pdf') return this.fail(name, claimed, 'No es un PDF válido.');
-    const result = await runOcrJob(bytes, { name }, mode, makeDeps);
+    const result = await runOcrJob(
+      bytes,
+      { name, progressDir: this.opts.progressDir },
+      mode,
+      makeDeps,
+    );
     // Revalidar tras el OCR: si el archivo cambió mientras se procesaba, la salida no
     // corresponde a lo que hay ahora; se descarta y el archivo vuelve a la entrada.
     if (!(await unchanged())) {

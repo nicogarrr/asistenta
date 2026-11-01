@@ -9,6 +9,12 @@ import {
   type WaitResult,
 } from '../browser/service.js';
 import { UNREADABLE_TARGET } from '../browser/target.js';
+import {
+  armDesktopSignup,
+  signupEmailDomains,
+  signupPasswordDomain,
+  signupSubmitBlock,
+} from '../credentials/signup-guard.js';
 import { normalizeDomain, parseSiteKey, siteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
@@ -735,7 +741,7 @@ export function createBrowserTool(
             if (stored === undefined) {
               throw new Error(
                 `El vault no tiene ningún secreto con la clave ${canonicalKey}. ` +
-                  `Nico lo guarda con: pa vault set ${canonicalKey} <valor>`,
+                  `Nico lo guarda con: pa vault set-stdin ${canonicalKey} (se escribe sin que se vea)`,
               );
             }
             value = stored;
@@ -1026,8 +1032,22 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
     },
   };
   const run = tool.execute;
+  // Altas de cuenta: dominios cuya contraseña pendiente ya se escribió en cada sesión.
+  const signupFills = new Map<string, Set<string>>();
   tool.execute = async (...a) => {
     const action = String(a[1]?.action ?? '');
+    const scope = scopeOf();
+    if (action === 'open' || action === 'close') signupFills.delete(scope);
+    if (action === 'click' || action === 'press') {
+      const block = await signupSubmitBlock(signupFills.get(scope) ?? new Set());
+      if (block) {
+        return {
+          content: [{ type: 'text', text: block }],
+          details: { action, signupApprovalRequired: true },
+          isError: true,
+        };
+      }
+    }
     let result: Awaited<ReturnType<typeof run>>;
     try {
       result = await run(...a);
@@ -1037,6 +1057,26 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
       if (action !== 'close')
         notePageAfterFailedCall(String(a[0] ?? ''), pageUrlOf(service, scopeOf()));
       throw err;
+    }
+    const signupDomain =
+      action === 'fill'
+        ? signupPasswordDomain((a[1] as { secret_key?: unknown }).secret_key)
+        : null;
+    const filledOk = action === 'fill' && !(result as { isError?: boolean }).isError;
+    const signupDomains = !filledOk
+      ? []
+      : signupDomain
+        ? [signupDomain]
+        : await signupEmailDomains(
+            (a[1] as { text?: unknown }).text,
+            pageUrlOf(service, scope),
+          ).catch(() => []);
+    if (signupDomains.length > 0) {
+      const set = signupFills.get(scope) ?? new Set<string>();
+      for (const d of signupDomains) set.add(d);
+      signupFills.set(scope, set);
+      // La ventana del navegador también se ve en el escritorio: un clic de `computer` cuenta.
+      armDesktopSignup(signupDomains);
     }
     return withPageUrl(service, scopeOf(), action, result);
   };

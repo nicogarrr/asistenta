@@ -10,7 +10,7 @@ node dist/cli.js autostart install --start
 
 O directamente `powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-all.ps1 -Start`.
 
-Requisitos ya preparados: Node >=24, vault DPAPI configurado con Telegram y allowlist, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
+Requisitos ya preparados: Node >=24 y la caja fuerte (vault DPAPI) con Telegram y tu ID — `instalar.bat` deja ambas cosas listas en un paso —, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
 
 ## Antes de instalar: `pa iniciar`
 
@@ -105,7 +105,7 @@ Con `PA_AUTOUPDATE=1` (por defecto) Asistenta se actualiza sola cuando entra alg
 2. Espera a que Asistenta esté libre: ningún turno en marcha y ninguna aprobación esperando. Si está ocupada, lo vuelve a mirar en la siguiente pasada del vigilante.
 3. Guarda `dist` en `dist.anterior`, para el daemon con cierre limpio (sin marcarlo como parado a propósito), hace `git merge --ff-only`, `npm ci` solo si cambió `package-lock.json` y `npm run build`.
 4. Arranca la tarea del daemon (el mismo camino que el vigilante) y espera hasta 2 min a que vuelva sana. Mientras dura, el vigilante ve el candado y no arranca nada por su cuenta.
-5. Si todo va bien te escribe por Telegram «🆕 Me he actualizado» con la lista de novedades (títulos de los commits, sin `feat:`/`fix:`, como mucho 8 y «y N cambios más»). Si falla `npm ci`, la compilación o el arranque, vuelve al commit y al `dist` de antes, rearranca y te avisa de que sigue en la versión anterior y por qué.
+5. Si todo va bien te escribe por Telegram «🆕 Me he actualizado» con la lista de novedades (títulos de los commits, sin `feat:`/`fix:`, como mucho 8 y «y N cambios más»). Si falla `npm ci`, la compilación o el arranque, vuelve al commit y al `dist` de antes, rearranca y te avisa de que sigue en la versión anterior y por qué. Ese aviso sale una sola vez por versión: si la misma vuelve a fallar no te escribe otra vez, y no la reintenta hasta 6 horas después (o `pa autoupdate now`).
 
 Como mucho una actualización cada 30 min. Dos revisiones nunca se pisan (candado). Los ficheros están en `state/autoupdate/` (los `*.log` de los fallos se podan con `PA_FILE_RETENTION_DAYS`).
 

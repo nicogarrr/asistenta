@@ -14,6 +14,7 @@ import {
   isOneShotReminder,
   isReminder,
   oneShotStillPending,
+  parkFailedRepeating,
   recordDroppedReminder,
   reminderEnded,
   reminderText,
@@ -111,10 +112,13 @@ export function createRoutineFire(
       if (isCommandRoutine(ctx.routine)) {
         // F4: un comando aprobado, sin modelo. Nunca se manda a runTask.
         const out = deps.fireCommand
-          ? await deps.fireCommand(ctx).catch((err: unknown) => ({
-              body: `No se pudo ejecutar el comando: ${String(err)}`,
-              failed: true,
-            }))
+          ? await deps.fireCommand(ctx).catch((err: unknown) => {
+              log.warn('command routine failed', { routine: ctx.routine.name, err });
+              return {
+                body: `No se pudo ejecutar el comando: ${commandFailure(err)}.`,
+                failed: true,
+              };
+            })
           : {
               body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
               failed: true,
@@ -154,7 +158,7 @@ export function createRoutineFire(
     }
     const text = reminder
       ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-      : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`;
+      : `⏰ ${ctx.routine.name}\n\n${body}`;
     const buttons = reminder
       ? deps.reminderButtons?.(ctx.scope, reminderText(ctx.routine))
       : undefined;
@@ -174,9 +178,18 @@ export function createRoutineFire(
         log.warn('one-time reminder dropped after an hour of failed delivery', {
           routine: ctx.routine.name,
         });
-        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name);
+        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name, Date.now(), chatId);
       }
       deps.sync();
+    } else if (!sent && reminder) {
+      // A repeating reminder that could not be sent is parked as a one-time retry
+      // for this slot instead of being lost until its next day.
+      try {
+        parkFailedRepeating(store, ctx.routine);
+        deps.sync();
+      } catch (err) {
+        log.warn('could not park a failed reminder for retry', { err });
+      }
     } else if (sent && reminder && reminderEnded(ctx.routine, new Date(), true)) {
       // That was its last firing: remove it now so lists and the briefing stop showing it.
       store.deleteRoutine(ctx.scope, ctx.routine.name);
@@ -244,4 +257,19 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
       if (r && (r.delivered || r.failed || r.invalid)) log.info('missed reminders', r);
     })
     .finally(() => deps.start());
+}
+
+/**
+ * Causa en castellano de un comando de rutina que no llegó a ejecutarse. Antes se
+ * mandaba al chat el error crudo («Error: spawn x ENOENT»); el detalle queda en el log.
+ */
+function commandFailure(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${(err as NodeJS.ErrnoException).code ?? ''} ${err.message}`
+      : String(err);
+  if (/ENOENT|not found|no such file/i.test(raw)) return 'no encuentro el programa';
+  if (/EACCES|EPERM|denied/i.test(raw)) return 'no tengo permiso para ejecutarlo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw)) return 'tardó demasiado';
+  return 'algo ha fallado por mi parte';
 }

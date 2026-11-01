@@ -52,7 +52,7 @@ describe('assertNotRunning with a reused pid', () => {
     const d = dir();
     writeFileSync(join(d, 'agent.pid'), String(process.ppid));
     expect(() => assertNotRunning(d, 'agent', { imageOf: () => 'node.exe' })).toThrow(
-      /already running/,
+      /ya está en marcha/,
     );
     expect(existsSync(join(d, 'agent.pid'))).toBe(true);
   });
@@ -60,7 +60,9 @@ describe('assertNotRunning with a reused pid', () => {
   it('still refuses when the image cannot be read', () => {
     const d = dir();
     writeFileSync(join(d, 'agent.pid'), String(process.ppid));
-    expect(() => assertNotRunning(d, 'agent', { imageOf: () => null })).toThrow(/already running/);
+    expect(() => assertNotRunning(d, 'agent', { imageOf: () => null })).toThrow(
+      /ya está en marcha/,
+    );
   });
 
   it('recognises node images and parses tasklist output', () => {

@@ -324,6 +324,19 @@ describe('book tool + Biblioteca Secreta', () => {
     return { tool: tool as unknown as AgentTool, docs };
   };
 
+  it('si Biblioteca Secreta falla, la nota no repite el error crudo', async () => {
+    const { tool } = mkTool({
+      status: async () => ({ ok: true }),
+      search: async () => {
+        throw new Error('FLOOD_WAIT_30 fetch failed');
+      },
+      download: async () => ({ title: 'x', bytes: EPUB }),
+    });
+    const text = await run(tool, { action: 'search', query: 'nombre de la rosa' });
+    expect(text).toContain('Biblioteca Secreta no responde ahora');
+    expect(text).not.toMatch(/FLOOD_WAIT|fetch failed/);
+  });
+
   it('sin resultados publicos, ofrece los de Biblioteca Secreta con su id', async () => {
     const { tool } = mkTool({
       status: async () => ({ ok: true }),

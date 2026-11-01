@@ -13,7 +13,7 @@ const src = readFileSync(join(import.meta.dirname, '..', 'src', 'cli.ts'), 'utf8
 const NOT_IN_USAGE: Record<string, string> = {
   'autostart-notify': 'lo lanza la tarea programada de autostart, no se escribe a mano',
 };
-const HELP_ALIASES = new Set(['help', '--help', '-h']);
+const HELP_ALIASES = new Set(['help', '--help', '-h', 'ayuda']);
 
 function usageText(): string {
   const start = src.indexOf('const USAGE = `');

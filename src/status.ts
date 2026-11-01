@@ -1,4 +1,4 @@
-import type { ProjectContext } from './project-context.js';
+import { type ProjectContext, projectFolderName } from './project-context.js';
 /**
  * Datos para /estado: que Nico vea desde Telegram si algo falla, sin abrir el PC.
  *
@@ -77,9 +77,9 @@ export function conversationStatus(c: {
   const project = !c.projectDir
     ? 'Proyecto: ninguno (/proyecto <carpeta> para ligar uno).'
     : c.project?.ok
-      ? `Proyecto: ${c.project.dir} (cargo ${c.project.name}, ${c.project.bytes} bytes).`
-      : `Proyecto: ${c.projectDir}, ahora no cargo nada: ${c.project?.ok === false ? c.project.reason : 'sin fichero'}.`;
-  const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (elegido con /modelo)'}.`;
+      ? `Proyecto: carpeta «${projectFolderName(c.project.dir)}» (tengo en cuenta ${c.project.name}).`
+      : `Proyecto: carpeta «${projectFolderName(c.projectDir)}», pero ahora no puedo leer nada: ${c.project?.ok === false ? c.project.reason : 'no hay fichero'}.`;
+  const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (el que elegiste)'}.`;
   return [project, model];
 }
 
@@ -95,7 +95,9 @@ export function formatStatus(s: StatusInfo): string {
   } else if (s.log.errors === 0 && s.log.warns === 0) {
     lines.push('Log de hoy: sin avisos ni errores.');
   } else {
-    lines.push(`Log de hoy: ${s.log.errors} errores, ${s.log.warns} avisos.`);
+    lines.push(
+      `Log de hoy: ${s.log.errors} ${s.log.errors === 1 ? 'error' : 'errores'}, ${s.log.warns} ${s.log.warns === 1 ? 'aviso' : 'avisos'}.`,
+    );
     for (const e of s.log.recentErrors) lines.push(`- ${e}`);
   }
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);

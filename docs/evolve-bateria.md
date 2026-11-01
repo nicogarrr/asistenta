@@ -13,7 +13,13 @@ Sin batería configurada no se promueve nada.
 
 ## Configuración
 
-- `PA_EVOLVE_PROPOSER`: comando que escribe el cambio en la carpeta del intento.
+- `PA_EVOLVE_PROPOSER`: comando que escribe el cambio en la carpeta del intento. Él y el evaluador
+  corren con una carpeta personal temporal (HOME, USERPROFILE, APPDATA) que se borra al acabar, no
+  con la tuya ni con la carpeta de estado de Asistenta. Si tu proponedor necesita tu HOME real
+  (por ejemplo para su login), nómbralo en `PA_EVOLVE_PROPOSER_PASS`.
+- Lo que el proponedor o el código del intento dejen en marcha (procesos en segundo plano) se cierra
+  antes de revisar el intento, después de medirlo y al tirar la copia: todo proceso que trabaje en la
+  copia, lleve `PA_EVOLVE_SANDBOX` o descienda de uno de ellos.
 - `PA_EVOLVE_BATTERY`: comando que corre **un** caso contra el código de su carpeta (cwd). El caso
   llega como JSON en `PA_BATTERY_CASE`; la última línea de su salida debe ser la traza JSON
   (`{"reply": "...", "toolCalls": [...], "approvalsAsked": 0, ...}`, ver `battery-judge.ts`).

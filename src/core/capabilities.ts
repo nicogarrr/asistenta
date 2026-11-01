@@ -56,9 +56,20 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'preguntar', threadAllow: true },
   { name: 'memory', threadAllow: true },
   { name: 'reminder', threadAllow: true },
+  { name: 'tareas', threadAllow: true },
+  {
+    name: 'correo_reglas',
+    note: 'Clasifica el correo y guarda reglas del dueño; no mueve ni borra correo. Sin threadAllow: en otros hilos pregunta.',
+  },
   { name: 'agenda', threadAllow: true },
+  {
+    name: 'cuentas',
+    threadAllow: true,
+    note: 'listar/buscar del gestor de contraseñas: nunca devuelve la contraseña.',
+  },
   { name: 'opengym', threadAllow: true },
   { name: 'book', threadAllow: true },
+  { name: 'repartos', threadAllow: true },
   {
     name: 'objetivo',
     threadAllow: true,
@@ -118,6 +129,10 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     name: 'ocr_local',
     note: 'OCR local opcional (PA_OCR_LOCAL=1): lee una imagen/PDF de las carpetas permitidas; la Gate decide.',
+  },
+  {
+    name: 'tiempo',
+    note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },
 ];
 

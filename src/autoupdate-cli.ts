@@ -4,7 +4,18 @@
  * Telegram al dueño. La lógica está en autoupdate.ts; aquí solo se enchufa.
  */
 import { execFile, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { type DaemonRunState, startDaemonTaskArgs } from './autostart-watchdog.js';
 import {
@@ -135,6 +146,24 @@ function npmInvocation(args: string[]): [string, string[]] {
   return existsSync(cli) ? [process.execPath, [cli, ...args]] : ['npm', args];
 }
 
+/** Los últimos 64 KB de un log, o null si no se puede leer. */
+export function readLogTail(file: string, max = 64 * 1024): string | null {
+  try {
+    const size = statSync(file).size;
+    const len = Math.min(size, max);
+    const fd = openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDeps {
   const run = async (exe: string, args: string[], timeout = 120_000): Promise<CmdResult> => {
     const r = await runExe(exe, args, timeout, repo);
@@ -152,6 +181,7 @@ export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDe
       await stopDaemon(stateDir);
     },
     startDaemon: startDaemonTask,
+    launcherLog: () => readLogTail(join(stateDir, 'log', 'launcher.stderr.log')),
     backupDist: () => {
       rmSync(prev, { recursive: true, force: true });
       if (existsSync(dist)) cpSync(dist, prev, { recursive: true });
@@ -198,8 +228,15 @@ export function autoupdateStatusLine(
       ? ` Última (${future}): ${state.last.text}.`
       : ` Última (hace ${min} min): ${state.last.text}.`;
   }
+  if (state.pending) line += lockHeld(stateDir, now) ? AUTOUPDATE_PENDING_BUSY : AUTOUPDATE_PENDING;
   return line;
 }
+
+/** Una actualización cortada (apagón, suspensión) que aún no se ha arreglado. */
+export const AUTOUPDATE_PENDING =
+  ' Hay una actualización a medias (se cortó antes de acabar): la arreglo sola en la próxima revisión del vigilante, o ya mismo con pa autoupdate now.';
+export const AUTOUPDATE_PENDING_BUSY =
+  ' Ahora mismo estoy arreglando una actualización que se quedó a medias.';
 
 /** Desde el vigilante: si toca revisar, lanza `pa autoupdate aplicar` aparte y vuelve. */
 export function maybeLaunchAutoupdate(
@@ -210,8 +247,14 @@ export function maybeLaunchAutoupdate(
   env: NodeJS.ProcessEnv = process.env,
   now: number = Date.now(),
 ): boolean {
-  if (!autoupdateEnabled(stateDir, env) || lockHeld(stateDir, now)) return false;
-  if (!autoupdateDue(readAutoupdateState(stateDir), now, autoupdateIntervalMin(env))) return false;
+  if (lockHeld(stateDir, now)) return false;
+  const state = readAutoupdateState(stateDir);
+  // Una actualización a medias se arregla ya, aunque esté apagada o no toque revisar:
+  // si no, Asistenta seguía con la versión a medio montar hasta 30 min (o para siempre).
+  if (!state.pending) {
+    if (!autoupdateEnabled(stateDir, env)) return false;
+    if (!autoupdateDue(state, now, autoupdateIntervalMin(env))) return false;
+  }
   try {
     launch(process.execPath, [cliJs, 'autoupdate', 'aplicar']);
     return true;
@@ -220,13 +263,21 @@ export function maybeLaunchAutoupdate(
   }
 }
 
+/** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b». */
+/** Fuera de Windows: cómo actualizar a mano, no solo «no se puede». */
+export const AUTOUPDATE_NOT_WINDOWS =
+  'La autoactualización solo funciona en Windows. Aquí actualízala a mano en la carpeta de Asistenta: git pull, npm ci y npm run build, y luego pa restart.';
+
+export const AUTOUPDATE_USAGE =
+  'No conozco esa orden. Usa: pa autoupdate status (cómo está), pa autoupdate now (actualizar ya), pa autoupdate off (que no se actualice sola) o pa autoupdate on (que vuelva a hacerlo).';
+
 export async function autoupdateCommand(
   args: string[],
   opts: { stateDir: string; repo: string; deps?: AutoupdateDeps; env?: NodeJS.ProcessEnv },
 ): Promise<number> {
   const action = args[0] ?? 'status';
   if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar'].includes(action)) {
-    process.stderr.write('uso: pa autoupdate status|now|off|on\n');
+    process.stderr.write(`${AUTOUPDATE_USAGE}\n`);
     return 2;
   }
   const { stateDir, env = process.env } = opts;
@@ -235,9 +286,7 @@ export async function autoupdateCommand(
   }
   if (action === 'now' || action === 'aplicar') {
     if (process.platform !== 'win32' && !opts.deps) {
-      process.stderr.write(
-        'Autoactualización disponible solo en Windows (reinicia la tarea del daemon).\n',
-      );
+      process.stderr.write(`${AUTOUPDATE_NOT_WINDOWS}\n`);
       return 2;
     }
     const out = await runAutoupdate(

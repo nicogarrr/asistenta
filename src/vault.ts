@@ -40,7 +40,7 @@ const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
-interface VaultFile {
+export interface VaultFile {
   version: 1;
   /** base64 wrapped DEK, DPAPI CurrentUser scope. */
   wrappedDek: string;
@@ -84,7 +84,17 @@ function readPortableFile(file: string): Record<string, string> {
   if (process.platform !== 'win32' && (statSync(file).mode & 0o077) !== 0) {
     throw new Error(`${file} es legible por otros usuarios; ejecuta: chmod 600 ${file}`);
   }
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+  // Bloc de notas de Windows guarda a veces con BOM: se quita antes de leer.
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // El error de JSON.parse cita un trozo del archivo: con claves dentro, nunca se repite.
+    throw new Error(
+      `${file} no es un JSON válido; revisa comillas y comas. Debe ser {"clave": "valor"}`,
+    );
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`${file} debe ser un objeto JSON {"clave": "valor"}`);
   }
@@ -217,17 +227,60 @@ function decrypt(encoded: string, dek: Buffer): string {
   return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8');
 }
 
+const VAULT_DAMAGED =
+  'La caja fuerte de claves (vault.json) está dañada y no se puede leer. No he tocado nada: si tienes una copia, ponla en su sitio; si no, renómbrala (por ejemplo vault.json.dañado) y abre instalar.bat para guardar tus claves otra vez.';
+const VAULT_OTHER_USER =
+  'No puedo abrir la caja fuerte de claves con este usuario de Windows (¿vault.json viene de otro PC o de otro usuario?). Ábrela con el usuario que la creó, o renómbrala y abre instalar.bat para guardar tus claves otra vez.';
+
+/**
+ * vault.json for the DPAPI backend. A damaged or foreign file says so in
+ * plain Spanish; the JSON parser's own English words (which quote file bytes)
+ * never reach the chat.
+ */
+export function parseDpapiVaultFile(text: string): VaultFile {
+  let file: Partial<VaultFile> | null;
+  try {
+    file = JSON.parse(text.replace(/^\uFEFF/, '')) as Partial<VaultFile> | null;
+  } catch {
+    throw new Error(VAULT_DAMAGED);
+  }
+  if (!file || typeof file !== 'object') throw new Error(VAULT_DAMAGED);
+  if (file.version !== 1) {
+    if (typeof file.version === 'number' && file.version > 1)
+      throw new Error(
+        'La caja fuerte de claves es de una Asistenta más nueva que esta. Actualiza Asistenta y vuelve a probar.',
+      );
+    throw new Error(VAULT_DAMAGED);
+  }
+  if (typeof file.wrappedDek !== 'string' || typeof file.ciphertext !== 'string')
+    throw new Error(VAULT_DAMAGED);
+  return file as VaultFile;
+}
+
 async function loadMap(): Promise<Record<string, string>> {
   if (vaultBackend() === 'portable') {
     const map = loadPortableMap();
     for (const [k, v] of Object.entries(map)) cache.set(k, v);
     return map;
   }
-  if (!existsSync(paths.vault)) throw new Error(`no vault at ${paths.vault}; run: pa vault init`);
-  const file = JSON.parse(readFileSync(paths.vault, 'utf8')) as VaultFile;
-  if (file.version !== 1) throw new Error(`unsupported vault version ${file.version}`);
-  const dek = await dpapi(Buffer.from(file.wrappedDek, 'base64'), false);
-  const map = JSON.parse(decrypt(file.ciphertext, dek)) as Record<string, string>;
+  if (!existsSync(paths.vault))
+    throw new Error(
+      `No hay caja fuerte de claves en ${paths.vault}. Haz doble clic en instalar.bat (o usa pa vault init).`,
+    );
+  const file = parseDpapiVaultFile(readFileSync(paths.vault, 'utf8'));
+  let dek: Buffer;
+  try {
+    dek = await dpapi(Buffer.from(file.wrappedDek, 'base64'), false);
+  } catch {
+    throw new Error(VAULT_OTHER_USER);
+  }
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(decrypt(file.ciphertext, dek)) as Record<string, string>;
+  } catch {
+    // The parser's own words could quote decrypted secrets: never pass them on.
+    throw new Error(VAULT_DAMAGED);
+  }
   for (const [k, v] of Object.entries(map)) cache.set(k, v);
   return map;
 }

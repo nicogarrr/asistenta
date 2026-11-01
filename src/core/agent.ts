@@ -16,6 +16,7 @@ import { FileWriteTracker } from './filewrites.js';
 import {
   compactHistory,
   compactionFor,
+  compactTokensFromEnv,
   DEFAULT_COMPACTION,
   estimateAll,
   extractionPrompt,
@@ -74,6 +75,11 @@ export interface AgentRunResult {
  */
 export interface RunHooks {
   onToolCall?: (info: { tool: string; summary: string; count: number }) => void;
+  /**
+   * Fin de una herramienta: si salió bien y si fue el control de permisos quien la
+   * paró (eso no es un fallo de la herramienta). Sin argumentos ni salida.
+   */
+  onToolEnd?: (info: { tool: string; ok: boolean; blocked: boolean }) => void;
   /**
    * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
    * el mismo orden en que llega y sin acumular ni trocear. Un delta vacio o
@@ -937,12 +943,12 @@ export class PersonalAgent {
    */
   /** Umbral y cola del resumen para el modelo que usa ahora esta conversación. */
   get compaction(): { triggerTokens: number; keepRecentTokens: number } {
-    const env = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const env = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     return compactionFor(env, this.#agent.state.model?.contextWindow);
   }
 
   async #compact(): Promise<void> {
-    const raw = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const raw = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     if (!this.#summarize || !Number.isFinite(raw) || raw <= 0) return;
     const trigger = this.compaction.triggerTokens;
     if (this.#summaryCooldown > 0) {
@@ -1306,6 +1312,13 @@ export class PersonalAgent {
         const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
         if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
           shared.steps.push({ tool: event.toolName, action, ok: !event.isError });
+        }
+        if (hooks?.onToolEnd) {
+          try {
+            hooks.onToolEnd({ tool: event.toolName, ok: !event.isError, blocked: gateBlocked });
+          } catch (err) {
+            log.warn('tool end hook failed', { err: String(err) });
+          }
         }
         if (event.isError) {
           // A gate refusal and a tool that ran and failed are different failures

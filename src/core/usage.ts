@@ -280,7 +280,14 @@ export function usageToday(): UsageTotals {
 }
 
 /**
- * Consumo acumulado de una sesion. Mira todos los `usage-*.jsonl`: una
+ * Días de uso (ficheros `usage-*.jsonl`, los más recientes) que mira
+ * usageForSession. Antes leía TODOS en cada llamada: con meses de historial
+ * eran cientos de ficheros enteros para una sola sesión.
+ */
+export const SESSION_USAGE_DAYS = 7;
+
+/**
+ * Consumo acumulado de una sesion. Mira los últimos días con uso: una
  * conversacion puede cruzar la medianoche y su coste no debe resetearse.
  */
 export function usageForSession(id: string): UsageTotals {
@@ -289,6 +296,7 @@ export function usageForSession(id: string): UsageTotals {
     const files = readdirSync(paths.log)
       .filter((name) => USAGE_FILE.test(name))
       .sort()
+      .slice(-SESSION_USAGE_DAYS)
       .map((name) => join(paths.log, name));
     const records = files.flatMap((file) => readRecords(file)).filter((r) => r.sessionId === id);
     return aggregate(records);

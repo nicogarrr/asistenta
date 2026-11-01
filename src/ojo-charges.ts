@@ -86,6 +86,12 @@ export function scanMoney(text: string): { cents: number[]; bad: boolean } {
       const end = (m.index ?? 0) + m[0].length;
       const follow = text.slice(end);
       if (BAD_FOLLOW.test(follow)) bad = true;
+      // «€ 1 299,00» / «EUR 12 345,50»: con la divisa delante, un espacio normal y más
+      // dígitos detrás es un separador de miles no soportado; leer solo «1» daría 1 €.
+      if (form === 'before' && /^ \d/.test(follow)) {
+        bad = true;
+        continue;
+      }
       let token = m[2] ?? '';
       // "EUR 12,50." : un único punto/coma de fin de frase, solo con la divisa delante
       if (form === 'before' && /^\d[\d.,]*\d[.,]$/.test(token) && /^(?:\s|$)/.test(follow)) {

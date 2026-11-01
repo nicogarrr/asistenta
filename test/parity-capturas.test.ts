@@ -113,7 +113,7 @@ describe('paridad con las capturas: lo que Asistenta ya puede hacer', () => {
   it('transcribe notas de voz en local, sin claves de pago', async () => {
     const { createLocalWhisperStt, transcribeVoiceNote } = await import('../src/voice/stt.js');
     expect(typeof createLocalWhisperStt().transcribe).toBe('function');
-    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/vacia/);
+    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/vacía/);
   });
 
   it('busca en la web y cada resultado trae su fuente (horarios de TV, compras)', async () => {
@@ -200,16 +200,68 @@ describe('paridad con las capturas: lo que Asistenta ya puede hacer', () => {
     expect(vistas).toEqual(['390x844']);
     expect(size).toEqual({ width: 1440, height: 900 });
   });
+
+  it('tablero de tareas de la semana: apuntar, ver la semana y marcar hecho desde el chat', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { TaskBoard } = await import('../src/tasks/board.js');
+    const { createTasksTool } = await import('../src/tools/tasks.js');
+    const board = new TaskBoard(
+      join(mkdtempSync(join(tmpdir(), 'pa-par-')), 't.json'),
+      () => new Date(2026, 9, 26, 9),
+    );
+    const tool = createTasksTool({ board, scopeOf: () => 'telegram:dm:1' });
+    const say = async (args: Record<string, string>) =>
+      ((await tool.execute('x', args as never)).content[0] as { text: string }).text;
+    await say({ action: 'apuntar', titulo: 'llamar al banco', dia: 'jueves' });
+    await say({ action: 'marcar', tarea: 'banco', estado: 'hecho' });
+    expect(await say({ action: 'ver' })).toContain('jueves 29:\n  ✓ llamar al banco [1]');
+  });
+
+  it('planificar un evento: las tareas piden un paso por tarea y preguntar solo lo que falte', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { TaskBoard } = await import('../src/tasks/board.js');
+    const { createTasksTool } = await import('../src/tools/tasks.js');
+    const board = new TaskBoard(
+      join(mkdtempSync(join(tmpdir(), 'pa-ev-')), 't.json'),
+      () => new Date(2026, 9, 26, 9),
+    );
+    const tool = createTasksTool({ board, scopeOf: () => 'telegram:dm:1' });
+    expect(tool.description).toContain('For planning an event, apuntar one task per step');
+    expect(tool.description).toContain('ask him only what is really missing');
+    // Lo que haría el modelo con «organízame el cumple del sábado»: un paso por tarea.
+    for (const titulo of ['reservar restaurante', 'avisar a los invitados', 'encargar la tarta'])
+      await tool.execute('x', { action: 'apuntar', titulo, dia: 'viernes' } as never);
+    const week = (
+      (await tool.execute('x', { action: 'ver' } as never)).content[0] as { text: string }
+    ).text;
+    expect(week).toContain('0 de 3 hechas.');
+  });
 });
 
-describe('paridad con las capturas: lo que todavía no puede', () => {
-  it.todo(
-    'tablero de tareas de la semana (Gertru instala Kanvas): Kanvas se descartó como interfaz y el panel no tiene tablero — decide Nico',
-  );
-  it.todo(
-    'seguir un pedido a domicilio y avisar cuando llega: no hay seguimiento de entregas (las vigilancias son de precio y páginas)',
-  );
-  it.todo(
-    'planificar un evento y preguntar por su cuenta qué falta: lo hace el modelo, no hay herramienta; no se puede probar con el modelo falso',
-  );
+describe('paridad con las capturas: añadido después', () => {
+  it('seguir un pedido a domicilio y avisar cuando llega (leyendo los correos de envío)', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const { createDeliveriesTool } = await import('../src/tools/deliveries.js');
+    const msg = {
+      id: 'p1',
+      from: 'noreply@seur.com',
+      to: ['yo@x.es'],
+      subject: 'Tu pedido está en reparto',
+      text: 'Número de envío: 12345678901. Llega hoy.',
+      at: Date.UTC(2026, 9, 30, 8),
+      seen: true,
+      folder: 'INBOX',
+    };
+    const tool = createDeliveriesTool({
+      db: new DatabaseSync(':memory:'),
+      recentMail: async () => [msg],
+      now: () => msg.at + 3_600_000,
+    });
+    const text = ((await tool.execute('x', {} as never)).content[0] as { text: string }).text;
+    expect(text).toContain('SEUR (12345678901): en reparto');
+  });
 });

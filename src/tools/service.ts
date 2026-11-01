@@ -22,6 +22,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
 import { containsVaultValue } from '../gestor/playbooks.js';
+import { log } from '../log.js';
 import {
   buildCompose,
   costSmell,
@@ -63,7 +64,11 @@ export const defaultRunner: Runner = (cmd, args) =>
             : err
               ? 1
               : 0;
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+        // A missing binary (ENOENT) or a 2-minute timeout leave stderr empty;
+        // keep err's own words so the plain line below can tell them apart.
+        const e = err as (Error & { killed?: boolean }) | null;
+        const why = e ? (e.killed ? 'ETIMEDOUT' : e.message) : '';
+        resolve({ code, stdout: String(stdout), stderr: String(stderr) || why });
       },
     );
   });
@@ -134,6 +139,72 @@ const Params = Type.Object({
     Type.String({ description: 'proponer: resumen honesto de lo investigado.' }),
   ),
 });
+
+/**
+ * Docker's own words (daemon pipe, Windows path, exit code) go to the log; the
+ * chat gets one plain line saying what happened and what Nico can do.
+ */
+export function dockerFailText(res: RunResult): string {
+  const raw = `${res.stderr}\n${res.stdout}`;
+  if (/ENOENT|is not recognized|no se reconoce|command not found/i.test(raw))
+    return 'no encuentro Docker en este PC. Instala Docker Desktop (es gratis) o ábrelo, y vuelve a pedírmelo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw))
+    return 'Docker tardó más de 2 minutos y lo he cortado. Vuelve a pedírmelo en un momento';
+  if (
+    /cannot connect to the docker daemon|daemon (is )?not running|error during connect|docker_engine|dockerDesktop\w*Engine/i.test(
+      raw,
+    )
+  )
+    return 'Docker no está arrancado. Abre Docker Desktop, espera a que diga que está listo y vuelve a pedírmelo';
+  if (/port is already allocated|address already in use|only one usage of each socket/i.test(raw))
+    return 'el puerto ya lo está usando otro programa. Ciérralo o elige otro puerto';
+  if (/pull access denied|manifest unknown|repository does not exist|no such image/i.test(raw))
+    return 'Docker no encuentra esa imagen. Revisa el nombre de la imagen';
+  if (/permission denied|access is denied|acceso denegado/i.test(raw))
+    return 'Docker no me deja (permiso denegado). Abre Docker Desktop con tu usuario y vuelve a pedírmelo';
+  return 'Docker dio un error que no reconozco (el detalle técnico queda en el registro del PC)';
+}
+
+/**
+ * `tailscale serve` failures: Tailscale's own words (socket paths, node ids,
+ * operator hints for Linux) go to the log; the chat gets what happened and
+ * what Nico can do. The admin-console link Tailscale prints to enable Serve is
+ * kept: it is the one thing he needs to click.
+ */
+export function tailscaleServeFailText(res: RunResult): string {
+  const raw = `${res.stderr}\n${res.stdout}`;
+  if (/serve is not enabled|funnel is not enabled|not enabled on your tailnet/i.test(raw)) {
+    const link = /https:\/\/login\.tailscale\.com\/[^\s"'<>]+/i.exec(raw)?.[0];
+    return link
+      ? `tu tailnet no tiene activado Serve. Actívalo una vez aquí: ${link} y vuelve a pedírmelo`
+      : 'tu tailnet no tiene activado Serve. Actívalo en la consola de Tailscale (DNS → HTTPS y Serve) y vuelve a pedírmelo';
+  }
+  if (/needs ?login|logged out|not logged in|log in|login required/i.test(raw))
+    return 'Tailscale no tiene la sesión iniciada en este PC. Abre Tailscale, inicia sesión y vuelve a pedírmelo';
+  if (
+    /failed to connect to local tailscaled|tailscaled.*not running|is tailscaled running|service is not running|connection refused/i.test(
+      raw,
+    )
+  )
+    return 'Tailscale no está arrancado. Ábrelo, espera a que diga «Connected» y vuelve a pedírmelo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw))
+    return 'Tailscale tardó demasiado en contestar y lo he cortado. Vuelve a pedírmelo en un momento';
+  if (/access denied|permission denied|acceso denegado|--operator|operator/i.test(raw))
+    return 'Tailscale no me deja cambiar Serve con este usuario (permiso denegado). En Linux: `sudo tailscale set --operator=$USER`; en Windows, abre Tailscale con tu usuario';
+  if (/https certificates? (are|is) not enabled|enable https|certificate/i.test(raw))
+    return 'tu tailnet no tiene activados los certificados HTTPS. Actívalos en la consola de Tailscale (DNS → HTTPS) y vuelve a pedírmelo';
+  return 'Tailscale dio un error que no reconozco (el detalle técnico queda en el registro del PC)';
+}
+
+function dockerFail(step: string, service: string, res: RunResult): string {
+  log.warn('docker compose failed', {
+    step,
+    service,
+    code: res.code,
+    detail: (res.stderr || res.stdout).slice(0, 500),
+  });
+  return dockerFailText(res);
+}
 
 function reply(text: string, isError = false): AgentToolResult {
   return { content: [{ type: 'text', text }], details: {}, isError };
@@ -289,10 +360,7 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
           });
           const up = await run('docker', ['compose', '-f', file, 'up', '-d']);
           if (up.code !== 0) {
-            return reply(
-              `El arranque falló (docker compose up): ${(up.stderr || up.stdout).slice(0, 500)}`,
-              true,
-            );
+            return reply(`No pude arrancarlo: ${dockerFail('up', s.name, up)}.`, true);
           }
           verified.push('`docker compose up -d` terminó sin error.');
           const ps = await run('docker', ['compose', '-f', file, 'ps', '--status', 'running']);
@@ -378,8 +446,13 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
         }
         const up = await run('tailscale', tailscaleServeArgs(s.port));
         if (up.code !== 0) {
+          log.warn('tailscale serve failed', {
+            service: s.name,
+            code: up.code,
+            detail: (up.stderr || up.stdout).slice(0, 500),
+          });
           return reply(
-            `\`tailscale serve\` falló: ${(up.stderr || up.stdout).slice(0, 500)}. No he expuesto nada.`,
+            `No pude servirlo en tu tailnet: ${tailscaleServeFailText(up)}. No he expuesto nada.`,
             true,
           );
         }
@@ -435,10 +508,7 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
         const file = join(deps.servicesDir, s.name, 'docker-compose.yml');
         const stop = await run('docker', ['compose', '-f', file, 'stop']);
         if (stop.code !== 0) {
-          return reply(
-            `No pude pararlo (docker compose stop): ${(stop.stderr || stop.stdout).slice(0, 500)}`,
-            true,
-          );
+          return reply(`No pude pararlo: ${dockerFail('stop', s.name, stop)}.`, true);
         }
         const next: AdoptedService = {
           ...s,
@@ -456,7 +526,9 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
       if (args.action === 'listar') {
         const all = deps.services.list();
         if (all.length === 0) {
-          return reply('No hay servicios adoptados. Con "adopta <herramienta>" te propongo uno.');
+          return reply(
+            'No hay servicios adoptados. Si quieres alguno, dime cuál, por ejemplo «adopta Uptime Kuma».',
+          );
         }
         const lines = all.map(
           (s) =>

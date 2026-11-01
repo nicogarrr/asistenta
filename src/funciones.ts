@@ -227,7 +227,24 @@ export const TOOL_ABILITIES: Readonly<
   reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
+  correo: {
+    area: 'correo',
+    text: 'busco y leo tus correos; respondo, reenvío o escribo solo si apruebas el borrador exacto',
+  },
+  tareas: { area: 'agenda', text: 'apunto tus tareas de la semana y te digo qué tienes' },
+  repartos: {
+    area: 'agenda',
+    text: 'te digo dónde están tus paquetes leyendo los correos de envío',
+  },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  cuentas: {
+    area: 'agenda',
+    text: 'guardo tus cuentas y contraseñas fuertes en un gestor cifrado',
+  },
+  correo_reglas: {
+    area: 'correo',
+    text: 'resumo tu correo por tipos (publicidad, avisos, estafas) y guardo tus reglas de correo',
+  },
   objetivo: { area: 'agenda', text: 'persigo un objetivo varios días y te aviso de los avances' },
   gestion: {
     area: 'agenda',
@@ -353,7 +370,10 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
   if (query) {
     const area = findArea(query);
     if (!area || !areas.some((a) => a.id === area.id)) {
-      return `No conozco el área «${query.slice(0, 40)}». Prueba /funciones a secas para ver todas.`;
+      return [
+        `No conozco el área «${query.slice(0, 40)}». Tengo estas:`,
+        ...areas.map((a) => a.title),
+      ].join('\n');
     }
     const lines = visibleCommands(view)
       .filter((c) => c.area === area.id)

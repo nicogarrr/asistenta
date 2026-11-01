@@ -2,6 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
+import {
+  isTooOldButtonError,
+  STALE_TV_BUTTON_NOTICE,
+  tvButtonMaybeStale,
+} from '../tv/stale-order.js';
+import { TelegramClock } from '../tv/telegram-clock.js';
 import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
@@ -174,6 +180,10 @@ export class TelegramChannel implements ChannelAdapter {
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Health evidence: a getUpdates completed since the last (re)start. */
   #pollingConfirmed = false;
+  /** Inicio de la última conexión (arranque o reconexión): ver #onTvPress. */
+  #pollStartedAt: number | undefined;
+  /** Hora de Telegram medida con el sondeo: las órdenes a la tele no dependen del reloj del PC. */
+  readonly #clock = new TelegramClock();
   #healthProbeInstalled = false;
   /**
    * One gate for every outbound call in the process.
@@ -276,6 +286,9 @@ export class TelegramChannel implements ChannelAdapter {
         // ok === true AND a real batch — never just "no throw" (auditor #153
         // ronda 2).
         const result = await prev(method, payload, signal);
+        if (method === 'getUpdates' && result.ok === true && Array.isArray(result.result)) {
+          this.#clock.observe(result.result, (payload as { limit?: number } | undefined)?.limit);
+        }
         if (
           method === 'getUpdates' &&
           result.ok === true &&
@@ -296,6 +309,8 @@ export class TelegramChannel implements ChannelAdapter {
     }
     const poll = async (): Promise<void> => {
       this.#pollingConfirmed = false;
+      this.#pollStartedAt = Date.now();
+      this.#clock.reset();
       try {
         await bot.start({
           onStart: (me) => {
@@ -395,7 +410,9 @@ export class TelegramChannel implements ChannelAdapter {
       isGroup,
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
-      sentAt: msg.date ? new Date(msg.date * 1000).toISOString() : undefined,
+      sentAt: msg.date
+        ? new Date(this.#clock.sentAtMs(msg.date, ctx.update?.update_id)).toISOString()
+        : undefined,
       replyToMessageId: msg.reply_to_message
         ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
         : undefined,
@@ -435,6 +452,24 @@ export class TelegramChannel implements ChannelAdapter {
     // A command with no text must still reach the handler: `/screen` and `/watch`
     // are handled before the agent exists, and a caption-less photo needs its file
     // id even though there is nothing to say about it.
+    // Un sticker, vídeo, ubicación, contacto o encuesta sin texto se perdía en
+    // silencio y el usuario esperaba una respuesta que nunca llegaba. Ahora se dice.
+    const unsupported = unsupportedKindNote(msg);
+    if (
+      unsupported &&
+      !inbound.text &&
+      !inbound.photoFileId &&
+      !inbound.audioFileId &&
+      !inbound.documentFileId
+    ) {
+      await ctx
+        .reply(unsupported, {
+          message_thread_id: msg.message_thread_id,
+          reply_to_message_id: msg.message_id,
+        } as never)
+        .catch(() => {});
+      return;
+    }
     if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId && !inbound.documentFileId)
       return;
 
@@ -544,6 +579,33 @@ export class TelegramChannel implements ChannelAdapter {
       await ctx.answerCallbackQuery({ text: TV_BUTTON_STALE }).catch(() => {});
       return;
     }
+    // Pulsado con Asistenta apagada: Telegram lo entrega al arrancar. Se contesta
+    // primero; si Telegram dice que la pulsación es vieja, la tele no se toca.
+    const keyboard = ctx.callbackQuery?.message;
+    const keyboardAt = keyboard?.date
+      ? this.#clock.sentAtMs(
+          Math.max(keyboard.date, ('edit_date' in keyboard && keyboard.edit_date) || 0),
+        )
+      : undefined;
+    let answered = false;
+    if (tvButtonMaybeStale(keyboardAt, this.#pollStartedAt)) {
+      try {
+        await ctx.answerCallbackQuery({ text: TV_BUTTON_SENDING });
+        answered = true;
+      } catch (err) {
+        if (isTooOldButtonError(err)) {
+          handlers.log('info', 'tv button pressed while off, skipped', { data: data.slice(0, 64) });
+          await this.#throttled(() =>
+            withTimeout(
+              this.#bot.api.sendMessage(chatId, STALE_TV_BUTTON_NOTICE),
+              20_000,
+              'sendMessage timed out',
+            ),
+          ).catch(() => {});
+          return;
+        }
+      }
+    }
     const run = handlers
       .onTvButton({
         channel: 'telegram',
@@ -569,13 +631,15 @@ export class TelegramChannel implements ChannelAdapter {
     clearTimeout(timer);
     // Respuesta rápida y corta: en el aviso del botón. Una larga (p. ej. «Estado»)
     // no cabe en el aviso (200 caracteres), así que va entera como mensaje.
-    if (quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
+    if (!answered && quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
       await ctx.answerCallbackQuery({ text: quick, show_alert: quick.length > 60 }).catch(() => {});
       return;
     }
-    await ctx
-      .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
-      .catch(() => {});
+    if (!answered) {
+      await ctx
+        .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
+        .catch(() => {});
+    }
     const text = quick ?? (await run);
     await this.#throttled(() =>
       withTimeout(
@@ -807,7 +871,7 @@ export class TelegramChannel implements ChannelAdapter {
         buttons: opts?.askScope
           ? [
               { label: '✅ Una vez', action: `approve:once:${id}` },
-              { label: '🕒 Esta sesión', action: `approve:session:${id}` },
+              { label: '🕒 Por ahora', action: `approve:session:${id}` },
               { label: '♾️ Siempre', action: `approve:always:${id}` },
               { label: '❌ Denegar', action: `deny:${id}` },
             ]
@@ -1020,7 +1084,7 @@ export class TelegramChannel implements ChannelAdapter {
       withTimeout(
         this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
           message_thread_id: threadId ? Number(threadId) : undefined,
-          caption: fitCaption(`. ${Math.round(seconds)}s de microfono`),
+          caption: fitCaption(`. ${Math.round(seconds)}s de micrófono`),
         }),
         60_000,
         'sendVoice timed out',
@@ -1425,8 +1489,11 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => null);
     if (!file?.file_path) return null;
     const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    // Al rendirse, también corta la conexión: sin señal, una descarga colgada seguía
+    // abierta para siempre aunque ya hubiéramos devuelto null.
+    const abort = new AbortController();
     return withTimeout(
-      fetch(url).then(async (r) => {
+      fetch(url, { signal: abort.signal }).then(async (r) => {
         if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
         const buf = Buffer.from(await r.arrayBuffer());
         if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
@@ -1434,7 +1501,10 @@ export class TelegramChannel implements ChannelAdapter {
       }),
       60_000,
       'file download timed out',
-    ).catch(() => null);
+    ).catch(() => {
+      abort.abort();
+      return null;
+    });
   }
 
   /**
@@ -1589,7 +1659,7 @@ export const NOT_PENDING = 'Esta solicitud ya no está pendiente.';
 /** Spanish verdicts, one per scope. */
 const DECISION_LABELS: Record<ApprovalScope, string> = {
   once: '✅ Aprobado para esta vez',
-  session: '✅ Aprobado para esta sesión',
+  session: '✅ Aprobado por ahora',
   always: '✅ Aprobado siempre',
 };
 
@@ -1899,7 +1969,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
-const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
+const TV_BUTTON_STALE =
+  'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 
@@ -2124,4 +2195,22 @@ export function tooBigForBotDownload(sizeBytes: number | undefined): string | un
   if (!sizeBytes || sizeBytes <= TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES) return undefined;
   const mb = Math.ceil(sizeBytes / 1_000_000);
   return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
+}
+
+/**
+ * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
+ * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta):
+ * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
+ * sin respuesta.
+ */
+export function unsupportedKindNote(msg: object): string | null {
+  if ('sticker' in msg) return 'Aún no sé ver stickers. Si quieres algo, escríbemelo.';
+  if ('video' in msg || 'animation' in msg)
+    return 'Aún no puedo ver vídeos ni GIF. Cuéntame qué hay o mándame una captura.';
+  if ('location' in msg || 'venue' in msg)
+    return 'Aún no sé leer ubicaciones compartidas. Escríbeme el sitio o la dirección.';
+  if ('contact' in msg)
+    return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
+  if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
+  return null;
 }

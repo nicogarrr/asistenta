@@ -100,7 +100,7 @@ export async function captureCameraFrame(opts: { maxEdge?: number } = {}): Promi
 }> {
   const devices = await listCaptureDevices();
   if (!devices.video) {
-    throw new Error('no encuentro ninguna camara en este ordenador.');
+    throw new Error('no encuentro ninguna cámara en este ordenador.');
   }
   mkdirSync(paths.voice, { recursive: true });
   const out = join(paths.voice, `cam-${Date.now()}.jpg`);
@@ -151,7 +151,7 @@ export async function recordCamera(options: {
   maxEdge?: number;
 }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.video) throw new Error('no encuentro ninguna camara en este ordenador.');
+  if (!devices.video) throw new Error('no encuentro ninguna cámara en este ordenador.');
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   const fps = Math.max(1, Math.min(15, Math.trunc(options.fps ?? 10)));
   const maxEdge = Math.max(320, Math.trunc(options.maxEdge ?? 1280));
@@ -213,9 +213,9 @@ export async function recordCameraWithMic(options: {
   maxEdge?: number;
 }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.video) throw new Error('no encuentro ninguna camara en este ordenador.');
+  if (!devices.video) throw new Error('no encuentro ninguna cámara en este ordenador.');
   if (!devices.audio) {
-    throw new Error('no encuentro ningun microfono en este ordenador.');
+    throw new Error('no encuentro ningún micrófono en este ordenador.');
   }
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   const fps = Math.max(1, Math.min(15, Math.trunc(options.fps ?? 10)));
@@ -284,7 +284,7 @@ export async function recordCameraWithMic(options: {
  */
 export async function recordMicrophone(options: { seconds: number }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.audio) throw new Error('no encuentro ningun microfono en este ordenador.');
+  if (!devices.audio) throw new Error('no encuentro ningún micrófono en este ordenador.');
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   mkdirSync(paths.voice, { recursive: true });
   const out = join(paths.voice, `mic-${Date.now()}.ogg`);

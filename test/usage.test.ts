@@ -310,6 +310,18 @@ describe('persistencia JSONL', () => {
     expect(usage.usageForSession('s-vieja').inputTokens).toBe(3);
   });
 
+  it('usageForSession solo lee los últimos días con uso, no todo el historial', () => {
+    mkdirSync(logDir, { recursive: true });
+    const line = (day: string) =>
+      `${JSON.stringify({ ts: `${day}T10:00:00.000Z`, day, sessionId: 's-larga', model: 'space-bunny-free', inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, kind: 'turn', costEur: 0 })}\n`;
+    // 40 días de historial, la sesión aparece en todos.
+    for (let d = 1; d <= 40; d++) {
+      const day = `2001-0${d <= 28 ? 1 : 2}-${String(d <= 28 ? d : d - 28).padStart(2, '0')}`;
+      writeFileSync(join(logDir, `usage-${day}.jsonl`), line(day));
+    }
+    expect(usage.usageForSession('s-larga').inputTokens).toBe(usage.SESSION_USAGE_DAYS);
+  });
+
   it('nunca lanza si no puede escribir el fichero', () => {
     mkdirSync(logDir, { recursive: true });
     // Un directorio con el nombre del fichero hace fallar appendFileSync.

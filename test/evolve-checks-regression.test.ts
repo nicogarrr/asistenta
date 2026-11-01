@@ -41,7 +41,13 @@ describe('juez: regresión en las sondas', () => {
   });
 
   it('sigue promoviendo una mejora real que conserva los checks', () => {
-    const kernel = run({ checks: 2, passingChecks: ['abre', 'rellena'] });
+    // «envía» fallaba en el kernel (la sonda imprime siempre los mismos checks) y ahora pasa.
+    const kernel = run({
+      checks: 2,
+      checksFailed: 1,
+      passingChecks: ['abre', 'rellena'],
+      failingChecks: ['envía'],
+    });
     const v = judge(
       kernel,
       run({ passed: 120, failed: 0, checks: 3, passingChecks: ['abre', 'rellena', 'envía'] }),
@@ -62,5 +68,44 @@ describe('checkNames', () => {
       passing: ['abre la página', 'envía el formulario'],
       failing: ['el campo recibe foco'],
     });
+  });
+});
+
+describe('juez: todo check de la versión actual sale en el intento', () => {
+  it('descarta si un check que fallaba desaparece de la salida (antes contaba como mejora)', () => {
+    const kernel = run({
+      checks: 1,
+      checksFailed: 1,
+      passingChecks: ['abre'],
+      failingChecks: ['envía'],
+    });
+    // «envía» ya no sale ni como PASA ni como FALLA: un fallo menos, +puntos en main.
+    const cand = run({ checks: 1, checksFailed: 0, passingChecks: ['abre'], failingChecks: [] });
+    const v = judge(kernel, cand);
+    expect(v.kind).toBe('discard');
+    expect(v.reason).toMatch(/faltan checks de la sonda.*envía/);
+  });
+
+  it('descarta si el kernel tiene nombres y el intento no imprime ninguno legible', () => {
+    const kernel = run({ checks: 0, checksFailed: 1, passingChecks: [], failingChecks: ['envía'] });
+    const v = judge(kernel, run({ checks: 0, checksFailed: 0 }));
+    expect(v.kind).toBe('discard');
+    expect(v.reason).toContain('envía');
+  });
+
+  it('un check que fallaba y ahora pasa sigue siendo una mejora', () => {
+    const kernel = run({
+      checks: 1,
+      checksFailed: 1,
+      passingChecks: ['abre'],
+      failingChecks: ['envía'],
+    });
+    const cand = run({
+      checks: 2,
+      checksFailed: 0,
+      passingChecks: ['abre', 'envía'],
+      failingChecks: [],
+    });
+    expect(judge(kernel, cand).kind).not.toBe('discard');
   });
 });

@@ -47,7 +47,7 @@ describe('/cron probar objetivo:<id>', () => {
   it('con el objetivo en pausa no promete una prueba: lo dice y no dispara', () => {
     const reply = runCronCommand(deps('paused'), 'probar objetivo:g1');
     expect(reply).toContain('en pausa');
-    expect(reply).toContain('reanuda el objetivo g1');
+    expect(reply).toMatch(/reanuda el objetivo «[^»]+»/);
     expect(reply).not.toContain('Lanzo');
     expect(runner.isRunning(scope, 'objetivo:g1')).toBe(false);
   });

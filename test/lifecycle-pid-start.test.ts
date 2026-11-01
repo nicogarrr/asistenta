@@ -67,7 +67,7 @@ describe('assertNotRunning with a pid reused by another node program', () => {
     writeFileSync(join(d, 'agent.pid.start'), `${pid} proc:42\n`);
     expect(() =>
       assertNotRunning(d, 'agent', { imageOf: node, identityOf: () => 'proc:42' }),
-    ).toThrow(/already running/);
+    ).toThrow(/ya está en marcha/);
     expect(existsSync(join(d, 'agent.pid'))).toBe(true);
   });
 
@@ -77,16 +77,16 @@ describe('assertNotRunning with a pid reused by another node program', () => {
     writeFileSync(join(d, 'agent.pid'), String(pid));
     writeFileSync(join(d, 'agent.pid.start'), `${pid} proc:1\n`);
     expect(() => assertNotRunning(d, 'agent', { imageOf: node, identityOf: () => null })).toThrow(
-      /already running/,
+      /ya está en marcha/,
     );
     writeFileSync(join(d, 'agent.pid.start'), `${pid + 1} proc:1\n`);
     expect(() =>
       assertNotRunning(d, 'agent', { imageOf: node, identityOf: () => 'proc:2' }),
-    ).toThrow(/already running/);
+    ).toThrow(/ya está en marcha/);
     writeFileSync(join(d, 'agent.pid.start'), `${pid} ms:5\n`);
     expect(() =>
       assertNotRunning(d, 'agent', { imageOf: node, identityOf: () => 'proc:2' }),
-    ).toThrow(/already running/);
+    ).toThrow(/ya está en marcha/);
   });
 
   it('a leftover start file without a pid file is cleaned', () => {

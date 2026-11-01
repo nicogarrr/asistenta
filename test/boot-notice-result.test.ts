@@ -1,4 +1,4 @@
-/** El resultado del aviso «Asistenta lista ✅» se guarda y `pa autostart status` lo enseña. */
+/** El resultado del aviso de arranque se guarda y `pa autostart status` lo enseña. */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +19,14 @@ function statePath(): string {
   dirs.push(d);
   return join(d, BOOT_NOTICE_FILE);
 }
-const facts = { model: 'm', tv: false, computerUse: false, mail: false, threads: 0 };
+const facts = {
+  model: 'm',
+  tv: false,
+  computerUse: false,
+  mail: false,
+  threads: 0,
+  problems: ['modelo' as const],
+};
 const NOW = Date.parse('2026-10-30T18:00:00Z');
 
 describe('resultado del aviso de arranque', () => {
@@ -77,15 +84,16 @@ describe('resultado del aviso de arranque', () => {
     const now = new Date(NOW + 5 * 60_000);
     const at = new Date(NOW).toISOString();
     expect(formatBootNoticeResult(undefined, now)).toBe(
-      'Aviso «Asistenta lista ✅» del último arranque: ninguno registrado todavía.',
+      'Aviso al arrancar (solo si algo falla): ninguno registrado todavía.',
     );
     expect(formatBootNoticeResult({ result: 'sent', at }, now)).toBe(
-      'Aviso «Asistenta lista ✅» del último arranque, hace 5 min: enviado a tu chat privado ✅.',
+      'Aviso al arrancar (solo si algo falla), hace 5 min: avisado en tu chat privado porque algo fallaba.',
     );
     expect(formatBootNoticeResult({ result: 'no-owner', at }, now)).toContain(
       'pa iniciar --solo-comprobar',
     );
     expect(formatBootNoticeResult({ result: 'off', at }, now)).toContain('PA_BOOT_NOTICE=0');
     expect(formatBootNoticeResult({ result: 'failed', at }, now)).toContain('❌');
+    expect(formatBootNoticeResult({ result: 'quiet', at }, now)).toContain('arrancó bien');
   });
 });

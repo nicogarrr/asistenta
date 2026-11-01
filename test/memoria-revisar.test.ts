@@ -14,7 +14,7 @@ describe('/memoria revisar', () => {
     expect(r).toContain('Posibles contradicciones (1):');
     expect(r).toContain('1. [m1] Vive en Madrid');
     expect(r).toContain('   [m3] No vive en Madrid');
-    expect(r).toContain('/memoria olvidar <id>');
+    expect(r).toContain('dime cuál y la olvido');
     expect(r).not.toContain('café');
   });
 

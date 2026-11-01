@@ -40,6 +40,7 @@
  * reads is never folded; only the copy the patterns run against.
  */
 
+import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { localTimeZone } from '../datecontext.js';
 import type { MailMessage } from '../mail/types.js';
 import { zonedAddDays, zonedDayKey, zonedParts, zonedTime } from './ics.js';
@@ -346,6 +347,32 @@ const DATE_RULES: ReadonlyArray<{
     specificity: 88,
     rule: 'dd/mm',
     build: (m, ctx) => slashHit(m, ctx, 88, 'dd/mm'),
+  },
+  {
+    // «el 3-12»: en España el día y el mes también se escriben con guion. Solo detrás de
+    // «el»/«del»: un «3-12» suelto es un rango («niños de 3-12 años») y «el 10-12 por ciento»
+    // no es una fecha.
+    re: /\b(?:el|del|hasta el|para el) (\d{1,2})-(\d{1,2})\b(?!-?\d| por ciento)/,
+    specificity: 87,
+    rule: 'dd-mm',
+    build: (m, ctx) => slashHit(m, ctx, 87, 'dd-mm'),
+  },
+  {
+    // «el lunes 9»: el día de la semana con su número es ese día, no el lunes más cercano
+    // (antes la cita del lunes 9 caía el lunes 2, una semana antes). Solo si el próximo
+    // día 9 cae en lunes; si no cuadra, decide la regla del día de la semana. «el lunes
+    // 10:00» o «el lunes 9 de la mañana» son horas, no días.
+    re: /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo),? (?:dia )?(\d{1,2})\b(?![:.,]\d| ?(?:h|hrs?|horas?|am|pm)\b| ?(?:de|del) [a-z]| (?:a|al|hasta|y)\s+\d)/,
+    specificity: 86,
+    rule: 'dia de semana y numero',
+    build: (m, ctx) => {
+      const hit = nextDayOfMonth(Number(m[2]), ctx, m);
+      if (!hit) return undefined;
+      const local = ymd(hit.at, ctx.timeZone);
+      const weekday = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
+      if (weekday !== WEEKDAYS[m[1] ?? '']) return undefined;
+      return { ...hit, specificity: 86, rule: 'dia de semana y numero' };
+    },
   },
   {
     // "el día 5" with no month: the next 5th - this month if it has not gone by, else
@@ -759,17 +786,26 @@ function summarize(message: MailMessage, kind: CommitmentKind): string {
  * letter, a digit nor a date separator goes too, so one pattern covers both languages.
  */
 function fold(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      // «el 10-12%» es un porcentaje: borrar el «%» lo dejaba como «el 10-12», el 10 de
+      // diciembre. En palabras, la regla de fechas ya sabe que «por ciento» no es fecha.
+      .replace(/\s*%/g, ' por ciento ')
+      .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
-const SPOKEN_TIME_RE =
-  /\b(a las|a la|sobre las|hacia las|desde las) (\d{1,2})(?:[:.](\d{2})(?!\d)| y (media|cuarto)| menos (cuarto))?(?: ?(?:h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?/g;
+// «y diez», «y veinte», «menos veinte», «y treinta y cinco», «y 15» (gaps8): before,
+// only media/cuarto were read and «a las 9 y diez» was 9:00.
+const SPOKEN_TIME_RE = new RegExp(
+  `\\b(a las|a la|sobre las|hacia las|desde las) (\\d{1,2})(?:[:.](\\d{2})(?!\\d)| y (${MINUTES_AFTER})(?![\\d:.])| menos (${MINUTES_BEFORE})(?![\\d:.]))?(?: ?(?:h|hs|hrs|horas)\\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?`,
+  'g',
+);
 
 /**
  * Spoken Spanish clocks, rewritten as "a las HH:MM" before anything else reads the text.
@@ -819,15 +855,18 @@ function spokenTimes(folded: string): string {
     (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
       let hour = Number(h);
       let minute = mm !== undefined ? Number(mm) : 0;
-      if (half === 'media') minute = 30;
-      else if (half === 'cuarto') minute = 15;
+      if (half) minute = minuteSaid(half);
       else if (less) {
+        const before = minuteSaid(less);
+        if (!(before >= 1 && before <= 30)) return whole;
         hour -= 1;
-        minute = 45;
+        minute = 60 - before;
       }
-      if (hour < 0 || hour > 23 || minute > 59) return whole;
+      if (hour < 0 || hour > 23 || !(minute >= 0 && minute <= 59)) return whole;
       const explicit = mm !== undefined || /h|hs|hrs|horas/.test(whole.slice(lead.length));
-      if (part === 'de la manana' || part === 'de la madrugada') {
+      if (part === 'de la manana') {
+        // «a las 12 de la mañana» es mediodía en España, no medianoche.
+      } else if (part === 'de la madrugada') {
         if (hour === 12) hour = 0;
       } else if (part === 'de la tarde' || part === 'del mediodia') {
         if (hour >= 1 && hour < 12) hour += 12;

@@ -528,6 +528,10 @@ function cutWithHint(text: string, budget: number): string {
     // rather than shipping half of it.
     const straddled = tokens.find((span) => limit > span.start && limit < span.end);
     cut = straddled ? straddled.start : limit;
+    // Sin hueco ninguno (una tira de emojis): no partir un emoji por la mitad, que deja
+    // medio par sustituto y Telegram lo enseña como «�» o rechaza el mensaje.
+    const high = text.charCodeAt(cut - 1);
+    if (cut > 0 && high >= 0xd800 && high <= 0xdbff) cut -= 1;
   }
   let body = text.slice(0, cut).trimEnd();
   // Una negrita **… partida por el corte se cierra: si no, telegramHtml no la
@@ -724,6 +728,13 @@ const AUTH_ERROR =
   /\b(?:401|unauthori[sz]ed|invalid[_ ]api[_ ]key|incorrect api key|authentication|permission[_ ]denied)\b/i;
 const OVERLOAD_ERROR =
   /\b(?:5\d\d|overloaded|service unavailable|bad gateway|internal server error)\b/i;
+/** Disco lleno o base de datos dañada / ocupada: llegaba al chat en inglés con la ruta. */
+const DISK_FULL_ERROR = /\bENOSPC\b|no space left on device|database or disk is full|SQLITE_FULL/i;
+const DATA_CORRUPT_ERROR =
+  /file is not a database|database disk image is malformed|SQLITE_CORRUPT|SQLITE_NOTADB/i;
+const DATA_BUSY_ERROR = /database is locked|SQLITE_BUSY|\bEBUSY\b/i;
+const FILE_DENIED_ERROR =
+  /\b(?:EPERM|EACCES)\b[^\n]*\b(?:open|mkdir|rename|unlink|scandir|copyfile)\b/;
 /** Fallos de programación: el texto es para el registro, no para el chat. */
 const BUG_ERROR =
   /\b(?:Cannot read propert|Cannot set propert|is not a function|is not defined|is not iterable|undefined is not|null is not|Maximum call stack|Unexpected token|ReferenceError|TypeError|SyntaxError|RangeError)\b/;
@@ -750,7 +761,19 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const code = (err as { code?: unknown } | null)?.code;
   const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
-    return 'Se me ha roto algo por dentro y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+    return 'Se me ha roto algo por dentro y no he podido terminar. Vuelve a intentarlo en un momento.';
+  }
+  if (DISK_FULL_ERROR.test(probe)) {
+    return 'El disco del PC está lleno y no puedo guardar nada. Libera espacio y vuelve a pedírmelo.';
+  }
+  if (DATA_CORRUPT_ERROR.test(probe)) {
+    return 'Un fichero de datos mío está dañado. En el PC, con Asistenta parada: pa backup restaurar ultima';
+  }
+  if (DATA_BUSY_ERROR.test(probe)) {
+    return 'Otro programa está usando mis datos ahora mismo (¿OneDrive o el antivirus?). Prueba otra vez en un momento.';
+  }
+  if (FILE_DENIED_ERROR.test(probe)) {
+    return 'Windows no me deja abrir un fichero (permiso denegado o lo tiene otro programa). Prueba otra vez en un momento.';
   }
   if (RATE_LIMIT_ERROR.test(probe)) {
     return 'El modelo de IA me está limitando por exceso de peticiones. Espera un minuto y repítemelo.';
@@ -774,7 +797,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const looksTechnical =
     !clean || /[{}[\]]|\bat \S+:\d+|https?:\/\//.test(clean) || clean.length > 200;
   if (looksTechnical) {
-    return 'Algo ha fallado y no he podido terminar. Queda apuntado en el registro; prueba otra vez o mira /estado.';
+    return 'Algo ha fallado y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
   return `${prefix}${clean}`;
 }

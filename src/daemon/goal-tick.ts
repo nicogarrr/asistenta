@@ -62,7 +62,7 @@ export function createGoalTickExecute<T extends TickThread>(
     const thread = await threadFor(goalChatKey, goalThreadName, threadLabel(goalThreadName));
     const gen = thread.generation;
     const tick = async (): Promise<GoalTickResult> => {
-      if (thread.generation !== gen) return { text: '', error: 'turno cancelado (/stop)' };
+      if (thread.generation !== gen) return { text: '', error: 'parado con /stop' };
       thread.active = true;
       let sessionId = '';
       safeRemember(() => {

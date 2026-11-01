@@ -29,7 +29,7 @@ describe('docs/windows-startup.md: el vigilante', () => {
   });
 });
 
-const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+// README.md en inglés y README.es.md en castellano (Nico, 1 nov): los dos enlazan igual.
 
 /** GitHub's heading anchor: lowercase, drop punctuation (keeps letters, digits, - and _), spaces → -. */
 function githubSlug(heading: string): string {
@@ -40,8 +40,13 @@ function githubSlug(heading: string): string {
     .replace(/\s/g, '-');
 }
 
-describe('README: arranque automático lleva a docs/windows-startup.md', () => {
-  const start = readme.indexOf('## Arranque automático');
+describe.each([
+  { fichero: 'README.es.md', titulo: '## Arranque automático' },
+  { fichero: 'README.md', titulo: '## Autostart' },
+])('$fichero: arranque automático lleva a docs/windows-startup.md', ({ fichero, titulo }) => {
+  const readme = readFileSync(new URL(`../${fichero}`, import.meta.url), 'utf8');
+  const start = readme.indexOf(titulo);
+  it('tiene el apartado', () => expect(start).toBeGreaterThan(-1));
   const next = readme.indexOf('\n## ', start + 1);
   const section = readme.slice(start, next < 0 ? undefined : next);
 

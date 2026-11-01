@@ -9,8 +9,10 @@ import {
 } from './battery-gate.js';
 import { checkPatch } from './guard.js';
 import { measure as realMeasure } from './measure.js';
+import { reapAttempt } from './reap.js';
 import { checklistPasses, renderReceipt, verificationChecklist } from './receipt.js';
 import { comparable, judge, touchesForbidden } from './score.js';
+import { toolchainFingerprint } from './toolchain.js';
 import {
   changedFiles,
   commitAll,
@@ -18,11 +20,16 @@ import {
   depsFingerprint,
   diffText,
   dropSandbox,
+  gitControlFingerprint,
   headCommit,
   ignoredFiles,
   isClean,
   repoRoot,
   type Sandbox,
+  sandboxGitFingerprint,
+  treeDirFingerprint,
+  treeStatFingerprint,
+  watchRoot,
 } from './worktree.js';
 
 /**
@@ -67,6 +74,8 @@ export interface EvolveOptions {
    * si la aprueba sin regresiones; sin batería no se promueve nada (falla cerrado).
    */
   battery?: BatteryGate;
+  /** Cierra los procesos que el intento dejó en marcha (reap.ts). Inyectado en tests. */
+  reap?: (sandboxDir: string) => number;
 }
 
 export interface WeekReport {
@@ -96,6 +105,14 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
   const minGainPct = opts.minGainPct ?? 5;
   const say = opts.log ?? (() => {});
   const measure = opts.measure ?? realMeasure;
+  const reap = opts.reap ?? reapAttempt;
+  // Lo que el proponente o el código del intento dejan vivo podría cambiar la copia mientras
+  // se mide, o después: se cierra antes de revisar, después de medir y al tirar la copia.
+  const reapNow = (dir: string, when: string): void => {
+    const n = reap(dir);
+    if (n > 0) say(`se cerraron ${n} procesos que el intento dejó en marcha (${when})`);
+    if (n < 0) say(`no se pudieron listar los procesos del intento (${when})`);
+  };
   const week = isoWeek();
   const archive = new Archive(join(opts.stateDir, 'evolve', 'attempts.jsonl'));
 
@@ -147,6 +164,7 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
       archive.add({ week, kind: 'hypothesis', hypothesis, tries: attempt });
 
       let sandbox: Sandbox;
+      let stopRootWatch: (() => Promise<string[]>) | undefined;
       try {
         sandbox = createSandbox(root, kernel, id, join(opts.stateDir, 'evolve', `w${id}`));
       } catch (err) {
@@ -171,10 +189,16 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
 
       // Lo que el intento haga en su node_modules no entra en el diff: se compara la huella.
       const depsBefore = depsFingerprint(sandbox.dir);
+      const gitBefore = gitControlFingerprint(root);
+      // Node, npm y su config fuera de la copia también deciden qué corre al medir.
+      const toolBefore = toolchainFingerprint();
+      const sandboxGitBefore = sandboxGitFingerprint(sandbox.dir);
       try {
         try {
           await opts.propose(sandbox.dir, hypothesis, attempt);
+          reapNow(sandbox.dir, 'tras el proponente');
         } catch (err) {
+          reapNow(sandbox.dir, 'tras el proponente');
           // Un fallo del proponente (modelo caído, sin clave...) es de la máquina, no de la
           // idea: queda archivado con veredicto y la semana para aquí, sin tumbar el ciclo.
           const reason = `el proponente falló: ${String((err as Error)?.message ?? err).slice(0, 200)}`;
@@ -195,8 +219,52 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
           break;
         }
 
+        // El proponente es un programa cualquiera: nada le impide escribir fuera de su sandbox,
+        // en el árbol del kernel, o mover su rama desde el worktree (las ramas se comparten).
+        // Eso no pasa por el guard ni por la medición: se descarta y la semana para aquí,
+        // sin tocar lo que haya cambiado, para que una persona lo mire.
+        // Primero los hooks y la config de git (se leen sin git): si cambiaron, ni un git status.
+        // Y el git del propio intento: el commit de abajo se hace con él.
+        const gitChanged = gitControlFingerprint(root) !== gitBefore;
+        const sandboxGitChanged = sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore;
+        const toolChanged = toolchainFingerprint() !== toolBefore;
+        if (
+          gitChanged ||
+          sandboxGitChanged ||
+          toolChanged ||
+          !isClean(root) ||
+          headCommit(root) !== kernel
+        ) {
+          const reason = gitChanged
+            ? 'el proponente cambió la config o los hooks de git del kernel: no se mide ni se promueve; revisa .git a mano'
+            : toolChanged
+              ? 'el proponente cambió Node, npm, git o su config fuera de la copia: no se mide ni se promueve; revisa a mano'
+              : sandboxGitChanged
+                ? 'el proponente redirigió el git del intento (su .git o su HEAD): no se mide ni se promueve; revisa a mano'
+                : 'el proponente cambió el árbol del kernel fuera de su sandbox: no se mide ni se promueve; revisa los cambios a mano';
+          archive.add({
+            week,
+            kind: 'verdict',
+            hypothesis,
+            verdict: 'discard',
+            reason,
+            unmeasured: true,
+            kernel,
+            candidate: sandbox.branch,
+            tries: attempt,
+          });
+          report.attempts.push({ hypothesis, try: attempt, verdict: 'discard', delta: 0, reason });
+          say(reason);
+          proposerDown = true;
+          break;
+        }
+
         // What is checked is what is measured: commit the working tree first.
         commitAll(sandbox.dir, `evolve: ${hypothesis.slice(0, 60)}`);
+        const checkedHead = headCommit(sandbox.dir);
+        const checkedTree = treeStatFingerprint(sandbox.dir);
+        const checkedDirs = treeDirFingerprint(sandbox.dir);
+        stopRootWatch = watchRoot(sandbox.dir);
         const touched = changedFiles(root, kernel, sandbox.branch);
         const patch = diffText(root, kernel, sandbox.branch);
         const forbidden = [
@@ -294,6 +362,45 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
               : { kind: 'discard', delta: verdict.delta, reason: bv.reason };
           }
         }
+        reapNow(sandbox.dir, 'tras medir');
+        // Lo medido tiene que ser lo revisado. Un proceso que el proponente dejó vivo, o el propio
+        // código del intento durante sus tests, puede cambiar la copia después del guard (un test,
+        // la config, node_modules o su git): los números serían de otro árbol que el parche.
+        const rootNames = await stopRootWatch();
+        if (
+          rootNames.length > 0 ||
+          headCommit(sandbox.dir) !== checkedHead ||
+          !isClean(sandbox.dir) ||
+          treeStatFingerprint(sandbox.dir) !== checkedTree ||
+          treeDirFingerprint(sandbox.dir) !== checkedDirs ||
+          depsFingerprint(sandbox.dir) !== depsBefore ||
+          sandboxGitFingerprint(sandbox.dir) !== sandboxGitBefore
+        ) {
+          unmeasured = true;
+          proposerDown = true;
+          verdict = {
+            kind: 'discard',
+            delta: verdict.delta,
+            reason: `la copia del intento cambió después de revisarla (ficheros, dependencias o git${rootNames.length ? `; en la raíz: ${rootNames.slice(0, 3).join(', ')}` : ''}): lo medido no es el parche; no se promueve`,
+          };
+        }
+        // Medir también ejecuta código del intento (sus tests, la batería): el kernel tiene que
+        // seguir igual después. Primero la huella de .git, que se lee sin llamar a git.
+        if (
+          gitControlFingerprint(root) !== gitBefore ||
+          toolchainFingerprint() !== toolBefore ||
+          !isClean(root) ||
+          headCommit(root) !== kernel
+        ) {
+          unmeasured = true;
+          proposerDown = true;
+          verdict = {
+            kind: 'discard',
+            delta: verdict.delta,
+            reason:
+              'medir el intento cambió el árbol, la config o los hooks del kernel, o Node/npm: no se promueve; revisa los cambios a mano',
+          };
+        }
         receiptInput.verdictReason = verdict.reason;
         archive.add({
           week,
@@ -352,6 +459,8 @@ export async function runWeek(opts: EvolveOptions): Promise<WeekReport> {
         // retry: the idea is worth another attempt with the same hypothesis, so the
         // model is asked again with the attempt number to change its approach.
       } finally {
+        await stopRootWatch?.();
+        reapNow(sandbox.dir, 'al cerrar el intento');
         if (!report.promoted) dropSandbox(root, sandbox);
       }
       if (report.promoted) break;

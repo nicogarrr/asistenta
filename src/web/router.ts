@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { type HostResolver, isFetchableResolved } from '../tools/fetch.js';
 
@@ -83,12 +83,38 @@ export interface WebRouterOptions {
   maxCostEur?: number;
   /** JSONL de metricas; undefined = no persiste (tests). */
   metricsPath?: string;
+  /** Tope del fichero de métricas; por defecto METRICS_MAX_BYTES. */
+  metricsMaxBytes?: number;
   /**
    * Puerta SSRF previa a routeFetch. Por defecto la misma que la tool fetch
    * (lexical + DNS). El guard vive AQUI (ademas de en la tool web y en el
    * backend remoto) para que ningun consumidor del router la esquive.
    */
   validateFetchUrl?: (url: string, resolve?: HostResolver) => Promise<boolean>;
+}
+
+/**
+ * Una línea por petición web, para siempre: en un PC que usa la búsqueda a diario el
+ * fichero crecía sin fin. Al pasar del tope se queda la mitad más reciente (las
+ * estadísticas solo necesitan una muestra reciente).
+ */
+export const METRICS_MAX_BYTES = 512 * 1024;
+
+async function capMetricsFile(path: string, maxBytes: number): Promise<void> {
+  if ((await stat(path)).size <= maxBytes) return;
+  const lines = (await readFile(path, 'utf8')).split('\n').filter((l) => l.trim());
+  let kept: string[] = [];
+  let size = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (size + line.length + 1 > maxBytes / 2) break;
+    kept.push(line);
+    size += line.length + 1;
+  }
+  kept = kept.reverse();
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, kept.length ? `${kept.join('\n')}\n` : '', 'utf8');
+  await rename(tmp, path);
 }
 
 export class WebRouter {
@@ -118,6 +144,7 @@ export class WebRouter {
     try {
       await mkdir(dirname(path), { recursive: true });
       await appendFile(path, `${JSON.stringify(m)}\n`, 'utf8');
+      await capMetricsFile(path, this.opts.metricsMaxBytes ?? METRICS_MAX_BYTES);
     } catch {
       // La metrica nunca rompe la peticion: peor caso, se pierde una linea.
     }
