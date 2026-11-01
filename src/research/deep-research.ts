@@ -338,7 +338,10 @@ export async function deepResearch(question: string, deps: ResearchDeps): Promis
   const maxSources = deps.maxSources ?? DEFAULT_MAX_SOURCES;
   const maxQuestions = deps.maxQuestions ?? DEFAULT_MAX_QUESTIONS;
   const trimmed = question.trim();
-  if (!trimmed) throw new Error('Falta la pregunta: /investiga <pregunta>');
+  if (!trimmed)
+    throw new Error(
+      'Falta la pregunta. Por ejemplo: /investiga ¿merece la pena la aerotermia en Madrid?',
+    );
 
   let plan = heuristicPlan(trimmed);
   let usedLlm = false;
