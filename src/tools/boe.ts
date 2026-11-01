@@ -28,6 +28,13 @@ export const avisoRoutineName = (tema: string): string => `${AVISO_PREFIX}${norm
 export const sinNovedad = (tema: string): string =>
   `En el BOE de hoy no ha salido nada sobre «${tema}».`;
 
+/**
+ * Lo que dice el aviso si el BOE no responde: nadie ha preguntado, así que nada de «prueba
+ * otra vez». Siempre igual, para que «solo si cambia» lo diga una vez por caída.
+ */
+export const caidoEnRutina = (tema: string): string =>
+  `Hoy no he podido mirar el BOE por «${tema}»: no respondía. Sigo mirando cada mañana; si te corre prisa, está en boe.es.`;
+
 export interface BoeItem {
   id: string;
   titulo: string;
@@ -373,7 +380,7 @@ export function createBoeTool(deps: BoeDeps = {}): AgentTool<typeof Params> {
               : `No encuentro el BOE del ${diaLargo(day)}.`;
           }
           log.warn('boe: fallo al consultar', { err: String(err) });
-          return DOWN;
+          return rutina ? caidoEnRutina(q) : DOWN;
         }
         const del = esHoy ? `de hoy, ${diaLargo(day)},` : `del ${diaLargo(day)}`;
         if (!q) {
