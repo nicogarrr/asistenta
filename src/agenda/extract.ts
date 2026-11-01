@@ -978,6 +978,20 @@ function nominalAt(date: DateHit, folded: string, timeZone: string): number {
  * the clock, the network or the filesystem, which is what makes it testable without a
  * mailbox and cheap enough to run on every turn.
  */
+/**
+ * «Se ha cancelado su cita», «queda anulada», «ha sido cancelada», «Cita cancelada».
+ * Solo la frase que dice que YA se canceló: «puede cancelarla en la web» o «las citas no
+ * anuladas se cobrarán» acompañan a citas de verdad. Con «nueva fecha» la cita sigue.
+ */
+const CANCELLED_RE =
+  /\b(?:se ha|ha sido|han sido|queda|quedan|ha quedado|hemos|esta) (?:cancelad|anulad)[ao]s?\b|\b(?:cita|reunion|reserva|consulta|clase|visita|evento) (?:cancelad|anulad)[ao]\b|\bcancelacion de (?:su|tu|la) (?:cita|reserva|reunion|consulta|clase|visita)\b|\b(?:has been|was|is) cancel+ed\b/;
+const RESCHEDULED_RE =
+  /\b(?:nueva fecha|nueva cita|nueva hora|reprogramad[ao]|le proponemos|te proponemos)\b/;
+
+function isCancellation(folded: string): boolean {
+  return CANCELLED_RE.test(folded) && !RESCHEDULED_RE.test(folded);
+}
+
 export function extractCommitments(
   messages: readonly MailMessage[],
   opts: ExtractOptions = {},
@@ -993,6 +1007,8 @@ export function extractCommitments(
     const raw = `${message.subject ?? ''} ${message.text ?? ''}`;
     const folded = withoutTimeOfDay(spokenTimes(fold(raw)));
     if (!folded) continue;
+    // Un correo que cancela una cita no es una cita: antes se apuntaba y llegaba el aviso.
+    if (isCancellation(folded)) continue;
 
     // «mañana», «el viernes», «hoy» se cuentan desde el día en que se escribió el correo,
     // no desde hoy: un correo del viernes que dice «le esperamos mañana a las 10» leído
