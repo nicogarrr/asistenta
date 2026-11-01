@@ -572,6 +572,17 @@ function fromOnly(normalised: string): { from: number; to: number } | null | und
 
 /** Los días quitados con «excepto / menos / salvo / quitando», y dónde empieza la excepción. */
 function exceptDays(normalised: string): { index: number; days: number[] } | null {
+  // «menos el finde», «excepto los fines de semana», «salvo entre semana»: antes se leían
+  // como los días de la rutina y sonaba justo los días quitados.
+  const group =
+    /\b(?:excepto|menos|salvo|quitando|sin contar) (?:el |los )?(fin(?:es)? de semana|findes?|entre semana|(?:dias )?laborables)\b/.exec(
+      normalised,
+    );
+  if (group)
+    return {
+      index: group.index,
+      days: /laborables|entre semana/.test(group[1] ?? '') ? [1, 2, 3, 4, 5] : [0, 6],
+    };
   const m = new RegExp(
     `\\b(?:excepto|menos|salvo|quitando|sin contar) (?:el |los )?(${DAY})((?:\\s*,\\s*(?:el |los )?(?:${DAY}))*(?:\\s+(?:y|ni) (?:el |los )?(?:${DAY}))?)\\b`,
   ).exec(normalised);
