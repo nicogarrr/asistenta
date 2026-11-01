@@ -176,6 +176,8 @@ export interface ChildSpec {
   signal: AbortSignal;
   /** Especialista resuelto, si el padre pidio uno conocido (su Gate depende de el). */
   specialist?: SpecialistSpec;
+  /** Solo especialistas con efectos: pregunta al humano por cada accion. */
+  approve?: SpecialistApprove;
 }
 
 export interface ChildHandle {
@@ -203,6 +205,17 @@ function contextTools(context: unknown): (() => readonly AgentTool[]) | undefine
     : undefined;
 }
 
+/**
+ * Canal para preguntar al humano (lo pone el cableado por hilo). Sin el, un
+ * especialista con efectos no se ejecuta: no habria a quien pedir permiso.
+ */
+export type SpecialistApprove = (question: string) => Promise<boolean>;
+
+function contextApprove(context: unknown): SpecialistApprove | undefined {
+  const c = context as { approve?: unknown } | null | undefined;
+  return c && typeof c.approve === 'function' ? (c.approve as SpecialistApprove) : undefined;
+}
+
 function readBudget(budget: unknown): SubagentBudget | undefined {
   const b = budget as Partial<SubagentBudget> | null | undefined;
   if (!b || typeof b.maxToolCalls !== 'number' || !b.signal) return undefined;
@@ -228,7 +241,8 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
       if (!specialist && !isSubagentRole(role)) {
         return { text: '', error: `Rol de subagente desconocido: ${String(role)}.` };
       }
-      if (specialist?.effectful) {
+      const approve = contextApprove(request.context);
+      if (specialist?.effectful && !approve) {
         return {
           text: '',
           error: `El especialista ${specialist.title} actúa sobre aparatos o cuentas y aquí no tiene forma de pedirte permiso; no se ejecuta.`,
@@ -264,6 +278,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
           maxToolCalls: budget.maxToolCalls,
           signal: budget.signal,
           specialist,
+          ...(specialist.effectful && approve ? { approve } : {}),
         });
       } else {
         const genericRole = role as SubagentRole;

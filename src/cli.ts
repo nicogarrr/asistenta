@@ -316,14 +316,18 @@ let delegateWiring: ReturnType<typeof createDelegateWiring> | undefined;
  * Con `threadTools`, los especialistas (correo, calendario…) eligen de las
  * herramientas de ESE hilo, con sus propias comprobaciones; el pool es el mismo.
  */
-function delegateTool(config: Config, threadTools?: () => readonly AgentTool[]): AgentTool {
+function delegateTool(
+  config: Config,
+  threadTools?: () => readonly AgentTool[],
+  approve?: (question: string) => Promise<boolean>,
+): AgentTool {
   delegateWiring ??= createDelegateWiring({
     config,
     protectedPaths: protectedPaths(),
     secretPaths: secretStatePaths(),
     parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
   });
-  return threadTools ? delegateWiring.forThread(threadTools) : delegateWiring.tool;
+  return threadTools ? delegateWiring.forThread(threadTools, approve) : delegateWiring.tool;
 }
 
 import {
@@ -2123,8 +2127,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createDoneTool(),
       createAskTool(),
       createShellTool(config),
-      // Especialistas: eligen de las herramientas finales de este hilo (threadFinal).
-      delegateTool(config, () => threadFinal),
+      // Especialistas: eligen de las herramientas finales de este hilo (threadFinal). Los
+      // de PC/tele/casa preguntan en este chat cada acción, sin botones de «Siempre».
+      delegateTool(
+        config,
+        () => threadFinal,
+        (question) => askOncePerTurn(thread, question),
+      ),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
       // silently blocks every batch. `sendPhoto` is what lets the model put a

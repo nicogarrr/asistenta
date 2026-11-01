@@ -94,6 +94,56 @@ export const SPECIALISTS: Readonly<Record<string, SpecialistSpec>> = Object.free
       'busca hueco para una cena',
     ],
   }),
+  pc: spec({
+    name: 'pc',
+    title: 'PC',
+    prompt:
+      'Eres el especialista del PC de Asistenta. Manejas el ordenador Windows de Nico: miras la pantalla, cambias de ventana, haces clic y escribes para terminar la tarea. Mira la pantalla antes de actuar y comprueba el resultado después. Cada acción con efecto se la pregunta a Nico; si dice que no, para y explica qué ibas a hacer. No escribes claves ni pagas nada.',
+    tools: ['computer', 'windows', 'read', 'list'],
+    // Sin `batch`: sus pasos se comprobarian con la Gate del hilo (con sus permisos ya
+    // dados), y un especialista nunca hereda aprobaciones.
+    actions: {
+      computer: ['screenshot', 'click', 'move', 'drag', 'type', 'key'],
+      windows: ['list', 'foreground', 'controls', 'focus'],
+    },
+    effectful: true,
+    examples: ['abre el Excel de gastos y dime el total', 'cierra la ventana que se ha colgado'],
+  }),
+  tv: spec({
+    name: 'tv',
+    title: 'Tele',
+    prompt:
+      'Eres el especialista de la tele de Asistenta. Usas solo la herramienta de la tele tal cual: encender o apagar, volumen, silencio, entrada, abrir apps, teclas del mando y lo que se está reproduciendo. Mira el estado antes de cambiar algo y di cómo ha quedado. Cada acción con efecto se la pregunta a Nico; si dice que no, para.',
+    tools: ['tv'],
+    actions: {
+      tv: [
+        'status',
+        'state',
+        'apps',
+        'screenshot',
+        'power',
+        'volume',
+        'mute',
+        'input',
+        'launch',
+        'key',
+        'media',
+        'channel',
+      ],
+    },
+    effectful: true,
+    examples: ['pon Netflix en la tele', 'baja el volumen a 15', 'apaga la tele'],
+  }),
+  hogar: spec({
+    name: 'hogar',
+    title: 'Casa',
+    prompt:
+      'Eres el especialista de la casa de Asistenta (Home Assistant). Miras el estado de luces, enchufes y aparatos y los enciendes o apagas cuando te lo piden. Mira el estado antes y confirma cómo queda después. Cada acción con efecto se la pregunta a Nico; si dice que no, para.',
+    tools: ['casa'],
+    actions: { casa: ['estado', 'encender', 'apagar', 'alternar'] },
+    effectful: true,
+    examples: ['apaga las luces del salón', '¿está encendido el enchufe del calefactor?'],
+  }),
 });
 
 /**
@@ -116,6 +166,17 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   agenda: 'calendario',
   citas: 'calendario',
   festivos: 'calendario',
+  ordenador: 'pc',
+  computer: 'pc',
+  windows: 'pc',
+  pantalla: 'pc',
+  tele: 'tv',
+  television: 'tv',
+  smarttv: 'tv',
+  casa: 'hogar',
+  homeassistant: 'hogar',
+  domotica: 'hogar',
+  luces: 'hogar',
 });
 
 function normalizeName(value: string): string {
