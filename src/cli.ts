@@ -671,6 +671,7 @@ import {
   unknownCommandMessage,
   vaultListText,
   vaultMissingText,
+  vaultSplitValueText,
   vaultUsageText,
 } from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
@@ -993,6 +994,12 @@ async function vaultCommand(args: string[]): Promise<number> {
       process.stderr.write(
         'Uso: pa vault set <nombre> <valor>  (mejor: pa vault set-stdin <nombre>, así el valor no queda en el historial)\n',
       );
+      return 2;
+    }
+    if (args.length > 3) {
+      // Sin comillas, «pa vault set <nombre> abcd efgh ijkl mnop» llegaba en
+      // trozos y se guardaba solo «abcd», sin avisar. Mejor no guardar nada.
+      process.stderr.write(vaultSplitValueText(args.length - 2));
       return 2;
     }
     await vaultSet(key, value);

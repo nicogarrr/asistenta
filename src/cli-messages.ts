@@ -58,6 +58,11 @@ export function vaultMissingText(name: string): string {
   return `No hay ninguna clave guardada con el nombre «${name}». Para verlas: pa vault list\n`;
 }
 
+/** `pa vault set` con un valor de varias palabras sin comillas: llega partido. */
+export function vaultSplitValueText(pieces: number): string {
+  return `No he guardado nada: el valor tiene espacios y me llegó partido en ${pieces} trozos. Ponlo entre comillas ("…") o, mejor, usa pa vault set-stdin <nombre> y pégalo.\n`;
+}
+
 /** `pa vault` sin orden o con una mal escrita: ayuda corta, no la de `pa` entera. */
 export function vaultUsageText(sub?: string): string {
   const head = sub ? `No conozco «${sub}» en pa vault.\n` : '';
