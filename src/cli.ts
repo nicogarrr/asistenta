@@ -273,6 +273,7 @@ function delegateTool(config: Config): AgentTool {
   return delegateWiring.tool;
 }
 
+import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
@@ -5569,20 +5570,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
-    if (!m) {
+    // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
+    const natural = m ? null : parseFechaCalendario(args);
+    if (!m && !natural) {
+      // La respuesta normal completa el /calendario (Nico, 1 nov).
+      preguntas.ask(chatKey(inbound), 'calendario', {
+        answer: (t) => (parseFechaCalendario(t) ? `add ${t}` : null),
+      });
       await say(
         inbound,
-        'Para apuntar algo, escribe la fecha, la hora y qué es, por ejemplo: /calendario add 2026-11-02 18:00 | Dentista.',
+        args.trim()
+          ? 'No he pillado la fecha o la hora. Dímelo de otra forma, por ejemplo «el 2 de noviembre a las 18:00 dentista».'
+          : '¿Qué apunto y cuándo? Dímelo normal, por ejemplo «mañana a las 18:00 dentista» o «el viernes a las 10 revisión del coche».',
         { quote: true },
       );
       return;
     }
-    const start = new Date((m[1] ?? '').trim());
-    const title = (m[2] ?? '').trim();
+    const start = natural ? natural.start : new Date((m?.[1] ?? '').trim());
+    const title = natural ? natural.title : (m?.[2] ?? '').trim();
     if (Number.isNaN(start.getTime()) || !title) {
-      await say(inbound, 'No entiendo esa fecha. Escríbela así: 2026-11-02 18:00 | Dentista.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No entiendo esa fecha. Dímela de otra forma, por ejemplo «el 2 de noviembre a las 18:00».',
+        { quote: true },
+      );
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
