@@ -1489,8 +1489,11 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => null);
     if (!file?.file_path) return null;
     const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    // Al rendirse, también corta la conexión: sin señal, una descarga colgada seguía
+    // abierta para siempre aunque ya hubiéramos devuelto null.
+    const abort = new AbortController();
     return withTimeout(
-      fetch(url).then(async (r) => {
+      fetch(url, { signal: abort.signal }).then(async (r) => {
         if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
         const buf = Buffer.from(await r.arrayBuffer());
         if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
@@ -1498,7 +1501,10 @@ export class TelegramChannel implements ChannelAdapter {
       }),
       60_000,
       'file download timed out',
-    ).catch(() => null);
+    ).catch(() => {
+      abort.abort();
+      return null;
+    });
   }
 
   /**
