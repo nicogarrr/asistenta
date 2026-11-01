@@ -1,3 +1,5 @@
+import { sliceSafe } from '../text.js';
+
 /** Parsing del protocolo del bot Biblioteca Secreta (espec real, capturas 11-oct-2026).
  *
  * Busqueda: texto libre -> lista "Titulo /bCODE" (codigo = /b + 4-5 alfanum (longitud variable, visto en capturas reales)).
@@ -86,5 +88,5 @@ export function sanitizeQuery(input: string): string {
   }
   const clean = stripped.replace(/\s+/g, ' ').trim();
   if (!clean) throw new Error('busqueda vacia');
-  return clean.slice(0, 120);
+  return sliceSafe(clean, 120);
 }

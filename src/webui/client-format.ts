@@ -295,7 +295,8 @@ export function resumenSesion(item: unknown, indice: number, ahora: number): Res
   else if (ambito.startsWith('panel') || ambito.startsWith('web')) partes.push('Panel');
   else if (ambito.startsWith('cli')) partes.push('Terminal');
   let extracto = texto(r.snippet) || texto(r.summary);
-  if (extracto.length > 220) extracto = `${extracto.slice(0, 217).trimEnd()}…`;
+  if (extracto.length > 220)
+    extracto = `${extracto.slice(0, 217).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}…`;
   return { titulo, meta: partes.join(' · '), extracto };
 }
 

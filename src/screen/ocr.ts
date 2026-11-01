@@ -332,7 +332,7 @@ function explain(code: string, detail: string): string {
       );
     }
     default:
-      return `el OCR de Windows ha fallado sin explicacion util: ${detail.replace(/\s+/g, ' ').slice(0, 300)}`;
+      return `el OCR de Windows ha fallado sin explicacion util: ${sliceSafe(detail.replace(/\s+/g, ' '), 300)}`;
   }
 }
 
@@ -423,7 +423,7 @@ export async function ocrImage(imagePath: string): Promise<OcrResult> {
     }
     throw new Error(explain(code, detail));
   }
-  throw new Error(`respuesta inesperada del OCR de Windows: ${line.slice(0, 200)}`);
+  throw new Error(`respuesta inesperada del OCR de Windows: ${sliceSafe(line, 200)}`);
 }
 
 /**

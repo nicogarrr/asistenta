@@ -1,3 +1,4 @@
+import { sliceSafe } from '../text.js';
 import { fetchPage, type HostResolver, isFetchableResolved } from '../tools/fetch.js';
 import type { WebBackend, WebFetchResult, WebSearchItem, WebSearchResult } from './router.js';
 
@@ -162,7 +163,7 @@ export function createTinyfishBackend(opts: {
         }
         const truncated = content.length > maxChars;
         const text = truncated
-          ? `${content.slice(0, maxChars)}\n\n[truncated at ${maxChars} chars]`
+          ? `${sliceSafe(content, maxChars)}\n\n[truncated at ${maxChars} chars]`
           : content;
         return { text, chars: content.length, status: first?.status };
       } finally {

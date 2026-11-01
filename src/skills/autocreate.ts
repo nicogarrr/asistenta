@@ -18,7 +18,7 @@
  */
 
 import { localDay } from '../datecontext.js';
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 import type { Skill, SkillDraft } from './types.js';
 
 /** How many different tool calls a task must have used before it is a recipe. */
@@ -172,11 +172,11 @@ export function extractUserRequest(transcript: string): string {
   const lines = transcript.replace(/\r\n?/g, '\n').split('\n');
   for (const raw of lines) {
     const match = USER_LINE.exec(raw.trim());
-    if (match?.[1]) return oneLine(match[1]).slice(0, 300);
+    if (match?.[1]) return sliceSafe(oneLine(match[1]), 300);
   }
   for (const raw of lines) {
     const line = oneLine(raw);
-    if (line) return line.slice(0, 300);
+    if (line) return sliceSafe(line, 300);
   }
   return '';
 }
