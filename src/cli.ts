@@ -6824,6 +6824,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
         onToolEnd: (info) => {
           setbacks.toolEnded(info);
+          // Solo el panel lo enseña («🧩 Lo hizo el especialista Tele.»); Telegram no cambia.
+          if (info.specialist) out?.specialist?.(info.specialist);
         },
       });
 
