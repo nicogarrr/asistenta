@@ -56,6 +56,13 @@ const dec = (n: number): string => (Math.round(n * 10) / 10).toString().replace(
 const diaMadrid = (d: Date): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: ZONE }).format(d);
 
+/** El día siguiente del calendario («2026-10-25» → «2026-10-26»), sin sumar 24 h. */
+const diaSiguiente = (dia: string): string => {
+  const [y, m, d] = dia.split('-').map(Number);
+  const t = new Date(Date.UTC(y ?? 0, (m ?? 1) - 1, (d ?? 1) + 1));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+};
+
 export function createAireTool(
   config: () => WeatherConfig | null,
   deps: { fetchFn?: typeof fetch; now?: () => Date; timeoutMs?: number } = {},
@@ -140,7 +147,7 @@ export function createAireTool(
         }
         const at = now();
         const hoy = diaMadrid(at);
-        const manana = diaMadrid(new Date(at.getTime() + 24 * 3600_000));
+        const manana = diaSiguiente(hoy);
         const horaAhora = `${hoy}T${new Intl.DateTimeFormat('es-ES', { timeZone: ZONE, hour: '2-digit', hour12: false }).format(at)}:00`;
         const sitio = cfg.label ? ` en ${cfg.label}` : '';
         const lines: string[] = [];
