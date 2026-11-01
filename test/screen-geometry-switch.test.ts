@@ -27,6 +27,10 @@ describe('parseCaptureGeometry', () => {
     expect(() => parseCaptureGeometry(`${g}\n${g}`)).toThrow(/ausente o ambigua/);
   });
 
+  it('una línea PA_CAPTURE con el JSON roto pide otra captura, no suelta un SyntaxError', () => {
+    expect(() => parseCaptureGeometry('PA_CAPTURE {"width":1366,')).toThrow(/ilegible/);
+  });
+
   it.each([
     ['cero', { width: 0, height: 10, nativeWidth: 10, nativeHeight: 10 }],
     ['negativo', { width: -5, height: 10, nativeWidth: 10, nativeHeight: 10 }],

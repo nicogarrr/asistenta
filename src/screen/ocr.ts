@@ -309,6 +309,18 @@ export function unb64(value: string): string {
  * "Exception from HRESULT: 0x80073D54\nat OcrEngine.RecognizeAsync\n..." and tell
  * nobody that the fix is to install a language pack.
  */
+/**
+ * El resultado del OCR llega en base64 dentro de la línea PAOCR!OK. Un resultado
+ * que no se puede leer no es un fallo de sintaxis: se explica en castellano.
+ */
+export function parseOcrPayload(payloadB64: string): OcrResult {
+  try {
+    return JSON.parse(unb64(payloadB64)) as OcrResult;
+  } catch {
+    throw new Error('el OCR de Windows ha devuelto un resultado ilegible; prueba otra vez.');
+  }
+}
+
 function explain(code: string, detail: string): string {
   switch (code) {
     case 'WINRT':
@@ -403,7 +415,7 @@ export async function ocrImage(imagePath: string): Promise<OcrResult> {
   const tag = line.slice(0, cut);
   const fields = line.slice(cut + 1).split('|');
   if (tag === 'PAOCR!OK') {
-    return JSON.parse(unb64(fields[0] ?? '')) as OcrResult;
+    return parseOcrPayload(fields[0] ?? '');
   }
   if (tag === 'PAOCR!ERR') {
     const code = fields[0] ?? 'FAILED';
