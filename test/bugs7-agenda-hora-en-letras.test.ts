@@ -48,4 +48,10 @@ describe('agenda: hora en letras en el correo', () => {
   it('«a las dos empresas» no es una hora', () => {
     expect(at('Reunión el 4 de noviembre: invitación a las dos empresas')).toBe('2026-11-04 09:00');
   });
+
+  it('«a mediodía» y «al mediodía» son las 12:00', () => {
+    expect(at('Comida el 4 de noviembre a mediodía')).toBe('2026-11-04 12:00');
+    expect(at('Comida de empresa el 4 de noviembre al mediodía')).toBe('2026-11-04 12:00');
+    expect(at('Cita el 4 de noviembre a las 2 del mediodía')).toBe('2026-11-04 14:00');
+  });
 });

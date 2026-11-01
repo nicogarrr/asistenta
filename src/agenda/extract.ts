@@ -947,7 +947,11 @@ function spokenTimes(folded: string): string {
       return `a las ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     },
   );
-  return out.replace(/\b(?:a (?:la )?)?medianoche\b/g, 'a las 24:00');
+  // «a mediodía», «al mediodía»: las 12:00 (antes la cita quedaba a las 09:00). «a las 2
+  // del mediodía» ya se ha leído arriba y aquí no se toca.
+  return out
+    .replace(/\b(?:a (?:la )?)?medianoche\b/g, 'a las 24:00')
+    .replace(/\b(?:a|al) mediodia\b/g, 'a las 12:00');
 }
 
 /**
