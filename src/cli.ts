@@ -393,6 +393,7 @@ import {
   setPace,
 } from './notice-pace.js';
 import { makeStrangerHint } from './owner-id-hint.js';
+import { evolveNowAnswer, stopWatchingWords } from './palabras-vigilancia.js';
 import {
   type PanelListenProblem,
   panelBootFacts,
@@ -4566,6 +4567,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** «deja de vigilar» (pregunta cuál) o «deja de vigilar la tele» (si una encaja). */
+  const stopWatchingByWords = async (inbound: Inbound): Promise<boolean> => {
+    const rest = stopWatchingWords(inbound.text);
+    if (rest === null) return false;
+    const list = pageWatches.list(inbound.chatId);
+    if (list.length === 0) return false;
+    if (!rest) {
+      await cmdDejarDeVigilar(inbound, '');
+      return true;
+    }
+    const w = watchFromAnswer(list, rest);
+    if (!w) return false;
+    await cmdDejarDeVigilar(inbound, w.id);
+    return true;
+  };
+
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
     const list = pageWatches.list(inbound.chatId);
@@ -4947,6 +4964,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       void runEvolveCycle(inbound.chatId);
       return;
     }
+    preguntas.ask(chatKey(inbound), 'evolucion', {
+      answer: (t) => (evolveNowAnswer(t) ? 'ahora' : null),
+    });
     await say(inbound, describeLast(paths.state), { quote: true });
   };
 
@@ -7797,6 +7817,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (await stopAndEraseByWords(inbound)) return;
           // «olvida la regla 2» tras «📝 Aprendido: …»: la borra como /olvida 2.
           if (await forgetRuleByWords(inbound)) return;
+          // «deja de vigilar (la tele)» con vigilancias en este chat: como /dejar_de_vigilar.
+          if (await stopWatchingByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);

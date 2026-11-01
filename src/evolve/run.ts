@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 import { loadConfig } from '../config.js';
 import { isGoogleEndpoint, isOpenCodeEndpoint, isOpenRouterEndpoint } from '../core/provider.js';
 import { wallClock } from '../datecontext.js';
+import { EVOLVE_HOW } from '../palabras-vigilancia.js';
 import { envSecretName, vaultGet } from '../vault.js';
-
 import { Archive, isoWeek } from './archive.js';
 import {
   BATTERY_FILE,
@@ -369,7 +369,7 @@ export function describeLast(stateDir: string): string {
     notCounting(stateDir),
     heavyThisWeek(stateDir),
     ...lines,
-    'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
+    EVOLVE_HOW,
   ].join('\n');
 }
 
