@@ -40,7 +40,12 @@ export function parseCaptureGeometry(stdout: string): CaptureGeometry {
   const line = lines.filter((value) => value.startsWith('PA_CAPTURE '));
   if (line.length !== 1)
     throw new Error('Geometría de captura ausente o ambigua; pide otra captura.');
-  const parsed = JSON.parse(line[0]?.slice('PA_CAPTURE '.length) ?? '') as CaptureGeometry;
+  let parsed: CaptureGeometry;
+  try {
+    parsed = JSON.parse(line[0]?.slice('PA_CAPTURE '.length) ?? '') as CaptureGeometry;
+  } catch {
+    throw new Error('Geometría de captura ilegible; pide otra captura.');
+  }
   const values = [parsed.width, parsed.height, parsed.nativeWidth, parsed.nativeHeight];
   if (
     values.some((n) => !Number.isSafeInteger(n) || n < 1 || n > 32768) ||

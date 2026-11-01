@@ -5,12 +5,14 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import {
+  b64,
   buildLanguagesScript,
   buildOcrScript,
   formatOcr,
   type OcrResult,
   ocrAvailable,
   ocrImage,
+  parseOcrPayload,
 } from '../src/screen/ocr.js';
 import { isWindows } from './helpers/platform.js';
 
@@ -243,6 +245,18 @@ $bmp.Dispose()
       rmSync(dir, { recursive: true, force: true });
     }
   }, 40_000);
+});
+
+describe('parseOcrPayload', () => {
+  it('lee el resultado en base64 de la línea PAOCR!OK', () => {
+    const expected = result([line('hola', 1, 2, 30, 10)]);
+    expect(parseOcrPayload(b64(JSON.stringify(expected)))).toEqual(expected);
+  });
+
+  it('un resultado corrupto se explica en castellano, no como SyntaxError', () => {
+    expect(() => parseOcrPayload('%%%no-es-base64%%%')).toThrow(/ilegible/);
+    expect(() => parseOcrPayload(b64('{"lines":['))).toThrow(/ilegible/);
+  });
 });
 
 describe('ocr failure paths', () => {
