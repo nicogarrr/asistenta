@@ -100,6 +100,13 @@ describe('EPUB: «léeme este libro» por Telegram', () => {
     expect(text).toContain('Capítulo 2');
   });
 
+  it('un href con % mal puesto no tira la lectura: manda el respaldo por nombre', () => {
+    const opfMal = OPF.replace('Text/cap1.xhtml', 'Text/cap%c3%28.xhtml');
+    const text = extractOfficeText(book({ 'OEBPS/content.opf': opfMal }), 'epub');
+    expect(text).toContain('Capítulo 1');
+    expect(text).toContain('Capítulo 2');
+  });
+
   it('un zip sin capítulos se rechaza con un motivo en castellano', () => {
     const empty = makeZip({
       mimetype: 'application/epub+zip',
