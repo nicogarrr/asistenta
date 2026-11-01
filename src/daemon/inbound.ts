@@ -5,6 +5,7 @@
  */
 
 import type { Inbound } from '../channels/types.js';
+import { sliceSafe } from '../text.js';
 
 /** Telegram entrega al menos una vez: un update repetido dentro de esta ventana se ignora. */
 export const SEEN_MESSAGE_TTL_MS = 3_600_000;
@@ -257,7 +258,7 @@ export async function resolveInboundThread<T extends ThreadLike>(
 
   // Its own conversation, named after the message that started it so the label is
   // traceable. The label shown to the user is a trimmed version of the request.
-  const label = inbound.text.trim().slice(0, 40) || 'petición';
+  const label = sliceSafe(inbound.text.trim(), 40) || 'petición';
   return deps.getOrCreateThread(chatKey, `m${inbound.messageId}`, label);
 }
 

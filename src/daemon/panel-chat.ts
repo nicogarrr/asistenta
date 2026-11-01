@@ -12,6 +12,7 @@
  * Usa la misma cola por hilo que el resto (`queueThreadTurn`), así que espera al turno
  * vivo y se descarta si el hilo se reinició (/nuevo, /borrar_chat) mientras esperaba.
  */
+import { sliceSafe } from '../text.js';
 import { queueThreadTurn } from './inbound.js';
 
 export interface PanelChatThread {
@@ -71,11 +72,13 @@ const PANEL_FILE_TYPES: Record<string, string> = {
 
 /** Nombre seguro para descargar: sin rutas ni caracteres de control, máx. 120. */
 export function panelFileName(name: string): string {
-  const base = (name.split(/[\\/]/).pop() ?? '')
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: se quitan a propósito los caracteres de control del nombre de archivo
-    .replace(/[\u0000-\u001f\u007f"<>]/g, '')
-    .trim()
-    .slice(0, 120);
+  const base = sliceSafe(
+    (name.split(/[\\/]/).pop() ?? '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: se quitan a propósito los caracteres de control del nombre de archivo
+      .replace(/[\u0000-\u001f\u007f"<>]/g, '')
+      .trim(),
+    120,
+  );
   return base && base !== '.' && base !== '..' ? base : 'archivo';
 }
 

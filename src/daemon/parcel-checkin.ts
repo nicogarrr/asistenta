@@ -5,9 +5,11 @@
  * de silencio. Lee los repartos que ya se guardan de los correos (src/mail/deliveries.ts);
  * no cambia cómo se leen.
  */
+
 import type { DatabaseSync } from 'node:sqlite';
 import { wallClock, zonedTime } from '../datecontext.js';
 import { activeDeliveries, type Delivery, markDeliveryCollected } from '../mail/deliveries.js';
+import { sliceSafe } from '../text.js';
 
 /** «En reparto» es «llega hoy»: pasada esta hora local sin entregar, se pregunta. */
 export const PARCEL_CHECKIN_HOUR = 21;
@@ -46,7 +48,7 @@ export function pickParcelCheckIn(
 function parcelName(d: Delivery): string {
   if (d.carrier !== 'tienda') return d.carrier;
   const t = d.title.replace(/\s+/g, ' ').trim();
-  return `«${t.length > 60 ? `${t.slice(0, 59).trimEnd()}…` : t}»`;
+  return `«${t.length > 60 ? `${sliceSafe(t, 59).trimEnd()}…` : t}»`;
 }
 
 export function parcelCheckInLine(d: Delivery): string {

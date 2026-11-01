@@ -1,3 +1,5 @@
+import { sliceSafe } from '../text.js';
+
 /**
  * Flatten a transcript into text for the /learn summariser.
  *
@@ -17,10 +19,10 @@ export function summarizeTranscript(messages: readonly unknown[]): string {
     if (!m || typeof m !== 'object') continue;
     if (m.role === 'user') {
       const text = textOf(m.content);
-      if (text) lines.push(`usuario: ${text.slice(0, 300)}`);
+      if (text) lines.push(`usuario: ${sliceSafe(text, 300)}`);
     } else if (m.role === 'assistant') {
       const text = textOf(m.content);
-      if (text) lines.push(`agente: ${text.slice(0, 300)}`);
+      if (text) lines.push(`agente: ${sliceSafe(text, 300)}`);
     } else if (m.role === 'toolResult' || m.toolName) {
       const name = (m as { toolName?: string }).toolName;
       if (name) lines.push(`herramienta: ${name}`);

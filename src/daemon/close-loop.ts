@@ -8,7 +8,9 @@
  * después de la hora, uno cada vez, fuera de las horas de silencio, y no insiste.
  * Si el dueño contesta «ya está» / «hecho» poco después, el pendiente se cierra.
  */
+
 import type { Followup } from '../alerts/followups.js';
+import { sliceSafe } from '../text.js';
 
 /** Margen tras la hora: preguntar justo a la hora suena a reloj, no a persona. */
 export const CHECKIN_GRACE_MS = 2 * 3_600_000;
@@ -41,7 +43,7 @@ function shortSubject(subject: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[.!?¡¿]+$/u, '');
-  return clean.length > 80 ? `${clean.slice(0, 79).trimEnd()}…` : clean;
+  return clean.length > 80 ? `${sliceSafe(clean, 79).trimEnd()}…` : clean;
 }
 
 const OPENERS = ['¿Qué tal fue lo de', '¿Cómo salió lo de', 'Oye, ¿qué tal lo de'];
