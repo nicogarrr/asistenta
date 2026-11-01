@@ -128,7 +128,8 @@ function switchWord(args: string): string {
   return foldAccents(args.trim()).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
 }
 
-export const COMPUTER_SWITCH_USAGE = 'Uso: /ordenador ⬦ /ordenador on ⬦ /ordenador off';
+export const COMPUTER_SWITCH_USAGE =
+  'Con /ordenador te digo si puedo usar tu PC; /ordenador on me deja y /ordenador off me lo quita.';
 
 export function computerSwitchCommand(args: string, deps: ComputerSwitchDeps): string {
   if (!deps.isOwner) {

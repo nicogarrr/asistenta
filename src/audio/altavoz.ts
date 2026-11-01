@@ -52,8 +52,7 @@ export function stopReplyText(threads: number, notes: number): string {
   return parts.length ? `Detenido. ${parts.join('; ')}.` : 'No había nada en curso.';
 }
 
-export const ALTAVOZ_USAGE =
-  'Uso: /altavoz pc · /altavoz tele · /altavoz off · /altavoz (ver estado)';
+export const ALTAVOZ_USAGE = '¿Por dónde te hablo, por el PC, por la tele o por ninguno?';
 
 export class AltavozStore {
   #file: string;

@@ -238,6 +238,6 @@ export function formatServicesList(all: AdoptedService[]): string {
     'Servicios adoptados:',
     ...lines,
     '',
-    'Detalle y verificación de cada uno: "estado de <nombre>" o mira su ficha.',
+    'Para ver uno en detalle, pídemelo por su nombre, por ejemplo «estado de ollama», o mira su ficha.',
   ].join('\n');
 }

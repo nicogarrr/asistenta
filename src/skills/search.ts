@@ -134,6 +134,6 @@ export function formatSkillSearch(query: string, hits: SkillIndexEntry[]): strin
     ...hits.map(
       (h, n) => `${n + 1}. ${h.name}${h.description ? ` — ${h.description}` : ''}\n   ${h.url}`,
     ),
-    'Para instalar una: /skills instalar <url> (se revisa antes de guardarla).',
+    'Para instalar una, pásame su enlace con /skills instalar (la reviso antes de guardarla).',
   ].join('\n');
 }

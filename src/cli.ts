@@ -3258,13 +3258,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (arg === 'on' || arg === 'off') {
       setOjoEnabled(memoryDb, arg === 'on');
     } else if (arg && arg !== 'estado') {
-      await say(
-        inbound,
-        'Uso: /ojo on, /ojo off, /ojo (estado), /ojo descargas on|off o /ojo pantalla on|off.',
-        {
-          quote: true,
-        },
-      );
+      await say(inbound, 'No te he pillado. ¿Lo enciendo, lo apago o te digo cómo está?', {
+        quote: true,
+      });
       return;
     }
     const quiet = ownerQuiet();
@@ -3307,11 +3303,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^#?(\d{1,9})$/.exec(args.trim());
     if (!m) {
-      await say(
-        inbound,
-        'Uso: /ignora <número del aviso>, el que sale entre corchetes [#n]. /ignorados lista las reglas.',
-        { quote: true },
-      );
+      await say(inbound, '¿Qué aviso descarto? Dime el número que sale entre corchetes.', {
+        quote: true,
+      });
       return;
     }
     const res = dismissNotice(memoryDb, Number(m[1]), Date.now());
@@ -3356,9 +3350,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const want = parsePace(args);
     if (want === null) {
-      await say(inbound, 'Uso: /avisos (estado), /avisos menos, /avisos minimo o /avisos normal.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres menos avisos, solo los importantes o volver a lo normal?',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (want !== 'estado') setPace(memoryDb, want);
@@ -3375,9 +3373,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^(activar|borrar)\s+R?(\d{1,9})$/i.exec(args.trim());
     if (args.trim() && !m) {
-      await say(inbound, 'Uso: /ignorados, /ignorados activar <id> o /ignorados borrar <id>.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres ver las reglas, borrar una o volver a activarla? Dime cuál por su número.',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (m) {
@@ -3621,10 +3623,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!ended.ok) {
         const text =
           ended.reason === 'none'
-            ? 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.'
+            ? 'No estaba grabando ninguna rutina. Si quieres enseñarme una, dime cómo la llamo.'
             : ended.reason === 'other-thread'
-              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`
-              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo con /learn <nombre>.';
+              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí, por ejemplo /learn pedir-cita.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo, por ejemplo /learn pedir-cita.';
         await say(inbound, text, { quote: true });
         return;
       }
@@ -3708,7 +3710,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     }
     if (!name) {
-      await say(inbound, 'Uso: /learn <nombre> para empezar, /learn end para cerrar.', {
+      await say(inbound, '¿Cómo llamo a la rutina? Dímelo y empiezo a grabar.', {
         quote: true,
       });
       return;
@@ -3724,7 +3726,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdRoutine = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim().split(/\s+/)[0] ?? '';
     if (!name) {
-      await say(inbound, 'Uso: /routine <nombre>. Mira /routines para la lista.', { quote: true });
+      await say(inbound, '¿Qué rutina repito? Dime su nombre.', { quote: true });
       return;
     }
     const routine =
@@ -3782,7 +3784,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!parsed.ok) {
         await say(
           inbound,
-          `${parsed.error} Uso: /routine ${routine.name} ${routine.params
+          `${parsed.error} Pásame cada dato así: /routine ${routine.name} ${routine.params
             .map((p) => `${p.name}=...`)
             .join(' ')}.`,
           { quote: true },
@@ -3824,7 +3826,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const chatKey_ = chatKey(inbound);
     const list = store.listRoutines().filter((r) => inChatScope(r.scope, chatKey_));
     if (!list.length) {
-      await say(inbound, 'Todavía no hay rutinas. Graba una con /learn <nombre>.', {
+      await say(inbound, 'Todavía no hay rutinas. Si quieres enseñarme una, dime cómo la llamo.', {
         quote: true,
       });
       return;
@@ -3866,7 +3868,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
       const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
       if (!victim) {
-        await say(inbound, 'Uso: /disparador del <número de /disparadores>.', { quote: true });
+        await say(inbound, '¿Cuál quito? Dime su número.', { quote: true });
         return;
       }
       store.deleteTrigger(victim.id);
@@ -5566,7 +5568,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();
     if (!url) {
-      await say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+      await say(inbound, '¿Cuál instalo? Pásame el enlace a su SKILL.md.', { quote: true });
       return;
     }
     try {
@@ -7121,7 +7123,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
         await say(
           inbound,
-          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|altavoces|auriculares (vale desde la próxima sesión).`,
+          `Corte al interrumpirme: ${bargeLevel}. Para cambiarlo: /conversacion corte auriculares, /conversacion corte altavoces o /conversacion corte off (vale desde la próxima sesión).`,
           { quote: true },
         );
         return;
@@ -7146,7 +7148,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (want !== 'on' && want !== 'off') {
-      await say(inbound, 'Uso: /conversacion on|off|estado|corte', { quote: true });
+      await say(
+        inbound,
+        'No te he pillado. ¿Activo la conversación por voz, la apago o te digo cómo está?',
+        { quote: true },
+      );
       return;
     }
     if (want === 'off') {
@@ -7365,7 +7371,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
         return say(
           inbound,
-          'Uso: /skills buscar <texto> · /skills catalogo · /skills instalar <url de SKILL.md>',
+          'No te he pillado. Puedo buscar habilidades, enseñarte el catálogo o instalar una si me pasas el enlace.',
           { quote: true },
         );
       },
@@ -8137,7 +8143,7 @@ export async function skillsSearchReply(
   fetchImpl?: typeof fetch,
 ): Promise<string> {
   const q = query.trim();
-  if (!q) return 'Uso: /skills buscar <texto>';
+  if (!q) return '¿Qué habilidad busco?';
   if (!indexUrl?.trim()) {
     return 'No hay índice de skills configurado. Pon PA_SKILLS_INDEX_URL=https://… (un JSON con [{ "name", "url", "description" }]) en .env.';
   }
