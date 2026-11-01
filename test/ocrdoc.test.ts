@@ -378,8 +378,11 @@ describe('runOcrJob', () => {
     expect(pdf.ok).toBe(true);
     expect(pdf.message).toContain('7 caracteres');
     expect(pdf.message).toContain('incompleto');
-    expect(pdf.message).toContain('/ocr md');
-    expect(pdf.files.map((f) => f.filename)).toEqual(['s_OCR.pdf']);
+    // Nico (1 nov): sin mandar a «/ocr md»; el texto completo va ya en el archivo de texto.
+    expect(pdf.message).toContain('te lo mando también, en el archivo de texto');
+    expect(pdf.message).not.toMatch(/\/ocr/);
+    expect(pdf.files.map((f) => f.filename)).toEqual(['s_OCR.pdf', 's.md']);
+    expect(pdf.files[1]?.bytes.toString()).toContain('Привет');
     const both = await runOcrJob(input, { name: 's.pdf' }, 'todo', sync({ ocr }));
     expect(both.message).toContain('está en el Markdown');
     expect(both.files.map((f) => f.filename)).toEqual(['s_OCR.pdf', 's.md']);

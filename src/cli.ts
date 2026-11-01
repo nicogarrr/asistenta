@@ -326,6 +326,7 @@ import {
   ALTAVOZ_USAGE,
   AltavozStore,
   altavozStatusText,
+  altavozWords,
   createAltavozPlayer,
   parseAltavozArgs,
   stopReplyText,
@@ -393,7 +394,7 @@ import {
   setPace,
 } from './notice-pace.js';
 import { makeStrangerHint } from './owner-id-hint.js';
-import { evolveNowAnswer, stopWatchingWords } from './palabras-vigilancia.js';
+import { evolveNowAnswer, stopWatchingWords, unknownCommandText } from './palabras-vigilancia.js';
 import {
   type PanelListenProblem,
   panelBootFacts,
@@ -7809,7 +7810,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             runCommand: (m, command) =>
               dispatchCommand(commandTable, m, command, async (name) => {
                 // Unknown slash command: say so instead of silently running it as a task.
-                await say(m, `No conozco el comando /${name}. /help para ver la lista.`, {
+                await say(m, unknownCommandText(name), {
                   quote: true,
                 });
               }),
@@ -7832,6 +7833,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (await forgetRuleByWords(inbound)) return;
           // «deja de vigilar (la tele)» con vigilancias en este chat: como /dejar_de_vigilar.
           if (await stopWatchingByWords(inbound)) return;
+          // «pon el modo altavoz (en la tele)» / «quita el modo altavoz»: como /altavoz.
+          const altavozMode = altavozWords(inbound.text);
+          if (altavozMode) {
+            await cmdAltavoz(inbound, altavozMode);
+            return;
+          }
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);

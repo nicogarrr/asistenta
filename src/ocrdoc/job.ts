@@ -124,7 +124,10 @@ export async function runOcrJob(
     if (r.pdf && (mode === 'pdf' || mode === 'todo')) {
       files.push({ bytes: Buffer.from(r.pdf), filename: outputName(name, '_OCR', 'pdf') });
     }
-    if (mode === 'md' || mode === 'todo') {
+    // Con caracteres que la capa del PDF no admite, el texto completo va también aparte:
+    // antes se mandaba a pedirlo otra vez con «/ocr md».
+    const fullTextToo = mode === 'pdf' && r.droppedChars > 0;
+    if (mode === 'md' || mode === 'todo' || fullTextToo) {
       files.push({ bytes: Buffer.from(r.markdown, 'utf8'), filename: outputName(name, '', 'md') });
     }
     await progress?.finish();
@@ -149,7 +152,7 @@ export async function runOcrJob(
       lines.push(
         `Aviso: ${r.droppedChars} ${r.droppedChars > 1 ? 'caracteres' : 'carácter'} (emoji o alfabetos no latinos) no se pueden meter en la capa de búsqueda del PDF: buscar en el PDF encontrará el texto incompleto. ${
           mode === 'pdf'
-            ? 'El texto reconocido completo sale con «/ocr md» o «/ocr todo».'
+            ? 'El texto reconocido completo te lo mando también, en el archivo de texto.'
             : 'El texto reconocido completo está en el Markdown.'
         }`,
       );
