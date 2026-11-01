@@ -75,15 +75,13 @@ describe('habilidades generales sembradas', () => {
     expect(all).toContain('nunca pagar');
   });
 
-  // Hasta donde se puede probar con fakes: falta saber en el daemon qué está
-  // configurado (correo, calendario, Home Assistant, transcripción) para pasarlo
-  // al auto-chequeo; hoy, sin esa conexión, dice «sin comprobar».
-  it.todo(
-    'el daemon pasa al auto-chequeo lo que hay configurado (correo, calendario, casa, notas de voz)',
-  );
-  it.todo(
-    'casa: herramienta de Home Assistant local (solo si PA tiene su URL y token en el vault)',
-  );
+  // Ya hechos (eran it.todo):
+  // - El daemon pasa al auto-chequeo lo que hay configurado: detectSkillEnv
+  //   (src/skills/env.ts, probado en skills-entorno.test.ts) conectado como
+  //   checkEnv al crear la herramienta de habilidades (src/cli.ts).
+  // - Casa: la herramienta de Home Assistant existe (src/tools/casa.ts, probada
+  //   en casa-home-assistant.test.ts); solo se carga con PA_HA_URL y el token
+  //   homeassistant:token en el vault.
   it.todo(
     'facturas/viajes: recordatorio creado tras el «sí» del dueño, con correo falso de extremo a extremo',
   );
