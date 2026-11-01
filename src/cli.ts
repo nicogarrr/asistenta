@@ -435,6 +435,7 @@ import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
 import { startTelegramEstado } from './telegram-estado.js';
+import { backToMainAnswer, topicReadyText } from './temas.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
@@ -3640,11 +3641,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     activeTopic.set(chatKey_, name);
     const thread = await getOrCreateThread(chatKey_, name, name);
     messageThread.set(`${chatKey_}:${inbound.messageId}`, thread.key);
-    await say(
-      inbound,
-      `Conversación "${name}" lista. Lo que escribas va aquí; /topic main vuelve a la principal.`,
-      { quote: true },
-    );
+    await say(inbound, topicReadyText(name), { quote: true });
+  };
+
+  /** «vuelve a la principal» con otra conversación activa: lo mismo que /topic main. */
+  const backToMainByWords = async (inbound: Inbound): Promise<boolean> => {
+    const current = activeTopic.get(chatKey(inbound));
+    if (!current || current === 'main' || !backToMainAnswer(inbound.text)) return false;
+    await cmdTopic(inbound, 'main');
+    return true;
   };
 
   const cmdTopics = async (inbound: Inbound): Promise<void> => {
@@ -7709,6 +7714,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (await stopLiveByWords(inbound)) return;
           // «descarta el 3»: descarta el aviso [#3] como /ignora 3.
           if (await ignoraByWords(inbound)) return;
+          // «vuelve a la principal» con otra conversación activa: como /topic main.
+          if (await backToMainByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);
