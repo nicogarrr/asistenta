@@ -8,6 +8,7 @@ export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
   para_recoger: 'listo para recoger',
   entregado: 'entregado',
   incidencia: 'incidencia',
+  retrasado: 'con retraso',
 };
 
 function who(d: Delivery): string {
@@ -41,6 +42,8 @@ export function formatDeliveryAlert(d: Delivery, now = Date.now(), timeZone?: st
   if (d.status === 'para_recoger')
     return `📦 Tu paquete de ${who(d)} está listo para recoger: «${d.title}».`;
   if (d.status === 'entregado') return `📦 Tu paquete de ${who(d)} ya está entregado.`;
+  if (d.status === 'retrasado')
+    return `📦 Tu paquete de ${who(d)} va con retraso: la nueva fecha la dice el correo de la transportista.`;
   return `📦 Hay una incidencia con tu paquete de ${who(d)}: «${d.title}». Mira el correo de la transportista.`;
 }
 
@@ -76,6 +79,9 @@ export function briefingDeliveries(
     .map((d) => ({
       text: `${who(d)}: ${DELIVERY_STATUS_LABEL[d.status]}`,
       notable:
-        d.status === 'en_reparto' || d.status === 'para_recoger' || d.status === 'incidencia',
+        d.status === 'en_reparto' ||
+        d.status === 'para_recoger' ||
+        d.status === 'incidencia' ||
+        d.status === 'retrasado',
     }));
 }
