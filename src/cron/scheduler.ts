@@ -138,6 +138,21 @@ function withPartOfDay(hour: number, part: string): number {
   return hour;
 }
 
+const MONTH_NAMES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+
 /**
  * Turn an ordinary Spanish sentence into a schedule.
  *
@@ -220,6 +235,39 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
 
+  // «cada 25 de diciembre», «todos los años el 6 de enero»: una vez al año. Antes una
+  // fecha del año (o «cada año», «cada trimestre», «una vez al mes») caía en «todos
+  // los días» a esa hora; ahora la fecha se respeta y lo que un cron no dice se pregunta.
+  const daily = /\b(?:cada dia|todos los dias|diariamente)\b(?! \d)/.test(normalised);
+  const ofYear = new RegExp(String.raw`\b(\d{1,2}) de (${MONTH_NAMES.join('|')})\b`).exec(
+    normalised,
+  );
+  const yearly =
+    /\b(?:todos los anos|cada ano|anualmente)\b/.test(normalised) ||
+    (ofYear !== null && normalised.slice(0, ofYear.index).endsWith('cada '));
+  if (ofYear && yearly && !daily) {
+    const day = Number(ofYear[1]);
+    const month = MONTH_NAMES.indexOf(ofYear[2] ?? '') + 1;
+    // El año 2000 fue bisiesto: así «cada 29 de febrero» vale y «cada 31 de febrero» no.
+    const real = new Date(Date.UTC(2000, month - 1, day)).getUTCDate() === day;
+    if (!real) return null;
+    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} ${month} *`, prompt: text.trim() };
+  }
+  if (
+    /\b(?:cada|una vez al|una vez cada) (?:ano|quincena|trimestre|semestre)\b|\buna vez al mes\b|\b(?:quincenal|trimestral|semestral)mente\b/.test(
+      normalised,
+    )
+  ) {
+    return null;
+  }
+  // «cada día 5 a las 9»: el día 5 de cada mes, no todos los días.
+  const dayEachMonth = /\bcada dia (\d{1,2})\b(?! (?:veces|minutos?|min|horas?))/.exec(normalised);
+  if (dayEachMonth) {
+    const day = Number(dayEachMonth[1]);
+    if (day < 1 || day > 31) return null;
+    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} * *`, prompt: text.trim() };
+  }
+
   // «cada mes el día 5», «el día 1 de cada mes», «todos los meses el 15».
   if (/\b(?:cada mes|todos los meses|de cada mes|mensualmente)\b/.test(normalised)) {
     const rest = normalised.replace(/\ba las? \S+/, '');
@@ -279,6 +327,8 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     return { schedule: `${minute} ${hour} * * 1`, prompt: text.trim() };
   }
 
+  // «el 6 de enero a las 9» sin «cada año» es un día suelto, no todos los días.
+  if (ofYear && !daily) return null;
   if (hasTime) return { schedule: `${minute} ${hour} * * *`, prompt: text.trim() };
   return null;
 }
