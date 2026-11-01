@@ -245,10 +245,21 @@ export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<typeof Pa
         const horizon = addDays(today, 365);
         const coming = list.filter((f) => f.date >= today && f.date <= horizon);
         if (args.puentes) {
-          const puentes = coming.filter((f) => puenteDe(f.date, isOff)).slice(0, 8);
+          // Dos festivos del mismo finde largo (jueves y viernes santo) van en una sola línea.
+          const grupos: { fs: Festivo[]; p: string }[] = [];
+          for (const f of coming) {
+            const p = puenteDe(f.date, isOff);
+            if (!p) continue;
+            const last = grupos.at(-1);
+            if (last && last.p === p) last.fs.push(f);
+            else grupos.push({ fs: [f], p });
+          }
+          const puentes = grupos.slice(0, 8);
           if (puentes.length === 0)
             return `No veo puentes en los próximos 12 meses${place ? ` en ${place}` : ''}.${unknownNote}`;
-          return `Puentes y findes largos${place ? ` en ${place}` : ''}:\n${puentes.map(line).join('\n')}${unknownNote}`;
+          const grupo = (g: { fs: Festivo[]; p: string }): string =>
+            `• ${g.fs.map((f) => `${fechaLarga(f.date)}: ${label(f)}`).join('; ')} (${g.p})`;
+          return `Puentes y findes largos${place ? ` en ${place}` : ''}:\n${puentes.map(grupo).join('\n')}${unknownNote}`;
         }
         if (coming.length === 0) return `No tengo festivos en los próximos meses.${unknownNote}`;
         return `Próximos festivos${place ? ` en ${place}` : ''}:\n${coming.slice(0, 5).map(line).join('\n')}${unknownNote}`;
