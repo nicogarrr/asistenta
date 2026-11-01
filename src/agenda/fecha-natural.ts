@@ -154,7 +154,10 @@ export function parseFechaCalendario(
   let h = Number(m[12] ?? m[14]);
   const mi = Number(m[13] ?? m[15] ?? 0);
   const part = m[16];
-  if ((part === 'tarde' || part === 'noche') && h < 12) h += 12;
+  // «a la una de la noche» (hasta las 4) es de madrugada, en la noche de ese día, como lo
+  // lee la agenda del correo; antes quedaba a las 13:00.
+  if (part === 'noche' && h >= 1 && h <= 4) [y, mo, d] = addDays(y, mo, d, 1);
+  else if ((part === 'tarde' || part === 'noche') && h < 12) h += 12;
   // «a las 12 de la noche» es la medianoche al acabar ese día y «a las 12 de la
   // madrugada» las 00:00 de ese día, como lo lee la agenda del correo; antes las dos
   // quedaban a mediodía.
