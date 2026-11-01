@@ -153,6 +153,31 @@ const MONTH_NAMES = [
   'diciembre',
 ];
 
+/** Una hora dicha: «9», «8:30», «ocho y media», «9 menos cuarto», «7 de la tarde». */
+const CLOCK = `(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`;
+
+/** Hora y minuto de una coincidencia de CLOCK, en 24 h; null si no es una hora real. */
+function clockOf(m: RegExpExecArray): { hour: number; minute: number } | null {
+  const said = m[1] ?? '0';
+  let hour = /^\d+$/.test(said) ? Number(said) : (SPOKEN_HOUR_VALUE[said] ?? 0);
+  let minute = Number(m[2] ?? 0);
+  // «a las 8 y media», «a las ocho y diez», «a las 9 menos veinte»: before, the
+  // minutes said in words were dropped and the routine fired on the hour.
+  // «a las 8 y 15», «a las 9 menos 10» and «y treinta y cinco» too (gaps8).
+  if (m[3]) minute = minuteSaid(m[3]);
+  else if (m[4]) {
+    const before = minuteSaid(m[4]);
+    if (!(before >= 1 && before <= 30)) return null;
+    hour = hour === 0 ? 23 : hour - 1;
+    minute = 60 - before;
+  }
+  // The part of the day said right next to the clock is the one that counts:
+  // «a las 12 de la noche» is midnight and «a la una de la noche» is 01:00, not
+  // noon and 13:00; «a las 8 de la mañana … esta noche» stays at 8.
+  if (m[6]) hour = withPartOfDay(hour, m[6]);
+  return { hour, minute };
+}
+
 /**
  * Turn an ordinary Spanish sentence into a schedule.
  *
@@ -168,31 +193,45 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   let minute = 0;
   let hasTime = false;
 
-  const timeMatch = new RegExp(
-    `\\ba las?\\s+(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`,
-  ).exec(normalised);
+  const timeMatch = new RegExp(`\\ba las?\\s+${CLOCK}`).exec(normalised);
+  /** «a las 9 y a las 21», «a las 8, 14 y 20»: más tomas del mismo día. */
+  const extraHours: number[] = [];
   if (timeMatch) {
-    const said = timeMatch[1] ?? '0';
-    hour = /^\d+$/.test(said) ? Number(said) : (SPOKEN_HOUR_VALUE[said] ?? 0);
-    minute = Number(timeMatch[2] ?? 0);
-    // «a las 8 y media», «a las ocho y diez», «a las 9 menos veinte»: before, the
-    // minutes said in words were dropped and the routine fired on the hour.
-    // «a las 8 y 15», «a las 9 menos 10» and «y treinta y cinco» too (gaps8).
-    if (timeMatch[3]) minute = minuteSaid(timeMatch[3]);
-    else if (timeMatch[4]) {
-      const before = minuteSaid(timeMatch[4]);
-      if (!(before >= 1 && before <= 30)) return null;
-      hour = hour === 0 ? 23 : hour - 1;
-      minute = 60 - before;
-    }
+    const first = clockOf(timeMatch);
+    if (!first) return null;
+    hour = first.hour;
+    minute = first.minute;
     hasTime = true;
+    // Antes solo se leía la primera hora: «a las 9 y a las 21 pastilla» quedaba en
+    // «0 9 * * *» y la toma de la noche se perdía sin avisar.
+    let rest = normalised.slice(timeMatch.index + timeMatch[0].length);
+    let list = false;
+    const take = (m: RegExpExecArray): boolean => {
+      const clock = clockOf(m);
+      // Un cron solo pone varias horas con el mismo minuto; si no, se pregunta.
+      if (!clock || clock.minute !== minute) return false;
+      extraHours.push(clock.hour);
+      rest = rest.slice(m[0].length);
+      return true;
+    };
+    for (;;) {
+      const named = new RegExp(`^(?:\\s*,\\s*|\\s*\\by\\s+)(?:a\\s+)?las?\\s+${CLOCK}`).exec(rest);
+      // «, 14» sin «las» solo dentro de una lista que sigue («, 14 y 20»): «a las 8, 20
+      // minutos de paseo» no es otra hora.
+      const bare = named ? null : new RegExp(`^\\s*,\\s*${CLOCK}(?=\\s*,|\\s*\\by\\s)`).exec(rest);
+      const m = named ?? bare;
+      if (!m) break;
+      if (!take(m)) return null;
+      if (bare) list = true;
+    }
+    if (list) {
+      const last = new RegExp(
+        `^\\s*\\by\\s+${CLOCK}(?!\\s*(?:min|minutos?|veces|dias|semanas)\\b)`,
+      ).exec(rest);
+      if (last && !take(last)) return null;
+    }
     const part = timeMatch[6];
-    if (part) {
-      // The part of the day said right next to the clock is the one that counts:
-      // «a las 12 de la noche» is midnight and «a la una de la noche» is 01:00, not
-      // noon and 13:00; «a las 8 de la mañana … esta noche» stays at 8.
-      hour = withPartOfDay(hour, part);
-    } else if (/(tarde|noche)/.test(normalised) && hour < 12) {
+    if (!part && extraHours.length === 0 && /(tarde|noche)/.test(normalised) && hour < 12) {
       // "a las 6 … por la tarde" means six in the evening to a person, and a scheduler
       // that fires at 6 a.m. instead is the kind of bug that makes people stop using it.
       // Without a part of day next to the clock, the modifier counts anywhere.
@@ -229,6 +268,9 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   }
 
   if (hour > 23 || !(minute >= 0 && minute <= 59)) return null;
+  if (extraHours.some((h) => h > 23)) return null;
+  // «9,21»: varias tomas al día con el mismo minuto.
+  const hours = [...new Set([hour, ...extraHours])].sort((x, y) => x - y).join(',');
 
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
@@ -251,7 +293,7 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     // El año 2000 fue bisiesto: así «cada 29 de febrero» vale y «cada 31 de febrero» no.
     const real = new Date(Date.UTC(2000, month - 1, day)).getUTCDate() === day;
     if (!real) return null;
-    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} ${month} *`, prompt: text.trim() };
+    return { schedule: `${minute} ${hasTime ? hours : 8} ${day} ${month} *`, prompt: text.trim() };
   }
   if (
     /\b(?:cada|una vez al|una vez cada) (?:ano|quincena|trimestre|semestre)\b|\buna vez al mes\b|\b(?:quincenal|trimestral|semestral)mente\b/.test(
@@ -265,7 +307,7 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   if (dayEachMonth) {
     const day = Number(dayEachMonth[1]);
     if (day < 1 || day > 31) return null;
-    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} * *`, prompt: text.trim() };
+    return { schedule: `${minute} ${hasTime ? hours : 8} ${day} * *`, prompt: text.trim() };
   }
 
   // «cada mes el día 5», «el día 1 de cada mes», «todos los meses el 15».
@@ -277,7 +319,7 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       (/\bel primer dia\b/.test(rest) ? '1' : undefined);
     const day = said === undefined ? Number.NaN : said === 'primero' ? 1 : Number(said);
     if (!Number.isInteger(day) || day < 1 || day > 31) return null;
-    return { schedule: `${minute} ${hasTime ? hour : 8} ${day} * *`, prompt: text.trim() };
+    return { schedule: `${minute} ${hasTime ? hours : 8} ${day} * *`, prompt: text.trim() };
   }
 
   // Intervals beat fixed times: "cada 5 minutos" is a schedule on its own.
@@ -318,18 +360,18 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   const dow = daysOfWeek(normalised);
   if (dow !== null) {
     return {
-      schedule: `${minute} ${hasTime ? hour : 8} * * ${dow}`,
+      schedule: `${minute} ${hasTime ? hours : 8} * * ${dow}`,
       prompt: text.trim(),
     };
   }
 
   if (/cada semana|semanalmente/.test(normalised) && hasTime) {
-    return { schedule: `${minute} ${hour} * * 1`, prompt: text.trim() };
+    return { schedule: `${minute} ${hours} * * 1`, prompt: text.trim() };
   }
 
   // «el 6 de enero a las 9» sin «cada año» es un día suelto, no todos los días.
   if (ofYear && !daily) return null;
-  if (hasTime) return { schedule: `${minute} ${hour} * * *`, prompt: text.trim() };
+  if (hasTime) return { schedule: `${minute} ${hours} * * *`, prompt: text.trim() };
   return null;
 }
 
