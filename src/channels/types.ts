@@ -42,6 +42,8 @@ export interface Inbound {
   audioFileId?: string;
   audioMimeType?: string;
   audioDurationSeconds?: number;
+  /** Tamaño del audio que declara Telegram, en bytes (si lo da). */
+  audioSizeBytes?: number;
   /**
    * A forwarded document (PDF, text file, ...), also fetched lazily: the bytes
    * feed the document memory, and downloading on arrival would reorder
@@ -50,6 +52,8 @@ export interface Inbound {
   documentFileId?: string;
   documentMimeType?: string;
   documentName?: string;
+  /** Tamaño del documento que declara Telegram, en bytes (si lo da). */
+  documentSizeBytes?: number;
   /** Set by the adapter after its own auth check. */
   authorised: boolean;
   replyToMessageId?: string;
@@ -57,6 +61,8 @@ export interface Inbound {
   isGroup?: boolean;
   messageId: string;
   receivedAt: string;
+  /** Cuándo se envió el mensaje según el canal (Telegram: msg.date). Ausente = en vivo. */
+  sentAt?: string;
 }
 
 /**
@@ -157,6 +163,17 @@ export interface ChannelHandlers {
     userId: string;
     data: string;
   }): Promise<string>;
+  /**
+   * Botón de un área de /funciones (callback `fn:<área>`, ver src/funciones.ts).
+   * Devuelve el texto del área y sus botones; el adaptador edita el mensaje.
+   * Va por su propio camino: nunca resuelve ni consume una aprobación.
+   */
+  onFuncionesButton?(press: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    data: string;
+  }): Promise<{ text: string; buttons: Array<{ label: string; action: string }> }>;
   log(
     level: 'debug' | 'info' | 'warn' | 'error',
     msg: string,
@@ -183,4 +200,25 @@ export function chatKey(
   const parts = [inbound.channel, inbound.account, inbound.chatId];
   if (inbound.threadId) parts.push(inbound.threadId);
   return parts.join(':');
+}
+
+/** The pieces of a {@link chatKey}: `channel:account:chatId[:threadId]`. Missing pieces are undefined. */
+export function parseChatKey(key: string): {
+  channel: string | undefined;
+  account: string | undefined;
+  chatId: string | undefined;
+  threadId: string | undefined;
+} {
+  const [channel, account, chatId, threadId] = key.split(':');
+  return { channel, account, chatId, threadId };
+}
+
+/** The chat id inside a {@link chatKey} (for Telegram, the chat to send to); '' when missing. */
+export function chatIdOf(key: string): string {
+  return parseChatKey(key).chatId ?? '';
+}
+
+/** The chat id as a number (Telegram's send API); NaN when missing, as `Number(undefined)`. */
+export function chatNumberOf(key: string): number {
+  return Number(parseChatKey(key).chatId);
 }

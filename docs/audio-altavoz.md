@@ -12,6 +12,8 @@ El PC sube el volumen del sistema al pedido (100 por defecto) y lo restaura al a
 ## En la tele (apagado por defecto)
 Actívalo con `PA_AUDIO_TELE=1` en `.env`. Requisitos: tele emparejada (`pa tv setup <ip>`),
 PC y tele en la misma subred, y el firewall de Windows permitiendo conexiones entrantes de
+Si la tele pide emparejar otra vez durante un audio y lo aceptas, la client-key nueva se
+guarda en el vault (`tv:clientKey`) igual que con `/tv`, así que el aviso no vuelve a salir.
 la red privada a Node (Windows lo pregunta la primera vez).
 
 Cómo funciona: el audio se convierte a MP3, se sirve desde un servidor efímero que solo
@@ -32,11 +34,19 @@ Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el c
 activo. Las notas suenan en orden, una detrás de otra; si se acumulan más de 5, las nuevas no se
 sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se duplica.
 
+`/stop` corta la nota que suena en el PC y vacía la cola de ese chat. En modo tele, si una nota
+tuya llegó a la tele hace menos de 2 minutos, `/stop` también la para allí; pasado ese tiempo la
+tele no se toca (puede que ya estés viendo otra cosa).
+
 ### La respuesta en voz alta (`PA_ALTAVOZ_VOZ=1`, apagado por defecto)
 Con el altavoz en `pc` o `tele`, la respuesta del asistente a tu nota de voz también se
 dice en el mismo sitio, detrás de la nota. El texto llega primero a Telegram y nunca
 espera a la voz; si la voz falla, no hay aviso (ya tienes el texto). Solo tus notas, en
 tu chat privado.
+
+En la tele, una respuesta de más de 700 caracteres (unos 45 s de voz) no se dice: el texto ya
+está en el chat. En el PC se dice entera. `/stop` también tira la respuesta hablada que espera
+en la cola.
 
 ## ¿Y «llamar al bot»?
 Telegram no deja que los bots reciban llamadas. `/altavoz` es lo más cercano: grabas, sueltas y
@@ -50,3 +60,5 @@ directo desde el panel web) se estudian aparte.
 Orden de vías: `media.viewer/open`, luego `system.launcher/open` y, solo si `tv:glasshouseUrl` está en el vault, Glasshouse (`url`).
 
 Si la tele acepta pero nunca descarga el audio, casi siempre es el firewall de Windows: permite Node.js en redes privadas y comprueba que la Wi-Fi del PC está marcada como «privada».
+
+- /stop con la tele: si la nota se abrió con el navegador de la tele o con Glasshouse, además de media.controls/stop se cierra la app que abrió ese envío, solo si sigue en primer plano (nunca el inicio ni la TV en directo).

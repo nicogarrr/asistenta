@@ -1,12 +1,28 @@
 import { execFile } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { loadConfig } from '../config.js';
+import { isGoogleEndpoint, isOpenCodeEndpoint, isOpenRouterEndpoint } from '../core/provider.js';
+import { wallClock } from '../datecontext.js';
+import { EVOLVE_HOW } from '../palabras-vigilancia.js';
+import { envSecretName, vaultGet } from '../vault.js';
 import { Archive, isoWeek } from './archive.js';
-import { BATTERY_FILE, type BatteryRunner, gateFromFile } from './battery-gate.js';
-import type { Trace } from './battery-judge.js';
+import {
+  BATTERY_FILE,
+  type BatteryRun,
+  type BatteryRunner,
+  cycleOfWeek,
+  gateFromFile,
+  heavyRotation,
+  unscored,
+} from './battery-gate.js';
+import { HISTORY_DIR, quarantinedCases, recordBaseWeek } from './battery-history.js';
+import { loadBattery, type Trace } from './battery-judge.js';
 import { type EvolveOptions, runWeek, summarize, type WeekReport } from './loop.js';
 import { cleanEnv } from './measure.js';
+import { noteAttemptRoot, SANDBOX_ENV } from './reap.js';
 import { repoRoot } from './worktree.js';
 
 /**
@@ -19,10 +35,18 @@ import { repoRoot } from './worktree.js';
 
 const exec = promisify(execFile);
 
-/** Sunday from 03:00 local, once every 6 days: the machine is idle and the owner is asleep. */
+/**
+ * Sunday from 03:00 local, once every 6 days: the machine is idle and the owner is asleep.
+ * A last run that is not a number, or lies in the future (the PC clock was wrong once and was
+ * fixed), does not count: otherwise the weekly cycle would silently stop until that date.
+ */
 export function isEvolveDue(now: Date, lastRunMs: number): boolean {
+  const since = now.getTime() - lastRunMs;
+  const stale = !Number.isFinite(since) || since < 0;
   return (
-    now.getDay() === 0 && now.getHours() >= 3 && now.getTime() - lastRunMs > 6 * 24 * 3_600_000
+    wallClock(now).weekday === 0 &&
+    wallClock(now).hour >= 3 &&
+    (stale || since > 6 * 24 * 3_600_000)
   );
 }
 
@@ -58,12 +82,17 @@ export function readHypotheses(stateDir: string): string[] {
 /**
  * What the proposer inherits: the minimum to run, plus ONLY the variables the operator names
  * in PA_EVOLVE_PROPOSER_PASS (comma-separated, e.g. the model key it needs). Not the whole
- * environment, and not the user's home, so it does not inherit HOME or other keys
- * (it can still open absolute paths: same OS user). The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
+ * environment, and not the user's home: with `home` it gets that throwaway folder as HOME,
+ * USERPROFILE and APPDATA (without HOME, os.homedir() falls back to the real one, and with it
+ * the Asistenta state folder and the vault). Naming HOME in PA_EVOLVE_PROPOSER_PASS gives the
+ * real one back on purpose. It can still open absolute paths: same OS user. The idea text (PA_EVOLVE_HYPOTHESIS) comes from /evolucion idea, so it is
  * untrusted input to the proposer; the guard checks what it writes, not what it was told.
  */
-export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const out = cleanEnv(env);
+export function proposerEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  home?: string,
+): NodeJS.ProcessEnv {
+  const out = cleanEnv(env, home);
   for (const name of (env.PA_EVOLVE_PROPOSER_PASS ?? '').split(',')) {
     const k = name.trim();
     if (k && env[k] !== undefined) out[k] = env[k];
@@ -71,57 +100,201 @@ export function proposerEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
   return out;
 }
 
+/** Runs `fn` with a fresh empty home folder, removed afterwards whatever happens. */
+async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'pa-evolve-home-'));
+  try {
+    return await fn(home);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Cómo lanzar un comando del operador (PA_EVOLVE_PROPOSER, PA_EVOLVE_BATTERY). En Windows un
+ * .cmd/.bat sin shell da EINVAL (Node 18.20/20.12+), igual que npx en #1253: se lanza con
+ * shell y la ruta entre comillas (puede tener espacios). Una ruta con comillas o % se rechaza:
+ * cmd.exe la reinterpretaría. Sin argumentos extra: la shell no recibe nada más.
+ */
+export function operatorCommand(
+  cmd: string,
+  platform: NodeJS.Platform = process.platform,
+): { file: string; shell: boolean } {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(cmd)) return { file: cmd, shell: false };
+  if (/["%]/.test(cmd)) throw new Error(`Ruta de comando no válida para cmd.exe: ${cmd}`);
+  return { file: `"${cmd}"`, shell: true };
+}
+
 export function proposerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): EvolveOptions['propose'] | null {
   const cmd = env.PA_EVOLVE_PROPOSER?.trim();
   if (!cmd) return null;
-  return async (dir, hypothesis, attempt) => {
-    await exec(cmd, [], {
-      cwd: dir,
-      timeout: 30 * 60_000,
-      windowsHide: true,
-      shell: false,
-      env: {
-        ...proposerEnv(env),
-        PA_EVOLVE_DIR: dir,
-        PA_EVOLVE_HYPOTHESIS: hypothesis,
-        PA_EVOLVE_ATTEMPT: String(attempt),
-      },
+  return (dir, hypothesis, attempt) =>
+    withTempHome(async (home) => {
+      const run = operatorCommand(cmd);
+      const child = exec(run.file, [], {
+        cwd: dir,
+        timeout: 30 * 60_000,
+        windowsHide: true,
+        shell: run.shell,
+        env: {
+          ...proposerEnv(env, home),
+          PA_EVOLVE_DIR: dir,
+          // Marca para cerrar después lo que deje en marcha (reap.ts), aunque cambie de carpeta.
+          [SANDBOX_ENV]: dir,
+          PA_EVOLVE_HYPOTHESIS: hypothesis,
+          PA_EVOLVE_ATTEMPT: String(attempt),
+        },
+      });
+      // Su pid, para encontrar después a sus hijos huérfanos en Windows (reap.ts).
+      const ended = noteAttemptRoot(dir, child.child?.pid);
+      try {
+        await child;
+      } finally {
+        ended();
+      }
     });
-  };
 }
 
-/** Lee la traza que imprime el evaluador: la última línea JSON de su salida. Estricto. */
+const isStrList = (v: unknown): boolean =>
+  v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+const isOptBool = (v: unknown): boolean => v === undefined || typeof v === 'boolean';
+const isOptStr = (v: unknown): boolean => v === undefined || typeof v === 'string';
+
+/** Una llamada de la traza: nombre de texto; args/result de texto y ok booleano si vienen. */
+function validCall(c: unknown): boolean {
+  if (!c || typeof c !== 'object') return false;
+  const x = c as Record<string, unknown>;
+  return typeof x.name === 'string' && isOptStr(x.args) && isOptStr(x.result) && isOptBool(x.ok);
+}
+
+/**
+ * Lee la traza que imprime el evaluador: la última línea JSON de su salida. Estricto: un JSON
+ * roto o un campo con otro tipo (p. ej. `envError: "false"`, `ok: "false"` o `media: "image"`,
+ * que el juez leería como verdadero o como texto) es «traza inválida», y el caso cuenta como fallo.
+ */
 export function parseTrace(stdout: string): Trace {
   const line = stdout.trim().split('\n').pop() ?? '';
-  const t = JSON.parse(line) as Trace;
+  let t: Record<string, unknown>;
+  try {
+    t = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    throw new Error('traza inválida');
+  }
   if (
-    typeof t?.reply !== 'string' ||
+    !t ||
+    typeof t !== 'object' ||
+    Array.isArray(t) ||
+    typeof t.reply !== 'string' ||
     !Array.isArray(t.toolCalls) ||
-    typeof t.approvalsAsked !== 'number'
+    !t.toolCalls.every(validCall) ||
+    typeof t.approvalsAsked !== 'number' ||
+    !Number.isFinite(t.approvalsAsked) ||
+    !isStrList(t.writes) ||
+    !isStrList(t.media) ||
+    !isStrList(t.protectedTexts) ||
+    !(t.scheduled === undefined || (Array.isArray(t.scheduled) && t.scheduled.every(validSched))) ||
+    !isOptBool(t.envError) ||
+    !isOptBool(t.paymentDataEntered) ||
+    !isOptBool(t.timedOut)
   )
     throw new Error('traza inválida');
-  return t;
+  return t as unknown as Trace;
 }
+
+function validSched(s: unknown): boolean {
+  if (!s || typeof s !== 'object') return false;
+  const x = s as Record<string, unknown>;
+  return (
+    (x.kind === 'once' || x.kind === 'cron') &&
+    isOptStr(x.fireAtIso) &&
+    isOptStr(x.expr) &&
+    isOptStr(x.tz)
+  );
+}
+
+/**
+ * Qué secreto del almacén usa el modelo para ese endpoint (la misma elección que
+ * resolveApiKey en core/provider.ts). Un endpoint propio no lee el almacén (PA_API_KEY), así
+ * que no hay nada que pasar: null.
+ */
+export function modelKeyName(baseUrl: string): string | null {
+  if (isOpenRouterEndpoint(baseUrl)) return 'provider:openrouterKey';
+  if (isGoogleEndpoint(baseUrl)) return 'provider:geminiKey';
+  if (!isOpenCodeEndpoint(baseUrl)) return null;
+  return 'provider:apiKey';
+}
+
+/** Qué modelo usa el asistente: el evaluador mide con el mismo (no son secretos). */
+const MODEL_CONFIG_VARS = ['PA_PROVIDER_PRESET', 'PA_PROVIDER', 'PA_MODEL', 'PA_BASE_URL'];
+
+export interface ModelKeyDeps {
+  /** Lee un secreto del almacén real (por defecto vaultGet, en el proceso del asistente). */
+  readSecret?: (key: string) => Promise<string | undefined>;
+  /** El endpoint del modelo (por defecto el de la configuración del asistente). */
+  baseUrl?: () => string;
+}
+
+/**
+ * Lo que el evaluador por defecto necesita para hablar con el modelo, sin que Nico configure
+ * nada: la elección de modelo y UNA clave, la del modelo, leída aquí del almacén real y
+ * entregada al hijo como variable PA_SECRET_<CLAVE> (el almacén por variables que usa su
+ * carpeta temporal). Solo vive en memoria y en el entorno del hijo: nunca se escribe a disco
+ * ni se registra. Si PA_SECRET_<CLAVE> ya está definida, esa gana (anulación manual).
+ */
+export async function modelKeyEnv(
+  env: NodeJS.ProcessEnv,
+  deps: ModelKeyDeps = {},
+): Promise<NodeJS.ProcessEnv> {
+  const out: NodeJS.ProcessEnv = {};
+  for (const k of MODEL_CONFIG_VARS) if (env[k]?.trim()) out[k] = env[k];
+  let name: string | null;
+  try {
+    name = modelKeyName((deps.baseUrl ?? (() => loadConfig().baseUrl))());
+  } catch {
+    return out;
+  }
+  if (!name) return out;
+  const manual = env[envSecretName(name)];
+  const value = manual || (await (deps.readSecret ?? vaultGet)(name).catch(() => undefined));
+  if (value) out[envSecretName(name)] = value;
+  return out;
+}
+
+/** Evaluador por defecto: el script del propio código que se mide (scripts/evolve-battery-case.mjs). */
+export const DEFAULT_BATTERY_SCRIPT = join('scripts', 'evolve-battery-case.mjs');
 
 /**
  * PA_EVOLVE_BATTERY: comando que ejecuta UN caso de la batería contra el código de su
  * carpeta (cwd) y escribe la traza como JSON. El caso llega en PA_BATTERY_CASE. Igual que
  * el proponedor, recibe el entorno limpio: nada de claves salvo PA_EVOLVE_PROPOSER_PASS.
+ * Sin definir se usa el script del repo con este mismo Node (datos temporales, sin cuentas
+ * reales); `off` o `0` lo apagan y entonces ningún cambio se aprueba.
  */
-export function batteryRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): BatteryRunner | null {
-  const cmd = env.PA_EVOLVE_BATTERY?.trim();
-  if (!cmd) return null;
+export function batteryRunnerFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ModelKeyDeps = {},
+): BatteryRunner | null {
+  const raw = env.PA_EVOLVE_BATTERY?.trim() ?? '';
+  if (/^(off|0|no|false)$/i.test(raw)) return null;
+  const custom = raw ? operatorCommand(raw) : null;
+  const [file, args] = custom
+    ? [custom.file, [] as string[]]
+    : [process.execPath, [DEFAULT_BATTERY_SCRIPT]];
   return async (c, cwd) => {
-    const { stdout } = await exec(cmd, [], {
-      cwd,
-      timeout: 10 * 60_000,
-      windowsHide: true,
-      shell: false,
-      maxBuffer: 4 * 1024 * 1024,
-      env: { ...proposerEnv(env), PA_BATTERY_CASE: JSON.stringify(c) },
-    });
+    // Solo el evaluador del repo recibe la clave: es el que usa el almacén por variables.
+    const key = raw ? {} : await modelKeyEnv(env, deps);
+    const { stdout } = await withTempHome((home) =>
+      exec(file, args, {
+        cwd,
+        timeout: 10 * 60_000,
+        windowsHide: true,
+        shell: custom?.shell ?? false,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...proposerEnv(env, home), ...key, PA_BATTERY_CASE: JSON.stringify(c) },
+      }),
+    );
     return parseTrace(String(stdout));
   };
 }
@@ -134,6 +307,45 @@ function lastBattery(rows: ReturnType<Archive['read']>): string {
   return `Última batería (${last.week}): ${b.passed}/${b.total} casos; el kernel tenía ${b.basePassed}/${b.baseTotal}.`;
 }
 
+/** Cuántos casos de la batería no cuentan en la nota, y por qué, en una línea. */
+export function notCounting(stateDir: string, file = join(repoRoot(), BATTERY_FILE)): string {
+  try {
+    const b = loadBattery(file);
+    const off = unscored(b, quarantinedCases(join(stateDir, HISTORY_DIR), b.cases));
+    if (off.length === 0) return `Casos que no cuentan: ninguno (los ${b.cases.length} puntúan).`;
+    const n = (re: RegExp) => off.filter((x) => re.test(x.why)).length;
+    const parts = [
+      [n(/^desactivado/), 'desactivados'],
+      [n(/^servicio externo/), 'apartados por webs que fallan 3 semanas'],
+      [n(/^sin criterio/), 'sin criterio de máquina'],
+    ]
+      .filter(([k]) => (k as number) > 0)
+      .map(([k, what]) => `${k} ${what}`);
+    return `Casos que no cuentan: ${off.length} de ${b.cases.length} (${parts.join(', ')}).`;
+  } catch {
+    return 'Casos que no cuentan: no se pudo leer la batería.';
+  }
+}
+
+/** Qué casos pesados rotan en la semana `week` (un tercio cada semana), en una línea. */
+export function heavyThisWeek(
+  stateDir: string,
+  file = join(repoRoot(), BATTERY_FILE),
+  week = isoWeek(),
+): string {
+  try {
+    const b = loadBattery(file);
+    const r = heavyRotation(
+      b,
+      cycleOfWeek(week),
+      quarantinedCases(join(stateDir, HISTORY_DIR), b.cases),
+    );
+    return `Casos pesados que rotan esta semana (turno ${r.turn} de 3): ${r.ids.length ? r.ids.join(', ') : 'ninguno'}.`;
+  } catch {
+    return 'Casos pesados de esta semana: no se pudo leer la batería.';
+  }
+}
+
 /** What /evolucion says without running anything: the last week, in plain Spanish. */
 export function describeLast(stateDir: string): string {
   const archive = new Archive(join(stateDir, 'evolve', 'attempts.jsonl'));
@@ -142,7 +354,7 @@ export function describeLast(stateDir: string): string {
   const head = !proposerFromEnv()
     ? 'Auto-mejora: sin proponedor configurado (PA_EVOLVE_PROPOSER), así que no puede generar cambios.'
     : !batteryRunnerFromEnv()
-      ? 'Auto-mejora: falta el evaluador de la batería (PA_EVOLVE_BATTERY); sin él ningún cambio se aprueba.'
+      ? 'Auto-mejora: el evaluador de la batería está apagado (PA_EVOLVE_BATTERY=off); sin él ningún cambio se aprueba.'
       : 'Auto-mejora: activa, un ciclo cada domingo de madrugada; cada cambio tiene que aprobar la batería.';
   const week = isoWeek();
   const mine = rows.filter((r) => r.week === week);
@@ -154,8 +366,10 @@ export function describeLast(stateDir: string): string {
     head,
     `Ideas en cola: ${ideas.length}.`,
     lastBattery(rows),
+    notCounting(stateDir),
+    heavyThisWeek(stateDir),
     ...lines,
-    'Nada entra sin pasar por PR y auditoría. /evolucion idea <texto> añade una idea; /evolucion ahora lanza un ciclo.',
+    EVOLVE_HOW,
   ].join('\n');
 }
 
@@ -176,13 +390,20 @@ export async function runEvolution(i: RunNow): Promise<{ text: string; report?: 
   const run = batteryRunnerFromEnv();
   if (!run) {
     return {
-      text: 'No hay evaluador de la batería (PA_EVOLVE_BATTERY): sin él ningún cambio puede aprobarse, así que no lanzo el ciclo.',
+      text: 'El evaluador de la batería está apagado (PA_EVOLVE_BATTERY=off): sin él ningún cambio puede aprobarse, así que no lanzo el ciclo.',
     };
   }
   try {
     // Los casos heavy rotan por semana ISO: base y candidato corren la misma selección.
-    const cycle = Number(isoWeek().split('W')[1]) || 0;
-    const battery = { ...gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run), cycle };
+    const cycle = cycleOfWeek(isoWeek());
+    const gate = gateFromFile(join(i.root ?? repoRoot(), BATTERY_FILE), run);
+    const historyDir = join(i.stateDir, HISTORY_DIR);
+    const battery = {
+      ...gate,
+      cycle,
+      quarantined: quarantinedCases(historyDir, gate.cases),
+      onBase: (base: BatteryRun) => recordBaseWeek(historyDir, base.results),
+    };
     const report = await runWeek({
       stateDir: i.stateDir,
       root: i.root,

@@ -28,6 +28,14 @@ export interface McpServerConfig {
   allowedTools?: string[];
   /** Si es true, `callTool` reinicia el proceso una vez y reintenta la llamada. */
   reconnect?: boolean;
+  /**
+   * Si se define, el proceso solo hereda estas variables del entorno (sin
+   * distinguir mayúsculas) más `env`, en vez de todo `process.env`. Solo lo usa
+   * la integración REA (src/mcp/rea.ts); PA_MCP_SERVERS no lo lee.
+   */
+  envAllowlist?: string[];
+  /** Si es true, solo se publican las tools que el servidor marca como de solo lectura. */
+  readOnlyOnly?: boolean;
 }
 
 /** Herramienta tal como la anuncia `tools/list`. */
@@ -35,6 +43,8 @@ export interface McpToolInfo {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  /** Pistas MCP (ToolAnnotations) tal como las anuncia el servidor. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
 /** Resultado normalizado de `tools/call`. */
@@ -46,6 +56,14 @@ export interface McpToolCallResult {
 /** Recurso tal como lo anuncia `resources/list`. */
 export interface McpResourceInfo {
   uri: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+/** Plantilla de recurso anunciada en `resources/templates/list` (RFC 6570). */
+export interface McpResourceTemplateInfo {
+  uriTemplate: string;
   name?: string;
   description?: string;
   mimeType?: string;
@@ -89,6 +107,11 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_RESTARTS = 3;
 const RESTART_DELAYS_MS = [250, 500, 1000] as const;
+/**
+ * Tras este rato sin reiniciar, el contador de reinicios vuelve a cero: el tope de
+ * MAX_RESTARTS frena un bucle de caídas seguidas, no tres caídas sueltas en días de uso.
+ */
+const RESTART_WINDOW_MS = 10 * 60 * 1000;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -121,6 +144,184 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Interpreta el resultado de `tools/list` (compartido por stdio y HTTP). */
+export function parseToolList(server: string, result: unknown): McpToolInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.tools)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de herramientas invalida.`);
+  }
+  const tools: McpToolInfo[] = [];
+  for (const item of result.tools) {
+    if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
+      log.warn('Herramienta MCP ignorada: nombre invalido', { server });
+      continue;
+    }
+    const info: McpToolInfo = { name: item.name };
+    if (typeof item.description === 'string') info.description = item.description;
+    if (isRecord(item.inputSchema)) info.inputSchema = item.inputSchema;
+    if (isRecord(item.annotations)) {
+      const { readOnlyHint, destructiveHint } = item.annotations;
+      info.annotations = {};
+      if (typeof readOnlyHint === 'boolean') info.annotations.readOnlyHint = readOnlyHint;
+      if (typeof destructiveHint === 'boolean') info.annotations.destructiveHint = destructiveHint;
+    }
+    tools.push(info);
+  }
+  return tools;
+}
+
+/**
+ * Interpreta el resultado de `tools/call`: concatena los bloques de texto en
+ * orden e ignora los que no son texto (compartido por stdio y HTTP).
+ */
+export function parseToolCall(server: string, name: string, result: unknown): McpToolCallResult {
+  if (!isRecord(result)) {
+    throw new Error(`El servidor MCP "${server}" devolvio un resultado invalido para "${name}".`);
+  }
+  const texts: string[] = [];
+  if (Array.isArray(result.content)) {
+    for (const block of result.content) {
+      if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+        texts.push(block.text);
+      }
+    }
+  }
+  return { text: texts.join(''), isError: result.isError === true };
+}
+
+/** Normaliza la respuesta de `resources/list` (stdio y HTTP). */
+export function parseResourceList(server: string, result: unknown): McpResourceInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.resources)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de recursos invalida.`);
+  }
+  const resources: McpResourceInfo[] = [];
+  for (const item of result.resources) {
+    if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
+      log.warn('Recurso MCP ignorado: URI invalida', { server });
+      continue;
+    }
+    const info: McpResourceInfo = { uri: item.uri };
+    if (typeof item.name === 'string') info.name = item.name;
+    if (typeof item.description === 'string') info.description = item.description;
+    if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
+    resources.push(info);
+  }
+  return resources;
+}
+
+/** Normaliza la respuesta de `resources/templates/list` (stdio y HTTP). */
+export function parseResourceTemplateList(
+  server: string,
+  result: unknown,
+): McpResourceTemplateInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.resourceTemplates)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de plantillas invalida.`);
+  }
+  const templates: McpResourceTemplateInfo[] = [];
+  for (const item of result.resourceTemplates) {
+    if (!isRecord(item) || typeof item.uriTemplate !== 'string' || !item.uriTemplate.trim()) {
+      log.warn('Plantilla MCP ignorada: uriTemplate invalida', { server });
+      continue;
+    }
+    const info: McpResourceTemplateInfo = { uriTemplate: item.uriTemplate };
+    if (typeof item.name === 'string') info.name = item.name;
+    if (typeof item.description === 'string') info.description = item.description;
+    if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
+    templates.push(info);
+  }
+  return templates;
+}
+
+/** Normaliza la respuesta de `resources/read` (stdio y HTTP). */
+export function parseResourceRead(
+  server: string,
+  target: string,
+  result: unknown,
+): McpResourceContent[] {
+  if (!isRecord(result) || !Array.isArray(result.contents)) {
+    throw new Error(
+      `El servidor MCP "${server}" devolvio un contenido invalido para el recurso "${target}".`,
+    );
+  }
+  const contents: McpResourceContent[] = [];
+  for (const item of result.contents) {
+    if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
+      log.warn('Contenido MCP ignorado: URI invalida', {
+        server,
+        recurso: target,
+      });
+      continue;
+    }
+    const content: McpResourceContent = { uri: item.uri };
+    if (typeof item.mimeType === 'string') content.mimeType = item.mimeType;
+    if (typeof item.text === 'string') content.text = item.text;
+    if (typeof item.blob === 'string') content.blob = item.blob;
+    if (content.text === undefined && content.blob === undefined) {
+      log.warn('Contenido MCP ignorado: sin text ni blob', {
+        server,
+        recurso: target,
+      });
+      continue;
+    }
+    contents.push(content);
+  }
+  if (contents.length === 0) {
+    throw new Error(
+      `El servidor MCP "${server}" no devolvio contenido legible para el recurso "${target}".`,
+    );
+  }
+  return contents;
+}
+
+/** Normaliza la respuesta de `prompts/list` (stdio y HTTP). */
+export function parsePromptList(server: string, result: unknown): McpPromptInfo[] {
+  if (!isRecord(result) || !Array.isArray(result.prompts)) {
+    throw new Error(`El servidor MCP "${server}" devolvio una lista de prompts invalida.`);
+  }
+  const prompts: McpPromptInfo[] = [];
+  for (const item of result.prompts) {
+    if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
+      log.warn('Prompt MCP ignorado: nombre invalido', { server });
+      continue;
+    }
+    const info: McpPromptInfo = { name: item.name };
+    if (typeof item.description === 'string') info.description = item.description;
+    if (Array.isArray(item.arguments)) {
+      const args: McpPromptArgument[] = [];
+      for (const arg of item.arguments) {
+        if (!isRecord(arg) || typeof arg.name !== 'string' || !arg.name.trim()) continue;
+        const parsed: McpPromptArgument = { name: arg.name };
+        if (typeof arg.description === 'string') parsed.description = arg.description;
+        if (typeof arg.required === 'boolean') parsed.required = arg.required;
+        args.push(parsed);
+      }
+      info.arguments = args;
+    }
+    prompts.push(info);
+  }
+  return prompts;
+}
+
+/** Normaliza la respuesta de `prompts/get` (stdio y HTTP). */
+export function parsePromptGet(server: string, target: string, result: unknown): McpPromptResult {
+  if (!isRecord(result) || !Array.isArray(result.messages)) {
+    throw new Error(`El servidor MCP "${server}" devolvio un prompt invalido para "${target}".`);
+  }
+  const messages: McpPromptMessage[] = [];
+  for (const item of result.messages) {
+    if (!isRecord(item) || typeof item.role !== 'string' || !('content' in item)) {
+      log.warn('Mensaje MCP ignorado: formato invalido', {
+        server,
+        prompt: target,
+      });
+      continue;
+    }
+    messages.push({ role: item.role, content: item.content });
+  }
+  const prompt: McpPromptResult = { messages };
+  if (typeof result.description === 'string') prompt.description = result.description;
+  return prompt;
 }
 
 /**
@@ -175,6 +376,41 @@ export function parseMcpServers(raw: string | undefined): McpServerConfig[] {
 }
 
 /**
+ * Entorno base de un servidor MCP: todo `process.env` (lo de siempre) o, con
+ * `allowlist`, solo esas variables. En Windows los nombres no distinguen
+ * mayúsculas (`Path`/`PATH`), así que se compara en minúsculas.
+ */
+export function launchBaseEnv(
+  env: NodeJS.ProcessEnv,
+  allowlist: string[] | undefined,
+): NodeJS.ProcessEnv {
+  if (!allowlist) return { ...env };
+  const wanted = new Set(allowlist.map((key) => key.toLowerCase()));
+  const picked: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && wanted.has(key.toLowerCase())) picked[key] = value;
+  }
+  return picked;
+}
+
+/**
+ * Línea en castellano llano cuando no arranca un servidor MCP. Sin el texto
+ * crudo del sistema (va al log): solo qué pasa y qué hacer.
+ */
+export function mcpStartFailureText(name: string, command: string, error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  const program = command.trim().split(/\s+/)[0] ?? command;
+  const head = `No se pudo arrancar el servidor MCP "${name}"`;
+  if (code === 'ENOENT') {
+    return `${head}: no encuentro el programa «${program}». Revisa que esté instalado o corrige PA_MCP_SERVERS.`;
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return `${head}: no hay permiso para ejecutar «${program}».`;
+  }
+  return `${head}. Revisa su configuración en PA_MCP_SERVERS.`;
+}
+
+/**
  * Cliente de un servidor MCP local.
  *
  * `start()` hace el handshake y deja el proceso listo; los metodos publicos
@@ -194,6 +430,7 @@ export class McpClient {
   #ready = false;
   #closed = false;
   #restarts = 0;
+  #lastRestartAt = 0;
 
   constructor(config: McpServerConfig) {
     this.#config = config;
@@ -245,26 +482,7 @@ export class McpClient {
 
   /** Lista las herramientas anunciadas por el servidor. */
   async listTools(): Promise<McpToolInfo[]> {
-    const result = await this.#request<unknown>('tools/list', {});
-    if (!isRecord(result) || !Array.isArray(result.tools)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de herramientas invalida.`,
-      );
-    }
-    const tools: McpToolInfo[] = [];
-    for (const item of result.tools) {
-      if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
-        log.warn('Herramienta MCP ignorada: nombre invalido', {
-          server: this.#config.name,
-        });
-        continue;
-      }
-      const info: McpToolInfo = { name: item.name };
-      if (typeof item.description === 'string') info.description = item.description;
-      if (isRecord(item.inputSchema)) info.inputSchema = item.inputSchema;
-      tools.push(info);
-    }
-    return tools;
+    return parseToolList(this.#config.name, await this.#request<unknown>('tools/list', {}));
   }
 
   /**
@@ -289,128 +507,36 @@ export class McpClient {
 
   /** Lista los recursos anunciados por el servidor. */
   async listResources(): Promise<McpResourceInfo[]> {
-    const result = await this.#request<unknown>('resources/list', {});
-    if (!isRecord(result) || !Array.isArray(result.resources)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de recursos invalida.`,
-      );
-    }
-    const resources: McpResourceInfo[] = [];
-    for (const item of result.resources) {
-      if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
-        log.warn('Recurso MCP ignorado: URI invalida', { server: this.#config.name });
-        continue;
-      }
-      const info: McpResourceInfo = { uri: item.uri };
-      if (typeof item.name === 'string') info.name = item.name;
-      if (typeof item.description === 'string') info.description = item.description;
-      if (typeof item.mimeType === 'string') info.mimeType = item.mimeType;
-      resources.push(info);
-    }
-    return resources;
+    return parseResourceList(this.#config.name, await this.#request<unknown>('resources/list', {}));
+  }
+
+  /** Lista las plantillas de recursos (`resources/templates/list`). */
+  async listResourceTemplates(): Promise<McpResourceTemplateInfo[]> {
+    return parseResourceTemplateList(
+      this.#config.name,
+      await this.#request<unknown>('resources/templates/list', {}),
+    );
   }
 
   /** Lee un recurso y devuelve todos sus bloques de contenido. */
   async readResource(uri: string): Promise<McpResourceContent[]> {
     const target = uri.trim();
     if (!target) throw new Error('readResource: falta la URI del recurso.');
-
     const result = await this.#request<unknown>('resources/read', { uri: target });
-    if (!isRecord(result) || !Array.isArray(result.contents)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un contenido invalido para el recurso "${target}".`,
-      );
-    }
-    const contents: McpResourceContent[] = [];
-    for (const item of result.contents) {
-      if (!isRecord(item) || typeof item.uri !== 'string' || !item.uri.trim()) {
-        log.warn('Contenido MCP ignorado: URI invalida', {
-          server: this.#config.name,
-          recurso: target,
-        });
-        continue;
-      }
-      const content: McpResourceContent = { uri: item.uri };
-      if (typeof item.mimeType === 'string') content.mimeType = item.mimeType;
-      if (typeof item.text === 'string') content.text = item.text;
-      if (typeof item.blob === 'string') content.blob = item.blob;
-      if (content.text === undefined && content.blob === undefined) {
-        log.warn('Contenido MCP ignorado: sin text ni blob', {
-          server: this.#config.name,
-          recurso: target,
-        });
-        continue;
-      }
-      contents.push(content);
-    }
-    if (contents.length === 0) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" no devolvio contenido legible para el recurso "${target}".`,
-      );
-    }
-    return contents;
+    return parseResourceRead(this.#config.name, target, result);
   }
 
   /** Lista los prompts anunciados por el servidor. */
   async listPrompts(): Promise<McpPromptInfo[]> {
-    const result = await this.#request<unknown>('prompts/list', {});
-    if (!isRecord(result) || !Array.isArray(result.prompts)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio una lista de prompts invalida.`,
-      );
-    }
-    const prompts: McpPromptInfo[] = [];
-    for (const item of result.prompts) {
-      if (!isRecord(item) || typeof item.name !== 'string' || !item.name.trim()) {
-        log.warn('Prompt MCP ignorado: nombre invalido', { server: this.#config.name });
-        continue;
-      }
-      const info: McpPromptInfo = { name: item.name };
-      if (typeof item.description === 'string') info.description = item.description;
-      if (Array.isArray(item.arguments)) {
-        const args: McpPromptArgument[] = [];
-        for (const arg of item.arguments) {
-          if (!isRecord(arg) || typeof arg.name !== 'string' || !arg.name.trim()) continue;
-          const parsed: McpPromptArgument = { name: arg.name };
-          if (typeof arg.description === 'string') parsed.description = arg.description;
-          if (typeof arg.required === 'boolean') parsed.required = arg.required;
-          args.push(parsed);
-        }
-        info.arguments = args;
-      }
-      prompts.push(info);
-    }
-    return prompts;
+    return parsePromptList(this.#config.name, await this.#request<unknown>('prompts/list', {}));
   }
 
   /** Obtiene un prompt con sus argumentos ya sustituidos por el servidor. */
   async getPrompt(name: string, args: Record<string, string> = {}): Promise<McpPromptResult> {
     const target = name.trim();
     if (!target) throw new Error('getPrompt: falta el nombre del prompt.');
-
-    const result = await this.#request<unknown>('prompts/get', {
-      name: target,
-      arguments: args,
-    });
-    if (!isRecord(result) || !Array.isArray(result.messages)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un prompt invalido para "${target}".`,
-      );
-    }
-    const messages: McpPromptMessage[] = [];
-    for (const item of result.messages) {
-      if (!isRecord(item) || typeof item.role !== 'string' || !('content' in item)) {
-        log.warn('Mensaje MCP ignorado: formato invalido', {
-          server: this.#config.name,
-          prompt: target,
-        });
-        continue;
-      }
-      messages.push({ role: item.role, content: item.content });
-    }
-    const prompt: McpPromptResult = { messages };
-    if (typeof result.description === 'string') prompt.description = result.description;
-    return prompt;
+    const result = await this.#request<unknown>('prompts/get', { name: target, arguments: args });
+    return parsePromptGet(this.#config.name, target, result);
   }
 
   /** Cierra el proceso. Es idempotente y no espera a que termine. */
@@ -450,20 +576,7 @@ export class McpClient {
       name,
       arguments: args,
     });
-    if (!isRecord(result)) {
-      throw new Error(
-        `El servidor MCP "${this.#config.name}" devolvio un resultado invalido para "${name}".`,
-      );
-    }
-    const texts: string[] = [];
-    if (Array.isArray(result.content)) {
-      for (const block of result.content) {
-        if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
-          texts.push(block.text);
-        }
-      }
-    }
-    return { text: texts.join(''), isError: result.isError === true };
+    return parseToolCall(this.#config.name, name, result);
   }
 
   async #recover(): Promise<void> {
@@ -471,6 +584,9 @@ export class McpClient {
       throw new Error(`El cliente MCP "${this.#config.name}" ya esta cerrado.`);
     }
     if (this.#ready && this.#processAlive() && !this.#failure) return;
+    if (this.#restarts > 0 && Date.now() - this.#lastRestartAt >= RESTART_WINDOW_MS) {
+      this.#restarts = 0;
+    }
     if (this.#restarts >= MAX_RESTARTS) {
       throw new Error(
         `El servidor MCP "${this.#config.name}" no revive tras ${MAX_RESTARTS} reinicios.`,
@@ -478,6 +594,7 @@ export class McpClient {
     }
 
     this.#restarts += 1;
+    this.#lastRestartAt = Date.now();
     const attempt = this.#restarts;
     const delay = RESTART_DELAYS_MS[Math.min(attempt - 1, RESTART_DELAYS_MS.length - 1)] ?? 250;
     log.warn('Reiniciando servidor MCP', {
@@ -546,7 +663,7 @@ export class McpClient {
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(this.#config.command, this.#config.args ?? [], {
-        env: { ...process.env, ...this.#config.env },
+        env: { ...launchBaseEnv(process.env, this.#config.envAllowlist), ...this.#config.env },
         windowsHide: true,
       });
     } catch (error) {
@@ -611,9 +728,9 @@ export class McpClient {
     });
     child.on('error', (error) => {
       if (this.#child !== child) return;
-      this.#fail(
-        new Error(`No se pudo arrancar el servidor MCP "${this.#config.name}": ${error.message}`),
-      );
+      // El error crudo (spawn ENOENT, rutas…) solo al log; al modelo, una línea clara.
+      log.warn('No arranca el servidor MCP', { server: this.#config.name, err: error.message });
+      this.#fail(new Error(mcpStartFailureText(this.#config.name, this.#config.command, error)));
     });
     child.on('exit', (code, signal) => {
       if (this.#closed || this.#child !== child) return;
@@ -622,8 +739,12 @@ export class McpClient {
     });
     child.stdin.on('error', (error) => {
       if (this.#child !== child) return;
+      log.warn('Se cortó la entrada del servidor MCP', {
+        server: this.#config.name,
+        err: error.message,
+      });
       this.#fail(
-        new Error(`Se perdio la entrada del servidor MCP "${this.#config.name}": ${error.message}`),
+        new Error(`Se ha perdido la conexión con el servidor MCP "${this.#config.name}".`),
       );
     });
   }

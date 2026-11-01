@@ -10,13 +10,14 @@
  * `uninstall` never deletes: the directory stays with status `disabled`, so
  * what ran on the machine remains auditable.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -120,7 +121,9 @@ export function readFactoryTool(
   const mdPath = join(dir, 'TOOL.md');
   const jsPath = join(dir, 'tool.js');
   if (!existsSync(mdPath) || !existsSync(jsPath)) return null;
-  const md = readFileSync(mdPath, 'utf8');
+  // A TOOL.md touched on Windows (an editor, git autocrlf) has CRLF line ends; without
+  // this the tool read as corrupt and silently vanished from the list.
+  const md = readFileSync(mdPath, 'utf8').replace(/\r\n/g, '\n');
   const fm = md.match(/^---\n([\s\S]*?)\n---\n/);
   if (!fm) throw new Error(`TOOL.md corrupto en ${id}: falta frontmatter`);
   const kv = new Map<string, string>();
@@ -128,15 +131,22 @@ export function readFactoryTool(
     const m = line.match(/^([a-zA-Z0-9]+):\s?(.*)$/);
     if (m && m[1] !== undefined) kv.set(m[1], m[2] ?? '');
   }
+  // The folder is the tool's identity (loader, approvals, paths): a TOOL.md copied from
+  // another tool must not load under that other tool's id.
+  const fileId = kv.get('id');
+  if (fileId !== undefined && fileId !== id)
+    throw new Error(
+      `TOOL.md corrupto en ${id}: id ${JSON.stringify(fileId)} no es el de su carpeta`,
+    );
   const status = (kv.get('status') ?? 'built') as FactoryToolStatus;
   if (!STATUSES.includes(status)) throw new Error(`TOOL.md corrupto en ${id}: status ${status}`);
   const nullStr = (v: string | undefined) => (!v || v === 'null' ? null : v);
   const meta: FactoryToolMeta = {
-    id: kv.get('id') ?? id,
+    id,
     name: unq(kv.get('name') ?? '""'),
     description: unq(kv.get('description') ?? '""'),
     whenToUse: unq(kv.get('whenToUse') ?? '""'),
-    version: Number(kv.get('version') ?? '1'),
+    version: parseVersion(kv.get('version'), id),
     status,
     createdAt: kv.get('createdAt') ?? '',
     updatedAt: kv.get('updatedAt') ?? '',
@@ -146,9 +156,20 @@ export function readFactoryTool(
     lastTestOk: kv.get('lastTestOk') === 'true',
     contract: parseContract(kv.get('contract')),
   };
-  const notesIdx = md.indexOf('## Notes');
-  const notes = notesIdx >= 0 ? md.slice(notesIdx + 8).trim() : '';
+  // Look for the heading only after the frontmatter: a description that mentions
+  // "## Notes" must not become the notes.
+  const body = md.slice(fm[0].length);
+  const notesIdx = body.indexOf('## Notes');
+  const notes = notesIdx >= 0 ? body.slice(notesIdx + 8).trim() : '';
   return { meta, code: readFileSync(jsPath, 'utf8'), notes };
+}
+
+/** `version` must be a positive integer; anything else means a corrupt TOOL.md. */
+function parseVersion(raw: string | undefined, id: string): number {
+  if (raw === undefined) return 1;
+  const v = raw.trim();
+  if (!/^[1-9][0-9]{0,8}$/.test(v)) throw new Error(`TOOL.md corrupto en ${id}: version ${v}`);
+  return Number(v);
 }
 
 export function writeFactoryTool(meta: FactoryToolMeta, code: string, notes: string): void {
@@ -157,12 +178,20 @@ export function writeFactoryTool(meta: FactoryToolMeta, code: string, notes: str
   mkdirSync(dir, { recursive: true });
   // Atomic-ish writes: tmp + rename, so a crash mid-write cannot leave a
   // half-written tool.js that the loader would import at startup.
-  const tmpMd = join(dir, '.TOOL.md.tmp');
-  const tmpJs = join(dir, '.tool.js.tmp');
-  writeFileSync(tmpMd, serialize(meta, notes));
-  writeFileSync(tmpJs, code);
-  renameSync(tmpMd, join(dir, 'TOOL.md'));
-  renameSync(tmpJs, join(dir, 'tool.js'));
+  // Unique temp names: two writers (daemon + `pa`, or two saves at the same
+  // moment) must never share — and steal — each other's temp file.
+  const tag = `${process.pid}.${randomUUID()}`;
+  const tmpMd = join(dir, `.TOOL.md.${tag}.tmp`);
+  const tmpJs = join(dir, `.tool.js.${tag}.tmp`);
+  try {
+    writeFileSync(tmpMd, serialize(meta, notes));
+    writeFileSync(tmpJs, code);
+    renameSync(tmpMd, join(dir, 'TOOL.md'));
+    renameSync(tmpJs, join(dir, 'tool.js'));
+  } finally {
+    rmSync(tmpMd, { force: true });
+    rmSync(tmpJs, { force: true });
+  }
 }
 
 export function writeFactoryMeta(meta: FactoryToolMeta, notes: string): void {

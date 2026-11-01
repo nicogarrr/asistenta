@@ -10,14 +10,15 @@ import { describe, expect, it } from 'vitest';
  * conéctalo al daemon/router, o añádelo aquí con una razón honesta.
  */
 const KNOWN_UNWIRED: Record<string, string> = {
+  'src/evolve/battery-case.ts':
+    'evaluador de la batería: lo carga scripts/evolve-battery-case.mjs en la copia que se mide',
+  'src/evolve/battery-case-env.ts':
+    'lector del caso de la batería: scripts/evolve-battery-case.mjs lo carga antes que el asistente',
   'src/evals/battery.ts': 'solo evals (scripts/run-evals.mjs), no es del daemon',
   'src/evals/harness.ts': 'solo evals (scripts/run-evals.mjs), no es del daemon',
   'src/evals/live.ts': 'solo evals (scripts/run-evals.mjs), no es del daemon',
   'src/tools/renfe.ts':
     'herramienta usada solo por las evals; falta decidir si se ofrece al agente',
-  'src/memory/review.ts':
-    'cola de contradicciones; falta quien la llene (consolidación) y un comando para resolverla',
-  'src/skills/catalog.ts': 'catálogo de skills; falta comando /skills catalogo (descarga remota)',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
 };
 

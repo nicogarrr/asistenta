@@ -17,6 +17,7 @@
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 import { vaultGet } from '../vault.js';
 import { extractBodyText } from './mime.js';
 import {
@@ -41,17 +42,34 @@ import {
  * "no hay correo configurado" when asked.
  */
 export async function loadAccount(): Promise<MailAccount | null> {
-  const address = await vaultGet('mail:address');
+  const address = (await vaultGet('mail:address'))?.trim();
   const password = await vaultGet('mail:password');
   if (!address || !password) return null;
   return {
     address,
     password,
-    imapHost: (await vaultGet('mail:imapHost')) ?? GMAIL_IMAP_HOST,
-    imapPort: Number((await vaultGet('mail:imapPort')) ?? GMAIL_IMAP_PORT),
-    smtpHost: (await vaultGet('mail:smtpHost')) ?? GMAIL_SMTP_HOST,
-    smtpPort: Number((await vaultGet('mail:smtpPort')) ?? GMAIL_SMTP_PORT),
+    imapHost: await hostSetting('mail:imapHost', GMAIL_IMAP_HOST),
+    imapPort: await portSetting('mail:imapPort', GMAIL_IMAP_PORT),
+    smtpHost: await hostSetting('mail:smtpHost', GMAIL_SMTP_HOST),
+    smtpPort: await portSetting('mail:smtpPort', GMAIL_SMTP_PORT),
   };
+}
+
+/**
+ * Un ajuste vaciado en el vault («») vale lo mismo que uno ausente: el valor por
+ * defecto. Antes un host «» conectaba a localhost y un puerto «» se leía como 0.
+ */
+async function hostSetting(key: string, fallback: string): Promise<string> {
+  const value = (await vaultGet(key))?.trim();
+  return value ? value : fallback;
+}
+
+/** Puerto válido (1–65535) o el de por defecto; «abc» ya no da NaN. */
+async function portSetting(key: string, fallback: number): Promise<number> {
+  const raw = (await vaultGet(key))?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return fallback;
+  const port = Number(raw);
+  return port >= 1 && port <= 65_535 ? port : fallback;
 }
 
 /**
@@ -92,9 +110,11 @@ export function toMessage(
         .filter(Boolean)
         .join(', ') ?? '',
     to: (envelope.to ?? []).map((t) => t.address ?? '').filter(Boolean),
-    subject: envelope.subject ?? '(sin asunto)',
+    subject: envelope.subject?.trim() ? envelope.subject : '(sin asunto)',
     text: text.slice(0, 8000),
-    at: envelope.date ? envelope.date.getTime() : 0,
+    // Una cabecera Date ilegible llega como Invalid Date: NaN rompería ordenar y
+    // comparar fechas aguas abajo (agenda, resúmenes). 0 = «sin fecha».
+    at: envelope.date && Number.isFinite(envelope.date.getTime()) ? envelope.date.getTime() : 0,
     seen: raw.flags?.has('\\Seen') ?? false,
     folder,
   };
@@ -170,11 +190,15 @@ function searchCriteria(query: MailSearchQuery): Record<string, unknown> {
 }
 
 function matchesFreeText(message: MailMessage, q: string): boolean {
-  const needle = q.toLowerCase();
+  // Sin tildes ni mayúsculas: «reunion» encuentra «Reunión».
+  const needle = foldAccents(q.trim());
   return (
-    message.subject.toLowerCase().includes(needle) || message.text.toLowerCase().includes(needle)
+    foldAccents(message.subject).includes(needle) || foldAccents(message.text).includes(needle)
   );
 }
+
+/** Cuántos correos, como mucho, se leen para un filtro de texto libre. */
+const FREE_TEXT_SCAN = 200;
 
 export async function searchMail(
   account: MailAccount,
@@ -190,9 +214,16 @@ export async function searchMail(
       const list = Array.isArray(uids) ? uids : [];
       // Newest first: a mailbox search is almost always "what came in recently", and
       // IMAP hands back uids in ascending order.
-      const picked = list.slice(-Math.max(1, limit)).reverse();
+      const newestFirst = list.slice().reverse();
+      const wanted = Math.max(1, limit);
+      // Sin texto libre bastan los `limit` más nuevos. Con texto libre el filtro es
+      // local, así que se sigue mirando hacia atrás hasta reunir `limit` aciertos
+      // (con techo): antes solo se miraban los `limit` más nuevos y un correo que
+      // coincidía pero era algo más antiguo no aparecía nunca.
+      const scan = query.q?.trim() ? Math.max(wanted, FREE_TEXT_SCAN) : wanted;
       const found: MailMessage[] = [];
-      for (const uid of picked) {
+      for (const uid of newestFirst.slice(0, scan)) {
+        if (found.length >= wanted) break;
         const raw = await client.fetchOne(
           String(uid),
           { uid: true, envelope: true, source: true, flags: true },
@@ -200,7 +231,7 @@ export async function searchMail(
         );
         if (!raw) continue;
         const message = toMessage(raw as never, 'INBOX');
-        if (query.q && !matchesFreeText(message, query.q)) continue;
+        if (query.q?.trim() && !matchesFreeText(message, query.q)) continue;
         found.push(message);
       }
       return found;
@@ -208,6 +239,9 @@ export async function searchMail(
     deadlineMs,
   );
 }
+
+const SMTP_TIMEOUT_MS = 30_000;
+const SMTP_SOCKET_TIMEOUT_MS = 60_000;
 
 /**
  * Send one message.
@@ -217,7 +251,9 @@ export async function searchMail(
  * that — but every send is logged so "did it actually go out" is answerable.
  */
 export async function sendMail(account: MailAccount, req: SendRequest): Promise<SendResult> {
-  if (!req.to.length) return { ok: false, error: 'falta el destinatario' };
+  // «  » o «» no son destinatarios: antes contaban y el fallo llegaba del SMTP.
+  const to = req.to.map((addr) => addr.trim()).filter(Boolean);
+  if (!to.length) return { ok: false, error: 'falta el destinatario' };
   if (!req.subject.trim() || !req.text.trim()) return { ok: false, error: 'falta asunto o cuerpo' };
 
   const transport = createTransport({
@@ -225,12 +261,18 @@ export async function sendMail(account: MailAccount, req: SendRequest): Promise<
     port: account.smtpPort,
     secure: account.smtpPort === 465,
     auth: { user: account.address, pass: account.password },
+    // Sin esto nodemailer espera hasta 2 min a conectar y 10 min a un socket
+    // callado: un SMTP colgado dejaba el turno parado ese tiempo.
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
   });
 
   try {
     const info = await transport.sendMail({
       from: account.address,
-      to: req.to.join(', '),
+      to: to.join(', '),
+      ...(req.cc?.length ? { cc: req.cc.join(', ') } : {}),
       subject: req.subject,
       text: req.text,
       ...(req.attachments?.length ? { attachments: req.attachments } : {}),
@@ -238,7 +280,7 @@ export async function sendMail(account: MailAccount, req: SendRequest): Promise<
         ? { inReplyTo: req.inReplyTo, references: req.references ?? [req.inReplyTo] }
         : {}),
     });
-    log.info('mail sent', { to: req.to.length, subject: req.subject.length });
+    log.info('mail sent', { to: to.length, subject: req.subject.length });
     return { ok: true, id: String(info.messageId ?? '') };
   } catch (err) {
     const why = redactSecrets(err instanceof Error ? err.message : String(err));

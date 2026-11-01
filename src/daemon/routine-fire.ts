@@ -14,7 +14,9 @@ import {
   isOneShotReminder,
   isReminder,
   oneShotStillPending,
+  parkFailedRepeating,
   recordDroppedReminder,
+  reminderEnded,
   reminderText,
   settleOneShot,
 } from '../tools/reminder.js';
@@ -35,7 +37,19 @@ export interface RoutineFireDeps {
   /** Ejecuta el trabajo real de una rutina (no recordatorio) y devuelve su texto. */
   runTask: (task: string, ctx: RoutineRunContext) => Promise<string>;
   /** Envía un mensaje al chat. Rechaza si el envío falla. */
-  send: (chatId: string, text: string) => Promise<unknown>;
+  send: (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => Promise<unknown>;
+  /**
+   * Botones del aviso de un recordatorio («✅ Hecho» / «⏰ +1h»), o undefined para
+   * mandarlo sin botones. Recibe el ámbito y el texto del recordatorio.
+   */
+  reminderButtons?: (
+    scope: string,
+    text: string,
+  ) => Array<{ label: string; action: string }> | undefined;
   /** Re-sincroniza el planificador (tras borrar o reprogramar un recordatorio puntual). */
   sync: () => void;
   /** F6: adónde va la salida de cada rutina (chat/fichero/nada) y «solo si cambia». */
@@ -74,6 +88,12 @@ export function createRoutineFire(
     // A one-time reminder deleted after this job was registered (delivered late at
     // startup, cancelled) must not send again from a stale callback.
     if (isOneShotReminder(ctx.routine) && !oneShotStillPending(store, ctx.routine)) return;
+    // A repeating reminder whose last day («hasta …») has passed stops for good.
+    if (isReminder(ctx.routine) && reminderEnded(ctx.routine)) {
+      store.deleteRoutine(ctx.scope, ctx.routine.name);
+      deps.sync();
+      return;
+    }
     log.info('routine fired', { routine: ctx.routine.name, chatId });
     const reminder = isReminder(ctx.routine);
     // Un recordatorio solo avisa; una rutina TRABAJA. La tarea real se saca del
@@ -92,10 +112,13 @@ export function createRoutineFire(
       if (isCommandRoutine(ctx.routine)) {
         // F4: un comando aprobado, sin modelo. Nunca se manda a runTask.
         const out = deps.fireCommand
-          ? await deps.fireCommand(ctx).catch((err: unknown) => ({
-              body: `No se pudo ejecutar el comando: ${String(err)}`,
-              failed: true,
-            }))
+          ? await deps.fireCommand(ctx).catch((err: unknown) => {
+              log.warn('command routine failed', { routine: ctx.routine.name, err });
+              return {
+                body: `No se pudo ejecutar el comando: ${commandFailure(err)}.`,
+                failed: true,
+              };
+            })
           : {
               body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
               failed: true,
@@ -133,13 +156,13 @@ export function createRoutineFire(
         return;
       }
     }
-    const sent = await deps
-      .send(
-        chatId,
-        reminder
-          ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-          : `⏰ Rutina "${ctx.routine.name}":\n\n${body}`,
-      )
+    const text = reminder
+      ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
+      : `⏰ ${ctx.routine.name}\n\n${body}`;
+    const buttons = reminder
+      ? deps.reminderButtons?.(ctx.scope, reminderText(ctx.routine))
+      : undefined;
+    const sent = await (buttons ? deps.send(chatId, text, buttons) : deps.send(chatId, text))
       .then(() => true)
       .catch((err: unknown) => {
         log.warn('routine send failed', { err });
@@ -155,8 +178,21 @@ export function createRoutineFire(
         log.warn('one-time reminder dropped after an hour of failed delivery', {
           routine: ctx.routine.name,
         });
-        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name);
+        recordDroppedReminder(deps.droppedRemindersPath, ctx.routine.name, Date.now(), chatId);
       }
+      deps.sync();
+    } else if (!sent && reminder) {
+      // A repeating reminder that could not be sent is parked as a one-time retry
+      // for this slot instead of being lost until its next day.
+      try {
+        parkFailedRepeating(store, ctx.routine);
+        deps.sync();
+      } catch (err) {
+        log.warn('could not park a failed reminder for retry', { err });
+      }
+    } else if (sent && reminder && reminderEnded(ctx.routine, new Date(), true)) {
+      // That was its last firing: remove it now so lists and the briefing stop showing it.
+      store.deleteRoutine(ctx.scope, ctx.routine.name);
       deps.sync();
     }
   };
@@ -165,7 +201,19 @@ export function createRoutineFire(
 export interface BootReminderDeps {
   store: Store;
   /** Envía un mensaje al chat. Rechaza si el envío falla. */
-  send: (chatId: string, text: string) => Promise<unknown>;
+  send: (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => Promise<unknown>;
+  /**
+   * Botones del aviso tardío («✅ Hecho» / «⏰ +1h»), los mismos que a su hora, o
+   * undefined para mandarlo sin botones. Recibe el ámbito y el texto del recordatorio.
+   */
+  reminderButtons?: (
+    scope: string,
+    text: string,
+  ) => Array<{ label: string; action: string }> | undefined;
   /** Arranca el planificador; se llama siempre, haya ido bien o mal la recuperación. */
   start: () => void;
   /** Tope de cada envío al arrancar (20 s por defecto). */
@@ -182,7 +230,7 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
   const timeoutMs = deps.sendTimeoutMs ?? 20_000;
   return deliverMissedReminders({
     store: deps.store,
-    send: async (scope, text) => {
+    send: async (scope, text, reminder) => {
       const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
       if (!chatId) return false;
       // A hung send must not keep the scheduler from starting. A timeout counts as
@@ -191,8 +239,8 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
         const t = setTimeout(() => resolve(false), timeoutMs);
         t.unref?.();
       });
-      const sent = deps
-        .send(chatId, text)
+      const buttons = deps.reminderButtons?.(scope, reminder);
+      const sent = (buttons ? deps.send(chatId, text, buttons) : deps.send(chatId, text))
         .then(() => true)
         .catch((err: unknown) => {
           log.warn('missed reminder send failed', { err });
@@ -209,4 +257,19 @@ export function deliverMissedThenStart(deps: BootReminderDeps): Promise<void> {
       if (r && (r.delivered || r.failed || r.invalid)) log.info('missed reminders', r);
     })
     .finally(() => deps.start());
+}
+
+/**
+ * Causa en castellano de un comando de rutina que no llegó a ejecutarse. Antes se
+ * mandaba al chat el error crudo («Error: spawn x ENOENT»); el detalle queda en el log.
+ */
+function commandFailure(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${(err as NodeJS.ErrnoException).code ?? ''} ${err.message}`
+      : String(err);
+  if (/ENOENT|not found|no such file/i.test(raw)) return 'no encuentro el programa';
+  if (/EACCES|EPERM|denied/i.test(raw)) return 'no tengo permiso para ejecutarlo';
+  if (/ETIMEDOUT|timed? ?out/i.test(raw)) return 'tardó demasiado';
+  return 'algo ha fallado por mi parte';
 }

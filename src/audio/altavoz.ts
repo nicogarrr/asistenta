@@ -1,6 +1,11 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { TV_FIREWALL_HINT } from './tv-cast.js';
+import { writeFileReplacing } from '../fs-tmp.js';
+import {
+  claimTeleFirewallWarning,
+  TV_FIREWALL_HINT,
+  teleFirewallAlreadyWarned,
+} from './tv-cast.js';
 
 /**
  * Modo altavoz: con `/altavoz pc` (o `tele`), cada nota de voz que manda el dueño
@@ -18,11 +23,18 @@ export function parseAltavozArgs(args: string): AltavozArgs {
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.!¡]+$/g, '')
+    .replace(/^(?:por|en)\s+(?:el|la)\s+|^(?:por|en)\s+/, '')
+    .trim();
   if (!a || a === 'estado') return { kind: 'show' };
   if (/^(on|si|pc|ordenador|enciende|activa|activar)$/.test(a)) return { kind: 'set', mode: 'pc' };
   if (/^(tele|tv|television)$/.test(a)) return { kind: 'set', mode: 'tele' };
-  if (/^(off|no|apaga|apagar|desactiva|desactivar|para)$/.test(a)) {
+  if (
+    /^(off|no|apaga|apagar|apagalo|desactiva|desactivar|para|ninguno|ninguna|ningun sitio|ningun lado)$/.test(
+      a,
+    )
+  ) {
     return { kind: 'set', mode: 'off' };
   }
   return { kind: 'error' };
@@ -31,11 +43,11 @@ export function parseAltavozArgs(args: string): AltavozArgs {
 export function altavozStatusText(mode: AltavozMode): string {
   switch (mode) {
     case 'pc':
-      return '🔊 Altavoz activado: tus notas de voz sonarán en el PC al llegar. /altavoz off para quitarlo.';
+      return '🔊 Altavoz activado: tus notas de voz sonarán en el PC al llegar. Si quieres quitarlo, dime «apágalo».';
     case 'tele':
-      return '📺 Altavoz activado en la tele: tus notas de voz sonarán en la tele al llegar. /altavoz off para quitarlo.';
+      return '📺 Altavoz activado en la tele: tus notas de voz sonarán en la tele al llegar. Si quieres quitarlo, dime «apágalo».';
     default:
-      return '🔇 Altavoz apagado. /altavoz pc o /altavoz tele para que tus notas de voz suenen solas.';
+      return '🔇 Altavoz apagado. Si quieres que tus notas de voz suenen solas, dime «por el PC» o «por la tele».';
   }
 }
 
@@ -47,8 +59,7 @@ export function stopReplyText(threads: number, notes: number): string {
   return parts.length ? `Detenido. ${parts.join('; ')}.` : 'No había nada en curso.';
 }
 
-export const ALTAVOZ_USAGE =
-  'Uso: /altavoz pc · /altavoz tele · /altavoz off · /altavoz (ver estado)';
+export const ALTAVOZ_USAGE = '¿Por dónde te hablo: por el PC, por la tele, o lo apago?';
 
 export class AltavozStore {
   #file: string;
@@ -75,9 +86,7 @@ export class AltavozStore {
     if (mode === 'off') delete this.#modes[chat];
     else this.#modes[chat] = mode;
     mkdirSync(dirname(this.#file), { recursive: true });
-    const tmp = `${this.#file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.#modes, null, 2));
-    renameSync(tmp, this.#file);
+    writeFileReplacing(this.#file, JSON.stringify(this.#modes, null, 2));
   }
 }
 
@@ -90,12 +99,30 @@ export interface AltavozPlayerDeps {
    */
   playOnPc(file: string, signal?: AbortSignal): Promise<void>;
   /** Manda un fichero a la tele (se queda con él). Ausente si la tele está apagada. */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  castToTv?: (file: string) => Promise<{
+    ok: boolean;
+    message: string;
+    hits?: () => number;
+    /** Para esa nota en la tele (el cast sabe si la abrió el visor, el navegador o Glasshouse). */
+    stop?: () => Promise<unknown>;
+    /** Cierra el servidor LAN que sirve el audio a la tele y borra la copia. */
+    close?: () => void;
+  }>;
   /**
    * Si la tele aceptó la orden pero no ha descargado el fichero en este tiempo, se avisa
    * (una vez por sesión) de que suele ser el firewall de Windows. Por defecto 15 s.
    */
   noFetchMs?: number;
+  /**
+   * /stop en modo tele: para lo que suena en la tele (ssap media.controls/stop). Solo se
+   * usa si esta cola mandó algo a la tele hace poco (`teleStopWindowMs`): una tele que
+   * está con Netflix no se toca. Ausente si la tele está apagada.
+   */
+  stopTv?: () => Promise<unknown>;
+  /** Cuánto tiempo tras mandar una nota a la tele /stop todavía la para. Por defecto 2 min. */
+  teleStopWindowMs?: number;
+  /** Reloj (para pruebas). */
+  now?: () => number;
   /** Borra la copia temporal del PC. */
   remove(file: string): void;
   onError?: (err: unknown) => void;
@@ -118,12 +145,29 @@ export interface AltavozPlayer {
   ): boolean;
   /**
    * /stop: descarta las notas en cola de ese chat (o de todos sin `key`) y corta la que
-   * suena en el PC. Devuelve cuántas notas paró. Las descartadas no avisan de fallo.
+   * suena en el PC. Si ese chat mandó una nota a la tele hace menos de
+   * `teleStopWindowMs`, también la para en la tele. Devuelve cuántas notas paró. Las
+   * descartadas no avisan de fallo.
    */
   clear(key?: string): number;
+  /**
+   * Apunta una nota que llegó a la tele por otro camino («reprodúcelo en la tele»), para
+   * que /stop en ese chat la pare igual que una de /altavoz tele: solo dentro de
+   * `teleStopWindowMs` y con el `stop` del propio cast (si no hay, el genérico).
+   */
+  noteTele(
+    key: string | undefined,
+    stop?: () => Promise<unknown>,
+    close?: () => void,
+  ): TeleCastHandle;
   /** Promesa de la cola actual (para pruebas y para /stop). */
   idle(): Promise<void>;
   pending(): number;
+}
+
+/** Lo que devuelve `noteTele`: si /stop ya paró ese cast (para no avisar del firewall). */
+export interface TeleCastHandle {
+  stopped(): boolean;
 }
 
 /**
@@ -135,20 +179,49 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   let waiting = 0;
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
-  /** El aviso del firewall sale una sola vez por sesión: repetirlo en cada nota cansa. */
-  let firewallWarned = false;
-  const watchFetch = (hits: (() => number) | undefined, onNotice?: (text: string) => void) => {
-    if (!hits || !onNotice || firewallWarned) return;
+  const now = deps.now ?? Date.now;
+  /**
+   * Notas mandadas a la tele por chat (la tele se queda con ellas y siguen sonando). Se
+   * guardan todas las de la ventana, no solo la última: dos casts seguidos tienen cada uno
+   * su propio «parar» (servidor LAN, Glasshouse…) y /stop debe llamar a los dos.
+   */
+  const teleCasts = new Map<
+    string | undefined,
+    Array<{ at: number; stop?: () => Promise<unknown>; close?: () => void; stopped: boolean }>
+  >();
+  const noteTeleCast = (
+    key: string | undefined,
+    stop?: () => Promise<unknown>,
+    close?: () => void,
+  ) => {
+    const window = deps.teleStopWindowMs ?? 120_000;
+    const t = now();
+    const kept = (teleCasts.get(key) ?? []).filter((e) => t - e.at <= window);
+    const entry = { at: t, stop, close, stopped: false };
+    kept.push(entry);
+    teleCasts.set(key, kept);
+    return entry;
+  };
+  /**
+   * El aviso del firewall sale una sola vez por sesión, compartido con «reprodúcelo en
+   * la tele» (src/tools/media.ts): repetirlo en cada nota o por cada camino cansa.
+   */
+  const watchFetch = (
+    hits: (() => number) | undefined,
+    onNotice?: (text: string) => void,
+    stopped?: () => boolean,
+  ) => {
+    if (!hits || !onNotice || teleFirewallAlreadyWarned()) return;
     const timer = setTimeout(() => {
-      if (firewallWarned) return;
+      // Parada con /stop antes de que la tele pidiera el fichero: no es el firewall.
+      if (stopped?.() || teleFirewallAlreadyWarned()) return;
       let served = 1;
       try {
         served = hits();
       } catch {
         return;
       }
-      if (served > 0) return;
-      firewallWarned = true;
+      if (served > 0 || !claimTeleFirewallWarning()) return;
       try {
         onNotice(`📺 ${TV_FIREWALL_HINT}`);
       } catch {
@@ -160,7 +233,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
   const playOne = async (
     mode: 'pc' | 'tele',
     load: () => Promise<{ bytes: Buffer; mimeType: string } | null>,
-    item: { dropped: boolean; abort?: AbortController },
+    item: { key?: string; dropped: boolean; abort?: AbortController },
     onNotice?: (text: string) => void,
   ): Promise<void> => {
     if (item.dropped) return;
@@ -179,7 +252,19 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);
-      watchFetch(r.hits, onNotice);
+      if (item.dropped) {
+        // /stop llegó mientras la tele abría la nota (conectar puede tardar segundos):
+        // antes la nota sonaba igual y /stop ya no la encontraba. Se para ya y se cierra
+        // el servidor del audio, sin bloquear la cola si la tele tarda en contestar.
+        const stop = r.stop ?? deps.stopTv;
+        void Promise.resolve()
+          .then(() => stop?.())
+          .catch((err) => deps.onError?.(err))
+          .finally(() => r.close?.());
+        return;
+      }
+      const cast = noteTeleCast(item.key, r.stop, r.close);
+      watchFetch(r.hits, onNotice, () => cast.stopped);
       return;
     }
     const abort = new AbortController();
@@ -192,6 +277,54 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     } finally {
       deps.remove(file);
     }
+  };
+  /** Para en la tele la nota de ese chat (o de cualquiera sin `key`) si es reciente. */
+  const stopRecentTele = (key?: string): number => {
+    const { stopTv } = deps;
+    const window = deps.teleStopWindowMs ?? 120_000;
+    const t = now();
+    // Cada «parar» con los servidores LAN de sus casts: se cierran cuando la tele ha
+    // contestado (o ha fallado). Antes /stop paraba la tele pero el servidor del audio
+    // seguía abierto, con el fichero, hasta el final de su ventana.
+    const stops = new Map<() => Promise<unknown>, Array<() => void>>();
+    const orphanCloses: Array<() => void> = [];
+    for (const [k, list] of teleCasts) {
+      if (key !== undefined && k !== key) continue;
+      teleCasts.delete(k);
+      for (const e of list) {
+        if (t - e.at > window) continue;
+        e.stopped = true;
+        // El «parar» del propio cast (cierra el navegador/Glasshouse si hizo falta); si no, el genérico.
+        const stop = e.stop ?? stopTv;
+        if (stop) {
+          const closes = stops.get(stop) ?? [];
+          if (e.close) closes.push(e.close);
+          stops.set(stop, closes);
+        } else if (e.close) orphanCloses.push(e.close);
+      }
+    }
+    const closeAll = (closes: Array<() => void>): void => {
+      for (const close of closes) {
+        try {
+          close();
+        } catch (err) {
+          deps.onError?.(err);
+        }
+      }
+    };
+    closeAll(orphanCloses);
+    if (!stops.size) return 0;
+    for (const [stop, closes] of stops) {
+      try {
+        void Promise.resolve(stop())
+          .catch((err) => deps.onError?.(err))
+          .finally(() => closeAll(closes));
+      } catch (err) {
+        deps.onError?.(err);
+        closeAll(closes);
+      }
+    }
+    return 1;
   };
   return {
     enqueue(mode, load, onFail, key, onNotice) {
@@ -227,7 +360,12 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
         item.abort?.abort();
         stopped++;
       }
+      stopped += stopRecentTele(key);
       return stopped;
+    },
+    noteTele(key, stop, close) {
+      const cast = noteTeleCast(key, stop, close);
+      return { stopped: () => cast.stopped };
     },
     idle: () => chain,
     pending: () => waiting,

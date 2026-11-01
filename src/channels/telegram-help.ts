@@ -38,6 +38,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'corrige lo que estoy haciendo sin pararlo',
       },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
+      {
+        command: 'funciones',
+        args: '[área]',
+        description: 'todo lo que sé hacer, por áreas y con ejemplos',
+      },
       { command: 'status', args: 'on|off', description: 'avisos de cómo voy mientras trabajo' },
       { command: 'topic', args: '<nombre>', description: 'abre o cambia de conversación' },
       { command: 'topics', description: 'conversaciones abiertas' },
@@ -151,6 +156,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       { command: 'buscar', args: '<texto>', description: 'busca en conversaciones pasadas' },
       { command: 'perfil', args: '[guardar|olvidar]', description: 'tu perfil estructurado' },
+      { command: 'aprendido', description: 'lo aprendido de tus correcciones' },
+      { command: 'olvida', args: '<n>', description: 'borra una' },
       { command: 'exportar', description: 'esta conversación en JSON' },
     ],
   },
@@ -164,6 +171,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       { command: 'vigila', args: '<enlace> [nombre]', description: 'te aviso si cambia el precio' },
       { command: 'vigilando', description: 'lo que estoy vigilando' },
+      { command: 'vigilancias', description: 'todo lo que vigilo: páginas, precios, rutinas' },
       { command: 'dejar_de_vigilar', args: '<id>', description: 'deja de vigilar una página' },
       { command: 'precio', description: 'histórico de precio de algo vigilado' },
       { command: 'compara', args: '<enlace>', description: 'el mismo producto en 7 tiendas' },
@@ -209,13 +217,22 @@ export const HELP_SECTIONS: HelpSection[] = [
     entries: [
       {
         command: 'permisos',
-        args: '[revocar <herramienta>|todo]',
+        args: '[lista|revocar …]',
         description: 'los permisos «siempre» que me diste',
       },
       { command: 'consumo', args: '[hoy|semana|mes]', description: 'tokens y coste estimado' },
       { command: 'servicios', description: 'herramientas externas adoptadas y su estado' },
-      { command: 'skills', args: 'instalar <url>', description: 'instala una skill' },
+      { command: 'mcp', description: 'recursos MCP' },
+      {
+        command: 'skills',
+        args: 'buscar <texto> | instalar <url>',
+        description: 'busca o instala una skill',
+      },
       { command: 'evolucion', args: '[idea <texto>|ahora]', description: 'la auto-mejora semanal' },
+      {
+        command: 'actualizacion',
+        description: 'si me actualizo sola desde main y cómo fue la última vez',
+      },
     ],
   },
   {
@@ -252,16 +269,32 @@ export function helpText(opts: { bold?: boolean } = {}): string {
   ].join('\n\n');
 }
 
-/** /start: bienvenida corta, con ejemplos, en vez del muro de /help. */
+/** /start: bienvenida corta (saludo, cómo usarla, permisos), en vez del muro de /help. */
 export function startText(displayName?: string): string {
   const name = displayName?.trim().split(/\s+/)[0];
   return [
     name ? `¡Hola, ${name}! Soy tu asistente.` : '¡Hola! Soy tu asistente.',
-    'Escríbeme o mándame una nota de voz como a una persona. Por ejemplo:',
-    '• «Recuérdame el viernes a las 10 pagar el alquiler»',
-    '• «Mira el precio de esta tele y avísame si baja» + enlace',
-    '• «Hazme una captura de la pantalla»',
-    'Antes de hacer algo importante (enviar, comprar, borrar) te pido permiso con botones.',
-    'Toca el botón Menú o escribe /help para ver todos los comandos.',
+    'Escríbeme o mándame una nota de voz como a una persona; /help tiene todo lo que sé hacer.',
+    'Antes de hacer algo importante (enviar, comprar, borrar) te pido permiso.',
   ].join('\n');
+}
+
+/** Un /start repetido en menos de esto (o que llega tarde, al arrancar) no se vuelve a contestar. */
+export const START_REPEAT_WINDOW_MS = 5 * 60_000;
+const START_STALE_MS = 2 * 60_000;
+const lastStartAt = new Map<string, number>();
+
+/**
+ * ¿Toca mandar la bienvenida? No si ya se mandó a este chat hace menos de 5 min ni
+ * si el /start es de hace más de 2 min (Telegram lo guardó con Asistenta apagada y
+ * lo entrega al arrancar). Así la bienvenida no sale dos veces seguidas.
+ */
+export function startWelcomeDue(chatKey: string, now: number, sentAt?: string): boolean {
+  const sent = sentAt ? Date.parse(sentAt) : Number.NaN;
+  if (Number.isFinite(sent) && now - sent > START_STALE_MS) return false;
+  const last = lastStartAt.get(chatKey);
+  if (last !== undefined && now - last >= 0 && now - last < START_REPEAT_WINDOW_MS) return false;
+  lastStartAt.set(chatKey, now);
+  if (lastStartAt.size > 100) lastStartAt.delete(lastStartAt.keys().next().value as string);
+  return true;
 }

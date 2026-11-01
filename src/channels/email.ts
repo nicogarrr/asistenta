@@ -25,6 +25,7 @@ export const EMAIL_TAINT_SOURCE = 'correo';
 export interface EmailTurnGate {
   markTainted(sessionId: string, source: string): void;
   taintSessionPrivate(sessionId: string, source: string): void;
+  recordExternalText?(sessionId: string, text: string): void;
 }
 
 /**
@@ -34,9 +35,11 @@ export interface EmailTurnGate {
  * pregunta, F2) y es privado (es tu buzón → una salida a la red con datos
  * pregunta, #376/#492). Solo endurece.
  */
-export function taintEmailTurn(gate: EmailTurnGate, sessionId: string): void {
+export function taintEmailTurn(gate: EmailTurnGate, sessionId: string, text = ''): void {
   gate.markTainted(sessionId, EMAIL_TAINT_SOURCE);
-  gate.taintSessionPrivate(sessionId, 'el correo que inició este turno');
+  gate.taintSessionPrivate(sessionId, 'el correo que acaba de llegar');
+  // El texto del correo también se apunta: un recuerdo o recordatorio que lo copie pregunta.
+  if (text) gate.recordExternalText?.(sessionId, text);
 }
 export const EMAIL_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_AUTHSERV = 'mx.google.com';
@@ -252,6 +255,12 @@ export interface EmailChannelDeps {
   now?: () => Date;
 }
 
+/**
+ * Hilos de correo recordados para engancharles la respuesta. Sin tope, un daemon que
+ * dura semanas guardaba en memoria cada correo recibido (con su texto) para siempre.
+ */
+export const EMAIL_THREADS_MAX = 1000;
+
 export const EMAIL_APPROVAL_NOTE =
   'Esto necesita tu aprobación: te la he mandado por Telegram (las aprobaciones nunca van por correo).';
 
@@ -302,7 +311,13 @@ export class EmailChannel implements ChannelAdapter {
         }
         this.#deps.audit({ uid: raw.uid, accepted: true });
         const messageId = v.messageId ?? `uid:${raw.uid}`;
+        this.#threads.delete(messageId);
         this.#threads.set(messageId, v);
+        while (this.#threads.size > EMAIL_THREADS_MAX) {
+          const oldest = this.#threads.keys().next();
+          if (oldest.done) break;
+          this.#threads.delete(oldest.value);
+        }
         const inbound: Inbound = {
           channel: EMAIL_CHANNEL,
           account: this.account,

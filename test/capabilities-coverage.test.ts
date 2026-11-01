@@ -10,6 +10,7 @@ import { CAPABILITIES } from '../src/core/capabilities.js';
 // Exentas = herramientas sin metadatos: sin mutex, en todos los modos, la Gate decide, siempre cargadas.
 const EXEMPT: Record<string, string> = {
   calendar: 'calendario de Google: llamada de red; la Gate pregunta las escrituras',
+  correo: 'Gmail: llamada de red; la Gate marca la sesión al leer y pregunta cada envío',
   decision: 'registro de decisiones en SQLite propio; no toca la máquina',
   documents: 'índice de documentos (docs.sqlite); solo lectura/índice',
   download: 'descarga a la carpeta de descargas; la Gate pregunta por acción',

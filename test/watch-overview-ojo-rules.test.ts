@@ -67,7 +67,6 @@ describe('pa vigilancias: reglas «no avisar» del ojo', () => {
     const { entries, errors } = collectWatches({
       stateDir: state,
       agentDb: join(state, 'agent.db'),
-      priceConfig: join(state, 'pricewatch.json'),
     });
     expect(errors).toEqual([]);
     const rules = entries.filter((e) => e.kind === 'silencio');

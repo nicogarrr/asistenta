@@ -136,6 +136,60 @@ export function isMailReplyRequest(text: string): boolean {
   return /^responde(?:r)? a ese\s*\n/i.test(text);
 }
 
+/** Resultado de routeInboundControl: el mensaje ya está atendido, o sigue hacia un hilo. */
+export type InboundControlResult = 'handled' | 'continue';
+
+export interface InboundControlDeps<I, C> {
+  /** «responde a ese» + texto: va a /correo. */
+  mailReply: (inbound: I) => Promise<unknown>;
+  /** Confirmación pendiente de /borrar_chat en este chat (null si no hay ninguna). */
+  consumeErase: (key: string, text: string) => 'confirmed' | 'cancelled' | null;
+  eraseConfirmed: (inbound: I) => Promise<unknown>;
+  eraseCancelled: (inbound: I) => Promise<unknown>;
+  parseCommand: (text: string) => C | null;
+  runCommand: (inbound: I, command: C) => Promise<unknown>;
+  /** Respuesta en texto normal a la última pregunta de un comando (null si no hay). */
+  consumeAnswer?: (key: string, text: string) => C | null;
+  /** Un comando nuevo anula la pregunta pendiente de este chat. */
+  clearAnswer?: (key: string) => void;
+}
+
+/**
+ * Lo que va antes de cualquier hilo, en este orden (movido tal cual de onMessage):
+ * respuesta a un correo, confirmación de /borrar_chat y comandos, que nunca pasan
+ * por el agente. Un «cancelado» de /borrar_chat avisa pero no corta: el mismo
+ * mensaje sigue como comando o como petición normal. Sin nada de Telegram (el
+ * altavoz se queda en el manejador de Telegram), así el panel y la voz pueden usarlo.
+ */
+export async function routeInboundControl<I extends { text: string }, C>(
+  inbound: I,
+  key: string,
+  deps: InboundControlDeps<I, C>,
+): Promise<InboundControlResult> {
+  if (isMailReplyRequest(inbound.text)) {
+    await deps.mailReply(inbound);
+    return 'handled';
+  }
+  const erase = deps.consumeErase(key, inbound.text);
+  if (erase === 'confirmed') {
+    await deps.eraseConfirmed(inbound);
+    return 'handled';
+  }
+  if (erase === 'cancelled') await deps.eraseCancelled(inbound);
+  const command = deps.parseCommand(inbound.text);
+  if (command) {
+    deps.clearAnswer?.(key);
+    await deps.runCommand(inbound, command);
+    return 'handled';
+  }
+  const answer = deps.consumeAnswer?.(key, inbound.text);
+  if (answer) {
+    await deps.runCommand(inbound, answer);
+    return 'handled';
+  }
+  return 'continue';
+}
+
 /** Lo mínimo de un hilo que necesita resolveInboundThread. */
 export interface ThreadLike {
   active: boolean;

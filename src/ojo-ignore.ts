@@ -140,15 +140,30 @@ export function confirmNotices(db: DatabaseSync, ns: readonly number[]): void {
 
 /**
  * Envío fallido: se sueltan las reservas y los números no se gastan (el siguiente intento
- * reutiliza los mismos). Solo es seguro porque el barrido está serializado.
+ * reutiliza los mismos). Solo es seguro porque el barrido está serializado: los números
+ * soltados son los últimos asignados. La secuencia vuelve justo antes del menor de ellos,
+ * nunca más abajo: un número gastado antes (una reserva huérfana que quizá salió, un
+ * aviso enviado o descartado) no se vuelve a dar.
  */
 export function releaseNotices(db: DatabaseSync, ns: readonly number[]): void {
   if (ns.length === 0) return;
   const del = db.prepare("DELETE FROM vigilante_notices WHERE n = ? AND status = 'reservado'");
   for (const n of ns) del.run(n);
+  const floor = Math.min(...ns) - 1;
   db.prepare(
-    "UPDATE sqlite_sequence SET seq = max((SELECT COALESCE(MAX(n), 0) FROM vigilante_notices), (SELECT COALESCE(MAX(n), 0) FROM vigilante_dismissals)) WHERE name = 'vigilante_notices'",
-  ).run();
+    "UPDATE sqlite_sequence SET seq = min(seq, max(?, (SELECT COALESCE(MAX(n), 0) FROM vigilante_notices), (SELECT COALESCE(MAX(n), 0) FROM vigilante_dismissals))) WHERE name = 'vigilante_notices'",
+  ).run(floor);
+}
+
+/**
+ * Envío de resultado desconocido (vencido el plazo o lanzó un error): el mensaje quizá
+ * salió o salga tarde con sus [#N]. Se quitan las reservas SIN bajar la secuencia: esos
+ * números se queman y no se reutilizan, así /ignora N nunca nombra otro aviso.
+ */
+export function burnNotices(db: DatabaseSync, ns: readonly number[]): void {
+  if (ns.length === 0) return;
+  const del = db.prepare("DELETE FROM vigilante_notices WHERE n = ? AND status = 'reservado'");
+  for (const n of ns) del.run(n);
 }
 
 /**
@@ -191,7 +206,7 @@ export function dismissNotice(db: DatabaseSync, n: number, now: number): Dismiss
     .prepare("SELECT 1 AS x FROM vigilante_notices WHERE n = ? AND status = 'reservado'")
     .get(n);
   if (pend) {
-    return { ok: false, error: `El aviso #${n} se está enviando; repite /ignora en un momento.` };
+    return { ok: false, error: `El aviso #${n} se está enviando; dímelo otra vez en un momento.` };
   }
   const notice = db
     .prepare("SELECT * FROM vigilante_notices WHERE n = ? AND status = 'enviado'")
@@ -305,11 +320,29 @@ export function ruleSuppresses(state: IgnoreState, item: AgendaItem): boolean {
 
 export function formatRules(rules: ReturnType<typeof listRules>): string {
   if (rules.length === 0) {
-    return 'No hay reglas de ignorar. Cuando descartes dos avisos parecidos con /ignora <número>, te propongo una.';
+    return 'No hay reglas de ignorar. Cuando descartes dos avisos parecidos, te propongo una.';
   }
   const lines = rules.map(
     (r) =>
       `• R${r.id} [${r.status}] ${r.kind} · ${r.src} · «${r.pattern}» (avisos distintos descartados: ${r.dismissed})`,
   );
-  return `Reglas de ignorar:\n${lines.join('\n')}\nActivar una propuesta: /ignorados activar <id>. Borrar: /ignorados borrar <id>.`;
+  return `Reglas de ignorar:\n${lines.join('\n')}\n¿Activo o borro alguna? Dime, por ejemplo, «activa la R${rules[0]?.id}» o «borra la R${rules[0]?.id}».`;
+}
+
+/** «descarta el 3», «ignora el aviso #3»: el número del aviso a descartar, o null. */
+export function ignoraAnswer(text: string): number | null {
+  const m =
+    /^(?:descarta|ignora|olv[ií]da(?:te\s+de)?)\s+(?:el\s+)?(?:aviso\s+)?(?:#|n[uú]mero\s+)?(\d{1,9})[.!]*$/i.exec(
+      text.trim(),
+    );
+  return m ? Number(m[1]) : null;
+}
+
+/** «activa la R3», «borra la 3»: los argumentos de /ignorados, o null. */
+export function rulesAnswer(text: string): string | null {
+  const m = /^(activa|borra|quita)(?:la|r)?\s+(?:la\s+)?(?:regla\s+)?R?(\d{1,9})[.!]*$/i.exec(
+    text.trim(),
+  );
+  if (!m) return null;
+  return `${(m[1] ?? '').toLowerCase() === 'activa' ? 'activar' : 'borrar'} ${m[2]}`;
 }

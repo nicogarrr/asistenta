@@ -180,9 +180,17 @@ export function extractPriceTexts(text: string, limit = 5): PriceText[] {
   return out;
 }
 
-/** A page price raw ("1.234,56", "45,20", "300") as cents, or null if it does not parse. */
+/** A page price raw ("1.234,56", "45,20", "300", "1299.99", "1,299.99") as cents, or null if it does not parse. */
 export function parsePriceToCents(raw: string): number | null {
-  const cleaned = raw.replace(/[.\u00a0\u202f\u2009 ]/g, '').replace(',', '.');
+  const compact = raw.replace(/[\u00a0\u202f\u2009 ]/g, '');
+  // One dot followed by one or two digits and no comma ("1299.99", "12.5") is a
+  // decimal point, not a thousands dot ("1.299" keeps meaning 1299).
+  // English grouping with a decimal point ("1,299.99"): commas are thousands.
+  const cleaned = /^\d+\.\d{1,2}$/.test(compact)
+    ? compact
+    : /^\d{1,3}(?:,\d{3})+\.\d{1,2}$/.test(compact)
+      ? compact.replace(/,/g, '')
+      : compact.replace(/\./g, '').replace(',', '.');
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
   const cents = Math.round(Number.parseFloat(cleaned) * 100);
   return Number.isSafeInteger(cents) ? cents : null;

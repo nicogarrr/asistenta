@@ -1,12 +1,15 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { type Static, Type } from 'typebox';
 import { log } from '../log.js';
-import { needsAppLookup, resolveAppId } from '../tv/apps.js';
+import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
-import { describeTvIntent, parseTvCommand } from '../tv/natural.js';
+import { describeTvIntent, parseTvCommand, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
+
+/** Pantallas de inicio de webOS: «apagar todo» no las cierra (no son una app abierta). */
+const HOME_APPS = new Set(['com.webos.app.home', 'com.webos.app.launcher']);
 
 /**
  * Herramienta de la tele LG (SSAP).
@@ -50,6 +53,11 @@ export interface TvToolDeps {
   /** Glasshouse GET /api/stats, optional for older installations. */
   stats?: () => Promise<unknown>;
   launch: (id: string) => Promise<void>;
+  /**
+   * Aviso si el mensaje que originó este turno es viejo (src/tv/stale-order.ts):
+   * entonces nada que mueva la tele se ejecuta. Ausente = siempre en vivo.
+   */
+  staleOrder?: () => string | null;
   key: (name: string) => Promise<void>;
   toast: (message: string) => Promise<void>;
   /**
@@ -97,6 +105,7 @@ const Params = Type.Object({
     Type.Literal('channel'),
     Type.Literal('command'),
     Type.Literal('scene'),
+    Type.Literal('picture'),
   ]),
   appId: Type.Optional(
     Type.String({
@@ -145,6 +154,12 @@ const Params = Type.Object({
     Type.String({
       description:
         'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo").',
+    }),
+  ),
+  pictureMode: Type.Optional(
+    Type.String({
+      description:
+        'Para picture: modo de imagen de LG (standard, eco, cinema, vivid, sports, game, filmMaker...). «Pon la imagen en estandar» = standard.',
     }),
   ),
   mode: Type.Optional(
@@ -259,6 +274,11 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
     // screen state that no longer exists, same reason as the ocr tool.
     executionMode: 'sequential',
     execute: async (_id, args) => {
+      const stale = TV_READ_ONLY.has(args.action) ? null : (deps.staleOrder?.() ?? null);
+      if (stale) {
+        log.info('tv: orden de un mensaje viejo, no se ejecuta', { action: args.action });
+        return { content: [{ type: 'text', text: stale }], details: { skipped: 'stale' } };
+      }
       try {
         return await runTvAction(deps, args);
       } catch (err) {
@@ -269,6 +289,15 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
 }
 
 type TvArgs = Static<typeof Params>;
+
+/** Acciones que solo miran la tele: un mensaje viejo puede seguir pidiéndolas. */
+const TV_READ_ONLY: ReadonlySet<string> = new Set([
+  'screenshot',
+  'state',
+  'status',
+  'apps',
+  'inspect',
+]);
 
 /**
  * Los errores de transporte llegan tecnicos ("No se pudo conectar... (no
@@ -411,9 +440,10 @@ async function runTvAction(
       const resolved = resolveAppId(asked, installed);
       const appId = resolved.id;
       await enqueueTvMutation(() => deps.launch(appId));
-      const label = appId === asked ? appId : `${resolved.title ?? asked} (${appId})`;
+      // A la persona, el nombre de la app; el id técnico (youtube.leanback.v4) va en details.
+      const label = resolved.title ?? APP_NAMES[appId] ?? asked;
       return {
-        content: [{ type: 'text' as const, text: `He lanzado ${label} en la tele.` }],
+        content: [{ type: 'text' as const, text: `He abierto ${label} en la tele.` }],
         details: {
           appId,
           verified: false,
@@ -441,7 +471,7 @@ async function runTvAction(
         content: [
           {
             type: 'text' as const,
-            text: `Volumen ${steps > 0 ? 'subido' : 'bajado'} ${n} paso${n === 1 ? '' : 's'} (sin confirmacion de la tele).`,
+            text: `Volumen ${steps > 0 ? 'subido' : 'bajado'} ${n} paso${n === 1 ? '' : 's'} (sin confirmación de la tele).`,
           },
         ],
         details: { steps, verified: false },
@@ -522,7 +552,7 @@ async function runTvAction(
               text:
                 presses < want
                   ? `Volumen bajado ${presses} pasos con el mando (de ${current} a unos ${to}); para seguir bajando dime "baja N" o "volumen a ${target}".`
-                  : `Volumen bajado a la mitad con el mando: de ${current} a ${target} (sin confirmacion de la tele).`,
+                  : `Volumen bajado a la mitad con el mando: de ${current} a ${target} (sin confirmación de la tele).`,
             },
           ],
           details: { from: current, to, via, presses, verified: false },
@@ -548,7 +578,7 @@ async function runTvAction(
             : `canal ${Number(raw)}`;
       return {
         content: [
-          { type: 'text' as const, text: `He puesto el ${what} (sin confirmacion de la tele).` },
+          { type: 'text' as const, text: `He puesto el ${what} (sin confirmación de la tele).` },
         ],
         details: { channel: raw, keys, verified: false },
       };
@@ -570,7 +600,18 @@ async function runTvAction(
         isOn: deps.status ? async () => (await deps.status?.())?.power === 'encendida' : undefined,
         exec: async (step) => {
           // Cada paso con su explicacion en castellano, como una accion suelta.
-          const res = await runTvAction(deps, step as TvArgs).catch((err: unknown) => {
+          let stepArgs: TvArgs;
+          if (step.action === 'closeForeground') {
+            const fg = await deps.foreground();
+            const open = (fg.appId ?? '').trim();
+            if (!open || HOME_APPS.has(open)) return 'no habia ninguna app abierta';
+            stepArgs = { action: 'closeApp', appId: open } as TvArgs;
+          } else if (step.action === 'picture') {
+            stepArgs = { action: 'picture', pictureMode: step.mode } as TvArgs;
+          } else {
+            stepArgs = step as TvArgs;
+          }
+          const res = await runTvAction(deps, stepArgs).catch((err: unknown) => {
             throw explainTvError(err);
           });
           return res.content
@@ -595,6 +636,11 @@ async function runTvAction(
       const text = (args.text ?? '').trim();
       if (!text) throw new Error('action=command necesita text: la orden en castellano.');
       const intent = parseTvCommand(text);
+      if (!intent && tvOrderHasTime(text)) {
+        throw new Error(
+          `"${text.slice(0, 80)}" lleva hora, plazo o condicion: action=command solo ejecuta ordenes para AHORA y no ha tocado la tele. No la ejecutes ya con otra accion: programala para su momento (p. ej. con la tool reminder) o preguntale a Nico.`,
+        );
+      }
       if (!intent) {
         throw new Error(
           `No he entendido "${text.slice(0, 80)}" como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Tambien puedes usar las acciones explicitas.`,
@@ -623,7 +669,7 @@ async function runTvAction(
         content: [
           {
             type: 'text' as const,
-            text: `He enviado la tecla ${name} (sin confirmacion de la tele).`,
+            text: `He enviado la tecla ${name} (sin confirmación de la tele).`,
           },
         ],
         details: { name },
@@ -648,6 +694,12 @@ async function runTvAction(
       }
       const on = args.on;
       const outcome = await enqueueTvMutation(() => deps.power(on));
+      if (on && outcome?.alreadyOn) {
+        return {
+          content: [{ type: 'text' as const, text: 'La tele ya estaba encendida.' }],
+          details: { on, verified: true, alreadyOn: true },
+        };
+      }
       if (outcome && outcome.via === 'wol') {
         return {
           content: [
@@ -731,6 +783,22 @@ async function runTvAction(
           },
         ],
         details: { url, verified: false },
+      };
+    }
+    case 'picture': {
+      const pictureMode = (args.pictureMode ?? '').trim();
+      if (!/^[A-Za-z0-9]{2,40}$/.test(pictureMode)) {
+        throw new Error('action=picture necesita pictureMode (standard, eco, cinema, vivid...).');
+      }
+      await enqueueTvMutation(() => needGh(deps)('pictureMode', pictureMode));
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Imagen de la tele en modo ${pictureMode} (orden enviada).`,
+          },
+        ],
+        details: { pictureMode, verified: false },
       };
     }
     case 'closeApp': {

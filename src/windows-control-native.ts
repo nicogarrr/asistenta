@@ -1,6 +1,7 @@
 /** Native DACL checks and a kernel file lock held until the Node owner's stdin closes. */
 import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { childEnv } from './child-env.js';
 
 const SCRIPT = String.raw`
 $ErrorActionPreference='Stop'
@@ -64,7 +65,7 @@ function options(state: string, mode: string, leaf = '') {
     encoding: 'utf8' as const,
     windowsHide: true,
     timeout: 10_000,
-    env: { ...process.env, PA_CONTROL_STATE: state, PA_CONTROL_MODE: mode, PA_CONTROL_LEAF: leaf },
+    env: childEnv({ PA_CONTROL_STATE: state, PA_CONTROL_MODE: mode, PA_CONTROL_LEAF: leaf }),
   };
 }
 const args = () => [

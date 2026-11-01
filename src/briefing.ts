@@ -24,6 +24,10 @@ export interface BriefingInput {
   followups: Array<{ subject: string; due?: string }>;
   reminders: Array<{ text: string; at?: string }>;
   agenda: Array<{ title: string; when: string }>;
+  /** Tareas del tablero para hoy sin hacer, y las atrasadas. */
+  tasks?: Array<{ title: string; time?: string; late?: boolean }>;
+  /** Paquetes en camino, ya redactados («SEUR (123): en reparto»). */
+  deliveries?: Array<{ text: string; notable?: boolean }>;
   /** Una línea ya redactada con el tiempo de hoy («Madrid: 12–21 °C, despejado»). */
   weather?: string;
   /** Correo sin leer que merece mirarse hoy. Solo remitente y asunto, nunca el cuerpo. */
@@ -49,6 +53,12 @@ function dayLabel(today: Date): string {
   if (Number.isNaN(today.getTime())) return 'hoy';
   const w = wallClock(today);
   return `${WEEKDAYS_ES[w.weekday] ?? 'día'} ${pad(w.day)}/${pad(w.month)}`;
+}
+
+function taskLine(item: { title: string; time?: string; late?: boolean }): string | null {
+  const title = oneLine(item.title, 160);
+  if (!title) return null;
+  return `${item.time ? `${item.time} ` : ''}${title}${item.late ? ' (atrasada)' : ''}`;
 }
 
 function agendaLine(item: { title: string; when: string }): string | null {
@@ -154,7 +164,7 @@ function clamp(text: string): string {
 }
 
 /**
- * Construye el briefing. Las secciones van en orden fijo (Hoy, Correo, Pendiente,
+ * Construye el briefing. Las secciones van en orden fijo (Hoy, Tareas, Correo, Paquetes, Pendiente,
  * Recordatorios, Seguimientos, Objetivos, Precios; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
  * se lea siempre igual; las que no tienen contenido no aparecen.
  */
@@ -166,8 +176,16 @@ export function buildBriefing(input: BriefingInput): string {
       items: section(input.agenda.map(agendaLine)),
     },
     {
+      title: 'Tareas',
+      items: section((input.tasks ?? []).map(taskLine)),
+    },
+    {
       title: 'Correo',
       items: section((input.mail ?? []).map(mailLine)),
+    },
+    {
+      title: 'Paquetes',
+      items: section((input.deliveries ?? []).map((d) => oneLine(d.text, 140) || null)),
     },
     {
       title: 'Pendiente',

@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { childEnv } from '../child-env.js';
 import {
   createSapiTts,
   encodeSpeech,
@@ -38,7 +39,7 @@ export type PiperRunner = (
 
 const defaultRunner: PiperRunner = (bin, args, input, opts) =>
   new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { windowsHide: true, signal: opts.signal });
+    const child = spawn(bin, args, { windowsHide: true, signal: opts.signal, env: childEnv() });
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill();

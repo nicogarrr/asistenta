@@ -26,7 +26,7 @@ Cada intento (éxito o fallo) añade una línea a `<state>/log/web-metrics.jsonl
 ## Activar TinyFish (opcional)
 
 ```
-pa vault set web:tinyfishApiKey
+pa vault set-stdin web:tinyfishApiKey
 ```
 
 Con clave: `search` prueba TinyFish antes que ddg; `fetch` gana un fallback detrás de `directo` para páginas con anti-bot (el caso que hoy devuelve 403/202). Sin clave todo sigue funcionando con `directo` + `ddg`.

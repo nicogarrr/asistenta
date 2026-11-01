@@ -1,6 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
+import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
+import {
+  isTooOldButtonError,
+  STALE_TV_BUTTON_NOTICE,
+  tvButtonMaybeStale,
+} from '../tv/stale-order.js';
+import { TelegramClock } from '../tv/telegram-clock.js';
 import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
@@ -55,6 +62,8 @@ interface DraftState {
   text: string;
   /** null hasta la primera edición, para no frenar la primera versión del borrador. */
   lastEditAt: number | null;
+  /** Topic del borrador, para mandar ahí el resto de una respuesta final larga. */
+  threadId?: number;
 }
 
 /** Entrada de la caché de respuestas completas, con su instante de caducidad. */
@@ -76,6 +85,8 @@ const MIN_GAP_MS = 1_100;
 /** Un envío no puede reintentarse para siempre: un endpoint muerto congelaría todos los chats. */
 const SEND_MAX_ATTEMPTS = 4;
 const SEND_MAX_TOTAL_MS = 90_000;
+/** Upper bound for stop(): grammY's final getUpdates has no timeout of its own. */
+const STOP_MAX_MS = 10_000;
 
 /**
  * Cadencia por defecto del borrador. Editar más a menudo que esto multiplica las
@@ -83,8 +94,13 @@ const SEND_MAX_TOTAL_MS = 90_000;
  */
 const DRAFT_MIN_INTERVAL_MS = 1_200;
 
-/** Lo que queda escrito cuando una aprobación caduca sin respuesta. */
-const APPROVAL_EXPIRED_TEXT = 'Caducada';
+/**
+ * Lo que queda escrito cuando una aprobación caduca sin respuesta. Antes era solo
+ * «Caducada»: no decía qué pasó con la petición ni qué hacer. Mismo tono que los demás
+ * avisos de botones («Este botón ya no sirve. …»).
+ */
+export const APPROVAL_EXPIRED_TEXT =
+  '⌛ Solicitud caducada: no se ha hecho nada. Si aún lo quieres, pídemelo otra vez.';
 
 /**
  * Una respuesta completa se guarda para "Dime más". Diez minutos cubren la lectura
@@ -164,6 +180,10 @@ export class TelegramChannel implements ChannelAdapter {
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Health evidence: a getUpdates completed since the last (re)start. */
   #pollingConfirmed = false;
+  /** Inicio de la última conexión (arranque o reconexión): ver #onTvPress. */
+  #pollStartedAt: number | undefined;
+  /** Hora de Telegram medida con el sondeo: las órdenes a la tele no dependen del reloj del PC. */
+  readonly #clock = new TelegramClock();
   #healthProbeInstalled = false;
   /**
    * One gate for every outbound call in the process.
@@ -266,6 +286,9 @@ export class TelegramChannel implements ChannelAdapter {
         // ok === true AND a real batch — never just "no throw" (auditor #153
         // ronda 2).
         const result = await prev(method, payload, signal);
+        if (method === 'getUpdates' && result.ok === true && Array.isArray(result.result)) {
+          this.#clock.observe(result.result, (payload as { limit?: number } | undefined)?.limit);
+        }
         if (
           method === 'getUpdates' &&
           result.ok === true &&
@@ -286,6 +309,8 @@ export class TelegramChannel implements ChannelAdapter {
     }
     const poll = async (): Promise<void> => {
       this.#pollingConfirmed = false;
+      this.#pollStartedAt = Date.now();
+      this.#clock.reset();
       try {
         await bot.start({
           onStart: (me) => {
@@ -385,6 +410,9 @@ export class TelegramChannel implements ChannelAdapter {
       isGroup,
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
+      sentAt: msg.date
+        ? new Date(this.#clock.sentAtMs(msg.date, ctx.update?.update_id)).toISOString()
+        : undefined,
       replyToMessageId: msg.reply_to_message
         ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
         : undefined,
@@ -400,6 +428,7 @@ export class TelegramChannel implements ChannelAdapter {
       inbound.audioMimeType = reported ?? 'audio/ogg';
       inbound.audioDurationSeconds =
         'duration' in incomingAudio ? (incomingAudio.duration ?? undefined) : undefined;
+      inbound.audioSizeBytes = (incomingAudio as { file_size?: number }).file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
     }
 
@@ -416,12 +445,31 @@ export class TelegramChannel implements ChannelAdapter {
       inbound.documentFileId = msg.document.file_id;
       inbound.documentMimeType = msg.document.mime_type ?? undefined;
       inbound.documentName = msg.document.file_name ?? undefined;
+      inbound.documentSizeBytes = msg.document.file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
     }
 
     // A command with no text must still reach the handler: `/screen` and `/watch`
     // are handled before the agent exists, and a caption-less photo needs its file
     // id even though there is nothing to say about it.
+    // Un sticker, vídeo, ubicación, contacto o encuesta sin texto se perdía en
+    // silencio y el usuario esperaba una respuesta que nunca llegaba. Ahora se dice.
+    const unsupported = unsupportedKindNote(msg);
+    if (
+      unsupported &&
+      !inbound.text &&
+      !inbound.photoFileId &&
+      !inbound.audioFileId &&
+      !inbound.documentFileId
+    ) {
+      await ctx
+        .reply(unsupported, {
+          message_thread_id: msg.message_thread_id,
+          reply_to_message_id: msg.message_id,
+        } as never)
+        .catch(() => {});
+      return;
+    }
     if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId && !inbound.documentFileId)
       return;
 
@@ -462,6 +510,22 @@ export class TelegramChannel implements ChannelAdapter {
     // toca aprobaciones. Dueño + chat privado lo comprueba quien ejecuta.
     if (data.startsWith(TV_CALLBACK_PREFIX)) {
       await this.#onTvPress(ctx, handlers, data, userId);
+      return;
+    }
+
+    // Áreas de /funciones: solo cambian el texto del mensaje, nunca tocan
+    // aprobaciones. Quién ve qué lo decide el daemon (dueño en privado o no).
+    if (data.startsWith(FUNCIONES_CALLBACK_PREFIX)) {
+      await this.#onFuncionesPress(ctx, handlers, data, userId);
+      return;
+    }
+
+    // Botón que equivale a teclear una orden (p. ej. «Dejar de vigilar» en
+    // /vigilando): entra como si quien pulsa la hubiera escrito en ese chat, por el
+    // mismo camino y con los mismos permisos. Solo órdenes de una lista cerrada;
+    // nunca resuelve ni toca aprobaciones.
+    if (data.startsWith(COMMAND_CALLBACK_PREFIX)) {
+      await this.#onCommandPress(ctx, handlers, data, userId);
       return;
     }
 
@@ -515,6 +579,33 @@ export class TelegramChannel implements ChannelAdapter {
       await ctx.answerCallbackQuery({ text: TV_BUTTON_STALE }).catch(() => {});
       return;
     }
+    // Pulsado con Asistenta apagada: Telegram lo entrega al arrancar. Se contesta
+    // primero; si Telegram dice que la pulsación es vieja, la tele no se toca.
+    const keyboard = ctx.callbackQuery?.message;
+    const keyboardAt = keyboard?.date
+      ? this.#clock.sentAtMs(
+          Math.max(keyboard.date, ('edit_date' in keyboard && keyboard.edit_date) || 0),
+        )
+      : undefined;
+    let answered = false;
+    if (tvButtonMaybeStale(keyboardAt, this.#pollStartedAt)) {
+      try {
+        await ctx.answerCallbackQuery({ text: TV_BUTTON_SENDING });
+        answered = true;
+      } catch (err) {
+        if (isTooOldButtonError(err)) {
+          handlers.log('info', 'tv button pressed while off, skipped', { data: data.slice(0, 64) });
+          await this.#throttled(() =>
+            withTimeout(
+              this.#bot.api.sendMessage(chatId, STALE_TV_BUTTON_NOTICE),
+              20_000,
+              'sendMessage timed out',
+            ),
+          ).catch(() => {});
+          return;
+        }
+      }
+    }
     const run = handlers
       .onTvButton({
         channel: 'telegram',
@@ -540,22 +631,111 @@ export class TelegramChannel implements ChannelAdapter {
     clearTimeout(timer);
     // Respuesta rápida y corta: en el aviso del botón. Una larga (p. ej. «Estado»)
     // no cabe en el aviso (200 caracteres), así que va entera como mensaje.
-    if (quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
+    if (!answered && quick !== null && quick.length <= TV_BUTTON_NOTICE_MAX) {
       await ctx.answerCallbackQuery({ text: quick, show_alert: quick.length > 60 }).catch(() => {});
       return;
     }
-    await ctx
-      .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
-      .catch(() => {});
+    if (!answered) {
+      await ctx
+        .answerCallbackQuery(quick === null ? { text: TV_BUTTON_SENDING } : {})
+        .catch(() => {});
+    }
     const text = quick ?? (await run);
     await this.#throttled(() =>
       withTimeout(
-        this.#bot.api.sendMessage(chatId, text.slice(0, 4000)),
+        this.#bot.api.sendMessage(chatId, clipTelegramText(text)),
         20_000,
         'sendMessage timed out',
       ),
     ).catch(() => {
       handlers.log('warn', 'tv button result not sent', { data: data.slice(0, 64) });
+    });
+  }
+
+  /**
+   * Pulsación de un área de /funciones: edita el mensaje con el texto del área y
+   * sus botones. Si no se puede editar (mensaje viejo o borrado), lo manda nuevo.
+   */
+  async #onCommandPress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    const text = commandFromCallback(data);
+    const message = ctx.callbackQuery?.message;
+    if (!text || !message) {
+      await ctx.answerCallbackQuery({ text: STALE_BUTTON }).catch(() => {});
+      return;
+    }
+    await ctx.answerCallbackQuery().catch(() => {});
+    const threadId =
+      'message_thread_id' in message && message.message_thread_id
+        ? String(message.message_thread_id)
+        : undefined;
+    const from = ctx.from;
+    await handlers.onMessage({
+      channel: this.name,
+      account: this.account,
+      chatId: String(message.chat.id),
+      threadId,
+      userId: String(userId),
+      displayName: from?.username ? `@${from.username}` : (from?.first_name ?? String(userId)),
+      text,
+      authorised: true,
+      isGroup: message.chat.type !== 'private',
+      messageId: String(message.message_id),
+      receivedAt: new Date().toISOString(),
+    });
+  }
+
+  async #onFuncionesPress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const chatId = ctx.callbackQuery?.message?.chat?.id;
+    const messageId = ctx.callbackQuery?.message?.message_id;
+    if (chatId === undefined || !handlers.onFuncionesButton) return;
+    const view = await handlers
+      .onFuncionesButton({
+        channel: 'telegram',
+        chatId: String(chatId),
+        userId: String(userId),
+        data: data.slice(0, 64),
+      })
+      .catch(() => null);
+    if (!view) {
+      handlers.log('warn', 'funciones button failed', { data: data.slice(0, 64) });
+      return;
+    }
+    const text = clipTelegramText(view.text);
+    const reply_markup = usableButtons(view.buttons).length
+      ? buildKeyboard(view.buttons)
+      : undefined;
+    if (messageId !== undefined) {
+      const edited = await this.#throttled(() =>
+        withTimeout(
+          this.#bot.api.editMessageText(chatId, messageId, text, { reply_markup }),
+          20_000,
+          'editMessageText timed out',
+        ),
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (edited) return;
+    }
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendMessage(chatId, text, { reply_markup }),
+        20_000,
+        'sendMessage timed out',
+      ),
+    ).catch(() => {
+      handlers.log('warn', 'funciones button result not sent', { data: data.slice(0, 64) });
     });
   }
 
@@ -691,7 +871,7 @@ export class TelegramChannel implements ChannelAdapter {
         buttons: opts?.askScope
           ? [
               { label: '✅ Una vez', action: `approve:once:${id}` },
-              { label: '🕒 Esta sesión', action: `approve:session:${id}` },
+              { label: '🕒 Por ahora', action: `approve:session:${id}` },
               { label: '♾️ Siempre', action: `approve:always:${id}` },
               { label: '❌ Denegar', action: `deny:${id}` },
             ]
@@ -743,19 +923,22 @@ export class TelegramChannel implements ChannelAdapter {
 
     let firstId: string | null = null;
 
-    // Buttons ride on the first chunk only: repeating them on every chunk of a long
-    // message would produce duplicate approvals for the same request.
-    let first = true;
+    // Buttons ride on ONE chunk only (repeating them would produce duplicate
+    // approvals for the same request): the LAST one, right under the end of the
+    // text, so a long message doesn't make the owner scroll up to approve.
     const chunks = outbound.text.trim()
       ? chunkText(outbound.text, 4000, { marks: outbound.format === 'marks' })
       : [];
-    for (const chunk of chunks) {
+    for (const [index, chunk] of chunks.entries()) {
+      const withButtons = index === chunks.length - 1;
       const options = (withThread: boolean, withReply: boolean) => ({
         message_thread_id: withThread && outbound.threadId ? Number(outbound.threadId) : undefined,
         reply_to_message_id:
           withReply && outbound.replyToMessageId ? Number(outbound.replyToMessageId) : undefined,
         reply_markup:
-          first && outbound.buttons?.length ? buildKeyboard(outbound.buttons) : undefined,
+          withButtons && usableButtons(outbound.buttons ?? []).length
+            ? buildKeyboard(outbound.buttons ?? [])
+            : undefined,
       });
       const rich = outbound.format === 'marks';
       let html = rich;
@@ -806,7 +989,7 @@ export class TelegramChannel implements ChannelAdapter {
       }
       if (sent?.message_id) {
         const sentId = sent.message_id;
-        if (first) {
+        if (withButtons) {
           bindMoreButtons(outbound.buttons, String(chatId), () =>
             this.#clearKeyboard(chatId, sentId),
           );
@@ -814,7 +997,6 @@ export class TelegramChannel implements ChannelAdapter {
         onSent?.(String(sentId));
       }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
-      first = false;
     }
 
     for (const image of outbound.images ?? []) {
@@ -902,7 +1084,7 @@ export class TelegramChannel implements ChannelAdapter {
       withTimeout(
         this.#bot.api.sendVoice(chatId, new InputFile(bytes), {
           message_thread_id: threadId ? Number(threadId) : undefined,
-          caption: fitCaption(`. ${Math.round(seconds)}s de microfono`),
+          caption: fitCaption(`. ${Math.round(seconds)}s de micrófono`),
         }),
         60_000,
         'sendVoice timed out',
@@ -970,12 +1152,15 @@ export class TelegramChannel implements ChannelAdapter {
   async streamDraft(
     chatId: number,
     threadId: string | undefined,
-    text: string,
+    rawText: string,
     opts?: { minIntervalMs?: number },
   ): Promise<string | null> {
     if (!Number.isFinite(chatId)) {
       throw new Error(`invalid telegram chat id: ${chatId}`);
     }
+    // Telegram rechaza (400) un mensaje o edición de más de 4096 caracteres: el
+    // borrador es solo una vista previa, así que se recorta en vez de romper el turno.
+    const text = clipDraftText(rawText);
     const minIntervalMs = Math.max(0, opts?.minIntervalMs ?? DRAFT_MIN_INTERVAL_MS);
 
     return this.#draftGate.run(async () => {
@@ -994,7 +1179,13 @@ export class TelegramChannel implements ChannelAdapter {
         );
         if (!sent?.message_id) return null;
         const messageId = String(sent.message_id);
-        this.#drafts.set(key, { chatId, messageId, text, lastEditAt: null });
+        this.#drafts.set(key, {
+          chatId,
+          messageId,
+          text,
+          lastEditAt: null,
+          threadId: threadId ? Number(threadId) : undefined,
+        });
         return messageId;
       }
 
@@ -1034,23 +1225,40 @@ export class TelegramChannel implements ChannelAdapter {
     const ref = parseMessageRef(String(chatId), messageId);
     await this.#draftGate.run(async () => {
       let unchanged = false;
+      let threadId: number | undefined;
       for (const [key, draft] of this.#drafts) {
         if (draft.chatId === chatId && draft.messageId === messageId) {
           unchanged = draft.text === text;
+          threadId = draft.threadId;
           this.#drafts.delete(key);
           break;
         }
       }
       if (!ref || unchanged) return;
+      // Telegram rechaza más de 4096 caracteres: una respuesta final larga se
+      // quedaba en el borrador a medias (solo un log). Ahora el borrador recibe el
+      // primer trozo y el resto llega en mensajes nuevos.
+      const [first = text, ...rest] = chunkText(text, 4000);
       await this.#throttled(() =>
         withTimeout(
-          this.#bot.api.editMessageText(ref.chatId, ref.messageId, text),
+          this.#bot.api.editMessageText(ref.chatId, ref.messageId, first),
           20_000,
           'editMessageText timed out',
         ),
       ).catch((err: unknown) => {
         log.warn('draft final edit failed', { error: describeError(err) });
       });
+      for (const part of rest) {
+        await this.#throttled(() =>
+          withTimeout(
+            this.#bot.api.sendMessage(ref.chatId, part, { message_thread_id: threadId }),
+            20_000,
+            'sendMessage timed out',
+          ),
+        ).catch((err: unknown) => {
+          log.warn('draft final rest failed', { error: describeError(err) });
+        });
+      }
     });
   }
 
@@ -1087,12 +1295,16 @@ export class TelegramChannel implements ChannelAdapter {
     bytes: Buffer,
     durationSeconds: number,
     caption: string,
+    threadId?: string,
   ): Promise<void> {
+    // Mismo tema que el resto de envíos (foto, documento, voz): sin message_thread_id
+    // el vídeo de un tema de un grupo con temas caía en «General».
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.sendVideo(chatId, new InputFile(bytes), {
           caption: fitCaption(`${caption} (${Math.round(durationSeconds)}s)`),
           supports_streaming: true,
+          message_thread_id: threadId ? Number(threadId) : undefined,
         }),
         120_000,
         'sendVideo timed out',
@@ -1132,7 +1344,7 @@ export class TelegramChannel implements ChannelAdapter {
    * Deja constancia visible de que la aprobación caducó y retira los botones.
    *
    * Se hace en dos llamadas porque son dos operaciones distintas en la Bot API: el
-   * texto pasa a "Caducada" y `editMessageReplyMarkup` con un teclado vacío borra los
+   * texto pasa a APPROVAL_EXPIRED_TEXT y `editMessageReplyMarkup` con un teclado vacío borra los
    * botones. Un fallo aquí es cosmético (la aprobación ya se resolvió como denegada),
    * así que se registra y no se propaga.
    */
@@ -1277,8 +1489,11 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => null);
     if (!file?.file_path) return null;
     const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    // Al rendirse, también corta la conexión: sin señal, una descarga colgada seguía
+    // abierta para siempre aunque ya hubiéramos devuelto null.
+    const abort = new AbortController();
     return withTimeout(
-      fetch(url).then(async (r) => {
+      fetch(url, { signal: abort.signal }).then(async (r) => {
         if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
         const buf = Buffer.from(await r.arrayBuffer());
         if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
@@ -1286,7 +1501,10 @@ export class TelegramChannel implements ChannelAdapter {
       }),
       60_000,
       'file download timed out',
-    ).catch(() => null);
+    ).catch(() => {
+      abort.abort();
+      return null;
+    });
   }
 
   /**
@@ -1319,10 +1537,16 @@ export class TelegramChannel implements ChannelAdapter {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;
     }
-    await this.#bot.stop().catch((error: unknown) => {
-      if (strict)
-        throw new Error('No se pudo confirmar el cierre de polling Telegram.', { cause: error });
-    });
+    // grammY's bot.stop() ends with one last getUpdates (to confirm the offset)
+    // that has no time limit of its own: with Telegram unreachable it could hold
+    // the whole shutdown. Bounded: past STOP_MAX_MS we stop waiting; strict
+    // callers hear it as an unconfirmed close, everyone else moves on.
+    await withTimeout(this.#bot.stop(), STOP_MAX_MS, 'bot.stop timed out').catch(
+      (error: unknown) => {
+        if (strict)
+          throw new Error('No se pudo confirmar el cierre de polling Telegram.', { cause: error });
+      },
+    );
   }
 
   /**
@@ -1435,7 +1659,7 @@ export const NOT_PENDING = 'Esta solicitud ya no está pendiente.';
 /** Spanish verdicts, one per scope. */
 const DECISION_LABELS: Record<ApprovalScope, string> = {
   once: '✅ Aprobado para esta vez',
-  session: '✅ Aprobado para esta sesión',
+  session: '✅ Aprobado por ahora',
   always: '✅ Aprobado siempre',
 };
 
@@ -1457,13 +1681,72 @@ function decisionLabel(choice: ApprovalChoice): string {
  * approved. Callback data is passed through untouched and the decision is carried
  * inside it, so there is exactly one place that decides approve vs deny.
  */
+/** Prefijo de los botones que equivalen a teclear una orden (ver commandButton). */
+export const COMMAND_CALLBACK_PREFIX = 'cmd:';
+/** Aviso de un botón de orden que ya no se reconoce. */
+export const STALE_BUTTON = 'Este botón ya no sirve. Escribe la orden a mano.';
+/**
+ * Órdenes que un botón puede lanzar, con las subórdenes permitidas ('' = sin
+ * suborden). Lista cerrada: un callback_data inventado no puede lanzar otra orden,
+ * y cada una pasa por el mismo camino (y permisos) que si se tecleara. Solo
+ * acciones que se deshacen con otro toque o que el usuario ve en su lista: borrar
+ * una rutina sigue pidiendo escribirlo.
+ */
+const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['dejar_de_vigilar', new Set([''])],
+  // «👀 Vigilar» de /compara: el arg es un id corto en memoria, nunca el enlace.
+  // «🔕 Silenciar 1 día» en un aviso de precio: calla la página 24 h, no borra nada.
+  ['vigila', new Set(['enlace', 'silenciar', 'avisar'])],
+  // Solo lectura: enseña la ficha de precio de una página vigilada.
+  // …y «🔕 Silenciar 1 día» / «🔔 Avisar otra vez» de un aviso del vigilante de precios.
+  ['precio', new Set(['', 'silenciar', 'avisar'])],
+  // Botones de un recordatorio que acaba de avisar: no borran nada (+1h crea otro).
+  ['recordatorios', new Set(['hecho', 'pospone', 'manana'])],
+  ['cron', new Set(['pausa', 'reanudar'])],
+]);
+const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
+
+function allowed(command: string, sub: string): boolean {
+  return BUTTON_COMMANDS.get(command)?.has(sub) ?? false;
+}
+
+/**
+ * Botón en línea que equivale a escribir `/<orden> [suborden] <arg>`. Devuelve
+ * undefined si la orden (o suborden) no está en la lista, si el argumento no es un
+ * nombre o id simple, o si no cabe en los 64 bytes de callback_data de Telegram.
+ */
+export function commandButton(
+  label: string,
+  command: string,
+  arg: string,
+  sub = '',
+): { label: string; action: string } | undefined {
+  const action = `${COMMAND_CALLBACK_PREFIX}${command} ${sub ? `${sub} ` : ''}${arg}`;
+  if (!allowed(command, sub) || !BUTTON_ARG.test(arg) || action.length > 64) return undefined;
+  const short = label.length > 40 ? `${label.slice(0, 39)}…` : label;
+  return { label: short, action };
+}
+
+/** El texto de orden (`/cron pausa resumen`) de un botón, o undefined si no vale. */
+export function commandFromCallback(data: string): string | undefined {
+  if (!data.startsWith(COMMAND_CALLBACK_PREFIX)) return undefined;
+  const m = /^([a-z_]{1,32}) (?:([a-z]{1,16}) )?(\S+)$/.exec(
+    data.slice(COMMAND_CALLBACK_PREFIX.length),
+  );
+  const command = m?.[1];
+  const sub = m?.[2] ?? '';
+  const arg = m?.[3];
+  if (!command || !arg || !allowed(command, sub) || !BUTTON_ARG.test(arg)) return undefined;
+  return `/${command} ${sub ? `${sub} ` : ''}${arg}`;
+}
+
 export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
   const kb = new InlineKeyboard();
   // Hasta dos botones van en una fila; con más, filas de dos. Los cuatro botones de
   // una aprobación en una sola fila se truncaban en el móvil («Esta se…», «Siem…») y
   // era fácil pulsar el vecino. El orden y el callback_data no cambian.
   const perRow = 2;
-  buttons.forEach((b, i) => {
+  usableButtons(buttons).forEach((b, i) => {
     if (i > 0 && i % perRow === 0) kb.row();
     kb.text(b.label, b.action);
   });
@@ -1608,6 +1891,7 @@ function splitAt(text: string, budget: number): { head: string; rest: string; mi
       break;
     }
   }
+  cut = outsideMdLink(points, cut);
   const head = points.slice(0, cut).join('').replace(/\s+$/u, '');
   const tail = points.slice(cut).join('');
   // El separador se queda en el corte: sin líneas en blanco ni espacio inicial en el
@@ -1616,6 +1900,28 @@ function splitAt(text: string, budget: number): { head: string; rest: string; mi
   // midLine: el corte no cae en un salto de línea (la línea sigue en el próximo trozo).
   const midLine = cut < points.length && !/^[ \t]*\r?\n/u.test(tail);
   return { head: head || points.slice(0, cut).join(''), rest, midLine };
+}
+
+/** Enlace markdown `[texto](url)` como lo convierte telegramHtml (formatters.ts). */
+const MD_LINK_SPAN = /\[[^\]\n]+\]\(https?:\/\/(?:[^\s()<>"]|\([^\s()<>"]*\))+\)/gu;
+
+/**
+ * Si el corte (en puntos de código) cae dentro de un enlace `[texto](url)`, lo
+ * adelanta al inicio del enlace para que salga entero en el trozo siguiente: partido,
+ * Telegram enseñaría «[texto» en un mensaje y «resto](https://…)» en el otro. Un enlace
+ * que empieza el trozo (más largo que la ventana) se corta igual: no hay otra.
+ */
+function outsideMdLink(points: string[], cut: number): number {
+  const scope = points.slice(0, cut + 1).join('');
+  if (!scope.includes('[')) return cut;
+  const lookahead = points.slice(0, cut + 2100).join('');
+  for (const match of lookahead.matchAll(MD_LINK_SPAN)) {
+    const start = Array.from(lookahead.slice(0, match.index ?? 0)).length;
+    if (start >= cut) break;
+    const end = start + Array.from(match[0]).length;
+    if (cut < end) return start > 0 ? start : cut;
+  }
+  return cut;
 }
 
 const AUDIO_FILE_NAME = /\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|amr|wma)$/i;
@@ -1663,7 +1969,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
-const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
+const TV_BUTTON_STALE =
+  'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 
@@ -1835,4 +2142,75 @@ export function isMoreRequest(text: string): boolean {
   if (!MORE_REQUEST.test(plain)) return false;
   const words = plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   return words.length <= 6 && words.every((w) => MORE_FILLER.has(w));
+}
+
+/**
+ * Botones que Telegram acepta: texto visible y callback_data de 1 a 64 bytes. Un solo
+ * botón fuera de eso hacía que Telegram rechazara el mensaje entero (BUTTON_DATA_INVALID)
+ * y el dueño no recibía ni el texto; ahora ese botón se omite y el mensaje llega.
+ */
+export function usableButtons<T extends { label: string; action: string }>(buttons: T[]): T[] {
+  return buttons.filter((b) => {
+    const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
+    return Boolean(b.label?.trim()) && bytes >= 1 && bytes <= 64;
+  });
+}
+
+/**
+ * Corta un texto a `max` unidades sin partir un emoji (par sustituto) por la mitad:
+ * un `slice` a ciegas dejaba medio emoji al final y Telegram lo enseñaba como «�».
+ */
+export function clipTelegramText(text: string, max = 4000): string {
+  if (text.length <= max) return text;
+  let cut = max;
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return text.slice(0, cut);
+}
+
+/** Límite de Telegram para el texto de un mensaje (y de una edición). */
+const DRAFT_MAX_CHARS = 4096;
+
+/**
+ * Recorta el texto de un borrador al límite de Telegram, terminando en «…».
+ * No parte un par sustituto (emoji) por la mitad.
+ */
+export function clipDraftText(text: string): string {
+  if (text.length <= DRAFT_MAX_CHARS) return text;
+  let cut = DRAFT_MAX_CHARS - 1;
+  const code = text.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return `${text.slice(0, cut)}…`;
+}
+
+/** Lo más que un bot puede descargar de Telegram (getFile de la Bot API); lo mismo que corta downloadFile. */
+export const TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES = 20_000_000;
+
+/**
+ * Frase para un archivo que Telegram declara por encima del límite de descarga de los
+ * bots: antes solo se decía «Telegram no devolvió el archivo» y no se sabía por qué.
+ * Sin tamaño, o por debajo del límite, devuelve undefined.
+ */
+export function tooBigForBotDownload(sizeBytes: number | undefined): string | undefined {
+  if (!sizeBytes || sizeBytes <= TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES) return undefined;
+  const mb = Math.ceil(sizeBytes / 1_000_000);
+  return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
+}
+
+/**
+ * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
+ * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta):
+ * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
+ * sin respuesta.
+ */
+export function unsupportedKindNote(msg: object): string | null {
+  if ('sticker' in msg) return 'Aún no sé ver stickers. Si quieres algo, escríbemelo.';
+  if ('video' in msg || 'animation' in msg)
+    return 'Aún no puedo ver vídeos ni GIF. Cuéntame qué hay o mándame una captura.';
+  if ('location' in msg || 'venue' in msg)
+    return 'Aún no sé leer ubicaciones compartidas. Escríbeme el sitio o la dirección.';
+  if ('contact' in msg)
+    return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
+  if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
+  return null;
 }

@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { log } from '../log.js';
 import { GlasshouseClient } from '../tv/glasshouse.js';
 import { pickLanAddress, type ServedFile, serveFileToHost } from './lan-server.js';
 
@@ -42,6 +43,29 @@ export const TV_CAST_VIAS: readonly TvCastVia[] = ['media.viewer', 'launcher', '
 export const TV_FIREWALL_HINT =
   'La tele no ha podido descargar el audio. Suele ser el firewall de Windows: permite Node.js en redes privadas (Panel de control → Firewall de Windows Defender → Permitir una aplicación) y comprueba que la red Wi-Fi del PC está como «privada».';
 
+/**
+ * El aviso del firewall sale una sola vez por sesión del daemon, venga de donde venga
+ * (altavoz en la tele o «reprodúcelo en la tele»): la causa es la misma, repetirlo cansa.
+ */
+let teleFirewallWarned = false;
+
+/** ¿Ya se avisó del firewall en esta sesión? */
+export function teleFirewallAlreadyWarned(): boolean {
+  return teleFirewallWarned;
+}
+
+/** Marca el aviso como dado. Devuelve false si otro camino ya lo había dado. */
+export function claimTeleFirewallWarning(): boolean {
+  if (teleFirewallWarned) return false;
+  teleFirewallWarned = true;
+  return true;
+}
+
+/** Solo para pruebas: vuelve a permitir el aviso del firewall. */
+export function resetTeleFirewallWarning(): void {
+  teleFirewallWarned = false;
+}
+
 export interface TvCastResult {
   ok: boolean;
   /** Texto en español para el modelo/usuario. */
@@ -52,6 +76,34 @@ export interface TvCastResult {
   tried?: string[];
   /** Cuántas veces ha descargado la tele el fichero (para avisar del firewall). */
   hits?: () => number;
+  /**
+   * Para ESTA nota en la tele (/stop). Con media.viewer es media.controls/stop; si se
+   * abrió con el navegador (launcher) o Glasshouse, además cierra la app que abrió el
+   * cast, solo si sigue en primer plano y nunca el inicio ni la TV en directo.
+   */
+  stop?: () => Promise<void>;
+  /**
+   * Cierra ya el servidor LAN de esta nota (y borra la copia). Lo usa `pa audio
+   * prueba-tele` cuando la tele no la descargó: sin esto el comando se quedaba colgado
+   * hasta el ttl (10 min) con el puerto abierto.
+   */
+  close?: () => void;
+}
+
+const TV_FOREGROUND = 'com.webos.applicationManager/getForegroundAppInfo';
+/** Apps que parar una nota no cierra nunca. */
+const TV_NEVER_CLOSE = new Set([
+  'com.webos.app.home',
+  'com.webos.app.livetv',
+  'com.webos.app.launcher',
+  'com.webos.app.discovery',
+]);
+
+function appIdOf(res: unknown): string | undefined {
+  if (!res || typeof res !== 'object') return undefined;
+  const r = res as Record<string, unknown>;
+  const id = r.appId ?? r.id;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
 export function audioTeleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -92,6 +144,38 @@ export async function castAudioToTv(
     };
   }
   const errors: string[] = [];
+  const foreground = async (): Promise<string | undefined> => {
+    try {
+      return appIdOf(await deps.ssap(TV_FOREGROUND, {}));
+    } catch {
+      return undefined;
+    }
+  };
+  /** App en primer plano antes de abrir con Glasshouse (para saber cuál abrió el cast). */
+  let ghBefore: string | undefined;
+  const stopFor = (via: TvCastVia, opened: unknown) => {
+    const mediaStop = () => deps.ssap('media.controls/stop', {});
+    if (via === 'media.viewer') {
+      return async (): Promise<void> => {
+        await mediaStop();
+      };
+    }
+    const launched = via === 'launcher' ? appIdOf(opened) : undefined;
+    const before = via === 'glasshouse' ? ghBefore : undefined;
+    return async (): Promise<void> => {
+      try {
+        await mediaStop();
+      } catch {
+        // Una URL abierta en el navegador no siempre atiende a media.controls.
+      }
+      const fg = await foreground();
+      if (!fg || TV_NEVER_CLOSE.has(fg)) return;
+      // Solo la app de NUESTRO cast: la que devolvió launcher, o la que apareció con
+      // Glasshouse (si no sabemos qué había antes, no se cierra nada).
+      if (launched ? fg !== launched : before === undefined || fg === before) return;
+      await deps.ssap('system.launcher/close', { id: fg });
+    };
+  };
   const attempts: Array<[TvCastVia, () => Promise<unknown>, string]> = [
     [
       'media.viewer',
@@ -115,14 +199,17 @@ export async function castAudioToTv(
   if (gh) {
     attempts.push([
       'glasshouse',
-      () => gh(served.url),
+      async () => {
+        ghBefore = await foreground();
+        await gh(served.url);
+      },
       'La tele no aceptó el audio por webOS; lo he abierto con Glasshouse. No puedo confirmar que se haya oído.',
     ]);
   }
   for (const [via, run, message] of attempts) {
     if (deps.only && deps.only !== via) continue;
     try {
-      await run();
+      const opened = await run();
       return {
         ok: true,
         via,
@@ -130,6 +217,8 @@ export async function castAudioToTv(
         message,
         tried: errors.length ? [...errors] : undefined,
         hits: () => served.hits(),
+        close: () => served.close(),
+        stop: stopFor(via, opened),
       };
     } catch (err) {
       errors.push(`${via}: ${err instanceof Error ? err.message : String(err)}`);
@@ -148,28 +237,58 @@ type TvRequestFn = (
   clientKey: string,
   uri: string,
   payload: Record<string, unknown>,
-  deps?: { allowPlaintext?: boolean },
+  deps?: {
+    allowPlaintext?: boolean;
+    onNewClientKey?: (clientKey: string) => void | Promise<void>;
+  },
 ) => Promise<Record<string, unknown>>;
 
 /**
  * El "caster" que usa el daemon: lee el emparejamiento del vault igual que la tool
  * `tv` (tv:host / tv:clientKey / tv:secure) sin tocar su cableado.
  */
+/**
+ * /stop con /altavoz tele: para lo que la tele está reproduciendo (ssap
+ * media.controls/stop). Devuelve false sin tocar nada si la tele no está emparejada.
+ */
+export function tvStopperFromVault(
+  vaultGet: VaultGet,
+  request: TvRequestFn,
+): () => Promise<boolean> {
+  return async () => {
+    const host = await vaultGet('tv:host');
+    const clientKey = await vaultGet('tv:clientKey');
+    if (!host || !clientKey) return false;
+    const allowPlaintext = (await vaultGet('tv:secure')) === '0';
+    await request(host, clientKey, 'media.controls/stop', {}, { allowPlaintext });
+    return true;
+  };
+}
+
 export function tvCasterFromVault(
   vaultGet: VaultGet,
   request: TvRequestFn,
-  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs' | 'only'>> = {},
+  extra: Partial<Pick<TvCastDeps, 'pickAddress' | 'serve' | 'ttlMs' | 'only'>> & {
+    /**
+     * Guarda la client-key nueva (tv:clientKey) si la tele se re-empareja durante
+     * el cast, igual que la tool `tv`. Sin esto la clave se perdía y cada audio
+     * volvía a sacar el aviso de emparejamiento en la tele.
+     */
+    saveClientKey?: (clientKey: string) => Promise<void>;
+  } = {},
 ): (file: string) => Promise<TvCastResult> {
-  return async (file) => {
+  const { saveClientKey, ...castExtra } = extra;
+  const castFrom = async (file: string): Promise<TvCastResult> => {
     const host = await vaultGet('tv:host');
-    const clientKey = await vaultGet('tv:clientKey');
-    if (!host || !clientKey) {
+    const storedKey = await vaultGet('tv:clientKey');
+    if (!host || !storedKey) {
       rmSync(file, { force: true });
       return {
         ok: false,
         message: 'La tele no está emparejada. Empareja una vez con: pa tv setup <ip-de-la-tele>',
       };
     }
+    let clientKey = storedKey;
     const allowPlaintext = (await vaultGet('tv:secure')) === '0';
     const ghUrl = (await vaultGet('tv:glasshouseUrl'))?.trim();
     const glasshouse = ghUrl
@@ -185,11 +304,40 @@ export function tvCasterFromVault(
           await client.control('url', url);
         }
       : undefined;
+    const onNewClientKey = saveClientKey
+      ? async (key: string): Promise<void> => {
+          // La siguiente vía de este mismo cast ya usa la clave nueva.
+          clientKey = key;
+          try {
+            await saveClientKey(key);
+            log.info('tv-cast: la tele se ha vuelto a emparejar; client-key nueva guardada');
+          } catch (err) {
+            log.warn('tv-cast: no he podido guardar la client-key nueva', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      : undefined;
     return castAudioToTv(file, {
       tvHost: host,
-      ssap: (uri, payload) => request(host, clientKey, uri, payload, { allowPlaintext }),
+      ssap: (uri, payload) =>
+        request(host, clientKey, uri, payload, {
+          allowPlaintext,
+          ...(onNewClientKey ? { onNewClientKey } : {}),
+        }),
       glasshouse,
-      ...extra,
+      ...castExtra,
     });
+  };
+  return async (file) => {
+    try {
+      return await castFrom(file);
+    } catch (err) {
+      // Leer el emparejamiento puede fallar (almacén bloqueado, disco): el fichero ya
+      // es nuestro y castAudioToTv no llegó a recibirlo, así que se borra aquí. Antes
+      // se quedaba la copia del audio en disco. Si castAudioToTv ya lo tenía, ya lo borró.
+      rmSync(file, { force: true });
+      throw err;
+    }
   };
 }

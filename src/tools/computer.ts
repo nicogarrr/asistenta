@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import type { Config } from '../config.js';
+import { desktopSignupBlock } from '../credentials/signup-guard.js';
 import { log } from '../log.js';
 import type { Decision, ToolCall } from '../permissions.js';
 import { expand, type Region, scaleRegion } from '../screen/regions.js';
@@ -109,6 +110,18 @@ export interface ScreenBackend {
 }
 
 /**
+ * A coordinate as a number, or NaN when the value is not one. `Number()` alone
+ * turns null, '', '  ', true and [5] into numbers, so an empty x/y (a leaked tool
+ * call or a batch item with no coordinates) used to become a click at 0,0. NaN
+ * is refused by `coords()` with a Spanish error before anything moves.
+ */
+function strictNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim() !== '') return Number(value);
+  return Number.NaN;
+}
+
+/**
  * Recover an action from text the model emitted outside the tool_calls channel.
  * Returns null when nothing parses, so the caller can re-ask rather than act on a
  * guess.
@@ -144,20 +157,20 @@ export function normalizeAction(text: string): Action | null {
     case 'click':
       return {
         action: 'click',
-        x: Number(o.x),
-        y: Number(o.y),
+        x: strictNumber(o.x),
+        y: strictNumber(o.y),
         button: String(o.button ?? 'left'),
         clicks: Number(o.clicks ?? 1),
       };
     case 'move':
-      return { action: 'move', x: Number(o.x), y: Number(o.y) };
+      return { action: 'move', x: strictNumber(o.x), y: strictNumber(o.y) };
     case 'drag':
       return {
         action: 'drag',
-        x: Number(o.x),
-        y: Number(o.y),
-        toX: Number(o.toX),
-        toY: Number(o.toY),
+        x: strictNumber(o.x),
+        y: strictNumber(o.y),
+        toX: strictNumber(o.toX),
+        toY: strictNumber(o.toY),
       };
     case 'type':
       return {
@@ -260,23 +273,38 @@ function coords(
   view: Screen,
   native: Screen,
 ): { x: number; y: number } {
-  const x = Number(args.x);
-  const y = Number(args.y);
+  const x = strictNumber(args.x);
+  const y = strictNumber(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('this action requires numeric x and y');
+    throw new Error('esta acción necesita x e y numéricas');
   }
   if (x < 0 || y < 0 || x >= view.width || y >= view.height) {
     throw new Error(
-      `coordinates ${x},${y} fall outside the ${view.width}x${view.height} image you were shown`,
+      `las coordenadas ${x},${y} quedan fuera de la imagen de ${view.width}x${view.height} que se te mostró`,
     );
   }
-  const real = toRealCoordinates(x, y, view, native);
+  const real = clampToLastPixel(toRealCoordinates(x, y, view, native), native);
   if (real.x < 0 || real.y < 0 || real.x >= native.width || real.y >= native.height) {
     throw new Error(
-      `coordinates ${real.x},${real.y} fall outside the ${native.width}x${native.height} screen`,
+      `las coordenadas ${real.x},${real.y} quedan fuera de la pantalla de ${native.width}x${native.height}`,
     );
   }
   return real;
+}
+
+/**
+ * A point already proven inside the image can still round up to `native.width`
+ * (x=1279.7 on a 1280-wide view of a 1920 screen → 1919.55 → 1920): it is on the
+ * last pixel the model saw, so it lands on the last real pixel instead of being
+ * refused as «fuera de la pantalla». Only the upper edge moves, and only by the
+ * rounding; anything outside the image was refused before this runs.
+ */
+function clampToLastPixel<T extends { x: number; y: number }>(p: T, native: Screen): T {
+  return {
+    ...p,
+    x: p.x >= native.width && native.width > 0 ? native.width - 1 : p.x,
+    y: p.y >= native.height && native.height > 0 ? native.height - 1 : p.y,
+  };
 }
 
 /**
@@ -318,25 +346,39 @@ export function toRealCoordinates(
 function parseRegionField(value: unknown, label: string): Region | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object with x, y, width and height`);
+    throw new Error(`${label} debe ser un objeto con x, y, width y height`);
   }
   const r = value as Record<string, unknown>;
-  const x = Number(r.x);
-  const y = Number(r.y);
-  const width = Number(r.width);
-  const height = Number(r.height);
+  const x = strictNumber(r.x);
+  const y = strictNumber(r.y);
+  const width = strictNumber(r.width);
+  const height = strictNumber(r.height);
   if (
     !Number.isFinite(x) ||
     !Number.isFinite(y) ||
     !Number.isFinite(width) ||
     !Number.isFinite(height)
   ) {
-    throw new Error(`${label} must have finite x, y, width and height`);
+    throw new Error(`${label} necesita x, y, width y height numéricos y finitos`);
   }
   if (width < 0 || height < 0) {
-    throw new Error(`${label} cannot have negative width or height`);
+    throw new Error(`${label} no puede tener width ni height negativos`);
   }
   return { x, y, width, height };
+}
+
+/**
+ * `roi` only means something on screenshot and click. A move or drag carrying one
+ * used to ignore it silently and read x/y as full-screenshot pixels, so after a
+ * roi screenshot the pointer went somewhere else on the real desktop. Reject it
+ * before anything moves (a null/absent roi is fine).
+ */
+function rejectRoi(args: Record<string, unknown>, action: 'move' | 'drag'): void {
+  if (args.roi === undefined || args.roi === null) return;
+  throw new Error(
+    `roi solo vale con screenshot y click; en ${action} usa x/y de la captura completa (sin roi). ` +
+      'No he movido nada.',
+  );
 }
 
 /**
@@ -352,14 +394,14 @@ function coordsInRoi(
   view: Screen,
   native: Screen,
 ): { x: number; y: number; viewX: number; viewY: number } {
-  const x = Number(args.x);
-  const y = Number(args.y);
+  const x = strictNumber(args.x);
+  const y = strictNumber(args.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error('this action requires numeric x and y');
+    throw new Error('esta acción necesita x e y numéricas');
   }
   if (x < 0 || y < 0 || x >= roi.width || y >= roi.height) {
     throw new Error(
-      `coordinates ${x},${y} fall outside the roi ${roi.width}x${roi.height} they are relative to`,
+      `las coordenadas ${x},${y} quedan fuera de la roi de ${roi.width}x${roi.height} a la que se refieren`,
     );
   }
   // Offsetting by the roi lands the point in the full screenshot space first —
@@ -368,14 +410,25 @@ function coordsInRoi(
   // clicks.
   const viewX = roi.x + x;
   const viewY = roi.y + y;
-  const scaled = scaleRegion(
-    { x: viewX, y: viewY, width: 0, height: 0 },
-    { x: 0, y: 0, width: view.width, height: view.height },
-    { x: 0, y: 0, width: native.width, height: native.height },
+  // The roi itself is never checked against the image, so a point inside the
+  // roi can still lie outside the screenshot (a roi hanging off the edge, or a
+  // negative roi.x). Same check, same words as `coords()`.
+  if (viewX < 0 || viewY < 0 || viewX >= view.width || viewY >= view.height) {
+    throw new Error(
+      `las coordenadas ${viewX},${viewY} (roi + x/y) quedan fuera de la imagen de ${view.width}x${view.height} que se te mostró`,
+    );
+  }
+  const scaled = clampToLastPixel(
+    scaleRegion(
+      { x: viewX, y: viewY, width: 0, height: 0 },
+      { x: 0, y: 0, width: view.width, height: view.height },
+      { x: 0, y: 0, width: native.width, height: native.height },
+    ),
+    native,
   );
   if (scaled.x < 0 || scaled.y < 0 || scaled.x >= native.width || scaled.y >= native.height) {
     throw new Error(
-      `coordinates ${scaled.x},${scaled.y} fall outside the ${native.width}x${native.height} screen`,
+      `las coordenadas ${scaled.x},${scaled.y} quedan fuera de la pantalla de ${native.width}x${native.height}`,
     );
   }
   return { x: scaled.x, y: scaled.y, viewX, viewY };
@@ -390,17 +443,29 @@ function parseButton(value: unknown): 'left' | 'right' | 'middle' {
   if (value === undefined || value === null || value === '') return 'left';
   const name = String(value).trim().toLowerCase();
   if (name === 'left' || name === 'right' || name === 'middle') return name;
-  throw new Error(`unknown mouse button "${String(value)}": use left, right or middle`);
+  throw new Error(`botón del ratón desconocido "${String(value)}": usa left, right o middle`);
 }
 
 /** Click count: a whole number 1-5 (the backend's own range); anything else is refused. */
 function parseClicks(value: unknown): number {
   if (value === undefined || value === null) return 1;
-  const n = Number(value);
+  // strictNumber: `true` or `[2]` (a batch item skips the schema) are not counts.
+  const n = strictNumber(value);
   if (!Number.isInteger(n) || n < 1 || n > 5) {
-    throw new Error(`clicks must be a whole number from 1 to 5, got ${String(value)}`);
+    throw new Error(`clicks debe ser un número entero de 1 a 5; recibido ${String(value)}`);
   }
   return n;
+}
+
+/**
+ * Text for type/key: a string as given, a finite number as its digits, anything
+ * else (object, list, boolean, null) as empty so the caller refuses it with its
+ * own Spanish error instead of typing «[object Object]».
+ */
+function textArg(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
 }
 
 /** Actions that change the screen, and therefore deserve before/after verification. */
@@ -506,10 +571,9 @@ export function createComputerTool(
     if (!view || !viewNative) return;
     if (viewNative.width === native.width && viewNative.height === native.height) return;
     throw new Error(
-      `the desktop changed from ${viewNative.width}x${viewNative.height} to ` +
-        `${native.width}x${native.height} since your last screenshot (resolution, scaling or ` +
-        'monitor): take a new screenshot before using coordinates. ' +
-        'La pantalla ha cambiado desde la última captura: haz una captura nueva.',
+      `la pantalla ha cambiado de ${viewNative.width}x${viewNative.height} a ` +
+        `${native.width}x${native.height} desde tu última captura (resolución, escala o ` +
+        'monitor): haz una captura nueva antes de usar coordenadas.',
     );
   };
 
@@ -602,11 +666,17 @@ export function createComputerTool(
         const roi = parseRegionField(record.roi, 'roi');
         if (roi) {
           const cropped = await captureRoi(backend, roi);
+          if (cropped.image.length === 0) {
+            // The capture itself failed: an empty image would reach the model (which
+            // refuses an empty image and fails the turn) and the chat. Say why instead.
+            throw new Error(cropped.detail ?? 'no pude capturar la pantalla para la roi');
+          }
           // The picture has to reach the chat, not just this context: the user asked
           // for it, and an image they cannot see is an image nobody sent.
-          const sent = record.send
-            ? await sendPhoto?.(cropped.image, { width: cropped.width, height: cropped.height })
-            : undefined;
+          const sent =
+            record.send === true
+              ? await sendPhoto?.(cropped.image, { width: cropped.width, height: cropped.height })
+              : undefined;
           if (!view) {
             // No full frame yet: reconstruct the capture scale from the crop's
             // own ratio so later clicks translate correctly even when the very
@@ -663,9 +733,10 @@ export function createComputerTool(
         viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
-        const sent = record.send
-          ? await sendPhoto?.(shot.image, { width: shot.width, height: shot.height })
-          : undefined;
+        const sent =
+          record.send === true
+            ? await sendPhoto?.(shot.image, { width: shot.width, height: shot.height })
+            : undefined;
         return {
           content: [
             {
@@ -762,6 +833,7 @@ export function createComputerTool(
       }
 
       case 'move': {
+        rejectRoi(record, 'move');
         const native = await backend.screenSize();
         assertSameDesktop(native);
         const p = coords(record, view ?? native, native);
@@ -777,6 +849,7 @@ export function createComputerTool(
       }
 
       case 'drag': {
+        rejectRoi(record, 'drag');
         const native = await backend.screenSize();
         assertSameDesktop(native);
         const from = coords(record, view ?? native, native);
@@ -786,7 +859,7 @@ export function createComputerTool(
           content: [
             {
               type: 'text',
-              text: `Dragged ${from.x},${from.y} to ${to.x},${to.y}${
+              text: `Arrastre de ${from.x},${from.y} a ${to.x},${to.y}${
                 check ? `\n${check.verdict}` : ''
               }`,
             },
@@ -797,25 +870,32 @@ export function createComputerTool(
       }
 
       case 'type': {
-        const text = String(record.text ?? '');
-        if (!text) throw new Error('the type action requires text');
+        // Only a string (or a plain number, e.g. a code): `String()` turned an
+        // object or a list from a batch item into «[object Object]» / «a,b» and
+        // typed that on the real desktop.
+        const text = textArg(record.text);
+        if (!text) throw new Error('la acción type necesita texto');
+        // Characters as a person counts them (code points): `text.length` counts an
+        // emoji as 2, so «Escritos N» disagreed with the «Parcial: … N de M» that
+        // the Windows backend reports, and the model resumed from the wrong place.
+        const chars = Array.from(text).length;
         const check = await act(() => backend.type(text));
-        log.info('typed', { chars: text.length, changed: check?.changed ?? null });
+        log.info('typed', { chars, changed: check?.changed ?? null });
         return {
           content: [
             {
               type: 'text',
-              text: `Escritos ${text.length} caracteres${check ? `\n${check.verdict}` : ''}`,
+              text: `Escritos ${chars} caracteres${check ? `\n${check.verdict}` : ''}`,
             },
           ],
-          details: { chars: text.length, verified: verifiedOf(check) },
+          details: { chars, verified: verifiedOf(check) },
           at: null,
         };
       }
 
       case 'key': {
-        const key = String(record.key ?? '');
-        if (!key) throw new Error('the key action requires a key name');
+        const key = textArg(record.key);
+        if (!key) throw new Error('la acción key necesita el nombre de una tecla');
         const check = await act(() => backend.key(key));
         return {
           content: [
@@ -828,10 +908,10 @@ export function createComputerTool(
 
       case 'batch':
         // A nested batch would smuggle ungated actions past the loop below.
-        throw new Error('an action inside a batch cannot be another batch');
+        throw new Error('una acción dentro de un lote no puede ser otro lote');
 
       default:
-        throw new Error(`unknown action: ${String(record.action)}`);
+        throw new Error(`acción desconocida: ${String(record.action)}`);
     }
   };
 
@@ -858,7 +938,7 @@ export function createComputerTool(
   const runBatch = async (record: Record<string, unknown>, signal?: AbortSignal) => {
     const list = asActionList(record.actions);
     if (!list || list.length === 0) {
-      throw new Error('the batch action requires a non-empty actions array');
+      throw new Error('la acción batch necesita una lista actions no vacía');
     }
     // An unwired gate is a wiring bug, not a permission decision, so the batch is
     // refused before the first action rather than while running it: "blocked on
@@ -1016,7 +1096,7 @@ export function createComputerTool(
         const head = `[${r.index}] ${r.action}`;
         if (r.ok) return `${head}: ok`;
         if (r.error?.startsWith('omitida')) return `${head}: ${r.error}`;
-        return `${head}: FAILED — ${r.error ?? 'unknown error'}`;
+        return `${head}: FALLÓ — ${r.error ?? 'error desconocido'}`;
       }),
       verdict ? verdict.reason : '',
       uncompared
@@ -1072,12 +1152,15 @@ export function createComputerTool(
           // explicit `false` disables it, so a config without the field keeps working.
           if (config.computerUse === false) {
             throw new Error(
-              'Computer Use is disabled on this PC (PA_COMPUTER_USE=0): do not retry, tell the user. ' +
-                'El control del escritorio está desactivado (PA_COMPUTER_USE=0); para activarlo, quita esa línea del .env y reinicia.',
+              'El control del escritorio está desactivado en este PC (PA_COMPUTER_USE=0): no lo reintentes y díselo al usuario. ' +
+                'Para activarlo, quita esa línea del .env y reinicia.',
             );
           }
           const record = args as unknown as Record<string, unknown>;
           lastAfter = null;
+          // Alta de cuenta a medias: sin el sí reciente del dueño, ni clic ni Enter.
+          const signupBlock = await desktopSignupBlock(record);
+          if (signupBlock) throw new Error(signupBlock);
           const wantsLook = record.look === true && args.action !== 'screenshot';
           if (args.action === 'batch') {
             const out = await runBatch(record, signal);

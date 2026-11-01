@@ -46,6 +46,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { listCaptureDevices } from '../screen/media.js';
@@ -531,10 +532,11 @@ export class FfmpegMicCapture implements WakeCapture {
 
   async start(onChunk: (pcm: Float32Array) => void, onError: (err: Error) => void): Promise<void> {
     if (this.#started) return;
-    if (!FFMPEG) throw new Error('no encuentro ffmpeg para capturar audio.');
+    if (!FFMPEG)
+      throw new Error('no encuentro ffmpeg, el programa con el que grabo el audio del micrófono.');
 
     const devices = await listCaptureDevices();
-    if (!devices.audio) throw new Error('no encuentro ningun microfono en este ordenador.');
+    if (!devices.audio) throw new Error('no encuentro ningún micrófono en este ordenador.');
     const device = devices.audio;
 
     const child = spawn(
@@ -557,7 +559,7 @@ export class FfmpegMicCapture implements WakeCapture {
         's16le',
         '-',
       ],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() },
     );
     this.#child = child;
     this.#started = true;
@@ -597,7 +599,9 @@ export class FfmpegMicCapture implements WakeCapture {
     });
 
     child.on('error', (err) => {
-      onError(new Error(`no puedo capturar audio del microfono: ${err.message}`));
+      // El detalle técnico va al registro; al chat, una frase llana.
+      log.warn('wake capture spawn failed', { error: err.message });
+      onError(new Error('no puedo usar el micrófono: no arranca el programa que graba el audio.'));
     });
 
     // Settle: dshow opens the device at spawn time and any failure surfaces as an
@@ -654,24 +658,29 @@ export class FfmpegMicCapture implements WakeCapture {
     await withTimeout(
       this.#exited ?? Promise.resolve(),
       CAPTURE_STOP_TIMEOUT_MS,
-      `ffmpeg no libero el microfono en ${CAPTURE_STOP_TIMEOUT_MS / 1000}s`,
+      `ffmpeg no liberó el micrófono en ${CAPTURE_STOP_TIMEOUT_MS / 1000} s`,
     ).catch((err: unknown) => {
       log.warn('wake capture stop', { error: err instanceof Error ? err.message : String(err) });
     });
   }
 }
 
-/** Spanish message for the two ways dshow fails to hand us a microphone. */
-function captureFailureMessage(device: string, code: number | null, stderrTail: string): string {
+/**
+ * Spanish message for the two ways dshow fails to hand us a microphone. What
+ * ffmpeg printed (exit code, stderr tail) goes to the log, not to the chat.
+ */
+export function captureFailureMessage(
+  device: string,
+  code: number | null,
+  stderrTail: string,
+): string {
   const detail = stderrTail.trim();
   if (/0x800700aa|resource is in use|device.*busy|being used/i.test(detail)) {
-    return `el microfono "${device}" esta ocupado por otro programa; no hago reintentos automaticos`;
+    return `el micrófono «${device}» está ocupado por otro programa (¿una llamada o una grabación?); no lo reintento solo`;
   }
   const tail = detail.split(/\r?\n/).filter(Boolean).slice(-3).join(' | ');
-  const suffix = code === null ? '' : ` (ffmpeg salio con ${code})`;
-  return tail
-    ? `no puedo capturar audio del microfono "${device}"${suffix}: ${tail}`
-    : `no puedo capturar audio del microfono "${device}"${suffix}`;
+  if (tail || code !== null) log.warn('wake capture failed', { device, code, tail });
+  return `no puedo usar el micrófono «${device}»: mira que esté conectado y que Windows deje usarlo (Configuración > Privacidad > Micrófono)`;
 }
 
 /** Bounded ring of the last `WINDOW_SECONDS` of audio. */

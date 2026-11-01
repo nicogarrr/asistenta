@@ -126,6 +126,20 @@ export function buildNowNote(at: Date = new Date(), timeZone: string = localTime
   ].join('\n');
 }
 
+/** «HH:MM» de pared en la zona configurada (PA_TIMEZONE); «??:??» si la fecha no vale. */
+export function wallHourMinute(d: Date, timeZone: string = localTimeZone()): string {
+  if (Number.isNaN(d.getTime())) return '??:??';
+  const w = wallClock(d, timeZone);
+  return `${pad(w.hour)}:${pad(w.minute)}`;
+}
+
+/** «AAAA-MM-DD HH:MM» de pared en la zona configurada (PA_TIMEZONE); '' si la fecha no vale. */
+export function wallDateMinute(d: Date, timeZone: string = localTimeZone()): string {
+  if (Number.isNaN(d.getTime())) return '';
+  const w = wallClock(d, timeZone);
+  return `${w.year}-${pad(w.month)}-${pad(w.day)} ${pad(w.hour)}:${pad(w.minute)}`;
+}
+
 const WALL_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**

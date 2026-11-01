@@ -6,7 +6,7 @@ import { type BrowserContext, chromium, type Locator, type Page } from 'playwrig
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
-import { foldAccents, normalizeHostname } from '../text.js';
+import { foldAccents, urlHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
@@ -374,14 +374,11 @@ interface Session {
 
 /** Hostname of a URL, or null when the string is not a URL. */
 export function hostOf(url: string): string | null {
-  try {
-    // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
-    // and to Chromium, so it must be the same host here: otherwise it walks past the
-    // never-approve list and past every domain approval.
-    return normalizeHostname(new URL(url).hostname).replace(/^www\./, '');
-  } catch {
-    return null;
-  }
+  // The trailing dot of a fully qualified name ("paypal.com.") is the same host to DNS
+  // and to Chromium, so it must be the same host here: otherwise it walks past the
+  // never-approve list and past every domain approval. urlHostname normalizes it.
+  const host = urlHostname(url);
+  return host === null ? null : host.replace(/^www\./, '');
 }
 
 /**
@@ -1918,11 +1915,18 @@ export class BrowserService {
     return value;
   }
 
-  /** Screenshot of the page. PNG at the viewport size keeps the token cost sane. */
-  async screenshot(scope: string, fullPage = false): Promise<{ mimeType: string; data: string }> {
+  /**
+   * Screenshot of the page. PNG at the viewport size keeps the token cost sane.
+   * `mobile` captures at phone width and puts the viewport back afterwards.
+   */
+  async screenshot(
+    scope: string,
+    fullPage = false,
+    opts: { mobile?: boolean } = {},
+  ): Promise<{ mimeType: string; data: string; mobile?: boolean }> {
     const session = await this.#session(scope);
-    const buf = await session.page.screenshot({ type: 'png', fullPage, scale: 'css' });
-    return { mimeType: 'image/png', data: buf.toString('base64') };
+    const shot = await screenshotPage(session.page, fullPage, opts.mobile === true);
+    return { mimeType: 'image/png', data: shot.buf.toString('base64'), mobile: shot.mobile };
   }
 
   /**
@@ -2119,4 +2123,34 @@ const fold = (v: string): string => foldAccents(v).replace(/\s+/g, ' ');
 export function textIncludes(haystack: string, needle: string): boolean {
   const n = fold(needle).trim();
   return n.length > 0 && fold(haystack).includes(n);
+}
+
+/** Tamaño de un móvil normal (iPhone 12–15) para ver cómo queda una página en el teléfono. */
+export const MOBILE_VIEWPORT = { width: 390, height: 844 } as const;
+
+interface ShotPage {
+  viewportSize(): { width: number; height: number } | null;
+  setViewportSize(size: { width: number; height: number }): Promise<void>;
+  screenshot(opts: { type: 'png'; fullPage: boolean; scale: 'css' }): Promise<Buffer>;
+}
+
+/**
+ * Captura con `mobile`: ancho de móvil y vuelta al tamaño de antes, también si falla.
+ * Sin tamaño fijo (ventana visible) no se toca: devuelve `mobile: false` y la captura normal.
+ */
+export async function screenshotPage(
+  page: ShotPage,
+  fullPage: boolean,
+  mobile: boolean,
+): Promise<{ buf: Buffer; mobile: boolean }> {
+  const before = mobile ? page.viewportSize() : null;
+  if (!before) {
+    return { buf: await page.screenshot({ type: 'png', fullPage, scale: 'css' }), mobile: false };
+  }
+  await page.setViewportSize({ ...MOBILE_VIEWPORT });
+  try {
+    return { buf: await page.screenshot({ type: 'png', fullPage, scale: 'css' }), mobile: true };
+  } finally {
+    await page.setViewportSize(before).catch(() => undefined);
+  }
 }

@@ -15,8 +15,10 @@
  * - Contenido web NO fiable: al modelo se le pasa entre marcas <fuente>.
  */
 
+import { foldAccents } from '../text.js';
 import type { ResearchDeps, ResearchSource } from './deep-research.js';
 import { extractQuotes, keyTerms } from './deep-research.js';
+import { bounded, DEFAULT_CALL_TIMEOUT_MS } from './limits.js';
 
 /** Apagado por defecto: PA_INVESTIGA_AMPLIO=1 lo activa (una llamada al modelo por elemento). */
 export function wideResearchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -105,7 +107,8 @@ async function researchItem(
 ): Promise<ItemResult> {
   if (!budget.take()) throw new BudgetError();
   const query = `${item} ${question}`;
-  const hits = await deps.search(query, 5);
+  const ms = deps.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const hits = await bounded(() => deps.search(query, 5), ms);
   const terms = keyTerms(query);
   const sources: ItemResult['sources'] = [];
   for (const hit of hits) {
@@ -116,7 +119,7 @@ async function researchItem(
       break;
     }
     try {
-      const text = await deps.fetch(hit.url, FETCH_CHARS);
+      const text = await bounded(() => deps.fetch(hit.url, FETCH_CHARS), ms);
       const quotes = extractQuotes(text, terms, 2);
       if (quotes.length > 0) sources.push({ title: hit.title, url: hit.url, quotes });
     } catch {
@@ -179,8 +182,10 @@ export async function wideResearch(
   deps: WideDeps,
 ): Promise<WideReport> {
   const q = question.trim();
-  if (!q) throw new Error('Falta la pregunta: /investiga amplio <pregunta> | a, b, c');
-  if (items.length === 0) throw new Error('Falta la lista: /investiga amplio <pregunta> | a, b, c');
+  if (!q)
+    throw new Error('Falta la pregunta. Por ejemplo: «precio y garantía | iPhone 16, Pixel 9».');
+  if (items.length === 0)
+    throw new Error('Falta de qué cosas. Por ejemplo: «precio y garantía | iPhone 16, Pixel 9».');
   if (items.length > WIDE_MAX_ITEMS) {
     throw new Error(
       `Como mucho ${WIDE_MAX_ITEMS} elementos por investigacion amplia (has puesto ${items.length}).`,
@@ -269,10 +274,7 @@ export function wideCsvAttachment(
     ...report.rows.map((r) => `${esc(r.item)},${esc(r.cell)}`),
   ].join('\r\n');
   const slug =
-    report.question
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
+    foldAccents(report.question)
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 40)

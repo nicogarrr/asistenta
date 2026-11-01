@@ -58,6 +58,8 @@ jobs:
       - run: npm test -- --coverage
         env:
           CI: '1'
+          # Las pruebas con Chromium real solo corren aquí (ver test/helpers/real-browser.ts).
+          PA_TEST_REAL_BROWSER: '1'
           # Los tests de agenda esperan la hora de Nico, no UTC.
           TZ: Europe/Madrid
       - name: Resumen de cobertura
@@ -73,12 +75,3 @@ jobs:
           retention-days: 14
       # Bateria de evaluacion (25 tareas): valida la propia bateria y sus checks.
       - run: node scripts/run-evals.mjs --dry
-
-  # Mocks del driver telnet y del canal del boton TV: sin red externa ni tele.
-  tv-mocks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - run: scripts/tv/test-tv-token-patch-mock.sh
-      - run: scripts/tv/test-tv-rollback-mock.sh

@@ -21,9 +21,9 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${src}$`);
 }
 
-function concurrencyBlock(): string {
-  const match = workflow.match(/^concurrency:\n((?:[ \t]+.*\n)+)/m);
-  if (!match) throw new Error('ci.yml no tiene bloque concurrency');
+function concurrencyBlock(text = workflow, name = 'ci.yml'): string {
+  const match = text.match(/^concurrency:\n((?:[ \t]+.*\n)+)/m);
+  if (!match) throw new Error(`${name} no tiene bloque concurrency`);
   return match[1] ?? '';
 }
 
@@ -34,6 +34,26 @@ describe('CI workflow', () => {
     expect(block).toMatch(
       /cancel-in-progress:\s*\$\{\{\s*github\.event_name == 'pull_request'\s*\}\}/,
     );
+  });
+
+  it('Windows y los mocks de la tele: en main no cancelan una ejecución en curso, y cada workflow tiene su grupo', () => {
+    const tv = readFileSync(new URL('../.github/workflows/tv-mocks.yml', import.meta.url), 'utf8');
+    const groups = new Set<string>([concurrencyBlock().match(/group:\s*(.+?)\s*$/m)?.[1] ?? 'ci']);
+    for (const [name, text] of [
+      ['windows.yml', windows],
+      ['tv-mocks.yml', tv],
+    ] as const) {
+      const block = concurrencyBlock(text, name);
+      expect(block, name).not.toMatch(/cancel-in-progress:\s*true\s*$/m);
+      expect(block, name).toMatch(
+        /cancel-in-progress:\s*\$\{\{\s*github\.event_name == 'pull_request'\s*\}\}/,
+      );
+      // Un grupo por rama y por workflow: compartirlo con ci.yml cancelaría uno con el otro.
+      const group = block.match(/group:\s*(.+?)\s*$/m)?.[1] ?? '';
+      expect(group, name).toMatch(/\$\{\{\s*github\.ref\s*\}\}/);
+      expect(groups.has(group), name).toBe(false);
+      groups.add(group);
+    }
   });
 
   it('sigue ejecutándose en PRs y en cada push a main', () => {
@@ -91,5 +111,29 @@ describe('CI workflow', () => {
     expect(missing).toEqual([]);
     expect(covered('.github/workflows/windows.yml')).toBe(true);
     expect(covered('package-lock.json')).toBe(true);
+  });
+});
+
+describe('workflows: tv-mocks y biome', () => {
+  it('los mocks de la tele van en su propio workflow, solo en rutas de la tele', () => {
+    expect(workflow).not.toMatch(/tv-mocks:/);
+    const tv = readFileSync(new URL('../.github/workflows/tv-mocks.yml', import.meta.url), 'utf8');
+    for (const p of [
+      "'scripts/tv/**'",
+      "'deploy/tv-webos/**'",
+      "'.github/workflows/tv-mocks.yml'",
+    ]) {
+      expect(tv.split(p).length - 1, p).toBe(2); // en pull_request y en push
+    }
+    for (const m of tv.matchAll(/run: (scripts\/tv\/[\w.-]+)/g)) {
+      expect(existsSync(new URL(`../${m[1]}`, import.meta.url)), m[1]).toBe(true);
+    }
+  });
+
+  it('biome también revisa los .mjs (scripts/, qa/)', () => {
+    const biome = JSON.parse(readFileSync(new URL('../biome.json', import.meta.url), 'utf8')) as {
+      files: { includes: string[] };
+    };
+    expect(biome.files.includes).toContain('**/*.mjs');
   });
 });

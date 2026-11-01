@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
+import { psErrorSummary } from './ps-error.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,9 +48,9 @@ async function ps(script: string, timeoutMs = 20_000): Promise<string> {
   const { stdout } = await execFileAsync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+    { encoding: 'utf8', env: childEnv(), timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
   ).catch((err: unknown) => {
-    log.warn('powershell helper failed', { err });
+    log.warn('powershell helper failed', psErrorSummary(err));
     return { stdout: '' };
   });
   return stdout;

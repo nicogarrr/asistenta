@@ -1,10 +1,13 @@
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
-import { localTimeZone, wallClock } from '../datecontext.js';
+import { scheduleEs } from '../cron/describe-es.js';
+import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
+import { writeFileReplacing } from '../fs-tmp.js';
+import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
 
 /**
@@ -75,6 +78,12 @@ const Params = Type.Object({
     Type.String({
       description:
         'create, repeating: 5-field cron in local time (min hour day-of-month month day-of-week), e.g. "30 8 * * 1" for Mondays at 8:30.',
+    }),
+  ),
+  until: Type.Optional(
+    Type.String({
+      description:
+        'create, repeating only: last local day it may fire, YYYY-MM-DD ("cada día durante una semana", "hasta el viernes"). Omit when it has no end.',
     }),
   ),
 });
@@ -190,6 +199,30 @@ export function settleOneShot(
 }
 
 /**
+ * A repeating reminder («cada día a las 9 la pastilla») whose send failed — no
+ * internet, Telegram down — lost that day's notice: nothing retried it, unlike a
+ * one-time reminder. Park a one-time copy pinned to this slot, five minutes ahead,
+ * so the one-time path retries it, delivers it late at startup, or drops and
+ * records it after RETRY_MAX_AGE_MS. Returns the parked name.
+ */
+export function parkFailedRepeating(
+  store: Pick<Store, 'saveRoutine'>,
+  routine: Pick<Routine, 'scope' | 'name' | 'prompt'>,
+  now = Date.now(),
+): string {
+  const text = reminderText(routine);
+  const name = nameFor(REMINDER_ONCE_PREFIX, text, ` @${stamp(new Date(now))}`);
+  store.saveRoutine({
+    scope: routine.scope,
+    name,
+    kind: 'schedule',
+    prompt: text,
+    schedule: onceCron(new Date(now + RETRY_MS)),
+  });
+  return name;
+}
+
+/**
  * One-time reminders whose time already passed when this runs (startup). The
  * scheduler never fires a past cron late: it would sit in the store and fire a YEAR
  * later (the pinned cron has no year), so the user would never hear about it. Every
@@ -226,10 +259,10 @@ function pad2(n: number): string {
  */
 export function lateReminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
   const due = dueOfOneShot(r.name);
-  const when = due
-    ? ((w) => `${pad2(w.day)}/${pad2(w.month)} ${pad2(w.hour)}:${pad2(w.minute)}`)(wallClock(due))
-    : 'una hora anterior';
-  return `⏰ Recordatorio pendiente con retraso (era para el ${when}): ${reminderText(r)}`;
+  if (!due) return `⏰ Te lo recuerdo con retraso: ${reminderText(r)}`;
+  const w = wallClock(due);
+  const when = `${pad2(w.day)}/${pad2(w.month)} a las ${pad2(w.hour)}:${pad2(w.minute)}`;
+  return `⏰ Te lo recuerdo con retraso, era para el ${when}: ${reminderText(r)}`;
 }
 
 /** Whether a fired one-shot is still stored. A job whose routine was deleted must not send again. */
@@ -242,8 +275,11 @@ export function oneShotStillPending(
 
 export interface MissedDeliveryDeps {
   store: Pick<Store, 'listRoutines' | 'deleteRoutine'>;
-  /** Sends into the chat of the routine's scope; false when it could not be delivered. */
-  send: (scope: string, text: string) => Promise<boolean>;
+  /**
+   * Sends into the chat of the routine's scope; false when it could not be delivered.
+   * `reminder` is the reminder's own text (for the «✅ Hecho» / «⏰ +1h» buttons).
+   */
+  send: (scope: string, text: string, reminder: string) => Promise<boolean>;
   now?: number;
 }
 
@@ -262,7 +298,7 @@ export async function deliverMissedReminders(
   let delivered = 0;
   let failed = 0;
   for (const r of missed) {
-    const ok = await deps.send(r.scope, lateReminderText(r)).catch(() => false);
+    const ok = await deps.send(r.scope, lateReminderText(r), reminderText(r)).catch(() => false);
     if (ok) {
       deps.store.deleteRoutine(r.scope, r.name);
       delivered++;
@@ -273,8 +309,122 @@ export async function deliverMissedReminders(
   return { delivered, failed, invalid: invalid.length };
 }
 
+/** Last local day of a repeating reminder, kept at the end of its name (`... [cron] hasta YYYY-MM-DD`). */
+export function untilOfReminder(name: string): string | null {
+  const m = / hasta (\d{4}-\d{2}-\d{2})$/.exec(name);
+  return m?.[1] ?? null;
+}
+
+/**
+ * A repeating reminder with an end day is over when that day has passed, or when its
+ * next firing after `now` falls after it (so it is removed right after its last one).
+ */
+export function reminderEnded(
+  r: Pick<Routine, 'name' | 'schedule'>,
+  now: Date = new Date(),
+  afterFiring = false,
+): boolean {
+  const end = untilOfReminder(r.name);
+  if (!end || isOneShotReminder(r)) return false;
+  if (localDay(now) > end) return true;
+  if (!afterFiring || !r.schedule) return false;
+  const next = nextRunOf(r.schedule, now);
+  return !next || localDay(next) > end;
+}
+
+function nextRunOf(schedule: string, from: Date): Date | null {
+  try {
+    return new Cron(schedule, { paused: true, timezone: localTimeZone() }).nextRun(from);
+  } catch {
+    return null;
+  }
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
+}
+
+/** Cuánto vale un botón «✅ Hecho» / «⏰ +1h» de un aviso. */
+export const FIRED_BUTTON_MS = 24 * 3_600_000;
+/** Aviso de un botón de recordatorio caducado, ya usado o de antes de reiniciar. */
+export const FIRED_BUTTON_STALE =
+  'Este botón ya no sirve (vale una vez y 24 horas). Si quieres ver tus recordatorios, pídemelos.';
+
+/**
+ * Recordatorios que acaban de avisar, para sus botones «✅ Hecho», «⏰ +1h» y «🌅 Mañana
+ * 9:00». Un recordatorio puntual se borra al avisar, así que el botón lleva un id corto
+ * que apunta aquí (OneTapIds). Con `file` sobrevive a un reinicio; sin él, tras
+ * reiniciar el botón contesta FIRED_BUTTON_STALE.
+ */
+export class FiredReminders {
+  readonly #ids: OneTapIds<{ scope: string; text: string }>;
+
+  constructor(now: () => number = Date.now, max = 200, file?: string) {
+    this.#ids = new OneTapIds({ ttlMs: FIRED_BUTTON_MS, now, max, file });
+  }
+
+  /** Apunta un aviso y devuelve su id (8 hex). Tira los caducados y, si sobran, los más viejos. */
+  remember(scope: string, text: string): string {
+    return this.#ids.remember({ scope, text });
+  }
+
+  /** Lo saca (un botón vale una vez). Solo desde el chat del aviso; caducado → undefined. */
+  take(
+    id: string,
+    sameChat: (scope: string) => boolean,
+  ): { scope: string; text: string } | undefined {
+    const v = this.#ids.take(id, (e) => typeof e?.scope === 'string' && sameChat(e.scope));
+    return v && typeof v.text === 'string' ? { scope: v.scope, text: v.text } : undefined;
+  }
+}
+
+/**
+ * «Mañana a las 9» en la hora de pared de PA_TIMEZONE (cambios de hora incluidos). De
+ * madrugada (antes de las 5) «mañana» es hoy a las 9, como lo diría una persona.
+ */
+export function nextMorningAt9(now: number, timeZone: string = localTimeZone()): number {
+  const w = wallClock(new Date(now), timeZone);
+  return zonedTime(w.year, w.month, w.hour < 5 ? w.day : w.day + 1, 9, 0, timeZone);
+}
+
+/**
+ * `/recordatorios hecho|pospone|manana <id>` (los botones del aviso). «Mañana 9:00» es
+ * como «+1h» pero para mañana a las 9 (nextMorningAt9). «Hecho» solo lo da por
+ * visto: no borra nada (un recordatorio que se repite sigue). «+1h» crea un recordatorio
+ * puntual con el mismo texto dentro de una hora, en el mismo hilo. Devuelve la respuesta.
+ */
+export function reminderButtonCommand(
+  deps: {
+    fired: FiredReminders;
+    store: Pick<Store, 'saveRoutine' | 'listRoutines'>;
+    sameChat: (scope: string) => boolean;
+    now?: () => number;
+  },
+  sub: 'hecho' | 'pospone' | 'manana',
+  id: string,
+): string {
+  const hit = deps.fired.take(id, deps.sameChat);
+  if (!hit) return FIRED_BUTTON_STALE;
+  if (sub === 'hecho') return `✅ Hecho: ${hit.text}`;
+  if (deps.store.listRoutines(hit.scope).filter(isReminder).length >= MAX_REMINDERS_PER_CHAT) {
+    return `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`;
+  }
+  const t = (deps.now ?? Date.now)();
+  const when = new Date(sub === 'manana' ? nextMorningAt9(t) : t + 3_600_000);
+  deps.store.saveRoutine({
+    scope: hit.scope,
+    name: nameFor(REMINDER_ONCE_PREFIX, hit.text, ` @${stamp(when)}`),
+    kind: 'schedule',
+    prompt: hit.text,
+    schedule: onceCron(when),
+  });
+  if (sub === 'manana') {
+    const w = stamp(when);
+    const day = `${w.slice(8, 10)}/${w.slice(5, 7)}`;
+    const label = w.slice(0, 10) === stamp(new Date(t)).slice(0, 10) ? 'hoy' : 'mañana';
+    return `🌅 Te lo vuelvo a recordar ${label} (${day}) a las ${w.slice(11)}: ${hit.text}`;
+  }
+  return `⏰ Te lo vuelvo a recordar a las ${stamp(when).slice(11)}: ${hit.text}`;
 }
 
 export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params> {
@@ -285,7 +435,10 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
     description: [
       'Reminders the user asked for: a message in this chat at the time they said.',
       'action=create with text plus ONE of: at (YYYY-MM-DDTHH:MM local), in_minutes (>= 2),',
-      'or schedule (5-field cron, for repeating ones like every Monday 8:30).',
+      'or schedule (5-field cron, for repeating ones like every Monday 8:30; add until',
+      '(YYYY-MM-DD, last day) when it should stop). Spanish night hours: «12 de la noche» or',
+      '«medianoche» is 00:00 (the night after that day), «la una de la noche» is 01:00,',
+      '«las 3 de la noche» is 03:00, «9 de la noche» is 21:00.',
       "action=list shows this chat's reminders with their next time; action=cancel with a",
       'word from the text removes it. Say back the exact time you set, in local time.',
       'Never claim a reminder exists unless this tool said it was created.',
@@ -297,13 +450,20 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
       const mine = () => deps.store.listRoutines(scope).filter(isReminder);
 
       if (args.action === 'list') {
-        const rows = mine();
+        // Same words as /recordatorios («cada lunes a las 08:30», «lun 05/10 08:30»):
+        // with the raw cron the model read «30 8 * * 1» back to the owner.
+        const rows = reminderRows(mine());
         if (rows.length === 0) return reply('No hay recordatorios programados.');
-        const lines = rows.map((r) => {
-          const check = r.schedule ? validateSchedule(r.schedule) : null;
-          const next = check?.ok ? check.next : 'sin próxima ejecución';
-          const kind = isOneShotReminder(r) ? 'una vez' : `repite (${r.schedule})`;
-          return `- ${reminderText(r)} | ${kind} | próximo: ${next}`;
+        const lines = rows.map(({ routine: r, next }) => {
+          const when = next
+            ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now())})`
+            : 'sin próxima vez';
+          const end = untilOfReminder(r.name);
+          const said = r.schedule ? scheduleEs(r.schedule) : null;
+          const kind = isOneShotReminder(r)
+            ? 'una vez'
+            : `se repite ${said ?? 'con un horario propio'}${end ? ` hasta ${end}` : ''}`;
+          return `- ${reminderText(r)} | ${kind} | próximo: ${when}`;
         });
         return reply(lines.join('\n'));
       }
@@ -336,6 +496,19 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
 
+      const until = args.until === undefined ? undefined : String(args.until).trim();
+      if (until !== undefined) {
+        if (args.schedule === undefined) {
+          return reply('until solo vale con schedule (recordatorios que se repiten).', true);
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || !parseLocalStamp(`${until}T12:00`)) {
+          return reply('until debe ser YYYY-MM-DD (último día, fecha real).', true);
+        }
+        if (until < localDay(new Date(now()))) {
+          return reply(`El último día (${until}) ya pasó; dime otra fecha.`, true);
+        }
+      }
+
       if (mine().length >= MAX_REMINDERS_PER_CHAT) {
         return reply(
           `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`,
@@ -348,16 +521,23 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
         if (!check.ok) return reply(`Horario no válido: ${check.error}`, true);
         const tooOften = checkRepeating(args.schedule);
         if (tooOften) return reply(tooOften, true);
+        if (until !== undefined) {
+          const first = nextRunOf(args.schedule.trim(), new Date(now()));
+          if (!first || localDay(first) > until) {
+            return reply(`No sonaría ninguna vez antes de que acabe el ${until}.`, true);
+          }
+        }
+        const end = until ? ` hasta ${until}` : '';
         deps.store.saveRoutine({
           scope,
-          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]`),
+          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]${end}`),
           kind: 'schedule',
           prompt: text,
           schedule: args.schedule.trim(),
         });
         deps.sync();
         return reply(
-          `Recordatorio programado (repite ${args.schedule.trim()}): ${text}. Próximo: ${check.next}.`,
+          `Recordatorio programado (repite ${args.schedule.trim()}${end}): ${text}. Próximo: ${check.next}.`,
         );
       }
 
@@ -400,7 +580,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
  * settleOneShot). The drop used to leave only a log line, so the user never learned that
  * "avísame a las 9" had not happened. It is written down here and /estado shows it.
  */
-export function recordDroppedReminder(file: string, routineName: string, now = Date.now()): void {
+export function recordDroppedReminder(
+  file: string,
+  routineName: string,
+  now = Date.now(),
+  chat?: string,
+): void {
   const due = dueOfOneShot(routineName);
   const label = routineName
     .replace(REMINDER_ONCE_PREFIX, '')
@@ -415,9 +600,44 @@ export function recordDroppedReminder(file: string, routineName: string, now = D
     : '';
   try {
     mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify({ at: now, text: `${label}${when}` })}\n`, 'utf8');
+    appendFileSync(
+      file,
+      `${JSON.stringify({ at: now, text: `${label}${when}`, ...(chat ? { chat } : {}) })}\n`,
+      'utf8',
+    );
+    trimDroppedReminders(file, now);
   } catch {
     // The drop is already logged; failing to note it must not break the scheduler.
+  }
+}
+
+/** Past this size the dropped-reminder file is rewritten with only recent lines. */
+export const DROPPED_FILE_MAX_BYTES = 32 * 1024;
+
+/**
+ * The file only ever grew; /estado reads the last week. Once it passes the cap it
+ * keeps the last 30 days (at most 200 lines), replaced in one step so a crash never
+ * leaves it half written.
+ */
+export function trimDroppedReminders(file: string, now = Date.now()): void {
+  try {
+    if (statSync(file).size <= DROPPED_FILE_MAX_BYTES) return;
+    const cutoff = now - 30 * 86_400_000;
+    const keep = readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((line) => {
+        if (!line.trim()) return false;
+        try {
+          const at = (JSON.parse(line) as { at?: unknown }).at;
+          return typeof at === 'number' && at >= cutoff;
+        } catch {
+          return false;
+        }
+      })
+      .slice(-200);
+    writeFileReplacing(file, keep.length ? `${keep.join('\n')}\n` : '');
+  } catch {
+    // Trimming is housekeeping; the next drop tries again.
   }
 }
 
@@ -496,14 +716,15 @@ export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()):
     const when = next
       ? `${fechaCortaEs(next)} (${dentroDeEs(next.getTime() - now.getTime())})`
       : 'sin próxima vez';
-    const kind = isOneShotReminder(routine) ? '' : ` · se repite (${routine.schedule})`;
+    const said = routine.schedule ? scheduleEs(routine.schedule) : null;
+    const kind = isOneShotReminder(routine) ? '' : ` · ${said ?? 'se repite'}`;
     return `${i + 1}. ${reminderText(routine)} — ${when}${kind}`;
   });
   return [
     `Recordatorios: ${rows.length}`,
     ...lines,
     '',
-    'Para borrar uno: /recordatorios borrar <número o palabra>',
+    'Si quieres quitar alguno, dime cuál.',
   ].join('\n');
 }
 
@@ -516,7 +737,11 @@ export function pickReminder(
   ref: string,
 ): { ok: true; routine: Routine } | { ok: false; error: string } {
   const want = ref.trim();
-  if (!want) return { ok: false, error: 'Dime cuál: /recordatorios borrar <número o palabra>' };
+  if (!want)
+    return {
+      ok: false,
+      error: '¿Cuál quito? Dime su número de la lista o una palabra.',
+    };
   if (/^\d+$/.test(want)) {
     const row = rows[Number(want) - 1];
     if (!row) {

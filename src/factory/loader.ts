@@ -60,6 +60,23 @@ export async function loadInstalledFactoryTools(
         ].join(' '),
         parameters: Type.Unsafe<Record<string, unknown>>(contract.parameters),
         execute: async (_id, args) => {
+          // The wrapper outlives the load (it stays registered across
+          // messages), so the approval is re-checked on every call: a tool.js
+          // edited, or a tool uninstalled, after the load must not run.
+          const refused = notApprovedNow(meta.id, realHash);
+          if (refused) {
+            log.error('factory tool rechazada al ejecutar', { id: meta.id, reason: refused });
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `No ejecuto ${meta.id}: ${refused}. Hay que volver a probarla y aprobarla.`,
+                },
+              ],
+              details: { factory: meta.id, version: meta.version },
+              isError: true,
+            };
+          }
           const result = await runFactoryToolSandboxed(meta.id, args, { timeoutMs });
           if (result.ok) {
             return {
@@ -86,6 +103,25 @@ export async function loadInstalledFactoryTools(
   return tools;
 }
 
+/** Null when the tool on disk is still the installed, approved artifact; else the reason (Spanish). */
+function notApprovedNow(id: string, approvedSha: string): string | null {
+  try {
+    const t = readFactoryTool(id);
+    if (!t) return 'ya no existe';
+    if (t.meta.status !== 'installed') return 'ya no está instalada';
+    if (
+      !t.meta.lastTestOk ||
+      t.meta.testedSha256 !== approvedSha ||
+      sha256(t.code) !== approvedSha
+    ) {
+      return 'su código ya no es el aprobado';
+    }
+    return null;
+  } catch {
+    return 'su TOOL.md no se puede leer';
+  }
+}
+
 /**
  * Keeps one agent's live toolset in sync with the installed factory set:
  * registers new installs, retracts uninstalls, idempotent both ways. Called
@@ -94,22 +130,32 @@ export async function loadInstalledFactoryTools(
 export function createFactorySync(
   register: (tool: AgentTool) => void,
   unregister: (name: string) => void,
+  load: () => Promise<AgentTool[]> = () => loadInstalledFactoryTools(),
 ): () => Promise<void> {
-  const registered = new Set<string>();
+  // name -> fingerprint of what the model sees. A re-install under the same
+  // name with a new description/parameters must replace the live wrapper, not
+  // keep the stale one until the next restart.
+  const registered = new Map<string, string>();
   return async function syncFactoryTools() {
-    const installed = await loadInstalledFactoryTools();
+    const installed = await load();
     const want = new Set(installed.map((t) => t.name));
     for (const t of installed) {
-      if (!registered.has(t.name)) {
-        register(t);
-        registered.add(t.name);
-      }
+      const fp = toolFingerprint(t);
+      const prev = registered.get(t.name);
+      if (prev === fp) continue;
+      if (prev !== undefined) unregister(t.name);
+      register(t);
+      registered.set(t.name, fp);
     }
-    for (const name of [...registered]) {
+    for (const name of [...registered.keys()]) {
       if (!want.has(name)) {
         unregister(name);
         registered.delete(name);
       }
     }
   };
+}
+
+function toolFingerprint(t: AgentTool): string {
+  return JSON.stringify([t.label, t.description, t.parameters]);
 }

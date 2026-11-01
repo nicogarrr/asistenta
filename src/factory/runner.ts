@@ -47,9 +47,11 @@
  * captured output is capped - a flood kills the run instead of eating
  * daemon memory.
  */
+
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { factoryDir } from './store.js';
 import type { FactoryToolContract } from './types.js';
 
@@ -69,6 +71,17 @@ export interface FactoryTestResult {
 /** Cap on captured child output. */
 export const MAX_FACTORY_OUTPUT_BYTES = 1024 * 1024;
 const LOG_TAIL_BYTES = 4000;
+/**
+ * Console output a guest may buffer INSIDE its sandbox before the run is cut
+ * (stage 'output'). Enforced in the guest's own realm, so a tool that logs in
+ * a loop can no longer grow memory without bound until run() ends; the 1 MB
+ * pipe cap above stays as the outer limit.
+ */
+export const MAX_GUEST_LOG_CHARS = 256 * 1024;
+/** Old-space heap ceiling (MB) for the guest process that runs tool code. */
+export const GUEST_HEAP_MB = 256;
+/** How often the guest trampoline streams buffered console lines out. */
+const GUEST_LOG_PUMP_MS = 200;
 
 /**
  * Trusted verifier: the only code that writes the verdict (fd 3). It runs NO
@@ -84,7 +97,7 @@ import path from 'node:path';
 
 const [toolPath, guestPath, paramsJson] = process.argv.slice(2);
 const say = (v) => { try { fs.writeSync(3, JSON.stringify(v) + '\\n'); } catch {} };
-const STAGES = new Set(['import', 'shape', 'run']);
+const STAGES = new Set(['import', 'shape', 'run', 'output']);
 let said = false;
 const sayOnce = (v) => { if (said) return; said = true; say(v); process.exit(0); };
 
@@ -96,7 +109,9 @@ try { code = fs.readFileSync(toolPath, 'utf8'); } catch (e) {
 const dir = path.dirname(toolPath);
 const guest = spawn(
   process.execPath,
-  ['--experimental-vm-modules', '--no-warnings', '--permission', '--allow-fs-read=' + dir, guestPath],
+  // Heap ceiling for guest code: a tool that allocates without bound dies on
+  // its own (no report -> 'supervisor') instead of taking the PC's memory.
+  ['--experimental-vm-modules', '--no-warnings', '--max-old-space-size=${GUEST_HEAP_MB}', '--permission', '--allow-fs-read=' + dir, guestPath],
   // NO fd 3 here: the guest process physically lacks the verdict channel.
   { stdio: ['pipe', 'pipe', 'pipe'], env: {} },
 );
@@ -164,16 +179,24 @@ guest.stdin.end(JSON.stringify({ code, paramsJson: paramsJson ?? '' }));
 const GUEST_SOURCE = `
 import vm from 'node:vm';
 
-const emit = (v) => { try { process.stdout.write('FACTORY-RESULT:' + JSON.stringify(v) + '\\n'); } catch {} };
+let emitted = false;
+const emit = (v) => {
+  if (emitted) return;
+  emitted = true;
+  try { process.stdout.write('FACTORY-RESULT:' + JSON.stringify(v) + '\\n'); } catch {}
+};
+let pump = null;
 
 let buf = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { buf += d; });
 process.stdin.on('end', () => {
-  main(buf).then(
-    () => {},
-    (e) => emit({ ok: false, stage: 'supervisor', error: String(e && e.stack ? e.stack : e) }),
-  );
+  main(buf)
+    .then(
+      () => {},
+      (e) => emit({ ok: false, stage: 'supervisor', error: String(e && e.stack ? e.stack : e) }),
+    )
+    .finally(() => { if (pump) clearInterval(pump); });
 });
 
 async function main(raw) {
@@ -192,20 +215,55 @@ async function main(raw) {
   // In-context helpers (guest-realm objects only): console capture into an
   // in-context buffer the trampoline drains, and params arriving as a JSON
   // string parsed INSIDE the guest (a host object would leak constructors).
+  // The buffer and its counter live in a closure; the guest only sees two
+  // frozen accessors, so it cannot reset the count. Past the cap every
+  // console call throws, which also breaks a synchronous logging loop.
   vm.runInContext(
-    'globalThis.__guestLogs = [];' +
-    'globalThis.console = (() => {' +
-    '  const push = (a) => { try { __guestLogs.push(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ")); } catch {} };' +
-    '  return { log: (...a) => push(a), info: (...a) => push(a), warn: (...a) => push(a), error: (...a) => push(a), debug: (...a) => push(a) };' +
+    '(() => {' +
+    '  const cap = ${MAX_GUEST_LOG_CHARS};' +
+    '  let logs = []; let used = 0; let over = false;' +
+    '  const fail = () => { throw new Error("salida del tool > " + cap + " caracteres"); };' +
+    '  const push = (a) => {' +
+    '    if (over) fail();' +
+    '    let line;' +
+    '    try { line = String(a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ")); } catch { return; }' +
+    '    if (used + line.length > cap) { logs.push(line.slice(0, cap - used)); used = cap; over = true; fail(); }' +
+    '    used += line.length; logs.push(line);' +
+    '  };' +
+    '  const fix = (k, v) => Object.defineProperty(globalThis, k, { value: v, writable: false, configurable: false, enumerable: false });' +
+    '  fix("__guestDrain", () => { const out = logs.join("\\\\n"); logs = []; return out; });' +
+    '  fix("__guestOver", () => over);' +
+    '  globalThis.console = { log: (...a) => push(a), info: (...a) => push(a), warn: (...a) => push(a), error: (...a) => push(a), debug: (...a) => push(a) };' +
     '})();',
     ctx,
   );
+  let overflowed = false;
+  const OVERFLOW = 'salida del tool > ${MAX_GUEST_LOG_CHARS} caracteres: ejecucion cortada dentro del sandbox';
   const drainLogs = () => {
     try {
-      const out = vm.runInContext('__guestLogs.splice(0).join("\\\\n")', ctx);
-      if (out) console.log('[tool]', String(out).split('\\n').join('\\n[tool] '));
+      const out = String(vm.runInContext('__guestDrain()', ctx));
+      if (out) console.log('[tool]', out.split('\\n').join('\\n[tool] '));
+      if (vm.runInContext('__guestOver()', ctx) === true) overflowed = true;
     } catch {}
   };
+  // Final report: drain first, and an overflow outranks whatever the tool did
+  // afterwards (even a tool that swallowed the console error and returned).
+  const finishWith = (v) => {
+    drainLogs();
+    emit(overflowed ? { ok: false, stage: 'output', error: OVERFLOW } : v);
+  };
+  // Stream console lines while the tool runs (a tool that logs and then hangs
+  // shows its lines on timeout) and stop at once on overflow. Also keeps the
+  // event loop alive: Node exits fast on an unsettled top-level await, which
+  // would bypass the parent's timeout and mislabel a hang as a supervisor
+  // failure. Cleared when main() settles.
+  pump = setInterval(() => {
+    drainLogs();
+    if (overflowed) {
+      emit({ ok: false, stage: 'output', error: OVERFLOW });
+      clearInterval(pump);
+    }
+  }, ${GUEST_LOG_PUMP_MS});
   vm.runInContext('globalThis.__paramsJson = ' + JSON.stringify(paramsJson), ctx);
 
   let mod;
@@ -214,13 +272,12 @@ async function main(raw) {
     await mod.link((specifier) => { throw new Error('imports denegados en herramientas de fabrica (v1 solo computo): ' + specifier); });
     await mod.evaluate();
   } catch (e) {
-    drainLogs();
-    emit({ ok: false, stage: 'import', error: String(e && e.stack ? e.stack : e) });
+    finishWith({ ok: false, stage: 'import', error: String(e && e.stack ? e.stack : e) });
     return;
   }
 
   const ns = mod.namespace;
-  const bad = (msg) => { drainLogs(); emit({ ok: false, stage: 'shape', error: msg }); };
+  const bad = (msg) => finishWith({ ok: false, stage: 'shape', error: msg });
   if (typeof ns.name !== 'string' || !ns.name) return bad('export name debe ser string no vacio');
   if (typeof ns.description !== 'string' || !ns.description) return bad('export description debe ser string no vacio');
   if (!ns.parameters || typeof ns.parameters !== 'object' || ns.parameters.type !== 'object') return bad('export parameters debe ser un JSON schema de objeto ({ type: "object", ... })');
@@ -228,33 +285,64 @@ async function main(raw) {
 
   let params;
   try { params = vm.runInContext('JSON.parse(globalThis.__paramsJson || "{}")', ctx); } catch (e) {
-    drainLogs();
-    emit({ ok: false, stage: 'run', error: 'sampleParams no es JSON valido: ' + String(e) });
+    finishWith({ ok: false, stage: 'run', error: 'sampleParams no es JSON valido: ' + String(e) });
     return;
   }
 
-  // Keep the event loop alive while run() is in flight: Node exits fast on an
-  // unsettled top-level await, which would bypass the parent's timeout and
-  // mislabel a hang as a supervisor failure. Cleared when run() settles.
-  const keepAlive = setInterval(() => {}, 60000);
   try {
     const result = await ns.run(params);
-    clearInterval(keepAlive);
-    drainLogs();
     // Only primitives cross back: strings and JSON. Guest objects are
     // stringified, never handed to host callers as live objects.
     const text = typeof result === 'string' ? result : (result && typeof result.text === 'string' ? result.text : JSON.stringify(result));
-    emit({
+    finishWith({
       ok: true, stage: 'run', text: String(text).slice(0, 4000),
       contract: { name: String(ns.name), description: String(ns.description), parameters: JSON.parse(JSON.stringify(ns.parameters)) },
     });
   } catch (e) {
-    clearInterval(keepAlive);
-    drainLogs();
-    emit({ ok: false, stage: 'run', error: String(e && e.stack ? e.stack : e) });
+    finishWith({ ok: false, stage: 'run', error: String(e && e.stack ? e.stack : e) });
   }
 }
 `;
+
+/**
+ * Collects the child's stdout/stderr for the parent side of the sandbox.
+ * Bytes are counted as they arrive (chunk.length), so the cap check is O(1)
+ * per chunk instead of re-measuring everything collected so far, and each
+ * stream has its own UTF-8 decoder so a character split across two pipe
+ * chunks («á», «ñ», emoji) is not turned into replacement characters.
+ */
+export interface OutputCollector {
+  /** Bytes received so far across all streams. */
+  readonly bytes: number;
+  /** Adds a chunk on a default stream; returns true once bytes > maxBytes. */
+  push(chunk: Buffer): boolean;
+  /** A writer for one stream with its own decoder; returns true once over the cap. */
+  stream(): (chunk: Buffer) => boolean;
+  /** Text collected so far. */
+  text(): string;
+}
+
+export function createOutputCollector(maxBytes: number): OutputCollector {
+  let bytes = 0;
+  let text = '';
+  const stream = (): ((chunk: Buffer) => boolean) => {
+    const decoder = new StringDecoder('utf8');
+    return (chunk: Buffer) => {
+      bytes += chunk.length;
+      text += decoder.write(chunk);
+      return bytes > maxBytes;
+    };
+  };
+  const def = stream();
+  return {
+    get bytes() {
+      return bytes;
+    },
+    push: def,
+    stream,
+    text: () => text,
+  };
+}
 
 function tail(s: string): string {
   return s.length <= LOG_TAIL_BYTES
@@ -270,7 +358,7 @@ interface SupervisorVerdict {
   contract?: FactoryToolContract;
 }
 
-const VERDICT_STAGES = new Set(['import', 'shape', 'run']);
+const VERDICT_STAGES = new Set(['import', 'shape', 'run', 'output']);
 
 /**
  * Picks the verdict the verifier wrote: the FIRST line that parses as a
@@ -286,7 +374,10 @@ export function pickVerdict(verdictRaw: string): SupervisorVerdict | null {
         parsed &&
         typeof parsed.ok === 'boolean' &&
         typeof parsed.stage === 'string' &&
-        VERDICT_STAGES.has(parsed.stage)
+        VERDICT_STAGES.has(parsed.stage) &&
+        // Only a finished run can be a success: «ok» with any other stage
+        // is malformed, not a verdict.
+        (parsed.ok === false || (parsed.stage === 'run' && typeof parsed.text === 'string'))
       ) {
         return parsed;
       }
@@ -327,7 +418,7 @@ export async function runFactoryToolSandboxed(
       // on purpose.
       { cwd: dir, env: {}, stdio: ['ignore', 'pipe', 'pipe', 'pipe'], detached: true },
     );
-    let logs = '';
+    const collected = createOutputCollector(MAX_FACTORY_OUTPUT_BYTES);
     let verdictRaw = '';
     let settled = false;
     const finish = (r: FactoryTestResult) => {
@@ -352,24 +443,27 @@ export async function runFactoryToolSandboxed(
       finish({
         ok: false,
         stage: 'timeout',
-        output: `${tail(logs)}\n[timeout ${timeoutMs}ms: grupo de procesos muerto]`,
+        output: `${tail(collected.text())}\n[timeout ${timeoutMs}ms: grupo de procesos muerto]`,
         durationMs: Date.now() - started,
       });
     }, timeoutMs);
-    const onLog = (d: Buffer) => {
-      logs += d.toString();
-      if (Buffer.byteLength(logs) > MAX_FACTORY_OUTPUT_BYTES) {
-        killGroup();
-        finish({
-          ok: false,
-          stage: 'output',
-          output: `${tail(logs)}\n[salida > ${MAX_FACTORY_OUTPUT_BYTES} bytes: grupo de procesos muerto]`,
-          durationMs: Date.now() - started,
-        });
-      }
+    const onOverflow = () => {
+      killGroup();
+      finish({
+        ok: false,
+        stage: 'output',
+        output: `${tail(collected.text())}\n[salida > ${MAX_FACTORY_OUTPUT_BYTES} bytes: grupo de procesos muerto]`,
+        durationMs: Date.now() - started,
+      });
     };
-    child.stdout?.on('data', onLog);
-    child.stderr?.on('data', onLog);
+    const outWriter = collected.stream();
+    const errWriter = collected.stream();
+    child.stdout?.on('data', (d: Buffer) => {
+      if (outWriter(d)) onOverflow();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      if (errWriter(d)) onOverflow();
+    });
     const verdictStream = child.stdio[3];
     if (verdictStream)
       verdictStream.on('data', (d: Buffer) => {
@@ -390,7 +484,7 @@ export async function runFactoryToolSandboxed(
         finish({
           ok: verdict.ok as boolean,
           stage: verdict.stage as FactoryRunStage,
-          output: String((verdict.ok ? verdict.text : verdict.error) ?? tail(logs)),
+          output: String((verdict.ok ? verdict.text : verdict.error) ?? tail(collected.text())),
           durationMs: Date.now() - started,
           ...(verdict.contract ? { contract: verdict.contract } : {}),
         });
@@ -398,7 +492,9 @@ export async function runFactoryToolSandboxed(
         finish({
           ok: false,
           stage: 'supervisor',
-          output: tail(logs) || `el supervisor no produjo veredicto (exit ${String(exitCode)})`,
+          output:
+            tail(collected.text()) ||
+            `el supervisor no produjo veredicto (exit ${String(exitCode)})`,
           durationMs: Date.now() - started,
         });
       }

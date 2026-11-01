@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { log } from '../log.js';
+import { normalizeHostname } from '../text.js';
 import { isFetchable, isFetchableResolved } from '../tools/fetch.js';
 
 /** Same narrowing as voice/decode.ts: typed as a module, a string at runtime. */
@@ -12,6 +13,7 @@ const FFMPEG: string | null =
     ? ffmpegStatic
     : ((ffmpegStatic as { default?: string }).default ?? null);
 
+import { childEnv } from '../child-env.js';
 import { COOKIE_BROWSERS } from './cookie-browsers.js';
 
 /**
@@ -81,7 +83,7 @@ function run(
     execFile(
       file,
       args,
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true, env: childEnv() },
       (err, stdout, stderr) => {
         if (!err) return resolve({ stdout, stderr, code: 0 });
         const e = err as NodeJS.ErrnoException & { code?: string | number };
@@ -219,6 +221,11 @@ async function hasDeno(): Promise<boolean> {
 
 const YOUTUBE_HOST = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/;
 
+/** ¿Es un host de YouTube? También con mayúsculas o el punto final de un FQDN («youtube.com.»). */
+export function isYoutubeHost(hostname: string): boolean {
+  return YOUTUBE_HOST.test(normalizeHostname(hostname));
+}
+
 export async function downloadVideo(
   rawUrl: string,
   ytdlp = process.env.ASISTENTA_YTDLP || 'yt-dlp',
@@ -288,7 +295,7 @@ export async function downloadVideo(
           tooBig = true;
           continue;
         }
-        const youtube = YOUTUBE_HOST.test(url.hostname.toLowerCase());
+        const youtube = isYoutubeHost(url.hostname);
         // The raw English message is the only diagnostic when the Spanish one is too coarse.
         log.warn('yt-dlp failed', { host: url.hostname, stderr: res.stderr.slice(0, 500) });
         return {
@@ -414,7 +421,7 @@ export async function downloadAudio(
       };
     }
     if (res.code !== 0) {
-      const youtube = YOUTUBE_HOST.test(url.hostname.toLowerCase());
+      const youtube = isYoutubeHost(url.hostname);
       // The raw English message is the only diagnostic when the Spanish one is too coarse.
       log.warn('yt-dlp audio failed', { host: url.hostname, stderr: res.stderr.slice(0, 500) });
       return {

@@ -5,15 +5,32 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const RESOURCE_TESTS = ['test/memory-office.test.ts', 'test/factory.test.ts', 'test/diagnose-cli-process.test.ts', 'test/daemon-stop-process.test.ts', 'test/vault-stdin-process.test.ts', 'test/vault-writer-process.test.ts', 'test/setup-process.test.ts', 'test/setup-terminal-pty.test.ts'];
+export const RESOURCE_TESTS = [
+  'test/memory-office.test.ts',
+  'test/factory.test.ts',
+  'test/diagnose-cli-process.test.ts',
+  'test/daemon-stop-process.test.ts',
+  'test/vault-stdin-process.test.ts',
+  'test/vault-writer-process.test.ts',
+  'test/setup-process.test.ts',
+  'test/setup-terminal-pty.test.ts',
+];
 
 export function runSuite(args = [], launch = spawnSync) {
   const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url));
-  const general = [vitest, 'run', ...args, ...RESOURCE_TESTS.flatMap((file) => ['--exclude', file])];
+  const general = [
+    vitest,
+    'run',
+    ...args,
+    ...RESOURCE_TESTS.flatMap((file) => ['--exclude', file]),
+  ];
   const resources = [vitest, 'run', '--maxWorkers=1', '--fileParallelism=false', ...RESOURCE_TESTS];
   let failed = false;
   // No short-circuit: recursos se ejecuta también si falla o no arranca general.
-  for (const [name, command] of [['general', general], ['recursos (serial)', resources]]) {
+  for (const [name, command] of [
+    ['general', general],
+    ['recursos (serial)', resources],
+  ]) {
     console.log(`\nSuite: ${name}`);
     try {
       const result = launch(process.execPath, command, { stdio: 'inherit' });

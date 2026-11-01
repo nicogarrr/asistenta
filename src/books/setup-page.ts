@@ -12,8 +12,11 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { envFileText } from '../env-text.js';
+import { uniqueTmpPath } from '../fs-tmp.js';
+import { log } from '../log.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
 const ENV_PATH = process.env.BOOKS_ENV_PATH ?? '.env';
@@ -84,17 +87,46 @@ input,button{font-size:1rem;padding:.5rem;margin:.25rem 0;width:100%}</style></h
 <p>MSG</p>
 </body></html>`;
 
-function saveCredsToEnv(apiId: string, apiHash: string): void {
-  const lines = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8').split('\n') : [];
+/**
+ * Escribe las dos claves en el .env de Nico, que guarda TODAS sus claves.
+ * - Atómico (temporal + rename): un corte a medias (disco lleno, cierre) dejaba
+ *   el .env truncado y se perdían todas las claves, no solo estas dos.
+ * - Respeta el resto del fichero: líneas en blanco, CRLF de Windows y BOM.
+ * - Sustituye todas las apariciones de la clave (también `export CLAVE=`), para
+ *   que una línea repetida más abajo no siga mandando con el valor viejo.
+ */
+export function saveCredsToEnv(apiId: string, apiHash: string, envPath = ENV_PATH): void {
+  // Como el arranque: un .env con BOM o en UTF-16 (PowerShell 5 «>») se lee bien
+  // y se reescribe en UTF-8; leído como utf8 se corrompía entero.
+  const raw = existsSync(envPath) ? envFileText(readFileSync(envPath)) : '';
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const lines = raw === '' ? [] : raw.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   const set = (key: string, value: string) => {
-    const i = lines.findIndex((l) => l.startsWith(`${key}=`));
-    if (i >= 0) lines[i] = `${key}=${value}`;
-    else lines.push(`${key}=${value}`);
+    const isKey = (l: string) => {
+      const t = l.trimStart();
+      return t.startsWith(`${key}=`) || t.startsWith(`export ${key}=`);
+    };
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (!isKey(lines[i] as string)) continue;
+      lines[i] = found ? '' : `${key}=${value}`;
+      found = true;
+    }
+    if (!found) lines.push(`${key}=${value}`);
   };
   set('BOOKS_TG_API_ID', apiId);
   set('BOOKS_TG_API_HASH', apiHash);
-  writeFileSync(ENV_PATH, `${lines.filter((l) => l.trim()).join('\n')}\n`, { mode: 0o600 });
-  chmodSync(ENV_PATH, 0o600);
+  const tmp = uniqueTmpPath(envPath);
+  try {
+    writeFileSync(tmp, `${lines.join(eol)}${eol}`, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, envPath);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+  chmodSync(envPath, 0o600);
 }
 
 export interface SetupDeps {
@@ -214,11 +246,26 @@ export function makeSetupHandler(deps: SetupDeps) {
             render(res, 'Ruta desconocida.', 404);
           }
         } catch (err) {
-          render(res, `Error: ${err instanceof Error ? err.message : String(err)}`, 500);
+          // El error crudo de Telegram («PHONE_CODE_INVALID», «FLOOD_WAIT_60») solo al registro.
+          log.warn('books setup: paso fallido', { err: String(err) });
+          render(res, setupFailureText(err), 500);
         }
       });
     });
   };
+}
+
+/** Motivo llano de un paso fallido de la página; nunca el texto crudo del error. */
+export function setupFailureText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/PHONE_CODE_(INVALID|EXPIRED|EMPTY)/i.test(raw)) {
+    return 'El código no es válido o ha caducado. Pide otro y vuelve a intentarlo.';
+  }
+  if (/PASSWORD|SRP/i.test(raw)) {
+    return 'Falta la contraseña de verificación en dos pasos de Telegram, o no es correcta.';
+  }
+  if (/FLOOD/i.test(raw)) return 'Telegram pide esperar un rato antes de volver a intentarlo.';
+  return 'No se pudo completar este paso con Telegram. Inténtalo de nuevo en un momento.';
 }
 
 export function startSetupServer(port = 8377): {

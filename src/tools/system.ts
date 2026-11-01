@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
+import { psErrorSummary } from './ps-error.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,13 +44,25 @@ export interface SystemStatus {
   localIp: string | null;
 }
 
-async function ps(script: string, timeoutMs = 20_000, strict = false): Promise<string> {
+async function ps(
+  script: string,
+  timeoutMs = 20_000,
+  strict = false,
+  signal?: AbortSignal,
+): Promise<string> {
   const { stdout } = await execFileAsync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
+    {
+      encoding: 'utf8',
+      env: childEnv(),
+      timeout: timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
+      // /stop: matar el PowerShell que reproduce corta el sonido (MCI vive en ese proceso).
+      ...(signal ? { signal } : {}),
+    },
   ).catch((err: unknown) => {
-    log.warn('system helper failed', { err });
+    log.warn('system helper failed', psErrorSummary(err));
     if (strict) throw err;
     return { stdout: '' };
   });
@@ -175,10 +189,26 @@ export function playbackRestoreText(
   return `He dejado el volumen como estaba (${result.volumeRestoredTo}%).`;
 }
 
+/** Motivo cuando /stop corta la reproducción en el PC. */
+const STOPPED_DETAIL = 'parado con /stop';
+
 export async function playAudioFile(
   file: string,
-  opts: { volume?: number; restoreVolume?: boolean } = {},
+  opts: { volume?: number; restoreVolume?: boolean; signal?: AbortSignal } = {},
 ): Promise<PlaybackResult> {
+  const target0 =
+    opts.volume === undefined ? 100 : Math.max(0, Math.min(100, Math.trunc(opts.volume)));
+  if (opts.signal?.aborted) {
+    // /stop antes de empezar: ni se toca el volumen ni se lanza nada.
+    return {
+      ok: false,
+      seconds: 0,
+      volumeSet: target0,
+      volumeRestoredTo: null,
+      restoreStatus: 'not-requested',
+      detail: STOPPED_DETAIL,
+    };
+  }
   const exists = await ps(
     `if (Test-Path -LiteralPath '${file.replace(/'/g, "''")}') { '1' } else { '0' }`,
     10_000,
@@ -224,9 +254,10 @@ Write-Output ("played " + $elapsed)
 `,
       300_000,
       true,
+      opts.signal,
     );
   } catch (err) {
-    out = err instanceof Error ? err.message : String(err);
+    out = opts.signal?.aborted ? STOPPED_DETAIL : err instanceof Error ? err.message : String(err);
   } finally {
     if (opts.restoreVolume !== false) {
       try {
@@ -240,7 +271,7 @@ Write-Output ("played " + $elapsed)
             got: state.level,
           });
       } catch (err) {
-        log.warn('audio volume restore failed', { err });
+        log.warn('audio volume restore failed', psErrorSummary(err));
       }
     }
   }

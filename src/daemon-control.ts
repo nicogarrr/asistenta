@@ -160,6 +160,23 @@ function receive(socket: Socket): Promise<Record<string, unknown>> {
     socket.once('end', end);
   });
 }
+/**
+ * `pa stop` needs to tell «there is no Asistenta to stop» apart from «stopping failed».
+ * Both control paths (Unix socket and Windows) throw this only when it is certain that no
+ * daemon owns the state dir: no signed ready record, no control socket, or (Windows) no
+ * owner holding the lock. Anything ambiguous keeps throwing its own error.
+ */
+export class DaemonNotRunningError extends Error {
+  constructor() {
+    super('Asistenta no está en marcha.');
+    this.name = 'DaemonNotRunningError';
+  }
+}
+
+export function isMissingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
 export interface DaemonControl {
   instanceId: string;
   /** Publish READY only after the daemon has finished startup. */
@@ -265,7 +282,16 @@ export async function openDaemonControl(
       }
       unlinkSync(file);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        // nothing left behind
+      } else if (
+        error instanceof Error &&
+        /^Metadata de control (ilegible|inválida)\./.test(error.message)
+      ) {
+        // Half-written by a power cut. recordAt already checked owner and permissions
+        // before parsing; we hold the lock, so it is ours to remove.
+        unlinkSync(file);
+      } else throw error;
     }
     await new Promise<void>((yes, no) => {
       server.once('error', no);
@@ -394,6 +420,27 @@ export async function requestDaemonControl(
   }
 }
 
+/** True when no process holds `owner.lock` (or it was never created). Probe only; holds nothing. */
+function ownerLockFree(dir: string): boolean {
+  const lock = join(dir, 'owner.lock');
+  let fd: number;
+  try {
+    ownedPrivate(lock, false);
+    fd = openSync(lock, constants.O_RDWR | constants.O_NOFOLLOW);
+  } catch (error) {
+    return isMissingFile(error);
+  }
+  try {
+    const probe = spawnSync('flock', ['--exclusive', '--nonblock', '4'], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ignore', fd],
+      timeout: 3000,
+    });
+    return !probe.error && probe.status === 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Stop and prove both graceful completion and release of OS ownership. */
 export async function stopDaemon(
   stateDir: string,
@@ -404,8 +451,23 @@ export async function stopDaemon(
     return stopWindowsDaemon(stateDir, Math.max(timeoutMs, 30_000));
   }
   const dir = controlDir(stateDir);
-  const original = recordAt(join(dir, 'ready.json'));
-  const ack = await requestDaemonControl(stateDir, 'stop');
+  let original: RecordV1;
+  let ack: { instanceId: string; state: State };
+  try {
+    original = recordAt(join(dir, 'ready.json'));
+    ack = await requestDaemonControl(stateDir, 'stop');
+  } catch (error) {
+    // No ready record, or a record left behind with no control socket: nothing is running.
+    if (isMissingFile(error)) throw new DaemonNotRunningError();
+    // A ready.json half-written by a power cut: if nobody holds the owner lock, nothing runs.
+    if (
+      error instanceof Error &&
+      /^Metadata de control (ilegible|inválida)\./.test(error.message) &&
+      ownerLockFree(dir)
+    )
+      throw new DaemonNotRunningError();
+    throw error;
+  }
   if (ack.instanceId !== original.instanceId)
     throw new Error('Instancia cambiada; no se confirma la parada.');
   const deadline = Date.now() + timeoutMs;

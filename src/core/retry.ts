@@ -30,6 +30,18 @@ const FLAKY_MARKERS = [
   /socket hang up/i,
   /ECONNRESET/i,
   /ETIMEDOUT/i,
+  // Sin red: un fetch de Node lanza TypeError('fetch failed') y el texto llegaba
+  // al chat tal cual («Fallo: fetch failed» a un «Hola») sin ningún reintento.
+  /fetch failed/i,
+  /ECONNREFUSED/,
+  /ENOTFOUND/,
+  /EAI_AGAIN/,
+  /ENETUNREACH/,
+  /EHOSTUNREACH/,
+  /ENETDOWN/,
+  /UND_ERR/,
+  /other side closed/i,
+  /network ?error/i,
 ];
 
 /** Reasons that must never be retried, whatever else the message says. */
@@ -107,6 +119,21 @@ export const DEFAULT_RETRY: RetryPolicy = { attempts: 3, baseDelayMs: 1_500, max
 export function retryDelay(attempt: number, policy: RetryPolicy = DEFAULT_RETRY): number {
   const ceiling = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** attempt);
   return Math.floor(Math.random() * ceiling);
+}
+
+/**
+ * Espera que pide el proveedor («retry-after: 7», «try again in 2.5s»), en ms.
+ * El bucle de reintento la respeta (con el tope de la política) en vez de volver
+ * a llamar antes de tiempo y gastar el intento en otro 429.
+ */
+export function retryAfterMs(message: string | null | undefined): number | undefined {
+  if (!message) return undefined;
+  const m =
+    /retry[- ]after["':\s]*(\d+(?:\.\d+)?)/i.exec(message) ??
+    /try again in (\d+(?:\.\d+)?) ?s/i.exec(message);
+  if (!m?.[1]) return undefined;
+  const seconds = Number(m[1]);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds * 1000) : undefined;
 }
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {

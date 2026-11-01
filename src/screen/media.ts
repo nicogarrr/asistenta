@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 
@@ -58,6 +59,7 @@ export async function listCaptureDevices(): Promise<CaptureDevices> {
       FFMPEG as string,
       ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
       {
+        env: childEnv(),
         windowsHide: true,
       },
     );
@@ -98,7 +100,7 @@ export async function captureCameraFrame(opts: { maxEdge?: number } = {}): Promi
 }> {
   const devices = await listCaptureDevices();
   if (!devices.video) {
-    throw new Error('no encuentro ninguna camara en este ordenador.');
+    throw new Error('no encuentro ninguna cámara en este ordenador.');
   }
   mkdirSync(paths.voice, { recursive: true });
   const out = join(paths.voice, `cam-${Date.now()}.jpg`);
@@ -149,7 +151,7 @@ export async function recordCamera(options: {
   maxEdge?: number;
 }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.video) throw new Error('no encuentro ninguna camara en este ordenador.');
+  if (!devices.video) throw new Error('no encuentro ninguna cámara en este ordenador.');
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   const fps = Math.max(1, Math.min(15, Math.trunc(options.fps ?? 10)));
   const maxEdge = Math.max(320, Math.trunc(options.maxEdge ?? 1280));
@@ -211,9 +213,9 @@ export async function recordCameraWithMic(options: {
   maxEdge?: number;
 }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.video) throw new Error('no encuentro ninguna camara en este ordenador.');
+  if (!devices.video) throw new Error('no encuentro ninguna cámara en este ordenador.');
   if (!devices.audio) {
-    throw new Error('no encuentro ningun microfono en este ordenador.');
+    throw new Error('no encuentro ningún micrófono en este ordenador.');
   }
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   const fps = Math.max(1, Math.min(15, Math.trunc(options.fps ?? 10)));
@@ -282,7 +284,7 @@ export async function recordCameraWithMic(options: {
  */
 export async function recordMicrophone(options: { seconds: number }): Promise<MediaRecording> {
   const devices = await listCaptureDevices();
-  if (!devices.audio) throw new Error('no encuentro ningun microfono en este ordenador.');
+  if (!devices.audio) throw new Error('no encuentro ningún micrófono en este ordenador.');
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
   mkdirSync(paths.voice, { recursive: true });
   const out = join(paths.voice, `mic-${Date.now()}.ogg`);
@@ -376,7 +378,10 @@ export async function toPlayableAudio(bytes: Buffer, hint = 'input'): Promise<st
  */
 async function probeSize(ffmpeg: string, file: string): Promise<{ width: number; height: number }> {
   const stderr = await new Promise<string>((resolve) => {
-    const child = spawn(ffmpeg, ['-hide_banner', '-i', file], { windowsHide: true });
+    const child = spawn(ffmpeg, ['-hide_banner', '-i', file], {
+      env: childEnv(),
+      windowsHide: true,
+    });
     let text = '';
     child.stderr.on('data', (c: Buffer) => {
       text = (text + c.toString('utf8')).slice(-4000);
@@ -396,7 +401,7 @@ function run(
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { windowsHide: true });
+    const child = spawn(exe, args, { env: childEnv(), windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c: Buffer) => {

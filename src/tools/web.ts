@@ -19,7 +19,7 @@ import { isFetchableResolved } from './fetch.js';
  * (si no hay gratis, falla en claro y NUNCA cobra) y medida por peticion en
  * <state>/log/web-metrics.jsonl. La puerta SSRF es la misma que la tool fetch.
  *
- * Clave TinyFish (opcional): `pa vault set web:tinyfishApiKey` (Search y Fetch
+ * Clave TinyFish (opcional): `pa vault set-stdin web:tinyfishApiKey` (Search y Fetch
  * son gratis siempre en TinyFish). Sin clave: fetch va por `directo` y search
  * cae a `ddg`; si tampoco hay, error claro.
  */

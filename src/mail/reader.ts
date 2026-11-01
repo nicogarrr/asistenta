@@ -12,6 +12,8 @@ export interface ReplyMessage extends MailMessage {
   authenticationResults: string;
   threadDigest: string;
   threadCount: number;
+  /** Names and sizes only (from BODYSTRUCTURE); the bytes are never downloaded here. */
+  attachments?: MailAttachment[];
 }
 export function parseHeaderMetadata(headers: Buffer | undefined) {
   const text = (headers?.toString('utf8') ?? '').replace(/\r?\n[ \t]+/g, ' ');
@@ -42,6 +44,7 @@ const QUERY = {
   source: { maxLength: 32768 },
   flags: true,
   threadId: true,
+  bodyStructure: true,
   headers: ['message-id', 'references', 'authentication-results'],
 } as const;
 async function withReader<T>(
@@ -71,6 +74,7 @@ function message(raw: FetchMessageObject): ReplyMessage {
     ...toMessage(raw as never, 'INBOX'),
     ...meta,
     replyTo: (raw.envelope?.replyTo ?? []).map((a) => a.address ?? '').filter(Boolean),
+    attachments: attachmentsOf(raw.bodyStructure as StructNode | undefined),
     threadDigest: '',
     threadCount: 0,
   };
@@ -160,4 +164,95 @@ export function resolveReplyCard(
   cards: Map<string, string>,
 ): string | null {
   return /^responde(?:r)? a ese\s*\n/i.test(text) && replyTo ? (cards.get(replyTo) ?? null) : null;
+}
+
+export interface InboxQuery {
+  from?: string;
+  subject?: string;
+  text?: string;
+  unreadOnly?: boolean;
+  /** Only messages at or after this epoch ms. */
+  since?: number;
+}
+export interface InboxRow {
+  ref: string;
+  from: string;
+  subject: string;
+  at: number;
+  seen: boolean;
+}
+/** IMAP SEARCH criteria for the inbox list. Pure, so it is testable without a server. */
+export function inboxCriteria(query: InboxQuery): Record<string, unknown> {
+  const criteria: Record<string, unknown> = {};
+  if (query.from?.trim()) criteria.from = query.from.trim();
+  if (query.subject?.trim()) criteria.subject = query.subject.trim();
+  if (query.text?.trim()) criteria.text = query.text.trim();
+  if (query.unreadOnly) criteria.seen = false;
+  if (query.since && Number.isFinite(query.since)) criteria.since = new Date(query.since);
+  return Object.keys(criteria).length ? criteria : { all: true };
+}
+/** Read-only inbox search for the chat tool: envelopes only, newest first, refs `UIDVALIDITY:UID`. */
+export async function searchInbox(
+  account: ReadMailAccount,
+  query: InboxQuery,
+  limit = 10,
+): Promise<InboxRow[]> {
+  return withReader(account, async (client) => {
+    const box = await client.mailboxOpen('INBOX', { readOnly: true });
+    if (!box.readOnly) throw new Error('Read-only required');
+    const found = await client.search(inboxCriteria(query), { uid: true });
+    if (!Array.isArray(found)) throw new Error('Search failed');
+    const rows: InboxRow[] = [];
+    for (const uid of found.slice(-Math.max(1, Math.min(limit, 20))).reverse()) {
+      const row = await client.fetchOne(
+        String(uid),
+        { uid: true, envelope: true, flags: true },
+        { uid: true },
+      );
+      if (!row) continue;
+      rows.push({
+        ref: `${box.uidValidity}:${uid}`,
+        from: row.envelope?.from?.map((a) => a.address ?? '').join(', ') ?? '',
+        subject: row.envelope?.subject ?? '(sin asunto)',
+        at: row.envelope?.date ? new Date(row.envelope.date).getTime() : 0,
+        seen: row.flags?.has('\\Seen') ?? false,
+      });
+    }
+    return rows;
+  });
+}
+
+export interface MailAttachment {
+  name: string;
+  size: number;
+}
+/** The subset of an IMAP BODYSTRUCTURE node this module reads. */
+export interface StructNode {
+  type?: string;
+  size?: number;
+  disposition?: string;
+  parameters?: Record<string, string>;
+  dispositionParameters?: Record<string, string>;
+  childNodes?: StructNode[];
+}
+/** Attachment names and sizes from BODYSTRUCTURE (max 20). Inline text bodies are not attachments. */
+export function attachmentsOf(root: StructNode | undefined): MailAttachment[] {
+  const out: MailAttachment[] = [];
+  const walk = (node: StructNode | undefined, depth: number) => {
+    if (!node || depth > 20 || out.length >= 20) return;
+    if (node.childNodes?.length) {
+      for (const child of node.childNodes) walk(child, depth + 1);
+      return;
+    }
+    const name = node.dispositionParameters?.filename ?? node.parameters?.name ?? '';
+    const isAttachment = node.disposition?.toLowerCase() === 'attachment' || Boolean(name);
+    if (!isAttachment) return;
+    const clean = name
+      .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    out.push({ name: clean || `(sin nombre, ${node.type ?? 'archivo'})`, size: node.size ?? 0 });
+  };
+  walk(root, 0);
+  return out;
 }

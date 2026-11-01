@@ -74,9 +74,9 @@ describe('caracterizacion SSAP (tele simulada)', () => {
     ).rejects.toThrow(
       /No se pudo conectar con la TV en 192\.168\.1\.237 \(wss:\/\/3001\)\. ¿Encendida y en la misma red\?/,
     );
-    // Un rechazo inmediato se reintenta UNA vez (connectRetries=1, PR tv-2):
+    // Un rechazo inmediato se reintenta DOS veces con backoff (connectRetries=2):
     // antes del open no se envia nada, asi que no hay orden duplicada.
-    expect(tv.urls).toEqual([`wss://${HOST}:3001`, `wss://${HOST}:3001`]);
+    expect(tv.urls).toEqual([`wss://${HOST}:3001`, `wss://${HOST}:3001`, `wss://${HOST}:3001`]);
     expect(tv.requests).toEqual([]);
   });
 
@@ -193,7 +193,7 @@ describe('caracterizacion tool tv', () => {
     const { d, calls } = toolDeps();
     const r = await run(d, { action: 'launch', appId: '  netflix ' });
     expect(calls).toEqual(['launch:netflix']);
-    expect(text(r)).toBe('He lanzado netflix en la tele.');
+    expect(text(r)).toBe('He abierto Netflix en la tele.');
     await expect(run(d, { action: 'launch' })).rejects.toThrow(/necesita appId/);
   });
 

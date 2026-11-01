@@ -136,11 +136,24 @@ function refused(reason: string): AgentToolResult {
 
 /** Failed write: the disk did not take it, so say it is not saved. */
 function writeFailed(error: string): AgentToolResult {
+  const plain = plainWriteError(error);
   return {
-    content: [{ type: 'text', text: `No he podido guardarlo: ${error}. No está guardado.` }],
-    details: { saved: false, error },
+    content: [{ type: 'text', text: `No he podido guardarlo: ${plain}. No está guardado.` }],
+    details: { saved: false, error: plain },
     isError: true,
   };
+}
+
+/**
+ * The disk's own words (code, Windows path) stay in the log; the chat gets one
+ * plain line saying what happened and what to do.
+ */
+export function plainWriteError(raw: string): string {
+  if (/ENOSPC|no space left|disk (is )?full/i.test(raw))
+    return 'el disco está lleno; libera algo de espacio y vuelve a pedírmelo';
+  if (/EACCES|EPERM|EBUSY|EROFS|permission denied|operation not permitted|resource busy/i.test(raw))
+    return 'Windows no me deja escribir en el archivo de la memoria (quizá otro programa o el antivirus lo tiene abierto); prueba otra vez en un momento';
+  return 'el disco rechazó la escritura';
 }
 
 /** Error text safe to echo: credential-shaped messages are dropped, not shown. */

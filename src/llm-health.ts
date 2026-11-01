@@ -176,7 +176,7 @@ async function probe(
       }
       if (!isValidChatResponse(parsed)) {
         status = 'error';
-        detail = 'http 2xx sin choices de contenido (respuesta vacia o no-JSON)';
+        detail = 'contestó, pero sin texto (respuesta vacía o rara)';
       }
     } else {
       try {
@@ -210,35 +210,58 @@ async function probe(
  * only ever used for OpenCode endpoints, OpenRouter and Gemini have their own
  * vault keys, and custom endpoints require PA_API_KEY (fail-closed).
  */
+function keyNamesFor(kind: 'opencode' | 'openrouter' | 'google' | 'custom'): {
+  vaultKey?: string;
+  envNames: string[];
+} {
+  if (kind === 'openrouter')
+    return { vaultKey: 'provider:openrouterKey', envNames: ['OPENROUTER_API_KEY'] };
+  if (kind === 'google')
+    return { vaultKey: 'provider:geminiKey', envNames: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] };
+  if (kind === 'opencode')
+    return { vaultKey: 'provider:apiKey', envNames: ['OPENCODE_GO_API_KEY'] };
+  return { envNames: ['PA_API_KEY'] };
+}
+
 async function resolveKeyFor(
   kind: 'opencode' | 'openrouter' | 'google' | 'custom',
   deps: Required<HealthDeps>,
 ): Promise<string | undefined> {
-  const vaultKey =
-    kind === 'openrouter'
-      ? 'provider:openrouterKey'
-      : kind === 'google'
-        ? 'provider:geminiKey'
-        : kind === 'opencode'
-          ? 'provider:apiKey'
-          : undefined;
+  const { vaultKey, envNames } = keyNamesFor(kind);
   if (vaultKey) {
     const fromVault = await deps.getKey(vaultKey);
     if (fromVault) return fromVault;
   }
-  const envNames =
-    kind === 'openrouter'
-      ? ['OPENROUTER_API_KEY']
-      : kind === 'google'
-        ? ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
-        : kind === 'opencode'
-          ? ['OPENCODE_GO_API_KEY']
-          : ['PA_API_KEY'];
   for (const name of envNames) {
     const v = deps.env[name]?.trim();
     if (v) return v;
   }
   return undefined;
+}
+
+/**
+ * Dónde está la clave del modelo configurado (para `pa doctor`): la misma
+ * búsqueda que usa el proveedor según el endpoint, no siempre la de OpenCode.
+ * Sin clave, `hint` dice cómo ponerla.
+ */
+export async function providerKeySource(
+  baseUrl: string,
+  deps: Pick<HealthDeps, 'getKey' | 'env'> = {},
+): Promise<{ source: 'vault' | 'env' | 'unset'; hint: string }> {
+  const getKey = deps.getKey ?? ((k: string) => vaultGet(k));
+  const env = deps.env ?? process.env;
+  const { vaultKey, envNames } = keyNamesFor(endpointKind(baseUrl));
+  if (vaultKey && (await getKey(vaultKey).catch(() => undefined)))
+    return { source: 'vault', hint: '' };
+  if (envNames.some((n) => env[n]?.trim())) return { source: 'env', hint: '' };
+  // Nunca `pa vault set <clave> <valor>`: la clave quedaría en el historial de la consola.
+  const hint =
+    vaultKey === 'provider:apiKey'
+      ? 'doble clic en instalar.bat, o pa vault set-stdin provider:apiKey'
+      : vaultKey
+        ? `pa vault set-stdin ${vaultKey}: te la pide sin que se vea`
+        : `${envNames[0]} en .env`;
+  return { source: 'unset', hint };
 }
 
 function endpointKind(baseUrl: string): 'opencode' | 'openrouter' | 'google' | 'custom' {
@@ -290,7 +313,8 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
       // (PA_CRON, PA_PROVIDER_PRESET, ...) y ese valor puede ser un secreto
       // que ningun provider llego a cargar -> irredactable. Diagnostico
       // generico; el detalle real esta en stderr al arrancar el daemon.
-      detail: 'loadConfig fallo (sin detalle: puede citar valores de env)',
+      detail:
+        'no he podido leer la configuración (no muestro el detalle: podría llevar datos privados)',
     });
   }
 
@@ -344,7 +368,8 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
         model: plan.model,
         status: 'error',
         latencyMs: 0,
-        detail: 'key lookup fallo (sin detalle: puede citar secretos)',
+        detail:
+          'no he podido leer la clave guardada (no muestro el detalle: podría llevar secretos)',
       });
     } else if (!key) {
       statuses.push({
@@ -364,12 +389,26 @@ export async function runLlmHealth(deps: HealthDeps = {}): Promise<LlmProviderSt
   return [...probed, ...statuses];
 }
 
+/** Cada estado en castellano llano para `pa llm-health` (el código interno no cambia). */
+const STATUS_TEXT: Record<LlmStatus, string> = {
+  ok: 'funciona',
+  auth: 'clave rechazada',
+  cuota: 'sin cuota o demasiadas peticiones',
+  timeout: 'no contesta a tiempo',
+  red: 'no hay conexión',
+  'sin-key': 'sin clave guardada',
+  error: 'falla',
+};
+
 export function formatLlmHealth(statuses: LlmProviderStatus[]): string {
   return statuses
     .map((s) => {
-      const http = s.http === undefined ? '-' : String(s.http);
-      const detail = s.detail ? ` :: ${s.detail}` : '';
-      return `${s.provider}/${s.model}: ${s.status} (http ${http}, ${s.latencyMs}ms)${detail}`;
+      const extra: string[] = [];
+      if (s.http !== undefined && s.http >= 300) extra.push(`error ${s.http}`);
+      if (s.latencyMs > 0) extra.push(`${s.latencyMs} ms`);
+      const paren = extra.length ? ` (${extra.join(', ')})` : '';
+      const detail = s.detail ? ` — ${s.detail}` : '';
+      return `${s.provider} · ${s.model}: ${STATUS_TEXT[s.status] ?? s.status}${paren}${detail}`;
     })
     .join('\n');
 }

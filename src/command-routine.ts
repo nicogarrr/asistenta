@@ -13,8 +13,9 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { writeFileReplacing } from './fs-tmp.js';
 
 /** Marca en `routine.prompt`: la rutina es un comando y jamás se manda al modelo. */
 export const COMMAND_PROMPT_PREFIX = '[comando] ';
@@ -107,18 +108,41 @@ export interface ParsedCommandAdd {
   timeoutMs: number;
 }
 
+/** Sin horario o sin programa: se pregunta normal (Nico, 1 nov: nada de sintaxis de comandos). */
+export const COMMAND_ADD_USAGE =
+  '¿Qué programa ejecuto y cuándo? Dímelo normal, por ejemplo «cada día a las 8 ejecuta node C:\\scripts\\saldo.js».';
+
+/** «cada día a las 8 ejecuta node saldo.js»: el horario dicho normal y el programa tras el verbo. */
+const NATURAL_COMMAND = /^(.+?)\s+(?:ejecuta|ejecútame|lanza|corre|arranca)\s+(.+)$/iu;
+
+/** ¿Parece una respuesta con horario y programa (dicha normal o con `--`)? */
+export function looksLikeCommandAdd(text: string): boolean {
+  return text.includes(' -- ') || NATURAL_COMMAND.test(text.trim());
+}
+
 /**
- * `/cron comando <horario cron> [--timeout N] -- <programa> [args…]`.
- * El `--` es obligatorio: separa el horario (que lleva espacios) del comando.
+ * `/cron comando <horario cron> [--timeout N] -- <programa> [args…]`, o dicho normal:
+ * «cada día a las 8 ejecuta node saldo.js» (si se pasa `natural`, que traduce el
+ * horario en palabras a cron). El `--` separa el horario (que lleva espacios) del comando.
  */
 export function parseCommandAdd(
   body: string,
   validate: (expr: string) => { ok: true } | { ok: false; error: string },
+  natural?: (words: string) => string | null,
 ): { ok: true; value: ParsedCommandAdd } | { ok: false; error: string } {
-  const usage =
-    'Formato: /cron comando <horario cron> [--timeout segundos] -- <programa> [argumentos]\nEj.: /cron comando 0 8 * * * -- node C:\\scripts\\saldo.js';
+  const usage = COMMAND_ADD_USAGE;
   const sep = body.indexOf(' -- ');
-  if (sep < 0) return { ok: false, error: usage };
+  if (sep < 0) {
+    const said = natural ? NATURAL_COMMAND.exec(body.trim()) : null;
+    const schedule = said ? natural?.(said[1] as string) : null;
+    if (!said || !schedule) return { ok: false, error: usage };
+    const argv = splitArgv((said[2] as string).trim());
+    if (!argv) return { ok: false, error: 'Hay una comilla sin cerrar en el comando.' };
+    if (argv.length === 0 || !argv[0]) return { ok: false, error: usage };
+    const check = validate(schedule);
+    if (!check.ok) return { ok: false, error: `Ese horario no vale: ${check.error}` };
+    return { ok: true, value: { schedule, argv, timeoutMs: COMMAND_DEFAULT_TIMEOUT_MS } };
+  }
   let head = body.slice(0, sep).trim();
   const argv = splitArgv(body.slice(sep + 4).trim());
   if (!argv) return { ok: false, error: 'Hay una comilla sin cerrar en el comando.' };
@@ -161,9 +185,7 @@ export class CommandRoutineStore {
 
   #write(all: Record<string, CommandSpec>): void {
     mkdirSync(dirname(this.#path), { recursive: true });
-    const tmp = `${this.#path}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`);
-    renameSync(tmp, this.#path);
+    writeFileReplacing(this.#path, `${JSON.stringify(all, null, 2)}\n`);
   }
 
   get(scope: string, name: string): CommandSpec | null {
@@ -326,7 +348,7 @@ export async function fireCommandRoutine(
     };
   if (!isApproved(spec) || (routine.schedule ?? '').trim() !== spec.schedule.trim()) {
     return {
-      body: 'El comando guardado no coincide con el que aprobaste (o no está aprobado). No se ha ejecutado nada. Vuelve a crearlo con /cron comando.',
+      body: 'El comando guardado no coincide con el que aprobaste (o no está aprobado). No se ha ejecutado nada. Si lo quieres, pídemelo otra vez y te doy un código nuevo para aprobarlo.',
       failed: true,
     };
   }

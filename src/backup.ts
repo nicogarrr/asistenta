@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { wallClock } from './datecontext.js';
 import { backedUp } from './state-files.js';
 
 /**
@@ -27,11 +28,51 @@ import { backedUp } from './state-files.js';
 const ROOT_FILES = new Set(backedUp('file'));
 
 const KEEP_DEFAULT = 7;
+
+/**
+ * Falló solo el segundo destino (PA_BACKUP_MIRROR): la copia local YA está hecha.
+ * Antes era un Error genérico y el daemon la tomaba por «copia no hecha»: repetía
+ * la copia local entera cada 10 minutos mientras el disco del espejo siguiera
+ * desconectado, y avisaba «No he podido hacer la copia de seguridad de hoy».
+ */
+export class BackupMirrorError extends Error {
+  readonly code: string | undefined;
+  readonly localDir: string;
+  readonly mirrorRoot: string;
+  constructor(localDir: string, mirrorRoot: string, cause: unknown) {
+    super(
+      `copia local hecha en ${localDir}, pero el segundo destino ${mirrorRoot} falló: ${String(cause)}`,
+    );
+    this.name = 'BackupMirrorError';
+    this.localDir = localDir;
+    this.mirrorRoot = mirrorRoot;
+    const code = (cause as { code?: unknown } | null)?.code;
+    this.code = typeof code === 'string' ? code : undefined;
+  }
+}
+
+/** true si la copia local de hoy quedó hecha aunque algo fallara después (el espejo). */
+export function localBackupDone(err: unknown): boolean {
+  return err instanceof BackupMirrorError;
+}
+
+/** Aviso en castellano llano cuando solo falla el segundo destino. Nada de códigos. */
+export function backupMirrorNotice(err: BackupMirrorError): string {
+  const base = `He hecho la copia de seguridad de hoy en este PC, pero no he podido guardar la segunda copia en ${err.mirrorRoot}`;
+  const c = err.code ?? '';
+  if (c === 'ENOENT' || c === 'ENOTDIR' || c === 'ENODEV' || c === 'EIO')
+    return `${base}: no encuentro esa carpeta. ¿Está conectado ese disco? Lo intento otra vez mañana.`;
+  if (c === 'EACCES' || c === 'EPERM' || c === 'EROFS')
+    return `${base}: no tengo permiso para escribir ahí. Lo intento otra vez mañana.`;
+  if (c === 'ENOSPC')
+    return `${base}: ese disco está lleno. Libera espacio; lo intento otra vez mañana.`;
+  return `${base}. Lo intento otra vez mañana.`;
+}
 const DAY_MS = 24 * 3_600_000;
 
 /** Cada día a partir de las 03:00 locales, una vez cada 20 h. */
 export function isBackupDue(now: Date, lastRunMs: number): boolean {
-  return now.getHours() >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
+  return wallClock(now).hour >= 3 && now.getTime() - lastRunMs > DAY_MS - 4 * 3_600_000;
 }
 
 function dayStamp(d: Date): string {
@@ -86,13 +127,12 @@ export function runBackup(opts: {
     for (const name of readdirSync(opts.stateDir)) {
       const from = join(opts.stateDir, name);
       if (!statSync(from).isFile()) continue;
-      // pricewatch.sqlite no acababa en .db y se quedaba fuera de la copia.
+      // Las bases *.sqlite también entran (no todas acaban en .db).
       if (name.endsWith('.db') || name.endsWith('.sqlite')) {
         copyDb(from, join(tmp, name));
         databases.push(name);
       } else if (name.endsWith('.json') || ROOT_FILES.has(name)) {
-        // Configuración que solo existe aquí: pricewatch.json (tus alertas de
-        // precio), routine-delivery.json...
+        // Configuración que solo existe aquí: routine-delivery.json, modelos.json...
         cpSync(from, join(tmp, name));
       }
     }
@@ -151,9 +191,7 @@ export function runBackup(opts: {
         // La limpieza puede fallar por la misma causa que el espejo (p. ej.
         // ENOTDIR): nunca debe tapar el error que nombra el destino.
       }
-      throw new Error(
-        `copia local hecha en ${dir}, pero el segundo destino ${mroot} falló: ${String(err)}`,
-      );
+      throw new BackupMirrorError(dir, mroot, err);
     }
     const mold = readdirSync(mroot)
       .filter((n) => /^\d{4}-\d{2}-\d{2}$/.test(n))

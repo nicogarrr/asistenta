@@ -12,7 +12,9 @@
  * - 'archivo': nombre de un archivo nuevo en la carpeta de Descargas
  *   vigilada (/ojo descargas on). Evento GLOBAL: dispara en cualquier chat
  *   que tenga el trigger y la rutina recibe el aviso en su propio chat.
- * - 'precio': texto de un aviso del vigilante de precios. Global igual.
+ * - 'precio': texto de un aviso de precio. Global igual. Hoy no lo emite nadie: el
+ *   vigilante de precios automático se quitó (31-oct-2026); se conserva para no romper
+ *   disparadores ya guardados.
  *
  * Seguridad heredada: el prompt disparado es el de la rutina guardada
  * (procedurePrompt o buildMacroPrompt con sus args fijos validados); las
@@ -20,6 +22,7 @@
  * confirmación en lo destructivo) viajan con él. Un trigger nunca ejecuta
  * nada que la rutina no dijera ya.
  */
+import { wallDateMinute } from './datecontext.js';
 import type { Routine, RoutineTrigger, Store } from './db.js';
 import { log } from './log.js';
 import { buildMacroPrompt, isMacroName, procedurePrompt } from './routines.js';
@@ -167,8 +170,8 @@ export function parseTriggerAdd(
   rest: string,
 ): { ok: true; value: ParsedTriggerAdd } | { ok: false; error: string } {
   const USAGE =
-    'Uso: /disparador <mensaje|archivo|precio> <coincidencia> | <rutina> [clave=valor...]. ' +
-    'Ejemplo: /disparador archivo .pdf | macro/archiva fichero=documentos';
+    'Dime qué lo dispara y qué rutina hago, separados por una barra. Por ejemplo: ' +
+    '«archivo .pdf | macro/archiva fichero=documentos» o «mensaje factura | macro/archiva».';
   const [left, ...rightParts] = rest.split('|');
   const right = rightParts.join('|').trim();
   const leftTrim = (left ?? '').trim();
@@ -206,17 +209,15 @@ export function parseTriggerAdd(
  * clock, so it is shown in the process zone (PA_TIMEZONE, applied at start-up):
  * slicing the ISO string printed 22:30 for a fire at 23:30 in Madrid.
  */
+/** Wall-clock minute in PA_TIMEZONE, not the process zone. */
 function localMinute(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return wallDateMinute(new Date(iso));
 }
 
 /** One list line per trigger, numbered the way /disparador del expects. */
 export function formatTriggerList(triggers: readonly RoutineTrigger[]): string {
   if (!triggers.length) {
-    return 'No hay disparadores. Crea uno con /disparador <mensaje|archivo|precio> <coincidencia> | <rutina>.';
+    return 'No hay disparadores todavía.';
   }
   const lines = triggers.map((t, i) => {
     const off = t.enabled ? '' : ' (desactivado)';

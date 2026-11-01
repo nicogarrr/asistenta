@@ -40,10 +40,28 @@ describe('computer · escribir textos largos', () => {
     await expect(s.type('x'.repeat(450))).rejects.toThrow(/200 de 450[\s\S]*no vuelvas a escribir/);
   });
 
-  it('si falla el primer trozo, el error es el mismo de siempre', async () => {
+  it('si el primer trozo se corta por tiempo, avisa de que pudo escribirse parte', async () => {
+    // Antes: el error de siempre, sin «Parcial», y el modelo reescribía el texto
+    // entero encima de lo que SendKeys ya había tecleado antes del corte.
     const { s } = screen(1);
     await expect(s.type('x'.repeat(450))).rejects.toThrow(
-      /^PowerShell no respondió en 30 s y se cortó$/,
+      /^PowerShell no respondió en 30 s y se cortó\nParcial: puede que se hayan escrito hasta 200 de 450[\s\S]*captura/,
+    );
+  });
+
+  it('si el primer trozo falla sin cortarse, el error es el mismo de siempre', async () => {
+    const s = new WindowsScreen(async () => {
+      throw new Error('No encuentro powershell.exe en este equipo.');
+    });
+    await expect(s.type('x'.repeat(450))).rejects.toThrow(
+      /^No encuentro powershell\.exe en este equipo\.$/,
+    );
+  });
+
+  it('si falla a medias, cuenta también el trozo que pudo quedarse a medias', async () => {
+    const { s } = screen(3);
+    await expect(s.type('x'.repeat(450))).rejects.toThrow(
+      /al menos 400 de 450 caracteres[\s\S]*quizá hasta 450/,
     );
   });
 

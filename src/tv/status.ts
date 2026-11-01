@@ -17,7 +17,24 @@ export interface TvStatusDeps {
   /** Apps instaladas, para traducir el appId a su titulo (opcional). */
   apps?: () => Promise<Array<{ id: string; title: string }>>;
   now?: () => Date;
+  /**
+   * Intentos de leer el estado de energia cuando la tele no conecta (por
+   * defecto 3). Una LG en reposo puede rechazar o no contestar las primeras
+   * aperturas: antes de decir «apagada» se reintenta con espera corta.
+   */
+  attempts?: number;
+  /** Espera antes del 2º intento (por defecto 250 ms; luego el doble). */
+  retryDelayMs?: number;
+  /** Tope total de los reintentos (por defecto 6 s): nunca se espera mas. */
+  budgetMs?: number;
+  /** Inyectables para tests. */
+  sleep?: (ms: number) => Promise<void>;
+  clock?: () => number;
 }
+
+export const STATUS_ATTEMPTS = 3;
+export const STATUS_RETRY_DELAY_MS = 250;
+export const STATUS_BUDGET_MS = 6_000;
 
 export type TvPowerWord =
   | 'encendida'
@@ -38,6 +55,8 @@ export interface TvStatus {
   volume: number | null;
   muted: boolean | null;
   checkedAt: string;
+  /** Solo si no conecta: cuantas veces se intento antes de rendirse. */
+  attempts?: number;
 }
 
 /** Nombres conocidos de apps de webOS (ids estables de la LG Content Store). */
@@ -112,13 +131,36 @@ export async function readTvStatus(deps: TvStatusDeps): Promise<TvStatus> {
   };
   // Primero el estado de energia: si no conecta, no tiene sentido seguir
   // abriendo sockets contra una tele que no esta.
+  // Una tele en reposo puede rechazar (o dejar colgadas) las primeras
+  // aperturas mientras despierta su servidor SSAP: hasta 3 intentos con
+  // espera corta (250 ms, 500 ms) y un tope total de ~6 s.
   let powerState: string | null = null;
-  try {
-    const p = rec(await deps.ssap('com.webos.service.tvpower/power/getPowerState', {}));
-    powerState = typeof p.state === 'string' ? p.state.slice(0, 40) : null;
-  } catch (err) {
-    if (err instanceof TvUnreachableError) return unknown;
-    powerState = null;
+  const maxAttempts = Math.max(1, Math.floor(deps.attempts ?? STATUS_ATTEMPTS));
+  const baseDelay = Math.max(0, deps.retryDelayMs ?? STATUS_RETRY_DELAY_MS);
+  const budget = Math.max(0, deps.budgetMs ?? STATUS_BUDGET_MS);
+  const clock = deps.clock ?? Date.now;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const started = clock();
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const p = rec(await deps.ssap('com.webos.service.tvpower/power/getPowerState', {}));
+      powerState = typeof p.state === 'string' ? p.state.slice(0, 40) : null;
+      break;
+    } catch (err) {
+      if (!(err instanceof TvUnreachableError)) {
+        powerState = null;
+        break;
+      }
+      const delay = baseDelay * 2 ** (attempt - 1);
+      // Otro intento cuesta al menos lo que tardo este: si no cabe en el
+      // presupuesto, mejor decirlo ya que hacer esperar mas.
+      const spent = clock() - started;
+      const perAttempt = spent / attempt;
+      if (attempt >= maxAttempts || spent + delay + perAttempt > budget) {
+        return { ...unknown, attempts: attempt };
+      }
+      await sleep(delay);
+    }
   }
   const [fg, vol] = await Promise.allSettled([
     deps.ssap('com.webos.applicationManager/getForegroundAppInfo', {}),
@@ -157,7 +199,11 @@ export async function readTvStatus(deps: TvStatusDeps): Promise<TvStatus> {
 /** Una frase en castellano para el usuario. */
 export function describeTvStatus(s: TvStatus): string {
   if (!s.reachable) {
-    return 'La tele no responde: esta apagada del todo o fuera de la red (no puedo distinguir cual).';
+    const tried =
+      s.attempts && s.attempts > 1
+        ? ` (lo he intentado ${s.attempts} veces, por si estaba en reposo)`
+        : '';
+    return `La tele no responde${tried}: esta apagada del todo o fuera de la red (no puedo distinguir cual). Si solo esta en reposo, prueba «enciende la tele».`;
   }
   const parts: string[] = [];
   switch (s.power) {

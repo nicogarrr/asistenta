@@ -47,6 +47,12 @@ const NAMED_KEYS: Record<string, string> = {
   end: '{END}',
   pageup: '{PGUP}',
   pagedown: '{PGDN}',
+  pgup: '{PGUP}',
+  pgdn: '{PGDN}',
+  arrowup: '{UP}',
+  arrowdown: '{DOWN}',
+  arrowleft: '{LEFT}',
+  arrowright: '{RIGHT}',
   up: '{UP}',
   down: '{DOWN}',
   left: '{LEFT}',
@@ -54,7 +60,15 @@ const NAMED_KEYS: Record<string, string> = {
   space: ' ',
   spacebar: ' ',
   capslock: '{CAPSLOCK}',
-  printscreen: '{PRINTSCREEN}',
+  numlock: '{NUMLOCK}',
+  scrolllock: '{SCROLLLOCK}',
+  // SendKeys' own word is PRTSC: «{PRINTSCREEN}» is not one of its keywords, so
+  // SendWait threw and «printscreen» failed every time on Windows.
+  printscreen: '{PRTSC}',
+  prtsc: '{PRTSC}',
+  prtscn: '{PRTSC}',
+  plus: '{+}',
+  minus: '-',
   f1: '{F1}',
   f2: '{F2}',
   f3: '{F3}',
@@ -67,6 +81,11 @@ const NAMED_KEYS: Record<string, string> = {
   f10: '{F10}',
   f11: '{F11}',
   f12: '{F12}',
+  // SendKeys goes up to F16; F17-F24 only exist through real key events (win+…).
+  f13: '{F13}',
+  f14: '{F14}',
+  f15: '{F15}',
+  f16: '{F16}',
 };
 
 /**
@@ -116,6 +135,15 @@ export function escapeForSendKeys(text: string): string {
 }
 
 /**
+ * One key character in SendKeys syntax. Braces themselves must be written `{{}` and
+ * `{}}`; a bare `{` used to reach SendKeys as is and it threw instead of pressing it.
+ */
+function braceKey(ch: string): string {
+  if (ch === '{' || ch === '}') return `{${ch}}`;
+  return escapeForSendKeys(ch);
+}
+
+/**
  * Parse a chord like `ctrl+s`, `ctrl+shift+p`, `alt+F4` or `enter` into SendKeys
  * syntax. Throws on anything unrecognised rather than typing it literally.
  */
@@ -131,6 +159,10 @@ export function parseKeyChord(chord: string): string {
     .split('+')
     .map((p) => p.trim())
     .filter(Boolean);
+  // «ctrl++» (zoom in) splits into ['ctrl'] once the empty pieces are dropped,
+  // which used to be refused as «unrecognised key "ctrl"». A chord that ends in
+  // two '+' means the '+' key itself after the modifiers.
+  if (/\+\s*\+$/.test(raw)) parts.push('+');
   const last = parts[parts.length - 1];
   if (last === undefined) {
     throw new Error(`unrecognised key chord: ${JSON.stringify(chord)}`);
@@ -154,13 +186,17 @@ export function parseKeyChord(chord: string): string {
   }
 
   const named = NAMED_KEYS[last.toLowerCase()];
-  const target = named ?? (last.length === 1 ? escapeForSendKeys(last) : undefined);
+  // SendKeys types an uppercase letter WITH Shift, so «ctrl+A» became Ctrl+Shift+A
+  // (and «ctrl+C» Ctrl+Shift+C: devtools in Chrome instead of copy). In a chord the
+  // letter names a key, not a character: Shift is only pressed when asked for.
+  const key = modifiers.length > 0 && /^[A-Z]$/.test(last) ? last.toLowerCase() : last;
+  const target = named ?? (key.length === 1 ? braceKey(key) : undefined);
 
   if (!target) {
     // The bug this replaces: returning the raw string made SendKeys type it.
     throw new Error(
       `unrecognised key ${JSON.stringify(last)} in chord ${JSON.stringify(chord)}. ` +
-        `Use a named key (enter, tab, escape, f1-f12, arrows) or a single character.`,
+        `Use a named key (enter, tab, escape, f1-f24, arrows) or a single character.`,
     );
   }
 
@@ -241,6 +277,12 @@ const VK_NAMED: Record<string, number> = {
   end: 0x23,
   pageup: 0x21,
   pagedown: 0x22,
+  pgup: 0x21,
+  pgdn: 0x22,
+  arrowup: 0x26,
+  arrowdown: 0x28,
+  arrowleft: 0x25,
+  arrowright: 0x27,
   up: 0x26,
   down: 0x28,
   left: 0x25,
@@ -248,10 +290,46 @@ const VK_NAMED: Record<string, number> = {
   space: 0x20,
   spacebar: 0x20,
   printscreen: 0x2c,
+  prtsc: 0x2c,
+  prtscn: 0x2c,
+  // VK_OEM_PLUS / VK_OEM_MINUS: the «=+» and «-_» keys (win++ / win+- zoom the
+  // magnifier in and out).
+  '+': 0xbb,
+  plus: 0xbb,
+  '=': 0xbb,
+  '-': 0xbd,
+  minus: 0xbd,
   '.': 0xbe,
   ',': 0xbc,
   ';': 0xba,
 };
+
+/**
+ * F17–F24, alone or with Ctrl/Shift/Alt, as real key events. SendKeys stops at
+ * F16, so these chords were refused. Every other chord returns null and keeps
+ * going through SendKeys exactly as before; Windows-key chords are
+ * `winChordVirtualKeys`' job and are checked first by the caller.
+ */
+export function highFunctionKeyVirtualKeys(chord: string): number[] | null {
+  const parts = chord
+    .trim()
+    .split('+')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  const last = parts[parts.length - 1];
+  const f = last === undefined ? null : /^f(1[7-9]|2[0-4])$/.exec(last);
+  if (!f) return null;
+  const codes: number[] = [];
+  for (const m of parts.slice(0, -1)) {
+    const vk = VK_MODIFIERS[m];
+    if (vk === undefined) {
+      throw new Error(`unknown modifier ${JSON.stringify(m)} in chord ${JSON.stringify(chord)}`);
+    }
+    if (!codes.includes(vk)) codes.push(vk);
+  }
+  codes.push(0x70 + Number(f[1]) - 1);
+  return codes;
+}
 
 /**
  * Virtual-key codes for a chord that uses the Windows key, in press order
@@ -268,6 +346,10 @@ export function winChordVirtualKeys(chord: string): number[] | null {
     .split('+')
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean);
+  // «win++» splits into ['win'] once the empty pieces are dropped, which pressed
+  // the Windows key alone (Start menu) instead of Win+Plus. Same rule as
+  // parseKeyChord: a chord ending in two '+' means the '+' key itself.
+  if (parts.length > 0 && /\+\s*\+$/.test(raw)) parts.push('+');
   if (parts.length === 0) return null;
   const isWin = (p: string) => VK_MODIFIERS[p] === 0x5b;
   if (!parts.some(isWin)) return null;

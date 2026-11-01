@@ -69,7 +69,8 @@ describe('poda de ficheros que crecen (PA_FILE_RETENTION_DAYS)', () => {
     const r0 = retentionIfDue({
       ...base,
       stateDir: off.root,
-      env: { PA_SESSION_RETENTION_DAYS: '0' },
+      // log/ tiene su propio plazo por defecto (PA_LOG_RETENTION_DAYS): aquí se apaga.
+      env: { PA_SESSION_RETENTION_DAYS: '0', PA_LOG_RETENTION_DAYS: '0' },
     });
     expect(r0.ran).toBe(false);
     expect(existsSync(off.oldLog)).toBe(true);
@@ -88,7 +89,15 @@ describe('poda de ficheros que crecen (PA_FILE_RETENTION_DAYS)', () => {
       prunable()
         .map((p) => p.dir.split('/')[0])
         .sort(),
-    ).toEqual(['log', 'media', 'screenshots', 'voice']);
+    ).toEqual([
+      'autoupdate',
+      'botones',
+      'evolve-historial',
+      'log',
+      'media',
+      'screenshots',
+      'voice',
+    ]);
     for (const e of STATE_ENTRIES.filter((x) => x.prune)) {
       expect(e.backup, e.name).toBe(false);
       expect(e.retention, e.name).toMatch(/PA_FILE_RETENTION_DAYS/);

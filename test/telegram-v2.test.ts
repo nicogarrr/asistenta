@@ -266,7 +266,7 @@ describe('offerApproval', () => {
     await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
   });
 
-  it('al caducar deja "Caducada" y retira el teclado', async () => {
+  it('al caducar dice que caducó y que no se hizo nada, y retira el teclado', async () => {
     vi.useFakeTimers();
     const channel = makeChannel(1_000);
     const pending = channel.offerApproval('req-2', '42', '¿Permito shell?', { threadId: '77' });
@@ -278,7 +278,13 @@ describe('offerApproval', () => {
 
     // Los dos avisos visuales pasan por el espaciado global de la Bot API.
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(state.edits).toEqual([{ chatId: 42, messageId: 100, text: 'Caducada' }]);
+    expect(state.edits).toEqual([
+      {
+        chatId: 42,
+        messageId: 100,
+        text: '⌛ Solicitud caducada: no se ha hecho nada. Si aún lo quieres, pídemelo otra vez.',
+      },
+    ]);
     expect(state.markupEdits).toEqual([{ chatId: 42, messageId: 100, keyboard: [] }]);
   });
 });
@@ -430,5 +436,46 @@ describe('isMoreRequest', () => {
     for (const text of ['más, por favor', 'vale, sigue', 'dime el resto', 'sigue, porfa']) {
       expect(isMoreRequest(text)).toBe(true);
     }
+  });
+});
+
+describe('streamDraft con texto largo', () => {
+  it('recorta el borrador a 4096 caracteres al enviarlo y al editarlo', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+
+    await channel.streamDraft(42, undefined, 'a'.repeat(5000));
+    expect(state.sent).toHaveLength(1);
+    expect(state.sent[0]?.text.length).toBeLessThanOrEqual(4096);
+    expect(state.sent[0]?.text.endsWith('…')).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1_200);
+    await channel.streamDraft(42, undefined, '😀'.repeat(2100));
+    expect(state.edits).toHaveLength(1);
+    const edited = state.edits[0]?.text ?? '';
+    expect(edited.length).toBeLessThanOrEqual(4096);
+    expect(edited.endsWith('…')).toBe(true);
+    // Sin medio emoji suelto antes del «…».
+    const last = edited.charCodeAt(edited.length - 2);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+});
+
+describe('finishDraft con respuesta final larga', () => {
+  it('reparte en trozos de Telegram en vez de quedarse en el borrador', async () => {
+    vi.useFakeTimers();
+    const channel = makeChannel();
+    await channel.streamDraft(42, '7', 'parcial');
+    const long = `${'a'.repeat(3990)} ${'b'.repeat(3000)}`;
+    const finish = channel.finishDraft(42, '100', long);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await finish;
+    expect(state.edits).toHaveLength(1);
+    expect(state.edits[0]?.text.length).toBeLessThanOrEqual(4096);
+    const rest = state.sent.slice(1);
+    expect(rest.length).toBeGreaterThanOrEqual(1);
+    expect(rest.every((m) => m.threadId === 7 && m.text.length <= 4096)).toBe(true);
+    const all = [state.edits[0]?.text ?? '', ...rest.map((m) => m.text)].join('');
+    expect(all.replace(/\s/g, '')).toBe(long.replace(/\s/g, ''));
   });
 });

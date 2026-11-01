@@ -36,6 +36,13 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Budget for waitFor. The conditions resolve in ~100 ms on an idle machine, but
+ * a full suite on a loaded box once missed a 1 s budget (stop() twice test);
+ * a generous budget only costs time when a test is about to fail anyway.
+ */
+const WAIT_MS = 10_000;
+
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!cond()) {
@@ -250,7 +257,7 @@ describe('WakeWordListener initial prompt', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => seen.length > 0, 1_000);
+    await waitFor(() => seen.length > 0, WAIT_MS);
     expect(seen).toEqual(['chochi']);
     await listener.stop();
   });
@@ -274,7 +281,7 @@ describe('WakeWordListener phonetic wake', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => listener.stats().wakeCount === 1, 1_000);
+    await waitFor(() => listener.stats().wakeCount === 1, WAIT_MS);
     expect(wakes).toEqual([' Chocchi']);
     await listener.stop();
   });
@@ -329,7 +336,7 @@ describe('WakeWordListener energy gate', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => listener.stats().checks >= 1, 1_000);
+    await waitFor(() => listener.stats().checks >= 1, WAIT_MS);
     expect(transcriber).toHaveBeenCalled();
     expect(wakes).toEqual([]);
     expect(listener.stats().wakeCount).toBe(0);
@@ -352,7 +359,7 @@ describe('WakeWordListener wake handling', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => listener.stats().wakeCount === 1, 1_000);
+    await waitFor(() => listener.stats().wakeCount === 1, WAIT_MS);
     expect(wakes).toEqual([' La asistenta']);
     expect(listener.stats().lastWakeAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
@@ -380,7 +387,7 @@ describe('WakeWordListener wake handling', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => errors.length >= 1, 1_000);
+    await waitFor(() => errors.length >= 1, WAIT_MS);
     expect(errors[0]?.message).toBe('el handler fallo');
     expect(listener.isRunning()).toBe(true);
     await listener.stop();
@@ -407,7 +414,7 @@ describe('WakeWordListener suppression', () => {
 
     await wait(250);
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => listener.stats().wakeCount === 1, 1_000);
+    await waitFor(() => listener.stats().wakeCount === 1, WAIT_MS);
 
     expect(transcriber).toHaveBeenCalledTimes(1);
     expect(windows.length).toBe(1);
@@ -431,7 +438,7 @@ describe('WakeWordListener suppression', () => {
     // checks are all inside the 400ms window the first call set. Discriminating
     // through the dropped audio alone is impossible (it never enters the window
     // either way), so the covered check count is what proves the extension.
-    await waitFor(() => listener.stats().suppressed >= 3, 1_000);
+    await waitFor(() => listener.stats().suppressed >= 3, WAIT_MS);
     expect(transcriber).not.toHaveBeenCalled();
     await listener.stop();
   });
@@ -440,14 +447,14 @@ describe('WakeWordListener suppression', () => {
 describe('WakeWordListener shutdown', () => {
   it('stop() twice does not throw and releases the capture exactly once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pa-wake-'));
+    const capture = new FakeCapture();
     try {
-      const capture = new FakeCapture();
       capture.heartbeatDir = dir;
       const transcriber = vi.fn(async () => 'ordenador');
       const listener = new WakeWordListener({ capture, transcriber, checkIntervalMs: 100 });
       await listener.start();
       capture.push(tone(0.2, 0.3));
-      await waitFor(() => transcriber.mock.calls.length >= 1, 1_000);
+      await waitFor(() => transcriber.mock.calls.length >= 1, WAIT_MS);
 
       await listener.stop();
       await expect(listener.stop()).resolves.toBeUndefined();
@@ -462,6 +469,9 @@ describe('WakeWordListener shutdown', () => {
       expect(readdirSync(dir).length).toBe(heartbeats);
       expect(transcriber).toHaveBeenCalledTimes(1);
     } finally {
+      // If an assertion above failed, the heartbeat would keep writing into the
+      // removed dir and flood the run with ENOENT errors: stop it first.
+      await capture.stop();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -479,7 +489,7 @@ describe('WakeWordListener failure paths', () => {
   it('surfaces a busy microphone once, in Spanish, without retrying', async () => {
     const capture = new FakeCapture();
     capture.startError = new Error(
-      'el microfono "Varios micrófonos" esta ocupado por otro programa; no hago reintentos automaticos',
+      'el micrófono «Varios micrófonos» está ocupado por otro programa (¿una llamada o una grabación?); no lo reintento solo',
     );
     const listener = new WakeWordListener({ capture, transcriber: async () => '' });
     await expect(listener.start()).rejects.toThrow(/ocupado por otro programa/);
@@ -502,7 +512,7 @@ describe('WakeWordListener failure paths', () => {
     });
     await listener.start();
     capture.fail(new Error('la captura de audio se detuvo'));
-    await waitFor(() => !listener.isRunning(), 1_000);
+    await waitFor(() => !listener.isRunning(), WAIT_MS);
     expect(errors.map((err) => err.message)).toContain('la captura de audio se detuvo');
     expect(capture.startCalls).toBe(1);
     await listener.stop();
@@ -524,8 +534,8 @@ describe('WakeWordListener failure paths', () => {
     });
     await listener.start();
     capture.push(tone(0.2, 0.5));
-    await waitFor(() => listener.stats().checks > 0, 1_000);
-    await waitFor(() => info.mock.calls.length > 0, 1_000);
+    await waitFor(() => listener.stats().checks > 0, WAIT_MS);
+    await waitFor(() => info.mock.calls.length > 0, WAIT_MS);
 
     expect(info.mock.calls.map((call) => call[0])).toContain('wake word oida');
     expect(listener.stats().lastHeard).toBe('que es eso');
@@ -545,18 +555,21 @@ describe('WakeWordListener failure paths', () => {
       transcriber: async () => heard,
       checkIntervalMs: 100,
     });
-    await listener.start();
-    capture.push(tone(0.2, 0.5));
-    await waitFor(() => info.mock.calls.length === 1, 1_000);
-    heard = 'otra cosa distinta';
-    capture.push(tone(0.2, 0.5));
-    await waitFor(() => info.mock.calls.length === 2, 1_000);
-    await wait(300);
+    try {
+      await listener.start();
+      capture.push(tone(0.2, 0.5));
+      await waitFor(() => info.mock.calls.length === 1, WAIT_MS);
+      heard = 'otra cosa distinta';
+      capture.push(tone(0.2, 0.5));
+      await waitFor(() => info.mock.calls.length === 2, WAIT_MS);
+      await wait(300);
 
-    expect(info.mock.calls.filter((call) => call[0] === 'wake word oida')).toHaveLength(2);
-    expect(listener.stats().lastHeard).toBe('otra cosa distinta');
-    info.mockRestore();
-    await listener.stop();
+      expect(info.mock.calls.filter((call) => call[0] === 'wake word oida')).toHaveLength(2);
+      expect(listener.stats().lastHeard).toBe('otra cosa distinta');
+    } finally {
+      info.mockRestore();
+      await listener.stop();
+    }
   });
 
   it('reports transcriber failures and stops after three in a row', async () => {

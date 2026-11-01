@@ -19,6 +19,7 @@ import {
 import { looksLikeFollowUp, parseCommand, summarizeTranscript, trimForSpeech } from '../src/cli.js';
 import { toRealCoordinates } from '../src/tools/computer.js';
 import { headTail, OutputCollector } from '../src/tools/shell.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 describe('parseCommand', () => {
   it('splits the command from its arguments', () => {
@@ -196,7 +197,7 @@ describe('browser helpers', () => {
  * bugs — persistent state, a click hanging on a gated destination, and the
  * sensitive-host list — without noticing any of them.
  */
-describe('BrowserService (live)', () => {
+describeBrowser('BrowserService (live)', () => {
   const scope = 'live-test#main';
   const root = mkdtempSync(join(tmpdir(), 'pa-br-'));
   const profiles = join(root, 'profiles');
@@ -262,7 +263,7 @@ describe('BrowserService (live)', () => {
   });
 });
 
-describe('BrowserService domain consent', () => {
+describeBrowser('BrowserService domain consent', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-consent-'));
   const profiles = join(root, 'profiles');
   const open: BrowserService[] = [];
@@ -363,7 +364,7 @@ describe('BrowserService domain consent', () => {
   });
 });
 
-describe('BrowserService advert skipping', () => {
+describeBrowser('BrowserService advert skipping', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-ads-'));
   const service = new BrowserService({
     policy: {

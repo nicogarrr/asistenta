@@ -2,8 +2,10 @@ import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import { Agent } from '@earendil-works/pi-agent-core';
 import type { Model } from '@earendil-works/pi-ai';
 import { appendCallAudit, hashArgs } from '../audit/calls.js';
+import { takePageAfterFailedCall } from '../browser/page-after-call.js';
 import type { Config } from '../config.js';
 import { log, redact } from '../log.js';
+import { busyBegin } from '../ocupada.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
 import { desktopEnabled } from '../platform.js';
 import { actionLabel, type RunStep } from '../skills/lessons.js';
@@ -14,6 +16,7 @@ import { FileWriteTracker } from './filewrites.js';
 import {
   compactHistory,
   compactionFor,
+  compactTokensFromEnv,
   DEFAULT_COMPACTION,
   estimateAll,
   extractionPrompt,
@@ -26,6 +29,7 @@ import {
   isContextOverflow,
   isQuotaError,
   isTransientProviderError,
+  retryAfterMs,
   retryDelay,
   retryRecoveryNote,
   sleep,
@@ -71,6 +75,11 @@ export interface AgentRunResult {
  */
 export interface RunHooks {
   onToolCall?: (info: { tool: string; summary: string; count: number }) => void;
+  /**
+   * Fin de una herramienta: si salió bien y si fue el control de permisos quien la
+   * paró (eso no es un fallo de la herramienta). Sin argumentos ni salida.
+   */
+  onToolEnd?: (info: { tool: string; ok: boolean; blocked: boolean }) => void;
   /**
    * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
    * el mismo orden en que llega y sin acumular ni trocear. Un delta vacio o
@@ -484,6 +493,8 @@ export class PersonalAgent {
   readonly #sessionId: string;
   /** True while the run is parked waiting for a human approval. */
   #awaitingApproval = false;
+  /** Cierra la marca de «aprobación esperando» que lee la autoactualización. */
+  #approvalBusyEnd: (() => void) | undefined;
   /** Set when something outside the run (e.g. /stop) aborts it. */
   #externalAbort = false;
   /** Señal del run en curso: corta esperas (reintentos) en cuanto se aborta. */
@@ -569,6 +580,11 @@ export class PersonalAgent {
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
   setAwaitingApproval(waiting: boolean): void {
+    if (waiting && !this.#awaitingApproval) this.#approvalBusyEnd = busyBegin('aprobaciones');
+    if (!waiting) {
+      this.#approvalBusyEnd?.();
+      this.#approvalBusyEnd = undefined;
+    }
     this.#awaitingApproval = waiting;
   }
 
@@ -717,6 +733,9 @@ export class PersonalAgent {
             : '';
           // La página en la que quedó el navegador (src/tools/browser.ts la pone en
           // details.pageUrl) para que un clic que acaba en Gmail cuente como privado.
+          // Si la llamada LANZÓ, no hay details: la herramienta apuntó la página aparte.
+          const failedPage =
+            toolCall.name === 'browser' ? takePageAfterFailedCall(toolCall.id) : undefined;
           const pageUrl = (result as { details?: { pageUrl?: unknown } } | undefined)?.details
             ?.pageUrl;
           gate.settle(
@@ -724,7 +743,7 @@ export class PersonalAgent {
             started,
             isError,
             resultText,
-            typeof pageUrl === 'string' ? pageUrl : undefined,
+            typeof pageUrl === 'string' ? pageUrl : failedPage,
           );
           const audit = callAudit.get(toolCall.id);
           callAudit.delete(toolCall.id);
@@ -924,12 +943,12 @@ export class PersonalAgent {
    */
   /** Umbral y cola del resumen para el modelo que usa ahora esta conversación. */
   get compaction(): { triggerTokens: number; keepRecentTokens: number } {
-    const env = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const env = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     return compactionFor(env, this.#agent.state.model?.contextWindow);
   }
 
   async #compact(): Promise<void> {
-    const raw = Number(process.env.PA_COMPACT_TOKENS ?? DEFAULT_COMPACTION.triggerTokens);
+    const raw = compactTokensFromEnv(process.env.PA_COMPACT_TOKENS);
     if (!this.#summarize || !Number.isFinite(raw) || raw <= 0) return;
     const trigger = this.compaction.triggerTokens;
     if (this.#summaryCooldown > 0) {
@@ -1031,6 +1050,20 @@ export class PersonalAgent {
     images?: Array<{ type: 'image'; mimeType: string; data: string }>,
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
+    // Mientras dura el turno, la autoactualización no reinicia el daemon.
+    const endBusy = busyBegin('turnos');
+    try {
+      return await this.#runTurn(prompt, images, hooks);
+    } finally {
+      endBusy();
+    }
+  }
+
+  async #runTurn(
+    prompt: string,
+    images?: Array<{ type: 'image'; mimeType: string; data: string }>,
+    hooks?: RunHooks,
+  ): Promise<AgentRunResult> {
     this.#externalAbort = false;
     this.#runAbort = new AbortController();
     // Per-request ceiling by default: each task gets the full allowance and cannot
@@ -1111,15 +1144,23 @@ export class PersonalAgent {
           isTransientProviderError(result.error)
         ) {
           attempt++;
-          if (!fellBack && this.#fallbackFor && isQuotaError(result.error)) {
+          // A la reserva (solo si ya está configurada): en cuanto el principal se
+          // queda sin cuota, o tras dos fallos seguidos del principal (caído).
+          const quota = isQuotaError(result.error);
+          if (!fellBack && this.#fallbackFor && (quota || attempt >= 2)) {
             fellBack = true;
             this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
-            log.warn('primary model quota exhausted: falling back for this run', {
-              from: this.#config.model,
-              to: this.#config.fallbackModel,
-            });
+            log.warn(
+              quota
+                ? 'primary model quota exhausted: falling back for this run'
+                : 'primary model keeps failing: falling back for this run',
+              { from: this.#config.model, to: this.#config.fallbackModel },
+            );
           }
-          const delay = retryDelay(attempt, this.#config.retry);
+          const delay = Math.max(
+            retryDelay(attempt, this.#config.retry),
+            Math.min(retryAfterMs(result.error) ?? 0, this.#config.retry.maxDelayMs),
+          );
           log.warn('retrying after a transient provider failure', {
             attempt,
             of: this.#config.retry.attempts,
@@ -1271,6 +1312,13 @@ export class PersonalAgent {
         const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
         if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
           shared.steps.push({ tool: event.toolName, action, ok: !event.isError });
+        }
+        if (hooks?.onToolEnd) {
+          try {
+            hooks.onToolEnd({ tool: event.toolName, ok: !event.isError, blocked: gateBlocked });
+          } catch (err) {
+            log.warn('tool end hook failed', { err: String(err) });
+          }
         }
         if (event.isError) {
           // A gate refusal and a tool that ran and failed are different failures

@@ -487,7 +487,10 @@ describe('buildAgenda', () => {
     });
     expect(broken.today).toHaveLength(1);
     expect(broken.notes.join(' ')).toMatch(/correo/i);
-    expect(formatAgenda(broken, { timeZone: 'Europe/Madrid' })).toContain('imap timeout');
+    expect(formatAgenda(broken, { timeZone: 'Europe/Madrid' })).toContain(
+      'No se ha podido leer el correo ahora mismo.',
+    );
+    expect(formatAgenda(broken, { timeZone: 'Europe/Madrid' })).not.toContain('imap timeout');
   });
 
   it('lists one entry for a train that is in the calendar AND in the inbox', async () => {

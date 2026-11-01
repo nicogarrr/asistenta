@@ -1,9 +1,34 @@
 // FIRST import, always: loads the optional .env before any module that
 // captures process.env at evaluation time (paths.ts, log.ts). See envfile.ts.
 
-import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
-import { formatModelos, ModelChoiceStore, parseModelo } from './model-choice.js';
-import { cleanProjectPath, ProjectContextStore } from './project-context.js';
+import {
+  BOOKS_USAGE,
+  OPENGYM_PAIR_USAGE,
+  OPENGYM_USAGE,
+  STOP_USAGE,
+  WATCHDOG_USAGE,
+} from './cli-uso.js';
+import { resolveModelCaps } from './core/models.js';
+import { learnNameAnswer, PreguntasPendientes, SI_RESPUESTA } from './daemon/pregunta-pendiente.js';
+import {
+  ERASE_BUSY_ASK,
+  ERASE_PROMPT,
+  EraseConfirm,
+  eraseChat,
+  eraseSummary,
+} from './erase-command.js';
+import {
+  formatModelos,
+  ModelChoiceStore,
+  modelSwitchWarnings,
+  parseModelo,
+} from './model-choice.js';
+import {
+  cleanProjectPath,
+  ProjectContextStore,
+  projectLinkedReply,
+  projectStateReply,
+} from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { foldAccents } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
@@ -26,20 +51,34 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { loadCalendar } from './agenda/ics.js';
+import { fetchIcsText } from './agenda/ics-fetch.js';
 import { readAgendaOverview } from './agenda/overview.js';
 import { readLocalCalendar } from './agenda/sources.js';
 import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
-import { formatApproval } from './approval-text.js';
 import {
   altavozVoiceReplyEnabled,
   routeInboundToAltavoz,
   routeReplyToAltavoz,
 } from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
-import { isBackupDue, runBackup } from './backup.js';
+import { answerPendingNovedades } from './autoupdate-novedades.js';
+import {
+  BackupMirrorError,
+  backupMirrorNotice,
+  isBackupDue,
+  localBackupDone,
+  runBackup,
+} from './backup.js';
 import { KINDLE_VAULT_KEY } from './books/kindle.js';
+import {
+  BOOT_NOTICE_FILE,
+  bootBanner,
+  maybeSendBootNotice,
+  telegramBotSend,
+} from './boot-notice.js';
+import { BoundedMap } from './bounded-map.js';
 import { BrowserService } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
@@ -47,8 +86,11 @@ import {
   cleanForTelegram,
   friendlyError,
   isAgendaTitle,
+  isCronTitle,
   isReminderTitle,
   isStatusTitle,
+  isWatchListTitle,
+  marksCardTitle,
   marksWithTitles,
   progressNote,
   shorten,
@@ -56,7 +98,7 @@ import {
 } from './channels/formatters.js';
 import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
-import { type ApprovalChoice, TelegramChannel } from './channels/telegram.js';
+import { TelegramChannel } from './channels/telegram.js';
 import {
   InboundReceipt,
   LiveNote,
@@ -66,79 +108,137 @@ import {
   voiceHeardText,
 } from './channels/telegram-receipts.js';
 import type { ChannelAudio, Inbound, Outbound } from './channels/types.js';
-import { chatKey } from './channels/types.js';
+import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
+import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
-import { THREAD_ALLOW_TOOLS } from './core/toolset.js';
-import { parseCronAdd, parseNatural } from './cron/scheduler.js';
+import { parseNatural } from './cron/scheduler.js';
+import { briefingHourFor } from './daemon/briefing-quiet.js';
+import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
+import { CloseLoop, closedLine } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
 import {
   beginInbound,
   cachedFullReply,
-  isMailReplyRequest,
   queueThreadTurn,
   resolveInboundThread,
+  routeInboundControl,
   threadForSentIds,
 } from './daemon/inbound.js';
 import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
-import { createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
+import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
+import { ProgressMilestones } from './daemon/progress-milestone.js';
+import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
+import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
+import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
+import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
+import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
-import { applyConfiguredTimeZone, buildNowNote, localDay, localTimeZone } from './datecontext.js';
+import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
+import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
+import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
-import { createFactorySync } from './factory/loader.js';
+import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
-import { GOAL_ROUTINE_PREFIX, GoalRunner, goalIdOf, isGoalRoutine } from './goals/runner.js';
+import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
-import { LearnRecorder } from './learn.js';
+import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
-import { llmHealthCommand } from './llm-health.js';
+import { llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
+import { activeDeliveries } from './mail/deliveries.js';
+import { briefingDeliveries } from './mail/deliveries-text.js';
 import { type IdleCursor, loadReadMailAccount, MailIdleTransport } from './mail/idle.js';
-import { listReplyInbox, resolveReplyCard } from './mail/reader.js';
+import { listReplyInbox, readReplyThread, resolveReplyCard, searchInbox } from './mail/reader.js';
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
+import { mailAttentionText } from './mail/triage.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
-import { renderMemoryContext } from './memory/context.js';
 import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
+import {
+  correctionHint,
+  forgetLearnedRule,
+  forgetRuleWords,
+  formatLearnedRules,
+  learnCorrectionsEnabled,
+  learnedRules,
+  learnedRulesCommand,
+  learnFromTurn,
+} from './memory/learned-rules.js';
 import { detectMemoryWorthy } from './memory/nudges.js';
+import {
+  aboutMeText,
+  factSavedLine,
+  forgetRequest,
+  forgotLine,
+  isAboutMeRequest,
+  RecentFacts,
+  SAID_PREFIX,
+  statedFact,
+} from './memory/owner-facts.js';
+import { ownerQuietHours } from './memory/owner-quiet.js';
+import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
-import type { SessionHit } from './memory/sessions.js';
 import { SessionStore } from './memory/sessions.js';
-import { MemorySnapshot } from './memory/snapshot.js';
+import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
 import { parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
-import { DEFAULT_QUIET_HOURS } from './ojo.js';
+import { trackBusyIn } from './ocupada.js';
+import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
   getDownloadsEnabled,
+  resolveDownloadsDir,
   setDownloadsEnabled,
 } from './ojo-downloads.js';
 import { AttentionQueue } from './ojo-events.js';
-import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
+import {
+  activateRule,
+  deleteRule,
+  dismissNotice,
+  formatRules,
+  ignoraAnswer,
+  listRules,
+  rulesAnswer,
+} from './ojo-ignore.js';
+import {
+  DOWNLOADS_DIR_ASK,
+  DOWNLOADS_OFF_TEXT,
+  downloadsDirAnswer,
+  downloadsDirMissingText,
+  downloadsDirSavedText,
+  MEMORIA_FORGET_ASK,
+  memoriaForgetAnswer,
+  OJO_OFF_HINT,
+  ojoOffAnswer,
+  ojoOnAnswer,
+  SCREEN_OFF_TEXT,
+  WIDE_EXAMPLE,
+} from './ojo-respuestas.js';
 import {
   getScreenEnabled,
   type ScanOutcome,
@@ -146,17 +246,11 @@ import {
   screenStatusText,
   setScreenEnabled,
 } from './ojo-screen.js';
+import { openGymCliError, openGymPaired } from './opengym/cli-text.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
-import {
-  approvalChatOf,
-  approvalScopeKey,
-  BROWSER_FREE_ACTIONS,
-  Gate,
-  protectedRepoPaths,
-  runPermisosCommand,
-} from './permissions.js';
+import { Gate, runPermisosCommand } from './permissions.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
   parseWideArgs,
@@ -167,14 +261,37 @@ import {
   wideResearchEnabled,
 } from './research/wide-research.js';
 import { drainThreadTails } from './shutdown-drain.js';
+import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
-import { checkTelegramToken, startupFailureMessage, withInboundFailureReply } from './startup.js';
+import {
+  fetchSkillIndex,
+  formatSkillSearch,
+  type SkillIndexEntry,
+  searchSkillIndex,
+  skillPickAnswer,
+} from './skills/search.js';
+import {
+  checkTelegramToken,
+  SERVE_TELEGRAM_RETRY_DELAYS_MS,
+  startupFailureMessage,
+  withInboundFailureReply,
+} from './startup.js';
+import { WebDemoRecorder, webDemoFollowUp } from './teach-demo-web.js';
 import {
   buildTriggerPrompt,
   formatTriggerList,
   parseTriggerAdd,
   TriggerEngine,
 } from './triggers.js';
+import {
+  CONVERSACION_OFF_HINT,
+  conversacionOffAnswer,
+  corteAnswer,
+  corteAsk,
+  MIC_CLOSED_ASK,
+  MIC_OFF_TEXT,
+  WAKE_AGAIN_ASK,
+} from './wake-texts.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -201,31 +318,7 @@ function delegateTool(config: Config): AgentTool {
   return delegateWiring.tool;
 }
 
-function protectedPaths(): string[] {
-  const home = process.env.USERPROFILE;
-  return [
-    ...(home ? [`${home}\\.ssh`, `${home}\\.aws`] : []),
-    'C:\\Windows\\System32',
-    ...protectedRepoPaths(),
-    // Writing a secret is as bad as reading it: a written approvals.db is a
-    // self-granted standing approval, a written vault is a planted secret.
-    ...secretStatePaths(),
-  ];
-}
-
-/**
- * Files the agent must never read through a tool call: its own secrets. The
- * vault, the approvals database and the .env decrypt or grant everything
- * else; they are only ever opened by the code that owns them. The same files
- * are write-protected too (a written approvals.db is a self-granted standing
- * approval), via protectedPaths below. Note the fs tools already confine
- * paths to the cwd - this is the explicit wall for the in-cwd case (.env) and
- * defense in depth for the rest.
- */
-function secretStatePaths(): string[] {
-  return [paths.state, paths.vault, approvalsDbPath(), resolve('.env')];
-}
-
+import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
@@ -237,40 +330,60 @@ import {
   parseAltavozArgs,
   stopReplyText,
 } from './audio/altavoz.js';
-import { audioTeleEnabled, tvCasterFromVault } from './audio/tv-cast.js';
+import { audioTeleEnabled, tvCasterFromVault, tvStopperFromVault } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import {
   agendaTodayLines,
   answerBriefingOnDemand,
+  briefingSpeaker,
   type DailyBriefingDeps,
   fetchWeatherLine,
   followupsDue,
   pickImportantMail,
-  runDailyBriefingIfDue,
   scheduledForToday,
+  startDailyBriefingTimer,
+  stopBriefingVoice,
   weatherConfigFromEnv,
 } from './briefing-daily.js';
-
-import { cacheFullReply, isMoreRequest, moreButton, takeFullReply } from './channels/telegram.js';
-import { helpText, startText } from './channels/telegram-help.js';
+import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
+import { permisosListaReply } from './channels/permisos-lista.js';
 import {
-  approvalCode,
-  COMMAND_PROMPT_PREFIX,
+  cacheFullReply,
+  commandButton,
+  isMoreRequest,
+  moreButton,
+  takeFullReply,
+  tooBigForBotDownload,
+} from './channels/telegram.js';
+import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
+import {
   CommandRoutineStore,
   commandRoutinesEnabled,
-  displayArgv,
   fireCommandRoutine,
-  isApproved,
   isCommandRoutine,
-  parseCommandAdd,
 } from './command-routine.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
 import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import { envHashDoctorLine } from './doctor-env-hash.js';
+import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
+import { envLinesDoctorLine } from './doctor-env-lines.js';
+import { installDoctorLines } from './doctor-install.js';
+import { doctorLinesEs } from './doctor-labels.js';
+import { doctorFetch, telegramDoctorLines } from './doctor-telegram.js';
+import { envNumbersDoctorLine, envSwitchesDoctorLine, envSwitchOn } from './env-flags.js';
+import {
+  FUNCIONES_CALLBACK_PREFIX,
+  findArea,
+  funcionesButtons,
+  funcionesButtonText,
+  funcionesText,
+} from './funciones.js';
 import { parseMcpServers } from './mcp/client.js';
-import { createMcpTools } from './mcp/tools.js';
+import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
+import { guardReaTools, withRea } from './mcp/rea.js';
+import { createMcpTools, mcpCommandText, mcpResourcesDoctorLines } from './mcp/tools.js';
 import { OwnerProfile } from './memory/profile.js';
-import { buildMemoryPromptSection } from './memory/prompt.js';
 import {
   currentLimits,
   getPace,
@@ -279,11 +392,24 @@ import {
   recordDismissal,
   setPace,
 } from './notice-pace.js';
-import { panelDoctorLines } from './panel-doctor.js';
+import { makeStrangerHint } from './owner-id-hint.js';
+import { evolveNowAnswer, stopWatchingWords } from './palabras-vigilancia.js';
+import {
+  type PanelListenProblem,
+  panelBootFacts,
+  panelDoctorLines,
+  panelListenProblem,
+  panelStartPlan,
+} from './panel-doctor.js';
+import { ensurePanelToken } from './panel-token.js';
+import { pdfSummaryIntent, pdfToTextIntent } from './pdfmd/chat-intent.js';
+import { ocrScannedForModel } from './pdfmd/scanned.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
+import { computerPlugin } from './plugins/computer.js';
 import { iphonePlugin } from './plugins/iphone.js';
+import { ocrLocalPlugin } from './plugins/ocr.js';
 import { tvPlugin, tvToolDeps } from './plugins/tv.js';
-import { describeDelivery, parseDeliveryArgs, RoutineDeliveryStore } from './routine-delivery.js';
+import { RoutineDeliveryStore } from './routine-delivery.js';
 import {
   buildMacroPrompt,
   canonicalMacroName,
@@ -293,9 +419,13 @@ import {
   procedurePrompt,
   RoutineRunner,
   summarizeRoutine,
-  validateSchedule,
 } from './routines.js';
-import { computerSwitchCommand } from './screen/computer-switch.js';
+import {
+  applySavedComputerOff,
+  computerOffSaved,
+  computerSwitchCommand,
+  saveComputerSwitch,
+} from './screen/computer-switch.js';
 import {
   captureCameraFrame,
   consumeRecording,
@@ -309,19 +439,30 @@ import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { formatServicesList, ServiceStore } from './services/store.js';
-import { seedBuiltinSkills, skillsForContext } from './skills/builtin.js';
-import { fetchSkillMarkdown, installSkill } from './skills/import.js';
-import { recordLessons, skillsIndex } from './skills/lessons.js';
+import { seedBuiltinSkills } from './skills/builtin.js';
+import { detectSkillEnv } from './skills/env.js';
+import { seedGeneralSkills } from './skills/general.js';
+import { GrillMe } from './skills/grill.js';
+import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
+import { recordLessons } from './skills/lessons.js';
+import { RepeatTracker } from './skills/repeats.js';
 import { SkillStore } from './skills/store.js';
+import { repitchText, wantsRepitch } from './skills/wait-what.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
+import { briefingTasks, TaskBoard } from './tasks/board.js';
+import { startTelegramEstado } from './telegram-estado.js';
+import { backToMainAnswer, topicReadyText } from './temas.js';
+import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
+import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
 import { createCalendarTool } from './tools/calendar.js';
-import { checkoutStageOf, createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
-import { createComputerTool } from './tools/computer.js';
+import { createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
+import type { ActionGate } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
+import { createDeliveriesTool } from './tools/deliveries.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
@@ -330,6 +471,8 @@ import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.j
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
+import { createMailTool } from './tools/mail.js';
+import { createMailRulesTool } from './tools/mail-rules.js';
 import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
@@ -337,10 +480,11 @@ import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
 import { createPriceWatchTool } from './tools/price-watch.js';
 import {
   createReminderTool,
+  FiredReminders,
   formatReminderRows,
-  isReminder,
   pickReminder,
   readDroppedReminders,
+  reminderButtonCommand,
   reminderRows,
   reminderText,
 } from './tools/reminder.js';
@@ -352,20 +496,24 @@ import { createShellTool } from './tools/shell.js';
 import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
+import { createTasksTool } from './tools/tasks.js';
 import { createTvTool } from './tools/tv.js';
+import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
 import { tvRequest } from './tv/lgtv.js';
+import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
+  isTvOrder,
   TV_BUTTONS_TITLE,
   tvButtonCommand,
   tvButtons,
   tvChatCommand,
 } from './tv/tv-chat-command.js';
 import { setUndoDir, undoLast } from './undo.js';
-import { Mutex, plainInline } from './utils.js';
+import { Mutex } from './utils.js';
 import {
   initVault,
   unlock,
@@ -374,6 +522,7 @@ import {
   vaultGet,
   vaultList,
   vaultSet,
+  vaultSnapshotValues,
 } from './vault.js';
 import {
   getOjoEnabled,
@@ -383,69 +532,100 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { LIVE_BUSY_TEXT, LIVE_STOPPED_TEXT, liveCaption, liveStopAnswer } from './vista-directo.js';
 import { createAloudSpeaker } from './voice/aloud.js';
-import { BargeStats, bargeClassified, bargeFalseRate } from './voice/barge-stats.js';
+import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
 import { type BargeInLevel, ConversationSession } from './voice/conversation.js';
 import { splitPhrases } from './voice/phrases.js';
 import { createDefaultTts } from './voice/piper.js';
+import { plainVoiceError } from './voice/plain-error.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
-import { transcribeVoiceNote } from './voice/stt.js';
+import { stopSpokenReply } from './voice/stop-speech.js';
+import { SttError, transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
-import { compareProduct, describeCompare } from './watch/compare.js';
 import {
+  COMPARE_WATCH_STALE,
+  type CompareReport,
+  CompareWatchLinks,
+  compareProduct,
+  describeCompare,
+  suggestedTargetCents,
+} from './watch/compare.js';
+import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
+import {
+  AVISAR_OTRA_VEZ,
+  type CheckOutcome,
   describeChange,
   describeWatch,
   eur,
+  PAGE_MUTE_MS,
+  type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
+  watchFromAnswer,
+  watchNotFound,
+  watchValueText,
 } from './watch/pages.js';
-import { startPricewatchLoop } from './watch/pricewatch-loop.js';
-import { realDeps } from './watch/pricewatch-runner.js';
 import { WebRouter } from './web/router.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
+import { panelRepartos } from './webui/repartos.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
+import { panelTareas } from './webui/tareas.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
-const USAGE = `personal-agent - a personal agent for your own PC
+const USAGE = `Asistenta (pa): tu asistente personal en tu propio PC
+En Windows, "pa" es "node dist\\cli.js" dentro de la carpeta de Asistenta.
 
-Usage:
+Uso:
   pa setup                configuración local guiada, sin red ni autostart
-  pa serve                run the daemon: Telegram, with approvals over chat
-  pa chat                 talk to the agent in the console
-  pa run "<prompt>"       run one prompt unattended (read-only tools, no prompts)
-  pa vault init           create the encrypted secret store
-  pa vault set <k> <v>    store a secret
-  pa vault set-stdin <k>  guardar secreto desde pipe privado, sin valor en argv
-  pa vault get <k>        print one secret
-  pa vault list           list secret names (never values)
-  pa vault rm <k>         delete a secret
+  pa serve                arrancar Asistenta: Telegram, con permisos que pides por chat
+  pa chat                 hablar con Asistenta en la consola
+  pa run "<orden>"        una orden sin supervisión (solo lectura, sin preguntas)
+  pa vault init           crear la caja fuerte cifrada de claves
+  pa vault set <k> <v>    guardar una clave (mejor set-stdin: así no queda en el historial)
+  pa vault set-stdin <k>  guardar un secreto: te lo pide sin que se vea (no queda en el historial)
+  pa vault get <k>        enseñar una clave en pantalla
+  pa vault list           ver los nombres de las claves (nunca los valores)
+  pa vault rm <k>         borrar una clave
+  pa cuentas listar|copiar <web>|borrar <web>|cambiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
-  pa vigilancias [--json] qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
+  pa vigilancias [--json]  qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
+  pa tv orden "<texto>"   dar una orden en palabras (p. ej. "apaga la tele", "volumen a 15")
+  pa tv mac <MAC>|auto    guardar la MAC de la tele para poder encenderla (auto: la busca en la red)
+  pa tv wake              encender la tele por la red (Wake-on-LAN; necesita pa tv mac)
   pa tv toast <mensaje>   mostrar un aviso en la tele
   pa tv apps              listar apps instaladas (ids para pa tv launch)
   pa tv launch <appId>    lanzar una app en la tele
   pa tv key <NOMBRE>      pulsar una tecla del mando (HOME, BACK, ENTER, UP/DOWN/LEFT/RIGHT)
   pa tv shot [fichero]    capturar la pantalla de la tele (960x540 jpg; DRM sale en negro)
   pa tv off               apagar la tele
-  pa opengym pair [url] <code>   pair openGym (read-only gym tracker)
-  pa opengym status       check the openGym connection
-  pa evolve [--idea <text>]  one self-improvement cycle on this git checkout (needs PA_EVOLVE_PROPOSER)
-  pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]
+  pa audio prueba-tele <fichero.mp3> [--via media.viewer|launcher|glasshouse]  probar que un audio suena en la tele
+  pa voice enroll|verify|list|remove  voces del hogar: enrolar, puntuar un audio, listar, borrar
+  pa dictado prueba [segundos]        prueba el dictado: graba y enseña el texto, sin escribirlo
+  pa dictado tecla                    comprueba que se nota la tecla del dictado (Windows)
+  pa opengym pair [url] <código>  emparejar openGym (registro del gimnasio, solo lectura)
+  pa opengym status       comprobar la conexión con openGym
+  pa evolve [--idea <texto>]  una vuelta de automejora sobre esta copia git (necesita PA_EVOLVE_PROPOSER)
+  pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]  arrancar sola al encender el PC
+  pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
-  pa precio [comprobar]          un ciclo del vigilante de precios ahora (avisos por pantalla) o valida pricewatch.json
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
-  pa stop                 Linux: cierre graceful autenticado, sin matar por PID
-  pa restart              no disponible sin verificar supervisor
-  pa doctor               check the environment
+  pa stop                 parar Asistenta con un cierre limpio (Windows y Linux; no mata por PID)
+  pa restart              no disponible: para y vuelve a abrir levantar.bat (o pa iniciar)
+  pa doctor               revisar la configuración del PC
+  pa panel                abrir el panel web en el navegador (ya con su token)
+  pa backup [lista]       copias de seguridad; pa backup restaurar <AAAA-MM-DD|ultima> con el daemon parado
+  pa auditoria [--tool <n>] [--verdict allow|deny] [--since 24h|7d] [--last N] [--json]  registro de llamadas (solo lectura)
+  pa mcp serve            servidor MCP de solo lectura por stdio (Claude Desktop, Cursor)
   pa iniciar [--solo-comprobar] [--sin-red] [--json]  comprueba todo (verde/rojo) y arranca si está listo
-  pa llm-health           probe each configured LLM provider (ok/auth/cuota/timeout/sin-key)
+  pa llm-health           probar cada modelo configurado (ok/clave/cuota/tiempo/sin clave)
 `;
 
 /**
@@ -463,13 +643,63 @@ const PLAYBACK_SUPPRESS_MS = 5 * 60_000;
 const WAKE_TAIL_MS = 2_000;
 
 import { booksSetupCommand } from './books/setup-cli.js';
+import {
+  cliFatalMessage,
+  unknownCommandMessage,
+  vaultListText,
+  vaultMissingText,
+  vaultUsageText,
+} from './cli-messages.js';
+import { buildContextNote } from './daemon/context-note.js';
+import {
+  commandRoutineTag,
+  inChatScope,
+  nextRunLabel,
+  routineNameFromPrompt,
+  runCronCommand,
+  scheduledAgendaText,
+} from './daemon/cron-command.js';
+import {
+  approvalsDbPath,
+  createDaemonGate,
+  protectedPaths,
+  secretStatePaths,
+} from './daemon/gate.js';
+import { inspectionThreadKey } from './daemon/inspection-thread.js';
+import { formatSessionHits } from './daemon/session-hits.js';
+import { trimForSpeech } from './daemon/speech-text.js';
+import { summarizeTranscript } from './daemon/transcript-summary.js';
+import { tvButtonAction } from './daemon/tv-button.js';
 import { retentionIfDue } from './maintenance.js';
+import { missingPieceMessage } from './setup-missing.js';
 import { tvCommand } from './tv/tv-cli.js';
+
+export { ANTICIPATION_RULES, buildContextNote } from './daemon/context-note.js';
+export {
+  type CronCommandDeps,
+  commandRoutineTag,
+  formatNextRun,
+  inChatScope,
+  nextRunLabel,
+  routineNameFromPrompt,
+  runCronCommand,
+  scheduledAgendaText,
+  uniqueRoutineName,
+} from './daemon/cron-command.js';
+export { approvalsDbPath, createDaemonGate, type DaemonGateOptions } from './daemon/gate.js';
+export { inspectionThreadKey } from './daemon/inspection-thread.js';
+export { formatSessionHits } from './daemon/session-hits.js';
+export { trimForSpeech } from './daemon/speech-text.js';
+export { summarizeTranscript } from './daemon/transcript-summary.js';
+export { type TvButtonAction, tvButtonAction } from './daemon/tv-button.js';
+
+/** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
+const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
 
 export async function main(argv: string[]): Promise<number> {
   const [command = 'chat', ...rest] = argv;
   // Todos los subcomandos (no solo `serve`) leen la hora en la zona de PA_TIMEZONE:
-  // `pa recordatorios`, `pa precio`… calculaban «hoy» y las próximas horas de croner en
+  // `pa recordatorios`… calculaban «hoy» y las próximas horas de croner en
   // la zona del sistema. `serve` vuelve a llamarlo y avisa si la zona no es válida.
   applyConfiguredTimeZone();
 
@@ -480,11 +710,13 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'vault':
       return vaultCommand(rest);
+    case 'cuentas':
+      return (await import('./credentials/export.js')).cuentasCommand(rest);
     case 'opengym':
       return openGymCommand(rest);
     case 'books':
       if (rest[0] !== 'setup') {
-        process.stderr.write('uso: pa books setup' + '\n');
+        process.stderr.write(`${BOOKS_USAGE}\n`);
         return 2;
       }
       try {
@@ -502,9 +734,11 @@ export async function main(argv: string[]): Promise<number> {
           copyFileSync(file, out);
           return out;
         },
-        cast: (file, only) => tvCasterFromVault(vaultGet, tvRequest, { only })(file),
+        cast: (file, only) =>
+          tvCasterFromVault(vaultGet, tvRequest, { only, saveClientKey: saveTvClientKey })(file),
         print: (line) => console.log(line),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        discard: (file) => rmSync(file, { force: true }),
       });
     }
     case 'tv':
@@ -524,6 +758,10 @@ export async function main(argv: string[]): Promise<number> {
       const { voiceCommand } = await import('./voice/voice-cli.js');
       return voiceCommand(rest);
     }
+    case 'dictado': {
+      const { dictadoCommand } = await import('./dictado/prueba.js');
+      return dictadoCommand(rest);
+    }
     case 'status': {
       const { statusCommand } = await import('./daemon-status.js');
       return statusCommand(rest);
@@ -532,19 +770,24 @@ export async function main(argv: string[]): Promise<number> {
       const { autostartCommand } = await import('./autostart.js');
       return autostartCommand(rest);
     }
+    case 'autoupdate': {
+      const { autostartRepo } = await import('./autostart.js');
+      // Copia instalada con el .exe (sin git): la actualiza el instalador de GitHub.
+      const inst = await import('./actualizar-instalado.js');
+      if (inst.isInstalledLayout(autostartRepo())) {
+        const code = await inst.instaladoAutoupdateCommand(rest, autostartRepo());
+        if (code !== null) return code;
+      }
+      const { autoupdateCommand } = await import('./autoupdate-cli.js');
+      return autoupdateCommand(rest, { stateDir: paths.state, repo: autostartRepo() });
+    }
     case 'autostart-notify': {
       const { notifyAutostart } = await import('./autostart.js');
       return rest.length === 1 ? notifyAutostart(rest[0] ?? '') : 2;
     }
-    case 'precio': {
-      const { pricewatchCommand } = await import('./watch/pricewatch-cli.js');
-      return pricewatchCommand(rest);
-    }
     case 'watchdog': {
       if (rest[0] !== '--status') {
-        process.stderr.write(
-          'uso: pa watchdog --status [--json] (solo consulta; no activa vigilancia)\n',
-        );
+        process.stderr.write(`${WATCHDOG_USAGE}\n`);
         return 2;
       }
       const { statusCommand } = await import('./daemon-status.js');
@@ -572,6 +815,15 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'doctor':
       return doctorCommand();
+    case 'panel': {
+      const { openInBrowser, panelCommand } = await import('./panel-abrir.js');
+      return panelCommand({
+        env: process.env,
+        stateDir: paths.state,
+        open: (url) => openInBrowser(url),
+        print: (line) => console.log(line),
+      });
+    }
     case 'llm-health':
       return llmHealthCommand();
     case 'evolve':
@@ -582,40 +834,50 @@ export async function main(argv: string[]): Promise<number> {
       return controlledDaemon(serveCommand);
     case 'iniciar': {
       const { iniciarCommand, realPreflightDeps } = await import('./iniciar.js');
+      const { STARTUP_RECORD_FILE } = await import('./startup-record.js');
+      if (!rest.some((a) => ['--solo-comprobar', '--check', '--json'].includes(a))) {
+        const { clearStoppedOnPurpose } = await import('./autostart-watchdog.js');
+        clearStoppedOnPurpose(paths.state);
+      }
       return iniciarCommand(rest, {
         deps: realPreflightDeps,
         serve: () => controlledDaemon(serveCommand),
         write: (text) => process.stdout.write(text),
         writeErr: (text) => process.stderr.write(text),
         color: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR,
+        recordPath: join(paths.state, STARTUP_RECORD_FILE),
       });
     }
     case 'stop': {
       if (rest.length) {
-        process.stderr.write('uso: pa stop\n');
+        process.stderr.write(`${STOP_USAGE}\n`);
         return 2;
       }
       const { stopDaemon } = await import('./daemon-control.js');
-      const result = await stopDaemon(paths.state);
-      process.stdout.write(
-        `Instancia ${result.instanceId.slice(0, 12)} detenida con cierre limpio confirmado.\n`,
-      );
-      return 0;
+      const { markStoppedOnPurpose } = await import('./autostart-watchdog.js');
+      const { runStopCommand } = await import('./stop-command.js');
+      return runStopCommand({
+        stop: () => stopDaemon(paths.state),
+        markStopped: () => markStoppedOnPurpose(paths.state),
+        write: (text) => process.stdout.write(text),
+        writeErr: (text) => process.stderr.write(text),
+      });
     }
-    case 'restart':
-      process.stderr.write(
-        'Restart no disponible: no se puede verificar si un supervisor volverá a lanzar el daemon. No se ha detenido ni arrancado ningún proceso.\n',
-      );
+    case 'restart': {
+      const { RESTART_TEXT } = await import('./stop-command.js');
+      process.stderr.write(`${RESTART_TEXT}\n`);
       return 2;
+    }
     case 'run':
       return runCommand(rest.join(' '));
     case '--help':
     case '-h':
     case 'help':
+    case 'ayuda':
       process.stdout.write(USAGE);
       return 0;
     default:
-      process.stderr.write(`unknown command ${command}\n\n${USAGE}`);
+      process.stderr.write(unknownCommandMessage(command));
       return 2;
   }
 }
@@ -652,13 +914,11 @@ async function openGymCommand(args: string[]): Promise<number> {
     if (sub === 'pair') {
       const code = b ?? a;
       if (!code) {
-        process.stderr.write('uso: pa opengym pair [url] <código de 8 caracteres>\n');
+        process.stderr.write(`${OPENGYM_PAIR_USAGE}\n`);
         return 2;
       }
       const host = await pairOpenGym(b ? a : undefined, code);
-      process.stdout.write(
-        `openGym emparejado (código canjeado en ${host}). El token está en el vault (opengym:token).\n`,
-      );
+      process.stdout.write(`${openGymPaired(host)}\n`);
       return 0;
     }
     if (sub === 'status') {
@@ -676,10 +936,10 @@ async function openGymCommand(args: string[]): Promise<number> {
       return 0;
     }
   } catch (err) {
-    process.stderr.write(`${err instanceof OpenGymError ? err.message : String(err)}\n`);
+    process.stderr.write(`${openGymCliError(err)}\n`);
     return 1;
   }
-  process.stderr.write('uso: pa opengym pair [url] <código> | pa opengym status\n');
+  process.stderr.write(`${OPENGYM_USAGE}\n`);
   return 2;
 }
 
@@ -698,61 +958,68 @@ async function vaultCommand(args: string[]): Promise<number> {
 
   if (sub === 'init') {
     await initVault();
-    process.stdout.write(`vault created at ${paths.vault}\n`);
+    process.stdout.write(`Caja fuerte creada en ${paths.vault}\n`);
     return 0;
   }
   if (sub === 'set') {
     if (!key || value === undefined) {
-      process.stderr.write('usage: pa vault set <key> <value>\n');
+      process.stderr.write(
+        'Uso: pa vault set <nombre> <valor>  (mejor: pa vault set-stdin <nombre>, así el valor no queda en el historial)\n',
+      );
       return 2;
     }
     await vaultSet(key, value);
-    process.stdout.write(`stored ${key}\n`);
+    process.stdout.write(`Guardado: ${key}\n`);
     return 0;
   }
   if (sub === 'get') {
     if (!key) {
-      process.stderr.write('usage: pa vault get <key>\n');
+      process.stderr.write('Uso: pa vault get <nombre>\n');
       return 2;
     }
     const v = await vaultGet(key);
     if (v === undefined) {
-      process.stderr.write(`no such secret: ${key}\n`);
+      process.stderr.write(vaultMissingText(key));
       return 1;
     }
     process.stdout.write(`${v}\n`);
     return 0;
   }
   if (sub === 'list') {
-    for (const k of await vaultList()) process.stdout.write(`${k}\n`);
+    process.stdout.write(vaultListText(await vaultList()));
     return 0;
   }
   if (sub === 'rm') {
     if (!key) {
-      process.stderr.write('usage: pa vault rm <key>\n');
+      process.stderr.write('Uso: pa vault rm <nombre>\n');
       return 2;
     }
     const removed = await vaultDelete(key);
-    process.stdout.write(removed ? `deleted ${key}\n` : `no such secret: ${key}\n`);
+    process.stdout.write(removed ? `Borrado: ${key}\n` : vaultMissingText(key));
     return removed ? 0 : 1;
   }
-  process.stderr.write(USAGE);
+  process.stderr.write(vaultUsageText(sub));
   return 2;
 }
 
 async function doctorCommand(): Promise<number> {
   ensureDirs();
   const lines: string[] = [];
-  lines.push(`node            ${process.version}`);
+  lines.push(...installDoctorLines());
   lines.push(`state dir       ${paths.state}`);
-  lines.push(`vault           ${vaultExists() ? 'present' : 'MISSING (pa vault init)'}`);
+  lines.push(
+    `vault           ${vaultExists() ? 'creado' : 'FALTA (doble clic en instalar.bat, o pa vault init)'}`,
+  );
 
-  const key = await vaultGet('provider:apiKey').catch(() => undefined);
-  const envKey = process.env.OPENCODE_GO_API_KEY ? 'set' : 'unset';
-  lines.push(`provider key    ${key ? 'vault' : envKey}`);
+  const keySrc = await providerKeySource(loadConfig().baseUrl);
+  lines.push(
+    `provider key    ${keySrc.source === 'unset' ? `sin poner (${keySrc.hint})` : keySrc.source === 'vault' ? 'guardada en tus claves' : 'puesta en el .env'}`,
+  );
+  if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));
+  lines.push(timeZoneDoctorLine());
   if (desktopEnabled()) {
     lines.push(
-      `shell           ${hasPwsh() ? 'pwsh 7' : 'powershell 5.1 (install pwsh for full syntax)'}`,
+      `shell           ${hasPwsh() ? 'PowerShell 7' : 'PowerShell 5.1 (funciona; con PowerShell 7 va mejor)'}`,
     );
 
     const screen = new WindowsScreen();
@@ -760,9 +1027,11 @@ async function doctorCommand(): Promise<number> {
       const size = await screen.screenSize();
       lines.push(`screen          ${size.width}x${size.height}`);
       const shot = await screen.screenshot();
-      lines.push(`screenshot      ok (${shot.image.length} bytes, ${shot.width}x${shot.height})`);
+      lines.push(`screenshot      funciona (${shot.width}x${shot.height})`);
     } catch (err) {
-      lines.push(`screenshot      FAILED: ${err instanceof Error ? err.message : String(err)}`);
+      lines.push(
+        `screenshot      FALLA: no pude capturar la pantalla${(err as NodeJS.ErrnoException | undefined)?.code ? ` (${(err as NodeJS.ErrnoException).code})` : ''}`,
+      );
     } finally {
       await screen.dispose();
     }
@@ -770,53 +1039,81 @@ async function doctorCommand(): Promise<number> {
     // Screen recording is what makes /watch work, and its absence is invisible until
     // someone asks for a video of their screen.
     lines.push(
-      `screen video    ${ffmpegAvailable() ? 'ok (ffmpeg + libx264)' : 'MISSING ffmpeg-static (/watch will not work)'}`,
+      `screen video    ${ffmpegAvailable() ? 'funciona' : 'FALTA ffmpeg-static (/watch no funcionará)'}`,
     );
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
     // model is already cached. A cold cache means the first voice note pays a download.
     const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
     lines.push(
-      `voice stt       ${modelCached ? 'model cached' : 'model not downloaded yet (first voice note downloads it)'}`,
+      `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );
-    lines.push(`voice tts       windows SAPI (offline, free)`);
+    lines.push('voice tts       la voz de Windows (sin internet, gratis)');
 
     // Camera and microphone, because "no encuentro ninguna cámara" at the moment the
     // user asks to be filmed is a much worse answer than this line.
     const devices = await listCaptureDevices().catch(() => ({ video: null, audio: null }));
-    lines.push(`camera          ${devices.video ?? 'MISSING (/camera will not work)'}`);
-    lines.push(`microphone      ${devices.audio ?? 'MISSING (/mic, wake word will not work)'}`);
+    lines.push(`camera          ${devices.video ?? 'NO ENCONTRADA (/camera no funcionará)'}`);
     lines.push(
-      `wake word       ${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'} (${
-        (await vaultGet('agent:wake')) === 'off' ? 'off' : 'on'
+      `microphone      ${devices.audio ?? 'NO ENCONTRADO (/mic y la palabra de activación no funcionarán)'}`,
+    );
+    lines.push(
+      `wake word       «${(await vaultGet('agent:wakeWord'))?.trim() || 'asistenta'}» (${
+        (await vaultGet('agent:wake')) === 'off' ? 'apagada' : 'encendida'
       })`,
     );
   } else {
     lines.push(
-      'desktop         off (modo servidor, PA_DESKTOP=off): sin chequeos de escritorio Windows',
+      'desktop         off (modo servidor, PA_DESKTOP=off): no miro pantalla, cámara ni micrófono',
     );
   }
 
   lines.push(...(await sandboxDoctorLines()));
   lines.push(...panelDoctorLines());
+  lines.push(...(await mcpHttpDoctorLines()));
+  lines.push(...mcpResourcesDoctorLines());
 
   const chromiumDir = join(process.env.LOCALAPPDATA ?? '', 'ms-playwright');
   lines.push(
-    `browser         ${existsSync(chromiumDir) ? 'chromium installed' : 'MISSING (run: npx playwright install chromium)'}`,
+    `browser         ${existsSync(chromiumDir) ? 'chromium instalado' : 'FALTA (ejecuta: npx playwright install chromium)'}`,
   );
-  lines.push(`cron            ${loadConfig().cron.length} schedule(s) from PA_CRON`);
+  lines.push(`cron            ${loadConfig().cron.length} tarea(s) programada(s) en PA_CRON`);
   lines.push(
-    `verify actions  ${loadConfig().verifyActions ? 'on (2 extra screenshots per input action)' : 'off'}`,
+    `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
+  );
+  // La hora real del resumen: si el dueño dijo «no me escribas antes de las 10», sale a las 10.
+  lines.push(
+    briefingDoctorLine(
+      process.env,
+      new MemorySnapshot({ dir: join(paths.state, 'snapshot') }).load().split(ENTRY_SEPARATOR),
+    ),
+  );
+  const switchesLine = envSwitchesDoctorLine();
+  if (switchesLine) lines.push(switchesLine);
+  const numbersLine = envNumbersDoctorLine();
+  if (numbersLine) lines.push(numbersLine);
+  const hashLine = envHashDoctorLine();
+  if (hashLine) lines.push(hashLine);
+  const unknownKeysLine = envUnknownKeysDoctorLine();
+  if (unknownKeysLine) lines.push(unknownKeysLine);
+  const envLinesLine = envLinesDoctorLine();
+  if (envLinesLine) lines.push(envLinesLine);
+  lines.push(
+    (await import('./dictado/doctor.js')).dictadoDoctorLine(
+      process.env,
+      process.platform,
+      desktopEnabled(),
+    ),
   );
 
   if (desktopEnabled()) {
     const windows = await listWindows().catch(() => []);
     lines.push(
-      `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'none detected'}`,
+      `open windows    ${windows.length ? windows.map((w) => w.title).join(' | ') : 'ninguna detectada'}`,
     );
   }
 
-  process.stdout.write(`${lines.join('\n')}\n`);
+  process.stdout.write(`${doctorLinesEs(lines).join('\n')}\n`);
   return 0;
 }
 
@@ -828,155 +1125,6 @@ function hasPwsh(): boolean {
 }
 
 /**
- * Where the standing human approvals are kept.
- *
- * Its own file rather than `paths.db`, for the same reason `memory.db` is separate
- * from the transcript: `Store` holds a WAL connection open on `paths.db` for the
- * whole process while the gate opens the file for the length of a single write, and
- * a second writer with no busy timeout gets `SQLITE_BUSY` instead of waiting. That
- * failure is silent and bad: raised inside the approver it converts the user's tap on
- * "Siempre" into a refusal, and raised in the gate constructor it throws while a
- * conversation is being created. A file nothing else writes to has neither problem.
- */
-export function approvalsDbPath(stateDir: string = paths.state): string {
-  return join(stateDir, 'approvals.db');
-}
-
-export interface DaemonGateOptions {
-  /** The conversation these approvals belong to: `chatKey#thread`. */
-  threadKey: string;
-  /**
-   * File the `always` scopes are written to and read back from. Required rather than
-   * optional: forgetting it is precisely the bug this wiring exists to fix, and it is
-   * invisible from the outside - the daemon keeps asking forever and looks healthy.
-   */
-  dbPath: string;
-  /** Vault opt-in (`agent:fullControl`): unattended, except money and credentials. */
-  fullControl?: boolean;
-  /**
-   * Publish the question and wait for the human.
-   *
-   * The answer carries the scope, so the choice is applied here, where it arrives:
-   * `setScope` writes to disk before the tool call it just authorised even returns,
-   * and the next call of the same tool is already covered.
-   */
-  ask: (
-    threadKey: string,
-    tool: string,
-    reason: string,
-    question?: string,
-  ) => Promise<ApprovalChoice>;
-  /**
-   * Told while a human is being asked, because the idle watchdog has to know that
-   * waiting for a person is not a stall. Optional so callers without a watchdog can
-   * ignore it.
-   */
-  onAwaiting?: (waiting: boolean) => void;
-}
-
-/**
- * The gate the daemon arms for a conversation.
- *
- * Extracted from the daemon's closure so the whole policy - the allow list, the
- * protected paths, and above all the file the standing grants live in - can be
- * exercised without a Telegram token and a desktop. The wiring is the part that
- * breaks; the gate itself was fine.
- *
- * Approval scope has two widths, and the difference is the whole point of this file.
- * `session` and `once` die with the turn (`clearSession` at the end of every turn),
- * because approval scope is one task and never the next one. `always` is the user's
- * standing decision about a tool, so it is written to `dbPath` keyed by tool alone:
- * global, and read back by every conversation in every chat on the next run. Keying it
- * per conversation instead would be indistinguishable to the user from not persisting
- * it at all - the next message arrives in a new thread and asks again - and it would
- * silently widen into a global grant the moment two threads shared a session id.
- *
- * `always` is never consulted for money or credentials; that exclusion lives in
- * `Gate.check` and is not this file's to weaken. The same goes for the purchase charge:
- * `allowUntilPayment` lets a purchase reach its payment screen unattended and stops
- * there, because the one thing a standing grant must never be is "always pays".
- */
-export function createDaemonGate(options: DaemonGateOptions): Gate {
-  // The approver closes over `gate`, which is the line being executed here, so the
-  // reference is live before any tool call can reach it. An approver cannot run before
-  // the agent that owns this gate exists, so a holder indirection would be noise.
-  const gate = new Gate({
-    // «Siempre» vale solo en el chat donde se dio (no en un grupo ni en otro chat).
-    approvalChat: approvalChatOf(options.threadKey),
-    // The whole read-only toolset rather than a hand-kept list, so a tool added on main
-    // is usable from a thread without editing this line.
-    allow: THREAD_ALLOW_TOOLS,
-    allowActions: [
-      'computer:screenshot',
-      'computer:move',
-      // Navigating and operating a page does not ask: the gate still asks first for
-      // money, credential fields and sending/deleting/booking elements, and exec_js
-      // (arbitrary code) is not in the list.
-      ...BROWSER_FREE_ACTIONS,
-      // Playing audio the user already sent, and listing what is stored, are the
-      // two media actions the prompt promises free ("needs no permission"). The
-      // camera, the microphone and screen recording still ask, every time.
-      'media:play',
-      'media:list_audio',
-    ],
-    // Autonomous up to the last click. A purchase is a chain of ordinary browsing
-    // actions, and asking about each of them is what stopped the Renfe flow before it
-    // bought anything. The stage of a call is read from `checkoutStageOf`, a five-row
-    // table in the tool itself, and the rules that survive this flag are in
-    // permissions.ts: money, credentials, the deny list and `confirm`, which always
-    // asks.
-    allowUntilPayment: true,
-    stageOf: checkoutStageOf,
-    fullControl: options.fullControl ?? false,
-    protectedPaths: protectedPaths(),
-    secretPaths: secretStatePaths(),
-    maxAmountCents: 30_000,
-    grantWindowMs: 90_000,
-    // The load-bearing line. Without it every "Siempre" dies with the process and an
-    // always-on daemon re-asks for exactly what it was told never to ask again.
-    dbPath: options.dbPath,
-    // Approvals travel back over Telegram as inline buttons, and the idle watchdog is
-    // paused while one is parked. The buttons also carry the scope: "siempre" must
-    // mean always, not once per task.
-    approver: async (call, reason) => {
-      options.onAwaiting?.(true);
-      try {
-        const approval = formatApproval(call, reason);
-        if (!approval.complete) {
-          // Fail-closed: si la accion no cabe entera en la pregunta se deniega,
-          // en vez de dejar aprobar a ciegas algo que no se ha mostrado entero.
-          log.error('approval denied: action not fully displayable', {
-            tool: call.tool,
-            questionChars: approval.question.length,
-          });
-          return false;
-        }
-        const choice = await options.ask(options.threadKey, call.tool, reason, approval.question);
-        if (choice.approved && choice.scope !== 'once') {
-          try {
-            gate.setScope(options.threadKey, approvalScopeKey(call), choice.scope);
-          } catch (err) {
-            // A grant that could not be written is a nuisance; losing the call the
-            // user just approved because of it would be a bug. Carry on, and say so:
-            // the next run will ask again rather than pretend the grant survived.
-            log.error('approval scope not saved', {
-              tool: call.tool,
-              scope: choice.scope,
-              dbPath: options.dbPath,
-              ...redact({ err }),
-            });
-          }
-        }
-        return choice.approved;
-      } finally {
-        options.onAwaiting?.(false);
-      }
-    },
-  });
-  return gate;
-}
-
-/**
  * The vertical slice: one agent, console input, gate armed, tools registered.
  * Everything else (channels, scheduler) plugs in behind this same shape.
  */
@@ -985,7 +1133,7 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   const config = loadConfig();
 
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
@@ -1104,7 +1252,7 @@ async function runCommand(prompt: string): Promise<number> {
   ensureDirs();
   const config = loadConfig();
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
@@ -1333,14 +1481,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const desktop = desktopEnabled();
   if (!desktop) log.info('modo servidor: herramientas de escritorio Windows desactivadas');
   if (!vaultExists()) {
-    process.stderr.write('no vault yet. run: pa vault init\n');
+    process.stderr.write(`${missingPieceMessage('vault')}\n`);
     return 1;
   }
   await unlock();
 
   const token = await vaultGet('telegram:botToken');
   if (!token) {
-    process.stderr.write('no telegram token. run: pa vault set telegram:botToken <token>\n');
+    process.stderr.write(`${missingPieceMessage('token')}\n`);
     return 1;
   }
 
@@ -1349,15 +1497,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n > 0);
   if (!allowed?.length) {
-    process.stderr.write('no allowed users. run: pa vault set telegram:allowedUserIds <id1,id2>\n');
+    process.stderr.write(`${missingPieceMessage('owner')}\n`);
     return 1;
   }
 
   // Resolve credentials before announcing readiness or creating a thread.
   // Provider construction does not issue a billable model request.
+  let providerOk = false;
   try {
     await createProviderHandle(config);
-    if (process.env.PA_QA_CHANNEL !== '1') await checkTelegramToken(token);
+    providerOk = true;
+    if (process.env.PA_QA_CHANNEL !== '1')
+      await checkTelegramToken(token, fetch, { delaysMs: SERVE_TELEGRAM_RETRY_DELAYS_MS });
   } catch (error) {
     const message =
       (error instanceof Error && error.message.startsWith('Telegram')) ||
@@ -1365,6 +1516,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ? error.message
         : startupFailureMessage(error);
     process.stderr.write(`${message}\n`);
+    if (!providerOk && process.env.PA_QA_CHANNEL !== '1') {
+      // Telegram sí está, el modelo no: una línea al dueño, una sola vez por problema.
+      const ownerSet = Number((await vaultGet('vigilante:ownerUserId').catch(() => ''))?.trim());
+      await maybeSendBootNotice({
+        statePath: join(paths.state, BOOT_NOTICE_FILE),
+        ownerChatId: resolveOwnerUserId(
+          allowed,
+          Number.isSafeInteger(ownerSet) && ownerSet > 0 ? ownerSet : null,
+        ),
+        facts: { tv: false, computerUse: false, mail: false, problems: ['modelo'] },
+        send: telegramBotSend(token),
+      }).catch(() => undefined);
+    }
     return 1;
   }
 
@@ -1425,13 +1589,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * rebuilding the same context from scattered rows each time.
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  // Las horas en que el dueño dijo que no le escriban («no me escribas antes de las 9»).
+  const ownerQuiet = (): QuietHours => ownerQuietHours(snapshot.load().split(ENTRY_SEPARATOR));
   // S5 (opt-in PA_SEMANTIC_RECALL=1): embeddings locales para recall híbrido.
   const semanticRecall = semanticFromEnv(paths.models);
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
+  const skillRepeats = new RepeatTracker(join(paths.state, 'habilidades-repetidas.json'));
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
   seedBuiltinSkills(skills);
+  seedGeneralSkills(skills);
   const playbooks = new PlaybookStore({ dir: join(paths.state, 'playbooks') });
   const adoptedServices = new ServiceStore({ dir: join(paths.state, 'services') });
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
@@ -1498,6 +1667,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
   // F7: /modelo por conversación, guardado para que sobreviva a un reinicio.
   const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
+  // /ordenador off guardado: el PC sigue sin control tras reiniciar (solo más estricto;
+  // PA_COMPUTER_USE=0 en el .env manda siempre).
+  if (applySavedComputerOff(config, paths.state)) {
+    log.warn(
+      'Computer Use arranca desactivado: /ordenador off guardado (usa /ordenador on para activarlo)',
+    );
+  }
   const altavozPlayer = createAltavozPlayer({
     toPlayable: (bytes, mimeType) => toPlayableAudio(bytes, mimeType),
     playOnPc: async (file, signal) => {
@@ -1510,7 +1686,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         currentWake()?.suppress(WAKE_TAIL_MS);
       }
     },
-    castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+    castToTv: audioTeleEnabled()
+      ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })
+      : undefined,
+    // /stop también para en la tele una nota mandada hace menos de 2 min (y nada más).
+    stopTv: audioTeleEnabled() ? tvStopperFromVault(vaultGet, tvRequest) : undefined,
     remove: (file) => rmSync(file, { force: true }),
     onError: (err) => log.warn('altavoz: no pude soltar la nota de voz', { err: String(err) }),
   });
@@ -1589,7 +1769,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // Approval for a domain goes to the chat that asked for it, through the same
         // inline buttons as any other gated action.
         approve: async (scope, domain, reason) => {
-          const chatId = scope.split('#')[0]?.split(':')[2] ?? '';
+          const chatId = chatIdOf(scope.split('#')[0] ?? '');
           log.info('browser domain approval requested', { domain, chatId });
           // "Siempre" is the right answer for a site the user has already named: the
           // domain is remembered across restarts, so the next visit is silent.
@@ -1611,26 +1791,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threads = new Map<string, Thread>();
   const eraseConfirm = new EraseConfirm();
+  const preguntas = new PreguntasPendientes();
   /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
   // --- Integraciones opcionales del daemon -----------------------------------
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
   // entran en todos los hilos. Un servidor caído se salta y no impide arrancar.
-  const mcpServers = parseMcpServers(process.env.PA_MCP_SERVERS);
-  const mcpTools = mcpServers.length
-    ? await createMcpTools(mcpServers).catch((err: unknown) => {
-        log.warn('mcp: no se pudieron arrancar los servidores', { err });
-        return [] as AgentTool[];
-      })
-    : [];
+  // PA_REA=1 añade REA (src/mcp/rea.ts): solo lectura, solo el dueño, pide permiso cada vez.
+  const mcpServers = withRea(parseMcpServers(process.env.PA_MCP_SERVERS));
+  // Entradas con `url` (MCP por HTTP): solo con PA_MCP_HTTP=1.
+  const mcpHttpServers = mcpHttpEnabled() ? parseMcpHttpServers(process.env.PA_MCP_SERVERS) : [];
+  const mcpTools =
+    mcpServers.length || mcpHttpServers.length
+      ? await createMcpTools(mcpServers, mcpHttpServers).catch((err: unknown) => {
+          log.warn('mcp: no se pudieron arrancar los servidores', { err });
+          return [] as AgentTool[];
+        })
+      : [];
   if (mcpTools.length)
-    log.info('mcp: tools listas', { servers: mcpServers.length, tools: mcpTools.length });
+    log.info('mcp: tools listas', {
+      servers: mcpServers.length + mcpHttpServers.length,
+      tools: mcpTools.length,
+    });
   const panelGoals = createOwnerGoalsReader();
-  // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
-  if (process.env.PA_WEB_PORT) {
-    const webToken = process.env.PA_WEB_TOKEN;
-    if (!webToken) log.warn('PA_WEB_PORT sin PA_WEB_TOKEN: panel web no arrancado');
-    else {
-      void startWebUi(
+  // Panel web local (PWA), encendido por defecto en 127.0.0.1:8787 (PA_WEB_PORT=0 lo
+  // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
+  const panelPlan = panelStartPlan(process.env, () => ensurePanelToken(paths.state));
+  let panelStarted: Promise<string | PanelListenProblem> | undefined;
+  if (panelPlan.kind !== 'off') {
+    if (panelPlan.kind === 'problem') {
+      log.warn(panelPlan.message);
+      process.stderr.write(`${panelPlan.message}\n`);
+    } else {
+      const webToken = panelPlan.token;
+      panelStarted = startWebUi(
         {
           token: webToken,
           goals: () => panelGoals.read(),
@@ -1648,6 +1841,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               return null;
             }
           },
+          // Tarjeta Tareas: el tablero de la semana, solo lectura y solo lo del dueño.
+          tareas: () =>
+            panelTareas(
+              new TaskBoard(join(paths.state, 'tareas.json')),
+              vigilanteOwnerId ?? undefined,
+            ),
+          // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
+          repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           status: () => ({
             model: config.model,
             provider: config.provider,
@@ -1710,7 +1911,52 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                   mark: t.agent.messages.length,
                   compactions: t.agent.compactions,
                 }),
-              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out }),
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
+              // /aprendido y /olvida <n> como en Telegram (borrar sigue siendo escrito).
+              command: (t, said) => learnedRulesCommand(memory, memoryScopesFor(t.key).read, said),
+            });
+          },
+          // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
+          // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram
+          // (el panel no tiene las fotos): se dice así, no «no hay nada que repetir».
+          retry: async () => {
+            const thread = await getOrCreateThread(
+              `telegram:dm:${String(vigilanteOwnerId ?? 'local')}`,
+              'main',
+              'principal',
+            );
+            const last = lastTurns.get(thread.key);
+            if (!last) return null;
+            if (last.images?.length) return 'con-fotos';
+            const base = inboundFor(thread);
+            const panelInbound: Inbound = {
+              channel: base.channel,
+              account: base.account,
+              chatId: base.chatId,
+              threadId: base.threadId,
+              userId: base.userId,
+              displayName: base.displayName,
+              isGroup: base.isGroup,
+              text: last.text,
+              authorised: true,
+              messageId: `${thread.key}#panel`,
+              receivedAt: new Date().toISOString(),
+            };
+            return runPanelChat(thread, last.text, {
+              remember: (t) => {
+                rewindLastTurn(last, {
+                  agent: t.agent,
+                  messages: t.agent.messages,
+                  compactions: t.agent.compactions,
+                });
+                lastTurns.remember(t.key, {
+                  ...last,
+                  agent: t.agent,
+                  mark: t.agent.messages.length,
+                  compactions: t.agent.compactions,
+                });
+              },
+              runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
             });
           },
           // Aprobaciones pendientes del broker (Telegram y panel ven la misma).
@@ -1719,15 +1965,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             approvals.resolve(id, decision),
         },
         {
-          port: Number(process.env.PA_WEB_PORT),
+          port: panelPlan.port,
           allowedHosts: parseAllowedHosts(process.env.PA_WEB_ALLOWED_HOSTS),
         },
       )
-        .then((ui) => log.info('panel web listo', { url: ui.url }))
-        .catch((err: unknown) => log.warn('panel web no arrancó', { err }));
+        .then((ui) => {
+          log.info('panel web listo', { url: ui.url });
+          return ui.url;
+        })
+        .catch((err: unknown) => {
+          // Puerto ocupado o reservado por Windows: dicho en castellano en la consola
+          // y, desde el aviso de arranque, por Telegram una vez.
+          const problem = panelListenProblem(err, panelPlan.port);
+          log.warn('panel web no arrancó', { err });
+          process.stderr.write(`${problem.message}\n`);
+          return problem;
+        });
     }
   }
-  const messageThread = new Map<string, string>();
+  // chatKey:messageId -> thread key; bounded so it does not grow all day (robustez-12).
+  const messageThread = new BoundedMap<string, string>(5000);
 
   /**
    * Retire conversations nobody has used for a while.
@@ -1745,27 +2002,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    */
   const MAX_THREADS = 20;
   const evictIdleThreads = (): void => {
-    if (threads.size <= MAX_THREADS) return;
-    const idle = [...threads.values()]
-      .filter((t) => !t.active && t.name !== activeTopic.get(t.chatKey))
-      .sort((a, b) => a.createdAt - b.createdAt);
-    while (threads.size > MAX_THREADS && idle.length) {
-      const victim = idle.shift();
-      if (!victim) break;
-      threads.delete(victim.key);
-      // The browser profile stays on disk on purpose; only the live Chromium goes.
-      const service = browsers.get(victim.key);
-      if (service) {
-        void service.closeAll().catch(() => {});
-        browsers.delete(victim.key);
-      }
-      log.info('thread evicted', { thread: victim.key, remaining: threads.size });
-    }
+    evictThreads({
+      threads,
+      max: MAX_THREADS,
+      selected: (chatKey_) => activeTopic.get(chatKey_),
+      // Per-thread state outside the Thread object goes with it (robustez-12).
+      perThread: [threadInbound, factorySyncs, { delete: (k: string) => lastTurns.forget(k) }],
+      onEvict: (victim) => {
+        // The browser profile stays on disk on purpose; only the live Chromium goes.
+        const service = browsers.get(victim.key);
+        if (service) {
+          void service.closeAll().catch(() => {});
+          browsers.delete(victim.key);
+        }
+        log.info('thread evicted', { thread: victim.key, remaining: threads.size });
+      },
+    });
   };
   /** chatKey -> explicitly selected thread name, set by /topic. */
   const activeTopic = new Map<string, string>();
   /** chatId -> thread currently recording steps for /learn. */
   const learning = new LearnRecorder();
+  // F11 paso 3: `/learn web <url>` (solo con PA_TEACH_DEMO=1).
+  const webDemo = new WebDemoRecorder();
   /** chatId -> whether to answer with a spoken reply. */
   const voiceOn = new Map<string, boolean>();
   /** chatId -> whether to send periodic progress notes. Off = one message at the end. */
@@ -1785,11 +2044,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * from a tool call, where quoting the current turn's message is the right guess.
    */
   const threadInbound = new Map<string, Inbound>();
+  /** thread.key -> salida del turno vivo cuando no es Telegram (el panel); ver thread-context.ts. */
+  const threadOutputs = new ThreadOutputs();
 
   const inboundFor = (thread: Thread): Inbound => {
     const live = threadInbound.get(thread.key);
     if (live) return live;
-    const [channel, account, chatId, threadId] = thread.chatKey.split(':');
+    const { channel, account, chatId, threadId } = parseChatKey(thread.chatKey);
     return {
       channel: channel ?? 'telegram',
       account: account ?? telegram.account,
@@ -1808,6 +2069,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threadTools = (thread: Thread): AgentTool[] => {
     const scope = () => thread.key;
+    const computerGate: ActionGate = (call) =>
+      thread.gate.check(thread.key, { ...call, actor: 'asistenta' });
+    const ctx = threadContext({ key: thread.key, outputs: threadOutputs, gate: computerGate });
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
@@ -1821,14 +2085,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // silently blocks every batch. `sendPhoto` is what lets the model put a
       // capture in the user's chat instead of only in its own context: a
       // screenshot the user cannot see is a screenshot nobody sent.
-      createComputerTool(
+      // Gate y envío de capturas salen del contexto del hilo: en un turno del panel la
+      // captura va al panel (thread-context.ts); en Telegram, igual que siempre.
+      // Computer Use como plugin (src/plugins/computer.ts), mismo sitio en la lista.
+      ...computerPlugin.tools({
         config,
         screen,
-        (call) => thread.gate.check(thread.key, { ...call, actor: 'asistenta' }),
-        async (bytes, opts) => {
-          const chatId = Number(thread.chatKey.split(':')[2]);
+        ctx,
+        channelPhoto: async (bytes, opts) => {
+          const chatId = chatNumberOf(thread.chatKey);
           const threadId = inboundFor(thread).threadId;
-          await telegram.action(thread.chatKey.split(':')[2] ?? '', 'upload_photo');
+          await telegram.action(chatIdOf(thread.chatKey), 'upload_photo');
           return telegram
             .sendPhotoBytes(chatId, bytes, threadId, opts)
             .then(() => true)
@@ -1837,11 +2104,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               return false;
             });
         },
-      ),
+      }),
       createBrowserTool(browserFor(thread.key), scope, (png) =>
-        telegram
-          .sendPhotoBytes(Number(thread.chatKey.split(':')[2]), png, inboundFor(thread).threadId)
-          .then(() => true),
+        ctx.sendPhoto(png, () =>
+          telegram
+            .sendPhotoBytes(chatNumberOf(thread.chatKey), png, inboundFor(thread).threadId)
+            .then(() => true),
+        ),
       ),
       // Buying something, from searching to the payment screen, with one question at
       // the end and no way through it: `confirm` takes no selector and `select` refuses
@@ -1895,6 +2164,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         isFetchable: (url) => isFetchableResolved(url),
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
+      createDeliveriesTool({
+        db: memoryDb,
+        recentMail: async (since) => {
+          const account = await loadMailAccount();
+          return account ? searchMail(account, { since }, 60, 30_000) : null;
+        },
+      }),
+      createWeatherTool(() => weatherConfigFromEnv()),
+      createAccountsTool(),
+      createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
+      createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
         scopeOf: scope,
@@ -1908,7 +2188,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Adopt a third-party service and serve it back privately (tailnet only):
       // proponer is free, instalar is always-ask in the Gate.
       createServiceTool({ services: adoptedServices, servicesDir: join(paths.state, 'services') }),
-      createSkillsTool({ store: skills, semantic: semanticRecall }),
+      createSkillsTool({
+        store: skills,
+        semantic: semanticRecall,
+        repeats: skillRepeats,
+        // Auto-chequeo con lo que hay de verdad (correo, calendario, herramientas).
+        checkEnv: () =>
+          detectSkillEnv({
+            vault: (key) => vaultGet(key),
+            hasLocalCalendar: () => existsSync(join(paths.state, 'calendar', 'local.ics')),
+            toolNames: async () => [
+              ...toolsForMode(all, desktop).map((t) => t.name),
+              ...(await loadInstalledFactoryTools()).map((t) => t.name),
+            ],
+          }),
+      }),
       // The tool factory: build -> subprocess test -> install with approval.
       // Installed tools are loaded right after agent creation (below), and an
       // install mid-chat lands on the next message via this onChange.
@@ -1941,11 +2235,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ? readLocalCalendar(join(paths.state, 'calendar', 'local.ics'))
             : Promise.resolve(undefined),
         getUrl: () => vaultGet('calendar:icsUrl'),
-        fetchText: async (url) => {
-          const res = await fetch(url, { redirect: 'follow' });
-          if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-          return res.text();
-        },
+        fetchText: (url) => fetchIcsText(url),
+      }),
+      // «correo»: el buzón de Gmail, solo lectura y solo en el chat privado del dueño.
+      createMailTool({
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        account: () => loadReadMailAccount(),
+        search: (account, query, limit) => searchInbox(account, query, limit),
+        read: (account, ref) => readReplyThread(account, ref),
+        // Enviar: la Gate enseña el borrador exacto y pregunta cada vez.
+        sendAccount: () => loadSendMailAccount(),
+        send: (account, req) => sendMail(account, req),
       }),
       // The machine itself: volume, mute, lock, and how it is doing.
       createSystemTool(),
@@ -1959,15 +2259,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // tienen el libro. Perezoso: sin setup, la tool lo dice y sigue.
         secret: new SecretLibrary(),
         sendDocument: (bytes, filename, caption) =>
-          telegram
-            .sendDocumentBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              filename,
-              caption,
-              inboundFor(thread).threadId,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: filename }, () =>
+            telegram
+              .sendDocumentBytes(
+                chatNumberOf(thread.chatKey),
+                bytes,
+                filename,
+                caption,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         saveKindleAddress: (address) => vaultSet(KINDLE_VAULT_KEY, address),
         kindle: {
           getAddress: async () => (await vaultGet(KINDLE_VAULT_KEY)) ?? null,
@@ -1976,7 +2278,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           requireApproval: async (_action, summary) => {
             const choice = await telegram.offerApproval(
               randomUUID(),
-              thread.chatKey.split(':')[2] ?? '',
+              chatIdOf(thread.chatKey),
               `¿${summary}?`,
             );
             return choice.approved;
@@ -1993,19 +2295,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             detail: r.ok ? r.kind : r.reason,
           }),
         sendVideo: (bytes, seconds, label) =>
-          telegram
-            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
-            .then(() => true),
+          ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
+            telegram
+              .sendVideo(
+                chatNumberOf(thread.chatKey),
+                bytes,
+                seconds,
+                label,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         sendDocument: (bytes, filename, caption) =>
-          telegram
-            .sendDocumentBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              filename,
-              caption,
-              inboundFor(thread).threadId,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: filename }, () =>
+            telegram
+              .sendDocumentBytes(
+                chatNumberOf(thread.chatKey),
+                bytes,
+                filename,
+                caption,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
         options: {
           cookiesFromBrowser: config.downloadCookiesBrowser,
@@ -2020,33 +2332,46 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         chatKey: thread.key,
         recall,
         downloadAudio: (fileId, limitBytes) => telegram.downloadFile(fileId, limitBytes),
-        chatId: thread.chatKey.split(':')[2] ?? '',
+        chatId: chatIdOf(thread.chatKey),
         maxEdge: config.screenshotMaxEdge,
         // Telegram's photo sender wants both dimensions together, and a caller that
         // knows neither has nothing useful to say about the size anyway.
-        sendPhoto: (bytes, opts) => {
-          const chatId = Number(thread.chatKey.split(':')[2]);
-          const threadId = inboundFor(thread).threadId;
-          return opts?.width !== undefined && opts.height !== undefined
-            ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
-                width: opts.width,
-                height: opts.height,
-              })
-            : telegram.sendPhotoBytes(chatId, bytes, threadId);
-        },
+        sendPhoto: (bytes, opts) =>
+          ctx
+            .sendPhoto(bytes, () => {
+              const chatId = chatNumberOf(thread.chatKey);
+              const threadId = inboundFor(thread).threadId;
+              return opts?.width !== undefined && opts.height !== undefined
+                ? telegram.sendPhotoBytes(chatId, bytes, threadId, {
+                    width: opts.width,
+                    height: opts.height,
+                  })
+                : telegram.sendPhotoBytes(chatId, bytes, threadId);
+            })
+            .then((sent) => (sent === true ? 'panel' : sent)),
         sendVideo: (bytes, seconds, label) =>
-          telegram
-            .sendVideo(Number(thread.chatKey.split(':')[2]), bytes, seconds, label)
-            .then(() => true),
+          ctx.sendFile({ bytes, name: `${label || 'video'}.mp4` }, () =>
+            telegram
+              .sendVideo(
+                chatNumberOf(thread.chatKey),
+                bytes,
+                seconds,
+                label,
+                inboundFor(thread).threadId,
+              )
+              .then(() => true),
+          ),
         sendVoice: (bytes, seconds) =>
-          telegram
-            .sendVoiceBytes(
-              Number(thread.chatKey.split(':')[2]),
-              bytes,
-              inboundFor(thread).threadId,
-              seconds,
-            )
-            .then(() => true),
+          ctx.sendFile({ bytes, name: 'nota-de-voz.ogg' }, () =>
+            telegram
+              .sendVoiceBytes(
+                chatNumberOf(thread.chatKey),
+                bytes,
+                inboundFor(thread).threadId,
+                seconds,
+              )
+              .then(() => true),
+          ),
         progress: (what) => telegram.action(inboundFor(thread).chatId, what),
         live: {
           start: (source, intervalSeconds) =>
@@ -2057,11 +2382,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         // The speakers are the microphone's other half. Quieten the listener before
         // the sound comes out or the agent answers its own playback.
         // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
-        castToTv: audioTeleEnabled() ? tvCasterFromVault(vaultGet, tvRequest) : undefined,
+        // Un mensaje de Telegram viejo tampoco manda audio a la tele (src/tv/stale-order.ts).
+        castToTv: audioTeleEnabled()
+          ? staleGuardedCaster(
+              tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey }),
+              () => staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
+              (file) => rmSync(file, { force: true }),
+            )
+          : undefined,
         // Si la tele aceptó pero nunca bajó el fichero: aviso del firewall al chat.
         notifyChat: (text) => {
           void say(inboundFor(thread), text);
         },
+        // /stop en este chat para también lo que «reprodúcelo en la tele» mandó (<2 min).
+        onTeleCast: (stop, close) => altavozPlayer.noteTele(thread.chatKey, stop, close),
         beforePlayback: () => currentWake()?.suppress(PLAYBACK_SUPPRESS_MS),
         afterPlayback: () => currentWake()?.suppress(WAKE_TAIL_MS),
       }),
@@ -2072,10 +2406,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // en paralelo con una captura del escritorio. El estado de la ultima mirada
     // se guarda en la tabla kv de la Store, para que el agente sepa que habia en
     // pantalla sin volver a despertar la tele.
-    all.push(...tvPlugin.tools({ store }));
+    // Un mensaje de Telegram viejo (Asistenta apagada) no mueve la tele: src/tv/stale-order.ts.
+    all.push(
+      ...tvPlugin.tools({
+        store,
+        staleOrder: () =>
+          staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
+      }),
+    );
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
-    if (mcpTools.length) all.push(...mcpTools);
+    // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
+    all.push(...ocrLocalPlugin.tools({}));
+    if (mcpTools.length)
+      all.push(...guardReaTools(mcpTools, () => isOwnerDm(inboundFor(thread), vigilanteOwnerId)));
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
@@ -2134,25 +2478,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
     });
 
-  /**
-   * The human confirmation a purchase stops for.
-   *
-   * Two layers ask about the charge on purpose and neither is the other: the gate asks
-   * because money always asks, and the tool asks because it is the only layer that
-   * knows what is being bought and for how much. A gate that can be misconfigured is
-   * not a reason to leave the charge to chance.
-   *
-   * The consequence is that the same purchase would put two identical questions in the
-   * chat, and a prompt you answer twice by reflex is a prompt you stop reading. So the
-   * answer is remembered for the turn, keyed by thread and by the exact question: the
-   * second layer reuses the first answer rather than asking again. Keyed by question and
-   * not by tool, so two different purchases in one turn still ask twice - which is the
-   * case where a second question is worth the interruption.
-   */
-  const purchaseAnswers = new Map<string, boolean>();
+  // La confirmación de una compra (una pregunta por compra y turno): src/daemon/purchase-approvals.ts.
   /** Telegram question with no scope buttons: "always pay" is not a thing. */
   const askOncePerTurn = async (thread: Thread, summary: string): Promise<boolean> => {
-    const chatId = thread.chatKey.split(':')[2] ?? '';
+    const chatId = chatIdOf(thread.chatKey);
     thread.agent.setAwaitingApproval(true);
     try {
       const choice = await telegram.offerApproval(randomUUID(), chatId, summary);
@@ -2161,15 +2490,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       thread.agent.setAwaitingApproval(false);
     }
   };
-  const askCheckout = async (thread: Thread, action: string, summary: string): Promise<boolean> => {
-    const key = `${thread.key}:${action}:${summary}`;
-    const remembered = purchaseAnswers.get(key);
-    if (remembered !== undefined) return remembered;
-    log.info('approval requested', { thread: thread.key, tool: action });
-    const approved = await askOncePerTurn(thread, summary);
-    purchaseAnswers.set(key, approved);
-    return approved;
-  };
+  const purchaseApprovals = createPurchaseApprovals();
+  const askCheckout = (thread: Thread, action: string, summary: string): Promise<boolean> =>
+    purchaseApprovals.ask(thread.key, action, summary, (q) => askOncePerTurn(thread, q));
 
   const getOrCreateThread = async (
     chatKey_: string,
@@ -2185,7 +2508,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return existing;
     }
     const holder: { agent: PersonalAgent | null } = { agent: null };
-    const gate = gateFor(key, chatKey_.split(':')[2] ?? '', holder);
+    const gate = gateFor(key, chatIdOf(chatKey_), holder);
     const thread: Thread = {
       key,
       chatKey: chatKey_,
@@ -2282,7 +2605,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       splitGoalScope,
       getOrCreateThread,
       defaultThread,
-      looksLikeFollowUp,
+      // «pásame una captura cuando lo tengas» sigue la tarea en marcha (captura-tarea.ts).
+      looksLikeFollowUp: (t: string) => looksLikeFollowUp(t) || sigueLaTareaEnCurso(t),
     });
 
   const say = async (
@@ -2398,6 +2722,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  // La autoactualización solo reinicia con este fichero diciendo «libre».
+  trackBusyIn(paths.state);
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {
@@ -2502,8 +2828,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const runRoutineTask = createRoutineTask(threadTickDeps);
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
-  const sendToChat = (chatId: string, text: string) =>
-    telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+  const sendToChat = (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => telegram.send({ channel: 'telegram', account: telegram.account, chatId, text, buttons });
+  // Botones de los avisos: en disco para que sigan sirviendo tras reiniciar (auto-update).
+  const firedReminders = new FiredReminders(
+    Date.now,
+    200,
+    join(paths.state, 'botones', 'recordatorios.json'),
+  );
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
   const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
   const runRoutineFire = createRoutineFire({
@@ -2514,6 +2849,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     tickGoal: (name) => goalRunner.tickByRoutineName(name),
     runTask: runRoutineTask,
     send: sendToChat,
+    reminderButtons: (scope, text) => reminderButtons(firedReminders.remember(scope, text)),
     delivery: routineDelivery,
     outputDir: join(paths.state, 'salidas'),
     sync: () => routineRunner.sync(),
@@ -2521,15 +2857,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
-  // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 lo desactiva.
+  // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 (o no/false/off) lo desactiva.
   const routineRunner = new RoutineRunner({
     store,
     run: runRoutineFire,
-    catchUp: process.env.PA_ROUTINE_CATCHUP !== '0',
+    catchUp: envSwitchOn('PA_ROUTINE_CATCHUP'),
   });
+  // Reminders dropped while there was no connection: told once when sending works again.
+  setInterval(
+    () => void announceDropped(join(paths.state, 'dropped-reminders.jsonl'), sendToChat),
+    DROPPED_NOTICE_EVERY_MS,
+  ).unref();
   // Overdue one-time reminders are delivered and deleted BEFORE the scheduler starts,
   // so a job due this minute cannot also fire fresh (see deliverMissedThenStart).
-  void deliverMissedThenStart({ store, send: sendToChat, start: () => routineRunner.start() });
+  void deliverMissedThenStart({
+    store,
+    send: sendToChat,
+    reminderButtons: (scope, text) => reminderButtons(firedReminders.remember(scope, text)),
+    start: () => routineRunner.start(),
+  });
 
   // Disparadores por evento (token-cero): un archivo nuevo, un aviso de precio
   // o un mensaje disparan rutinas ya guardadas. El reparto es el MISMO de las
@@ -2610,7 +2956,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const deliveries = messages.map((m) => ({
             source: 'mail' as const,
             id: `${scope}:${m.id}`,
-            text: `${m.subject}\n${m.text}`,
+            text: mailAttentionText(m),
             at: m.at,
           }));
           await attention.offer(deliveries);
@@ -2678,7 +3024,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const vigilante = startVigilanteLoop(
     {
       db: memoryDb,
-      quiet: DEFAULT_QUIET_HOURS,
+      get quiet() {
+        return ownerQuiet();
+      },
       screenScan,
       downloadsHealth: () => downloadsCtl.apply(),
       downloadsSuppressed: () => downloadsCtl.suppressed(),
@@ -2689,16 +3037,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             const calendarSnapshot = await loadCalendar({
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
-              fetchText: async (url) => {
-                // Timeout duro: un servidor de calendario colgado no puede eternizar
-                // el barrido ni el drain del apagado.
-                const res = await fetch(url, {
-                  redirect: 'follow',
-                  signal: AbortSignal.timeout(15_000),
-                });
-                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-                return res.text();
-              },
+              fetchText: (url) => fetchIcsText(url),
               // Los mismos 35 días que pide la agenda de abajo (sin esto, el calendario
               // solo se leía 7 días y las caducidades a 30 días nunca llegaban de él).
               days: calendarDaysFor(VIGILANTE_AGENDA_DAYS),
@@ -2830,7 +3169,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'Uso: /correo estado, /correo lista o /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
+        'Para contestar un correo, responde a su aviso y escribe lo que quieres decir. Si quieres ver cómo va el correo o los últimos que han llegado, dímelo.',
         { quote: true },
       );
       return;
@@ -2863,11 +3202,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdOcr = async (inbound: Inbound, args: string): Promise<void> => {
     const mode = parseOcrMode(args);
     if (!mode) {
-      await say(
-        inbound,
-        'Uso: manda un PDF o una foto con el pie «/ocr» (PDF con texto), «/ocr md» (Markdown) o «/ocr todo» (los dos).',
-        { quote: true },
-      );
+      await say(inbound, 'Mándame el PDF o la foto y te saco el texto.', { quote: true });
       return;
     }
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -2911,7 +3246,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       const result = await runOcrJob(
         Buffer.from(bytes),
-        { name: inbound.documentName },
+        { name: inbound.documentName, progressDir: join(paths.state, 'ocr-progreso') },
         mode,
         windowsDeps,
       );
@@ -2935,8 +3270,52 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** La respuesta «precio | iPhone 16, Pixel 9» completa la investigación amplia. */
+  const askWideArgs = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'investiga', {
+      prefix: 'amplio ',
+      accepts: (t) => t.includes('|'),
+    });
+  /** «enciéndelo» tras «apagado (es lo normal)» enciende esa parte del ojo. */
+  const askOjoOn = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOnAnswer(t) ? `${what} on` : null),
+    });
+  /** «apágalo» tras «encendido… Si quieres que lo apague» apaga esa parte del ojo. */
+  const askOjoOff = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? `${what} off` : null),
+    });
+  /** Descargas encendido sin carpeta: «D:\\Descargas» (o «apágalo») tras la pregunta. */
+  const askDownloadsDir = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? 'descargas off' : downloadsDirAnswer(t)),
+    });
+  /** Guarda la carpeta de Descargas que dice el dueño (solo si existe) y vuelve a vigilar. */
+  const setDownloadsDirByWords = async (inbound: Inbound, raw: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const dir = resolveDownloadsDir({ override: raw });
+    if (!dir) {
+      askDownloadsDir(inbound);
+      await say(inbound, downloadsDirMissingText(raw), { quote: true });
+      return;
+    }
+    await vaultSet('ojo:downloadsDir', dir);
+    const st = getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    await say(inbound, downloadsDirSavedText(dir, st), { quote: true });
+  };
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
+    const dirM = /^descargas\s+carpeta\s+(.+)$/i.exec(args.trim());
+    if (dirM?.[1]) {
+      await setDownloadsDirByWords(inbound, dirM[1]);
+      return;
+    }
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
     if (dm) {
       if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -2949,15 +3328,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (want === 'on' || want === 'off') setDownloadsEnabled(memoryDb, want === 'on');
       const st = await downloadsCtl.apply();
       const on = getDownloadsEnabled(memoryDb);
+      if (!on) askOjoOn(inbound, 'descargas');
+      if (on) askOjoOff(inbound, 'descargas');
       await say(
         inbound,
         on
           ? st.running
-            ? 'Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. /ojo descargas off lo apaga.'
-            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. Puedes fijar la carpeta en la bóveda con ojo:downloadsDir.`
-          : 'Descargas: apagado (es lo normal; /ojo descargas on lo enciende).',
+            ? `Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. ${OJO_OFF_HINT}`
+            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. ${DOWNLOADS_DIR_ASK}`
+          : DOWNLOADS_OFF_TEXT,
         { quote: true },
       );
+      if (on && !st.running) askDownloadsDir(inbound);
       return;
     }
     const pm = /^pantalla(?:\s+(on|off|estado))?$/.exec(arg);
@@ -2970,11 +3352,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const want = pm[1];
       if (want === 'on' || want === 'off') setScreenEnabled(memoryDb, want === 'on');
+      if (!getScreenEnabled(memoryDb)) askOjoOn(inbound, 'pantalla');
+      if (getScreenEnabled(memoryDb)) askOjoOff(inbound, 'pantalla');
       await say(
         inbound,
         getScreenEnabled(memoryDb)
-          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} /ojo pantalla off lo apaga.`
-          : 'Pantalla: apagado (es lo normal; /ojo pantalla on lo enciende).',
+          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} ${OJO_OFF_HINT}`
+          : SCREEN_OFF_TEXT,
         { quote: true },
       );
       return;
@@ -2982,27 +3366,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (arg === 'on' || arg === 'off') {
       setOjoEnabled(memoryDb, arg === 'on');
     } else if (arg && arg !== 'estado') {
-      await say(
-        inbound,
-        'Uso: /ojo on, /ojo off, /ojo (estado), /ojo descargas on|off o /ojo pantalla on|off.',
-        {
-          quote: true,
-        },
-      );
+      await say(inbound, 'No te he pillado. ¿Lo enciendo, lo apago o te digo cómo está?', {
+        quote: true,
+      });
       return;
     }
-    const quiet = DEFAULT_QUIET_HOURS;
+    const quiet = ownerQuiet();
     const ownerView = isOwnerDm(inbound, vigilanteOwnerId);
     const dst = ownerView && getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
     const screenLine = !ownerView
       ? null
       : getScreenEnabled(memoryDb)
         ? `Pantalla: encendido. ${screenStatusText(lastScreenScan)}`
-        : 'Pantalla: apagado (/ojo pantalla on lo enciende).';
+        : 'Pantalla: apagado (es lo normal).';
     const downloadsLine = !ownerView
       ? null
       : !dst
-        ? 'Descargas: apagado (/ojo descargas on lo enciende).'
+        ? 'Descargas: apagado (es lo normal).'
         : dst.running
           ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
           : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
@@ -3013,7 +3393,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         downloadsLine,
         screenLine,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas y la lectura de pantalla solo si lo pides: /ojo descargas on, /ojo pantalla on.',
-        `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
+        `Cada aviso lleva su número entre corchetes: si alguno no te interesa, dime «descarta el» y su número (por ejemplo «descarta el 3») y no te lo vuelvo a recordar; tras dos parecidos te propongo dejar de avisarte de esa clase. Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ]
         .filter((l): l is string => l !== null)
         .join('\n'),
@@ -3031,11 +3411,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^#?(\d{1,9})$/.exec(args.trim());
     if (!m) {
-      await say(
-        inbound,
-        'Uso: /ignora <número del aviso>, el que sale entre corchetes [#n]. /ignorados lista las reglas.',
-        { quote: true },
-      );
+      await say(inbound, '¿Qué aviso descarto? Dime el número que sale entre corchetes.', {
+        quote: true,
+      });
       return;
     }
     const res = dismissNotice(memoryDb, Number(m[1]), Date.now());
@@ -3057,8 +3435,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const r = res.proposal;
       lines.push(
         '',
-        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
+        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime «sí».`,
       );
+      preguntas.ask(chatKey(inbound), 'ignorados', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `activar ${r.id}` : null),
+      });
     }
     const stepped = recordDismissal(memoryDb, Date.now());
     if (stepped) {
@@ -3080,9 +3461,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const want = parsePace(args);
     if (want === null) {
-      await say(inbound, 'Uso: /avisos (estado), /avisos menos, /avisos minimo o /avisos normal.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres menos avisos, solo los importantes o volver a lo normal?',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (want !== 'estado') setPace(memoryDb, want);
@@ -3099,9 +3484,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^(activar|borrar)\s+R?(\d{1,9})$/i.exec(args.trim());
     if (args.trim() && !m) {
-      await say(inbound, 'Uso: /ignorados, /ignorados activar <id> o /ignorados borrar <id>.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres ver las reglas, borrar una o volver a activarla? Dime cuál por su número.',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (m) {
@@ -3115,7 +3504,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return;
       }
     }
-    await say(inbound, formatRules(listRules(memoryDb)), { quote: true });
+    const rules = listRules(memoryDb);
+    if (rules.length) preguntas.ask(chatKey(inbound), 'ignorados', { answer: rulesAnswer });
+    await say(inbound, formatRules(rules), { quote: true });
+  };
+
+  /** «descarta el 3» en el chat privado del dueño: lo mismo que /ignora 3. */
+  const ignoraByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = isOwnerDm(inbound, vigilanteOwnerId) ? ignoraAnswer(inbound.text) : null;
+    if (n === null) return false;
+    await cmdIgnora(inbound, String(n));
+    return true;
   };
 
   // ---- commands -----------------------------------------------------------
@@ -3133,9 +3532,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     caption: string,
     threadKey?: string,
   ): Promise<boolean> => {
-    if (!desktop) {
+    const service = threadKey ? browsers.get(threadKey) : undefined;
+    // Con escritorio también: si la tarea tiene una página abierta (el navegador va sin
+    // ventana), «pásame una captura» es esa página, no el escritorio (captura-tarea.ts).
+    const pagina =
+      service !== undefined &&
+      threadKey !== undefined &&
+      capturaDeLaPagina(inbound.text, service.isOpen(threadKey));
+    if (!desktop || pagina) {
       // Headless: no desktop to photograph, but the page the task is working on counts.
-      const service = threadKey ? browsers.get(threadKey) : undefined;
       if (!service || !threadKey) return false;
       try {
         const png = await capturePageIfOpen(service, threadKey);
@@ -3248,16 +3653,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
         const bytes = readFileSync(recording.file);
         rmSync(recording.file, { force: true });
-        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Pantalla');
+        await telegram.sendVideo(
+          Number(inbound.chatId),
+          bytes,
+          seconds,
+          'Pantalla',
+          inbound.threadId,
+        );
         log.info('watch clip sent', { chatId: inbound.chatId, bytes: bytes.length });
       } catch (err) {
-        await say(
-          inbound,
-          `No he podido grabar: ${err instanceof Error ? err.message : String(err)}`,
-          {
-            quote: true,
-          },
-        );
+        await say(inbound, ownerFailNote('clip', err), {
+          quote: true,
+        });
       } finally {
         watching.delete(inbound.chatId);
       }
@@ -3278,7 +3685,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           `Conversaciones abiertas: ${open.length}`,
           ...open.map((t) => `- ${t.name}${t.name === current ? ' (activa)' : ''}: ${t.label}`),
           '',
-          'Usa /topic <nombre> para abrir una conversación nueva y /topics para verlas.',
+          '¿Quieres abrir otra? Dime cómo la llamo.',
         ].join('\n'),
         { quote: true },
       );
@@ -3287,11 +3694,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     activeTopic.set(chatKey_, name);
     const thread = await getOrCreateThread(chatKey_, name, name);
     messageThread.set(`${chatKey_}:${inbound.messageId}`, thread.key);
-    await say(
-      inbound,
-      `Conversación "${name}" lista. Lo que escribas va aquí; /topic main vuelve a la principal.`,
-      { quote: true },
-    );
+    await say(inbound, topicReadyText(name), { quote: true });
+  };
+
+  /** «vuelve a la principal» con otra conversación activa: lo mismo que /topic main. */
+  const backToMainByWords = async (inbound: Inbound): Promise<boolean> => {
+    const current = activeTopic.get(chatKey(inbound));
+    if (!current || current === 'main' || !backToMainAnswer(inbound.text)) return false;
+    await cmdTopic(inbound, 'main');
+    return true;
+  };
+
+  /** «olvida la regla 2»: lo mismo que /olvida 2 (sigue siendo escrito, nunca un botón). */
+  const forgetRuleByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = forgetRuleWords(inbound.text);
+    if (!n) return false;
+    const thread = await resolveThread(inbound);
+    await say(inbound, forgetLearnedRule(memory, memoryScopesFor(thread.key).read, n), {
+      quote: true,
+    });
+    return true;
   };
 
   const cmdTopics = async (inbound: Inbound): Promise<void> => {
@@ -3321,17 +3743,43 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * demonstration is the only version of "it learns" that is reliable: asking a model
    * to invent steps it never performed produces plausible fiction.
    */
+  /** La respuesta normal («pedir cita») pone nombre a la rutina y empieza a grabar (Nico, 1 nov). */
+  const askLearnName = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'learn', { answer: learnNameAnswer });
+  /** Grabación en una web: «sí» la reintenta y el enlace como respuesta empieza otra. */
+  const askWebDemo = (inbound: Inbound, msg: string, url: string): void => {
+    const next = webDemoFollowUp(msg);
+    const link = (t: string) => /https?:\/\/\S+/i.exec(t)?.[0];
+    if (next === 'retry') {
+      preguntas.ask(chatKey(inbound), 'learn', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `web ${url}` : null),
+      });
+    } else if (next === 'link') {
+      preguntas.ask(chatKey(inbound), 'learn', { needsUrl: true, answer: (t) => `web ${link(t)}` });
+    }
+  };
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
+      const web = await webDemo.finish(thread.key, {
+        browser: browserFor(thread.key),
+        store: playbooks,
+        vaultValues: vaultSnapshotValues,
+      });
+      if (web !== null) {
+        askWebDemo(inbound, web, '');
+        await say(inbound, web, { quote: true });
+        return;
+      }
       const ended = learning.end(inbound.chatId, thread.key, thread.agent);
       if (!ended.ok) {
+        if (ended.reason !== 'other-thread') askLearnName(inbound);
         const text =
           ended.reason === 'none'
-            ? 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.'
+            ? 'No estaba grabando ninguna rutina. Si quieres enseñarme una, dime cómo la llamo.'
             : ended.reason === 'other-thread'
-              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`
-              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo con /learn <nombre>.';
+              ? `Estoy grabando "${ended.name}" en otra conversación. Termínala allí, o empieza una nueva aquí diciéndome cómo la llamo.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empecemos de nuevo: dime cómo la llamo.';
         await say(inbound, text, { quote: true });
         return;
       }
@@ -3382,14 +3830,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         params: macro ? params : null,
         steps,
       });
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
         [
           macro
-            ? `Macro "${routine.name}" guardada. La ejecutas con /routine ${routine.name} ${params
-                .map((p) => `${p.name}=...`)
-                .join(' ')}.`
-            : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+            ? `Macro "${routine.name}" guardada. ¿La pruebo ahora? Dime «sí» y te pido los datos.`
+            : `Rutina "${routine.name}" guardada. ¿La repito ahora? Dime «sí».`,
           ...(macro
             ? [
                 '',
@@ -3404,8 +3853,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       return;
     }
+    const webArg = /^web(?:\s+(.*))?$/i.exec(name);
+    if (webArg) {
+      const msg = await webDemo.start(thread.key, webArg[1] ?? '', {
+        browser: browserFor(thread.key),
+      });
+      if (msg !== null) {
+        askWebDemo(inbound, msg, webArg[1] ?? '');
+        await say(inbound, msg, { quote: true });
+        return;
+      }
+    }
     if (!name) {
-      await say(inbound, 'Uso: /learn <nombre> para empezar, /learn end para cerrar.', {
+      askLearnName(inbound);
+      await say(inbound, '¿Cómo llamo a la rutina? Dímelo y empiezo a grabar.', {
         quote: true,
       });
       return;
@@ -3413,7 +3874,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     learning.start(inbound.chatId, name, thread.key, thread.agent);
     await say(
       inbound,
-      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
+      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, dime «ya está».`,
       { quote: true },
     );
   };
@@ -3421,7 +3882,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdRoutine = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim().split(/\s+/)[0] ?? '';
     if (!name) {
-      await say(inbound, 'Uso: /routine <nombre>. Mira /routines para la lista.', { quote: true });
+      const names = store
+        .listRoutines()
+        .filter(
+          (r) =>
+            (r.scope === thread.key || r.scope === `${thread.chatKey}#main`) &&
+            r.kind === 'procedure',
+        )
+        .map((r) => r.name);
+      if (!names.length) {
+        await say(
+          inbound,
+          'Aún no me has enseñado ninguna rutina. Si quieres, dime cómo la llamo y te miro mientras la haces.',
+          { quote: true },
+        );
+        askLearnName(inbound);
+        return;
+      }
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => names.find((n) => n.toLowerCase() === t.trim().toLowerCase()) ?? null,
+      });
+      await say(inbound, `¿Qué rutina repito? Tienes: ${names.slice(0, 10).join(', ')}.`, {
+        quote: true,
+      });
       return;
     }
     const routine =
@@ -3451,7 +3934,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             `Rutina "${created.name}" programada con horario ${created.schedule}.`,
             `Tarea: ${created.prompt}`,
             `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-            'La ves con /agenda; la repito cuando quieras con /routine.',
+            'La verás en tu agenda.',
           ].join('\n'),
           { quote: true },
         );
@@ -3470,18 +3953,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // valid contract the steps would reach the model with raw {placeholders}.
       await say(
         inbound,
-        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Habría que enseñármela otra vez.`,
         { quote: true },
       );
       return;
     } else if (routine.params?.length) {
       const parsed = parseMacroArgs(tokens);
       if (!parsed.ok) {
+        preguntas.ask(chatKey(inbound), 'routine', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${routine.name} ${t}` : null),
+        });
         await say(
           inbound,
-          `${parsed.error} Uso: /routine ${routine.name} ${routine.params
-            .map((p) => `${p.name}=...`)
-            .join(' ')}.`,
+          `${parsed.error} Dime los datos así: «${routine.params.map((p) => `${p.name}=...`).join(' ')}».`,
           { quote: true },
         );
         return;
@@ -3493,9 +3977,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       prompt = built.prompt;
     } else if (tokens.length) {
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" no tiene parámetros: se repite tal cual con /routine ${routine.name}.`,
+        `"${routine.name}" no tiene parámetros: se repite tal cual. ¿La repito? Dime «sí».`,
         { quote: true },
       );
       return;
@@ -3505,9 +3992,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // F4: una rutina de comando jamás se manda al modelo.
     if (isCommandRoutine(routine)) {
+      preguntas.ask(chatKey(inbound), 'cron', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `probar ${routine.name}` : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" es una rutina de comando: pruébala con /cron probar ${routine.name}.`,
+        `"${routine.name}" es una rutina de comando: no la hago con el modelo. ¿La pruebo ahora? Dime «sí».`,
         { quote: true },
       );
       return;
@@ -3521,7 +4011,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const chatKey_ = chatKey(inbound);
     const list = store.listRoutines().filter((r) => inChatScope(r.scope, chatKey_));
     if (!list.length) {
-      await say(inbound, 'Todavía no hay rutinas. Graba una con /learn <nombre>.', {
+      await say(inbound, 'Todavía no hay rutinas. Si quieres enseñarme una, dime cómo la llamo.', {
         quote: true,
       });
       return;
@@ -3563,7 +4053,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
       const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
       if (!victim) {
-        await say(inbound, 'Uso: /disparador del <número de /disparadores>.', { quote: true });
+        if (!scoped.length) {
+          await say(inbound, 'No tienes disparadores que quitar.', { quote: true });
+          return;
+        }
+        // La respuesta normal («el 2») completa el /disparador del (Nico, 1 nov).
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => {
+            const k = Number(/^(?:el\s+|la\s+)?(\d+)[.!]*$/i.exec(t.trim())?.[1]);
+            return Number.isInteger(k) && k >= 1 && k <= scoped.length ? `del ${k}` : null;
+          },
+        });
+        await say(inbound, `¿Cuál quito? Dime su número.\n${formatTriggerList(scoped)}`, {
+          quote: true,
+        });
         return;
       }
       store.deleteTrigger(victim.id);
@@ -3584,6 +4087,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const parsed = parseTriggerAdd(args.trim());
     if (!parsed.ok) {
+      preguntas.ask(chatKey_, 'disparador', { accepts: (t) => parseTriggerAdd(t).ok });
       await say(inbound, parsed.error, { quote: true });
       return;
     }
@@ -3594,7 +4098,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!routine) {
       await say(
         inbound,
-        `No tengo ninguna rutina llamada "${routineName}". Grábala primero con /learn ${routineName}.`,
+        `No tengo ninguna rutina llamada "${routineName}". Enséñamela primero y luego la engancho a este disparador.`,
         { quote: true },
       );
       return;
@@ -3622,11 +4126,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createdAt: '',
     });
     if (!probe.ok) {
+      if (isMacroName(routineName)) {
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${args.trim()} ${t}` : null),
+        });
+      }
       await say(
         inbound,
         `Esa rutina no se puede disparar por evento: ${probe.error}. ` +
           (isMacroName(routineName)
-            ? `Pasa sus parámetros fijos: /disparador ${args.trim()} clave=valor.`
+            ? 'Dime sus parámetros fijos como clave=valor, por ejemplo «fichero=documentos», y lo guardo.'
             : ''),
         { quote: true },
       );
@@ -3643,7 +4152,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       `Disparador guardado: cuando [${event}] contenga "${match}", disparo "${routine.name}" ` +
-        `(mínimo cada ${saved.cooldownSeconds}s). Lo ves con /disparadores.`,
+        `(mínimo cada ${saved.cooldownSeconds}s). Lo verás en la lista de disparadores.`,
       { quote: true },
     );
   };
@@ -3652,8 +4161,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // La lógica vive en runCronCommand (exportada) para que los canarios del
     // comando — colisiones, aislamiento por chat, sync en vivo — corran
     // contra un Store y un RoutineRunner reales sin levantar el daemon.
-    await say(
-      inbound,
+    const text = marksWithTitles(
       runCronCommand(
         {
           store,
@@ -3665,11 +4173,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           isOwner: isOwnerDm(inbound, vigilanteOwnerId),
           commandCwd: homedir(),
           goals: goalStore,
+          ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
         },
         args,
       ),
-      { quote: true },
+      isCronTitle,
     );
+    // Solo la lista (/cron sin más) lleva botones; las respuestas de una suborden no.
+    const buttons = args.trim()
+      ? undefined
+      : cronListButtons(store.listRoutines().filter((r) => inChatScope(r.scope, chatKey(inbound))));
+    await say(inbound, text, { quote: true, format: 'marks', buttons });
   };
 
   /**
@@ -3696,19 +4210,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           loadCalendar({
             readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
             getUrl: () => vaultGet('calendar:icsUrl'),
-            fetchText: async (url) => {
-              const response = await fetch(url, {
-                redirect: 'follow',
-                signal: AbortSignal.timeout(15_000),
-              });
-              if (!response.ok) throw new Error(`el calendario ha respondido ${response.status}`);
-              return response.text();
-            },
+            fetchText: (url) => fetchIcsText(url),
             days: window,
           }),
         followups: () => followups.forChat(chatKey(inbound), 200),
         routines: () => scheduledAgenda(inbound),
         goals: () => goalStore.list().filter((goal) => inChatScope(goal.scope, chatKey(inbound))),
+        tasks: () => new TaskBoard(join(paths.state, 'tareas.json')).all(chatKey(inbound)),
       },
       days,
     );
@@ -3771,7 +4279,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * cambie el precio de una página, cuando baje de un objetivo o un %, o cuando una
    * palabra aparezca/desaparezca.
    */
-  const cmdVigila = async (inbound: Inbound, args: string): Promise<void> => {
+  // «👀 Vigilar» de /compara: id corto → enlace (una vez, 24 h, mismo chat).
+  const compareWatchLinks = new CompareWatchLinks(
+    Date.now,
+    200,
+    join(paths.state, 'botones', 'compara.json'),
+  );
+  const cmdVigila = async (inbound: Inbound, rawArgs: string): Promise<void> => {
+    let args = rawArgs;
+    const fromButton = /^enlace ([0-9a-f]{8})$/.exec(rawArgs.trim());
+    if (fromButton?.[1]) {
+      const hit = compareWatchLinks.takeEntry(fromButton[1], inbound.chatId);
+      if (!hit) return void (await say(inbound, COMPARE_WATCH_STALE, { quote: true }));
+      args = vigilaArgsFromCompare(hit);
+    }
+    const silence = vigilaSilenceArgs(rawArgs);
+    if (silence) {
+      const w =
+        silence.action === 'silenciar'
+          ? pageWatches.mute(inbound.chatId, silence.id, PAGE_MUTE_MS)
+          : pageWatches.unmute(inbound.chatId, silence.id);
+      const reply = vigilaSilenceReply(silence.action, w);
+      return void (await say(inbound, reply.text, {
+        quote: true,
+        ...(reply.buttons.length ? { buttons: reply.buttons } : {}),
+      }));
+    }
     let parsed: ReturnType<typeof parseVigilaArgs>;
     try {
       parsed = parseVigilaArgs(args);
@@ -3780,9 +4313,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const rawUrl = parsed?.url;
     if (!parsed || !rawUrl) {
+      preguntas.ask(chatKey(inbound), 'vigila', { needsUrl: true });
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. Si reconfiguras el mismo enlace, objetivo= y baja= reemplazan ambos ajustes anteriores: repite los dos si quieres conservarlos. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
+        '¿Qué página quieres que vigile? Pásame el enlace y te aviso si cambia el precio.',
         { quote: true },
       ));
     }
@@ -3818,29 +4352,58 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const cmdVigilando = async (inbound: Inbound): Promise<void> => {
     const list = pageWatches.list(inbound.chatId);
-    const text = list.length
-      ? list
-          .map(
-            (w) =>
-              `${w.id} - ${w.label || w.url} - último valor: ${w.lastValue || 'pendiente'}` +
-              `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
-              `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
-          )
-          .join('\n')
-      : 'No vigilo ninguna página. Prueba /vigila <enlace>.';
-    await say(inbound, text, { quote: true });
+    const text = formatWatchList(list);
+    await say(inbound, marksWithTitles(text, isWatchListTitle), {
+      quote: true,
+      format: 'marks',
+      buttons: watchListButtons(list),
+    });
   };
 
+  /** /vigilancias: todo lo que vigilo en este chat (páginas, precios, rutinas, ojo); solo lectura. */
+  const cmdVigilancias = async (inbound: Inbound): Promise<void> => {
+    const { collectWatches, defaultSources } = await import('./watch/overview-cli.js');
+    const { entries, errors } = collectWatches(defaultSources());
+    const r = vigilanciasReply(entries, inbound.chatId);
+    const note = vigilanciasErrorNote(errors);
+    await say(inbound, r.text + note, { quote: true, format: 'marks', buttons: r.buttons });
+  };
+
+  /** Silenciada: «avísame otra vez» quita el silencio sin escribir el comando. */
+  const askAvisarOtraVez = (inbound: Inbound, id: string): void =>
+    preguntas.ask(chatKey(inbound), 'vigila', {
+      answer: (t) => (AVISAR_OTRA_VEZ.test(t.trim()) ? `avisar ${id}` : null),
+    });
+  /** Fallo del modelo en el chat: «sí» resume la conversación o repite el mensaje. */
+  const modelErrorAsk = (
+    inbound: Inbound,
+    r: { text: string; error: string | null },
+    ask: boolean,
+  ): string => {
+    const cmd = !ask || r.text.trim() || !r.error ? null : modelErrorFollowUp(r.error);
+    if (!cmd) return '';
+    preguntas.ask(chatKey(inbound), cmd, { answer: (t) => (SI_RESPUESTA.test(t) ? '' : null) });
+    return ` ${MODEL_ERROR_QUESTION[cmd]}`;
+  };
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
+    if (precioMuteArgs(args)) {
+      return void (await say(inbound, PRICE_SWEEP_REMOVED_TEXT, { quote: true }));
+    }
     const id = args.trim();
     const w = id
       ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
       : undefined;
     if (!w) {
-      return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
+      return void (await say(inbound, watchNotFound(pageWatches.list(inbound.chatId)), {
+        quote: true,
+      }));
     }
-    await say(inbound, describeWatch(w, pageWatches.summary(w.id)), { quote: true });
+    if (w.mutedUntil > Date.now()) askAvisarOtraVez(inbound, w.id);
+    await say(inbound, marksCardTitle(describeWatch(w, pageWatches.summary(w.id))), {
+      quote: true,
+      format: 'marks',
+    });
   };
 
   /**
@@ -3850,9 +4413,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdCompara = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim().split(/\s+/)[0] ?? '';
     if (!url) {
+      preguntas.ask(chatKey(inbound), 'compara', { needsUrl: true });
       return void (await say(
         inbound,
-        'Uso: /compara <enlace de una ficha>. Busco ese mismo producto en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
+        '¿Qué producto comparo? Pásame el enlace y lo busco en las tiendas grandes.',
         { quote: true },
       ));
     }
@@ -3869,7 +4433,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         fetchHtml: fetchPageHtml,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
-      await say(inbound, describeCompare(report), { quote: true });
+      await say(inbound, marksCardTitle(describeCompare(report)), {
+        quote: true,
+        format: 'marks',
+        buttons: compareWatchButtons(
+          compareWatchLinks.remember(inbound.chatId, url),
+          ...compareTargetButton(report, (t) => compareWatchLinks.remember(inbound.chatId, url, t)),
+        ),
+      });
     } catch (err) {
       await say(inbound, friendlyError(err), { quote: true });
     }
@@ -3917,11 +4488,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdInvestiga = async (inbound: Inbound, args: string): Promise<void> => {
     const question = args.trim();
     if (!question) {
-      return void (await say(
-        inbound,
-        'Uso: /investiga <pregunta>. Hago un plan de sub-preguntas, busco y leo varias fuentes con el enrutador web (gratis) y te mando un informe con cada afirmacion citada [n] a su fuente verbatim. Lo que no pueda verificar queda marcado como tal.',
-        { quote: true },
-      ));
+      preguntas.ask(chatKey(inbound), 'investiga');
+      return void (await say(inbound, '¿Qué quieres que investigue?', { quote: true }));
     }
     const wide = /^amplio\b/i.test(question);
     if (wide) {
@@ -3929,15 +4497,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!wideResearchEnabled()) {
         return void (await say(
           inbound,
-          'La investigacion amplia esta desactivada (hace una consulta al modelo por elemento). Activala con PA_INVESTIGA_AMPLIO=1 y reinicia Asistenta.',
+          'La investigación amplia está desactivada (hace una consulta al modelo por elemento). Actívala con PA_INVESTIGA_AMPLIO=1 y reinicia Asistenta.',
           { quote: true },
         ));
       }
       const parsed = parseWideArgs(question.replace(/^amplio\b/i, ''));
       if (!parsed) {
+        askWideArgs(inbound);
         return void (await say(
           inbound,
-          `Uso: /investiga amplio <pregunta> | elemento1, elemento2, ... (hasta ${WIDE_MAX_ITEMS}). Ejemplo: /investiga amplio precio y garantia | iPhone 16, Pixel 9, Galaxy S25`,
+          `Dime qué quieres saber y de qué cosas (hasta ${WIDE_MAX_ITEMS}), separando con una barra. Por ejemplo: ${WIDE_EXAMPLE}.`,
           { quote: true },
         ));
       }
@@ -3998,10 +4567,42 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** «deja de vigilar» (pregunta cuál) o «deja de vigilar la tele» (si una encaja). */
+  const stopWatchingByWords = async (inbound: Inbound): Promise<boolean> => {
+    const rest = stopWatchingWords(inbound.text);
+    if (rest === null) return false;
+    const list = pageWatches.list(inbound.chatId);
+    if (list.length === 0) return false;
+    if (!rest) {
+      await cmdDejarDeVigilar(inbound, '');
+      return true;
+    }
+    const w = watchFromAnswer(list, rest);
+    if (!w) return false;
+    await cmdDejarDeVigilar(inbound, w.id);
+    return true;
+  };
+
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
+    const list = pageWatches.list(inbound.chatId);
+    if (!id && list.length > 0) {
+      // «la de la tele» o el código: la respuesta suelta dice cuál.
+      preguntas.ask(chatKey(inbound), 'dejar_de_vigilar', {
+        answer: (t) => watchFromAnswer(list, t)?.id ?? null,
+      });
+      await say(
+        inbound,
+        `¿Cuál dejo de vigilar? Tienes: ${list
+          .slice(0, 8)
+          .map((w) => w.label || w.url)
+          .join(', ')}.`,
+        { quote: true },
+      );
+      return;
+    }
     const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
-    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : 'No encuentro ese id. Mira /vigilando.', {
+    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : watchNotFound(list), {
       quote: true,
     });
   };
@@ -4010,7 +4611,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const w = pageWatches.get(id);
     if (!w?.active) return;
     const outcome = await pageWatches.check(w, fetchPageText, fetchPageHtml);
-    const msg = describeChange(w, outcome);
+    const notice = pageNotice(w, outcome, Date.now());
     if (outcome.kind === 'changed') {
       actions.record({
         actor: 'asistenta',
@@ -4019,9 +4620,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         result: 'ok',
       });
     }
-    if (msg) {
+    if (notice) {
       await telegram
-        .send({ channel: 'telegram', account: telegram.account, chatId: w.scope, text: msg })
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: w.scope,
+          text: notice.text,
+          ...(notice.buttons.length ? { buttons: notice.buttons } : {}),
+        })
         .catch((err: unknown) => log.warn('page watch notice failed', { err }));
     }
   };
@@ -4080,9 +4687,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
   const briefingWeather = weatherConfigFromEnv();
   const briefingDeps: DailyBriefingDeps = {
-    enabled: () => process.env.PA_BRIEFING === '1',
+    enabled: () => envOn(process.env.PA_BRIEFING),
     now: () => new Date(),
-    hour: Number.parseInt(process.env.PA_BRIEFING_HOUR ?? '', 10) || undefined,
+    // Si el dueño dijo «no me escribas antes de las 10», el de las 8 sale a las 10.
+    get hour() {
+      return briefingHourFor(
+        briefingHour(process.env.PA_BRIEFING_HOUR),
+        snapshot.load().split(ENTRY_SEPARATOR),
+      );
+    },
     lastSent: () => weeklyState.lastSent('briefing'),
     markSent: (at) => weeklyState.markSent('briefing', at),
     owner: briefingOwner,
@@ -4097,14 +4710,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await loadCalendar({
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
-              fetchText: async (url) => {
-                const res = await fetch(url, {
-                  redirect: 'follow',
-                  signal: AbortSignal.timeout(15_000),
-                });
-                if (!res.ok) throw new Error(`el calendario ha respondido ${res.status}`);
-                return res.text();
-              },
+              fetchText: (url) => fetchIcsText(url),
               days: 1,
             })
           ).events,
@@ -4120,28 +4726,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return pickImportantMail(messages, Date.now());
     },
     speak:
-      process.env.PA_BRIEFING_VOZ === '1' && desktop
-        ? async (chatId, text) => {
-            const spoken = await speakWithin(
-              tts,
-              trimForSpeech(text),
-              REPLY_TTS_BUDGET_MS,
-              (reason) => log.warn('briefing: sin voz', { reason }),
-            );
-            if (!spoken) return;
-            await telegram.send({
-              channel: 'telegram',
-              account: telegram.account,
-              chatId,
-              text: '🔊 Resumen de hoy',
-              audio: {
-                mimeType: spoken.mimeType,
-                data: spoken.data.toString('base64'),
-                durationSeconds: spoken.durationSeconds,
-              },
-            });
-          }
+      envOn(process.env.PA_BRIEFING_VOZ) && desktop
+        ? briefingSpeaker({
+            synth: (text) =>
+              speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+                log.warn('briefing: sin voz', { reason }),
+              ),
+            send: (chatId, spoken) =>
+              telegram.send({
+                channel: 'telegram',
+                account: telegram.account,
+                chatId,
+                text: '🔊 Resumen de hoy',
+                audio: {
+                  mimeType: spoken.mimeType,
+                  data: spoken.data.toString('base64'),
+                  durationSeconds: spoken.durationSeconds,
+                },
+              }),
+          })
         : undefined,
+    tasks: () => {
+      const owner = briefingOwner();
+      const key = owner ? ownerChatKey(owner) : undefined;
+      return key ? briefingTasks(new TaskBoard(join(paths.state, 'tareas.json')), key) : [];
+    },
+    deliveries: () => briefingDeliveries(activeDeliveries(memoryDb, Date.now())),
     goals: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;
@@ -4208,8 +4818,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   let evolving = false;
+  // Una petición hablada que llega con un ciclo en marcha se prueba al terminar ese.
+  let evolveAgain = false;
+  const featureAsks = new Map<string, { idea: string; at: number }>();
+  const grillMe = new GrillMe();
   const runEvolveCycle = async (chatId: string): Promise<void> => {
-    if (evolving) return;
+    if (evolving) {
+      evolveAgain = true;
+      return;
+    }
     evolving = true;
     try {
       const out = await runEvolution({
@@ -4221,6 +4838,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .catch((err: unknown) => log.warn('evolve report failed', { err }));
     } finally {
       evolving = false;
+    }
+    if (evolveAgain) {
+      evolveAgain = false;
+      void runEvolveCycle(chatId);
     }
   };
 
@@ -4254,6 +4875,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
     } catch (err) {
       log.warn('backup failed', { err });
+      // Solo falló el espejo: la copia local está hecha, no repetirla cada 10 minutos.
+      if (localBackupDone(err)) weeklyState.markSent('backup', Date.now());
       if (Date.now() - weeklyState.lastSent('backup-aviso') < 20 * 3_600_000) return;
       weeklyState.markSent('backup-aviso', Date.now());
       await telegram
@@ -4261,20 +4884,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           channel: 'telegram',
           account: telegram.account,
           chatId,
-          text: `No he podido hacer la copia de seguridad de hoy (${(err as Error).message}). Lo reintento en unos minutos.`,
+          text: backupFailedNotice(err),
         })
         .catch((e: unknown) => log.warn('backup notice failed', { e }));
     }
   };
 
   /**
-   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1): fusiona
+   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1 o sí): fusiona
    * duplicados con supersedes y copia recuperable previa (src/memory/consolidate.ts).
    * Mismo patron que el backup de las 03:00: solo cuenta como hecha si termina bien;
    * un fallo se reintenta en el siguiente tick y queda en el log.
    */
   const consolidateIfDue = async (): Promise<void> => {
-    if (process.env.PA_MEMORY_CONSOLIDATE !== '1') return;
+    if (!envSwitchOn('PA_MEMORY_CONSOLIDATE')) return;
     if (!isConsolidationDue(new Date(), weeklyState.lastSent('consolida'))) return;
     try {
       const report = await runConsolidation({
@@ -4326,7 +4949,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         addHypothesis(paths.state, a.replace(/^idea\s*/i, ''));
         await say(inbound, 'Anotada. La probará el próximo ciclo.', { quote: true });
       } catch (err) {
-        await say(inbound, `No la he anotado: ${(err as Error).message}`, { quote: true });
+        await say(inbound, failedReply('No la he anotado', err), { quote: true });
       }
       return;
     }
@@ -4341,6 +4964,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       void runEvolveCycle(inbound.chatId);
       return;
     }
+    preguntas.ask(chatKey(inbound), 'evolucion', {
+      answer: (t) => (evolveNowAnswer(t) ? 'ahora' : null),
+    });
     await say(inbound, describeLast(paths.state), { quote: true });
   };
 
@@ -4370,46 +4996,81 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     () => {
       for (const w of pageWatches.due(PAGE_WATCH_EVERY_MS)) void checkPageWatch(w.id);
       for (const userId of allowed) void sendWeeklyIfDue(String(userId));
-      if (process.env.PA_BRIEFING === '1') void runDailyBriefingIfDue(briefingDeps);
       const first = [...allowed][0];
       if (first !== undefined) void evolveIfDue(String(first));
       if (first !== undefined) void backupIfDue(String(first));
-      if (process.env.PA_MEMORY_CONSOLIDATE === '1') void consolidateIfDue();
+      if (envSwitchOn('PA_MEMORY_CONSOLIDATE')) void consolidateIfDue();
       retentionTick();
     },
     10 * 60 * 1000,
   );
   pageWatchTimer.unref();
+  // El resumen diario se comprueba cada minuto (antes, cada 2 h con las vigilancias).
+  startDailyBriefingTimer(briefingDeps);
+  // Cerrar el círculo: algo con fecha que contaste ya pasó → una pregunta, una vez.
+  const closeLoop = new CloseLoop({
+    followups: () => ownerDmFollowups(followups, ownerDmFollowupKey()),
+    markAsked: (id, at) => followups.safe(() => followups.markPushed(id, at), undefined),
+    resolve: (id) => followups.safe(() => followups.resolve(id), undefined),
+    send: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) return false;
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+      return true;
+    },
+    now: Date.now,
+    quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+    enabled: () => briefingOwner() !== null,
+  });
+  setInterval(() => void closeLoop.tick().catch(() => null), 10 * 60 * 1000).unref();
+  // Paquete «en reparto» sin «entregado» por la noche: «¿Te llegó el paquete de…?», una vez.
+  const parcelCheckIn = new ParcelCheckIn({
+    db: memoryDb,
+    send: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) return false;
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+      return true;
+    },
+    now: Date.now,
+    quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+    enabled: () => briefingOwner() !== null,
+    timeZone: localTimeZone,
+  });
+  setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
 
-  // Vigilante de precios: bucle interno, sin hacer nada mientras pricewatch.json no exista o
-  // tenga enabled=false. Ver src/watch/pricewatch-runner.ts.
-  {
-    // Disparador 'precio': todo aviso del vigilante pasa por makeNotify; se
-    // envuelve UNA vez y además se emite el evento (global, scope '').
-    const pwLog = {
-      info: (m: string, f?: Record<string, unknown>) => log.info(m, f),
-      warn: (m: string, f?: Record<string, unknown>) => log.warn(m, f),
-    };
-    const pwPath = process.env.PRICEWATCH_CONFIG ?? join(paths.state, 'pricewatch.json');
-    const pwDeps = realDeps(pwPath, join(paths.state, 'pricewatch.sqlite'), pwLog, false, token);
-    const pwNotify = pwDeps.makeNotify;
-    pwDeps.makeNotify = (cfg) => {
-      const notify = pwNotify(cfg);
-      return async (text: string) => {
-        void triggerEngine.emit({ type: 'precio', scope: '', text }).catch((err) => {
-          log.warn('trigger precio falló', { err: String(err) });
-        });
-        return notify(text);
-      };
-    };
-    startPricewatchLoop({
-      mainBotToken: token,
-      configPath: pwPath,
-      stateDir: paths.state,
-      log: pwLog,
-      deps: pwDeps,
-    });
-  }
+  // Lo que el dueño cuenta de sí mismo: se apunta al momento en su perfil, «¿qué sabes
+  // de mí?» lo enseña y «olvida eso» / «olvida lo de …» lo borra. Solo su chat privado.
+  const recentFacts = new RecentFacts();
+  const answerOwnerFacts = async (inbound: Inbound): Promise<boolean> => {
+    const text = inbound.text;
+    if (isAboutMeRequest(text)) {
+      const entries = snapshot.load().split(ENTRY_SEPARATOR);
+      await say(inbound, aboutMeText(entries.filter((e) => e.trim())), { quote: true });
+      return true;
+    }
+    const forget = forgetRequest(text);
+    if (forget) {
+      // «olvida eso» sin nada recién apuntado puede ser otra cosa: lo lleva el modelo.
+      const target = forget.kind === 'last' ? recentFacts.take(chatKey(inbound)) : forget.query;
+      if (!target) return false;
+      const before = snapshot.load().split(ENTRY_SEPARATOR);
+      const removed = snapshot.removeEntries(target);
+      if (removed === 0 && forget.kind === 'match') return false;
+      const left = new Set(snapshot.load().split(ENTRY_SEPARATOR));
+      await say(inbound, forgotLine(removed > 0 ? before.filter((e) => !left.has(e)) : []), {
+        quote: true,
+      });
+      return true;
+    }
+    const fact = statedFact(text);
+    if (fact && !looksLikeCredential(fact)) {
+      const entry = `${SAID_PREFIX} ${fact}`;
+      if (snapshot.appendEntry(entry).ok) recentFacts.remember(chatKey(inbound), entry);
+    }
+    // El turno sigue: el modelo contesta con el dato ya en el perfil.
+    return false;
+  };
 
   // Carpeta automática de OCR (opt-in): PA_OCR_WATCH_DIR=<carpeta>, PA_OCR_WATCH_MODE=md|pdf|todo.
   // Ver docs/ocr-telegram.md.
@@ -4419,6 +5080,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       mode: watchModeFromEnv(process.env.PA_OCR_WATCH_MODE),
       makeDeps: windowsDeps,
       log: { info: (m, f) => log.info(m, f), warn: (m, f) => log.warn(m, f) },
+      progressDir: join(paths.state, 'ocr-progreso'),
     });
     ocrWatcher.start();
   }
@@ -4442,11 +5104,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const ck = chatKey(inbound);
     const live = [...threads.values()].filter((t) => t.chatKey === ck);
     if (live.some((t) => t.active)) {
-      await say(
-        inbound,
-        'Hay una tarea en marcha en este chat. Usa /stop y vuelve a pedir /borrar_chat. No he borrado nada.',
-        { quote: true },
-      );
+      eraseAfterStop.set(ck, Date.now());
+      await say(inbound, ERASE_BUSY_ASK, { quote: true });
       return;
     }
     const result = eraseChat({
@@ -4460,6 +5119,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     for (const t of live) threads.delete(t.key);
     await say(inbound, eraseSummary(result), { quote: true });
+  };
+  /** «sí» tras ERASE_BUSY_ASK: para la tarea, espera a que suelte el chat y borra. */
+  const eraseAfterStop = new Map<string, number>();
+  const stopAndEraseByWords = async (inbound: Inbound): Promise<boolean> => {
+    const ck = chatKey(inbound);
+    const at = eraseAfterStop.get(ck);
+    if (at === undefined) return false;
+    eraseAfterStop.delete(ck);
+    if (Date.now() - at > 2 * 60_000 || !SI_RESPUESTA.test(inbound.text.trim())) return false;
+    await cmdStop(inbound);
+    const busy = () => [...threads.values()].some((t) => t.chatKey === ck && t.active);
+    for (let i = 0; i < 40 && busy(); i++) await new Promise((r) => setTimeout(r, 250));
+    await cmdBorrarChatConfirmado(inbound);
+    return true;
   };
   // F13: liga una carpeta de proyecto (su ASISTENTA.md/AGENTS.md entra en el contexto).
   const cmdProyecto = async (inbound: Inbound, args: string): Promise<void> => {
@@ -4486,12 +5159,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!arg || verb === 'estado') {
       const dir = projectContexts.get(thread.key);
       const ctx = projectContexts.load(thread.key);
-      const state = !dir
-        ? 'Sin carpeta de proyecto en esta conversación.'
-        : ctx?.ok
-          ? `Proyecto: ${ctx.dir} — cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno.`
-          : `Proyecto: ${dir} — ahora no cargo nada: ${ctx?.ok === false ? ctx.reason : 'sin fichero'}.`;
-      await say(inbound, `${state}\nUso: /proyecto <carpeta> · /proyecto quitar`, { quote: true });
+      await say(inbound, projectStateReply(dir, ctx), { quote: true });
       return;
     }
     const ctx = projectContexts.link(thread.key, arg);
@@ -4499,12 +5167,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, `No la ligo: ${ctx.reason}.`, { quote: true });
       return;
     }
-    const first = ctx.text.trim().split('\n')[0]?.slice(0, 80) ?? '';
-    await say(
-      inbound,
-      `Ligada ${ctx.dir}. Cargo ${ctx.name} (${ctx.bytes} bytes) en cada turno de esta conversación${first ? `: «${first}»` : ''}.`,
-      { quote: true },
-    );
+    await say(inbound, projectLinkedReply(ctx), { quote: true });
   };
 
   // F7: /reintentar repite el último mensaje sin la respuesta anterior en el historial.
@@ -4558,12 +5221,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           { quote: true },
         );
       } catch (err) {
-        await say(inbound, `No pude resumir el historial: ${String(err).slice(0, 160)}`, {
+        await say(inbound, failedReply('No pude resumir el historial', err), {
           quote: true,
         });
       }
     });
     await next;
+  };
+
+  // /modelo: avisa si el modelo nuevo tiene mucha menos ventana o no ve imágenes.
+  // PA_CONTEXT_WINDOW describe solo PA_MODEL; los demás usan su ficha del catálogo.
+  const modeloWarningText = (prevId: string, nextId: string): string => {
+    const caps = (id: string) =>
+      resolveModelCaps({ ...config, model: id }, { envOverrides: id === config.model });
+    const warnings = modelSwitchWarnings(caps(prevId), caps(nextId));
+    return warnings.length ? `\n${warnings.join('\n')}` : '';
   };
 
   // F7: /modelo ve o elige el modelo de esta conversación (solo el dueño, en privado).
@@ -4577,6 +5249,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const action = parseModelo(args, thread.agent.availableModels);
     if (action.kind === 'show') {
+      const available = thread.agent.availableModels;
+      // «el 2», «normal» o el nombre: la respuesta suelta elige el modelo.
+      if (available.length > 1) {
+        preguntas.ask(chatKey(inbound), 'modelo', {
+          answer: (t) => {
+            const said = t
+              .trim()
+              .replace(/^(?:el|la)\s+/i, '')
+              .replace(/[.!«»"]/g, '');
+            return parseModelo(said, available).kind === 'set' && said ? said : null;
+          },
+        });
+      }
       await say(inbound, formatModelos(thread.agent.availableModels, thread.agent.modelId), {
         quote: true,
       });
@@ -4588,6 +5273,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // En cola: no cambia el modelo a mitad de un turno de esta conversación.
     const next = queueThreadTurn(thread, async () => {
+      const prevModel = thread.agent.modelId;
       const r = thread.agent.chooseModel(action.id);
       if (r.ok)
         modelChoices.set(
@@ -4597,7 +5283,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(
         inbound,
         r.ok
-          ? `Listo: esta conversación usa ${r.model}${r.model === thread.agent.availableModels[0] ? ' (el principal)' : ''}.`
+          ? `Listo: esta conversación usa ${r.model}${r.model === thread.agent.availableModels[0] ? ' (el principal)' : ''}.${modeloWarningText(prevModel, r.model)}`
           : `No cambio el modelo: ${r.reason}.`,
         { quote: true },
       );
@@ -4619,21 +5305,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const key = chatKey(inbound);
     const parsed = parseAltavozArgs(args);
+    // La respuesta normal («por la tele», «apágalo») completa el /altavoz (Nico, 1 nov).
+    const askAltavoz = () =>
+      preguntas.ask(key, 'altavoz', { accepts: (t) => parseAltavozArgs(t).kind === 'set' });
     if (parsed.kind === 'error') {
+      askAltavoz();
       await say(inbound, ALTAVOZ_USAGE, { quote: true });
       return;
     }
     if (parsed.kind === 'set') {
       if (parsed.mode === 'tele' && !audioTeleEnabled()) {
+        askAltavoz();
         await say(
           inbound,
-          'La tele no está activada para audio. Pon PA_AUDIO_TELE=1 en el .env y reinicia; mientras, /altavoz pc.',
+          'La tele no está activada para audio: hace falta PA_AUDIO_TELE=1 en el .env y reiniciar. Mientras, si quieres, te hablo por el PC: dime «por el PC».',
           { quote: true },
         );
         return;
       }
       altavoz.set(key, parsed.mode);
     }
+    askAltavoz();
     await say(inbound, altavozStatusText(altavoz.get(key)), { quote: true });
   };
 
@@ -4641,12 +5333,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
     const rows = () => reminderRows(store.listRoutines(scope));
+    const b = /^(hecho|pospone|manana) ([0-9a-f]{8})$/.exec(args.trim());
+    if (b?.[2]) {
+      const reply = reminderButtonCommand(
+        {
+          fired: firedReminders,
+          store,
+          sameChat: (s) => chatIdOfScope(s) === inbound.chatId,
+        },
+        b[1] === 'hecho' ? 'hecho' : b[1] === 'manana' ? 'manana' : 'pospone',
+        b[2],
+      );
+      if (b[1] !== 'hecho') routineRunner.sync();
+      await say(inbound, reply, { quote: true });
+      return;
+    }
     const m = /^(borrar|cancelar|quitar|del)\b\s*(.*)$/i.exec(args.trim());
     if (!m) {
       if (args.trim()) {
-        await say(inbound, 'Uso: /recordatorios ⬦ /recordatorios borrar <número o palabra>', {
-          quote: true,
-        });
+        await say(
+          inbound,
+          'No te he pillado. Si quieres un recordatorio nuevo, dímelo sin más, como «recuérdame mañana a las 9 llamar al taller».',
+          { quote: true },
+        );
         return;
       }
       await say(inbound, marksWithTitles(formatReminderRows(rows()), isReminderTitle), {
@@ -4654,6 +5363,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         format: 'marks',
       });
       return;
+    }
+    if (!(m[2] ?? '').trim()) {
+      preguntas.ask(chatKey(inbound), 'recordatorios', { prefix: 'borrar ' });
     }
     const pick = pickReminder(rows(), m[2] ?? '');
     if (!pick.ok) {
@@ -4679,12 +5391,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
     const isOwner = isOwnerDm(inbound, vigilanteOwnerId);
+    const stale = args.trim() ? staleTvOrderNotice(inbound.sentAt, inbound.receivedAt) : null;
+    if (stale) {
+      await say(inbound, stale, { quote: true });
+      return;
+    }
     // /tv a secas, del dueño en privado: el mando con botones.
     if (!args.trim() && isOwner) {
       await say(inbound, TV_BUTTONS_TITLE, { quote: true, buttons: tvButtons() });
       return;
     }
     const reply = await tvChatCommand(args, { isOwner, run: runTvOrder });
+    // Si no la entendió, la siguiente orden dicha normal («bájale el volumen») completa el /tv.
+    if (isOwner && reply.startsWith('No he entendido «')) {
+      preguntas.ask(chatKey(inbound), 'tv', { accepts: isTvOrder });
+    }
     await say(inbound, reply, { quote: true });
   };
 
@@ -4697,6 +5418,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         config.computerUse = on;
         log.warn(`Computer Use ${on ? 'activado' : 'desactivado'} desde el chat (/ordenador)`);
       },
+      save: (on) => saveComputerSwitch(paths.state, on),
+      offSaved: () => computerOffSaved(paths.state),
+      ask: (opts) => preguntas.ask(chatKey(inbound), 'ordenador', opts),
     });
     await say(inbound, reply, { quote: true });
   };
@@ -4705,7 +5429,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
     if (days === null) {
-      await say(inbound, 'Uso: /consumo [hoy|semana|mes|1-31]', { quote: true });
+      preguntas.ask(chatKey(inbound), 'consumo', { accepts: (t) => parseUsageDays(t) !== null });
+      await say(inbound, '¿De cuándo quieres ver el consumo? ¿De hoy, de la semana, del mes?', {
+        quote: true,
+      });
       return;
     }
     const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
@@ -4795,11 +5522,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdResolve = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim();
     if (!want) {
-      await say(
-        inbound,
-        'Uso: /resolver <id del pendiente>. Mira los pendientes con /pendientes.',
-        { quote: true },
-      );
+      preguntas.ask(chatKey(inbound), 'resolver');
+      await say(inbound, '¿Cuál doy por resuelto?', { quote: true });
       return;
     }
     const needle = want.toLowerCase();
@@ -4839,7 +5563,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSearch = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const query = args.trim();
     if (!query) {
-      await say(inbound, 'Uso: /buscar <texto> para buscar en conversaciones pasadas.', {
+      preguntas.ask(chatKey(inbound), 'buscar');
+      await say(inbound, '¿Qué quieres que busque?', {
         quote: true,
       });
       return;
@@ -4878,7 +5603,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'buscar' || sub === 'search') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'memoria', { prefix: 'buscar ' });
+        await say(inbound, '¿Qué quieres que busque en lo que recuerdo?', {
+          quote: true,
+        });
         return;
       }
       const hits = memory
@@ -4893,9 +5621,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       return;
     }
+    if (sub === 'revisar' || sub === 'contradicciones' || sub === 'review') {
+      await say(inbound, contradictionsReply(vigentes()), { quote: true });
+      return;
+    }
     if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
+        preguntas.ask(chatKey(inbound), 'memoria', { answer: memoriaForgetAnswer });
+        await say(inbound, MEMORIA_FORGET_ASK, {
           quote: true,
         });
         return;
@@ -4939,9 +5672,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       return;
     }
-    await say(inbound, 'Uso: /memoria [listar | buscar <texto> | olvidar <id> | exportar]', {
-      quote: true,
-    });
+    await say(
+      inbound,
+      'No te he pillado. ¿Quieres ver lo que recuerdo, buscar algo u olvidar algo?',
+      {
+        quote: true,
+      },
+    );
   };
 
   /**
@@ -4975,7 +5712,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         Number(inbound.chatId),
         bytes,
         `conversacion-${session.id.slice(0, 8)}.json`,
-        `Conversación "${session.title}" (${exported.turns.length} turnos)`,
+        `Aquí tienes la conversación «${session.title}».`,
       );
     } catch (err) {
       log.warn('session export send failed', { err });
@@ -5009,25 +5746,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ? `Perfil (${facts.length}):\n${facts
               .map((f) => `- [${f.id}] (${f.updatedAt.slice(0, 10)}) ${f.text}`)
               .join('\n')}`
-          : 'El perfil está vacío. Guarda algo con /perfil guardar <texto>.',
+          : 'Aún no sé nada de ti. Cuéntame lo que quieras que recuerde.',
         { quote: true },
       );
       return;
     }
     if (sub === 'guardar' || sub === 'add') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil guardar <texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'guardar ' });
+        await say(inbound, '¿Qué quieres que recuerde de ti?', {
+          quote: true,
+        });
         return;
       }
       try {
-        const fact = profile.add(restText, { source: 'user' });
-        await say(inbound, `Guardado en tu perfil (${fact.id}).`, { quote: true });
+        profile.add(restText, { source: 'user' });
+        await say(inbound, 'Guardado en tu perfil.', { quote: true });
       } catch (err) {
-        await say(
-          inbound,
-          `No lo he guardado: ${err instanceof Error ? err.message : String(err)}`,
-          { quote: true },
-        );
+        await say(inbound, ownerFailNote('perfil', err), { quote: true });
       }
       return;
     }
@@ -5044,7 +5780,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil olvidar <id|texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'olvidar ' });
+        await say(inbound, '¿Qué quieres que olvide?', { quote: true });
         return;
       }
       const removed = profile.forget(restText);
@@ -5077,7 +5814,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'Uso: /perfil [listar | guardar <texto> | buscar <texto> | olvidar <id|texto> | migrar | exportar]',
+      'No te he pillado. ¿Quieres ver lo que sé de ti, guardar algo nuevo u olvidar algo?',
       { quote: true },
     );
   };
@@ -5092,14 +5829,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
-    if (!m) {
-      await say(inbound, 'Uso: /calendario add 2026-11-02 18:00 | Dentista', { quote: true });
+    // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
+    const natural = m ? null : parseFechaCalendario(args);
+    if (!m && !natural) {
+      // La respuesta normal completa el /calendario (Nico, 1 nov).
+      preguntas.ask(chatKey(inbound), 'calendario', {
+        answer: (t) => (parseFechaCalendario(t) ? `add ${t}` : null),
+      });
+      await say(
+        inbound,
+        args.trim()
+          ? 'No he pillado la fecha o la hora. Dímelo de otra forma, por ejemplo «el 2 de noviembre a las 18:00 dentista».'
+          : '¿Qué apunto y cuándo? Dímelo normal, por ejemplo «mañana a las 18:00 dentista» o «el viernes a las 10 revisión del coche».',
+        { quote: true },
+      );
       return;
     }
-    const start = new Date((m[1] ?? '').trim());
-    const title = (m[2] ?? '').trim();
+    const start = natural ? natural.start : new Date((m?.[1] ?? '').trim());
+    const title = natural ? natural.title : (m?.[2] ?? '').trim();
     if (Number.isNaN(start.getTime()) || !title) {
-      await say(inbound, 'Fecha no válida. Usa 2026-11-02 18:00 | Título.', { quote: true });
+      await say(
+        inbound,
+        'No entiendo esa fecha. Dímela de otra forma, por ejemplo «el 2 de noviembre a las 18:00».',
+        { quote: true },
+      );
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
@@ -5117,34 +5870,35 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();
     if (!url) {
-      await say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+      await say(inbound, '¿Cuál instalo? Pásame el enlace a su SKILL.md.', { quote: true });
       return;
     }
     try {
       const md = await fetchSkillMarkdown(url);
       const meta = await installSkill(md, async (text, m) => {
-        const steps = text
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith('---') && !/^(name|description):/.test(l))
-          .slice(0, 40);
-        skills.save({
-          name: m.name,
-          description: m.description,
-          category: 'importadas',
-          whenToUse: 'Cuando la tarea encaje con la descripción de la skill.',
-          steps,
-          notes: [`Importada de ${url}`],
-        });
+        skills.save(importedSkillDraft(text, m, url, skills.read(m.id)));
       });
-      await say(inbound, `Skill instalada: ${meta.name} (${meta.id}).`, { quote: true });
+      await say(inbound, `Hecho, ya tengo la skill «${meta.name}».`, { quote: true });
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido instalarla: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, ownerFailNote('skill', err), { quote: true });
     }
+  };
+  const cmdSkillsSearch = async (inbound: Inbound, args: string): Promise<void> => {
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL, undefined, pick);
+    await say(inbound, reply, { quote: true });
+  };
+  const cmdSkillsCatalog = async (inbound: Inbound): Promise<void> => {
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsCatalogReply(
+      skills.list(),
+      process.env.PA_SKILLS_CATALOG_URL,
+      undefined,
+      pick,
+    );
+    await say(inbound, reply, { quote: true });
   };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
@@ -5186,7 +5940,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     stopLiveView(inbound.chatId);
     for (const thread of mine) thread.gate.clearSession(thread.key);
     // Notas de voz en el altavoz (/altavoz): la que suena se corta y la cola se vacía.
-    const notes = altavozPlayer.clear(chatKey_);
+    // La respuesta que el PC dice en voz alta en la conversación por voz de este chat.
+    const notes =
+      altavozPlayer.clear(chatKey_) +
+      stopSpokenReply({
+        chatKey: chatKey_,
+        sessionChatKey,
+        speech: activeSpeech,
+        playback: sessionPlayback,
+      }) +
+      stopBriefingVoice(inbound.chatId);
     log.info('stop requested', {
       chatId: inbound.chatId,
       wasActive,
@@ -5215,15 +5978,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   ): Promise<string> => {
     const chatId = inbound.chatId;
     const announce = opts.announce !== false;
-    const caption =
-      source === 'camera'
-        ? 'Camara en directo, se actualiza sola. /camera off para parar.'
-        : 'Pantalla en directo, se actualiza sola. /screen off para parar.';
+    const caption = liveCaption(source);
 
     if (liveViews.has(chatId)) {
       // A second request must not silently replace the first view: two loops writing
       // to two different messages both look like a broken feed.
-      const note = 'Ya hay una vista en directo. Para pararla, /screen off o /camera off.';
+      const note = LIVE_BUSY_TEXT;
       if (announce) await say(inbound, note, { quote: true });
       return note;
     }
@@ -5236,7 +5996,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       first = await capture();
     } catch (err) {
-      const note = `No he podido abrir la vista en directo: ${err instanceof Error ? err.message : String(err)}`;
+      const note = ownerFailNote('directo', err);
       if (announce) await say(inbound, note, { quote: true });
       return note;
     }
@@ -5266,6 +6026,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     timer.unref();
     liveViews.set(chatId, { timer, messageId: id });
     return caption;
+  };
+
+  /** «para» mientras hay una vista en directo en el chat: la para sin pasar por el modelo. */
+  const stopLiveByWords = async (inbound: Inbound): Promise<boolean> => {
+    if (!liveViews.has(inbound.chatId) || !liveStopAnswer(inbound.text)) return false;
+    stopLiveView(inbound.chatId);
+    await say(inbound, LIVE_STOPPED_TEXT, { quote: true });
+    return true;
   };
 
   const stopLiveView = (chatId: string): void => {
@@ -5312,10 +6080,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'clip' || sub === 'video') {
       const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
-      await say(inbound, `Grabando ${seconds}s de camara...`, { quote: true });
+      await say(inbound, `Grabando ${seconds}s de cámara...`, { quote: true });
       const rec = await recordCamera({ seconds, fps: 10, maxEdge: config.screenshotMaxEdge });
       const bytes = consumeRecording(rec.file);
-      await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara');
+      await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara', inbound.threadId);
       return;
     }
     // Camera with the microphone attached. One ffmpeg with two inputs, because two
@@ -5324,7 +6092,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // voice in it.
     if (sub === 'av' || sub === 'voz' || sub === 'convoz') {
       const seconds = Math.max(1, Math.min(60, Number(parts[1]) || 10));
-      await say(inbound, `Grabando ${seconds}s de camara con tu voz...`, { quote: true });
+      await say(inbound, `Grabando ${seconds}s de cámara con tu voz...`, { quote: true });
       try {
         const rec = await recordCameraWithMic({
           seconds,
@@ -5332,13 +6100,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           maxEdge: config.screenshotMaxEdge,
         });
         const bytes = consumeRecording(rec.file);
-        await telegram.sendVideo(Number(inbound.chatId), bytes, seconds, 'Camara y voz');
-      } catch (err) {
-        await say(
-          inbound,
-          `No he podido grabar camara y microfono: ${err instanceof Error ? err.message : String(err)}`,
-          { quote: true },
+        await telegram.sendVideo(
+          Number(inbound.chatId),
+          bytes,
+          seconds,
+          'Camara y voz',
+          inbound.threadId,
         );
+      } catch (err) {
+        await say(inbound, ownerFailNote('camaraMicro', err), { quote: true });
       }
       return;
     }
@@ -5357,23 +6127,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
       await say(
         inbound,
-        ok ? 'Esto veo por la camara ahora mismo.' : 'No he podido enviar la foto.',
+        ok ? 'Esto veo por la cámara ahora mismo.' : 'No he podido enviar la foto.',
         {
           quote: true,
         },
       );
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido usar la camara: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido usar la cámara', err), { quote: true });
     }
   };
 
   const cmdMic = async (inbound: Inbound, args: string): Promise<void> => {
     const seconds = Math.max(1, Math.min(60, Number(args.trim().split(/\s+/)[0]) || 10));
-    await say(inbound, `Escuchando ${seconds}s por el microfono...`, { quote: true });
+    await say(inbound, `Escuchando ${seconds}s por el micrófono...`, { quote: true });
     try {
       // Through withMicrophone: the wake listener holds the capture device open, and
       // two recorders fighting over one microphone is a failure that looks like
@@ -5385,11 +6151,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await telegram.sendVoiceBytes(Number(inbound.chatId), bytes, inbound.threadId, rec.seconds);
       });
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido grabar el microfono: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido grabar el micrófono', err), { quote: true });
     }
   };
 
@@ -5448,11 +6210,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         { quote: true },
       );
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido reproducir el audio: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido reproducir el audio', err), { quote: true });
     } finally {
       if (playable) rmSync(playable, { force: true });
       currentWake()?.suppress(WAKE_TAIL_MS);
@@ -5477,7 +6235,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, helpText({ bold: true }), { quote: true, format: 'marks' });
   };
 
+  /** /funciones [área]: lo que sé hacer por áreas; el dueño en privado lo ve todo. */
+  const cmdFunciones = async (inbound: Inbound, args: string): Promise<void> => {
+    const view = { owner: isOwnerDm(inbound, vigilanteOwnerId) };
+    const area = findArea(args);
+    await say(inbound, funcionesText(view, args), {
+      quote: true,
+      buttons: funcionesButtons(view, args.trim() ? area?.id : undefined),
+    });
+  };
+
   const cmdStart = async (inbound: Inbound): Promise<void> => {
+    const chatKey = `${inbound.channel}:${inbound.chatId}:${inbound.threadId ?? ''}`;
+    if (!startWelcomeDue(chatKey, Date.now(), inbound.sentAt)) return;
     await say(inbound, startText(inbound.displayName), { quote: true });
   };
 
@@ -5516,6 +6286,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       spoken?: (text: string) => Promise<void>;
       /** Otro destino (el panel): nada del turno sale por Telegram, todo va aquí. */
       out?: TurnOutput;
+      /** Turno del chat del panel (loopback + token): lo escribe el dueño, puede enseñar reglas. */
+      panel?: boolean;
     },
   ): Promise<void> => {
     const generation = thread.generation;
@@ -5530,12 +6302,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
+    threadOutputs.bind(thread.key, out);
     // Taint gate (F2): a new message from the owner starts clean; what the
     // previous turn read from outside no longer blocks standing approvals.
     thread.gate.clearTaint(thread.key);
     // F10: un turno que entra por correo es contenido externo: lo que no sea lectura pregunta.
     // También privado: el cuerpo del correo es de tu buzón y entra sin herramienta.
-    if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key);
+    if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key, inbound.text);
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
@@ -5552,7 +6325,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     /** Tool names in call order; two or more in a row is an observed sequence. */
     const toolNames: string[] = [];
     const startedAt = Date.now();
-    let lastStatusAt = 0;
+    const milestones = new ProgressMilestones();
     let finished = false;
     /** The progress notes this turn sent, so they can be taken out of the chat at the end. */
     const progressIds: string[] = [];
@@ -5591,20 +6364,44 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
     // Telegram expires the typing indicator after ~5s, so it is refreshed while a run
     // is alive. It says "working" without inventing a progress report.
+    // Al momento, no a los 4 s: el primer tic del intervalo llegaba tarde.
+    if (!out) void telegram.action(inbound.chatId, 'typing');
     const typing = setInterval(() => {
       if (finished || out) return;
       void telegram.action(inbound.chatId, 'typing');
     }, 4000);
     typing.unref();
+    // Acuse con la tarea («Miro tu correo, dame un momento») si el turno tarda; es
+    // la primera versión de la nota de progreso, que se edita y se borra al final.
+    const turnAck = new TurnAck({
+      show: (text) =>
+        liveProgress.show(text).then(() => {
+          if (liveProgress.id && !progressIds.includes(liveProgress.id))
+            progressIds.push(liveProgress.id);
+        }),
+      enabled: () =>
+        !finished && !out && statusOn.get(inbound.chatId) !== false && receipt.id === null,
+    });
+    // Si algo falla a mitad, una línea honesta en la misma nota: qué y qué prueba ahora.
+    const setbacks = new TurnSetbacks({
+      show: (text) =>
+        liveProgress.show(text).then(() => {
+          if (liveProgress.id && !progressIds.includes(liveProgress.id))
+            progressIds.push(liveProgress.id);
+        }),
+      enabled: () => !finished && !out && statusOn.get(inbound.chatId) !== false,
+    });
 
     const status = setInterval(() => {
       if (finished || out) return;
+      turnAck.tick(Date.now() - startedAt, toolNames);
       // The progress note is opt-out per chat: some people want to be told how it is
       // going while it works, others want one message at the end and nothing between.
       if (statusOn.get(inbound.chatId) === false) return;
       const now = Date.now();
-      if (now - startedAt > 25_000 && now - lastStatusAt > 45_000) {
-        lastStatusAt = now;
+      // Solo en hitos: a partir del minuto y cuando cambia el paso (o cada 3 min).
+      if (milestones.due(now - startedAt, now, lastSummary)) {
+        milestones.shown(now, lastSummary);
         // Varied and short. A progress note that says the same three words every
         // time reads as an automated nag; this is the same information in the
         // voice of someone checking in. UNA sola nota por turno, editada: antes cada
@@ -5712,11 +6509,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 inbound.documentName ?? inbound.text,
                 `Imagen reenviada "${label}"`,
               )
-            : `[Imagen reenviada: ${label}. Telegram no devolvió el archivo.]`;
+            : `[Imagen reenviada: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
         } else if (docMime.startsWith('audio/')) {
           const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
           if (!bytes) {
-            documentNote = `[Audio reenviado: ${label}. Telegram no devolvió el archivo.]`;
+            documentNote = `[Audio reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
           } else {
             try {
               const heard = await transcribeVoiceNote(bytes, { mimeType: docMime });
@@ -5731,7 +6528,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 : `[Audio reenviado: ${label}. No se entendió ninguna palabra; no se indexó nada.]`;
             } catch (err) {
               log.warn('audio document index failed', { err: String(err) });
-              documentNote = `[Audio reenviado: ${label}. No se pudo transcribir: ${err instanceof Error ? err.message : String(err)}]`;
+              documentNote = forwardedAudioFailNote(label, err);
             }
           }
         } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
@@ -5740,7 +6537,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           try {
             const bytes = await telegram.downloadFile(inbound.documentFileId);
             if (!bytes) {
-              documentNote = `[Documento reenviado: ${label}. Telegram no devolvió el archivo.]`;
+              documentNote = `[Documento reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
             } else {
               // The thread key is the memory scope everywhere: the documents
               // tool reads with () => thread.key, so indexing MUST use the
@@ -5754,11 +6551,38 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 },
                 bytes,
               );
+              // «resume este PDF» escaneado: primero el OCR local (como «/ocr md»), luego el modelo.
+              const scanned =
+                !indexed &&
+                !ocrBusy &&
+                isOwnerDm(inbound, vigilanteOwnerId) &&
+                pdfSummaryIntent(inbound)
+                  ? await ocrScannedForModel(bytes, label, {
+                      available: async () => ocrAvailability,
+                      run: async (b, meta, mode) => {
+                        ocrBusy = true;
+                        try {
+                          const progressDir = join(paths.state, 'ocr-progreso');
+                          return await runOcrJob(b, { ...meta, progressDir }, mode, windowsDeps);
+                        } finally {
+                          ocrBusy = false;
+                        }
+                      },
+                      index: (md) =>
+                        docMemory.indexOcr(
+                          memoryScopesFor(thread.key).write,
+                          inbound.documentFileId ?? label,
+                          md,
+                          inbound.text,
+                        ),
+                    })
+                  : null;
               documentNote = indexed
                 ? indexed.truncated
                   ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
                   : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
-                : `[Documento reenviado: ${label}. No tenía texto extraíble (un PDF escaneado son imágenes, no texto: por ahora no leo imágenes dentro de un PDF; si quieres, mándame las páginas como fotos).]`;
+                : (scanned ??
+                  `[Documento reenviado: ${label}. No tenía texto extraíble (un PDF escaneado son imágenes, no texto: por ahora no leo imágenes dentro de un PDF; si quieres, mándame las páginas como fotos).]`);
             }
           } catch (err) {
             log.warn('document index failed', { err });
@@ -5774,7 +6598,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
         if (!bytes) {
           if (receipt.id) progressIds.push(receipt.id);
-          await tell(inbound, 'No he podido descargar el audio.', { quote: true });
+          const tooBig = tooBigForBotDownload(inbound.audioSizeBytes);
+          await tell(
+            inbound,
+            tooBig
+              ? `No he podido descargar el audio. ${tooBig}`
+              : 'No he podido descargar el audio.',
+            { quote: true },
+          );
           return;
         }
         recall.retain(chatKey(inbound), inbound.messageId, bytes);
@@ -5807,11 +6638,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
         } catch (err) {
           if (receipt.id) progressIds.push(receipt.id);
-          await tell(
-            inbound,
-            `No he entendido la nota de voz: ${err instanceof Error ? err.message : String(err)}`,
-            { quote: true },
-          );
+          await tell(inbound, failedReply('No he entendido la nota de voz', err), { quote: true });
           return;
         }
       }
@@ -5826,33 +6653,74 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
-      thread.agent.attachContext(
-        buildContextNote(
-          thread,
-          store,
-          memory,
-          snapshot,
-          workstreams,
-          skills,
-          sessions,
-          ownerProfile,
-          prompt,
-          isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-          projectContexts,
-        ),
+      // Aprender de correcciones (PA_LEARN_CORRECTIONS): solo el texto del dueño, en
+      // su chat privado, activa la instrucción; nunca una web, un correo o una herramienta.
+      const learnHint = correctionHint({
+        enabled: learnCorrectionsEnabled(),
+        ownerDm: isOwnerDm(inbound, vigilanteOwnerId),
+        // El panel solo lo usa el dueño (loopback + token) y siempre en su hilo principal.
+        panelOwner: opts.panel === true && opts.out !== undefined && thread.name === 'main',
+        ownerText: text,
+      });
+      const contextNote = buildContextNote(
+        thread,
+        store,
+        memory,
+        snapshot,
+        workstreams,
+        skills,
+        sessions,
+        ownerProfile,
+        prompt,
+        isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        projectContexts,
       );
+      thread.agent.attachContext(learnHint ? `${contextNote}\n\n${learnHint}` : contextNote);
 
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
           lastSummary = info.summary;
           toolNames.push(info.tool);
+          turnAck.tick(Date.now() - startedAt, toolNames);
           // Mid-turn trail: a session that only holds the final answer cannot
           // answer "what did you do first?" two days later.
           safeRemember(() => sessions.addTurn(sessionId, 'assistant', info.summary));
         },
+        onToolEnd: (info) => {
+          setbacks.toolEnded(info);
+        },
       });
 
       if (thread.generation !== generation) return;
+
+      // Lo que contó de sí mismo ya está en su perfil (se apuntó al llegar): que lo sepa.
+      const saidNow = recentFacts.peek(chatKey(inbound));
+      const factSaved =
+        saidNow !== null && saidNow === `${SAID_PREFIX} ${statedFact(inbound.text) ?? ''}`;
+      if (factSaved && !/apunt|guard|anot|record/i.test(result.text)) {
+        result = { ...result, text: `${result.text}\n\n${factSavedLine(saidNow)}`.trim() };
+      }
+
+      // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la
+      // memoria del chat y la respuesta lleva una línea «📝 Aprendido: …» (sin aprobación).
+      const learnt = learnFromTurn({
+        memory,
+        scope: memoryScopesFor(thread.key).write,
+        reply: result.text,
+        hinted: learnHint !== null,
+        tainted: thread.gate.taintOf(thread.key) !== null,
+        // «(si no la quieres, dime «olvida la regla N»)» solo donde eso funciona (Telegram y el panel).
+        forgetScopes:
+          opts.out && opts.panel !== true ? undefined : memoryScopesFor(thread.key).read,
+      });
+      if (learnt.outcome)
+        log.info('correction learned', { thread: thread.name, status: learnt.outcome.status });
+      if (learnt.text !== result.text || learnt.line) {
+        result = {
+          ...result,
+          text: learnt.line ? `${learnt.text}\n\n${learnt.line}`.trim() : learnt.text,
+        };
+      }
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.
@@ -5863,6 +6731,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // momento, sin esperar al evolve semanal. Solo anota; nunca reescribe.
       const refined = refineFromLessons(skills, learned, learnDay);
       if (refined.length) log.info('skills refined in use', { thread: thread.name, ids: refined });
+      // Receta repetida: solo al dueño, una línea al final; dice sí con skills accept.
+      if (result.error === null && isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
+        const offer = skillRepeats.observe(result.steps, skills.list());
+        if (offer) result = { ...result, text: `${result.text}\n\n${offer.line}`.trim() };
+      }
 
       log.info('task done', {
         thread: thread.name,
@@ -5878,9 +6751,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Coste y continuidad del turno: tokens reales en el libro diario, la
       // respuesta completa cacheada para "Dime más", y aviso si el presupuesto
       // diario (PA_DAILY_BUDGET_EUR) está agotado.
+      // El modelo real de esta conversación (/modelo) y sus precios: PA_PRICE_*
+      // solo valen para PA_MODEL.
+      const usedModel = thread.agent.modelId;
       recordUsage({
         sessionId: thread.key,
-        model: config.model,
+        model: usedModel,
+        priceOverrides: usedModel === config.model,
         inputTokens: result.inputTokens ?? 0,
         outputTokens: result.outputTokens ?? 0,
         kind: 'turn',
@@ -5895,8 +6772,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       }
 
-      const text2 =
-        result.text.trim() || (result.error ? `Fallo: ${result.error}` : 'Sin respuesta.');
+      // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
+      const text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
       if (out) out.answer(text2);
       else await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
@@ -5978,7 +6855,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // have to remember to ask: the moment they say "prefiero X" is the moment it
       // costs least to write it down.
       const nudge = detectMemoryWorthy(inbound.text);
-      if (nudge.worth) {
+      // Ya apuntado al llegar («mi dentista es…»): sin pregunta «¿lo guardo?».
+      if (nudge.worth && !factSaved) {
         // Modelo de usuario auto-enriquecido: el mismo hecho visto en
         // AUTOSAVE_DAYS días distintos deja de ser pregunta y se guarda solo,
         // marcado [auto], visible con action=profile y borrable con
@@ -6042,9 +6920,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Approval scope is one task: a memo or grant must never leak into the next
       // turn, where the user has new context that the approval did not cover.
       thread.gate.clearSession(thread.key);
-      for (const key of purchaseAnswers.keys()) {
-        if (key.startsWith(`${thread.key}:`)) purchaseAnswers.delete(key);
-      }
+      purchaseApprovals.forgetThread(thread.key);
+      threadOutputs.release(thread.key, out);
     }
   };
 
@@ -6123,25 +7000,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * nothing to attach this to, and a fabricated id would make it look like a reply to
    * something the user never wrote.
    */
-  const notifyLastChat = async (text: string): Promise<void> => {
+  /** Con `ask`, la respuesta «sí» en ese chat lanza el comando (sin escribirlo). */
+  const notifyLastChat = async (
+    text: string,
+    ask?: { command: string; args: string },
+  ): Promise<void> => {
     const chat = lastChat;
     if (!chat) return;
-    await say(
-      {
-        channel: 'telegram',
-        account: telegram.account,
-        chatId: chat.chatId,
-        threadId: chat.threadId,
-        userId: String(chat.chatId),
-        text: '',
-        authorised: true,
-        messageId: 'wake-notice',
-        receivedAt: new Date().toISOString(),
-      },
-      text,
-      { quote: false },
-    );
+    const to: Inbound = {
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: chat.chatId,
+      threadId: chat.threadId,
+      userId: String(chat.chatId),
+      text: '',
+      authorised: true,
+      messageId: 'wake-notice',
+      receivedAt: new Date().toISOString(),
+    };
+    if (ask) {
+      preguntas.ask(chatKey(to), ask.command, {
+        answer: (t) => (SI_RESPUESTA.test(t) ? ask.args : null),
+      });
+    }
+    await say(to, text, { quote: false });
   };
+  /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
+  const WAKE_ON_ASK = { command: 'wake', args: 'on' };
 
   // ---- spoken conversation (capability 6, V1) --------------------------------
 
@@ -6150,6 +7035,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   let session: ConversationSession | null = null;
   let sessionPlayback: Playback | null = null;
   let activeSpeech: { abort(): void } | null = null;
+  /** Chat dueño de la conversación por voz abierta (para que /stop solo corte la suya). */
+  let sessionChatKey: string | null = null;
   /** How easily talking over the agent cuts it off. Not persisted. */
   let bargeLevel: BargeInLevel = 'altavoces';
   let conversationCount = 0;
@@ -6259,11 +7146,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       onClose: (reason, detail) => {
         if (session === created) {
           session = null;
+          sessionChatKey = null;
         }
         sessionPlayback?.stop();
         activeSpeech?.abort();
         currentWake()?.hold(false);
-        lastConversationEnd = `${reason}${detail ? `: ${detail}` : ''}`;
+        lastConversationEnd =
+          reason === 'inactividad'
+            ? 'porque dejaste de hablar'
+            : reason === 'fallo'
+              ? 'porque no conseguía entenderte'
+              : reason === 'apagado'
+                ? 'al apagar la voz'
+                : 'porque la cerraste';
         const closeStats = created.stats();
         bargeStats.record({
           endedAt: Date.now(),
@@ -6280,6 +7175,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
     });
     session = created;
+    sessionChatKey = chat.key;
     conversationCount++;
     listener.hold(true);
     log.info('voice session opened', { chatId: chat.chatId, n: conversationCount });
@@ -6315,14 +7211,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       onError: (err) => {
         log.warn('wake listener error', { err });
         // Capture failure ends any spoken session too: its audio is gone.
-        endSession('fallo', err.message);
+        endSession('fallo', plainVoiceError(err));
         // The listener stops itself when capture or transcription fails, and from the
         // user's side a listener that stopped listening is indistinguishable from one
         // that never started. Said once: the failure repeats until it is fixed.
         if (told) return;
         told = true;
         void notifyLastChat(
-          `He dejado de escuchar "${wakeWord}": ${err.message}. Vuelve a activarlo con /wake on.`,
+          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} ${WAKE_AGAIN_ASK}`,
+          WAKE_ON_ASK,
         ).catch(() => {});
       },
     });
@@ -6366,9 +7263,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (action === 'need-mic') {
       // Sin listener no hay audio que darle a la sesion: se dice, no se calla.
       log.info('tv button pressed with the mic off', { source });
-      void notifyLastChat(
-        'Has pulsado el botón del mando pero el micrófono está apagado: actívalo con /wake on o /conversacion on.',
-      ).catch(() => {});
+      void notifyLastChat(MIC_OFF_TEXT, WAKE_ON_ASK).catch(() => {});
       return;
     }
     if (action === 'already-open') {
@@ -6498,12 +7393,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const gates = [...threads.values()].map((thread) => thread.gate);
-    await say(inbound, runPermisosCommand(gates, approvalsDb, args), { quote: true });
+    if ((args.trim().split(/\s+/)[0] ?? '').toLowerCase() === 'lista') {
+      // Solo lectura: herramienta, dónde vale y desde cuándo; sin botones.
+      await say(inbound, permisosListaReply(gates, approvalsDb, chatKey(inbound)), { quote: true });
+      return;
+    }
+    await say(inbound, runPermisosCommand(gates, approvalsDb, args, chatKey(inbound)), {
+      quote: true,
+    });
   };
+
+  /** Tras una pregunta de /conversacion, la respuesta normal completa el comando. */
+  const askConversacion = (inbound: Inbound, answer: (t: string) => string | null): void =>
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer });
+  const micOpenAnswer = (t: string): string | null => (SI_RESPUESTA.test(t) ? 'on' : null);
 
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
+      if (!currentWake()?.isRunning()) askConversacion(inbound, micOpenAnswer);
       const st = session?.stats();
       const bargeHist = bargeStats.totals();
       const bargeRate = bargeFalseRate(bargeHist);
@@ -6511,13 +7419,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         inbound,
         `Conversación por voz: ${conversationOn ? 'activada' : 'apagada'}. ` +
           (st
-            ? `Sesión abierta (${st.state}, ${st.utterances} frases, ${st.bargeIns} interrupciones (${st.bargeTrue} uso estimado, ${st.bargeFalseNoise + st.bargeFalseEcho} falsas estimadas, ${st.bargeUnclassified} sin clasificar${st.bargePending > 0 ? `, ${st.bargePending} pendiente de clasificar` : ''}${st.bargeVadRejected > 0 ? `, ${st.bargeVadRejected} ruidos rechazados por el detector` : ''}), lo último que he oído: "${st.lastHeard}"${st.lastError ? `, último fallo: ${st.lastError}` : ''}).`
-            : `Sin sesión abierta${lastConversationEnd ? ` (la última se cerró: ${lastConversationEnd})` : ''}.`) +
-          (currentWake()?.isRunning()
-            ? ''
-            : ' El micrófono está cerrado: /conversacion on lo abre.') +
+            ? `Ahora estamos hablando: ${st.utterances} ${st.utterances === 1 ? 'frase' : 'frases'}${
+                st.bargeIns > 0
+                  ? `; me has cortado ${st.bargeIns} ${st.bargeIns === 1 ? 'vez' : 'veces'}${
+                      st.bargeFalseNoise + st.bargeFalseEcho > 0
+                        ? `, ${st.bargeFalseNoise + st.bargeFalseEcho} sin querer (ruido o eco)`
+                        : ''
+                    }`
+                  : ''
+              }.${st.lastHeard ? ` Lo último que te oí: «${st.lastHeard}».` : ''}${
+                st.lastError ? ' La última vez algo falló al oírte.' : ''
+              }`
+            : `Ahora no estamos hablando${lastConversationEnd ? ` (la última conversación acabó ${lastConversationEnd})` : ''}.`) +
+          (currentWake()?.isRunning() ? '' : MIC_CLOSED_ASK) +
           (bargeHist.bargeIns > 0
-            ? ` Histórico de cortes: ${bargeHist.bargeIns} interrupciones en ${bargeHist.sessions} sesiones (${bargeClassified(bargeHist)} clasificadas${bargeRate !== null ? `, ${Math.round(bargeRate * 100)}% falsas estimadas` : ''}${bargeHist.unclassified > 0 ? `, ${bargeHist.unclassified} sin clasificar` : ''}).`
+            ? ` En total me has cortado ${bargeHist.bargeIns} ${bargeHist.bargeIns === 1 ? 'vez' : 'veces'}${
+                bargeRate !== null
+                  ? `; calculo que un ${Math.round(bargeRate * 100)}% sin querer`
+                  : ''
+              }.`
             : ''),
         { quote: true },
       );
@@ -6526,11 +7446,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (want === 'corte') {
       const level = args.trim().split(/\s+/)[1]?.toLowerCase() ?? '';
       if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
-        await say(
-          inbound,
-          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|altavoces|auriculares (vale desde la próxima sesión).`,
-          { quote: true },
-        );
+        askConversacion(inbound, corteAnswer);
+        await say(inbound, corteAsk(bargeLevel), { quote: true });
         return;
       }
       bargeLevel = level;
@@ -6538,7 +7455,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const histRate = bargeFalseRate(hist);
       const histLine =
         hist.bargeIns >= 20
-          ? ` Llevas ${hist.bargeIns} interrupciones: ${bargeClassified(hist)} clasificadas${histRate !== null ? ` (${Math.round(histRate * 100)}% falsas estimadas)` : ''}${hist.unclassified > 0 ? `, ${hist.unclassified} sin clasificar` : ''}. Es una estimación por transcripción, no una medición exacta.`
+          ? ` Hasta ahora me has cortado ${hist.bargeIns} veces${
+              histRate !== null ? `; calculo que un ${Math.round(histRate * 100)}% sin querer` : ''
+            }.`
           : '';
       await say(
         inbound,
@@ -6551,7 +7470,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (want !== 'on' && want !== 'off') {
-      await say(inbound, 'Uso: /conversacion on|off|estado|corte', { quote: true });
+      await say(
+        inbound,
+        'No te he pillado. ¿Activo la conversación por voz, la apago o te digo cómo está?',
+        { quote: true },
+      );
       return;
     }
     if (want === 'off') {
@@ -6571,17 +7494,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     try {
       if (!currentWake()?.isRunning()) await startWake();
     } catch (err) {
-      await say(
-        inbound,
-        `No he podido abrir el micrófono: ${err instanceof Error ? err.message : String(err)}`,
-        { quote: true },
-      );
+      await say(inbound, failedReply('No he podido abrir el micrófono', err), { quote: true });
       return;
     }
     conversationOn = true;
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer: conversacionOffAnswer });
     await say(
       inbound,
-      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio, con "adiós"/"nada más" o con /conversacion off. Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
+      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio o con "adiós"/"nada más". ${CONVERSACION_OFF_HINT} Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
       { quote: true },
     );
   };
@@ -6596,7 +7516,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     } catch (err) {
       await say(
         inbound,
-        `No he podido ${next ? 'activar' : 'desactivar'} la palabra: ${err instanceof Error ? err.message : String(err)}`,
+        failedReply(`No he podido ${next ? 'activar' : 'desactivar'} la palabra`, err),
         { quote: true },
       );
       return;
@@ -6612,7 +7532,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       next
-        ? `Escuchando "${wakeWord}" en el microfono. Dime "${wakeWord}, ..." y te hago caso.` +
+        ? `Escuchando "${wakeWord}" en el micrófono. Dime "${wakeWord}, ..." y te hago caso.` +
             (stats
               ? ` (ventanas oidas: ${stats.checks}, avisos: ${stats.wakeCount}` +
                 `${stats.lastHeard ? `, lo ultimo que he oido: "${stats.lastHeard}"` : ''})`
@@ -6681,6 +7601,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['resumen'], run: (inbound, args) => cmdResumen(inbound, args) },
     { names: ['evolucion'], run: (inbound, args) => cmdEvolucion(inbound, args) },
     { names: ['estado'], run: (inbound) => cmdEstado(inbound) },
+    {
+      names: ['actualizacion'],
+      run: async (inbound) => {
+        const { autoupdateStatusLine } = await import('./autoupdate-cli.js');
+        await say(inbound, autoupdateStatusLine(paths.state));
+      },
+    },
     { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
     { names: ['compactar'], run: (inbound) => cmdCompactar(inbound) },
     { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },
@@ -6698,8 +7625,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       names: ['servicios'],
       run: (inbound) => say(inbound, formatServicesList(adoptedServices.list()), { quote: true }),
     },
+    {
+      // /mcp recursos|prompts: solo lectura y solo el dueño en privado.
+      names: ['mcp'],
+      run: async (inbound, args) => {
+        if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+          await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+            quote: true,
+          });
+          return;
+        }
+        await say(inbound, await mcpCommandText(args), { quote: true });
+      },
+    },
     { names: ['vigila'], run: (inbound, args) => cmdVigila(inbound, args) },
     { names: ['vigilando'], run: (inbound) => cmdVigilando(inbound) },
+    { names: ['vigilancias'], run: (inbound) => cmdVigilancias(inbound) },
     { names: ['dejar_de_vigilar'], run: (inbound, args) => cmdDejarDeVigilar(inbound, args) },
     { names: ['precio'], run: (inbound, args) => cmdPrecio(inbound, args) },
     { names: ['compara'], run: (inbound, args) => cmdCompara(inbound, args) },
@@ -6714,6 +7655,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: async (inbound, args) => cmdMemoria(await resolveThread(inbound), inbound, args),
     },
     {
+      // Reglas aprendidas de tus correcciones (PA_LEARN_CORRECTIONS): ver y borrar.
+      // /olvida es un comando escrito, nunca un botón de un toque.
+      names: ['aprendido', 'aprendidas'],
+      run: async (inbound) => {
+        const thread = await resolveThread(inbound);
+        const rules = learnedRules(memory, memoryScopesFor(thread.key).read);
+        await say(inbound, formatLearnedRules(rules), { quote: true });
+      },
+    },
+    {
+      names: ['olvida'],
+      run: async (inbound, args) => {
+        const thread = await resolveThread(inbound);
+        const reply = forgetLearnedRule(memory, memoryScopesFor(thread.key).read, args);
+        if (reply.startsWith('¿Cuál')) preguntas.ask(chatKey(inbound), 'olvida');
+        await say(inbound, reply, { quote: true });
+      },
+    },
+    {
       names: ['exportar'],
       run: async (inbound, args) => cmdExportar(await resolveThread(inbound), inbound, args),
     },
@@ -6726,7 +7686,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (sub === 'instalar' || sub === 'importar' || sub === 'install') {
           return cmdSkillsImport(inbound, args.trim().split(/\s+/).slice(1).join(' '));
         }
-        return say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+        if (sub === 'buscar' || sub === 'search') {
+          return cmdSkillsSearch(inbound, args.trim().split(/\s+/).slice(1).join(' '));
+        }
+        if (sub === 'catalogo' || sub === 'catálogo' || sub === 'catalog') {
+          return cmdSkillsCatalog(inbound);
+        }
+        return say(
+          inbound,
+          'No te he pillado. Puedo buscar habilidades, enseñarte el catálogo o instalar una si me pasas el enlace.',
+          { quote: true },
+        );
       },
     },
     { names: ['agenda'], run: (inbound, args) => cmdAgenda(inbound, args) },
@@ -6742,9 +7712,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['wake', 'asistenta'], run: (inbound, args) => cmdWake(inbound, args) },
     { names: ['status'], run: (inbound, args) => cmdStatus(inbound, args) },
     { names: ['start'], run: (inbound) => cmdStart(inbound) },
+    { names: ['funciones'], run: (inbound, args) => cmdFunciones(inbound, args) },
     { names: ['help'], run: (inbound) => cmdHelp(inbound) },
   ]);
 
+  const strangerHint = makeStrangerHint();
   await registry.startAll({
     // Un canal caido avisa una vez por caida y reintenta solo (antes: una linea
     // de log y canal muerto hasta reinicio, sin aviso — auditoria, linea 120).
@@ -6753,11 +7725,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // esta caida, el catch lo traga y queda el log.
     onPollingLost: (_channel, message) => {
       void notifyLastChat(
-        `He perdido la conexion con Telegram: ${message}. Reintento solo cada poco y te aviso al volver.`,
+        `He perdido la conexión con Telegram: ${message}. Reintento solo cada poco y te aviso al volver.`,
       ).catch(() => {});
     },
     onPollingRecovered: () => {
       void notifyLastChat('Telegram reconectado.').catch(() => {});
+    },
+    onFuncionesButton: async (press) => {
+      const view = { owner: isOwnerDm(press, vigilanteOwnerId) };
+      return {
+        text: funcionesButtonText(press.data, view),
+        buttons: funcionesButtons(
+          view,
+          findArea(press.data.slice(FUNCIONES_CALLBACK_PREFIX.length))?.id,
+        ),
+      };
     },
     onTvButton: (press) =>
       tvButtonCommand(press.data, {
@@ -6799,26 +7781,121 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             key: chatKey_,
           });
 
-          if (isMailReplyRequest(inbound.text)) return cmdCorreo(inbound, inbound.text);
-          const erase = eraseConfirm.consume(chatKey_, inbound.text);
-          if (erase === 'confirmed') return cmdBorrarChatConfirmado(inbound);
-          if (erase === 'cancelled')
-            await say(inbound, 'Cancelado: no he borrado nada.', { quote: true });
-          const command = parseCommand(inbound.text);
-          if (command) {
+          // Correo, confirmación de /borrar_chat y comandos: antes de cualquier hilo.
+          const control = await routeInboundControl(inbound, chatKey_, {
+            mailReply: (m) => cmdCorreo(m, m.text),
+            consumeErase: (key, text) => eraseConfirm.consume(key, text),
+            eraseConfirmed: (m) => cmdBorrarChatConfirmado(m),
+            eraseCancelled: (m) => say(m, 'Cancelado: no he borrado nada.', { quote: true }),
+            parseCommand,
+            consumeAnswer: (key, text) => preguntas.consume(key, text),
+            clearAnswer: (key) => preguntas.clear(key),
             // Commands bypass the agent entirely: they are the user's hands on the
             // machine, not a task to delegate, and they must work even when every thread
             // is busy or the provider is down.
-            return dispatchCommand(commandTable, inbound, command, async (name) => {
-              // Unknown slash command: say so instead of silently running it as a task.
-              await say(inbound, `No conozco el comando /${name}. /help para ver la lista.`, {
-                quote: true,
-              });
-            });
+            runCommand: (m, command) =>
+              dispatchCommand(commandTable, m, command, async (name) => {
+                // Unknown slash command: say so instead of silently running it as a task.
+                await say(m, `No conozco el comando /${name}. /help para ver la lista.`, {
+                  quote: true,
+                });
+              }),
+          });
+          if (control === 'handled') return;
+          // «pásame este PDF a texto» con un PDF: el mismo trabajo que el pie «/ocr md».
+          if (isOwnerDm(inbound, vigilanteOwnerId) && pdfToTextIntent(inbound)) {
+            await cmdOcr(inbound, 'md');
+            return;
           }
+          // «para» con una vista en directo abierta en este chat: la para como /screen off.
+          if (await stopLiveByWords(inbound)) return;
+          // «descarta el 3»: descarta el aviso [#3] como /ignora 3.
+          if (await ignoraByWords(inbound)) return;
+          // «vuelve a la principal» con otra conversación activa: como /topic main.
+          if (await backToMainByWords(inbound)) return;
+          // «sí» tras «¿La paro y lo borro todo?»: para la tarea y borra el chat.
+          if (await stopAndEraseByWords(inbound)) return;
+          // «olvida la regla 2» tras «📝 Aprendido: …»: la borra como /olvida 2.
+          if (await forgetRuleByWords(inbound)) return;
+          // «deja de vigilar (la tele)» con vigilancias en este chat: como /dejar_de_vigilar.
+          if (await stopWatchingByWords(inbound)) return;
+          // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
+          if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
+            const learnThread = await resolveThread(inbound);
+            if (learning.isRecording(inbound.chatId) || webDemo.isRecording(learnThread.key)) {
+              await cmdLearn(learnThread, inbound, 'end');
+              return;
+            }
+          }
+          // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
+          const closed =
+            inbound.chatId === briefingOwner() ? closeLoop.answered(inbound.text) : null;
+          if (closed) {
+            await say(inbound, closedLine(closed.subject), { quote: true });
+            return;
+          }
+          const parcelAnswer =
+            inbound.chatId === briefingOwner() ? parcelCheckIn.answered(inbound.text) : null;
+          if (parcelAnswer) {
+            await say(inbound, parcelAnswerReply(parcelAnswer), { quote: true });
+            return;
+          }
+          // «sí» tras «Hay otros N cambios. ¿Quieres verlos?» del aviso de actualización.
+          const novedadesReply =
+            inbound.chatId === briefingOwner()
+              ? answerPendingNovedades(paths.state, inbound.text)
+              : null;
+          if (novedadesReply) {
+            for (const [i, part] of novedadesReply.entries())
+              await say(inbound, part, { quote: i === 0 });
+            return;
+          }
+          if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
+
+          // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
+          const plainText =
+            !inbound.documentFileId && !inbound.audioFileId && !inbound.images?.length;
+          // Lo grande o abierto: 3–5 preguntas y un resumen antes de empezar (skill grill-me).
+          const grill =
+            plainText && isOwnerDm(inbound, vigilanteOwnerId)
+              ? await grillMe.handle(chatKey_, inbound.text, {
+                  // El modelo solo se prepara si de verdad toca preguntar.
+                  llm: async (system, user, max) => {
+                    const llm = await researchLlm();
+                    if (!llm) throw new Error('sin modelo');
+                    return llm(system, user, max);
+                  },
+                  reply: (text) => say(inbound, text, { quote: true }).then(() => undefined),
+                })
+              : ({ kind: 'pass' } as const);
+          if (grill.kind === 'handled') return;
+          if (grill.kind === 'go' && grill.feature) {
+            const busy = evolving;
+            addHypothesis(paths.state, `Petición del dueño: ${grill.request} — ${grill.spec}`);
+            await say(inbound, busy ? ASK_QUEUED_BUSY : ASK_QUEUED, { quote: true });
+            void runEvolveCycle(inbound.chatId);
+            return;
+          }
+          if (grill.kind === 'go') inbound.text = grill.text;
+          if (
+            plainText &&
+            (await handleFeatureAsk(chatKey_, inbound.text, {
+              isOwner: isOwnerDm(inbound, vigilanteOwnerId),
+              addHypothesis: (idea) => addHypothesis(paths.state, idea),
+              busy: () => evolving,
+              start: () => void runEvolveCycle(inbound.chatId),
+              reply: (text) => say(inbound, text, { quote: true }).then(() => undefined),
+              pending: featureAsks,
+            }))
+          )
+            return;
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
+          // «no te entiendo», «¿cómo?» tras una respuesta: re-explicarlo en llano (skill wait-what).
+          if (thread.agent.messages.length > 0 && wantsRepitch(inbound.text)) {
+            inbound.text = repitchText(inbound.text);
+          }
           // "Dime más"/"sigue": sirve la respuesta completa cacheada sin gastar un turno.
           const full = cachedFullReply(inbound, thread.key, { isMoreRequest, takeFullReply });
           if (full) {
@@ -6847,8 +7924,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         (error) => log.error('inbound message failed', { error: startupFailureMessage(error) }),
       );
     },
-    log: (level, msg, fields) => log[level](msg, fields ?? {}),
+    log: (level, msg, fields) => {
+      log[level](msg, fields ?? {});
+      // ¿Un ID mal guardado al instalar? Que se vea en el PC, en castellano.
+      const hint = strangerHint(msg, fields);
+      if (hint) process.stderr.write(`${hint}\n`);
+    },
   });
+  // Para `pa status --json` y el icono de la bandeja: si Telegram está conectada.
+  startTelegramEstado(paths.state, () => telegram.isReady());
 
   // F3: webhook local para lanzar una rutina (apagado por defecto; docs/webhook.md).
   const hookCfg = webhookConfig();
@@ -6885,6 +7969,54 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   log.info('daemon ready', { allowed, threads: threads.size });
 
+  // Arranque: una sola línea clara en la consola. A Telegram no va nada si todo está
+  // bien (se da por hecho); maybeSendBootNotice solo avisa de problemas, uno por vez.
+  void (async () => {
+    const panel = await panelBootFacts(panelPlan, panelStarted);
+    const facts = {
+      model: config.model,
+      tv: Boolean(await vaultGet('tv:host').catch(() => undefined)),
+      computerUse: desktop && config.computerUse !== false,
+      mail: await mailStatus()
+        .then((m) => m.read === 'ok')
+        .catch(() => false),
+      threads: threads.size,
+      // El panel: su dirección en la consola si escucha; si no arranca, se avisa
+      // también por Telegram (una vez, ver boot-notice).
+      panelUrl: panel.url,
+      // PA_TIMEZONE mal escrita: antes solo una línea en inglés en la consola.
+      problems: withTimeZoneProblem(panel.problems),
+    };
+    process.stdout.write(`${bootBanner(facts)}\n`);
+    const result = await maybeSendBootNotice({
+      statePath: join(paths.state, BOOT_NOTICE_FILE),
+      ownerChatId: vigilanteOwnerId,
+      facts,
+      send: (chatId, text) =>
+        say(
+          {
+            channel: 'telegram',
+            account: telegram.account,
+            chatId,
+            userId: chatId,
+            text: '',
+            authorised: true,
+            messageId: 'boot-notice',
+            receivedAt: new Date().toISOString(),
+          },
+          text,
+          { quote: false },
+        ),
+    });
+    if (result !== 'off') log.info('boot notice', { result });
+  })().catch(() => {});
+
+  // Dictado por voz (PA_DICTADO=1, Windows): tecla mantenida → texto en la app con el foco.
+  void import('./dictado/arranque.js')
+    .then((m) => m.arrancarDictado({ log: (l) => log.info(l), escritorio: desktopEnabled() }))
+    .then((d) => d && process.once('exit', () => void d.stop()))
+    .catch((err: unknown) => log.error('dictado could not start', { err }));
+
   // Started last, and off the critical path: a machine with no microphone, or one
   // where the device is already held by Teams, must still end up with a working
   // Telegram daemon. A failure here is logged and reported in /wake, never thrown.
@@ -6905,7 +8037,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             messageId: 'wake-start-failed',
             receivedAt: new Date().toISOString(),
           },
-          `No he podido escuchar la palabra "${wakeWord}": ${err instanceof Error ? err.message : String(err)}`,
+          failedReply(`No he podido escuchar la palabra "${wakeWord}"`, err),
           { quote: true },
         );
       }
@@ -6927,51 +8059,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   await lifecycle.done;
   return 0;
-}
-
-/**
- * Text destined for speech.
- *
- * Markdown is read terribly aloud, and a 900-character answer becomes a 90-second
- * voice note nobody asked for. Code blocks are dropped entirely and replaced by a
- * marker, because a model quoting a stack trace at 2am on a phone is useless.
- */
-export function trimForSpeech(text: string): string {
-  const cleaned = text
-    .replace(/```[\s\S]*?```/g, ' (bloque de codigo omitido) ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, '')
-    // Emojis y viñetas: la voz los lee como nombres («cara sonriente», «guion»).
-    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
-    .replace(/^[ \t]*[-•·][ \t]+/gm, '')
-    // Símbolos de texto que no son emoji: flechas, estrellas, marcas, cajas. SAPI
-    // los lee por su nombre («flecha a la derecha», «estrella negra») o se traba.
-    .replace(
-      /[ \t]*(?:[\u2190-\u21FF\u27F0-\u27FF\u2900-\u297F\u2B00-\u2B2F]|-{1,2}>|={1,2}>|<-{1,2})[ \t]*/g,
-      ', ',
-    )
-    .replace(/[\u2600-\u27BF\u25A0-\u25FF\u2700-\u27BF\u2022\u2023\u2043\u2219\u00B7]/g, ' ')
-    // Un salto de línea sin puntuación (listas) es una pausa, no una frase pegada.
-    .replace(/([^\s.!?…:;,])[ \t]*\n+/g, '$1. ')
-    .replace(/[*_#>|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (cleaned.length <= 900) return cleaned;
-  // Cortar en el último fin de frase (o palabra) antes del tope: nunca a media palabra.
-  const head = cleaned.slice(0, 900);
-  const sentenceEnd = Math.max(
-    head.lastIndexOf('. '),
-    head.lastIndexOf('? '),
-    head.lastIndexOf('! '),
-  );
-  const cut =
-    sentenceEnd >= 450
-      ? sentenceEnd + 1
-      : head.lastIndexOf(' ') >= 450
-        ? head.lastIndexOf(' ')
-        : 900;
-  return `${cleaned.slice(0, cut).trimEnd()}...`;
 }
 
 /**
@@ -6998,8 +8085,6 @@ function safeRemember(fn: () => void): void {
  * matching would record noise as instinct and dilute the confidence counts.
  */
 const PREFERENCE_MARKERS = /\b(prefiero|me gusta\w*|siempre|nunca)\b/iu;
-
-const DAY_MS = 86_400_000;
 
 /** Ventana de la agenda del vigilante: las caducidades avisan a 30 días. */
 const VIGILANTE_AGENDA_DAYS = 35;
@@ -7050,198 +8135,6 @@ export function followupFromMessage(
 }
 
 /**
- * Search hits as a short Spanish list. The title says which conversation, the
- * snippet says why it matched; nothing else is worth the screen it takes.
- */
-export function formatSessionHits(hits: readonly SessionHit[], query = ''): string {
-  if (!hits.length) {
-    return query
-      ? `No he encontrado nada sobre "${query}" en el historial de esta conversación.`
-      : 'No he encontrado nada en el historial de esta conversación.';
-  }
-  const lines = hits.map((h) => {
-    const day = localDay(new Date(h.at));
-    const snippet = h.snippet.replace(/\s+/g, ' ').trim();
-    return `- ${h.title.trim() || 'sin título'} (${day}): ${snippet}`;
-  });
-  return [`Esto es lo que encontré (${hits.length}):`, ...lines].join('\n');
-}
-
-/**
- * Words that carry the schedule rather than the task. Stripped before naming, so
- * "cada mañana a las 8 resumen del día" becomes the routine "resumen" - the name
- * the user then types back in /routine.
- */
-const SCHEDULE_WORDS = new Set([
-  'a',
-  'al',
-  'cada',
-  'con',
-  'de',
-  'del',
-  'dia',
-  'dias',
-  'domingo',
-  'el',
-  'en',
-  'hora',
-  'horas',
-  'jueves',
-  'la',
-  'las',
-  'lo',
-  'los',
-  'lunes',
-  'manana',
-  'martes',
-  'mes',
-  'meses',
-  'miercoles',
-  'minuto',
-  'minutos',
-  'noche',
-  'para',
-  'por',
-  'proxima',
-  'que',
-  'sabado',
-  'semana',
-  'semanas',
-  'tarde',
-  'todos',
-  'un',
-  'una',
-  'viernes',
-  'y',
-]);
-
-export function routineNameFromPrompt(prompt: string): string {
-  const words = foldAccents(prompt)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w && !SCHEDULE_WORDS.has(w) && !/^\d+$/.test(w));
-  const slug = words
-    .slice(0, 6)
-    .join('-')
-    .replace(/[^a-z0-9-]/g, '');
-  return slug || 'rutina';
-}
-
-/** A local stamp with a rough distance, for the agenda and the creation reply. */
-export function formatNextRun(at: number, now = Date.now()): string {
-  const d = new Date(at);
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const delta = at - now;
-  if (delta <= 0) return `${stamp} (ya)`;
-  // Whole units chosen before rounding, so half an hour never rounds up into
-  // "en 1 h" and reads wrong for the next thirty minutes.
-  if (delta >= 2 * DAY_MS) return `${stamp} (en ${Math.round(delta / DAY_MS)} d)`;
-  if (delta >= 3_600_000) return `${stamp} (en ${Math.round(delta / 3_600_000)} h)`;
-  return `${stamp} (en ${Math.max(1, Math.round(delta / 60_000))} min)`;
-}
-
-/**
- * When a scheduled routine next fires, as text for the user. The live runner
- * answers first because it knows about held first fires; a routine that never
- * registered still gets an answer from its own cron expression.
- */
-/**
- * Scope model: a thread's routines live at `chatKey#thread`, so a chat owns
- * exactly the scopes with that prefix — a bare startsWith(chatKey) would leak
- * telegram:123's routines into telegram:12 (auditor #135 ronda 2).
- */
-export function inChatScope(scope: string, chatKey: string): boolean {
-  return scope.startsWith(`${chatKey}#`);
-}
-
-/**
- * First free name in the scope, any kind: saveRoutine UPSERTS by (scope,name)
- * — steps and params included — so an implicit `/cron add` must never reuse an
- * existing name (auditor #135 ronda 2).
- */
-export function uniqueRoutineName(store: Store, scope: string, base: string): string {
-  if (!store.getRoutine(scope, base)) return base;
-  for (let i = 2; ; i++) {
-    const candidate = `${base}-${i}`;
-    if (!store.getRoutine(scope, candidate)) return candidate;
-  }
-}
-
-export interface CronCommandDeps {
-  store: Store;
-  routineRunner: RoutineRunner;
-  /** thread.key of the conversation the command runs in (`chatKey#thread`). */
-  threadKey: string;
-  /** chatKey without the `#thread` suffix. */
-  chatKey: string;
-  /** Where each routine's output goes (F6); absent = `/cron entrega` unavailable. */
-  delivery?: RoutineDeliveryStore;
-  /** F4: comandos propuestos/aprobados; absent = `/cron comando` unavailable. */
-  commands?: CommandRoutineStore;
-  /** F4: solo el dueño en su chat privado programa comandos. */
-  isOwner?: boolean;
-  /** F4: carpeta fija donde corre cada comando. */
-  commandCwd?: string;
-  /** F4: PA_CRON_COMANDOS; inyectable para los tests. */
-  commandsEnabled?: boolean;
-  /** Para que `/cron probar objetivo:<id>` sepa si el objetivo puede avanzar. */
-  goals?: Pick<GoalStore, 'read'>;
-}
-
-/**
- * What the TV remote button does when pressed. It is an activation path of
- * its own — pressing a physical button IS the intent — so conversation mode
- * is NOT an input: /conversacion resets to off at every boot, and that used
- * to turn the button into a silent no-op (audit, "botón TV"). Without a chat
- * (nobody has talked yet) there is nowhere to open the session; without a
- * live wake listener there is no audio to feed it: the chat notice says so
- * instead of staying silent, and with no chat at all the log line is all
- * there is.
- */
-export type TvButtonAction = 'open-session' | 'need-mic' | 'no-chat' | 'already-open';
-
-export function tvButtonAction(opts: {
-  hasChat: boolean;
-  hasListener: boolean;
-  sessionOpen: boolean;
-}): TvButtonAction {
-  if (!opts.hasChat) return 'no-chat';
-  if (opts.sessionOpen) return 'already-open';
-  if (!opts.hasListener) return 'need-mic';
-  return 'open-session';
-}
-
-/**
- * The conversation an inspection command (/memory and friends) reads. Unlike
- * resolveThread it NEVER creates a thread — a read-only command has no
- * business spawning a conversation — and it never looks at occupancy: the
- * new-request heuristic ("main is busy, start #m<messageId>") is exactly what
- * made /memory answer "No recuerdo nada" with a full memory and litter a new
- * thread per read (auditor #152 ronda 1). Explicit intent wins, in
- * resolveThread's order: /topic, a reply to one of our messages, a real
- * Telegram thread id; without any of them, main is read even while busy.
- */
-export function inspectionThreadKey(opts: {
-  chatKey: string;
-  activeTopic?: string | undefined;
-  replyThreadKey?: string | undefined;
-  /** Durable reply routing: a goal notification's owning scope, from SQLite. */
-  replyGoalScope?: string | undefined;
-  threadId?: string | undefined;
-}): string {
-  if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
-  if (opts.replyThreadKey) return opts.replyThreadKey;
-  if (opts.replyGoalScope) {
-    // Same validation as resolveThread: the notification must belong to THIS
-    // chat — a foreign scope is ignored, never followed.
-    const { chatKey, thread } = splitGoalScope(opts.replyGoalScope);
-    if (chatKey === opts.chatKey) return `${chatKey}#${thread}`;
-  }
-  if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
-  return `${opts.chatKey}#main`;
-}
-
-/**
  * The whole /memory reply, free of I/O so its canary runs against a real
  * MemoryStore without a daemon. The scope is thread.key — the same one the
  * turn context and the memory tool use (chatKey#thread). Any other scope
@@ -7259,477 +8152,353 @@ export function runMemoryCommand(memory: MemoryStore, scope: string): string {
 }
 
 /**
- * `objetivo:<id>` is the schedule a goal rides, not a loose routine. Deleting
- * or pausing it through /cron left the goal `active` with no ticks, forever
- * and silently (and /cron reanudar ticked a paused goal behind its back): the
- * goal's state and its timer must move together, which only the goal actions
- * do. So /cron refuses and says which words do it.
+ * /vigilando: las páginas vigiladas del chat, con cabecera «Páginas vigiladas: N»
+ * (en negrita en Telegram vía isWatchListTitle; el resto es texto del usuario).
  */
-function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanudar'): string {
-  const id = name.slice(GOAL_ROUTINE_PREFIX.length).trim();
-  const action = verb === 'borrar' ? 'cancela' : verb === 'pausar' ? 'pausa' : 'reanuda';
-  return [
-    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'pausado pero con ticks' : 'activo pero sin ticks'}.`,
-    `Para eso dime «${action} el objetivo ${id}» (o pídeme la lista de objetivos).`,
-  ].join('\n');
+/**
+ * /vigilando: un botón «🗑 Dejar de vigilar …» por página (hasta 8), que equivale a
+ * escribir /dejar_de_vigilar <id>. Sin páginas, sin botones.
+ */
+/**
+ * /cron (lista): un botón por rutina programada (hasta 8), «⏸ Pausar …» si está
+ * activa y «▶️ Reanudar …» si está en pausa; equivalen a escribir /cron pausa|reanudar
+ * <nombre>. Borrar no tiene botón: sigue pidiendo escribirlo.
+ */
+/**
+ * Aviso de un recordatorio: «✅ Hecho» (lo da por visto), «⏰ +1h» (otro igual dentro
+ * de una hora) y «🌅 Mañana 9:00» (otro igual mañana a las 9). Ninguno borra nada. `id` es el de FiredReminders.
+ */
+export function reminderButtons(id: string): Array<{ label: string; action: string }> | undefined {
+  const buttons = [
+    commandButton('✅ Hecho', 'recordatorios', id, 'hecho'),
+    commandButton('⏰ +1h', 'recordatorios', id, 'pospone'),
+    commandButton('🌅 Mañana 9:00', 'recordatorios', id, 'manana'),
+  ].filter((x): x is { label: string; action: string } => x !== undefined);
+  return buttons.length ? buttons : undefined;
 }
 
 /**
- * The whole /cron command, free of I/O so its canaries run against a real
- * Store and RoutineRunner without a daemon (auditor #135 ronda 2). Returns
- * the exact reply text; the caller owns delivery.
+ * /compara: «👀 Vigilar» equivale a /vigila <ese enlace>. El botón lleva el id corto de
+ * CompareWatchLinks, nunca el enlace.
  */
-export function runCronCommand(deps: CronCommandDeps, args: string): string {
-  const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
-  const sub = (subRaw ?? '').toLowerCase();
-  const rest = restParts.join(' ');
+export function compareWatchButtons(
+  id: string,
+  target?: { id: string; cents: number },
+): Array<{ label: string; action: string }> | undefined {
+  const b = [
+    commandButton('👀 Vigilar', 'vigila', id, 'enlace'),
+    target
+      ? commandButton(`🎯 Avisar si baja a ${eur(target.cents)}`, 'vigila', target.id, 'enlace')
+      : undefined,
+  ].filter((x): x is { label: string; action: string } => x !== undefined);
+  return b.length ? b : undefined;
+}
 
-  if (sub === 'entrega') {
-    const parsed = parseDeliveryArgs(rest);
-    if (!parsed || !deps.delivery) {
-      return 'Uso: /cron entrega <nombre> [chat|fichero|ninguno] [solo-si-cambia|siempre].';
-    }
-    const routine =
-      deps.store.getRoutine(deps.threadKey, parsed.name) ??
-      deps.store.getRoutine(`${deps.chatKey}#main`, parsed.name);
-    if (!routine || routine.kind !== 'schedule' || isReminder(routine)) {
-      return `No tengo ninguna rutina programada llamada "${parsed.name}".`;
-    }
-    const current = deps.delivery.get(routine.scope, routine.name);
-    if (parsed.setting.target === undefined && parsed.setting.soloSiCambia === undefined) {
-      return `La rutina "${routine.name}" entrega ${describeDelivery(current)}.`;
-    }
-    const next = {
-      target: parsed.setting.target ?? current.target,
-      soloSiCambia: parsed.setting.soloSiCambia ?? current.soloSiCambia,
-    };
-    deps.delivery.set(routine.scope, routine.name, next);
-    return `Hecho: la rutina "${routine.name}" entregará ${describeDelivery(next)}.`;
-  }
+/**
+ * Segundo botón de /compara: vigilar la ficha con objetivo = el mejor precio hallado en
+ * otra tienda (suggestedTargetCents). Devuelve [] si no hay objetivo que proponer.
+ */
+export function compareTargetButton(
+  report: CompareReport,
+  remember: (targetCents: number) => string,
+): [] | [{ id: string; cents: number }] {
+  const cents = suggestedTargetCents(report);
+  return cents === undefined ? [] : [{ id: remember(cents), cents }];
+}
 
-  if (sub === 'comando' || sub === 'comandos') {
-    const enabled = deps.commandsEnabled ?? commandRoutinesEnabled();
-    if (!enabled) {
-      return 'Las rutinas de comando están desactivadas. Actívalas con PA_CRON_COMANDOS=1 y reinicia Asistenta.';
-    }
-    if (!deps.commands || !deps.isOwner) {
-      return 'Solo el dueño, en su chat privado, puede programar comandos.';
-    }
-    if ((restParts[0] ?? '').toLowerCase() === 'confirmar') {
-      const name = restParts[1] ?? '';
-      const code = restParts[2] ?? '';
-      if (!name || !code) return 'Uso: /cron comando confirmar <nombre> <código>.';
-      if (deps.store.getRoutine(deps.threadKey, name)) {
-        return `Ya hay una rutina llamada "${name}". Vuelve a proponer el comando con /cron comando.`;
-      }
-      const spec = deps.commands.approve(deps.threadKey, name, code);
-      if (!spec) {
-        return 'Ese código no corresponde al comando propuesto (o ya no existe). No se ha programado nada.';
-      }
-      const created = deps.store.saveRoutine({
-        scope: deps.threadKey,
-        name,
-        kind: 'schedule',
-        prompt: `${COMMAND_PROMPT_PREFIX}${displayArgv(spec.argv)}`,
-        schedule: spec.schedule,
-      });
-      deps.routineRunner.sync();
-      const live = deps.routineRunner
-        .status()
-        .find((st) => st.scope === created.scope && st.name === created.name);
-      return [
-        `Rutina de comando "${name}" programada con horario ${spec.schedule}. No usa el modelo.`,
-        `Comando: ${displayArgv(spec.argv)}`,
-        `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-        `Para que solo avise cuando cambie la salida: /cron entrega ${name} chat solo-si-cambia`,
-      ].join('\n');
-    }
-    const parsed = parseCommandAdd(restParts.join(' '), validateSchedule);
-    if (!parsed.ok) return parsed.error;
-    const program = (parsed.value.argv[0] ?? '').split(/[\\/]/).pop() ?? '';
-    const name = uniqueRoutineName(
-      deps.store,
-      deps.threadKey,
-      routineNameFromPrompt(`comando ${program}`),
-    );
-    const spec = deps.commands.propose(deps.threadKey, name, {
-      argv: parsed.value.argv,
-      cwd: deps.commandCwd ?? process.cwd(),
-      timeoutMs: parsed.value.timeoutMs,
-      schedule: parsed.value.schedule,
-      createdAt: new Date().toISOString(),
-    });
-    return [
-      'Revisa el comando exacto antes de aprobarlo (se ejecuta sin shell y sin preguntarte cada vez):',
-      `Programa y argumentos: ${displayArgv(spec.argv)}`,
-      `Carpeta: ${spec.cwd}`,
-      `Horario: ${spec.schedule} · tope: ${Math.round(spec.timeoutMs / 1000)} s`,
-      `Para aprobar exactamente este comando: /cron comando confirmar ${name} ${approvalCode(spec)}`,
-      'Si cambia algo del comando, hará falta una aprobación nueva.',
-    ].join('\n');
-  }
+/** Hora corta de Madrid para «no te aviso hasta …». */
+function fmtMuteUntil(ms: number): string {
+  return new Intl.DateTimeFormat('es-ES', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(ms);
+}
 
-  if (sub === 'del' || sub === 'borra' || sub === 'rm') {
-    const name = rest.trim();
-    if (!name) return 'Uso: /cron del <nombre>.';
-    const routine =
-      deps.store.getRoutine(deps.threadKey, name) ??
-      deps.store.getRoutine(`${deps.chatKey}#main`, name);
-    if (!routine || routine.kind !== 'schedule') {
-      return `No tengo ninguna rutina programada llamada "${name}".`;
-    }
-    if (isGoalRoutine(routine)) return goalRoutineCronRefusal(routine.name, 'borrar');
-    deps.store.deleteRoutine(routine.scope, routine.name);
-    deps.commands?.remove(routine.scope, routine.name);
-    // Live without restart: the runner drops the timer on this sync. An
-    // execution already in flight is NOT cancelled (the runner awaits its
-    // in-flight set, it does not interrupt it), so the confirmation only
-    // promises what it delivers (auditor #135 ronda 2).
-    deps.routineRunner.sync();
-    return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje.`;
-  }
+/** `/vigila silenciar <id>` (botón «🔕 Silenciar 1 día») y `/vigila avisar <id>`. */
+export function vigilaSilenceArgs(
+  raw: string,
+): { action: 'silenciar' | 'avisar'; id: string } | null {
+  const m = /^(silenciar|avisar) ([A-Za-z0-9_-]{1,40})$/.exec(raw.trim());
+  if (!m?.[1] || !m[2]) return null;
+  return { action: m[1] as 'silenciar' | 'avisar', id: m[2] };
+}
 
-  if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
-    const resuming = sub === 'reanuda' || sub === 'reanudar';
-    const name = rest.trim();
-    if (!name) return `Uso: /cron ${resuming ? 'reanudar' : 'pausa'} <nombre>.`;
-    const routine =
-      deps.store.getRoutine(deps.threadKey, name) ??
-      deps.store.getRoutine(`${deps.chatKey}#main`, name);
-    if (!routine || routine.kind !== 'schedule') {
-      return `No tengo ninguna rutina programada llamada "${name}".`;
-    }
-    if (isGoalRoutine(routine)) {
-      return goalRoutineCronRefusal(routine.name, resuming ? 'reanudar' : 'pausar');
-    }
-    if (routine.enabled === resuming) {
-      return resuming
-        ? `La rutina "${name}" ya estaba activa.`
-        : `La rutina "${name}" ya estaba en pausa.`;
-    }
-    deps.store.setRoutineEnabled(routine.scope, routine.name, resuming);
-    deps.routineRunner.sync();
-    if (!resuming) {
-      return `Rutina "${name}" en pausa: no se ejecutará hasta que hagas /cron reanudar ${name}. Si hay una en marcha ahora mismo, puede terminar.`;
-    }
-    const live = deps.routineRunner
-      .status()
-      .find((st) => st.scope === routine.scope && st.name === routine.name);
-    return `Rutina "${name}" reanudada. Próxima ejecución: ${nextRunLabel(routine.schedule, live?.next)}.`;
+/**
+ * Respuesta a `/vigila silenciar|avisar <id>`. Tras silenciar lleva «🔔 Avisar otra vez»
+ * (= `/vigila avisar <id>`) y tras avisar otra vez «🔕 Silenciar 1 día»: ninguno borra nada.
+ */
+export function vigilaSilenceReply(
+  action: 'silenciar' | 'avisar',
+  w: { id: string; label: string; url: string; mutedUntil: number } | null | undefined,
+): { text: string; buttons: Array<{ label: string; action: string }> } {
+  if (!w) return { text: 'No encuentro esa vigilancia en este chat.', buttons: [] };
+  const name = w.label || w.url;
+  if (action === 'avisar') {
+    const mute = commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar');
+    return { text: `🔔 Vuelvo a avisarte de ${name}.`, buttons: mute ? [mute] : [] };
   }
+  const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
+  return {
+    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}.${again ? ' Si quieres que vuelva a avisarte antes, pulsa «🔔 Avisar otra vez».' : ''}`,
+    buttons: again ? [again] : [],
+  };
+}
 
-  if (sub === 'probar' || sub === 'test' || sub === 'ahora') {
-    const name = rest.trim();
-    if (!name) return 'Uso: /cron probar <nombre>.';
-    const routine =
-      deps.store.getRoutine(deps.threadKey, name) ??
-      deps.store.getRoutine(`${deps.chatKey}#main`, name);
-    if (!routine || routine.kind !== 'schedule') {
-      return `No tengo ninguna rutina programada llamada "${name}".`;
-    }
-    if (!routine.enabled) {
-      return `La rutina "${name}" está en pausa. Reanúdala con /cron reanudar ${name} o dime si quieres probarla igualmente.`;
-    }
-    if (isGoalRoutine(routine) && deps.goals) {
-      // El tick de un objetivo que no está activo no hace nada (runner.ts: «silent
-      // skips»): decir «Lanzo… el resultado llegará» y luego callar era mentir.
-      const id = goalIdOf(routine.name) ?? '';
-      const goal = id ? deps.goals.read(id) : null;
-      if (!goal) return `El objetivo ${id} ya no existe; su programación no tiene nada que probar.`;
-      if (goal.status !== 'active') {
-        const estado =
-          goal.status === 'paused'
-            ? 'en pausa'
-            : goal.status === 'blocked'
-              ? 'bloqueado esperando tu respuesta'
-              : goal.status === 'proposed'
-                ? 'pendiente de tu aprobación'
-                : goal.status === 'done'
-                  ? 'terminado'
-                  : 'cancelado';
-        const hint =
-          goal.status === 'paused'
-            ? ` Dime «reanuda el objetivo ${id}» y vuelve a probar.`
-            : goal.status === 'proposed'
-              ? ` Apruébalo primero.`
-              : goal.status === 'blocked'
-                ? ' Respóndele primero.'
-                : '';
-        return `El objetivo ${id} está ${estado}: una prueba ahora no haría nada.${hint}`;
-      }
-    }
-    if (deps.routineRunner.isRunning(routine.scope, routine.name)) {
-      return `La rutina "${name}" ya se está ejecutando ahora mismo.`;
-    }
-    // A test is a real run: same approvals, same tools, same purchase cap. Say so,
-    // so nobody expects a dry run.
-    void deps.routineRunner.fire(routine.scope, routine.name);
-    return `Lanzo "${name}" ahora como prueba. Es una ejecución real (mismos permisos y aprobaciones que a su hora); el resultado llegará a este chat. Su horario no cambia.`;
-  }
+/**
+ * `/precio silenciar|avisar <clave>`: botones de avisos del vigilante automático de precios
+ * (barrido de tiendas), que se quitó el 31-oct-2026. Solo se reconocen para contestar claro.
+ */
+export function precioMuteArgs(
+  raw: string,
+): { action: 'silenciar' | 'avisar'; key: string } | null {
+  const m = /^(silenciar|avisar) ([0-9a-f]{8})$/.exec(raw.trim());
+  if (!m?.[1] || !m[2]) return null;
+  return { action: m[1] as 'silenciar' | 'avisar', key: m[2] };
+}
 
-  if (sub === 'add') {
-    if (!rest.trim()) {
-      return 'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.';
-    }
-    const parsed = parseCronAdd(rest, validateSchedule);
-    if (!parsed.ok) return parsed.error;
-    const base = routineNameFromPrompt(parsed.prompt);
-    const name = uniqueRoutineName(deps.store, deps.threadKey, base);
-    const created = deps.store.saveRoutine({
-      scope: deps.threadKey,
-      name,
-      kind: 'schedule',
-      prompt: parsed.prompt,
-      schedule: parsed.schedule,
-    });
-    // Live at once, igual que /routine: una rutina que solo dispara tras
-    // reiniciar es una que el usuario tiene que recordar que pidió.
-    deps.routineRunner.sync();
-    const live = deps.routineRunner
-      .status()
-      .find((st) => st.scope === created.scope && st.name === created.name);
-    return [
-      name !== base
-        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${created.schedule}.`
-        : `Rutina "${created.name}" programada con horario ${created.schedule}.`,
-      `Tarea: ${created.prompt}`,
-      `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-    ].join('\n');
-  }
+/** Respuesta a un botón o una orden del vigilante automático de precios, que ya no existe. */
+export const PRICE_SWEEP_REMOVED_TEXT =
+  'El vigilante de precios automático se ha quitado; puedo vigilar un enlace concreto si me lo pasas.';
 
-  // /cron (o cualquier otro subcomando desconocido): la lista.
-  const list = deps.store
-    .listRoutines()
-    .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule' && r.schedule);
-  if (!list.length) {
-    return 'No hay rutinas programadas. Crea una con /cron add 0 8 * * * | resumen del día.';
+/**
+ * Respuesta de «no he podido …» para el chat: conserva un error ya en castellano, dice claro
+ * si falta un programa en el PC y nunca pega salida técnica (ffmpeg, rutas, JSON, pilas).
+ */
+/** Qué no se pudo hacer, por sitio de cli.ts que antes pegaba err.message crudo. */
+export const OWNER_FAIL_WHAT = {
+  clip: 'No he podido grabar el clip',
+  perfil: 'No lo he guardado',
+  skill: 'No he podido instalarla',
+  directo: 'No he podido abrir la vista en directo',
+  camaraMicro: 'No he podido grabar cámara y micrófono',
+} as const;
+
+/** Aviso al dueño en castellano: conserva motivos en castellano, oculta texto técnico. */
+export function ownerFailNote(kind: keyof typeof OWNER_FAIL_WHAT, err: unknown): string {
+  return failedReply(OWNER_FAIL_WHAT[kind], err);
+}
+
+/**
+ * Errores de archivo de Node (ENOENT, EACCES…) en castellano y sin la ruta entera:
+ * antes la respuesta al dueño era «ENOENT: no such file or directory, open 'C:\\…'».
+ */
+function fileErrorReason(raw: string): string | null {
+  const m = /\b(ENOENT|EACCES|EPERM|EBUSY)\b[^']*'([^']+)'/.exec(raw);
+  if (!m) return null;
+  const name = (m[2] ?? '').split(/[\\/]/).pop() || 'un archivo';
+  if (m[1] === 'ENOENT') return `falta el archivo «${name}» en el PC.`;
+  if (m[1] === 'EBUSY')
+    return `«${name}» está en uso por otro programa; ciérralo y prueba otra vez.`;
+  return `Windows no me deja abrir «${name}» (permiso denegado o lo tiene otro programa).`;
+}
+
+/**
+ * Nota para el modelo cuando un audio enviado como archivo no se transcribe: antes
+ * llevaba el `err.message` crudo (inglés, rutas) y el modelo lo repetía al dueño.
+ */
+export function forwardedAudioFailNote(label: string, err: unknown): string {
+  return `[Audio reenviado: ${label}. ${failedReply('No se pudo transcribir', err)}]`;
+}
+
+export function failedReply(what: string, err: unknown): string {
+  // Los fallos de la voz ya vienen en castellano: sin el «SttError:» que añadía friendlyError.
+  if (err instanceof SttError) return `${what}: ${err.message}`;
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  const missing = /\bspawn (\S+) ENOENT\b/.exec(raw)?.[1];
+  if (missing) return `${what}: no encuentro «${missing.split(/[\\/]/).pop()}» instalado en el PC.`;
+  const fsReason = fileErrorReason(raw);
+  if (fsReason) return `${what}: ${fsReason}`;
+  const friendly = friendlyError(err, `${what}: `);
+  if (friendly.startsWith(`${what}: `)) return friendly;
+  if (/^(?:Algo ha fallado|Se me ha roto algo)/.test(friendly)) {
+    return `${what}. Algo ha fallado por mi parte; vuelve a intentarlo en un momento.`;
   }
-  const live = deps.routineRunner.status();
-  const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
+  return `${what}. ${friendly}`;
+}
+
+/** Aviso al dueño cuando falla la copia de seguridad diaria: motivo en castellano, sin texto técnico. */
+export function backupFailedNotice(err: unknown): string {
+  if (err instanceof BackupMirrorError) return backupMirrorNotice(err);
+  const base = 'No he podido hacer la copia de seguridad de hoy';
+  const retry = 'Lo reintento en unos minutos.';
+  const code = (err as { code?: unknown } | null)?.code;
+  const probe = `${err instanceof Error ? err.message : String(err ?? '')} ${typeof code === 'string' ? code : ''}`;
+  if (/\bENOSPC\b/.test(probe))
+    return `${base}: el disco está lleno. Libera espacio; lo reintento en unos minutos.`;
+  if (/\b(?:EACCES|EPERM)\b/.test(probe)) {
+    return `${base}: no tengo permiso para escribir en la carpeta de copias. ${retry}`;
+  }
+  if (/\bEBUSY\b/.test(probe)) return `${base}: había un archivo en uso. ${retry}`;
+  const friendly = failedReply(base, err);
+  if (friendly.startsWith(`${base}: `)) return `${friendly.replace(/\.?$/, '.')} ${retry}`;
+  return `${base}: algo ha fallado por mi parte. ${retry}`;
+}
+
+const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);
+
+/**
+ * Aviso de una página vigilada, o null si no hay nada que decir o está silenciada
+ * («🔕 Silenciar 1 día»). Los avisos de precio llevan ese botón: no borra nada, solo
+ * calla esta página 24 h (y /vigila avisar <id> lo deshace).
+ */
+export function pageNotice(
+  w: PageWatch,
+  outcome: CheckOutcome,
+  now: number,
+): { text: string; buttons: Array<{ label: string; action: string }> } | null {
+  const text = describeChange(w, outcome);
+  if (!text || w.mutedUntil > now) return null;
+  const mute = PAGE_ALERT_KINDS.has(outcome.kind)
+    ? commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar')
+    : undefined;
+  return { text, buttons: mute ? [mute] : [] };
+}
+
+/** Lo que equivale a escribir: «/vigila <enlace>» o «/vigila <enlace> objetivo=12,34€». */
+export function vigilaArgsFromCompare(hit: { url: string; targetCents?: number }): string {
+  if (hit.targetCents === undefined) return hit.url;
+  const euros = Math.floor(hit.targetCents / 100);
+  const cents = String(hit.targetCents % 100).padStart(2, '0');
+  return `${hit.url} objetivo=${euros},${cents}€`;
+}
+
+export function cronListButtons(
+  list: ReadonlyArray<{ name: string; kind: string; schedule?: string | null; enabled: boolean }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = list
+    .filter((r) => r.kind === 'schedule' && r.schedule)
+    .slice(0, 8)
+    .map((r) =>
+      r.enabled
+        ? commandButton(`⏸ Pausar ${r.name}`, 'cron', r.name, 'pausa')
+        : commandButton(`▶️ Reanudar ${r.name}`, 'cron', r.name, 'reanudar'),
+    )
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
+export function watchStopButtons(
+  list: ReadonlyArray<{ id: string; label: string; url: string }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = list
+    .slice(0, 8)
+    .map((w) => commandButton(`🗑 Dejar de vigilar ${w.label || w.url}`, 'dejar_de_vigilar', w.id))
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  return buttons.length ? buttons : undefined;
+}
+
+/**
+ * /vigilando: por página, «📈 Precio …» (enseña su ficha, como /precio <id>) y al lado
+ * «🗑 Dejar de vigilar …»; cada pareja va en su propia fila del teclado.
+ */
+export function watchListButtons(
+  list: ReadonlyArray<{ id: string; label: string; url: string }>,
+): Array<{ label: string; action: string }> | undefined {
+  const buttons = (watchStopButtons(list) ?? []).flatMap((stop) => {
+    const id = stop.action.slice(stop.action.lastIndexOf(' ') + 1);
+    const w = list.find((x) => x.id === id);
+    const price = w ? commandButton(`📈 Precio ${w.label || w.url}`, 'precio', w.id) : undefined;
+    return price ? [price, stop] : [stop];
+  });
+  return buttons.length ? buttons : undefined;
+}
+
+/**
+ * /vigilancias en Telegram: la vista única de `pa vigilancias` limitada a este chat (y
+ * lo global), con cabeceras en negrita y un «📈 Precio …» de solo lectura por página
+ * vigilada (hasta 8; equivale a /precio <id>). Nada de borrar con un toque.
+ */
+/** Nombre legible de cada lista de collectWatches (sus errores empiezan por «<lista>: »). */
+const OVERVIEW_SOURCE_NAMES: Record<string, string> = {
+  páginas: 'páginas vigiladas',
+  ojo: 'ojo de águila',
+  rutinas: 'rutinas',
+};
+
+/**
+ * Nota de /vigilancias cuando alguna lista no se pudo leer: dice cuáles (sin el detalle
+ * del error, que puede llevar rutas del PC) para que se sepa qué falta en la vista.
+ */
+export function vigilanciasErrorNote(errors: readonly string[]): string {
+  if (!errors.length) return '';
+  const names = [
+    ...new Set(
+      errors.map((e) => {
+        const key = e.split(':')[0]?.trim() ?? '';
+        return OVERVIEW_SOURCE_NAMES[key] ?? (key || 'otra lista');
+      }),
+    ),
+  ];
+  return `\n\n⚠️ No he podido leer: ${names.join(', ')}. Lo que sale arriba puede estar incompleto; \`pa vigilancias\` en el PC da el detalle.`;
+}
+
+export function vigilanciasReply(
+  entries: readonly OverviewEntry[],
+  chatId: string,
+  now: number = Date.now(),
+): { text: string; buttons: Array<{ label: string; action: string }> | undefined } {
+  const shown = forChat(entries, chatId, 'telegram');
+  const buttons = shown
+    .filter((e) => e.kind === 'pagina')
+    .slice(0, 8)
+    .map((e) => commandButton(`📈 Precio ${e.label || e.target}`, 'precio', e.id))
+    .filter((b): b is { label: string; action: string } => b !== undefined);
+  // ⏸/▶️ de las rutinas de ESTE chat (las globales no: /cron solo ve las del chat). Lo
+  // mismo que los botones de /cron: pausar no borra nada y se deshace con «Reanudar».
+  const routines =
+    cronListButtons(
+      shown
+        .filter((e) => e.kind === 'rutina' && e.scope.startsWith('telegram:'))
+        .map((e) => ({ name: e.label, kind: 'schedule', schedule: e.target, enabled: e.enabled })),
+    ) ?? [];
+  buttons.push(...routines);
+  return {
+    text: marksWithTitles(formatOverview(shown, now), isOverviewTitle),
+    buttons: buttons.length ? buttons : undefined,
+  };
+}
+
+export function formatWatchList(list: readonly PageWatch[]): string {
+  if (!list.length)
+    return 'No estoy vigilando ninguna página. Pásame un enlace y te aviso si cambia el precio.';
   return [
-    `Rutinas programadas: ${list.length}`,
+    `Páginas vigiladas: ${list.length}`,
     ...list.map(
-      (r) =>
-        `- ${r.name}${commandRoutineTag(r, deps.commands, commandsOn)} [${r.schedule}] — ${
-          r.enabled
-            ? `próxima: ${nextRunLabel(
-                r.schedule ?? null,
-                live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
-              )}`
-            : 'EN PAUSA'
-        }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
+      (w) =>
+        `${w.id} - ${w.label || w.url} - último valor: ${watchValueText(w.lastValue)}` +
+        `${w.targetCents !== null ? ` - objetivo ${eur(w.targetCents)}` : ''}` +
+        `${w.dropPct !== null ? ` - aviso si baja un ${w.dropPct} %` : ''}`,
     ),
   ].join('\n');
 }
 
 /**
- * /agenda (y la parte de rutinas de la agenda del dueño): las rutinas
- * programadas de este chat. Una rutina de comando lleva la misma marca que en
- * /cron, para que no parezca que habla con el modelo ni que va a correr si
- * está sin aprobar o con PA_CRON_COMANDOS apagado.
+ * F15 `/skills buscar <texto>`: busca en el índice JSON de PA_SKILLS_INDEX_URL.
+ * Lista nombre + URL; «la 2» o el enlace como respuesta la instala (con su revisión).
  */
-export function scheduledAgendaText(deps: {
-  store: Pick<Store, 'listRoutines'>;
-  routineRunner: Pick<RoutineRunner, 'status'>;
-  chatKey: string;
-  commands?: Pick<CommandRoutineStore, 'get'>;
-  commandsEnabled?: boolean;
-}): string {
-  const scheduled = deps.store
-    .listRoutines()
-    .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule');
-  if (!scheduled.length) {
-    return 'No hay rutinas programadas. Puedes crearlas con /routine.';
+export async function skillsSearchReply(
+  query: string,
+  indexUrl: string | undefined,
+  fetchImpl?: typeof fetch,
+  /** Con resultados: «¿Instalo alguna?» espera el número como respuesta. */
+  onHits?: (hits: readonly SkillIndexEntry[]) => void,
+): Promise<string> {
+  const q = query.trim();
+  if (!q) return '¿Qué habilidad busco?';
+  if (!indexUrl?.trim()) {
+    return 'No hay índice de skills configurado. Pon PA_SKILLS_INDEX_URL=https://… (un JSON con [{ "name", "url", "description" }]) en .env.';
   }
-  const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
-  const live = new Map(deps.routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));
-  const lines = scheduled.map((r) => {
-    const held = live.get(`${r.scope}\u0000${r.name}`);
-    const state = r.enabled ? '' : ' (desactivada)';
-    const running = held?.running ? ' [en curso]' : '';
-    const tag = commandRoutineTag(r, deps.commands, commandsOn);
-    return `- ${r.name}${tag}${state} [${r.schedule ?? 'sin horario'}] — próxima: ${nextRunLabel(
-      r.schedule,
-      held?.next ?? null,
-    )}${running}`;
-  });
-  return [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n');
-}
-
-/**
- * F4: en la lista de /cron una rutina de comando no se confunde con una que
- * habla con el modelo, y se ve si de verdad va a correr (aprobada y con
- * PA_CRON_COMANDOS=1) o se quedará parada en el aviso.
- */
-export function commandRoutineTag(
-  r: { scope: string; name: string; prompt: string | null },
-  commands: Pick<CommandRoutineStore, 'get'> | undefined,
-  enabled: boolean,
-): string {
-  if (!isCommandRoutine(r)) return '';
-  const spec = commands?.get(r.scope, r.name) ?? null;
-  if (!spec || !isApproved(spec)) return ' ⚙️ comando, sin aprobar (no se ejecuta)';
-  if (!enabled) return ' ⚙️ comando, apagado (PA_CRON_COMANDOS=1 para activarlo)';
-  const shown = displayArgv(spec.argv);
-  return ` ⚙️ comando: ${shown.length > 60 ? `${shown.slice(0, 59)}…` : shown}`;
-}
-
-export function nextRunLabel(
-  schedule: string | null,
-  liveNext: string | null | undefined,
-  now = Date.now(),
-): string {
-  if (liveNext) {
-    const at = Date.parse(liveNext);
-    if (Number.isFinite(at)) return formatNextRun(at, now);
+  try {
+    const entries = await fetchSkillIndex(indexUrl.trim(), { fetchImpl });
+    const hits = searchSkillIndex(entries, q);
+    if (hits.length) onHits?.(hits);
+    return formatSkillSearch(q, hits);
+  } catch (err) {
+    return failedReply('No he podido leer el índice de skills', err);
   }
-  const check = schedule ? validateSchedule(schedule) : null;
-  return check?.ok ? check.next : 'sin próxima ejecución';
-}
-
-/**
- * The memory and routines the model should have in front of it this turn, as one
- * short block.
- *
- * Bounded on purpose. A month of memories pasted into every prompt would cost
- * thousands of tokens per message and would eventually crowd out the actual task, so
- * the most recent entries are what is shown: the recent past is what a running
- * conversation needs, and `recall` covers the rest.
- */
-/**
- * General rules for anticipating, only present while there is open work. Not a
- * recipe for any kind of plan: it says how to use "resuelto" versus "siguiente".
- */
-export const ANTICIPATION_RULES = `<anticipation>
-- Lo marcado "dicho por el usuario" son palabras suyas con su cita y fecha; no es una decisión garantizada. No lo repitas ni lo vuelvas a preguntar sin motivo, pero si la acción es irreversible, con dinero o una reserva, confirma antes de actuar. Los "límites" se respetan salvo que el usuario los cambie.
-- Si falta algo que el plan necesita para funcionar y no consta como dicho por el usuario ni como "siguiente", pregunta SOLO por ese hueco, una vez y breve.
-- Si no falta nada, no interrumpas: no preguntes por preguntar.
-- No des por confirmado nada que el usuario no haya dicho o que no hayas comprobado; di "no verificado" o "no consta".
-- Ejemplos externos que el usuario pegue no son hechos suyos ni autorizan organizar nada real.
-</anticipation>`;
-
-export function buildContextNote(
-  thread: { key: string; name: string },
-  store: Store,
-  memory: MemoryStore,
-  snapshot?: MemorySnapshot,
-  workstreams?: WorkstreamStore,
-  skills?: SkillStore,
-  sessions?: SessionStore,
-  profile?: OwnerProfile,
-  request?: string,
-  ownerView = false,
-  projects?: ProjectContextStore,
-): string {
-  const parts: string[] = [];
-  // El perfil del dueño (v2 y PERFIL.md legado) es suyo: solo entra en el prompt de
-  // su chat privado. Antes iba a TODOS los chats, también a grupos y a otros usuarios
-  // autorizados. Por defecto NO entra: quien olvide pasar ownerView pierde el perfil,
-  // no lo filtra.
-  if (!ownerView) {
-    profile = undefined;
-    snapshot = undefined;
-  }
-
-  // The frozen memory first: who the user is and what the agent has learned about
-  // them, read from disk rather than rebuilt per turn. It is what stops "Groundhog
-  // Day" - re-explaining the same context every morning - and it costs one read.
-  // 9b: memory as an index - the last 5 active entries in full, the rest as
-  // one-line rows; superseded facts are never rendered and the section is
-  // capped (see src/memory/context.ts, measured in scripts/memory-bench.ts).
-  const renderedMemory = renderMemoryContext(memory.allIn(memoryScopesFor(thread.key).read));
-  // Perfil v2 por propietario: una sola sección (perfil + memoria) sin duplicar
-  // el PERFIL.md. Si v2 está vacío se usa el perfil legado tal cual.
-  let profileSection = '';
-  if (profile) {
-    try {
-      profileSection = buildMemoryPromptSection({ profile, memoryBody: renderedMemory?.body });
-    } catch {
-      profileSection = '';
-    }
-  }
-  if (profileSection) {
-    parts.push(profileSection);
-  } else {
-    const frozen = snapshot?.contextNote() ?? '';
-    if (frozen) parts.push(frozen);
-    if (renderedMemory) parts.push(`<memory>\n${renderedMemory.body}\n</memory>`);
-  }
-  // Continuidad entre reinicios y cambios de tema: lo último que se habló en este
-  // chat, una línea por sesión. Es un resumen, no la transcripción, y va aparte de
-  // la memoria curada: sirve para "¿cómo quedamos ayer?" sin releer nada.
-  if (sessions) {
-    try {
-      const recent = sessions
-        .recent(thread.key, 4)
-        .filter((s) => (s.summary ?? '').trim().length > 0);
-      if (recent.length) {
-        parts.push(
-          `<historial>\n${recent
-            .map((s) => {
-              const when = new Date(s.startedAt).toLocaleDateString('es-ES', {
-                day: 'numeric',
-                month: 'short',
-              });
-              // Title and summary are stored text (the summary is a past agent
-              // reply): they render inside <historial>, so markup characters go.
-              const title = plainInline(s.title).replace(/\s+/g, ' ').trim();
-              const summary = plainInline(s.summary ?? '')
-                .replace(/\s+/g, ' ')
-                .slice(0, 200);
-              return `- ${when} · ${title}: ${summary}`;
-            })
-            .join('\n')}\n</historial>`,
-        );
-      }
-    } catch (err) {
-      log.warn('recent sessions failed', { err: String(err) });
-    }
-  }
-  const routines = store.listRoutines(thread.key).filter((r) => r.enabled);
-  if (routines.length) {
-    parts.push(
-      `<routines>\n${routines
-        .map(
-          (r) =>
-            `- ${plainInline(r.name).replace(/\s+/g, ' ').trim()} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`,
-        )
-        .join('\n')}\n</routines>`,
-    );
-  }
-  // Open fronts of work, as the compact index the store writes for prompts.
-  // Include paused fronts too: a pending decision must not disappear. A standing
-  // "nothing open" line would pay tokens on every turn to say nothing.
-  const ws = workstreams?.index(thread.key) ?? '';
-  if (ws && ws !== 'Sin frentes de trabajo abiertos.') {
-    parts.push(`<workstreams>\n${ws}\n</workstreams>\n${ANTICIPATION_RULES}`);
-  }
-  // What the agent already knows how to do (including its own lessons), as a
-  // one-line-each index; the steps load on demand with `skills read`.
-  if (skills) {
-    let index = '';
-    try {
-      // Las skills de programación solo entran si la petición suena a código.
-      index = skillsIndex(skillsForContext(skills.list(), request));
-    } catch (err) {
-      log.warn('skills index failed', { err: String(err) });
-    }
-    if (index) parts.push(index);
-  }
-  // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
-  // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
-  parts.push(buildNowNote());
-  // F13: el ASISTENTA.md/AGENTS.md de la carpeta ligada con /proyecto. Es del
-  // dueño, así que como el perfil solo entra en su chat privado.
-  if (ownerView && projects) {
-    try {
-      const block = projects.render(thread.key);
-      if (block) parts.push(block);
-    } catch {
-      // un fichero ilegible no debe tumbar el turno
-    }
-  }
-  return parts.join('\n');
 }
 
 /**
@@ -7750,49 +8519,6 @@ function summarizeToolUse(summary: string): string {
   // `redact` blanks any value that looks like a secret whatever the key is called,
   // so passing the summary under a neutral key still gets it scrubbed.
   return redact({ detail }).detail as string;
-}
-
-/**
- * Flatten a transcript into text for the /learn summariser.
- *
- * Only the turns that describe actions: tool names and the model's own words. The
- * user's messages are included because "haz la compra" is the intent the steps have
- * to serve, but the tool *arguments* are not, because a typed password would be
- * written into a routine that lives in the database forever.
- */
-export function summarizeTranscript(messages: readonly unknown[]): string {
-  const lines: string[] = [];
-  for (const message of messages) {
-    const m = message as {
-      role?: string;
-      content?: unknown;
-      toolName?: string;
-    };
-    if (!m || typeof m !== 'object') continue;
-    if (m.role === 'user') {
-      const text = textOf(m.content);
-      if (text) lines.push(`usuario: ${text.slice(0, 300)}`);
-    } else if (m.role === 'assistant') {
-      const text = textOf(m.content);
-      if (text) lines.push(`agente: ${text.slice(0, 300)}`);
-    } else if (m.role === 'toolResult' || m.toolName) {
-      const name = (m as { toolName?: string }).toolName;
-      if (name) lines.push(`herramienta: ${name}`);
-    }
-  }
-  return lines.slice(-80).join('\n') || '(no hubo actividad)';
-}
-
-function textOf(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((b): b is { type: string; text: string } => {
-      const block = b as { type?: unknown; text?: unknown };
-      return block?.type === 'text' && typeof block.text === 'string';
-    })
-    .map((b) => b.text)
-    .join(' ');
 }
 
 /**
@@ -7834,7 +8560,7 @@ if (isEntrypoint()) {
     })
     .catch((err) => {
       log.error('fatal', { err });
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`${cliFatalMessage(err)}\n`);
       process.exitCode = 1;
     });
 }

@@ -1,7 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { log } from '../log.js';
+import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
+
+/** Archivos que /api/chat deja pasar al panel (ver panel-chat.ts PANEL_FILE_TYPES). */
+const PANEL_FILE_URL =
+  /^data:(application\/pdf|application\/epub\+zip|video\/mp4|audio\/ogg|audio\/mpeg|application\/octet-stream);base64,[A-Za-z0-9+/=]*$/;
 
 /** Decisiones que acepta una aprobacion del panel. */
 export type ApprovalDecision = 'once' | 'session' | 'always' | 'deny';
@@ -23,8 +28,29 @@ export interface WebUiDeps {
   goals?(): unknown | Promise<unknown>;
   /** Rutinas programadas del dueño (solo lectura). Si falta o devuelve null, la ruta responde 503. */
   routines?(): unknown | Promise<unknown>;
+  /** Tablero de tareas de la semana del dueño (solo lectura). Si falta o devuelve null, 503. */
+  tareas?(): unknown | Promise<unknown>;
+  /** Paquetes en camino según los correos de envío (solo lectura). Si falta o devuelve null, 503. */
+  repartos?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
-  chat?(text: string): Promise<{ text: string }>;
+  chat?(
+    text: string,
+  ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
+  /**
+   * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
+   * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409);
+   * `'con-fotos'` = el último mensaje llevaba fotos y solo se repite desde Telegram (409).
+   * Si falta, la ruta responde 503.
+   */
+  retry?(): Promise<
+    | {
+        text: string;
+        images?: string[];
+        files?: { name: string; url: string }[];
+      }
+    | null
+    | 'con-fotos'
+  >;
   /** Aprobaciones pendientes. Si falta, la ruta responde 503. */
   approvals?(): unknown;
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
@@ -65,6 +91,9 @@ const PAGE_CSP = [
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'routines' }
+  | { method: 'GET'; kind: 'tareas' }
+  | { method: 'GET'; kind: 'repartos' }
+  | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -72,6 +101,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'audit' }
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
+  | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -148,6 +178,12 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'goals' };
     case '/api/routines':
       return { method: 'GET', kind: 'routines' };
+    case '/api/tareas':
+      return { method: 'GET', kind: 'tareas' };
+    case '/api/repartos':
+      return { method: 'GET', kind: 'repartos' };
+    case '/api/funciones':
+      return { method: 'GET', kind: 'funciones' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -162,6 +198,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'approvals' };
     case '/api/chat':
       return { method: 'POST', kind: 'chat' };
+    case '/api/chat/retry':
+      return { method: 'POST', kind: 'chatRetry' };
     default:
       break;
   }
@@ -212,6 +250,19 @@ async function respondApi(
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Rutinas aún no disponibles');
         break;
+      case 'tareas':
+        payload = deps.tareas ? await deps.tareas() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Tareas aún no disponibles');
+        break;
+      case 'repartos':
+        payload = deps.repartos ? await deps.repartos() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Paquetes aún no disponibles');
+        break;
+      case 'funciones':
+        payload = panelFunciones();
+        break;
       case 'status':
         payload = await deps.status();
         break;
@@ -246,7 +297,23 @@ async function respondApi(
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
-        payload = { text: answer.text };
+        payload = panelReply(answer);
+        break;
+      }
+      case 'chatRetry': {
+        if (!deps.retry) throw new HttpError(503, 'Reintentar no disponible');
+        const answer = await deps.retry();
+        if (answer === null) throw new HttpError(409, 'No hay un mensaje reciente que repetir');
+        if (answer === 'con-fotos') {
+          throw new HttpError(
+            409,
+            'Tu último mensaje llevaba fotos y el panel no puede repetirlo. Mándamelo otra vez por Telegram, con las fotos.',
+          );
+        }
+        if (!isRecord(answer) || typeof answer.text !== 'string')
+          throw new Error('deps.retry devolvio una respuesta invalida');
+        // Lo mismo que /api/chat: un turno repetido también trae sus capturas y archivos.
+        payload = panelReply(answer);
         break;
       }
       case 'approval': {
@@ -479,4 +546,36 @@ export async function startWebUi(
   };
 
   return { url, close };
+}
+
+/** Respuesta de un turno del panel (chat o «Reintentar»): texto, capturas y archivos filtrados. */
+function panelReply(answer: Record<string, unknown> & { text: string }): Record<string, unknown> {
+  // Capturas del turno del panel (#arch8): solo data: de imagen, nada más.
+  const images = Array.isArray(answer.images)
+    ? answer.images.filter(
+        (u): u is string => typeof u === 'string' && /^data:image\/(png|jpeg);base64,/.test(u),
+      )
+    : [];
+  // Archivos del turno del panel (documentos, vídeo, voz): nombre sin rutas y
+  // `data:` de una lista corta de tipos; nada más, máx. 4.
+  const files = Array.isArray(answer.files)
+    ? answer.files
+        .filter(
+          (f): f is { name: string; url: string } =>
+            isRecord(f) &&
+            typeof f.name === 'string' &&
+            f.name.length > 0 &&
+            f.name.length <= 120 &&
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: se rechazan a propósito nombres con caracteres de control
+            !/[\\/\u0000-\u001f"<>]/.test(f.name) &&
+            typeof f.url === 'string' &&
+            PANEL_FILE_URL.test(f.url),
+        )
+        .slice(0, 4)
+        .map((f) => ({ name: f.name, url: f.url }))
+    : [];
+  const out: Record<string, unknown> = { text: answer.text };
+  if (images.length > 0) out.images = images;
+  if (files.length > 0) out.files = files;
+  return out;
 }

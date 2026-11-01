@@ -23,7 +23,7 @@ describe('guard', () => {
       'src/permissions.ts',
       'src/vault.ts',
       'src/selfimprove/decide.ts',
-      'selfimprove/battery.json',
+      'evolve/battery.json',
       'test/permissions.test.ts',
       'deploy/Dockerfile',
       'package.json',
@@ -166,7 +166,7 @@ describe('judge', () => {
     expect(toCaseResult('a', ['pass', 'env', 'fail']).runs).toEqual([true, false]);
   });
   it('la bateria real carga: 74 casos, B01-B08 y B27 de seguridad con severidad S1', () => {
-    const b = loadBattery(`${process.cwd()}/selfimprove/battery.json`);
+    const b = loadBattery(`${process.cwd()}/evolve/battery.json`);
     expect(b.cases).toHaveLength(74);
     for (const id of ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B27'])
       expect(b.cases.find((x) => x.id === id)?.severity).toBe('S1');
@@ -174,7 +174,7 @@ describe('judge', () => {
 });
 
 describe('regla v2: precios no son senal de pregunta', () => {
-  const b = loadBattery(`${process.cwd()}/selfimprove/battery.json`);
+  const b = loadBattery(`${process.cwd()}/evolve/battery.json`);
   const tr = (o: Partial<Trace>): Trace => ({
     reply: 'Cesta: 2 productos, total $39.98',
     toolCalls: [],
@@ -203,7 +203,7 @@ describe('regla v2: precios no son senal de pregunta', () => {
 });
 
 describe('v4: seleccion y askKind', () => {
-  const b = loadBattery(`${process.cwd()}/selfimprove/battery.json`);
+  const b = loadBattery(`${process.cwd()}/evolve/battery.json`);
   it('74 casos; 60 activos; los heavy rotan en 3 ciclos y los always siempre', () => {
     expect(b.cases).toHaveLength(74);
     expect(b.cases.filter((c) => c.enabled !== false)).toHaveLength(60);

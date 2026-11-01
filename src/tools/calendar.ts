@@ -12,6 +12,7 @@ import {
   loadCalendarSources,
   mergeCalendarEvents,
 } from '../agenda/sources.js';
+import { localTimeZone, wallClock } from '../datecontext.js';
 import { log } from '../log.js';
 
 /**
@@ -99,34 +100,59 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
- * All grouping and rendering is done with local getters and hand-rolled names
- * rather than `Intl.DateTimeFormat`, for two reasons: the local zone is already
- * the zone the listing reports in, and hand-rolled formatting cannot be moved by
- * an ICU version's midnight convention ("24:00" vs "00:00").
+ * All grouping and rendering is done with hand-rolled names rather than
+ * `Intl.DateTimeFormat` output, so an ICU version's midnight convention ("24:00" vs
+ * "00:00") cannot move a line. Timed events are shown on the wall clock of the
+ * configured zone (PA_TIMEZONE, via `wallClock`), not the process zone: the CLI and
+ * any library caller that never ran `applyConfiguredTimeZone` would otherwise list a
+ * Madrid 09:00 meeting as "08:00 +00:00" on a UTC machine. All-day events keep the
+ * process-local calendar date, because node-ical builds a DATE value as local
+ * midnight in the process zone; reading that instant in another zone could shift it
+ * to the previous day.
  */
-function localZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'local time';
+interface Wall {
+  year: number;
+  month: number; // 1-12
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: number; // 0 = Sunday
+}
+
+function wallOf(at: Date, allDay = false): Wall {
+  if (allDay) {
+    return {
+      year: at.getFullYear(),
+      month: at.getMonth() + 1,
+      day: at.getDate(),
+      hour: at.getHours(),
+      minute: at.getMinutes(),
+      weekday: at.getDay(),
+    };
+  }
+  return wallClock(at);
 }
 
 function offsetLabel(at: Date): string {
-  const minutes = -at.getTimezoneOffset();
+  const w = wallClock(at);
+  const minuteFloor = Math.floor(at.getTime() / 60_000) * 60_000;
+  const minutes = Math.round(
+    (Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute) - minuteFloor) / 60_000,
+  );
   const sign = minutes < 0 ? '-' : '+';
   const absolute = Math.abs(minutes);
   return `${sign}${pad2(Math.floor(absolute / 60))}:${pad2(absolute % 60)}`;
 }
 
-function dayHeader(at: Date): string {
-  const weekday = WEEKDAYS[at.getDay()] ?? '???';
-  const month = MONTHS[at.getMonth()] ?? '???';
-  return `${weekday} ${at.getDate()} ${month} ${at.getFullYear()}`;
+function dayHeader(at: Date, allDay = false): string {
+  const w = wallOf(at, allDay);
+  const weekday = WEEKDAYS[w.weekday] ?? '???';
+  const month = MONTHS[w.month - 1] ?? '???';
+  return `${weekday} ${w.day} ${month} ${w.year}`;
 }
 
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function isSameDay(a: Wall, b: Wall): boolean {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
 }
 
 function localDayCount(start: Date, end: Date): number {
@@ -150,12 +176,12 @@ function renderEvent(event: CalendarEvent): string {
         return days > 1 ? `all day (${days} days)` : 'all day';
       })()
     : (() => {
-        const range = `${pad2(event.start.getHours())}:${pad2(event.start.getMinutes())}-${pad2(
-          event.end.getHours(),
-        )}:${pad2(event.end.getMinutes())}`;
+        const from = wallClock(event.start);
+        const until = wallClock(event.end);
+        const range = `${pad2(from.hour)}:${pad2(from.minute)}-${pad2(until.hour)}:${pad2(until.minute)}`;
         // A timed event that runs past midnight would otherwise print "23:00-01:00"
         // with nothing to say that the end is on the following day.
-        const overnight = isSameDay(event.start, event.end) ? '' : ' (+1d)';
+        const overnight = isSameDay(from, until) ? '' : ' (+1d)';
         return `${range} ${offsetLabel(event.start)}${overnight}`;
       })();
 
@@ -316,7 +342,7 @@ export function summarizeForModel(events: CalendarEvent[], opts?: { maxChars?: n
 
   const ordered = [...events].sort((a, b) => a.start.getTime() - b.start.getTime());
   const anchor = ordered[0]?.start ?? new Date();
-  const header = `Agenda: ${ordered.length} event(s). Times are local to ${localZone()} (UTC${offsetLabel(
+  const header = `Agenda: ${ordered.length} event(s). Times are local to ${localTimeZone()} (UTC${offsetLabel(
     anchor,
   )}).`;
 
@@ -327,7 +353,7 @@ export function summarizeForModel(events: CalendarEvent[], opts?: { maxChars?: n
   let openDay = '';
 
   for (const event of ordered) {
-    const day = dayHeader(event.start);
+    const day = dayHeader(event.start, event.allDay);
     // Cut on an event boundary, never mid-line, so the listing stays parseable.
     const block = (day === openDay ? '' : `${day}\n`) + renderEvent(event);
     if (used + block.length + 1 > budget) break;
@@ -381,6 +407,13 @@ function redactSecret(message: string, secret: string): string {
 
 function fetchFailureMessage(err: unknown, secret: string): string {
   const status = httpStatus(err);
+  // The raw error (redacted) goes to the log only: the model repeats tool text to
+  // the owner, and «socket hang up» or an English stack line is not an answer.
+  const detail = err instanceof Error ? err.message : String(err);
+  log.warn('calendar: remote feed unavailable', {
+    status,
+    err: redactSecret(detail, secret),
+  });
 
   // Google answers 404 or 401 for a secret address that was reset (the address is
   // rotated every time the "Secret address" button is pressed) or belongs to a
@@ -388,21 +421,18 @@ function fetchFailureMessage(err: unknown, secret: string): string {
   // gets its own message instead of being buried in a generic fetch failure.
   if (status === 401 || status === 403 || status === 404) {
     return [
-      `The calendar feed answered ${status}.`,
-      'That almost always means the stored secret iCal address is wrong or was reset:',
-      'Google rotates it every time the "Secret address in iCal format" button is',
-      `pressed, so open the calendar again and replace the ${ICS_URL_KEY} entry in the`,
-      'vault with the current URL. (It is not printed here on purpose - that URL is a',
-      'password that grants read access to every event on the calendar, private ones',
-      'included.)',
+      `El calendario remoto ha respondido ${status}.`,
+      'Casi siempre es que la dirección secreta iCal guardada ha cambiado: Google la',
+      'cambia cada vez que se pulsa «Dirección secreta en formato iCal». Abre el',
+      `calendario y pon la dirección nueva en la entrada ${ICS_URL_KEY} de la bóveda.`,
+      '(No se muestra aquí a propósito: esa dirección es una contraseña que deja leer',
+      'todos los eventos, también los privados.)',
     ].join(' ');
   }
-
-  const detail = err instanceof Error ? err.message : String(err);
-  return `Could not read the calendar feed${status ? ` (HTTP ${status})` : ''}: ${redactSecret(
-    detail,
-    secret,
-  )}`;
+  if (status !== undefined && status >= 500) {
+    return `No he podido leer el calendario remoto: su servidor falla ahora mismo (${status}). Prueba más tarde.`;
+  }
+  return 'No he podido leer el calendario remoto: no hay conexión o no responde. Prueba más tarde.';
 }
 
 const CalendarParams = Type.Object({
@@ -456,7 +486,7 @@ export function createCalendarTool(deps: CalendarSources): AgentTool<typeof Cale
       if (source.localError) warnings.push(source.localError);
       if (source.invalidUrl) {
         const message =
-          'The stored calendar address is not a public http(s) URL, so it was refused. Check the vault entry.';
+          'La dirección del calendario guardada no es un enlace http(s) público, así que la he rechazado. Revisa la entrada de la bóveda.';
         if (!source.local) throw new Error(message);
         warnings.push(message);
       }

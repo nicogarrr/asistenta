@@ -12,6 +12,13 @@
  * - Si la tele consta APAGADA (status) y la rutina no la ha encendido, el
  *   resto de pasos se omiten («la tele esta apagada»): el modo noche no
  *   enciende una tele apagada, y apagar todo no la apaga dos veces.
+ * - Extras de Glasshouse (decision de Nico 30-oct-2026, «las opciones con mas
+ *   logica»): apagar todo cierra antes la app que este abierta, y modo noche
+ *   pone la imagen oscura (modo de imagen NOCHE_PICTURE_MODE). Son pasos
+ *   OPCIONALES: sin Glasshouse se omiten y si fallan se ignoran (la rutina
+ *   sigue: apagar todo apaga igual). Volver a la imagen de antes: «pon la
+ *   imagen en estandar» (tool tv action=picture) o el menu de la tele. Ver
+ *   docs/tv-ordenes.md.
  */
 
 export type SceneStep =
@@ -19,7 +26,21 @@ export type SceneStep =
   | { action: 'mute'; on: false }
   | { action: 'volume'; level: number }
   | { action: 'launch'; appId: string }
-  | { action: 'toast'; message: string };
+  | { action: 'toast'; message: string }
+  /** Cierra la app en primer plano, si hay una abierta (opcional, Glasshouse). */
+  | { action: 'closeForeground' }
+  /** Modo de imagen de la tele (opcional, Glasshouse). */
+  | { action: 'picture'; mode: string };
+
+/** Pasos que solo existen con Glasshouse: sin el se omiten. */
+const GLASSHOUSE_STEPS = new Set<SceneStep['action']>([
+  'mute',
+  'volume',
+  'closeForeground',
+  'picture',
+]);
+/** Pasos opcionales: si fallan se ignoran (omitido), no son un fallo de la rutina. */
+const OPTIONAL_STEPS = new Set<SceneStep['action']>(['closeForeground', 'picture']);
 
 export interface SceneOptions {
   /** App a abrir al final (nombre o id: "Netflix", "youtube"...). */
@@ -37,6 +58,8 @@ export interface SceneDef {
 export const CINE_DEFAULT_LEVEL = 20;
 /** Volumen por defecto del modo noche: bajo, para no despertar a nadie. */
 export const NOCHE_DEFAULT_LEVEL = 8;
+/** Modo de imagen del modo noche: «eco», el mas oscuro de LG (ahorro de energia). */
+export const NOCHE_PICTURE_MODE = 'eco';
 
 export const TV_SCENES: Record<string, SceneDef> = {
   cine: {
@@ -54,14 +77,16 @@ export const TV_SCENES: Record<string, SceneDef> = {
     // No enciende: es para bajar el volumen con la tele ya puesta.
     build: ({ appId, level }) => [
       { action: 'volume', level: level ?? NOCHE_DEFAULT_LEVEL },
+      { action: 'picture', mode: NOCHE_PICTURE_MODE },
       ...(appId ? [{ action: 'launch' as const, appId }] : []),
-      { action: 'toast', message: 'Modo noche: volumen bajo.' },
+      { action: 'toast', message: 'Modo noche: volumen bajo e imagen oscura.' },
     ],
   },
   'apagar-todo': {
     label: 'apagado',
     build: () => [
       { action: 'toast', message: 'Apagando. Buenas noches.' },
+      { action: 'closeForeground' },
       { action: 'power', on: false },
     ],
   },
@@ -112,6 +137,10 @@ export function describeStep(step: SceneStep): string {
       return `abrir ${step.appId}`;
     case 'toast':
       return 'aviso en pantalla';
+    case 'closeForeground':
+      return 'cerrar la app abierta';
+    case 'picture':
+      return `imagen ${step.mode}`;
   }
 }
 
@@ -150,7 +179,7 @@ export async function runScene(steps: SceneStep[], deps: RunSceneDeps): Promise<
       out.push({ step, status: 'omitido', text });
       continue;
     }
-    if ((step.action === 'mute' || step.action === 'volume') && !deps.hasGlasshouse) {
+    if (GLASSHOUSE_STEPS.has(step.action) && !deps.hasGlasshouse) {
       out.push({ step, status: 'omitido', text: 'sin Glasshouse configurado' });
       continue;
     }
@@ -159,7 +188,8 @@ export async function runScene(steps: SceneStep[], deps: RunSceneDeps): Promise<
       if (step.action === 'power') poweredOn = step.on;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      out.push({ step, status: 'fallo', text: msg });
+      // Un extra opcional que falla se ignora: la rutina sigue igual.
+      out.push({ step, status: OPTIONAL_STEPS.has(step.action) ? 'omitido' : 'fallo', text: msg });
       // Sin tele encendida no tiene sentido seguir mandando ordenes.
       if (step.action === 'power' && step.on) break;
     }

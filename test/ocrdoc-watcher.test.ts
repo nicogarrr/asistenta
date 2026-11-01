@@ -5,6 +5,8 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EngineDeps } from '../src/ocrdoc/engine.js';
 import { OcrFolderWatcher, watchModeFromEnv } from '../src/ocrdoc/watcher.js';
+import { openProgress } from '../src/pdfmd/progress.js';
+import type { OcrResult } from '../src/screen/ocr.js';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -23,6 +25,8 @@ const deps = (workDir: string): EngineDeps => ({
   digitalPages: async () => ['Hola mundo, texto digital suficiente de la pagina uno'],
 });
 const log = { info: () => {}, warn: () => {} };
+const ocrRes = (text: string): OcrResult =>
+  ({ lines: [], text, language: 'es-ES', width: 10, height: 10 }) as unknown as OcrResult;
 
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), 'pa-watch-'));
@@ -210,4 +214,46 @@ describe('OcrFolderWatcher', () => {
     expect(r.processed).toEqual([]);
     expect(await readdir(dir)).toEqual(['.claim-ajeno-a.pdf']);
   });
+});
+
+describe('carpeta vigilada: PDF largo que se cortó', () => {
+  it('sigue por la página que faltaba y borra el registro al terminar', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pa-watch-prog-'));
+    const progressDir = await mkdtemp(join(tmpdir(), 'pa-watch-progdir-'));
+    dirs.push(dir, progressDir);
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 100]);
+    doc.addPage([200, 100]);
+    const bytes = Buffer.from(await doc.save());
+    const done = await openProgress(progressDir, bytes);
+    await done.put(0, ocrRes('texto de p1.png'));
+    const calls: string[] = [];
+    const w = new OcrFolderWatcher({
+      dir,
+      mode: 'md',
+      log,
+      settleMs: 1000,
+      progressDir,
+      makeDeps: (workDir) => ({
+        workDir,
+        digitalPages: async () => ['', ''],
+        renderPage: async (_pdf, i, out) => writeFile(out, `p${i}`),
+        ocr: async (png) => {
+          const n = png.replace(/.*[\\/]/, '');
+          calls.push(n);
+          return ocrRes(`texto de ${n}`);
+        },
+      }),
+    });
+    const p = join(dir, 'largo.pdf');
+    await writeFile(p, bytes);
+    await old(p);
+    await w.scanOnce();
+    expect((await w.scanOnce()).processed).toEqual(['largo.pdf']);
+    expect(calls).toEqual(['p2.png']);
+    const md = await readFile(join(dir, 'salida', 'largo.md'), 'utf8');
+    expect(md).toContain('texto de p1.png');
+    expect(md).toContain('texto de p2.png');
+    expect(await readdir(progressDir)).toEqual([]);
+  }, 20_000);
 });

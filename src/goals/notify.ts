@@ -22,8 +22,11 @@
  * The destination is the caller's business (the owning chat's DM), wired as
  * `send` - this module never sees a transport.
  */
+
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { chatIdOf } from '../channels/types.js';
+import { friendlyModelError } from '../core/friendly-error.js';
 import { type Goal, splitGoalScope } from './store.js';
 
 /** Pending rows older than this are dropped: a chat unreachable for a day stays unreachable. */
@@ -85,7 +88,7 @@ export function goalNotifyTarget(scope: string): {
   replyToMessageId?: string;
 } | null {
   const { chatKey, thread } = splitGoalScope(scope);
-  const chatId = chatKey.split(':')[2] ?? '';
+  const chatId = chatIdOf(chatKey);
   if (!chatId) return null;
   if (/^t\d+$/.test(thread)) return { chatKey, chatId, threadId: thread.slice(1) };
   if (/^m\d+$/.test(thread)) return { chatKey, chatId, replyToMessageId: thread.slice(1) };
@@ -105,7 +108,8 @@ export function formatGoalMessage(kind: string, goal: Pick<Goal, 'title'>, reaso
     case 'hecho':
       return `🎯 Objetivo cumplido: "${goal.title}". ${r}`;
     case 'error':
-      return `🎯 "${goal.title}" falló en su último tick: ${r}\nLo reintento en el siguiente; si persiste, paúsalo o échame un ojo.`;
+      // El motivo es el error crudo del modelo («fetch failed»): dicho en claro.
+      return `🎯 "${goal.title}" falló en su último intento: ${friendlyModelError(r)}\nLo reintento en el siguiente; si persiste, paúsalo o échame un ojo.`;
     default:
       // desconocido: la regla es "si dudas entre escalar o seguir, escala".
       return `🎯 ${goal.title}: ${r}`;
@@ -271,7 +275,10 @@ export class GoalNotifier {
       )
       .all(goal.id) as Row[];
     for (const row of rows) {
-      if (this.#expired(goal, row.kind, row.created_at)) {
+      if (
+        this.#expired(goal, row.kind, row.created_at) ||
+        this.#answered(goal, row.kind, row.created_at)
+      ) {
         this.#db
           .prepare('DELETE FROM goal_notifications WHERE goal_id = ? AND nkey = ?')
           .run(row.goal_id, row.nkey);
@@ -291,6 +298,20 @@ export class GoalNotifier {
   #expired(goal: Goal, kind: string | null, createdAt: string): boolean {
     if (this.#now() - Date.parse(createdAt) <= NOTIFY_RETRY_MAX_AGE_MS) return false;
     return !((kind === 'decision' || kind === 'bloqueo') && goal.status === 'blocked');
+  }
+
+  /**
+   * A 'bloqueo' or 'decision' row only makes sense while the goal is still
+   * blocked waiting for Nico. Once he resumed (status changed after the row
+   * was written) or cancelled it (or it finished),
+   * the question is settled: delivering it late - after Telegram came back -
+   * would ask him to decide something nobody is waiting on any more.
+   */
+  #answered(goal: Goal, kind: string | null, createdAt: string): boolean {
+    if (kind === null || !REASKED_KINDS.has(kind) || goal.status === 'blocked') return false;
+    if (goal.status === 'cancelled' || goal.status === 'done') return true;
+    // Resumed (or resumed and paused again) after the question was raised.
+    return Date.parse(createdAt) < Date.parse(goal.updatedAt);
   }
 
   /**

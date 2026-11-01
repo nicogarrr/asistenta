@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { linkBrowsers } from './browsers-path.js';
+import { noteAttemptRoot, SANDBOX_ENV } from './reap.js';
 import type { Measurement } from './score.js';
 
 /**
@@ -52,6 +54,12 @@ export function cleanEnv(env: NodeJS.ProcessEnv = process.env, home?: string): N
     out.LOCALAPPDATA = join(home, 'AppData', 'Local');
     out.XDG_CONFIG_HOME = join(home, '.config');
     out.XDG_CACHE_HOME = join(home, '.cache');
+    // npm lee además su config global de <prefijo de Node>/etc/npmrc, fuera del HOME: en un Node
+    // del usuario (nvm en Linux/mac) el intento puede escribirla, y un node-options ahí carga
+    // código en el `npx vitest` de la medición (comprobado con npm real, 31 oct). Las dos
+    // configs de npm salen de la casa desechable (no existen: npm usa sus valores por defecto).
+    out.npm_config_globalconfig = join(home, '.npm-global-rc');
+    out.npm_config_userconfig = join(home, '.npmrc');
   }
   return out;
 }
@@ -82,6 +90,30 @@ export function parseJsonReport(text: string): {
   } catch {
     return null;
   }
+}
+
+const REPORT_START = '{"numTotalTestSuites"';
+
+/**
+ * vitest's JSON report, printed on its standard output: the one line that starts with it.
+ * The report used to be a file in the shared temp folder, where a process left running by
+ * the attempt (same OS user) could rewrite it after vitest wrote it. The standard output is
+ * read only by measure(). A test can still print lines, so a second copy of the report
+ * anywhere in the output, or one that does not start its own line, means no report.
+ */
+export function reportFromOutput(stdout: string): string | null {
+  const clean = stdout.replace(ANSI, '');
+  const first = clean.indexOf(REPORT_START);
+  if (first < 0 || clean.indexOf(REPORT_START, first + 1) >= 0) return null;
+  if (first > 0 && clean[first - 1] !== '\n') return null;
+  const end = clean.indexOf('\n', first);
+  const line = clean.slice(first, end < 0 ? undefined : end).replace(/\r$/, '');
+  try {
+    JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return line;
 }
 
 export interface MeasureOptions {
@@ -133,8 +165,69 @@ export function parseChecks(output: string): { passed: number; failed: number } 
   return { passed, failed };
 }
 
+/**
+ * Names of the probe checks that passed and failed (the label, without the « — detalle»
+ * tail, which can carry timings or page text that change between runs). The judge uses them
+ * per check, like the per-test report: a check that passed in the kernel and no longer
+ * passes (it fails, or the probe stopped printing it) is a regression whatever the totals say.
+ */
+export function checkNames(output: string): { passing: string[]; failing: string[] } {
+  const passing: string[] = [];
+  const failing: string[] = [];
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(ANSI, '').replace(/\r$/, '');
+    const m = /^(PASA|FALLA) +(.+)$/.exec(line);
+    if (!m) continue;
+    const name = (m[2] as string).split(/ (?:—|â€”) /)[0]?.trim() ?? '';
+    if (!name) continue;
+    (m[1] === 'PASA' ? passing : failing).push(name);
+  }
+  return { passing, failing };
+}
+
+/**
+ * Why a test-suite run measured nothing trustworthy, or null when it finished. vitest ends
+ * with exit 0 (everything green) or 1 (failures). A suite that printed its summary and then
+ * crashed, hung until the timeout or was killed is not a finished run: its numbers are
+ * reported as not measured instead of as a measurement. Exit 0 with failures in the summary
+ * means the summary is not this run's.
+ */
+export function suiteUnfinished(code: number | string | null, failed: number): string | null {
+  if (code === 0 && failed === 0) return null;
+  if (code === 1) return null;
+  return `la suite de tests no terminó (salida ${code ?? 'sin código'}): no medido`;
+}
+
+/**
+ * Why a probe run measured nothing trustworthy, or null when it finished. The probe ends
+ * with «FLUJO GENERICO OK» (exit 0) or «N PASO(S) FALLARON» (exit 1). A probe that crashed,
+ * was killed or stopped early printed only some checks: counting those as the result scored
+ * the steps it never reached as if they did not exist, so the run is reported as not
+ * measured instead of as a measurement.
+ */
+export function probeUnfinished(output: string, code: number | string | null): string | null {
+  const lines = output.split('\n').map((l) => l.replace(ANSI, '').replace(/\r$/, '').trim());
+  if (code === 0 && lines.includes('FLUJO GENERICO OK')) return null;
+  if (code === 1 && lines.some((l) => /^\d+ PASO\(S\) FALLARON$/.test(l))) return null;
+  return `la sonda de extremo a extremo no terminó (salida ${code ?? 'sin código'}, sin «FLUJO GENERICO OK»): no medido`;
+}
+
+/**
+ * Cómo lanzar npx. En Windows es npx.cmd: execFile sin shell no lo encuentra (ENOENT) y, desde
+ * Node 18.20/20.12, un .cmd sin shell da EINVAL. Así en el PC de Nico la medición fallaba
+ * siempre y ninguna semana arrancaba. Los argumentos son fijos y sin espacios: la shell no
+ * recibe nada del intento.
+ */
+export function npxCommand(platform: NodeJS.Platform = process.platform): {
+  file: string;
+  shell: boolean;
+} {
+  return platform === 'win32' ? { file: 'npx.cmd', shell: true } : { file: 'npx', shell: false };
+}
+
 export async function measure(opts: MeasureOptions): Promise<Measurement> {
   const cwd = opts.cwd;
+  const npx = npxCommand();
   const timeoutMs = opts.timeoutMs ?? 20 * 60_000;
   const started = Date.now();
   let passed = 0;
@@ -143,32 +236,32 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
   let checksFailed = 0;
 
   const home = mkdtempSync(join(tmpdir(), 'evolve-home-'));
-  // The report goes to its own directory with an unpredictable name, not into the home the
-  // candidate's tests run with. Same OS user, so this is a mitigation, not a wall: the report
-  // is also cross-checked against the runner's own summary line below.
-  const reportDir = mkdtempSync(join(tmpdir(), 'evolve-rep-'));
-  const reportFile = join(reportDir, `r-${Math.random().toString(36).slice(2)}.json`);
+  linkBrowsers(home);
   let names: { passing: string[]; failing: string[] } | null = null;
+  let suiteError: string | null = null;
   try {
-    const suite = await exec(
-      'npx',
-      ['vitest', '--run', '--reporter=basic', '--reporter=json', `--outputFile.json=${reportFile}`],
-      {
-        cwd,
-        timeout: timeoutMs,
-        windowsHide: true,
-        env: cleanEnv(process.env, home),
-        maxBuffer: 32 * 1024 * 1024,
-      },
-    ).catch((err: { stdout?: string; stderr?: string }) => ({
-      stdout: err.stdout ?? '',
-      stderr: err.stderr ?? '',
-    }));
-    try {
-      names = parseJsonReport(readFileSync(reportFile, 'utf8'));
-    } catch {
-      names = null;
-    }
+    // No --outputFile: the JSON report comes on vitest's own standard output (see
+    // reportFromOutput), not as a file another process of the same user can rewrite.
+    const suiteRun = exec(npx.file, ['vitest', '--run', '--reporter=basic', '--reporter=json'], {
+      cwd,
+      shell: npx.shell,
+      timeout: timeoutMs,
+      windowsHide: true,
+      env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    // Su pid, para encontrar después a sus hijos huérfanos en Windows (reap.ts).
+    const suiteEnded = noteAttemptRoot(cwd, suiteRun.child?.pid);
+    const suite = await suiteRun
+      .finally(suiteEnded)
+      .then((r) => ({ ...r, code: 0 as number | string | null }))
+      .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+        code: err.code ?? null,
+      }));
+    const report = reportFromOutput(suite.stdout);
+    names = report ? parseJsonReport(report) : null;
     const parsed = parseSuite(`${suite.stdout}\n${suite.stderr}`);
     // A report that disagrees with the summary line is not trusted.
     if (
@@ -179,9 +272,9 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     }
     passed = parsed.passed;
     failed = parsed.failed;
+    suiteError = suiteUnfinished(suite.code, parsed.failed);
   } catch (err) {
     rmSync(home, { recursive: true, force: true });
-    rmSync(reportDir, { recursive: true, force: true });
     return {
       passed: 0,
       failed: 0,
@@ -194,22 +287,45 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
 
   // The probes are the offline stand-in for the real flows. A failure here is worth more
   // than a failed unit test, and score.ts already prices it that way.
-  const probe = await exec('npx', ['tsx', 'evolve/probe-generic-flow.ts'], {
+  // vite-node viene con vitest (fijado en package-lock). `npx tsx` no es una dependencia: npx lo
+  // bajaba de internet en cada medición (con la casa desechable no hay caché), sin versión fija,
+  // y sin red la sonda no arrancaba. --no-install: nunca descarga nada.
+  const probeRun = exec(npx.file, ['--no-install', 'vite-node', 'evolve/probe-generic-flow.ts'], {
     cwd,
+    shell: npx.shell,
     timeout: timeoutMs,
     windowsHide: true,
-    env: cleanEnv(process.env, home),
+    env: { ...cleanEnv(process.env, home), [SANDBOX_ENV]: cwd },
     maxBuffer: 8 * 1024 * 1024,
-  }).catch((err: { stdout?: string; stderr?: string }) => ({
-    stdout: err.stdout ?? '',
-    stderr: err.stderr ?? '',
-  }));
+  });
+  const probeEnded = noteAttemptRoot(cwd, probeRun.child?.pid);
+  const probe = await probeRun
+    .finally(probeEnded)
+    .then((r) => ({ ...r, code: 0 as number | string | null }))
+    .catch((err: { stdout?: string; stderr?: string; code?: number | string | null }) => ({
+      stdout: err.stdout ?? '',
+      stderr: err.stderr ?? '',
+      code: err.code ?? null,
+    }));
+  const probeError = probeUnfinished(`${probe.stdout}\n${probe.stderr}`, probe.code);
   const parsedChecks = parseChecks(`${probe.stdout}\n${probe.stderr}`);
   checks = parsedChecks.passed;
   checksFailed = parsedChecks.failed;
+  const { passing: passingChecks, failing: failingChecks } = checkNames(
+    `${probe.stdout}\n${probe.stderr}`,
+  );
 
   rmSync(home, { recursive: true, force: true });
-  rmSync(reportDir, { recursive: true, force: true });
+  if (suiteError) {
+    return {
+      passed,
+      failed,
+      checks,
+      checksFailed,
+      durationMs: Date.now() - started,
+      error: suiteError,
+    };
+  }
   if (!names) {
     // Fail closed: without a per-test report the regression check cannot run, and falling
     // back to counts would let a change that fixes two tests and breaks one through.
@@ -222,6 +338,16 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
       error: 'falta el informe por test (o no coincide con el resumen): no comparable',
     };
   }
+  if (probeError) {
+    return {
+      passed,
+      failed,
+      checks,
+      checksFailed,
+      durationMs: Date.now() - started,
+      error: probeError,
+    };
+  }
   return {
     passed,
     failed,
@@ -230,5 +356,7 @@ export async function measure(opts: MeasureOptions): Promise<Measurement> {
     durationMs: Date.now() - started,
     passingTests: names.passing,
     failingTests: names.failing,
+    passingChecks,
+    failingChecks,
   };
 }

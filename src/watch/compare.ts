@@ -1,10 +1,10 @@
 /**
- * /compara <url>: el mismo producto en las 7 tiendas del vigilante, a petición del usuario.
+ * /compara <url>: el mismo producto en 7 tiendas españolas, a petición del usuario.
  *
  * Decisiones, y por qué:
  * - Nace de una ficha concreta: la identidad del producto sale de SU página (JSON-LD):
- *   EAN/GTIN si lo publica, código de modelo si lo tiene el título (modelKey, el mismo
- *   que usa el barrido) y, como mínimo, el título. No se busca por categorías.
+ *   EAN/GTIN si lo publica, código de modelo si lo tiene el título (modelKey) y, como
+ *   mínimo, el título. No se busca por categorías.
  * - El emparejamiento declara su fuerza: "ean" (verificado en la ficha de la otra
  *   tienda), "modelo" (mismo código de modelo en el título) o "titulo" (título muy
  *   parecido, se presenta como probable). Si la ficha candidata publica un EAN
@@ -14,14 +14,12 @@
  *   captcha, bloqueo o ausencia de precio = "no se pudo comprobar". El precio tachado
  *   no se usa.
  * - Es una acción manual y puntual: 1 petición de búsqueda + 1 ficha por tienda
- *   (máx. 13 peticiones), con una pausa de cortesía entre ellas. El barrido automático
- *   sigue teniendo sus propios límites (robots, presupuesto diario, backoff), que
- *   aquí no aplican porque no hay bucle.
+ *   (máx. 13 peticiones), con una pausa de cortesía entre ellas. No hay bucle.
  * - Este módulo no hace red: `fetchHtml` y `sleep` se inyectan (en producción, el
  *   mismo camino con control SSRF que la tool fetch).
  */
 
-import { type Card, extractCards, modelKey } from './listscan.js';
+import { OneTapIds } from '../one-tap-ids.js';
 import { eur } from './pages.js';
 import {
   type Extraction,
@@ -30,7 +28,8 @@ import {
   isBlockedPage,
   STORES,
   type StoreId,
-} from './pricewatch.js';
+} from './price-extract.js';
+import { type Card, extractCards, modelKey } from './store-cards.js';
 
 export interface ProductIdentity {
   title: string;
@@ -261,6 +260,25 @@ function rowFromFicha(
  * un fallo deja esa fila en "error" y el resto sigue. Lanza solo si la semilla
  * no es una tienda conocida o no tiene identidad aprovechable.
  */
+/**
+ * Por qué no se pudo leer la ficha, en una frase en español para el chat. Antes salía el
+ * texto técnico tal cual («403 Forbidden for https://…», «fetch timed out after 20s», «fetch failed»).
+ */
+export function fichaReadReason(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const status = /^(\d{3})\b/.exec(raw)?.[1];
+  if (status === '404' || status === '410') return 'esa página ya no existe en la tienda.';
+  if (status === '401' || status === '403' || status === '429')
+    return 'la tienda no me deja leerla ahora mismo; prueba en un rato.';
+  if (status?.startsWith('5')) return 'la tienda está fallando ahora mismo; prueba en un rato.';
+  if (/timed out|timeout|aborted/i.test(raw)) return 'la tienda ha tardado demasiado en responder.';
+  if (/not a public http|refusing to fetch/i.test(raw))
+    return 'ese enlace no es una página web pública.';
+  if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|network|socket/i.test(raw))
+    return 'no consigo conectar con la tienda; mira la conexión del PC.';
+  return 'la tienda no me ha devuelto la página.';
+}
+
 export async function compareProduct(seedUrl: string, d: CompareDeps): Promise<CompareReport> {
   const seedStore = (Object.keys(STORES) as StoreId[]).find((id) =>
     STORES[id].hosts.some((h) => {
@@ -275,9 +293,7 @@ export async function compareProduct(seedUrl: string, d: CompareDeps): Promise<C
   try {
     seedHtml = await d.fetchHtml(seedUrl);
   } catch (err) {
-    throw new Error(
-      `no pude leer la ficha que me pasas (${err instanceof Error ? err.message : String(err)})`,
-    );
+    throw new Error(`no pude leer la ficha que me pasas: ${fichaReadReason(err)}`);
   }
   const identity = productIdentity(seedHtml);
   if (!identity.title && !identity.ean) {
@@ -398,5 +414,86 @@ export function describeCompare(r: CompareReport): string {
       lines.push(`- ${store}: no se pudo comprobar (${row.note})`);
     }
   }
+  const verdict = compareVerdict(r);
+  if (verdict) lines.push(verdict);
   return lines.join('\n');
+}
+
+/**
+ * Última línea de /compara: si el enlace que mandaste ya es el mejor precio (o empata), o
+ * dónde y cuánto más barato está. Solo con precio fiable en la ficha Y en al menos otra
+ * tienda; sin con qué comparar, no presume de nada.
+ */
+export function compareVerdict(r: CompareReport): string | undefined {
+  const seed = r.rows.find((row) => row.store === r.seed.store);
+  if (!seed || seed.status !== 'ok' || seed.cents === null || seed.cents <= 0) return undefined;
+  const others = r.rows
+    .filter((row) => row !== seed && row.status === 'ok' && row.cents !== null && row.cents > 0)
+    .sort((a, b) => (a.cents ?? 0) - (b.cents ?? 0));
+  const next = others[0];
+  if (!next || next.cents === null) return undefined;
+  const nextName = STORES[next.store].name;
+  if (seed.cents < next.cents) {
+    return `✅ Tu enlace ya es el mejor precio: ${eur(next.cents - seed.cents)} menos que ${nextName}.`;
+  }
+  if (seed.cents === next.cents) {
+    return `✅ Tu enlace ya es el mejor precio (empata con ${nextName}).`;
+  }
+  return `💡 En ${nextName} está ${eur(seed.cents - next.cents)} más barato que en tu enlace.`;
+}
+
+/**
+ * Objetivo que proponer al vigilar la ficha de /compara: el mejor precio hallado en OTRA
+ * tienda, si es más bajo que el de la propia ficha (si la ficha ya es la más barata, o no
+ * se sabe su precio, no hay objetivo que proponer).
+ */
+export function suggestedTargetCents(report: CompareReport): number | undefined {
+  const best = report.best;
+  if (!best || best.cents === null || best.cents <= 0) return undefined;
+  const seed = report.rows.find((r) => r.store === report.seed.store);
+  if (best.store === report.seed.store) return undefined;
+  if (!seed || seed.status !== 'ok' || seed.cents === null) return undefined;
+  return best.cents < seed.cents ? best.cents : undefined;
+}
+
+/** Cuánto vale el botón «👀 Vigilar» de /compara (24 h). */
+export const COMPARE_WATCH_MS = 24 * 3_600_000;
+/** Respuesta de un «👀 Vigilar» caducado, ya usado, de otro chat o de antes de reiniciar. */
+export const COMPARE_WATCH_STALE =
+  'Este botón ya ha caducado. Si quieres que lo vigile, pásame otra vez el enlace.';
+
+/**
+ * Enlaces de /compara para su botón «👀 Vigilar». El enlace no cabe (ni debe ir) en el
+ * callback_data de Telegram: el botón lleva un id corto (8 hex) que apunta aquí
+ * (OneTapIds). Vale una vez, 24 h y solo desde el chat que comparó; con `file`
+ * sobrevive a un reinicio.
+ */
+export class CompareWatchLinks {
+  readonly #ids: OneTapIds<{ chatId: string; url: string; targetCents?: number }>;
+
+  constructor(now: () => number = Date.now, max = 200, file?: string) {
+    this.#ids = new OneTapIds({ ttlMs: COMPARE_WATCH_MS, now, max, file });
+  }
+
+  /** Apunta el enlace y devuelve su id. Tira los caducados y, si sobran, los más viejos. */
+  remember(chatId: string, url: string, targetCents?: number): string {
+    return this.#ids.remember(
+      targetCents === undefined ? { chatId, url } : { chatId, url, targetCents },
+    );
+  }
+
+  /** El enlace del id (y lo saca: vale una vez); otro chat o caducado → undefined. */
+  take(id: string, chatId: string): string | undefined {
+    return this.takeEntry(id, chatId)?.url;
+  }
+
+  /** Como take, con el objetivo propuesto (céntimos) si el botón lo lleva. */
+  takeEntry(id: string, chatId: string): { url: string; targetCents?: number } | undefined {
+    const v = this.#ids.take(id, (e) => e?.chatId === chatId && typeof e.url === 'string');
+    if (!v) return undefined;
+    const t = v.targetCents;
+    return typeof t === 'number' && Number.isInteger(t) && t > 0
+      ? { url: v.url, targetCents: t }
+      : { url: v.url };
+  }
 }

@@ -565,7 +565,7 @@ describe('browser fill con secret_key', () => {
         selector: '#pw',
         secret_key: 'site:seg-social.es:password',
       }),
-    ).rejects.toThrow(/pa vault set site:seg-social\.es:password/);
+    ).rejects.toThrow(/pa vault set-stdin site:seg-social\.es:password/);
   });
 
   it('rechaza text+secret_key a la vez y claves con mala forma', async () => {
@@ -666,10 +666,10 @@ describe('gestion preparar con logins', () => {
     const text = JSON.stringify(res.content);
     expect(text).toContain('- seg-social.es: ✔ usuario y contraseña ya están en el vault.');
     expect(text).toContain(
-      '- booking.com: falta site:booking.com:username - guárdala con: pa vault set site:booking.com:username <valor>',
+      '- booking.com: falta site:booking.com:username - guárdala con: pa vault set-stdin site:booking.com:username',
     );
     expect(text).toContain(
-      '- booking.com: falta site:booking.com:password - guárdala con: pa vault set site:booking.com:password <valor>',
+      '- booking.com: falta site:booking.com:password - guárdala con: pa vault set-stdin site:booking.com:password',
     );
   });
 

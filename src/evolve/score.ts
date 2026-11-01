@@ -1,3 +1,5 @@
+import { isProtectedPath } from './guard.js';
+
 /**
  * Deciding whether a change is an improvement.
  *
@@ -31,6 +33,10 @@ export interface Measurement {
   /** Keys of the tests that passed / failed, when the runner reported them per test. */
   passingTests?: string[];
   failingTests?: string[];
+  /** Labels of the end-to-end checks that passed, when the probe printed them. */
+  passingChecks?: string[];
+  /** Labels of the end-to-end checks that failed. */
+  failingChecks?: string[];
   /** Set when the run could not produce a number at all. */
   error?: string;
 }
@@ -119,6 +125,70 @@ export function judge(
       };
     }
   }
+  // The same per check: a probe that crashes, or stops printing a check, drops it from
+  // both «checks» and «checksFailed», so the failure count does not see it and the lost
+  // points can be outweighed by tests fixed elsewhere. A check that passed and no longer
+  // passes is a regression; without names, fewer passing checks is one.
+  {
+    const lostChecks =
+      kernel.passingChecks && candidate.passingChecks
+        ? (() => {
+            const now = new Set(candidate.passingChecks);
+            return kernel.passingChecks.filter((c) => !now.has(c));
+          })()
+        : [];
+    if (lostChecks.length || candidate.checks < kernel.checks) {
+      const detail = lostChecks.length ? ` (${lostChecks.slice(0, 3).join('; ')})` : '';
+      return {
+        kind: 'discard',
+        delta,
+        reason: `regresión en las sondas: checks que pasaban ${kernel.checks}->${candidate.checks}${detail}. No entra al kernel.`,
+      };
+    }
+  }
+  {
+    // La sonda carga el código del intento, que puede imprimir sus propias líneas «PASA x»:
+    // cada una sumaba un check (+2). La sonda está protegida, así que sus checks son los del
+    // kernel: uno nuevo, repetido o que pasa y falla a la vez no lo imprimió la sonda.
+    const forged =
+      kernel.passingChecks && candidate.passingChecks
+        ? (() => {
+            const known = new Set([...kernel.passingChecks, ...(kernel.failingChecks ?? [])]);
+            const seen = new Set<string>();
+            const failing = new Set(candidate.failingChecks ?? []);
+            const bad = candidate.passingChecks.filter((c) => {
+              const dup = seen.has(c);
+              seen.add(c);
+              return dup || !known.has(c) || failing.has(c);
+            });
+            if (candidate.checks > candidate.passingChecks.length) bad.push('(cuenta)');
+            return bad;
+          })()
+        : [];
+    if (forged.length) {
+      return {
+        kind: 'discard',
+        delta,
+        reason: `la sonda del candidato imprimió checks que no son de la sonda (${forged.slice(0, 3).join('; ')}). No entra al kernel.`,
+      };
+    }
+  }
+  // Todo check que la versión actual imprime (pase o falle) tiene que salir también en la
+  // salida del intento. Uno que fallaba y desaparece restaba un fallo de «checksFailed» y
+  // sumaba puntos: un check que se esfuma es un descarte, no una mejora.
+  if (kernel.passingChecks) {
+    const seen = new Set([...(candidate.passingChecks ?? []), ...(candidate.failingChecks ?? [])]);
+    const gone = [...kernel.passingChecks, ...(kernel.failingChecks ?? [])].filter(
+      (c) => !seen.has(c),
+    );
+    if (gone.length) {
+      return {
+        kind: 'discard',
+        delta,
+        reason: `faltan checks de la sonda en la salida del candidato (${gone.slice(0, 3).join('; ')}). No entra al kernel.`,
+      };
+    }
+  }
   if (candidate.failed > kernel.failed || candidate.checksFailed > kernel.checksFailed) {
     return {
       kind: 'discard',
@@ -158,33 +228,7 @@ export function judge(
  * before it is ever measured. This is the one place where the loop is not allowed to
  * argue with itself.
  */
-export const FORBIDDEN = [
-  'src/permissions.ts',
-  'src/cli.ts',
-  'src/tools/checkout.ts',
-  'src/tools/fetch.ts',
-  'src/books/net.ts',
-  'src/approval-text.ts',
-  'src/vault.ts',
-  'src/commerce/',
-  'src/evolve/',
-  'src/selfimprove/',
-  'selfimprove/',
-  // The rule of measuring: tests and probes are what the loop is scored with, so it never
-  // edits them (adding tests inflates the count, deleting them hides a failure).
-  'test/',
-  'evolve/',
-  'vitest.config',
-  'biome.json',
-  'package.json',
-  'package-lock.json',
-  'tsconfig',
-  '.github/',
-  'deploy/',
-];
 
 export function touchesForbidden(files: readonly string[]): string[] {
-  return files.filter((f) =>
-    FORBIDDEN.some((bad) => f === bad || f.startsWith(bad) || f.includes(`/${bad}`)),
-  );
+  return files.filter(isProtectedPath);
 }

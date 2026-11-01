@@ -20,6 +20,8 @@
  *    that is a secret without looking like one is indistinguishable from
  *    ordinary prose, and no formatter can tell them apart.
  */
+import { batchQuestion } from './mail/cleanup.js';
+import { unsubQuestion } from './mail/unsubscribe.js';
 import type { ToolCall } from './permissions.js';
 
 export interface ApprovalText {
@@ -88,6 +90,54 @@ export function formatApproval(
   const showArgs = opts.showArgs ?? true;
   reason = approvalReasonSpanish(reason);
   const target = typeof call.args._target === 'string' ? call.args._target : '';
+  // cuentas: si la herramienta resolvió el nombre a una web exacta (gateHint), se pregunta por esa.
+  const exactSite = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(target) ? target : '';
+  if (call.tool === 'cuentas' && call.args.action === 'codigo_registro') {
+    const sitio =
+      exactSite ||
+      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+    if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
+    const question = `Voy a mirar en tu correo el código que te ha mandado ${sitio} para terminar el alta. ¿Sigo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
+  if (call.tool === 'cuentas' && call.args.action === 'descartar') {
+    const sitio =
+      exactSite ||
+      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+    if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
+    const question = `Voy a descartar el alta a medias en ${sitio} y borrar la contraseña que guardé para ella. ¿Sigo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
+  if (call.tool === 'cuentas' && call.args.action === 'confirmar_registro') {
+    const sitio =
+      exactSite ||
+      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+    const correo =
+      typeof call.args.correo === 'string' ? call.args.correo.trim().slice(0, 200) : '';
+    if (!sitio || !correo || hasInvisible(sitio + correo)) return deniedInvisible('cuentas');
+    const at = correo.indexOf('@');
+    const shown = at > 0 ? `${correo.charAt(0)}…${correo.slice(at)}` : correo;
+    const question = `Voy a crear tu cuenta en ${sitio} con tu correo ${shown}. ¿Confirmo?`;
+    return withinBudget(question, question, 'cuentas');
+  }
+  if (call.tool === 'objetivo' && call.args.action === 'activar' && target) {
+    // El objetivo guardado, palabra por palabra (gateHint de la herramienta): lo que se
+    // aprueba es lo que va a trabajar días, no un id.
+    if (hasInvisible(target)) return deniedInvisible('objetivo');
+    if (redactSecrets(target) !== target) return deniedAltered('objetivo');
+    const id = typeof call.args.id === 'string' ? call.args.id : '?';
+    const raw = [
+      '¿Activo este objetivo? Trabajará solo, varios días, con este plan:',
+      target,
+      `(id: ${id})`,
+      `Motivo: ${reason}`,
+    ].join('\n');
+    return withinBudget(
+      raw,
+      raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`),
+      'objetivo',
+    );
+  }
   if (call.tool === 'browser' && target) {
     const [withCtx = '', ...rest] = target.split('\nRESUMEN DE LA PÁGINA:\n');
     const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
@@ -116,6 +166,22 @@ export function formatApproval(
     const question = raw.replace(`Motivo: ${reason}`, `Motivo: ${redactSecrets(reason)}`);
     return withinBudget(raw, question, 'browser');
   }
+  if (
+    call.tool === 'correo_reglas' &&
+    (call.args.action === 'limpiar' || call.args.action === 'baja')
+  ) {
+    // Lo que se aprueba es el lote guardado en la vista previa, con su lista exacta.
+    const lote = typeof call.args.lote === 'string' ? call.args.lote : '';
+    const question = !lote
+      ? null
+      : call.args.action === 'baja'
+        ? unsubQuestion(lote, Date.now())
+        : batchQuestion(lote, Date.now());
+    if (!question) return { question: 'Ese lote ya no existe: no se pregunta.', complete: false };
+    return withinBudget(question, question, 'correo_reglas');
+  }
+  const mailKind = call.tool === 'correo' ? MAIL_SEND_KIND[String(call.args.action)] : undefined;
+  if (mailKind) return formatMailDraft(call, mailKind, reason);
   if (call.tool === 'shell') {
     const command = typeof call.args.command === 'string' ? call.args.command.trim() : '';
     // The mask is a change-detector here: if it would alter the command, the
@@ -134,7 +200,8 @@ export function formatApproval(
   if (call.tool === 'computer') {
     if (call.args.action === 'batch' && Array.isArray(call.args.actions)) {
       const steps = call.args.actions as Array<Record<string, unknown>>;
-      if (steps.some((s) => s.action === 'type' && s.secret === true)) return deniedSecretType();
+      if (steps.some((s) => s.action === 'type' && flaggedSecret(s.secret)))
+        return deniedSecretType();
       if (hasInvisible(JSON.stringify(steps))) return deniedInvisible('computer');
       const rawSteps = steps.map((s, i) => `  ${i + 1}. ${describeComputerAction(s, IDENTITY)}`);
       const shownSteps = steps.map(
@@ -155,7 +222,7 @@ export function formatApproval(
       ].join('\n');
       return withGrantWindowNote(withinBudget(raw, question, 'computer'), opts.grantWindowMs);
     }
-    if (call.args.action === 'type' && call.args.secret === true) return deniedSecretType();
+    if (call.args.action === 'type' && flaggedSecret(call.args.secret)) return deniedSecretType();
     if (hasInvisible(JSON.stringify(call.args))) return deniedInvisible('computer');
     const rawAction = describeComputerAction(call.args, IDENTITY);
     const shownAction = describeComputerAction(call.args, redactSecrets);
@@ -278,6 +345,18 @@ function deniedAltered(tool: string): ApprovalText {
 }
 
 /**
+ * Whether a `secret` flag asks for secret handling. Only the literal `true` used
+ * to count, so `secret: "true"` or `secret: 1` (a batch item, which the schema
+ * does not check) turned into an ordinary approval question that SHOWED the
+ * secret in the chat. Anything but an explicit no counts as secret.
+ */
+function flaggedSecret(value: unknown): boolean {
+  if (value === undefined || value === null || value === false || value === 0) return false;
+  if (typeof value === 'string' && /^\s*(false|no|0)?\s*$/i.test(value)) return false;
+  return true;
+}
+
+/**
  * A type flagged `secret: true`: showing the value would leak it and hiding it
  * would be a blind approval, so it is denied until a vault flow can reference
  * the secret without showing it. The user is never asked to paste the secret.
@@ -321,6 +400,40 @@ function withGrantWindowNote(
       'no volverán a preguntar (los atajos del sistema como Win+R, Ctrl+Alt o Alt+F4 ' +
       'sí preguntan siempre).',
   };
+}
+
+const MAIL_SEND_KIND: Record<string, string | undefined> = {
+  responder: 'respuesta',
+  reenviar: 'reenvío',
+  nuevo: 'correo nuevo',
+};
+
+/** El borrador exacto de un correo: lo que se aprueba es lo que sale. */
+function formatMailDraft(call: ToolCall, kind: string, reason: string): ApprovalText {
+  const list = (v: unknown) =>
+    (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).map((x) => String(x).trim());
+  const text = (k: string) => (typeof call.args[k] === 'string' ? (call.args[k] as string) : '');
+  const to = list(call.args.para);
+  const cc = list(call.args.cc);
+  const oneLiners = [...to, ...cc, text('asunto'), text('ref')];
+  if (
+    [...oneLiners, text('cuerpo')].some(hasInvisible) ||
+    oneLiners.some((l) => /[\r\n\u2028\u2029]/u.test(l))
+  )
+    return deniedInvisible('correo');
+  const raw = [
+    `¿Envío exactamente este correo? (${kind})`,
+    text('ref') ? `Hilo: ${text('ref')}` : '',
+    `Para: ${to.join(', ') || '(nadie)'}`,
+    `CC: ${cc.join(', ') || 'nadie'}`,
+    `Asunto: ${text('asunto') || '(vacío)'}`,
+    `---\n${text('cuerpo') || '(vacío)'}\n---`,
+    call.args.action === 'reenviar' ? 'Debajo va el correo original del hilo, sin cambios.' : '',
+    `Motivo: ${redactSecrets(reason)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return withinBudget(raw, raw, 'correo');
 }
 
 function withinBudget(raw: string, shown: string, tool: string): ApprovalText {

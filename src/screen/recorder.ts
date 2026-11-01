@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
+import { isSecretEnvName } from '../child-env.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 
@@ -70,7 +71,7 @@ export function ffmpegAvailable(): boolean {
 export async function recordScreen(options: RecordingOptions): Promise<Recording> {
   if (!ffmpegAvailable() || !FFMPEG) {
     throw new Error(
-      'ffmpeg no esta disponible (falta ffmpeg-static). Usa /screen para una captura puntual.',
+      'No puedo grabar la pantalla porque falta ffmpeg (ffmpeg-static). Una captura puntual sí te la puedo mandar.',
     );
   }
   const seconds = Math.max(1, Math.min(60, Math.trunc(options.seconds)));
@@ -118,12 +119,26 @@ export async function recordScreen(options: RecordingOptions): Promise<Recording
   );
 
   log.info('screen recording started', { seconds, fps, maxEdge });
-  await run(FFMPEG, args, seconds * 1_000 + 25_000);
-
-  if (!existsSync(file)) throw new Error('ffmpeg no produjo ningun archivo');
-  const bytes = statSync(file).size;
-  if (bytes === 0) throw new Error('ffmpeg produjo un archivo vacio');
-  const { width, height } = await probeSize(FFMPEG, file);
+  let bytes: number;
+  let width: number;
+  let height: number;
+  try {
+    await run(FFMPEG, args, seconds * 1_000 + 25_000);
+    if (!existsSync(file)) throw new Error('ffmpeg no produjo ningun archivo');
+    bytes = statSync(file).size;
+    if (bytes === 0) throw new Error('ffmpeg produjo un archivo vacio');
+    ({ width, height } = await probeSize(FFMPEG, file));
+  } catch (err) {
+    // A failed or timed-out capture can leave a partial video of the desktop behind;
+    // nobody will consume it, so it is deleted here (best effort: Windows may still
+    // hold the file for a moment after the kill).
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
   log.info('screen recording ready', { bytes, width, height, seconds });
   return { file, bytes, seconds, width, height };
 }
@@ -174,11 +189,21 @@ export function ffmpegEnv(
   platform: NodeJS.Platform = process.platform,
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  if (platform !== 'win32') return base;
-  const current = (base.__COMPAT_LAYER ?? '').split(/\s+/).filter(Boolean);
-  if (current.includes('HighDpiAware')) return base;
-  return { ...base, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
+  // ffmpeg only needs the system variables; tokens and API keys of the daemon have
+  // no business in the environment of a child that records the desktop.
+  const secrets = Object.keys(base).filter(isSecretEnvName);
+  let env = base;
+  if (secrets.length > 0) {
+    env = { ...base };
+    for (const name of secrets) delete env[name];
+  }
+  if (platform !== 'win32') return env;
+  const current = (env.__COMPAT_LAYER ?? '').split(/\s+/).filter(Boolean);
+  if (current.includes('HighDpiAware')) return env;
+  return { ...env, __COMPAT_LAYER: [...current, 'HighDpiAware'].join(' ') };
 }
+
+export { isSecretEnvName };
 
 function run(
   exe: string,

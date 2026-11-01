@@ -398,7 +398,7 @@ describe('transcribeVoiceNote', () => {
   }, 10_000);
 
   it('rejects an empty buffer before any decoding', async () => {
-    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/llego vacia/);
+    await expect(transcribeVoiceNote(Buffer.alloc(0))).rejects.toThrow(/llegó vacía/);
   });
 
   it('reports undecodable mp3 bytes honestly instead of inventing a transcript', async () => {

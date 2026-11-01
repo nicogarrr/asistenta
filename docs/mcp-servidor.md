@@ -6,6 +6,7 @@ Tools (todas de solo lectura, sobre el chat privado del dueño):
 - `memoria_buscar { consulta, limite? }`
 - `sesiones_buscar { consulta, limite? }`
 - `objetivos_listar {}`
+- `agenda_hoy {}`: seguimientos pendientes de hoy (y los vencidos sin cerrar) y rutinas programadas que tocan hoy, en la hora de `PA_TIMEZONE`. No lee el calendario remoto.
 
 No hay ninguna tool que escriba. Todo lo que sale pasa por el mismo filtro de secretos que el registro (`--password=…`, tokens, `sk-…`).
 

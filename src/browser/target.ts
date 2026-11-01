@@ -35,7 +35,14 @@ export async function describeTarget(
  * gate judges the element that will be acted on and not a second guess at it.
  */
 export async function describeLocator(loc: Locator, timeoutMs = 4_000): Promise<string> {
-  return describeLoc(loc.first(), timeoutMs);
+  // `first()` can throw (a locator from a closed page or frame); that is an
+  // unreadable target for the gate to fail closed on, not an exception that
+  // skips the gate's own handling.
+  try {
+    return await describeLoc(loc.first(), timeoutMs);
+  } catch {
+    return UNREADABLE_TARGET;
+  }
 }
 
 async function describeOnce(page: Page, selector: string, timeoutMs: number): Promise<string> {
@@ -112,10 +119,11 @@ async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
           // Amount before or after the currency, symbol or ISO code: «25,00 €», «€25»,
           // and also «EUR 49,99» / «USD 5» / «CHF 10.00», which shops and payment
           // pages print and which the old pattern missed (the code was only accepted
+          // after the number); «5 dólares» / «10 libras» in words count too
           // after the number). The suffix form keeps no word boundary after «eur» on
           // purpose: a false «importe» only asks once more, a missed one does not ask.
           if (
-            /(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£))|((€|\$|£)\s?\d)|(\b(eur|usd|gbp|chf)\s?\d)/i.test(
+            /(\d[\d.,]*\s?(€|eur|usd|gbp|chf|\$|£|d[oó]lar|libra))|((€|\$|£)\s?\d)|(\b(eur|usd|gbp|chf)\s?\d)/i.test(
               t,
             )
           ) {
@@ -139,10 +147,17 @@ async function describeLoc(loc: Locator, timeoutMs: number): Promise<string> {
  * targets that look like money so ordinary clicks stay cheap.
  */
 export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string> {
+  // page.evaluate takes no timeout: a page busy in a long script (or a hung
+  // renderer) would otherwise hold the payment confirmation forever. The
+  // summary is optional context, so a slow page just gives ''.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const lines = await page.evaluate(() => {
+    const read = page.evaluate(() => {
+      // Same currencies the target check marks (symbol or ISO code), so a
+      // «Total: $49.99» or «USD 49.99» line is shown, not only euros; and
+      // amounts written in words: «49,99 euros», «5 dólares», «10 libras».
       const re =
-        /(€|\beur\b|total|subtotal|env[ií]o|entrega|direcci[oó]n|calle|avenida|plaza|c\/)/i;
+        /(€|\$|£|\b(eur|usd|gbp|chf)\b|\d\s?(euros?|d[oó]lar(es)?|libras?)\b|total|subtotal|env[ií]o|entrega|direcci[oó]n|calle|avenida|plaza|c\/)/i;
       const seen = new Set<string>();
       const out: string[] = [];
       for (const raw of document.body.innerText.split('\n')) {
@@ -154,10 +169,18 @@ export async function pageSummary(page: Page, timeoutMs = 2_000): Promise<string
       }
       return out;
     });
-    void timeoutMs;
-    return lines.join('\n');
+    read.catch(() => {});
+    const lines = await Promise.race([
+      read,
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), timeoutMs);
+      }),
+    ]);
+    return lines ? lines.join('\n') : '';
   } catch {
     return '';
+  } finally {
+    clearTimeout(timer);
   }
 }
 

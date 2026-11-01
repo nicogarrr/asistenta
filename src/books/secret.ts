@@ -79,13 +79,18 @@ const REPLY_TIMEOUT_MS = 25_000;
 const POLL_MS = 2000;
 const CODE_RE = /^b[A-Za-z0-9]{4,5}$/;
 
-/** Un EPUB de verdad: ZIP cuya primera entrada es "mimetype" sin comprimir
- * con el contenido exacto application/epub+zip (spec OCF). Mirar la cabecera
- * basta: un PDF o un HTML renombrado no la pasa. */
+/** Un EPUB de verdad: ZIP (cabecera de entrada "PK\\x03\\x04") con las marcas OCF.
+ * La spec pide la entrada "mimetype" sin comprimir al principio con
+ * application/epub+zip; muchos EPUB reales la guardan comprimida o más tarde, pero
+ * todos llevan "META-INF/container.xml", cuyo nombre el ZIP guarda en claro. Misma
+ * regla que books/net.ts sniff() (copiada aquí para no crear un ciclo de imports).
+ * Un PDF, un HTML renombrado, un DOCX o un ZIP de PDFs no la pasan. */
 export function sniffsAsEpub(bytes: Buffer): boolean {
   if (bytes.length < 64) return false;
-  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return false; // "PK"
-  return bytes.subarray(0, 512).includes('application/epub+zip');
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04)
+    return false;
+  if (bytes.subarray(0, 512).includes('application/epub+zip')) return true;
+  return bytes.includes('META-INF/container.xml');
 }
 
 function floodWaitSeconds(err: unknown): number | undefined {

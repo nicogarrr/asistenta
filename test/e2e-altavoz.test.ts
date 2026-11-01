@@ -10,7 +10,7 @@ import {
   stopReplyText,
 } from '../src/audio/altavoz.js';
 import { type AltavozInbound, routeInboundToAltavoz } from '../src/audio/altavoz-inbound.js';
-import { TV_FIREWALL_HINT } from '../src/audio/tv-cast.js';
+import { resetTeleFirewallWarning, TV_FIREWALL_HINT } from '../src/audio/tv-cast.js';
 
 /**
  * Escenario completo del altavoz (/altavoz pc|tele, nota de voz, /stop) con un PC y
@@ -88,6 +88,7 @@ beforeEach(() => {
   replies = [];
   tvHits = 0;
   pcGate = null;
+  resetTeleFirewallWarning();
 });
 
 afterEach(() => {

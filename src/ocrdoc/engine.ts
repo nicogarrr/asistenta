@@ -1,6 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PDFDocument, type PDFFont, type PDFPage, StandardFonts } from 'pdf-lib';
+import { log } from '../log.js';
+import type { PageProgress } from '../pdfmd/progress.js';
 import type { OcrResult } from '../screen/ocr.js';
 
 /**
@@ -51,6 +53,8 @@ export interface EngineDeps {
   noOcrReason?: string;
   /** Cancelación cooperativa: se mira antes de cada página. */
   shouldStop?: () => boolean;
+  /** Páginas ya reconocidas en un intento anterior (PDFs largos que se cortaron). */
+  progress?: PageProgress;
 }
 
 export interface OcrDocResult {
@@ -198,10 +202,12 @@ export async function ocrPdf(
     doc = await PDFDocument.load(bytes);
     total = doc.getPageCount();
   } catch (err) {
+    if (/encrypt/i.test(errMsg(err)))
+      throw new OcrDocError('El PDF está protegido con contraseña; no lo abro.');
+    // The library's own words (English, offsets) go to the log, not to the chat.
+    log.warn('ocrdoc: pdf load failed', { err: errMsg(err) });
     throw new OcrDocError(
-      /encrypt/i.test(errMsg(err))
-        ? 'El PDF está protegido con contraseña; no lo abro.'
-        : `No he podido abrir el PDF (¿está dañado?): ${errMsg(err)}`,
+      'No he podido abrir el PDF: parece dañado o no es un PDF de verdad. Prueba a guardarlo otra vez y mándamelo.',
     );
   }
   if (total === 0) throw new OcrDocError('El PDF no tiene páginas.');
@@ -214,7 +220,10 @@ export async function ocrPdf(
   try {
     digital = await deps.digitalPages(bytes);
   } catch (err) {
-    throw new OcrDocError(`No he podido leer el texto del PDF: ${errMsg(err)}`);
+    log.warn('ocrdoc: pdf text read failed', { err: errMsg(err) });
+    throw new OcrDocError(
+      'No he podido leer el texto del PDF. Prueba a guardarlo otra vez o mándamelo como fotos.',
+    );
   }
 
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -281,13 +290,17 @@ export async function ocrPdf(
       continue;
     }
     try {
-      if (!pdfWritten) {
-        await writeFile(pdfPath, bytes);
-        pdfWritten = true;
+      let result = deps.progress?.get(i);
+      if (!result) {
+        if (!pdfWritten) {
+          await writeFile(pdfPath, bytes);
+          pdfWritten = true;
+        }
+        const png = join(deps.workDir, `p${i + 1}.png`);
+        await deps.renderPage(pdfPath, i, png);
+        result = await deps.ocr(png);
+        await deps.progress?.put(i, result);
       }
-      const png = join(deps.workDir, `p${i + 1}.png`);
-      await deps.renderPage(pdfPath, i, png);
-      const result = await deps.ocr(png);
       const text = tidy(result.text ?? '');
       if (!text) {
         if (retainDigital('OCR sin texto adicional reconocido')) continue;
@@ -394,7 +407,10 @@ export async function ocrPhoto(
   try {
     image = mime === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
   } catch (err) {
-    throw new OcrDocError(`No he podido abrir la imagen: ${errMsg(err)}`);
+    log.warn('ocrdoc: image load failed', { err: errMsg(err) });
+    throw new OcrDocError(
+      'No he podido abrir la imagen: parece dañada. Prueba a mandarla otra vez como foto.',
+    );
   }
   // 0,75 pt por píxel (96 dpi): una foto de móvil sale como página grande pero proporcionada.
   const page = doc.addPage([image.width * 0.75, image.height * 0.75]);

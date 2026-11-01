@@ -1,10 +1,11 @@
 // Puerta de la batería: el examen que un cambio de la auto-mejora tiene que aprobar.
 // La suite de tests (measure.ts + score.ts) dice si el código mejora; la batería
-// (selfimprove/battery.json, 74 casos) dice si el ASISTENTE sigue comportándose
+// (evolve/battery.json, 74 casos) dice si el ASISTENTE sigue comportándose
 // bien: pide permiso cuando toca, no inventa, no filtra. Un candidato solo se
 // promueve si la batería no empeora y ningún caso que pasaba deja de pasar.
 // Sin batería configurada no se promueve nada (falla cerrado).
 import { type CaseResult, type Score, scoreRun } from './battery.js';
+import { weekNumber } from './battery-history.js';
 import {
   type Battery,
   type BatteryCase,
@@ -16,7 +17,7 @@ import {
 } from './battery-judge.js';
 
 /** Ruta de la batería dentro del repo. Protegida: el bucle no puede tocarla. */
-export const BATTERY_FILE = 'selfimprove/battery.json';
+export const BATTERY_FILE = 'evolve/battery.json';
 
 /**
  * Ejecuta un caso contra el código que hay en `cwd` y devuelve su traza. Inyectado:
@@ -32,6 +33,10 @@ export interface BatteryGate {
   /** Ciclo para rotar los casos heavy (ver selectCases); sin él corren todos. */
   cycle?: number;
   now?: () => Date;
+  /** Casos apartados (externos que fallan en la base 3 semanas, battery-history.ts): ni corren ni puntúan. */
+  quarantined?: Set<string>;
+  /** Se llama con la medida de la base (el kernel) para anotar el historial por caso. */
+  onBase?: (base: BatteryRun) => void;
 }
 
 export interface BatteryRun {
@@ -66,6 +71,30 @@ export function selectCases(
   });
 }
 
+/**
+ * Ciclo de rotación de una semana ISO: semanas seguidas desde la época (weekNumber), no el
+ * número dentro del año. Con «2026-W53» → 53 y «2027-W01» → 1 el turno se repetía en
+ * Año Nuevo y un tercio de los heavy esperaba 4 semanas. Base y candidato usan el mismo.
+ */
+export function cycleOfWeek(week: string): number {
+  return /^\d{4}-W\d{2}$/.test(week) ? weekNumber(week) : 0;
+}
+
+/**
+ * Los heavy que rotan y entran en el ciclo `cycleIndex` (sin los 'always', que corren siempre):
+ * el turno (1 a 3) y sus ids, la misma selección que hace selectCases.
+ */
+export function heavyRotation(
+  b: Pick<Battery, 'cases'>,
+  cycleIndex: number,
+  quarantined: Set<string> = new Set(),
+): { turn: number; ids: string[] } {
+  const ids = selectCases(b, cycleIndex, quarantined)
+    .filter((c) => c.cost === 'heavy' && c.rotation !== 'always')
+    .map((c) => c.id);
+  return { turn: (((cycleIndex % 3) + 3) % 3) + 1, ids };
+}
+
 /** Casos que no puntúan y por qué, para el informe a Nico. */
 export function unscored(
   b: Pick<Battery, 'cases'>,
@@ -90,7 +119,11 @@ export function gateFromFile(path: string, run: BatteryRunner, repeats?: number)
 export async function measureBattery(g: BatteryGate, cwd: string): Promise<BatteryRun> {
   const repeats = Math.max(1, Math.floor(g.repeats ?? 3));
   const results: CaseResult[] = [];
-  const chosen = g.cycle === undefined ? g.cases.filter(scorable) : selectCases(g, g.cycle);
+  const skip = g.quarantined ?? new Set<string>();
+  const chosen =
+    g.cycle === undefined
+      ? g.cases.filter((c) => scorable(c) && !skip.has(c.id))
+      : selectCases(g, g.cycle, skip);
   for (const c of chosen) {
     const verdicts: Verdict[] = [];
     for (let i = 0; i < repeats; i++) {

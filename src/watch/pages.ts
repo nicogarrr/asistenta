@@ -13,7 +13,7 @@
  *   completo (hash).
  * - En fichas de las 7 tiendas del vigilante (Amazon.es, MediaMarkt, PcComponentes,
  *   Carrefour, El Corte Inglés, Fnac, Worten) la lectura es estructurada: el MISMO
- *   extractor con consenso de pricewatch (JSON-LD/meta/selectores). Si las fuentes
+ *   extractor con consenso de price-extract (JSON-LD/meta/selectores). Si las fuentes
  *   discrepan, la página muestra un captcha o no hay precio claro, la lectura es
  *   "no se pudo comprobar": cuenta como fallo, nunca se inventa un número.
  * - Cada lectura fiable se guarda en `watch_readings` (histórico propio, retención de
@@ -38,7 +38,7 @@ import {
   parseMachinePrice,
   STORES,
   type StoreId,
-} from './pricewatch.js';
+} from './price-extract.js';
 
 export interface PageWatch {
   id: string;
@@ -61,12 +61,21 @@ export interface PageWatch {
   lastAlertAt: number;
   /** Precio del último aviso por bajada %: un mínimo nuevo sí vuelve a avisar. */
   lastAlertCents: number | null;
+  /** «🔕 Silenciar»: hasta este instante no se manda ningún aviso de esta página (0 = no). */
+  mutedUntil: number;
 }
 
 export type CheckOutcome =
   | { kind: 'baseline'; value: string }
   | { kind: 'unchanged'; value: string }
-  | { kind: 'changed'; from: string; to: string; inStock?: boolean | null }
+  | {
+      kind: 'changed';
+      from: string;
+      to: string;
+      inStock?: boolean | null;
+      /** Feed RSS/Atom: entradas que no estaban en la lectura anterior (las más nuevas primero). */
+      newItems?: FeedItem[];
+    }
   | {
       kind: 'target';
       cents: number;
@@ -132,10 +141,29 @@ export function parseAmount(raw: string): [string, string] | null {
 export function extractPrice(text: string): string | null {
   const m = PRICE.exec(text);
   if (!m) return null;
-  const parsed = parseAmount((m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, ''));
-  // Ambiguous format: keep exactly what the page wrote rather than a made-up number.
-  if (!parsed) return m[0].replace(/\s+/g, ' ').trim();
+  const raw = (m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, '');
+  const parsed = parseAmount(raw);
+  // Ambiguous format: keep the digits exactly as the page wrote them rather than a
+  // made-up number, in one canonical shape («1,459 €»). The symbol's spelling and
+  // position («1,459€», «1,459 EUR», «€ 1,459») is not part of the value: if it
+  // were, a cosmetic change on the page would read as a price change.
+  if (!parsed) return `${raw} €`;
   return `${parsed[0]},${parsed[1]} €`;
+}
+
+/**
+ * Whether two stored readings are the same value. Prices are compared in their
+ * canonical shape, so a literal saved by an older version («1,459€», «1,459 EUR»)
+ * still equals today's «1,459 €» and the first check after an update is not a
+ * false «cambio de precio». Keyword and text-hash values compare as they are.
+ */
+export function sameWatchValue(a: string, b: string): boolean {
+  if (a === b) return true;
+  const canon = (v: string): string =>
+    v.startsWith('texto:') || v.startsWith('feed:') || v === 'presente' || v === 'ausente'
+      ? v
+      : (extractPrice(v) ?? v);
+  return canon(a) === canon(b);
 }
 
 const fold = (t: string): string =>
@@ -145,9 +173,72 @@ const fold = (t: string): string =>
     .replace(/\s+/g, ' ')
     .toLowerCase();
 
+export interface FeedItem {
+  title: string;
+  link: string;
+  id: string;
+}
+
+/** Cuántas entradas del feed se recuerdan entre lecturas. */
+const FEED_ITEMS_KEPT = 30;
+
+const xmlText = (raw: string): string =>
+  raw
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const tagText = (block: string, tag: string): string => {
+  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i').exec(block);
+  return m?.[1] ? xmlText(m[1]) : '';
+};
+
+function atomLink(block: string): string {
+  const links = [...block.matchAll(/<link\b([^>]*)\/?>/gi)].map((m) => m[1] ?? '');
+  const href = (attrs: string): string => /\bhref\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ?? '';
+  const alt = links.find((a) => !/\brel\s*=/i.test(a) || /\brel\s*=\s*["']alternate["']/i.test(a));
+  return xmlText(href(alt ?? links[0] ?? ''));
+}
+
+/** Entradas de un feed RSS/Atom (en el orden del feed), o null si el texto no es un feed. */
+export function parseFeedItems(text: string): FeedItem[] | null {
+  const head = text.slice(0, 2000);
+  const isAtom = /<feed[\s>]/i.test(head);
+  if (!isAtom && !/<rss[\s>]|<rdf:RDF[\s>]/i.test(head)) return null;
+  const tag = isAtom ? 'entry' : 'item';
+  const blocks = [...text.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi'))];
+  return blocks.slice(0, FEED_ITEMS_KEPT).map((m) => {
+    const b = m[1] ?? '';
+    const title = tagText(b, 'title');
+    const link = isAtom ? atomLink(b) || tagText(b, 'link') : tagText(b, 'link');
+    const id = tagText(b, isAtom ? 'id' : 'guid') || link || title;
+    return { title, link, id };
+  });
+}
+
+const feedKey = (it: FeedItem): string =>
+  createHash('sha256').update(it.id).digest('hex').slice(0, 10);
+
+function feedValue(items: FeedItem[]): string {
+  return `feed:${items.map(feedKey).join(',')}`;
+}
+
+function feedKeys(value: string): Set<string> {
+  return new Set(value.slice('feed:'.length).split(',').filter(Boolean));
+}
+
 /** Valor que se compara entre lecturas. Con palabra: solo si aparece o no (sin mayúsculas ni tildes). */
 export function watchValue(text: string, keyword = ''): string {
   if (keyword) return fold(text).includes(fold(keyword)) ? 'presente' : 'ausente';
+  // Un feed nunca se lee como precio: un «19,99 €» en un post daría un «Cambio de precio» falso.
+  const feed = parseFeedItems(text);
+  if (feed) return feedValue(feed);
   const price = extractPrice(text);
   if (price) return price;
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -161,6 +252,8 @@ export const MAX_WATCHES_PER_SCOPE = 10;
 export const READINGS_RETENTION_MS = 366 * 24 * 3600 * 1000;
 /** Avisos por bajada %: como mucho uno al día salvo que haya un mínimo nuevo. */
 export const REALERT_MS = 24 * 3600 * 1000;
+/** Cuánto dura «🔕 Silenciar 1 día». */
+export const PAGE_MUTE_MS = 24 * 3600 * 1000;
 /** Lecturas que entran en la gráfica de /precio. */
 export const SPARKLINE_POINTS = 20;
 
@@ -201,6 +294,7 @@ function row(r: Record<string, unknown>): PageWatch {
     dropPct: r.drop_pct == null ? null : Number(r.drop_pct),
     lastAlertAt: Number(r.last_alert_at ?? 0),
     lastAlertCents: r.last_alert_cents == null ? null : Number(r.last_alert_cents),
+    mutedUntil: Number(r.muted_until ?? 0),
   };
 }
 
@@ -249,6 +343,9 @@ export class PageWatchStore {
     }
     if (!cols.some((c) => c.name === 'last_alert_cents')) {
       db.exec('ALTER TABLE page_watches ADD COLUMN last_alert_cents INTEGER');
+    }
+    if (!cols.some((c) => c.name === 'muted_until')) {
+      db.exec('ALTER TABLE page_watches ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0');
     }
     // Histórico propio por vigilancia: solo lecturas fiables (consenso del extractor).
     db.exec(`CREATE TABLE IF NOT EXISTS watch_readings (
@@ -327,6 +424,27 @@ export class PageWatchStore {
       .map((r) => row(r as Record<string, unknown>));
   }
 
+  /**
+   * «🔕 Silenciar»: sin avisos de esta página durante `ms` (se sigue leyendo y guardando
+   * el histórico). Solo desde el chat dueño; no borra nada. null si no es suya o no existe.
+   */
+  mute(scope: string, id: string, ms: number): PageWatch | null {
+    const w = this.list(scope).find((x) => x.id === id);
+    if (!w) return null;
+    this.db
+      .prepare('UPDATE page_watches SET muted_until = ? WHERE id = ?')
+      .run(this.now() + ms, w.id);
+    return this.get(w.id);
+  }
+
+  /** Quita el silencio antes de tiempo (mismo chat). */
+  unmute(scope: string, id: string): PageWatch | null {
+    const w = this.list(scope).find((x) => x.id === id);
+    if (!w) return null;
+    this.db.prepare('UPDATE page_watches SET muted_until = 0 WHERE id = ?').run(w.id);
+    return this.get(w.id);
+  }
+
   remove(scope: string, idOrPrefix: string): boolean {
     const w = this.list(scope).find((x) => x.id === idOrPrefix || x.id.startsWith(idOrPrefix));
     if (!w) return false;
@@ -401,7 +519,7 @@ export class PageWatchStore {
    * Lee la página, compara con la referencia y la actualiza. No lanza: devuelve el resultado.
    * `fetchHtml` (opcional) devuelve el HTML crudo; se usa solo en fichas de las 7 tiendas
    * del vigilante, donde la lectura es estructurada con el extractor de consenso de
-   * pricewatch. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
+   * price-extract. Sin `fetchHtml`, o fuera de esas tiendas, sigue la heurística de texto.
    */
   async check(
     w: PageWatch,
@@ -489,7 +607,16 @@ export class PageWatchStore {
       )
       .run(value, this.now(), w.id);
     if (!w.lastValue) return { kind: 'baseline', value };
-    if (value === w.lastValue) return { kind: 'unchanged', value };
+    if (value.startsWith('feed:')) {
+      // Feed: solo cuentan las entradas nuevas; una que sale del final no es un cambio.
+      // Una lectura anterior que no era de feed (versión vieja) es solo la nueva referencia.
+      if (!w.lastValue.startsWith('feed:')) return { kind: 'baseline', value };
+      const seen = feedKeys(w.lastValue);
+      const newItems = (parseFeedItems(text) ?? []).filter((it) => !seen.has(feedKey(it)));
+      if (newItems.length === 0) return { kind: 'unchanged', value };
+      return { kind: 'changed', from: w.lastValue, to: value, newItems };
+    }
+    if (sameWatchValue(value, w.lastValue)) return { kind: 'unchanged', value };
     return { kind: 'changed', from: w.lastValue, to: value };
   }
 }
@@ -519,6 +646,16 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
       ? `Ahora aparece "${w.keyword}" en ${name}\n${w.url}`
       : `Ya no veo "${w.keyword}" en el texto que leo de ${name} (puede cargarse con JavaScript o estar bloqueado, compruébalo)\n${w.url}`;
   }
+  if (o.kind === 'changed' && o.to.startsWith('feed:')) {
+    const items = o.newItems ?? [];
+    if (items.length === 0) return `Hay entradas nuevas en ${name}\n${w.url}`;
+    const shown = items
+      .slice(0, 5)
+      .map((it) => `• ${it.title || '(sin título)'}${it.link ? `\n  ${it.link}` : ''}`);
+    const more = items.length > 5 ? `\n…y ${items.length - 5} más` : '';
+    const n = items.length === 1 ? '1 entrada nueva' : `${items.length} entradas nuevas`;
+    return `${n} en ${name}:\n${shown.join('\n')}${more}`;
+  }
   if (o.kind === 'changed') {
     const textual = o.to.startsWith('texto:') || o.from.startsWith('texto:');
     if (textual) {
@@ -540,9 +677,40 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
     return `Bajada del ${o.dropPct} % en ${name}: ${eur(o.cents)} frente a ${ref}${stockText(o.inStock)}\n${w.url}`;
   }
   if (o.kind === 'error' && o.notify) {
-    return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${o.message}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
+    return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${readFailureCause(o.message)}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
   }
   return null;
+}
+
+/**
+ * Causa en castellano para el aviso «No consigo leer…». Antes salía el error
+ * tal cual («fetch failed», «This operation was aborted», «HTTP 403 Forbidden»);
+ * el texto crudo se queda en la base, el chat recibe una frase corta.
+ */
+export function readFailureCause(message: string): string {
+  const m = message.toLowerCase();
+  const http = /\b(?:http|status)\s*(\d{3})\b/.exec(m);
+  if (http) {
+    const code = Number(http[1]);
+    if (code === 404 || code === 410) return 'la página ya no existe';
+    if (code === 401 || code === 403) return 'la web no me deja entrar';
+    if (code === 429) return 'la web me pide que espere';
+    if (code >= 500) return 'la web da error ahora mismo';
+    return `la web responde con error ${code}`;
+  }
+  if (/abort|timed? ?out|timeout|etimedout/.test(m)) return 'la web tarda demasiado en responder';
+  if (/fetch failed|enotfound|eai_again|econnrefused|econnreset|network|socket|und_err/.test(m)) {
+    return 'sin conexión o la web no responde';
+  }
+  if (/captcha|robot|bot detect/.test(m)) return 'la web me pide demostrar que no soy un robot';
+  // Mensajes propios ya en castellano (p. ej. «no encuentro un precio claro…»).
+  if (
+    /^[a-záéíóúñü ,;.()0-9%€-]+$/i.test(message) &&
+    /[áéíóúñ]|\b(no|la|el|en|de)\b/i.test(message)
+  ) {
+    return message.slice(0, 120);
+  }
+  return 'no sé bien por qué';
 }
 
 const fmtDay = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
@@ -554,11 +722,31 @@ const fmtDayTime = new Intl.DateTimeFormat('es-ES', {
   minute: '2-digit',
 });
 
+/**
+ * Último valor guardado, legible: un precio tal cual; el resumen interno de texto o de
+ * feed (un hash) no le dice nada al usuario.
+ */
+export function watchValueText(v: string): string {
+  if (!v) return 'pendiente';
+  if (v === 'presente') return 'la palabra aparece';
+  if (v === 'ausente') return 'la palabra no aparece';
+  if (v.startsWith('texto:')) return 'texto sin precio claro';
+  if (v.startsWith('feed:')) {
+    const n = v.slice('feed:'.length).split(',').filter(Boolean).length;
+    return n === 1 ? 'feed con 1 entrada' : `feed con ${n} entradas`;
+  }
+  return v;
+}
+
 /** Ficha de una vigilancia para /precio: último valor, histórico y avisos configurados. */
-export function describeWatch(w: PageWatch, s: WatchSummary | null): string {
+export function describeWatch(
+  w: PageWatch,
+  s: WatchSummary | null,
+  now: number = Date.now(),
+): string {
   const lines = [`${w.label || w.url} (id ${w.id})`, w.url];
   if (!s) {
-    lines.push(`Aún no tengo lecturas de precio; último valor: ${w.lastValue || 'pendiente'}.`);
+    lines.push(`Aún no tengo lecturas de precio; último valor: ${watchValueText(w.lastValue)}.`);
   } else {
     lines.push(
       `Último: ${eur(s.lastCents)} (${fmtDayTime.format(s.lastAt)}${s.lastInStock === null ? '' : s.lastInStock ? ', en stock' : ', consta agotado'})`,
@@ -570,8 +758,51 @@ export function describeWatch(w: PageWatch, s: WatchSummary | null): string {
   }
   if (w.targetCents !== null) lines.push(`Objetivo: te aviso si baja de ${eur(w.targetCents)}.`);
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
+  if (w.mutedUntil > now) {
+    lines.push(
+      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
+    );
+  }
   return lines.join('\n');
 }
+
+/**
+ * Id que no existe: en vez de «Mira /vigilando», las vigilancias que hay, dichas por
+ * su nombre (Nico, 1 nov: hablar normal, sin comandos).
+ */
+export function watchNotFound(
+  list: ReadonlyArray<Pick<PageWatch, 'id' | 'label' | 'url'>>,
+): string {
+  if (list.length === 0) return 'No encuentro esa vigilancia: ahora no vigilo ninguna página.';
+  const names = list.slice(0, 8).map((w) => `${w.label || w.url} (${w.id})`);
+  return `No encuentro esa vigilancia. Las que tengo: ${names.join(', ')}${list.length > 8 ? '…' : ''}.`;
+}
+
+/** «la de la tele», «Tele 55» o el código: qué vigilancia nombra una respuesta suelta. */
+export function watchFromAnswer<T extends Pick<PageWatch, 'id' | 'label' | 'url'>>(
+  list: readonly T[],
+  answer: string,
+): T | null {
+  const said = foldSaid(answer.replace(/^(?:la|el)\s+(?:de\s+(?:la|el|los|las)\s+)?/i, ''));
+  if (!said) return null;
+  const byId = list.find((w) => w.id.toLowerCase() === said);
+  if (byId) return byId;
+  const hits = list.filter((w) => w.label && foldSaid(w.label).includes(said));
+  return hits.length === 1 ? (hits[0] as T) : null;
+}
+
+function foldSaid(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[«»"'.!?¿¡]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/** «avísame otra vez», «quita el silencio»… tras ver una vigilancia silenciada. */
+export const AVISAR_OTRA_VEZ =
+  /^(?:s[ií],?\s*)?(?:av[ií]same(?:\s+otra\s+vez|\s+ya)?|vuelve\s+a\s+avisarme|qu[ií]ta(?:le)?\s+el\s+silencio|qu[ií]talo)\s*[.!]*$/iu;
 
 export interface VigilaArgs {
   url: string;

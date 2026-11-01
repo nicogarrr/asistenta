@@ -23,12 +23,15 @@ import {
   tituloPestana,
 } from './client-format.js';
 
+// El logo de Asistenta (scripts/windows-app/icono.mjs: «A» blanca en placa grafito y punto azul).
 const ICON_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
-  '<rect width="180" height="180" rx="40" fill="#0b0f14"/>',
-  '<circle cx="90" cy="90" r="54" fill="none" stroke="#7dd3fc" stroke-width="9"/>',
-  '<path d="M66 116 90 64l24 52M74 101h32" fill="none" stroke="#e6edf3" stroke-width="9"',
-  ' stroke-linecap="round" stroke-linejoin="round"/>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">',
+  '<rect width="512" height="512" rx="112" fill="#111827"/>',
+  '<rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="#ffffff"',
+  ' stroke-opacity=".16" stroke-width="8"/>',
+  '<path d="M150 396 256 120l106 276" fill="none" stroke="#ffffff" stroke-width="58"',
+  ' stroke-linejoin="round"/>',
+  '<circle cx="256" cy="318" r="30" fill="#4f8cff"/>',
   '</svg>',
 ].join('');
 
@@ -158,7 +161,7 @@ export function renderPage(): string {
     .acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .actualizado {
       color: var(--suave);
-      font-size: 12px;
+      font-size: 13px;
       font-variant-numeric: tabular-nums;
     }
     button {
@@ -184,7 +187,7 @@ export function renderPage(): string {
     button:disabled { opacity: 0.55; cursor: progress; }
     button.mini {
       padding: 4px 8px;
-      font-size: 12px;
+      font-size: 13px;
       background: transparent;
       color: var(--suave);
     }
@@ -211,7 +214,7 @@ export function renderPage(): string {
     .token { display: grid; gap: 8px; border-color: #264357; background: var(--panel); color: var(--texto); }
     .token .token-fila { display: flex; gap: 8px; flex-wrap: wrap; }
     .token input { flex: 1 1 200px; min-width: 0; font: inherit; color: var(--texto); background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; }
-    .token p { margin: 0; font-size: 12px; }
+    .token p { margin: 0; font-size: 13px; }
     .error-bloque { display: grid; gap: 8px; justify-items: start; }
     .error-bloque p { margin: 0; }
     .recuerdos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -256,7 +259,7 @@ export function renderPage(): string {
     }
     .tarjeta-cabecera h2 {
       margin: 0;
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: 0.13em;
       text-transform: uppercase;
       color: var(--suave);
@@ -277,7 +280,7 @@ export function renderPage(): string {
       display: flex;
       flex-direction: column;
       gap: 3px;
-      font-size: 11px;
+      font-size: 13px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--suave);
@@ -298,6 +301,7 @@ export function renderPage(): string {
     .buscador input::placeholder { color: #8191a5; }
     .buscador input:focus-visible,
     .buscador select:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+    .copiable { user-select: all; cursor: pointer; }
     .buscador textarea {
       width: 100%;
       min-height: 82px;
@@ -326,7 +330,7 @@ export function renderPage(): string {
     }
     .datos dt {
       color: var(--suave);
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: 0.05em;
       text-transform: uppercase;
       padding-top: 2px;
@@ -335,6 +339,12 @@ export function renderPage(): string {
     .lista { margin: 0; padding-left: 18px; }
     .lista li { margin: 3px 0; }
     .texto { white-space: pre-wrap; word-break: break-word; }
+    .archivos { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; max-width: 100%; }
+    .archivo { display: inline-block; max-width: 100%; padding: 10px 0; overflow-wrap: anywhere; word-break: break-word; }
+    .funcion-titulo { color: var(--texto); font-size: 15px; }
+    .funcion-titulo h3 { display: inline; font-size: inherit; margin: 0; }
+    .capturas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde, #ccc); }
     .nulo { color: var(--suave); font-style: italic; }
     .muted { color: var(--suave); }
     [aria-busy='true'] { opacity: 0.6; transition: opacity 0.2s; }
@@ -347,7 +357,7 @@ export function renderPage(): string {
       border: 1px solid #2a3a4d;
       border-radius: 999px;
       background: #16202b;
-      font-size: 12px;
+      font-size: 13px;
     }
     .chip.ok { color: var(--ok); border-color: #1d4f35; background: #0f241a; }
     .chip.mal { color: var(--mal); border-color: #5b2424; background: #241111; }
@@ -401,7 +411,7 @@ export function renderPage(): string {
       border-radius: 999px;
       background: #fcd34d;
       color: #1a1405;
-      font-size: 12px;
+      font-size: 13px;
       letter-spacing: normal;
       text-align: center;
     }
@@ -416,6 +426,11 @@ export function renderPage(): string {
       .tarjeta-cuerpo { max-height: none; }
       .buscador input,
       .buscador select { width: 100%; }
+      /* iPhone amplía la página al tocar un campo con letra de menos de 16 px. */
+      .buscador input,
+      .buscador select,
+      .buscador textarea,
+      .token input { font-size: 16px; }
       .cabecera { align-items: flex-start; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -457,7 +472,7 @@ export function renderPage(): string {
       <article id="tarjeta-aprobaciones" class="tarjeta" aria-labelledby="titulo-aprobaciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
-          <button class="mini" type="button" data-refrescar="aprobaciones">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="aprobaciones" aria-label="Refrescar Aprobaciones">Refrescar</button>
         </header>
         <p id="conexion-aprobaciones" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente. Reintento cada 15 s; lo que ves puede estar desactualizado.</p>
         <div id="panel-aprobaciones" class="tarjeta-cuerpo sin-tope">
@@ -486,6 +501,7 @@ export function renderPage(): string {
               <button id="enviar-chat" type="submit">Enviar</button>
             </div>
           </form>
+          <p id="conexion-chat" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente: tu mensaje no se ha enviado. Pulsa Reintentar cuando vuelva.</p>
           <div id="panel-chat" class="chat-respuesta" role="log" aria-live="polite" aria-label="Conversación"></div>
         </div>
       </article>
@@ -493,7 +509,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-objetivos">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-objetivos">Objetivos</h2>
-          <button class="mini" type="button" data-refrescar="objetivos">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="objetivos" aria-label="Refrescar Objetivos">Refrescar</button>
         </header>
         <div id="panel-objetivos" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
@@ -503,9 +519,39 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-rutinas">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-rutinas">Rutinas</h2>
-          <button class="mini" type="button" data-refrescar="rutinas">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="rutinas" aria-label="Refrescar Rutinas">Refrescar</button>
         </header>
         <div id="panel-rutinas" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-tareas">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-tareas">Tareas de la semana</h2>
+          <button class="mini" type="button" data-refrescar="tareas" aria-label="Refrescar Tareas de la semana">Refrescar</button>
+        </header>
+        <div id="panel-tareas" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-repartos">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-repartos">Paquetes</h2>
+          <button class="mini" type="button" data-refrescar="repartos" aria-label="Refrescar Paquetes">Refrescar</button>
+        </header>
+        <div id="panel-repartos" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-funciones">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-funciones">Funciones</h2>
+          <button class="mini" type="button" data-refrescar="funciones" aria-label="Refrescar Funciones">Refrescar</button>
+        </header>
+        <div id="panel-funciones" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -513,7 +559,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-estado">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-estado">Estado</h2>
-          <button class="mini" type="button" data-refrescar="estado">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="estado" aria-label="Refrescar Estado">Refrescar</button>
         </header>
         <div id="panel-estado" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
@@ -522,13 +568,13 @@ export function renderPage(): string {
 
       <article class="tarjeta" aria-labelledby="titulo-sesiones">
         <header class="tarjeta-cabecera">
-          <h2 id="titulo-sesiones">Sesiones</h2>
+          <h2 id="titulo-sesiones">Conversaciones</h2>
           <div class="controles">
             <label class="buscador" for="buscar-sesiones">
               Buscar
               <input id="buscar-sesiones" type="search" placeholder="Texto…" autocomplete="off" spellcheck="false" />
             </label>
-            <button class="mini" type="button" data-refrescar="sesiones">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="sesiones" aria-label="Refrescar Conversaciones">Refrescar</button>
           </div>
         </header>
         <div id="panel-sesiones" class="tarjeta-cuerpo">
@@ -544,7 +590,7 @@ export function renderPage(): string {
               Ámbito
               <select id="ambito-memoria"><option value="">Por defecto</option></select>
             </label>
-            <button class="mini" type="button" data-refrescar="memoria">Refrescar</button>
+            <button class="mini" type="button" data-refrescar="memoria" aria-label="Refrescar Memoria">Refrescar</button>
           </div>
         </header>
         <div id="panel-memoria" class="tarjeta-cuerpo">
@@ -555,7 +601,7 @@ export function renderPage(): string {
       <article class="tarjeta" aria-labelledby="titulo-auditoria">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-auditoria">Auditoría</h2>
-          <button class="mini" type="button" data-refrescar="auditoria">Refrescar</button>
+          <button class="mini" type="button" data-refrescar="auditoria" aria-label="Refrescar Auditoría">Refrescar</button>
         </header>
         <div id="panel-auditoria" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
@@ -574,14 +620,17 @@ ${renderFormatScript()}
 
       var CLAVE_TOKEN = 'asistenta.webui.token';
       var parametros = new URLSearchParams(window.location.search);
-      var tokenDeUrl = parametros.get('token');
+      // Sin espacios ni saltos de línea: el enlace copiado a veces los arrastra.
+      var tokenDeUrl = (parametros.get('token') || '').trim();
 
       // El token de la URL se guarda una vez y desaparece de la barra de direcciones.
-      if (tokenDeUrl) {
-        try {
-          window.localStorage.setItem(CLAVE_TOKEN, tokenDeUrl);
-        } catch (error) {
-          // Un navegador sin almacenamiento sigue pudiendo usar el panel en esta visita.
+      if (parametros.has('token')) {
+        if (tokenDeUrl) {
+          try {
+            window.localStorage.setItem(CLAVE_TOKEN, tokenDeUrl);
+          } catch (error) {
+            // Un navegador sin almacenamiento sigue pudiendo usar el panel en esta visita.
+          }
         }
         parametros.delete('token');
         var resto = parametros.toString();
@@ -594,14 +643,21 @@ ${renderFormatScript()}
         } catch (error) {}
       }
 
-      var token = '';
-      try {
-        token = window.localStorage.getItem(CLAVE_TOKEN) || '';
-      } catch (error) {}
+      // El de la URL vale ya en esta visita aunque el navegador no deje guardarlo
+      // (modo privado estricto, almacenamiento bloqueado).
+      var token = tokenDeUrl;
+      if (!token) {
+        try {
+          token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
+        } catch (error) {}
+      }
 
       var aviso = document.getElementById('aviso');
 
       function mostrarAviso(texto) {
+        // role=alert: reescribir el mismo texto (p. ej. cada refresco de 15 s con el token
+        // rechazado) haría que el lector lo anunciara otra vez. Solo se toca si cambia.
+        if (aviso.textContent === texto && aviso.hidden === !texto) return;
         aviso.textContent = texto;
         aviso.hidden = !texto;
       }
@@ -693,7 +749,17 @@ ${renderFormatScript()}
           var boton = nodo('button', 'mini', 'Reintentar');
           boton.type = 'button';
           boton.addEventListener('click', function () {
-            reintentar();
+            boton.disabled = true;
+            // Al recargar, el bloque (y este botón) desaparece y el foco del teclado se iría
+            // al principio de la página: pasa al nuevo «Reintentar» o al título de la tarjeta.
+            Promise.resolve(reintentar()).then(function () {
+              var tarjeta = contenedor.closest('.tarjeta');
+              devolverFoco(
+                contenedor.querySelector('.error-bloque button') ||
+                  (tarjeta && tarjeta.querySelector('h2')) ||
+                  contenedor
+              );
+            });
           });
           bloque.appendChild(boton);
         }
@@ -725,7 +791,9 @@ ${renderFormatScript()}
             credentials: 'omit'
           });
         } catch (error) {
-          throw new Error('No se pudo conectar con el asistente. ¿Está encendido?');
+          var sinRed = new Error('No se pudo conectar con el asistente. ¿Está encendido?');
+          sinRed.sinConexion = true;
+          throw sinRed;
         }
         var datos = null;
         var esJson = true;
@@ -740,8 +808,12 @@ ${renderFormatScript()}
           rechazo.sinToken = true;
           throw rechazo;
         }
-        if (!respuesta.ok) throw new Error(formato.mensajeDeError(respuesta.status, datos));
-        if (!esJson) throw new Error('La respuesta del panel no es JSON válido.');
+        if (!respuesta.ok) {
+          var fallo = new Error(formato.mensajeDeError(respuesta.status, datos));
+          fallo.estado = respuesta.status;
+          throw fallo;
+        }
+        if (!esJson) throw new Error('El panel ha contestado algo que no entiendo. Recarga la página.');
         return datos;
       }
 
@@ -770,7 +842,7 @@ ${renderFormatScript()}
           return;
         }
         if (sesiones.length === 0) {
-          contenedor.appendChild(nodo('p', 'muted', 'No hay sesiones que coincidan.'));
+          contenedor.appendChild(nodo('p', 'muted', 'No hay conversaciones que coincidan.'));
           return;
         }
         contenedor.appendChild(
@@ -835,7 +907,7 @@ ${renderFormatScript()}
 
       var DECISIONES = [
         { id: 'once', texto: 'Permitir una vez', clase: 'permitir', hecho: 'Permitido una vez' },
-        { id: 'session', texto: 'Permitir en esta sesión', clase: '', hecho: 'Permitido en esta sesión' },
+        { id: 'session', texto: 'Permitir por ahora', clase: '', hecho: 'Permitido por ahora' },
         { id: 'always', texto: 'Permitir siempre', clase: 'siempre', hecho: 'Permitido siempre' },
         { id: 'deny', texto: 'Denegar', clase: 'denegar', hecho: 'Denegado' }
       ];
@@ -884,12 +956,22 @@ ${renderFormatScript()}
           mostrarAviso('');
           ultimaDecision = decision.hecho + ': «' + tarjeta.getAttribute('data-titulo') + '».';
           await cargarAprobaciones();
+          // La tarjeta decidida desaparece y el foco del teclado con ella: pasa al aviso
+          // «Aprobado: …», nunca al botón de otra aprobación (no se decide dos veces).
+          var contenedor = document.getElementById('panel-aprobaciones');
+          devolverFoco(contenedor.querySelector('.resultado.chip') || contenedor);
         } catch (error) {
-          for (var j = 0; j < botones.length; j += 1) botones[j].disabled = false;
+          var pulsado = null;
+          for (var j = 0; j < botones.length; j += 1) {
+            botones[j].disabled = false;
+            if (botones[j].textContent === decision.texto) pulsado = botones[j];
+          }
           var resultado = tarjeta.querySelector('.resultado');
           resultado.className = 'resultado error';
           resultado.textContent =
             error && error.message ? error.message : 'No se pudo aplicar la decisión.';
+          // El botón pulsado se desactivó y perdió el foco: vuelve a él para reintentar.
+          devolverFoco(pulsado);
         }
       }
 
@@ -937,7 +1019,20 @@ ${renderFormatScript()}
         document.title = formato.tituloPestana(n);
       }
 
+      // Al repintar (p. ej. la recarga silenciosa) el aviso «Permitido…» ya no se borra si
+      // el foco del teclado está en él, y si el foco estaba en la tarjeta no cae al principio.
       function pintarAprobaciones(contenedor, datos) {
+        var foco = document.activeElement;
+        var focoDentro = !!foco && foco !== contenedor && contenedor.contains(foco);
+        if (focoDentro && !ultimaDecision && foco.classList && foco.classList.contains('resultado')) ultimaDecision = foco.textContent;
+        pintarListaAprobaciones(contenedor, datos);
+        if (focoDentro && !contenedor.contains(document.activeElement)) {
+          var tarjetaAprobaciones = contenedor.closest ? contenedor.closest('.tarjeta') : null;
+          devolverFoco(contenedor.querySelector('.resultado.chip') || (tarjetaAprobaciones && tarjetaAprobaciones.querySelector('h2')) || contenedor);
+        }
+      }
+
+      function pintarListaAprobaciones(contenedor, datos) {
         contenedor.replaceChildren();
         if (ultimaDecision) {
           contenedor.appendChild(nodo('p', 'resultado chip ok', ultimaDecision));
@@ -1043,12 +1138,19 @@ ${renderFormatScript()}
       }
 
       // Si el asistente deja de responder, la recarga automática lo dice y lo quita al volver.
-      function avisoConexion(caido) {
+      // desdeChat = true: un envío del chat no llegó; el aviso del chat se quita al volver la conexión.
+      function avisoConexion(caido, desdeChat) {
         var aviso = document.getElementById('conexion-aprobaciones');
-        if (!aviso || aviso.hidden === !caido) return;
-        aviso.hidden = !caido;
-        if (!caido) anunciar('Conexión con el asistente recuperada.');
+        if (aviso && aviso.hidden !== !caido) {
+          aviso.hidden = !caido;
+          if (!caido) anunciar('Conexión con el asistente recuperada.');
+        }
+        var avisoChat = document.getElementById('conexion-chat');
+        if (!avisoChat || avisoChat === aviso) return;
+        if (!caido) avisoChat.hidden = true;
+        else if (desdeChat) avisoChat.hidden = false;
       }
+
 
       // Conversación de esta pestaña: el panel no guarda historial en el servidor.
       var MAX_TURNOS_CHAT = 20;
@@ -1074,14 +1176,26 @@ ${renderFormatScript()}
           campo.focus();
           return;
         }
+        // Un mensaje cada vez: con Enter el formulario se envía aunque «Enviar» esté
+        // desactivado. Mientras Asistenta responde, el texto se queda en el campo.
+        if (chatOcupado) return;
+        chatOcupado = true;
+        // En el móvil (≤ 780 px), tras pulsar «Enviar», enfocar el campo abre el teclado
+        // y tapa la respuesta: allí solo vuelve al campo si ya lo tenía (Enter).
+        var volverAlCampo = document.activeElement === campo || !pantallaPequena();
         boton.disabled = true;
         campo.value = '';
         anadirTurno('yo', 'Tú', texto);
-        var espera = anadirTurno('asistente esperando', 'Asistenta', formato.textoEspera(0));
+        var espera = anadirTurno('asistente esperando', 'Asistenta', 'Pensando…');
         var cuerpo = espera.querySelector('.texto');
+        // Los segundos cambian cada segundo dentro del registro vivo del chat: van aparte
+        // y ocultos al lector de pantalla (si no, leería «Pensando… 1 s, 2 s…» sin parar).
+        var segundos = nodo('span', 'segundos', '');
+        segundos.setAttribute('aria-hidden', 'true');
+        cuerpo.appendChild(segundos);
         var inicio = Date.now();
         var reloj = window.setInterval(function () {
-          cuerpo.textContent = formato.textoEspera(Date.now() - inicio);
+          segundos.textContent = formato.textoEspera(Date.now() - inicio).replace('Pensando…', '');
         }, 1000);
         try {
           var datos = await enviar('/api/chat', { text: texto });
@@ -1091,7 +1205,10 @@ ${renderFormatScript()}
               : JSON.stringify(datos);
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+          if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
+          avisoConexion(false);
         } catch (error) {
+          if (error && error.sinConexion) avisoConexion(true, true);
           espera.className = 'turno asistente fallo';
           cuerpo.className = 'texto error';
           cuerpo.textContent =
@@ -1099,17 +1216,131 @@ ${renderFormatScript()}
           var reintentar = nodo('button', 'mini', 'Reintentar');
           reintentar.type = 'button';
           reintentar.addEventListener('click', function () {
+            if (chatOcupado) return;
             reintentar.disabled = true;
-            enviarChat(null, texto);
+            // Sin conexión el mensaje no llegó: se manda otra vez. Si llegó y falló el
+            // turno, se repite sin la respuesta anterior (como /reintentar).
+            if (error && error.sinConexion) enviarChat(null, texto);
+            else repetirUltimo();
           });
           espera.appendChild(reintentar);
           if (!campo.value) campo.value = texto;
+          if (!volverAlCampo) devolverFoco(reintentar);
         } finally {
+          chatOcupado = false;
           window.clearInterval(reloj);
           boton.disabled = false;
-          campo.focus();
+          if (volverAlCampo) campo.focus();
+          else devolverFoco(espera);
         }
       }
+
+      // Archivos que devuelve un turno del panel (documentos, vídeo, nota de voz…):
+      // enlaces de descarga. Solo «data:» en base64 de tipos que no ejecutan nada
+      // (ni HTML ni SVG); el nombre va como texto, nunca como HTML.
+      var ARCHIVO_PROHIBIDO = ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'text/javascript', 'application/javascript'];
+      function archivoValido(url) {
+        if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return false;
+        var coma = url.indexOf(',');
+        var cabecera = coma > 5 ? url.slice(5, coma).toLowerCase() : '';
+        if (cabecera.slice(-7) !== ';base64') return false;
+        var tipo = cabecera.slice(0, -7);
+        var partes = tipo.split('/');
+        if (partes.length !== 2 || !partes.every(function (p) { return /^[a-z0-9.+-]+$/.test(p); })) return false;
+        if (ARCHIVO_PROHIBIDO.indexOf(tipo) !== -1) return false;
+        var datos = url.slice(coma + 1);
+        return datos.length > 0 && datos.split('/').every(function (p) { return /^[A-Za-z0-9+=]*$/.test(p); });
+      }
+      // Capturas de un turno (chat o «Reintentar»): solo PNG/JPEG en «data:» base64, máx. 4.
+      function pintarImagenes(turno, datos) {
+        var lista = datos && Array.isArray(datos.images) ? datos.images : [];
+        var validas = lista.filter(function (u) {
+          return typeof u === 'string' && /^data:image\\/(png|jpeg);base64,[A-Za-z0-9+\\/]+=*$/.test(u);
+        }).slice(0, 4);
+        if (!validas.length) return;
+        var caja = nodo('div', 'capturas');
+        caja.setAttribute('data-capturas', String(validas.length));
+        validas.forEach(function (u, i) {
+          var img = nodo('img', 'captura');
+          img.src = u;
+          img.alt = 'Captura ' + (i + 1);
+          caja.appendChild(img);
+        });
+        turno.appendChild(caja);
+      }
+      function pintarArchivos(turno, datos) {
+        pintarImagenes(turno, datos);
+        var lista = datos && Array.isArray(datos.files) ? datos.files : [];
+        var validos = lista.filter(function (f) {
+          return f && typeof f.name === 'string' && f.name.trim() && archivoValido(f.url);
+        }).slice(0, 4);
+        if (!validos.length) return;
+        var caja = nodo('div', 'archivos');
+        caja.setAttribute('data-archivos', String(validos.length));
+        validos.forEach(function (f) {
+          var nombre = f.name.split('/').join('_').split('\\\\').join('_').slice(0, 120);
+          var enlace = nodo('a', 'archivo', '📎 ' + nombre);
+          enlace.href = f.url;
+          enlace.setAttribute('download', nombre);
+          enlace.setAttribute('rel', 'noopener');
+          caja.appendChild(enlace);
+        });
+        turno.appendChild(caja);
+      }
+
+      async function repetirUltimo() {
+        if (chatOcupado) return;
+        chatOcupado = true;
+        // Sin reloj: «Pensando… 0 s» se quedaba congelado hasta la respuesta.
+        var espera = anadirTurno('asistente esperando', 'Asistenta', 'Pensando…');
+        espera.setAttribute('data-reintento', 'true');
+        var cuerpo = espera.querySelector('.texto');
+        try {
+          var datos = await enviar('/api/chat/retry', {});
+          var respuesta = datos && typeof datos.text === 'string' ? datos.text : '';
+          espera.className = 'turno asistente';
+          cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
+          if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
+          avisoConexion(false);
+          chatOcupado = false;
+          devolverFoco(espera);
+        } catch (error) {
+          chatOcupado = false;
+          espera.className = 'turno asistente fallo';
+          cuerpo.className = 'texto error';
+          cuerpo.textContent = error && error.message ? error.message : 'No se pudo repetir el mensaje.';
+          if (error && error.sinConexion) avisoConexion(true, true);
+          // Si la repetición también falla, se puede volver a intentar (sin conexión o
+          // turno fallido). No si no hay nada que repetir (409) o falta el token.
+          if (error && (error.estado === 409 || error.sinToken)) {
+            devolverFoco(espera);
+            return;
+          }
+          var otraVez = nodo('button', 'mini', 'Reintentar');
+          otraVez.type = 'button';
+          otraVez.addEventListener('click', function () {
+            if (chatOcupado) return;
+            otraVez.disabled = true;
+            repetirUltimo();
+          });
+          espera.appendChild(otraVez);
+          devolverFoco(otraVez);
+        }
+      }
+
+      // Al pulsar «Reintentar» el botón se desactiva y el foco del teclado se pierde
+      // (vuelve al principio de la página). Si nadie lo ha movido entretanto, se lleva
+      // al nuevo «Reintentar» o al turno nuevo; si Nico ya está escribiendo, no se toca.
+      function devolverFoco(destino) {
+        var activo = document.activeElement;
+        if (activo && activo !== document.body && !activo.disabled) return;
+        if (!destino || typeof destino.focus !== 'function') return;
+        if (destino.tagName !== 'BUTTON') destino.setAttribute('tabindex', '-1');
+        destino.focus();
+      }
+
+      // true mientras un mensaje o un «Reintentar» del chat espera respuesta.
+      var chatOcupado = false;
 
       async function cargarObjetivos() {
         var contenedor = document.getElementById('panel-objetivos');
@@ -1123,19 +1354,27 @@ ${renderFormatScript()}
           var estados = { proposed: 'Propuesto', active: 'Activo', paused: 'Pausado', blocked: 'Bloqueado', done: 'Terminado', cancelled: 'Cancelado' };
           objetivos.forEach(function (objetivo) {
             var tarjeta = nodo('section', 'sesion');
-            tarjeta.appendChild(nodo('h3', null, objetivo.title));
+            // Un objetivo sin título o sin estado no debe dejar un encabezado vacío ni «undefined».
+            var titulo = typeof objetivo.title === 'string' && objetivo.title.trim() ? objetivo.title : '(sin título)';
+            tarjeta.appendChild(nodo('h3', null, titulo));
             var linea = nodo('p', 'meta-objetivo');
-            linea.appendChild(insignia(claseEstado[objetivo.status] || '', estados[objetivo.status] || objetivo.status));
+            linea.appendChild(insignia(claseEstado[objetivo.status] || '', estados[objetivo.status] || objetivo.status || 'Sin estado'));
             var progreso = formato.progresoPlan(objetivo.plan);
-            linea.appendChild(nodo('span', 'muted', (progreso ? ' ' + progreso + ' · ' : ' ') + 'Hilo: ' + objetivo.thread));
+            linea.appendChild(nodo('span', 'muted', (progreso ? ' ' + progreso + ' · ' : ' ') + 'Hilo: ' + (objetivo.thread || '—')));
             tarjeta.appendChild(linea);
             if (objetivo.status === 'blocked' && objetivo.blockedReason) tarjeta.appendChild(nodo('p', 'error', 'Bloqueado: ' + objetivo.blockedReason));
                         var detalles = document.createElement('details');
             detalles.appendChild(nodo('summary', null, 'Plan y contexto'));
-            detalles.appendChild(nodo('p', 'muted', 'ID: ' + objetivo.id + ' · Ámbito: ' + objetivo.scope));
+            detalles.appendChild(nodo('p', 'muted', 'ID: ' + (objetivo.id || '—') + ' · Ámbito: ' + (objetivo.scope || '—')));
             var lista = document.createElement('ul');
-            objetivo.plan.forEach(function (paso) { lista.appendChild(nodo('li', null, (paso.done ? '✓ Hecho: ' : '○ Pendiente: ') + paso.text)); });
-            detalles.appendChild(lista);
+            // Un objetivo sin plan (o con un paso raro) no debe tumbar toda la tarjeta.
+            var pasos = Array.isArray(objetivo.plan) ? objetivo.plan : [];
+            pasos.forEach(function (paso) {
+              if (!paso || typeof paso !== 'object') return;
+              lista.appendChild(nodo('li', null, (paso.done ? '✓ Hecho: ' : '○ Pendiente: ') + (paso.text || '')));
+            });
+            if (lista.children.length) detalles.appendChild(lista);
+            else detalles.appendChild(nodo('p', 'muted', 'Sin plan todavía.'));
             if (objetivo.blockedReason) detalles.appendChild(nodo('p', 'texto', 'Bloqueo: ' + objetivo.blockedReason));
             if (objetivo.lastOutcome) detalles.appendChild(nodo('p', 'texto', 'Último resultado: ' + objetivo.lastOutcome));
             detalles.appendChild(nodo('p', 'muted', 'Actualizado: ' + (formato.formatearCampo('updatedAt', objetivo.updatedAt) || objetivo.updatedAt)));
@@ -1143,6 +1382,14 @@ ${renderFormatScript()}
             if (objetivo.panelChatAvailable) {
               var enlace = nodo('a', null, 'Ir al chat principal del panel');
               enlace.href = '#titulo-chat';
+              // Lleva el foco al cuadro del chat, no solo la vista: así se escribe sin buscarlo.
+              enlace.addEventListener('click', function (evento) {
+                var campoChat = document.getElementById('texto-chat');
+                if (!campoChat || typeof campoChat.focus !== 'function') return;
+                evento.preventDefault();
+                if (typeof campoChat.scrollIntoView === 'function') campoChat.scrollIntoView({ block: 'center' });
+                campoChat.focus();
+              });
               tarjeta.appendChild(enlace);
               tarjeta.appendChild(nodo('p', 'muted', 'El chat no modifica este objetivo automáticamente.'));
             } else tarjeta.appendChild(nodo('p', 'muted', 'Continúa en el hilo original de Telegram: ' + objetivo.thread + '. El chat del panel solo abre el principal.'));
@@ -1165,15 +1412,22 @@ ${renderFormatScript()}
         return true;
       }
 
+      // Búsqueda y ámbito: si llega tarde la respuesta de una consulta anterior (escribir
+      // rápido, cambiar de ámbito), no pinta encima de la última; solo cuenta la más nueva.
+      var consultaSesiones = 0;
       async function cargarSesiones() {
         var contenedor = document.getElementById('panel-sesiones');
         var consulta = document.getElementById('buscar-sesiones').value.trim();
         var ruta = '/api/sessions' + (consulta ? '?q=' + encodeURIComponent(consulta) : '');
+        var esta = ++consultaSesiones;
         pintarCarga(contenedor);
         try {
-          pintarSesiones(contenedor, await pedir(ruta));
+          var datos = await pedir(ruta);
+          if (esta !== consultaSesiones) return true;
+          pintarSesiones(contenedor, datos);
           finCarga(contenedor, true);
         } catch (error) {
+          if (esta !== consultaSesiones) return true;
           pintarError(contenedor, error, cargarSesiones); return false;
         }
         return true;
@@ -1216,15 +1470,20 @@ ${renderFormatScript()}
         }
       }
 
+      var consultaMemoria = 0;
       async function cargarMemoria() {
         var contenedor = document.getElementById('panel-memoria');
         var ambito = document.getElementById('ambito-memoria').value.trim();
         var ruta = '/api/memory' + (ambito ? '?scope=' + encodeURIComponent(ambito) : '');
+        var esta = ++consultaMemoria;
         pintarCarga(contenedor);
         try {
-          pintarMemoria(contenedor, await pedir(ruta));
+          var datos = await pedir(ruta);
+          if (esta !== consultaMemoria) return true;
+          pintarMemoria(contenedor, datos);
           finCarga(contenedor, true);
         } catch (error) {
+          if (esta !== consultaMemoria) return true;
           pintarError(contenedor, error, cargarMemoria); return false;
         }
         return true;
@@ -1242,13 +1501,92 @@ ${renderFormatScript()}
         return true;
       }
 
-      async function cargarRutinas() {
+      // silencio = true: recarga al volver a la pestaña, sin «Cargando…» y sin tapar lo que ya se ve si falla.
+      function filaTarea(t) {
+        var texto = t.dia + (t.hora ? ' ' + t.hora : '') + ' · ' + t.titulo + (t.repite ? ' (' + t.repite + ')' : '');
+        var fila = nodo('li', 'texto', texto + ' ');
+        fila.appendChild(insignia('', t.estado));
+        return fila;
+      }
+
+      async function cargarTareas(silencio) {
+        var contenedor = document.getElementById('panel-tareas');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/tareas');
+          if (!datos || !Array.isArray(datos.tareas) || !Array.isArray(datos.atrasadas)) throw new Error('Respuesta de tareas inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para apuntar o cambiar una tarea, pídelo en el chat.'));
+          if (!datos.tareas.length && !datos.atrasadas.length) contenedor.appendChild(nodo('p', 'muted', 'No tienes tareas esta semana.'));
+          if (datos.atrasadas.length) {
+            contenedor.appendChild(nodo('h3', null, 'Atrasadas'));
+            var lista1 = nodo('ul', 'tareas');
+            datos.atrasadas.forEach(function (t) { lista1.appendChild(filaTarea(t)); });
+            contenedor.appendChild(lista1);
+          }
+          if (datos.tareas.length) {
+            var lista2 = nodo('ul', 'tareas');
+            datos.tareas.forEach(function (t) { lista2.appendChild(filaTarea(t)); });
+            contenedor.appendChild(lista2);
+          }
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarTareas); return false;
+        }
+        return true;
+      }
+
+      function filaReparto(r) {
+        var fila = nodo('li', 'texto', r.envio + ' ');
+        if (r.seguimiento) {
+          // El número va aparte: un toque lo selecciona entero y lo copia.
+          var codigo = nodo('code', 'copiable', r.seguimiento);
+          codigo.title = 'Toca para copiar';
+          codigo.addEventListener('click', function () {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(r.seguimiento).then(function () { codigo.title = 'Copiado'; }, function () {});
+            }
+          });
+          fila.appendChild(codigo);
+          fila.appendChild(document.createTextNode(' '));
+        }
+        fila.appendChild(document.createTextNode('· ' + r.titulo + ' (' + r.cuando + ') '));
+        fila.appendChild(insignia('', r.estado));
+        return fila;
+      }
+
+      async function cargarRepartos(silencio) {
+        var contenedor = document.getElementById('panel-repartos');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/repartos');
+          if (!datos || !Array.isArray(datos.repartos)) throw new Error('Respuesta de paquetes inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: sale de tus correos de envío. Para preguntar, escribe en el chat.'));
+          if (!datos.repartos.length) contenedor.appendChild(nodo('p', 'muted', 'No hay paquetes en camino.'));
+          else {
+            var lista = nodo('ul', 'tareas');
+            datos.repartos.forEach(function (r) { lista.appendChild(filaReparto(r)); });
+            contenedor.appendChild(lista);
+          }
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarRepartos); return false;
+        }
+        return true;
+      }
+
+      async function cargarRutinas(silencio) {
         var contenedor = document.getElementById('panel-rutinas');
-        pintarCarga(contenedor);
+        if (silencio !== true) pintarCarga(contenedor);
         try {
           var rutinas = await pedir('/api/routines');
           if (!Array.isArray(rutinas)) throw new Error('Respuesta de rutinas inválida');
-          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
+          // Repintado en silencio (al volver a la pestaña): si el foco estaba en la tarjeta (p. ej. en
+          // «Reintentar») y desaparece, va al título de la tarjeta y no al principio de la página.
+          var foco = document.activeElement;
+          var focoDentro = silencio === true && !!foco && foco !== contenedor && contenedor.contains(foco);
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, pídemelo en el chat, por ejemplo «cada mañana a las 8 el resumen del día».'));
           if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
           rutinas.forEach(function (rutina) {
             var tarjeta = nodo('section', 'sesion rutina');
@@ -1259,17 +1597,88 @@ ${renderFormatScript()}
             tarjeta.appendChild(titulo);
             if (rutina.activa) tarjeta.appendChild(nodo('p', 'texto', 'Próxima: ' + rutina.proxima));
             tarjeta.appendChild(nodo('p', 'muted', 'Horario: ' + rutina.horario));
+            tarjeta.appendChild(nodo('p', 'muted', 'Última: ' + (rutina.ultima || 'todavía no se ha ejecutado')));
             if (rutina.comando) tarjeta.appendChild(nodo('p', 'muted', rutina.comando));
             contenedor.appendChild(tarjeta);
           });
           finCarga(contenedor, true);
-        } catch (error) { pintarError(contenedor, error, cargarRutinas); return false; }
+          if (focoDentro && !contenedor.contains(document.activeElement)) {
+            var tarjetaRutinas = contenedor.closest ? contenedor.closest('.tarjeta') : null;
+            devolverFoco((tarjetaRutinas && tarjetaRutinas.querySelector('h2')) || contenedor);
+          }
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarRutinas); return false;
+        }
+        return true;
+      }
+
+      function pantallaPequena() {
+        return !!(window.matchMedia && window.matchMedia('(max-width: 780px)').matches);
+      }
+
+      // Qué áreas de Funciones dejó Nico abiertas o cerradas a mano: { id: true|false }.
+      // Solo se guarda al pulsar un título; sin elección guardada manda el ancho de pantalla.
+      var CLAVE_FUNCIONES = 'asistenta.webui.funciones';
+      function funcionesGuardadas() {
+        try {
+          var valor = JSON.parse(window.localStorage.getItem(CLAVE_FUNCIONES) || '{}');
+          return valor && typeof valor === 'object' && !Array.isArray(valor) ? valor : {};
+        } catch (error) { return {}; }
+      }
+      function guardarFuncion(id, abierta) {
+        try {
+          var valor = funcionesGuardadas();
+          valor[id] = abierta === true;
+          window.localStorage.setItem(CLAVE_FUNCIONES, JSON.stringify(valor));
+        } catch (error) { /* almacén bloqueado: no se recuerda, sin romper */ }
+      }
+
+      async function cargarFunciones() {
+        var contenedor = document.getElementById('panel-funciones');
+        pintarCarga(contenedor);
+        try {
+          var areas = await pedir('/api/funciones');
+          if (!Array.isArray(areas)) throw new Error('Respuesta de funciones inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Lo mismo que /funciones en Telegram: qué sé hacer, por áreas, con un ejemplo de cómo pedirlo.'));
+          var guardadas = funcionesGuardadas();
+          areas.forEach(function (area) {
+            // Cada área se pliega (details/summary): en el móvil (≤ 780 px) empiezan
+            // cerradas para que la tarjeta no ocupe varias pantallas.
+            var bloque = document.createElement('details');
+            bloque.className = 'sesion funcion';
+            var elegida = guardadas[area.id];
+            bloque.open = typeof elegida === 'boolean' ? elegida : !pantallaPequena();
+            bloque.setAttribute('data-funcion', area.id);
+            var cabeza = nodo('summary', 'funcion-titulo');
+            // «click» en el <summary> llega también con Enter/Espacio; corre antes de que
+            // el navegador cambie .open, así que se guarda lo contrario de lo que hay.
+            cabeza.addEventListener('click', function () { guardarFuncion(area.id, !bloque.open); });
+            cabeza.appendChild(nodo('h3', null, area.titulo));
+            bloque.appendChild(cabeza);
+            bloque.appendChild(nodo('p', 'texto', area.resumen));
+            bloque.appendChild(nodo('p', 'muted', 'Ejemplo: «' + area.ejemplo + '»'));
+            var lista = nodo('ul', 'comandos');
+            (Array.isArray(area.comandos) ? area.comandos : []).forEach(function (c) {
+              var fila = nodo('li', null);
+              fila.appendChild(nodo('code', null, c.comando));
+              fila.appendChild(document.createTextNode(' — ' + c.descripcion));
+              lista.appendChild(fila);
+            });
+            bloque.appendChild(lista);
+            contenedor.appendChild(bloque);
+          });
+          finCarga(contenedor, true);
+        } catch (error) { pintarError(contenedor, error, cargarFunciones); return false; }
         return true;
       }
 
       var refrescos = {
         objetivos: cargarObjetivos,
         rutinas: cargarRutinas,
+        tareas: cargarTareas,
+        repartos: cargarRepartos,
+        funciones: cargarFunciones,
         estado: cargarEstado,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
@@ -1286,22 +1695,25 @@ ${renderFormatScript()}
         Promise.all([
           cargarObjetivos(),
           cargarRutinas(),
+          cargarFunciones(),
+          cargarTareas(),
           cargarEstado(),
           cargarSesiones(),
           cargarMemoria(),
           cargarAmbitos(),
           cargarAuditoria(),
-          cargarAprobaciones()
+          cargarAprobaciones(),
+          cargarRepartos()
         ])
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;
             var hora = new Date().toLocaleTimeString('es-ES');
-            if (!token) marca.textContent = 'Sin token';
+            if (!token) marca.textContent = 'Falta el token';
             else if (fallos === 0) marca.textContent = 'Actualizado · ' + hora;
-            else marca.textContent = fallos + (fallos === 1 ? ' sección' : ' secciones') + ' con error · ' + hora;
+            else marca.textContent = fallos + (fallos === 1 ? ' sección sin cargar · ' : ' secciones sin cargar · ') + hora;
           })
           .catch(function (error) {
-            marca.textContent = 'Error al actualizar';
+            marca.textContent = 'No he podido actualizar';
           })
           .finally(function () {
             boton.disabled = false;
@@ -1321,6 +1733,8 @@ ${renderFormatScript()}
         campo.value = '';
         evento.currentTarget.hidden = true;
         mostrarAviso('');
+        // El formulario se oculta con el foco dentro: pasa al contenido principal.
+        document.getElementById('contenido').focus();
         refrescarTodo();
       });
 
@@ -1343,7 +1757,7 @@ ${renderFormatScript()}
         try {
           ambitos = await pedir('/api/memory/scopes');
         } catch (error) {
-          return;
+          return false;
         }
         // Sin ámbito, /api/memory lee el ámbito por defecto (el privado del dueño si
         // está configurado): la primera opción lo dice en vez de «Local».
@@ -1352,7 +1766,7 @@ ${renderFormatScript()}
           porDefecto = typeof ambitos.porDefecto === 'string' ? ambitos.porDefecto : '';
           ambitos = ambitos.ambitos;
         }
-        if (!Array.isArray(ambitos)) return;
+        if (!Array.isArray(ambitos)) return false;
         var elegido = lista.value;
         var opciones = [nodo('option', null, formato.etiquetaAmbitoPorDefecto(porDefecto))];
         opciones[0].value = '';
@@ -1365,6 +1779,8 @@ ${renderFormatScript()}
         lista.replaceChildren.apply(lista, opciones);
         lista.value = elegido;
         if (lista.value !== elegido) lista.value = '';
+        // «Actualizar» cuenta como sección sin cargar todo lo que no devuelva true.
+        return true;
       }
 
       var formularioChat = document.getElementById('form-chat');
@@ -1402,7 +1818,8 @@ ${renderFormatScript()}
         if (document.visibilityState === 'visible' && token) cargarAprobacionesEnSilencio();
       }, 15000);
 
-      // Al volver a la pestaña tras tenerla oculta, las aprobaciones se recargan ya (sin esperar hasta 15 s).
+      // Al volver a la pestaña tras tenerla oculta, las aprobaciones se recargan ya (sin esperar hasta 15 s)
+      // y las Rutinas también, para que «Próxima» y «Última» no se queden viejas.
       var ocultaDesde = 0;
       function alCambiarVisibilidad() {
         if (document.visibilityState !== 'visible') {
@@ -1411,7 +1828,10 @@ ${renderFormatScript()}
         }
         var volvio = ocultaDesde > 0;
         ocultaDesde = 0;
-        if (volvio && token) cargarAprobacionesEnSilencio();
+        if (volvio && token) {
+          cargarAprobacionesEnSilencio();
+          cargarRutinas(true);
+        }
       }
       document.addEventListener('visibilitychange', alCambiarVisibilidad);
 

@@ -11,6 +11,8 @@ import {
   preflightExitCode,
   runPreflight,
 } from './preflight.js';
+import { computerOffSaved } from './screen/computer-switch.js';
+import { saveStartupRecord } from './startup-record.js';
 
 export interface IniciarOptions {
   checkOnly: boolean;
@@ -43,6 +45,8 @@ export interface IniciarIo {
   write: (text: string) => void;
   writeErr: (text: string) => void;
   color: boolean;
+  /** Dónde guardar el resultado para `pa autostart status` (sin ruta no se guarda). */
+  recordPath?: string;
 }
 
 export async function iniciarCommand(argv: readonly string[], io: IniciarIo): Promise<number> {
@@ -54,6 +58,7 @@ export async function iniciarCommand(argv: readonly string[], io: IniciarIo): Pr
   const deps = await io.deps();
   const checks = await runPreflight({ ...deps, offline: opts.offline || deps.offline });
   const code = preflightExitCode(checks);
+  if (io.recordPath) saveStartupRecord(io.recordPath, checks);
   if (opts.json) {
     io.write(`${JSON.stringify({ ok: code === 0, checks }, null, 2)}\n`);
     return code;
@@ -113,6 +118,7 @@ export async function realPreflightDeps(): Promise<PreflightDeps> {
     },
     desktopEnabled: () => platform.desktopEnabled(),
     computerUseEnabled: () => config.loadConfig().computerUse !== false,
+    computerOffSaved: () => computerOffSaved(pathsMod.paths.state),
     mailStatus: () => mail.mailStatus(),
     freeDiskBytes: async () => {
       pathsMod.ensureDirs();

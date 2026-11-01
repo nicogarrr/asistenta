@@ -4,9 +4,9 @@
  * real lo hace PersonalAgent.chooseModel.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { uniqueTmpPath } from './fs-tmp.js';
+import { writeFileReplacing } from './fs-tmp.js';
 
 export type ModeloAction =
   | { kind: 'show' }
@@ -25,13 +25,13 @@ export function parseModelo(args: string, available: readonly string[]): ModeloA
     const id = available[Number(raw) - 1];
     return id
       ? { kind: 'set', id }
-      : { kind: 'error', text: `No hay modelo ${raw}. Escribe /modelo para ver la lista.` };
+      : { kind: 'error', text: `No hay modelo ${raw}: tengo del 1 al ${available.length}.` };
   }
   const id = available.find((m) => m === raw) ?? available.find((m) => m.toLowerCase() === lower);
   if (id) return { kind: 'set', id };
   return {
     kind: 'error',
-    text: `«${raw.slice(0, 60)}» no está entre los modelos configurados. Escribe /modelo para ver la lista.`,
+    text: `«${raw.slice(0, 60)}» no está entre los modelos configurados. Tengo: ${available.join(', ')}.`,
   };
 }
 
@@ -48,7 +48,7 @@ export function formatModelos(available: readonly string[], current: string): st
       'Solo hay un modelo configurado. Pon PA_FALLBACK_MODEL o PA_MODELS en .env para tener otros.',
     );
   } else {
-    lines.push('Cambia con /modelo <número|nombre>; /modelo normal vuelve al principal.');
+    lines.push('¿Cuál quieres? Dime su número o su nombre, o «normal» para volver al principal.');
   }
   lines.push('Solo afecta a esta conversación y se mantiene aunque el asistente reinicie.');
   return lines.join('\n');
@@ -107,8 +107,34 @@ export class ModelChoiceStore {
 
   #write(all: Record<string, string>): void {
     mkdirSync(dirname(this.#file), { recursive: true });
-    const tmp = uniqueTmpPath(this.#file);
-    writeFileSync(tmp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, this.#file);
+    writeFileReplacing(this.#file, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
   }
+}
+
+/** Lo que el aviso de /modelo necesita de la ficha de un modelo. */
+export interface ModelSwitchCaps {
+  contextWindow: number;
+  supportsImages: boolean;
+}
+
+function kTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/**
+ * Avisos al cambiar de modelo con /modelo: ventana de contexto de la mitad o
+ * menos que la del modelo anterior, o un modelo que no ve imágenes cuando el
+ * anterior sí. Vacío si no hay nada que avisar.
+ */
+export function modelSwitchWarnings(prev: ModelSwitchCaps, next: ModelSwitchCaps): string[] {
+  const out: string[] = [];
+  if (next.contextWindow > 0 && next.contextWindow * 2 <= prev.contextWindow) {
+    out.push(
+      `Ojo: su ventana de contexto es de ${kTokens(next.contextWindow)} tokens (antes ${kTokens(prev.contextWindow)}); en conversaciones largas resumirá antes y recordará menos.`,
+    );
+  }
+  if (prev.supportsImages && !next.supportsImages) {
+    out.push('Ojo: este modelo no ve imágenes; las fotos que me mandes no las podrá mirar.');
+  }
+  return out;
 }

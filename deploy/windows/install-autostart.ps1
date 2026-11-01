@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Registers (or removes) the personal-agent daemon as a Windows scheduled task.
 

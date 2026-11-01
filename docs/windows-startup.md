@@ -10,7 +10,7 @@ node dist/cli.js autostart install --start
 
 O directamente `powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-all.ps1 -Start`.
 
-Requisitos ya preparados: Node >=24, vault DPAPI configurado con Telegram y allowlist, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
+Requisitos ya preparados: Node >=24 y la caja fuerte (vault DPAPI) con Telegram y tu ID — `instalar.bat` deja ambas cosas listas en un paso —, y `deploy/browserd/setup-browserd.ps1` completado (venv + navegadores). El instalador valida archivos antes de registrar nada; no descarga runtimes, no pide claves y no aprovisiona el contenedor.
 
 ## Antes de instalar: `pa iniciar`
 
@@ -63,9 +63,25 @@ Tope persistente: 3 intentos por 15 min, también si el stop falló. Si al sigui
 
 Los avisos usan un proceso CLI separado, DPAPI y contenido fijo. Van solo al owner explícito allowlisted o al único usuario de la allowlist, nunca un grupo. Red/Telegram/owner no verificado: entrega fallida registrada localmente, no se afirma que llegó y no se reintenta en bucle. Un daemon caído no es necesario para ese aviso.
 
+## Vigilante: «Asistenta-vigilante»
+
+`pa autostart install` registra además una tercera tarea, `Asistenta-vigilante`, que corre al iniciar sesión y cada 5 min. Lanza PowerShell oculto con `node dist/cli.js autostart vigilar` y decide una sola cosa:
+
+- Si Asistenta está en marcha, no hace nada.
+- Si no está en marcha, arranca la tarea normal del daemon (`personal-agent-daemon`), la misma del inicio de sesión. Nunca abre una segunda copia.
+- Si no puede saber si corre: «no sé si corre: no toco nada».
+- Si la paraste con `pa stop`: «la paraste tú: sigue apagada hasta reiniciar el PC o pa iniciar».
+  La marca deja de valer si Asistenta vuelve a arrancar después (p. ej. al iniciar sesión tras un apagado con inicio rápido de Windows, que no reinicia el contador de arranque) o si tiene una fecha futura (reloj adelantado).
+
+La tarea corre en la carpeta del repo, así que lee el mismo `.env` que el daemon (`PA_WATCHDOG`, `PA_STATE_DIR`). Si la registraste antes de #873, vuelve a ejecutar `pa autostart install` una vez para que se actualice.
+
+La última decisión se guarda en `<estado>/vigilante.json` y sale en `pa autostart status`. Con `PA_WATCHDOG=0` en `.env`, `pa autostart install` no registra el vigilante; si ya estaba registrado, sigue corriendo pero no hace nada («vigilante apagado (PA_WATCHDOG=0)»), y `pa autostart uninstall` lo quita. En los tests `schtasks` va simulado: no se crea ninguna tarea real.
+
 ## Parada y desinstalación
 
 `pa stop` conserva la parada limpia autenticada. Si fue una parada voluntaria con exit 0, el launcher no solicita reinicio.
+
+Si Asistenta ya no estaba en marcha, `pa stop` lo dice («Asistenta no estaba en marcha: no había nada que parar»), sale con 0 y también la deja apagada para el vigilante hasta reiniciar el PC o `pa iniciar`. Si la parada falla de verdad, sale con 1 y no marca nada.
 
 ```powershell
 node dist/cli.js autostart uninstall
@@ -78,3 +94,25 @@ Si el daemon está Running, solicita cierre limpio y se niega a quitar tareas si
 CI Windows ejecuta el parser PS5 real, canarios con Scheduler/handles simulados, rutas con espacios/apóstrofos, registro repetido sin duplicados, WhatIf sin tareas reales, y los tests del launcher/cierre autenticado. La suite también prueba destinatario fijo/fail-closed y contrato de salud. Esto no equivale a haber reiniciado el Huawei de Nico, capturado su escritorio, accedido a su TV o validado Docker Desktop en su sesión.
 
 Rollback de instalación: si falla el segundo registro se restaura el primero desde su XML previo (o se quita si antes no existía). Una reversión que falle también es fallo visible. No se permite considerar la instalación completada con una excepción oculta.
+
+`pa autostart status` empieza con una línea sobre la última comprobación de `pa iniciar` (cuándo fue, si estaba todo en verde o qué falló). Se guarda en `<estado>/iniciar-ultimo.json` cada vez que corre `pa iniciar`.
+
+## Autoactualización desde main
+
+Con `PA_AUTOUPDATE=1` (por defecto) Asistenta se actualiza sola cuando entra algo en `main`. No hace falta ninguna tarea nueva de Windows: la lanza el vigilante («Asistenta-vigilante», cada 5 min) cada `PA_AUTOUPDATE_INTERVAL_MIN` minutos (30 por defecto), como proceso aparte para no chocar con el límite de 2 min de la tarea.
+
+1. `git fetch origin main`. Solo sigue si estás en la rama `main`, no hay cambios sin guardar en ficheros de git y `origin/main` es un fast-forward del commit local. Nunca hace un merge de verdad, nunca resetea encima de cambios tuyos y nunca toca otra rama.
+2. Espera a que Asistenta esté libre: ningún turno en marcha y ninguna aprobación esperando. Si está ocupada, lo vuelve a mirar en la siguiente pasada del vigilante.
+3. Guarda `dist` en `dist.anterior`, para el daemon con cierre limpio (sin marcarlo como parado a propósito), hace `git merge --ff-only`, `npm ci` solo si cambió `package-lock.json` y `npm run build`.
+4. Arranca la tarea del daemon (el mismo camino que el vigilante) y espera hasta 2 min a que vuelva sana. Mientras dura, el vigilante ve el candado y no arranca nada por su cuenta.
+5. Si todo va bien te escribe por Telegram «🆕 Me he actualizado» con la lista de novedades (títulos de los commits, sin `feat:`/`fix:`, como mucho 8 y «y N cambios más»). Si falla `npm ci`, la compilación o el arranque, vuelve al commit y al `dist` de antes, rearranca y te avisa de que sigue en la versión anterior y por qué. Ese aviso sale una sola vez por versión: si la misma vuelve a fallar no te escribe otra vez, y no la reintenta hasta 6 horas después (o `pa autoupdate now`).
+
+Como mucho una actualización cada 30 min. Dos revisiones nunca se pisan (candado). Los ficheros están en `state/autoupdate/` (los `*.log` de los fallos se podan con `PA_FILE_RETENTION_DAYS`).
+
+```powershell
+node dist/cli.js autoupdate status   # encendida/apagada y el último resultado
+node dist/cli.js autoupdate now      # mirar y actualizar ya (sin esperar al intervalo)
+node dist/cli.js autoupdate off      # apagarla (on la vuelve a encender); PA_AUTOUPDATE=0 manda siempre
+```
+
+`pa autostart status` también enseña la línea de la autoactualización.

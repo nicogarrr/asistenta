@@ -1,11 +1,13 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { log } from '../log.js';
+import { PRICE_WATCH_REMOVE_HINT } from '../palabras-vigilancia.js';
 import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
 
 /**
  * «Avísame si baja de 400 € el precio de esto» como herramienta de chat.
  *
- * Hasta ahora solo había /vigila (comando) y pricewatch.json (fichero): el modelo no
+ * Hasta ahora solo había /vigila (comando): el modelo no
  * tenía forma de crear una vigilancia y acababa montando un objetivo que hacía fetch
  * cada hora gastando modelo en cada lectura. Esta herramienta escribe en el MISMO
  * registro que /vigila (PageWatchStore), así que /vigilando, /precio y
@@ -38,6 +40,22 @@ const Params = Type.Object({
   label: Type.Optional(Type.String({ description: 'add: short name to show in alerts.' })),
   id: Type.Optional(Type.String({ description: 'remove: the watch id (or its first letters).' })),
 });
+
+/**
+ * Los avisos propios del registro («ya vigilas 20 páginas…», el porcentaje) ya son claros
+ * y se dicen tal cual. Un fallo de la base de datos o del disco (SQLite, EPERM, ENOSPC)
+ * llegaba crudo al chat: ahora una frase llana y el crudo solo al log.
+ */
+function addFailReason(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const code = String((err as { code?: unknown } | null)?.code ?? '');
+  if (!/SQLITE|^E[A-Z]+$/.test(code) && !/SQLITE|database|disk|EPERM|EACCES|ENOSPC/i.test(raw))
+    return raw.slice(0, 200);
+  log.warn('vigilar_precio: no se pudo guardar', { err: raw.slice(0, 300), code });
+  if (/ENOSPC|SQLITE_FULL|disk is full|database or disk is full/i.test(`${code} ${raw}`))
+    return 'el disco del PC está lleno. Libera espacio y vuelve a pedírmelo.';
+  return 'no pude guardarla en el PC ahora mismo. Prueba otra vez en un rato.';
+}
 
 export interface PriceWatchToolDeps {
   watches: Pick<PageWatchStore, 'add' | 'list' | 'remove'>;
@@ -121,13 +139,10 @@ export function createPriceWatchTool(deps: PriceWatchToolDeps): AgentTool<typeof
           dropPct,
         });
         return reply(
-          `Vigilancia creada: ${describe(w)}. Miro cada 2 horas y aviso en este chat; /vigilando la lista, /dejar_de_vigilar ${w.id} la quita.`,
+          `Vigilancia creada: ${describe(w)}. Miro cada 2 horas y aviso en este chat. ${PRICE_WATCH_REMOVE_HINT}`,
         );
       } catch (err) {
-        return reply(
-          `No he podido crear la vigilancia: ${err instanceof Error ? err.message : String(err)}`,
-          true,
-        );
+        return reply(`No he podido crear la vigilancia: ${addFailReason(err)}`, true);
       }
     },
   };

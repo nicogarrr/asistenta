@@ -1,8 +1,15 @@
 /** DACL-private local mailbox. No PID signals, HTTP, credentials or unauthenticated stop. */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { lstatSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { DaemonControl } from './daemon-control.js';
+import { type DaemonControl, DaemonNotRunningError, isMissingFile } from './daemon-control.js';
 import { windowsNative, windowsOwnership } from './windows-control-native.js';
 
 const HEX = /^[a-f0-9]{64}$/;
@@ -43,7 +50,12 @@ function read(state: string, leaf: string): Record<string, unknown> {
     text.length > 2048
   )
     throw new Error('Metadata Windows cambió durante lectura.');
-  const value: unknown = JSON.parse(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Metadata Windows ilegible.');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Metadata Windows inválida.');
   return value as Record<string, unknown>;
@@ -80,12 +92,61 @@ function publish(state: string, leaf: string, value: unknown) {
   windowsNative(state, 'check', leaf);
 }
 function removeOwned(state: string, leaf: string) {
+  // Same ownership checks as read(), but the content is not parsed: a file left half-written
+  // by a power cut is removed instead of blocking every later start.
   try {
-    read(state, leaf);
-    unlinkSync(join(dir(state), leaf));
+    const path = join(dir(state), leaf);
+    const stat = lstatSync(path);
+    windowsNative(state, 'check', leaf);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Metadata Windows inválida.');
+    unlinkSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
+}
+/** Pruebas de parada y temporales de más de 10 min: `pa stop` solo espera 30 s por la suya. */
+export const CONTROL_LEFTOVER_MS = 10 * 60_000;
+const LEFTOVER = /^[a-f0-9]{64}\.(stopped|tmp)$/;
+/**
+ * Cada parada limpia deja `<id>.stopped` y nadie lo borraba: uno más por cada `pa stop`.
+ * Al arrancar se quitan los viejos, nunca el `.stopped` más reciente ni uno que un
+ * `pa stop` en curso pueda estar leyendo. Un fallo aquí nunca impide arrancar.
+ */
+export function pruneControlLeftovers(
+  controlDir: string,
+  remove: (leaf: string) => void,
+  now: number = Date.now(),
+): string[] {
+  let found: { leaf: string; at: number }[] = [];
+  try {
+    found = readdirSync(controlDir)
+      .filter((leaf) => LEFTOVER.test(leaf))
+      .map((leaf) => {
+        try {
+          const st = lstatSync(join(controlDir, leaf));
+          return { leaf, at: st.isFile() ? st.mtimeMs : Number.NaN };
+        } catch {
+          return { leaf, at: Number.NaN };
+        }
+      })
+      .filter((f) => Number.isFinite(f.at));
+  } catch {
+    return [];
+  }
+  const newest = found
+    .filter((f) => f.leaf.endsWith('.stopped'))
+    .sort((a, b) => b.at - a.at)[0]?.leaf;
+  const removed: string[] = [];
+  for (const f of found) {
+    if (f.leaf === newest || now - f.at < CONTROL_LEFTOVER_MS) continue;
+    try {
+      remove(f.leaf);
+      removed.push(f.leaf);
+    } catch {
+      // Sin permiso o bloqueado: se intenta en el próximo arranque.
+    }
+  }
+  return removed;
 }
 export async function openWindowsDaemonControl(
   input: string,
@@ -103,6 +164,7 @@ export async function openWindowsDaemonControl(
   try {
     removeOwned(state, 'ready.json');
     removeOwned(state, 'request.json');
+    pruneControlLeftovers(dir(state), (leaf) => removeOwned(state, leaf));
   } catch (error) {
     await ownership.release();
     throw error;
@@ -174,9 +236,22 @@ export async function stopWindowsDaemon(
   timeoutMs = 30_000,
 ): Promise<{ instanceId: string }> {
   const state = resolve(input);
-  const original = record(state);
-  if (windowsNative(state, 'probe') !== 'busy')
-    throw new Error('No hay propietario Windows activo; no se confirma parada.');
+  let original: RecordV1;
+  try {
+    original = record(state);
+  } catch (error) {
+    if (isMissingFile(error)) throw new DaemonNotRunningError();
+    // A broken ready.json (power cut) with nobody owning control: nothing is running.
+    if (
+      error instanceof Error &&
+      /^Metadata Windows (ilegible|inválida)\./.test(error.message) &&
+      windowsNative(state, 'probe') !== 'busy'
+    )
+      throw new DaemonNotRunningError();
+    throw error;
+  }
+  // Nobody holds the owner lock: a ready record left by a crash, nothing to stop.
+  if (windowsNative(state, 'probe') !== 'busy') throw new DaemonNotRunningError();
   const requestNonce = nonce();
   publish(state, 'request.json', {
     instanceId: original.instanceId,

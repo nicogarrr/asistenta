@@ -1,13 +1,14 @@
 import { type Browser, chromium, type Page } from 'playwright';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { callPageScan, installPageScan } from '../src/browser/inpage.js';
 import { formatSnapshot, type PageScan } from '../src/browser/service.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // Un snapshot es una acción GRATIS (no pide permiso): si filtra el valor de una
 // contraseña, una tarjeta o un código de un solo uso, ese secreto viaja al
 // proveedor del modelo y queda en la transcripción sin que nadie lo apruebe.
 // La página solo debe saber si el campo está relleno, nunca qué contiene.
-describe('snapshot del navegador sin secretos', () => {
+describeBrowser('snapshot del navegador sin secretos', () => {
   let browser: Browser;
   let page: Page;
 

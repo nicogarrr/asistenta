@@ -3,9 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { childEnv } from '../child-env.js';
 import type { ScreenBackend } from '../tools/computer.js';
 import {
   escapeForSendKeys,
+  highFunctionKeyVirtualKeys,
   parseKeyChord,
   splitAsciiSegments,
   winChordVirtualKeys,
@@ -56,6 +58,7 @@ export class WindowsScreen implements ScreenBackend {
             ['-NoProfile', '-NonInteractive', '-Command', script],
             {
               encoding: 'utf8',
+              env: childEnv(),
               maxBuffer: 16 * 1024 * 1024,
               timeout: POWERSHELL_TIMEOUT_MS,
               windowsHide: true,
@@ -151,23 +154,39 @@ if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cur
   }
 
   async drag(x: number, y: number, toX: number, toY: number): Promise<void> {
-    await this.#physicalPs(`
+    const script = `
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 ${ADD_TYPE_MOUSE}
 if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
 Start-Sleep -Milliseconds 80
 [M]::mouse_event(0x0002,0,0,0,[IntPtr]::Zero)
-$steps = 12
-for ($i=1; $i -le $steps; $i++) {
-  $t = $i / $steps
-  $nx = [int](${x} + (${toX} - ${x}) * $t)
-  $ny = [int](${y} + (${toY} - ${y}) * $t)
-  if (-not [PaDesktop]::SetCursorPos($nx, $ny)) { throw 'No se pudo arrastrar el cursor físico.' }
-  Start-Sleep -Milliseconds 25
+try {
+  $steps = 12
+  for ($i=1; $i -le $steps; $i++) {
+    $t = $i / $steps
+    $nx = [int](${x} + (${toX} - ${x}) * $t)
+    $ny = [int](${y} + (${toY} - ${y}) * $t)
+    if (-not [PaDesktop]::SetCursorPos($nx, $ny)) { throw 'No se pudo arrastrar el cursor físico.' }
+    Start-Sleep -Milliseconds 25
+  }
+} finally {
+  [M]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero)
 }
-[M]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero)
-`);
+`;
+    // The left button goes down before the loop: a SetCursorPos failure mid-drag
+    // threw past the left-up and left the button HELD on Nico's PC, turning every
+    // later move into a drag. The `finally` above covers a throw inside PowerShell;
+    // a PowerShell that never got there (killed on timeout, crashed) is covered by
+    // a separate release that only sends left-up if Windows still reports it down.
+    try {
+      await this.#physicalPs(script);
+    } catch (err) {
+      try {
+        await this.#ps(releaseLeftButtonScript());
+      } catch {}
+      throw err;
+    }
   }
 
   /**
@@ -209,10 +228,23 @@ Add-Type -AssemblyName System.Windows.Forms
           try {
             await this.#ps(releaseModifiersScript());
           } catch {}
-          if (done === 0) throw err;
+          // The piece that failed may be partly typed (a SendKeys cut by the timeout
+          // has already sent some keys) or wholly typed (a paste cut after its
+          // Ctrl+V). Counting it as 0 told the model fewer characters were in than
+          // really were, and a first piece cut half-way said nothing at all, so the
+          // model typed the WHOLE text again on top of what was already there.
+          const upTo = done + Array.from(piece).length;
+          if (done === 0 && !powerShellWasCut(err)) throw err;
           const reason = err instanceof Error ? err.message : String(err);
+          if (done === 0) {
+            throw new Error(
+              `${reason}\nParcial: puede que se hayan escrito hasta ${upTo} de ${total} caracteres antes del corte; ` +
+                'no vuelvas a escribir el texto entero sin mirar: haz una captura y sigue desde donde se paró.',
+            );
+          }
           throw new Error(
-            `${reason}\nParcial: ya se habían escrito ${done} de ${total} caracteres antes del fallo; ` +
+            `${reason}\nParcial: ya se habían escrito al menos ${done} de ${total} caracteres antes del fallo ` +
+              `(y quizá hasta ${upTo}: el trozo que se estaba escribiendo pudo quedarse a medias); ` +
               'no vuelvas a escribir el texto entero: haz una captura y sigue desde donde se paró.',
           );
         }
@@ -229,7 +261,7 @@ Add-Type -AssemblyName System.Windows.Forms
   }
 
   async key(key: string): Promise<void> {
-    const vks = winChordVirtualKeys(key);
+    const vks = winChordVirtualKeys(key) ?? highFunctionKeyVirtualKeys(key);
     const script = vks
       ? winChordScript(vks)
       : `
@@ -279,6 +311,24 @@ public class M {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
 }
 '@`;
+
+/**
+ * Left-up only if Windows still reports the left button down (VK_LBUTTON), so a
+ * stray button-up is never sent over an app that did not see a button-down.
+ */
+export function releaseLeftButtonScript(): string {
+  return `
+$ErrorActionPreference='Stop'
+Add-Type @'
+using System;using System.Runtime.InteropServices;
+public class L {
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+}
+'@
+if (([L]::GetAsyncKeyState(0x01) -band 0x8000) -ne 0) { [L]::mouse_event(0x0004,0,0,0,[IntPtr]::Zero); Write-Output 'released:left' }
+`;
+}
 
 /** Modifier virtual keys `releaseModifiersScript` checks: Win L/R, Shift, Ctrl, Alt (generic + L/R). */
 export const MODIFIER_VKS: readonly number[] = [
@@ -404,7 +454,7 @@ export async function hasInteractiveDesktop(): Promise<boolean> {
     const { stdout } = await execFileAsync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id $PID).SessionId'],
-      { encoding: 'utf8', timeout: 10_000 },
+      { encoding: 'utf8', env: childEnv(), timeout: 10_000 },
     );
     return Number(stdout.trim()) !== 0;
   } catch {
@@ -454,12 +504,25 @@ $do.SetData('ExcludeClipboardContentFromMonitorProcessing', (& $zero))
 Pa-Retry { [System.Windows.Forms.Clipboard]::SetDataObject($do, $true) } | Out-Null`;
 
 /**
- * `PA_COMPUTER_PASTE_NO_HISTORY=1` keeps text Computer Use pastes (emoji, braces,
- * accented runs) out of Nico's Win+V clipboard history and cloud sync. Off by
- * default: the plain paste is what has been proven on his PC.
+ * Private set with a safe fallback: if Windows refuses the extra formats (or the
+ * DataObject path throws for any reason), the text goes on the clipboard exactly as
+ * the plain paste does today, so pasting never breaks.
+ */
+const NO_HISTORY_WITH_FALLBACK = `$privateSet = $false
+try {
+${NO_HISTORY_SET}
+$privateSet = $true
+} catch {}
+if (-not $privateSet) { ${PLAIN_SET} }`;
+
+/**
+ * Text Computer Use pastes (emoji, braces, accented runs) stays out of Nico's Win+V
+ * clipboard history and cloud sync. ON by default (Nico, 16:47: the most private
+ * option); if Windows does not accept that, the paste falls back to the plain one.
+ * `PA_COMPUTER_PASTE_NO_HISTORY=0` forces the plain paste.
  */
 export function pasteNoHistory(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.PA_COMPUTER_PASTE_NO_HISTORY === '1';
+  return env.PA_COMPUTER_PASTE_NO_HISTORY?.trim() !== '0';
 }
 
 export function pasteScript(payloadB64: string, settleMs: number, noHistory = false): string {
@@ -487,7 +550,7 @@ try {
   }
 } catch {}
 $text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payloadB64}'))
-${noHistory ? NO_HISTORY_SET : PLAIN_SET}
+${noHistory ? NO_HISTORY_WITH_FALLBACK : PLAIN_SET}
 Start-Sleep -Milliseconds 120
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 try {
@@ -549,14 +612,38 @@ export function powerShellError(err: unknown, timeoutMs = POWERSHELL_TIMEOUT_MS)
   );
 }
 
+/**
+ * Whether a failed PowerShell call was cut by the timeout (or killed) rather than
+ * failing on its own: only a cut call can have typed part of its text. Matches the
+ * raw execFile error and the message `powerShellError` turns it into.
+ */
+export function powerShellWasCut(err: unknown): boolean {
+  const e = (err ?? {}) as { killed?: boolean; signal?: string | null; message?: unknown };
+  if (e.killed || e.signal === 'SIGTERM' || e.signal === 'SIGKILL') return true;
+  return typeof e.message === 'string' && /no respondió en \d+ s y se cortó/.test(e.message);
+}
+
 /** Max characters per SendKeys call (each call is one PowerShell process, 30 s timeout). */
 export const SENDKEYS_CHUNK = 200;
 
-/** Splits text into pieces of at most `size` code points (never inside an emoji). */
+/**
+ * Splits text into pieces of at most `size` code points (never inside an emoji,
+ * never between the `\r` and `\n` of a Windows line break: each half became its
+ * own {ENTER}, so a CRLF on the cut pressed Enter twice).
+ */
 export function chunkText(text: string, size: number): string[] {
   const chars = Array.from(text);
   if (chars.length <= size) return [text];
   const out: string[] = [];
-  for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(''));
+  let i = 0;
+  while (i < chars.length) {
+    let end = Math.min(i + size, chars.length);
+    if (end < chars.length && chars[end - 1] === '\r' && chars[end] === '\n') {
+      // Cut before the \r (keeps the size bound); a 1-char piece would be empty.
+      end = end - 1 > i ? end - 1 : end + 1;
+    }
+    out.push(chars.slice(i, end).join(''));
+    i = end;
+  }
   return out;
 }

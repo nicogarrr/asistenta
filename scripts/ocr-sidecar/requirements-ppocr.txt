@@ -1,0 +1,5 @@
+# PP-OCRv5 vía RapidOCR (ONNX, solo CPU). Licencias: Apache-2.0 (RapidOCR, PP-OCRv5), MIT (onnxruntime), Apache-2.0/BSD (pypdfium2).
+rapidocr>=3.1
+onnxruntime>=1.18
+pypdfium2>=4.30
+pillow>=10

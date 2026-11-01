@@ -10,9 +10,10 @@ import {
   tvScreenshot,
   tvToast,
 } from './lgtv.js';
-import { describeTvIntent, parseTvCommand } from './natural.js';
+import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
+import { readNeighborMac } from './neighbor-mac.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
-import { parseMac, sendWakeOnLan } from './wol.js';
+import { sendWakeOnLan, validateTvMac } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
 const TV_CLIENT_KEY = 'tv:clientKey';
@@ -28,18 +29,32 @@ export function macFromNetworkInfo(info: unknown): string | null {
     const raw = rec(root[key]).macAddress;
     if (typeof raw !== 'string') continue;
     try {
-      return parseMac(raw);
+      // Misma validación que `pa tv mac`: una MAC multicast (ID de app), todo
+      // ceros o broadcast no es la de la tarjeta de red y no sirve para WoL.
+      return validateTvMac(raw).mac;
     } catch {
-      // MAC ausente o basura: probar la siguiente interfaz
+      // MAC ausente, basura o imposible: probar la siguiente interfaz
     }
   }
   return null;
+}
+
+/**
+ * Si la tele olvido la client-key (reset, actualizacion de webOS) y Nico acepta
+ * el aviso de nuevo, la clave nueva se guarda: sin esto cada `pa tv …` volveria
+ * a sacar el aviso (igual que la tool tv, #660).
+ */
+async function saveNewClientKey(key: string): Promise<void> {
+  const { vaultSet } = await import('../vault.js');
+  await vaultSet(TV_CLIENT_KEY, key);
+  process.stderr.write('pa tv: la tele se ha vuelto a emparejar; client-key nueva guardada.\n');
 }
 
 async function requirePaired(): Promise<{
   host: string;
   clientKey: string;
   allowPlaintext: boolean;
+  onNewClientKey: (key: string) => Promise<void>;
 }> {
   const { vaultGet } = await import('../vault.js');
   const host = await vaultGet(TV_HOST_KEY);
@@ -51,7 +66,12 @@ async function requirePaired(): Promise<{
   }
   // Si el pairing solo pudo ir por ws (3000), los requests siguen por ws; si
   // fue por wss, el downgrade a ws queda prohibido (ver lgtv.ts).
-  return { host, clientKey, allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0' };
+  return {
+    host,
+    clientKey,
+    allowPlaintext: (await vaultGet(TV_SECURE_KEY)) === '0',
+    onNewClientKey: saveNewClientKey,
+  };
 }
 
 export interface TvCliDeps {
@@ -59,6 +79,8 @@ export interface TvCliDeps {
   runOrder?: (text: string) => Promise<string>;
   out?: (s: string) => void;
   err?: (s: string) => void;
+  /** `pa tv mac auto`: MAC de la IP en la tabla de vecinos (tests: falso). */
+  neighborMac?: (ip: string) => Promise<string | null>;
 }
 
 export const TV_ORDER_USAGE =
@@ -82,6 +104,13 @@ export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<num
     return 2;
   }
   const intent = parseTvCommand(order);
+  if (!intent && tvOrderHasTime(order)) {
+    // Como /tv: una orden con hora o condición no se ejecuta al momento (ni se programa aquí).
+    err(
+      `«${order.slice(0, 80)}» lleva hora o condición y \`pa tv orden\` solo hace cosas al momento: no he tocado la tele. Pídemelo por Telegram para programarlo.\n`,
+    );
+    return 2;
+  }
   if (!intent) {
     err(
       `No he entendido «${order.slice(0, 80)}» como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 15", "silencio", "modo cine", "estado".\n`,
@@ -94,7 +123,8 @@ export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<num
   }
   try {
     const res = (await deps.runOrder(order)).trim();
-    out(`${res || `Hecho: ${describeTvIntent(intent)}.`}\n`);
+    const notice = res ? tvIntentNotice(intent) : null;
+    out(`${res || `Hecho: ${describeTvIntent(intent)}.`}${notice ? `\n${notice}` : ''}\n`);
     return 0;
   } catch (e) {
     err(
@@ -189,19 +219,19 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write('uso: pa tv toast <mensaje>\n');
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvToast(host, clientKey, message, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvToast(host, clientKey, message, { allowPlaintext, onNewClientKey });
       process.stdout.write('Toast enviado.\n');
       return 0;
     }
     case 'apps': {
-      const { host, clientKey, allowPlaintext } = await requirePaired();
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
       const res = await tvRequest(
         host,
         clientKey,
         'com.webos.applicationManager/listLaunchPoints',
         {},
-        { allowPlaintext },
+        { allowPlaintext, onNewClientKey },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
       // Titulos remotos sanitizados: la tele no controla esta terminal.
@@ -215,14 +245,20 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write('uso: pa tv launch <appId>   (ids: pa tv apps)\n');
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvRequest(host, clientKey, 'system.launcher/launch', { id: appId }, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvRequest(
+        host,
+        clientKey,
+        'system.launcher/launch',
+        { id: appId },
+        { allowPlaintext, onNewClientKey },
+      );
       process.stdout.write(`Lanzada ${appId}.\n`);
       return 0;
     }
     case 'off': {
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvRequest(host, clientKey, 'system/turnOff', {}, { allowPlaintext, onNewClientKey });
       process.stdout.write('Tele apagada.\n');
       return 0;
     }
@@ -261,8 +297,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write(`pa tv shot: ${out} ya existe; usa --force para sobrescribir.\n`);
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      const deps = { allowPlaintext };
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      const deps = { allowPlaintext, onNewClientKey };
       if (keyName) {
         await tvKey(host, clientKey, keyName, deps);
         // La app tarda en redirigir: sin esta espera la captura sale en negro.
@@ -293,35 +329,62 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         );
         return 2;
       }
-      const { host, clientKey, allowPlaintext } = await requirePaired();
-      await tvKey(host, clientKey, name, { allowPlaintext });
+      const { host, clientKey, allowPlaintext, onNewClientKey } = await requirePaired();
+      await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey });
       // El protocolo del socket de input no confirma la pulsacion: se
       // reporta el envio, no el efecto en la tele.
-      process.stdout.write(`Tecla ${name} enviada (sin confirmacion de la tele).\n`);
+      process.stdout.write(`Tecla ${name} enviada (sin confirmación de la tele).\n`);
       return 0;
     }
     case 'mac': {
       const { vaultGet, vaultSetMany } = await import('../vault.js');
+      const out = deps.out ?? ((s: string) => void process.stdout.write(s));
+      const err = deps.err ?? ((s: string) => void process.stderr.write(s));
       const raw = rest.find((a) => !a.startsWith('--'))?.trim();
       if (!raw) {
         const current = await vaultGet(TV_MAC_KEY);
-        process.stdout.write(
+        out(
           current
             ? `MAC de la tele: ${current}\n`
-            : 'Sin MAC guardada. uso: pa tv mac AA:BB:CC:DD:EE:FF (Ajustes > General > Acerca de esta TV)\n',
+            : 'Sin MAC guardada. uso: pa tv mac AA:BB:CC:DD:EE:FF (Ajustes > General > Acerca de este TV) o pa tv mac auto\n',
         );
         return 0;
       }
-      let mac: string;
+      let candidate = raw;
+      if (raw.toLowerCase() === 'auto') {
+        const host = await vaultGet(TV_HOST_KEY);
+        let ip: string;
+        try {
+          if (!host) throw new Error('sin ip');
+          ip = assertTvHost(host);
+        } catch {
+          err(
+            'No sé la IP de la tele: empareja primero con «pa tv setup <ip>» con la tele encendida, o pon la MAC a mano: pa tv mac AA:BB:CC:DD:EE:FF\n',
+          );
+          return 2;
+        }
+        const found = await (deps.neighborMac ?? ((h: string) => readNeighborMac(h)))(ip).catch(
+          () => null,
+        );
+        if (!found) {
+          err(
+            `No encuentro la MAC de la tele (${ip}) en la tabla de red del PC. ¿Está encendida y en la misma red? Enciéndela y repite «pa tv mac auto», o mírala en Ajustes > General > Acerca de este TV.\n`,
+          );
+          return 2;
+        }
+        candidate = found;
+      }
+      let checked: { mac: string; warning: string | null };
       try {
-        mac = parseMac(raw);
-      } catch (err) {
-        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        checked = validateTvMac(candidate);
+      } catch (e) {
+        err(`${e instanceof Error ? e.message : String(e)}\n`);
         return 2;
       }
-      await vaultSetMany({ [TV_MAC_KEY]: mac });
-      process.stdout.write(
-        `MAC guardada: ${mac}. Ya puedo encender la tele por red (pa tv wake).\n`,
+      if (checked.warning) err(`${checked.warning}\n`);
+      await vaultSetMany({ [TV_MAC_KEY]: checked.mac });
+      out(
+        `MAC guardada: ${checked.mac}${raw.toLowerCase() === 'auto' ? ' (leída de la red)' : ''}. Ya puedo encender la tele por red (pa tv wake).\n`,
       );
       return 0;
     }

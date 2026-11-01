@@ -86,11 +86,11 @@ describe('parseCatalog', () => {
 
     const broken = parseCatalog('{no es json');
     expect(broken.ok).toBe(false);
-    if (!broken.ok) expect(broken.reason).toMatch(/JSON/);
+    if (!broken.ok) expect(broken.reason).toMatch(/formato/);
 
     const notObject = parseCatalog('[]');
     expect(notObject.ok).toBe(false);
-    if (!notObject.ok) expect(notObject.reason).toMatch(/objeto/);
+    if (!notObject.ok) expect(notObject.reason).toMatch(/formato/);
 
     const noSkills = parseCatalog('{}');
     expect(noSkills.ok).toBe(false);
@@ -271,7 +271,7 @@ describe('fetchCatalog', () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/tiempo límite|timeout/);
+    if (!result.ok) expect(result.reason).toMatch(/tardado demasiado/);
   });
 
   it('corta por tamaño y convierte errores de formato, estado o URL en reason', async () => {
@@ -283,12 +283,12 @@ describe('fetchCatalog', () => {
       maxBytes: 100,
     });
     expect(tooBig.ok).toBe(false);
-    if (!tooBig.ok) expect(tooBig.reason).toMatch(/límite/);
+    if (!tooBig.ok) expect(tooBig.reason).toMatch(/demasiado grande/);
 
     const broken = fakeFetch(() => responseOf('no es json'));
     const bad = await fetchCatalog('https://example.com/catalog.json', { fetchImpl: broken });
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.reason).toMatch(/JSON/);
+    if (!bad.ok) expect(bad.reason).toMatch(/formato/);
 
     const failing = fakeFetch(() => responseOf('no', { status: 500 }));
     const failed = await fetchCatalog('https://example.com/catalog.json', { fetchImpl: failing });
@@ -297,6 +297,6 @@ describe('fetchCatalog', () => {
 
     const invalid = await fetchCatalog('no-es-una-url', { fetchImpl: broken });
     expect(invalid.ok).toBe(false);
-    if (!invalid.ok) expect(invalid.reason).toMatch(/URL/);
+    if (!invalid.ok) expect(invalid.reason).toMatch(/enlace/);
   });
 });

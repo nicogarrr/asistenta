@@ -162,7 +162,7 @@ describe('diagnose', () => {
     expect(report.text).toContain('EPERM');
     expect(report.text).toContain(logPath());
     expect(report.text).toContain(actionsPath());
-    expect(report.text).toContain('pid: 9999 (vivo)');
+    expect(report.text).toContain('en marcha: sí (proceso 9999)');
     expect(report.text).toContain('hace 3 segundos');
     expect(report.text).toContain('hace 3 horas');
     expect(report.text).toContain('space-bunny-free');
@@ -245,8 +245,8 @@ describe('diagnose', () => {
     expect(report.data.actions.read).toBe(0);
     expect(report.data.log.scanned).toBe(0);
     expect(report.text).toContain('no hay ninguna acción registrada todavía');
-    expect(report.text).toContain('no hay ni un warn ni un error');
-    expect(report.text).toContain('sin acciones en la ventana');
+    expect(report.text).toContain('ningún aviso ni error en ese tiempo');
+    expect(report.text).toContain('sin acciones en ese tiempo');
     expect(report.text).toContain('FICHEROS LEÍDOS');
     expect(report.text).toContain('  ninguno');
   });

@@ -220,12 +220,14 @@ describe('computer · coordenadas', () => {
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     await tool.execute('s', { action: 'screenshot' });
     await expect(tool.execute('c', { action: 'click', x: 1280, y: 10 })).rejects.toThrow(
-      /outside the 1280x720 image/,
+      /fuera de la imagen de 1280x720/,
     );
-    await expect(tool.execute('c', { action: 'click', x: -1, y: 10 })).rejects.toThrow(/outside/);
+    await expect(tool.execute('c', { action: 'click', x: -1, y: 10 })).rejects.toThrow(
+      /quedan fuera/,
+    );
     await expect(
       tool.execute('c', { action: 'click', x: 'a' as unknown as number, y: 10 }),
-    ).rejects.toThrow(/numeric x and y/);
+    ).rejects.toThrow(/x e y numéricas/);
     expect(calls.filter((c) => c.startsWith('click'))).toEqual([]);
   });
 
@@ -235,10 +237,10 @@ describe('computer · coordenadas', () => {
     await tool.execute('s', { action: 'screenshot' });
     const r = await tool.execute('d', { action: 'drag', x: 100, y: 100, toX: 200, toY: 300 });
     expect(calls).toContain('drag:150,150->300,450');
-    expect(textOf(r)).toBe('Dragged 150,150 to 300,450');
+    expect(textOf(r)).toBe('Arrastre de 150,150 a 300,450');
     await expect(
       tool.execute('d', { action: 'drag', x: 100, y: 100, toX: 5000, toY: 1 }),
-    ).rejects.toThrow(/outside/);
+    ).rejects.toThrow(/quedan fuera/);
   });
 
   it('roi: un clic relativo al recorte se traduce a la pantalla completa', async () => {
@@ -258,13 +260,22 @@ describe('computer · coordenadas', () => {
 });
 
 describe('computer · teclado', () => {
+  it('type cuenta un emoji como un carácter, igual que el aviso «Parcial»', async () => {
+    const { backend } = fake();
+    const tool = createComputerTool(makeConfig(), backend, allowAll);
+    const r = await tool.execute('t', { action: 'type', text: 'ok 👍🏽' });
+    // «o», «k», espacio, 👍 y el tono de piel: 5 puntos de código (antes decía 7).
+    expect(textOf(r)).toBe('Escritos 5 caracteres');
+    expect(r.details).toMatchObject({ chars: 5 });
+  });
+
   it('type escribe el texto y cuenta caracteres; vacío es un error', async () => {
     const { backend, calls } = fake();
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     const r = await tool.execute('t', { action: 'type', text: 'hola ñandú' });
     expect(calls).toEqual(['type:hola ñandú']);
     expect(textOf(r)).toBe('Escritos 10 caracteres');
-    await expect(tool.execute('t', { action: 'type', text: '' })).rejects.toThrow(/requires text/);
+    await expect(tool.execute('t', { action: 'type', text: '' })).rejects.toThrow(/necesita texto/);
   });
 
   it('key pulsa el acorde; vacío es un error', async () => {
@@ -273,14 +284,16 @@ describe('computer · teclado', () => {
     const r = await tool.execute('k', { action: 'key', key: 'ctrl+s' });
     expect(calls).toEqual(['key:ctrl+s']);
     expect(textOf(r)).toBe('Pulsada la tecla ctrl+s');
-    await expect(tool.execute('k', { action: 'key', key: '' })).rejects.toThrow(/key name/);
+    await expect(tool.execute('k', { action: 'key', key: '' })).rejects.toThrow(
+      /nombre de una tecla/,
+    );
   });
 
   it('una acción desconocida es un error', async () => {
     const { backend } = fake();
     const tool = createComputerTool(makeConfig(), backend, allowAll);
     await expect(tool.execute('x', { action: 'scroll' as unknown as 'click' })).rejects.toThrow(
-      /unknown action/,
+      /acción desconocida/,
     );
   });
 });

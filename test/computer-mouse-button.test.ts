@@ -79,7 +79,7 @@ describe('computer · validación de botón y clics', () => {
     calls.length = 0;
     await expect(
       tool.execute('a', { action: 'click', x: 1, y: 1, button: 'double' }),
-    ).rejects.toThrow(/left, right or middle/);
+    ).rejects.toThrow(/left, right o middle/);
     await expect(tool.execute('b', { action: 'click', x: 1, y: 1, clicks: 0 })).rejects.toThrow(
       /clicks/,
     );

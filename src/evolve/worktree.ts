@@ -1,6 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  watch,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, posix } from 'node:path';
 
 /**
  * Isolating an attempt, so measuring it cannot disturb what is running.
@@ -23,6 +36,9 @@ export interface Sandbox {
   /** Left on purpose when the attempt was promoted, so the diff is inspectable. */
   kept: boolean;
 }
+
+/** Rutas tal cual (sin comillas ni escapes octales) y sin detección de renombrados. */
+const PLAIN_PATHS = ['-c', 'core.quotePath=false', '-c', 'diff.renames=false'];
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -89,11 +105,10 @@ export function dropSandbox(root: string, sandbox: Sandbox): void {
 
 /** Files an attempt changed, relative to the repo root. Used to refuse forbidden edits. */
 export function changedFiles(root: string, base: string, branch: string): string[] {
-  const out = git(root, ['diff', '--name-only', `${base}...${branch}`]);
-  return out
-    .split('\n')
-    .map((f) => f.trim())
-    .filter(Boolean);
+  // Sin -z git entrecomilla las rutas con tildes ("\"…\\303\\261…\""), y una ruta protegida así
+  // (.github/workflows/ñ.yml) no casaba. Con renombrados detectados solo salía el nombre nuevo.
+  const out = git(root, [...PLAIN_PATHS, 'diff', '--name-only', '-z', `${base}...${branch}`]);
+  return out.split('\0').filter(Boolean);
 }
 
 /** Whether the tree is clean enough to start from. A dirty kernel is not a baseline. */
@@ -133,7 +148,8 @@ export function commitAll(dir: string, message: string): void {
 
 /** The full unified diff of an attempt, for the guard's content rules and for the PR. */
 export function diffText(root: string, base: string, branch: string): string {
-  return execFileSync('git', ['diff', `${base}...${branch}`], {
+  // Un test renombrado fuera de test/ debe verse como borrado (deleted file), no como «rename».
+  return execFileSync('git', [...PLAIN_PATHS, 'diff', '--no-renames', `${base}...${branch}`], {
     cwd: root,
     encoding: 'utf8',
     windowsHide: true,
@@ -151,4 +167,207 @@ export function ignoredFiles(dir: string): string[] {
     .split('\n')
     .map((f) => f.trim())
     .filter((f) => f && !f.startsWith('node_modules/'));
+}
+
+/**
+ * Huella del node_modules propio del sandbox: ruta, tamaño, fechas e inodo de cada entrada.
+ * commitAll y ignoredFiles dejan node_modules fuera a propósito, así que un intento que
+ * cambiara ahí una dependencia (por ejemplo el propio vitest) se mediría con ella sin que el
+ * guard lo viera (salvo la caché de vitest). ctime cambia con cualquier escritura o utimes, así que no se disimula.
+ */
+export function depsFingerprint(dir: string): string {
+  const base = join(dir, 'node_modules');
+  if (!existsSync(base)) return '';
+  const h = createHash('sha256');
+  const walk = (rel: string): void => {
+    const names = readdirSync(join(base, rel)).sort();
+    for (const n of names) {
+      // La caché de vitest (resultados para ordenar tests) cambia con solo pasar los tests.
+      if (!rel && (n === '.vite' || n === '.vitest')) continue;
+      const r = rel ? `${rel}/${n}` : n;
+      const st = lstatSync(join(base, r));
+      const link = st.isSymbolicLink() ? readlinkSync(join(base, r)) : '';
+      h.update(`${r}\0${st.size}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}\0${link}\n`);
+      if (st.isDirectory()) walk(r);
+    }
+  };
+  walk('');
+  return h.digest('hex');
+}
+
+/**
+ * Huella del git del intento, leída del disco sin llamar a git: el fichero `.git` del
+ * worktree (a qué carpeta apunta) y, en esa carpeta privada, HEAD, commondir, gitdir y
+ * config.worktree. Si el proponente apunta su HEAD a la rama del kernel o su `.git` a otro
+ * repo, el commit del intento caería allí sin pasar por el guard.
+ */
+export function sandboxGitFingerprint(dir: string): string {
+  const h = createHash('sha256');
+  const gitFile = join(dir, '.git');
+  if (!existsSync(gitFile) || !lstatSync(gitFile).isFile()) return 'no-gitfile';
+  const text = readFileSync(gitFile, 'utf8');
+  h.update(text);
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(text);
+  if (m?.[1]) {
+    const priv = isAbsolute(m[1]) ? m[1] : join(dir, m[1]);
+    for (const rel of ['HEAD', 'commondir', 'gitdir', 'config.worktree']) {
+      const p = join(priv, rel);
+      h.update(`\0${rel}\0`);
+      if (existsSync(p) && lstatSync(p).isFile()) h.update(readFileSync(p));
+      else h.update('-');
+    }
+  }
+  return h.digest('hex');
+}
+
+/**
+ * Huella de lo que hace ejecutar código a git en el repo del kernel: su config (core.fsmonitor,
+ * core.hooksPath, alias…) y la carpeta de hooks, compartidas por todos los worktrees. Se lee
+ * del disco sin llamar a git, porque un fsmonitor plantado se ejecutaría con el propio
+ * `git status` que lo comprueba.
+ */
+export function gitControlFingerprint(root: string, home: string = homedir()): string {
+  let common = git(root, ['rev-parse', '--git-common-dir']);
+  if (!isAbsolute(common)) common = join(root, common);
+  const h = createHash('sha256');
+  const add = (rel: string): void => {
+    const p = join(common, rel);
+    if (!existsSync(p)) {
+      h.update(`${rel}\0-\n`);
+      return;
+    }
+    if (statSync(p).isDirectory()) {
+      for (const n of readdirSync(p).sort()) add(`${rel}/${n}`);
+      return;
+    }
+    h.update(`${rel}\0`);
+    const body = readFileSync(p);
+    h.update(body);
+    h.update('\n');
+    if (rel === 'config' || rel === 'config.worktree') follow(p, body.toString('utf8'), 0);
+  };
+  // Lo que una config incluye ([include]/[includeIf] path) o nombra (core.excludesFile,
+  // core.attributesFile) se lee igual que la config: un `status.showUntrackedFiles = no` en el
+  // ~/.gitconfig.local que incluye ~/.gitconfig dejaba `git status` en blanco con ficheros
+  // nuevos en el kernel (comprobado con git real, 31 oct).
+  const seen = new Set<string>();
+  const addFile = (p: string, depth: number): void => {
+    if (seen.has(p) || seen.size > 50) return;
+    seen.add(p);
+    h.update(`${p}\0`);
+    let body: Buffer | undefined;
+    try {
+      if (existsSync(p) && statSync(p).isFile()) body = readFileSync(p);
+    } catch {}
+    h.update(body ?? '-');
+    h.update('\n');
+    if (body && depth < 5) follow(p, body.toString('utf8'), depth + 1);
+  };
+  function follow(from: string, text: string, depth: number): void {
+    for (const m of text.matchAll(/^\s*(path|excludesfile|attributesfile)\s*=\s*(.+?)\s*$/gim)) {
+      let v = (m[2] ?? '').replace(/^"(.*)"$/, '$1');
+      if (!v) continue;
+      if (v === '~' || v.startsWith('~/')) v = join(home, v.slice(1));
+      else if (!isAbsolute(v)) v = join(dirname(from), v);
+      addFile(v, depth);
+    }
+  }
+  for (const rel of ['config', 'config.worktree', 'hooks', 'info/attributes']) add(rel);
+  // La config global del usuario también manda en el git del kernel: un core.fsmonitor puesto
+  // ahí hace que `git status` diga «limpio» con ficheros del kernel cambiados, y un
+  // core.attributesFile con «-diff» deja el diff del intento sin contenido.
+  const xdg = process.env.XDG_CONFIG_HOME || join(home, '.config');
+  const globals = [
+    process.env.GIT_CONFIG_GLOBAL,
+    join(home, '.gitconfig'),
+    join(xdg, 'git', 'config'),
+    join(xdg, 'git', 'attributes'),
+    // Los ignores globales por defecto: un «*» ahí también esconde ficheros nuevos del kernel.
+    join(xdg, 'git', 'ignore'),
+  ];
+  for (const p of globals) if (p) addFile(p, 0);
+  return h.digest('hex');
+}
+
+/**
+ * Huella del disco de los ficheros versionados: tamaño, fechas e inodo de cada uno. `git status`
+ * compara contenido, así que un test cambiado durante la medición y devuelto a su texto después
+ * pasa por limpio; su ctime no se puede devolver. Medir (la suite y la sonda) no toca la ctime
+ * de ningún fichero versionado (comprobado en la suite completa, 31 oct).
+ */
+export function treeStatFingerprint(dir: string): string {
+  const h = createHash('sha256');
+  for (const f of git(dir, ['ls-files', '-z']).split('\0')) {
+    if (!f) continue;
+    let line: string;
+    try {
+      const st = lstatSync(join(dir, f));
+      line = `${f}\0${st.size}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}`;
+    } catch {
+      line = `${f}\0-`;
+    }
+    h.update(`${line}\n`);
+  }
+  return h.digest('hex');
+}
+
+/**
+ * Huella de las carpetas con ficheros versionados (sin la raíz): fechas e inodo. Un fichero
+ * nuevo creado antes de que vitest recoja los tests y borrado antes de la revisión final (un
+ * test/x.test.ts que pasa) no deja rastro en git status ni en los ficheros versionados, pero
+ * sí en la fecha de su carpeta. Medir no cambia ninguna de estas carpetas (suite completa y
+ * sonda, 31 oct). La raíz sí cambia (un test crea y borra allí una carpeta temporal): la
+ * vigila watchRoot.
+ */
+export function treeDirFingerprint(dir: string): string {
+  const dirs = new Set<string>();
+  for (const f of git(dir, ['ls-files', '-z']).split('\0')) {
+    if (!f) continue;
+    for (let d = posix.dirname(f); d !== '.' && !dirs.has(d); d = posix.dirname(d)) dirs.add(d);
+  }
+  const h = createHash('sha256');
+  for (const d of [...dirs].sort()) {
+    let line: string;
+    try {
+      const st = lstatSync(join(dir, d));
+      line = `${d}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.ino}`;
+    } catch {
+      line = `${d}\0-`;
+    }
+    h.update(`${line}\n`);
+  }
+  return h.digest('hex');
+}
+
+/** Lo único que una medición normal crea y borra en la raíz (test/context-limits.test.ts). */
+const ROOT_TEMP = [/^\.tmp-read-cap-/];
+
+/**
+ * Vigila la raíz de la copia mientras se mide. Un vitest.workspace.ts o un .env creados al
+ * empezar y borrados al acabar cambian qué se mide sin dejar huella en git. Devuelve una
+ * función que para la vigilancia y dice qué nombres aparecieron o cambiaron (fuera de los
+ * temporales conocidos); si no se pudo vigilar, lo dice también, porque no se sabe.
+ */
+export function watchRoot(dir: string): () => Promise<string[]> {
+  const seen = new Set<string>();
+  let failed = '';
+  let w: ReturnType<typeof watch> | undefined;
+  try {
+    w = watch(dir, { persistent: false }, (_ev, name) => {
+      if (name) seen.add(String(name));
+      else failed = '(cambio sin nombre)';
+    });
+    w.on('error', () => {
+      failed = '(no se pudo vigilar la raíz)';
+    });
+  } catch {
+    failed = '(no se pudo vigilar la raíz)';
+  }
+  return async () => {
+    // Los avisos del sistema llegan en la siguiente vuelta del bucle de eventos.
+    await new Promise((r) => setTimeout(r, 200));
+    w?.close();
+    const bad = [...seen].filter((n) => !ROOT_TEMP.some((re) => re.test(n))).sort();
+    return failed ? [...bad, failed] : bad;
+  };
 }

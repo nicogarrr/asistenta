@@ -107,9 +107,7 @@ export async function backupCommand(args: string[]): Promise<number> {
     const { assertNotRunning } = await import('./lifecycle.js');
     assertNotRunning(paths.state, 'agent');
   } catch {
-    process.stderr.write(
-      'Asistenta está en marcha: para el daemon (pa stop) antes de restaurar.\n',
-    );
+    process.stderr.write('Asistenta está en marcha. Párala con «pa stop» y vuelve a probar.\n');
     return 1;
   }
   try {

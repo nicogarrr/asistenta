@@ -43,6 +43,17 @@ export interface Skill {
   /** Epoch milliseconds. */
   updatedAt: number;
   trust: SkillTrust;
+  /** Desactivada por el dueño («quita la de X»): no entra en el índice ni se sigue. */
+  disabled?: boolean;
+  /**
+   * Actúa hacia fuera o gasta (enviar, reservar, comprar, encender cosas). Solo
+   * informa: los permisos los decide permissions.ts, nunca la skill.
+   */
+  outward?: boolean;
+  /** Lo que tiene que estar configurado (correo, calendario, navegador…). */
+  needs?: string[];
+  /** Herramienta de la fábrica que usa (fab_<id>); tiene que estar instalada. */
+  tool?: string;
 }
 
 /**
@@ -56,4 +67,8 @@ export interface SkillDraft {
   whenToUse: string;
   steps: string[];
   notes?: string[];
+  /** Por defecto true en lo creado desde el chat: ante la duda, pide permiso. */
+  outward?: boolean;
+  needs?: string[];
+  tool?: string;
 }

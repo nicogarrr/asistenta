@@ -32,6 +32,12 @@ export interface UsageInput {
   /** Tokens de entrada servidos desde cache; se facturan a precio de entrada. */
   cacheReadTokens?: number;
   kind: UsageKind;
+  /**
+   * PA_PRICE_* describen PA_MODEL. Otro modelo (el de /modelo, el de respaldo o
+   * uno de PA_MODELS) se cobra con los precios de su ficha en el catálogo.
+   * Sin indicar: solo se aplican si `model` es PA_MODEL (o va vacío).
+   */
+  priceOverrides?: boolean;
 }
 
 /** Una linea del JSONL. `day` es la fecha local que decide el fichero. */
@@ -142,7 +148,15 @@ export function recordUsage(input: UsageInput): UsageRecord {
 
   let rawEur = 0;
   try {
-    rawEur = rawCost({ inputTokens, outputTokens, cacheReadTokens }, resolveModelCaps({ model }));
+    const envOverrides =
+      typeof input?.priceOverrides === 'boolean'
+        ? input.priceOverrides
+        : // Sin PA_MODEL configurado, PA_PRICE_* sigue valiendo para todo (como antes).
+          !model || !process.env.PA_MODEL?.trim() || model === process.env.PA_MODEL.trim();
+    rawEur = rawCost(
+      { inputTokens, outputTokens, cacheReadTokens },
+      resolveModelCaps({ model }, { envOverrides }),
+    );
   } catch {
     // Un catalogo roto no puede impedir registrar los tokens.
     rawEur = 0;
@@ -266,7 +280,14 @@ export function usageToday(): UsageTotals {
 }
 
 /**
- * Consumo acumulado de una sesion. Mira todos los `usage-*.jsonl`: una
+ * Días de uso (ficheros `usage-*.jsonl`, los más recientes) que mira
+ * usageForSession. Antes leía TODOS en cada llamada: con meses de historial
+ * eran cientos de ficheros enteros para una sola sesión.
+ */
+export const SESSION_USAGE_DAYS = 7;
+
+/**
+ * Consumo acumulado de una sesion. Mira los últimos días con uso: una
  * conversacion puede cruzar la medianoche y su coste no debe resetearse.
  */
 export function usageForSession(id: string): UsageTotals {
@@ -275,6 +296,7 @@ export function usageForSession(id: string): UsageTotals {
     const files = readdirSync(paths.log)
       .filter((name) => USAGE_FILE.test(name))
       .sort()
+      .slice(-SESSION_USAGE_DAYS)
       .map((name) => join(paths.log, name));
     const records = files.flatMap((file) => readRecords(file)).filter((r) => r.sessionId === id);
     return aggregate(records);

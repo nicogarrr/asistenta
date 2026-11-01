@@ -7,7 +7,7 @@
  * so no token and no network are involved: the resolution logic is what is under
  * test, not Telegram.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type ApprovalChoice,
   cacheFullReply,
@@ -155,11 +155,33 @@ vi.mock('grammy', () => ({
 }));
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   harness.sent.length = 0;
   harness.edits.length = 0;
   harness.answers.length = 0;
   harness.markups.length = 0;
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/**
+ * El canal espacia las llamadas a Telegram ~1,1 s con setTimeout. Con reloj real este
+ * fichero dormía ~12 s y bajo carga se pasaba de tiempo. Aquí el reloj es falso y se
+ * avanza a pasos de 100 ms solo hasta que la promesa termina, sin saltar a
+ * temporizadores lejanos (como la caducidad de una aprobación).
+ */
+async function drive<T>(p: Promise<T>): Promise<T> {
+  let settled = false;
+  const done = p.finally(() => {
+    settled = true;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  for (let step = 0; !settled && step < 300; step++) await vi.advanceTimersByTimeAsync(100);
+  if (!settled) throw new Error('drive: no terminó tras 30 s de reloj falso');
+  return done;
+}
 
 let nextMessageId = 500;
 
@@ -177,24 +199,30 @@ async function press(data: string, chatId = 42, userId = 7): Promise<number> {
   const handler = harness.handlers.get('callback_query:data');
   if (!handler) throw new Error('the adapter did not register a callback handler');
   const messageId = nextMessageId++;
-  await handler({
-    callbackQuery: { data, message: { chat: { id: chatId }, message_id: messageId } },
-    from: { id: userId },
-    answerCallbackQuery: async (args?: { text?: string }) => {
-      harness.answers.push(args?.text ?? '');
-      return true;
-    },
-  });
+  await drive(
+    Promise.resolve(
+      handler({
+        callbackQuery: { data, message: { chat: { id: chatId }, message_id: messageId } },
+        from: { id: userId },
+        answerCallbackQuery: async (args?: { text?: string }) => {
+          harness.answers.push(args?.text ?? '');
+          return true;
+        },
+      }),
+    ),
+  );
   return messageId;
 }
 
 async function stateOf(pending: Promise<ApprovalChoice>): Promise<'settled' | 'pending'> {
-  return Promise.race([
-    pending.then(() => 'settled' as const),
-    new Promise<'pending'>((resolve) => {
-      setTimeout(() => resolve('pending'), 50);
-    }),
-  ]);
+  return drive(
+    Promise.race([
+      pending.then(() => 'settled' as const),
+      new Promise<'pending'>((resolve) => {
+        setTimeout(() => resolve('pending'), 50);
+      }),
+    ]),
+  );
 }
 
 const FULL = 'Primera parte.\n\n## Detalle\n\n**Punto clave** con todo el texto que no cabía.';
@@ -206,13 +234,15 @@ describe('botón «📖 Ver todo»', () => {
     const button = moreButton('hilo-a', '42');
     expect(button.label).toBe(MORE_BUTTON_LABEL);
     expect(Buffer.byteLength(button.action)).toBeLessThanOrEqual(64);
-    await channel.send({
-      channel: 'telegram',
-      account: channel.account,
-      chatId: '42',
-      text: 'Primera parte…',
-      buttons: [button],
-    });
+    await drive(
+      channel.send({
+        channel: 'telegram',
+        account: channel.account,
+        chatId: '42',
+        text: 'Primera parte…',
+        buttons: [button],
+      }),
+    );
     expect(harness.sent[0]?.keyboard.flat().map((b) => b.text)).toEqual([MORE_BUTTON_LABEL]);
 
     const pressedOn = await press(button.action);
@@ -278,20 +308,21 @@ describe('«📖 Ver todo» retirado y el texto completo en el mismo hilo', () =
     const channel = await makeChannel();
     cacheFullReply('hilo-mas', FULL);
     const button = moreButton('hilo-mas', '42');
-    await channel.send({
-      channel: 'telegram',
-      account: 'main',
-      chatId: '42',
-      text: 'Recorte…',
-      buttons: [button],
-    });
+    await drive(
+      channel.send({
+        channel: 'telegram',
+        account: 'main',
+        chatId: '42',
+        text: 'Recorte…',
+        buttons: [button],
+      }),
+    );
     const trimmedId = harness.sent.length;
     expect(harness.markups).toEqual([]);
     expect(takeFullReply('hilo-mas')).toBe(FULL);
-    await vi.waitFor(
-      () => expect(harness.markups).toEqual([{ chatId: 42, messageId: trimmedId, rows: 0 }]),
-      { timeout: 4000 },
-    );
+    // La retirada del botón pasa por el mismo espaciado de ~1,1 s.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(harness.markups).toEqual([{ chatId: 42, messageId: trimmedId, rows: 0 }]);
     // Y la ficha ya no vale: pulsarlo avisa y no envía nada.
     const before = harness.sent.length;
     await press(button.action);
@@ -302,34 +333,37 @@ describe('«📖 Ver todo» retirado y el texto completo en el mismo hilo', () =
     const channel = await makeChannel();
     cacheFullReply('hilo-nuevo', FULL);
     const old = moreButton('hilo-nuevo', '42');
-    await channel.send({
-      channel: 'telegram',
-      account: 'main',
-      chatId: '42',
-      text: 'Recorte 1',
-      buttons: [old],
-    });
+    await drive(
+      channel.send({
+        channel: 'telegram',
+        account: 'main',
+        chatId: '42',
+        text: 'Recorte 1',
+        buttons: [old],
+      }),
+    );
     const oldId = harness.sent.length;
     cacheFullReply('hilo-nuevo', `${FULL} (otra)`);
-    await vi.waitFor(
-      () => expect(harness.markups).toEqual([{ chatId: 42, messageId: oldId, rows: 0 }]),
-      { timeout: 4000 },
-    );
+    // La retirada del botón pasa por el mismo espaciado de ~1,1 s.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(harness.markups).toEqual([{ chatId: 42, messageId: oldId, rows: 0 }]);
   });
 
   it('el botón de otro hilo no se toca', async () => {
     const channel = await makeChannel();
     cacheFullReply('hilo-x', FULL);
-    await channel.send({
-      channel: 'telegram',
-      account: 'main',
-      chatId: '42',
-      text: 'X',
-      buttons: [moreButton('hilo-x', '42')],
-    });
+    await drive(
+      channel.send({
+        channel: 'telegram',
+        account: 'main',
+        chatId: '42',
+        text: 'X',
+        buttons: [moreButton('hilo-x', '42')],
+      }),
+    );
     cacheFullReply('hilo-y', FULL);
     takeFullReply('hilo-y');
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(harness.markups).toEqual([]);
   });
 
@@ -365,7 +399,21 @@ describe('«📖 Ver todo» retirado y el texto completo en el mismo hilo', () =
     });
     await onMessage(msg(fullId));
     await onMessage(msg(12345));
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(inbound.map((m) => m.replyToMessageId)).toEqual([String(trimmedId), '12345']);
+  });
+});
+
+describe('ritmo de envío sin esperas reales', () => {
+  it('tres envíos y una pulsación no duermen de verdad el espaciado de 1,1 s', async () => {
+    const channel = await makeChannel();
+    const t0 = performance.now();
+    for (const text of ['uno', 'dos', 'tres']) {
+      await drive(channel.send({ channel: 'telegram', account: 'main', chatId: '42', text }));
+    }
+    cacheFullReply('hilo-ritmo', FULL);
+    await press(moreButton('hilo-ritmo', '42').action);
+    expect(harness.sent).toHaveLength(4);
+    expect(performance.now() - t0).toBeLessThan(1_000);
   });
 });

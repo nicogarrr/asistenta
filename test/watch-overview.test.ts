@@ -8,13 +8,11 @@ import {
   formatOverview,
   forScope,
   fromPageWatches,
-  fromPriceConfig,
   fromRoutines,
   fromTriggers,
 } from '../src/watch/overview.js';
 import { collectWatches, vigilanciasCommand } from '../src/watch/overview-cli.js';
 import { PageWatchStore } from '../src/watch/pages.js';
-import { parseConfig } from '../src/watch/pricewatch.js';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
 const dirs: string[] = [];
@@ -43,6 +41,7 @@ describe('vista única de vigilancias: lectores puros', () => {
       dropPct: null,
       lastAlertAt: 0,
       lastAlertCents: null,
+      mutedUntil: 0,
     };
     const e = fromPageWatches([
       {
@@ -111,16 +110,6 @@ describe('vista única de vigilancias: lectores puros', () => {
     expect(t?.detail).toBe('si contiene «factura»');
   });
 
-  it('pricewatch.json: un producto por entrada; null = nada', () => {
-    expect(fromPriceConfig(null)).toEqual([]);
-    const cfg = parseConfig({
-      enabled: false,
-      products: [{ name: 'ps5', urls: { amazon: 'B0CL5KNB9M' } }],
-    });
-    const [p] = fromPriceConfig(cfg);
-    expect(p).toMatchObject({ kind: 'tiendas', label: 'ps5', target: 'amazon', enabled: false });
-  });
-
   it('forScope deja las del chat y las globales', () => {
     const mk = (scope: string) => ({
       kind: 'rutina' as const,
@@ -136,7 +125,7 @@ describe('vista única de vigilancias: lectores puros', () => {
 });
 
 describe('pa vigilancias: lee las bases reales sin modificar nada', () => {
-  it('junta páginas (memory.db), rutinas (agent.db) y pricewatch.json', async () => {
+  it('junta páginas (memory.db) y rutinas (agent.db); un pricewatch.json viejo se ignora', async () => {
     const dir = tmp();
     const mem = new DatabaseSync(join(dir, 'memory.db'));
     new PageWatchStore(mem).add('tg:1', 'https://tienda.es/tv', 'Tele salón');
@@ -144,12 +133,12 @@ describe('pa vigilancias: lee las bases reales sin modificar nada', () => {
     const agentDb = join(dir, 'agent.db');
     const store = new Store(agentDb);
     store.close();
-    const priceConfig = join(dir, 'pricewatch.json');
+    // El vigilante de precios automático se quitó: su fichero, si quedó, no se lista.
     writeFileSync(
-      priceConfig,
+      join(dir, 'pricewatch.json'),
       JSON.stringify({ products: [{ name: 'ps5', urls: { amazon: 'B0CL5KNB9M' } }] }),
     );
-    const src = { stateDir: dir, agentDb, priceConfig };
+    const src = { stateDir: dir, agentDb };
     const { entries, errors } = collectWatches(src);
     expect(errors).toEqual([]);
     expect(
@@ -157,7 +146,7 @@ describe('pa vigilancias: lee las bases reales sin modificar nada', () => {
         .filter((e) => e.kind !== 'ojo')
         .map((e) => e.kind)
         .sort(),
-    ).toEqual(['pagina', 'tiendas']);
+    ).toEqual(['pagina']);
     let out = '';
     expect(
       await vigilanciasCommand([], src, (s) => {
@@ -165,40 +154,33 @@ describe('pa vigilancias: lee las bases reales sin modificar nada', () => {
       }),
     ).toBe(0);
     expect(out).toContain('Tele salón');
-    expect(out).toContain('ps5');
+    expect(out).not.toContain('ps5');
   });
 
-  it('un pricewatch.json roto se informa y el resto sigue', async () => {
+  it('un pricewatch.json roto que quedó de antes no da error', async () => {
     const dir = tmp();
-    const priceConfig = join(dir, 'pricewatch.json');
-    writeFileSync(priceConfig, '{roto');
-    const src = { stateDir: dir, agentDb: join(dir, 'no-existe.db'), priceConfig };
-    const { entries, errors } = collectWatches(src);
-    expect(entries).toEqual([]);
-    expect(errors[0]).toMatch(/^pricewatch\.json:/);
+    writeFileSync(join(dir, 'pricewatch.json'), '{roto');
+    const src = { stateDir: dir, agentDb: join(dir, 'no-existe.db') };
+    expect(collectWatches(src)).toEqual({ entries: [], errors: [] });
     let out = '';
     expect(
       await vigilanciasCommand(['--json'], src, (s) => {
         out += s;
       }),
-    ).toBe(1);
-    expect(JSON.parse(out).errors.length).toBe(1);
+    ).toBe(0);
+    expect(JSON.parse(out).errors.length).toBe(0);
   });
 
   it('sin estado no crea ficheros nuevos', () => {
     const dir = tmp();
-    const src = { stateDir: dir, agentDb: join(dir, 'agent.db'), priceConfig: join(dir, 'p.json') };
+    const src = { stateDir: dir, agentDb: join(dir, 'agent.db') };
     expect(collectWatches(src)).toEqual({ entries: [], errors: [] });
     expect(readdirSync(dir)).toEqual([]);
   });
 
   it('argumento desconocido → uso y código 2', async () => {
-    expect(
-      await vigilanciasCommand(
-        ['--xyz'],
-        { stateDir: tmp(), agentDb: 'x', priceConfig: 'y' },
-        () => {},
-      ),
-    ).toBe(2);
+    expect(await vigilanciasCommand(['--xyz'], { stateDir: tmp(), agentDb: 'x' }, () => {})).toBe(
+      2,
+    );
   });
 });

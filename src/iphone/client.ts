@@ -7,6 +7,8 @@
  * el servidor lleva su propio planificador/actor (ver deploy/iphone/).
  */
 
+import { log } from '../log.js';
+
 export interface IphoneStatus {
   /** La ESP32 esta conectada al servidor (puerto 7300). */
   device: boolean;
@@ -72,8 +74,10 @@ export class IphoneClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
+      // El fallo crudo («fetch failed», «ECONNREFUSED») solo al registro: el modelo lo repetía.
+      log.warn('iphone: sin conexión con el servidor', { err: String(err) });
       throw new IphoneError(
-        `No llego al servidor del iPhone (${this.base}): ${err instanceof Error ? err.message : String(err)}. ` +
+        `No llego al servidor del iPhone (${this.base}). ` +
           'Comprueba que esta arrancado y en la misma red que el telefono.',
       );
     }

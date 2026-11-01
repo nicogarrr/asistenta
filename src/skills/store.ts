@@ -36,6 +36,8 @@ import { foldAccents } from '../text.js';
 import type { Skill, SkillDraft, SkillTrust } from './types.js';
 
 export const SKILL_FILENAME = 'SKILL.md';
+/** Papelera de skills borradas: empieza por punto, así list() nunca la toma por un id. */
+export const TRASH_DIR = '.papelera';
 
 /** Slug-shaped ids only: they double as directory names, so no separators, no dots. */
 const SKILL_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -169,7 +171,29 @@ export function parseSkillMarkdown(id: string, markdown: string): Skill {
     createdAt,
     updatedAt,
     trust: toTrust(meta.get('trust')),
+    ...optionalMeta(meta),
   };
+}
+
+function toList(value: string | undefined): string[] {
+  return (value ?? '')
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map((item) => oneLine(item).toLowerCase())
+    .filter(Boolean);
+}
+
+/** Claves propias opcionales: un lector agentskills estándar las ignora. */
+function optionalMeta(meta: Map<string, string>): Partial<Skill> {
+  const out: Partial<Skill> = {};
+  if (meta.get('disabled') === 'true') out.disabled = true;
+  const outward = meta.get('outward');
+  if (outward === 'true' || outward === 'false') out.outward = outward === 'true';
+  const needs = toList(meta.get('needs'));
+  if (needs.length > 0) out.needs = needs;
+  const tool = oneLine(meta.get('tool') ?? '');
+  if (tool) out.tool = tool;
+  return out;
 }
 
 export function serializeSkillMarkdown(skill: Skill): string {
@@ -183,11 +207,13 @@ export function serializeSkillMarkdown(skill: Skill): string {
     `version: ${skill.version}`,
     `created_at: ${quoteYaml(new Date(skill.createdAt).toISOString())}`,
     `updated_at: ${quoteYaml(new Date(skill.updatedAt).toISOString())}`,
-    '---',
-    '',
-    '## Steps',
-    '',
   ];
+  if (skill.disabled) out.push('disabled: true');
+  if (skill.outward !== undefined) out.push(`outward: ${skill.outward}`);
+  if (skill.needs && skill.needs.length > 0)
+    out.push(`needs: ${quoteYaml(skill.needs.join(', '))}`);
+  if (skill.tool) out.push(`tool: ${quoteYaml(skill.tool)}`);
+  out.push('---', '', '## Steps', '');
   for (const step of skill.steps) out.push(`- ${oneLine(step)}`);
   if (skill.notes.length > 0) {
     out.push('', '## Notes', '');
@@ -230,7 +256,7 @@ export function buildChangeNote(
   const shown = markers.slice(0, MAX_NOTE_MARKERS);
   const hidden = markers.length - shown.length;
   const diff = shown.length > 0 ? ` ${shown.join(' ')}` : '';
-  const more = hidden > 0 ? ` ... y ${hidden} cambios mas` : '';
+  const more = hidden > 0 ? ` ... y ${hidden} ${hidden === 1 ? 'cambio más' : 'cambios más'}` : '';
   return `(${date}, v${version}) ${reason}${diff}${more}`;
 }
 
@@ -303,8 +329,42 @@ export class SkillStore {
       updatedAt: now,
       trust: existing?.trust ?? 'community',
     };
+    // Re-guardar no reactiva una skill que el dueño desactivó.
+    if (existing?.disabled) skill.disabled = true;
+    const outward = draft.outward ?? existing?.outward;
+    if (outward !== undefined) skill.outward = outward;
+    const needs = (draft.needs ?? existing?.needs ?? [])
+      .map((need) => oneLine(need).toLowerCase())
+      .filter(Boolean);
+    if (needs.length > 0) skill.needs = [...new Set(needs)];
+    const tool = oneLine(draft.tool ?? existing?.tool ?? '');
+    if (tool) skill.tool = tool;
     this.#write(skill);
     return id;
+  }
+
+  /** «quita la de X»: reversible, el fichero se queda. Devuelve false si no existe. */
+  setDisabled(id: string, disabled: boolean): boolean {
+    const skill = this.read(id);
+    if (!skill) return false;
+    if (Boolean(skill.disabled) === disabled) return true;
+    if (disabled) skill.disabled = true;
+    else delete skill.disabled;
+    skill.updatedAt = Date.now();
+    this.#write(skill);
+    return true;
+  }
+
+  /**
+   * Borrar es mover a `.papelera/<id>-<fecha>` dentro del directorio de skills:
+   * recuperable a mano y fuera de list() (los nombres con punto no son ids).
+   */
+  remove(id: string): boolean {
+    if (!isSkillId(id) || !existsSync(this.fileFor(id))) return false;
+    const bin = join(this.dir, TRASH_DIR);
+    mkdirSync(bin, { recursive: true });
+    renameSync(join(this.dir, id), join(bin, `${id}-${Date.now()}`));
+    return true;
   }
 
   /**

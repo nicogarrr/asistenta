@@ -205,8 +205,10 @@ export function parseRenfeResults(text: string): RenfeTrain[] {
   }
   hits.forEach((hit, i) => {
     const chunk = body.slice(hit.end, hits[i + 1]?.index ?? body.length);
-    const price = /Precio desde\s*\n?\s*(\d{1,3}(?:\.\d{3})*,\d{2}) €/.exec(chunk);
-    hit.train.precioDesde = price ? `${price[1]} €` : null;
+    // Espacio duro/fino antes de «€» (lo que da `&nbsp;`), precio entero («59 €») o miles sin
+    // punto («1299,00 €») también son un precio; antes salía «sin precio visible».
+    const price = /Precio desde\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{2}))?\s?€/.exec(chunk);
+    hit.train.precioDesde = price ? `${price[1]}${price[2] ? `,${price[2]}` : ''} €` : null;
   });
   return hits.map((h) => h.train);
 }
@@ -251,6 +253,25 @@ const RenfeParams = Type.Object({
 
 class StepError extends Error {}
 
+/**
+ * Un fallo de la web (Playwright) en palabras que el dueño entiende. El texto
+ * crudo («page.goto: net::ERR_INTERNET_DISCONNECTED at https://…», «Timeout
+ * 20000ms exceeded») va solo al log: el modelo repite este mensaje en el chat.
+ */
+export function renfeFailureText(raw: string): string {
+  if (
+    /ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_NETWORK|ERR_CONNECTION|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET/.test(
+      raw,
+    )
+  ) {
+    return 'no hay conexión a internet o la web de Renfe no responde; prueba otra vez en un rato';
+  }
+  if (/timeout|timed out/i.test(raw)) {
+    return 'la web de Renfe tardó demasiado en responder; prueba otra vez en un rato';
+  }
+  return 'la web de Renfe ha fallado o ha cambiado; prueba otra vez en un rato o mírala en renfe.com';
+}
+
 /** Cómo se abre el navegador; inyectable para probar el recorrido con una página falsa. */
 export interface RenfeDeps {
   launch?: () => Promise<Browser>;
@@ -292,10 +313,11 @@ export async function searchRenfe(
     // al modelo (y a Nico) le basta con el paso y el remedio.
     const msg = err instanceof Error ? err.message : String(err);
     const missing = /Executable doesn't exist|playwright install/i.test(msg);
+    if (!missing) log.warn('renfe: el navegador no arranca', { err: msg.slice(0, 300) });
     throw new StepError(
       missing
         ? 'paso navegador: no hay Chromium instalado para Playwright (ejecuta `npx playwright install chromium`)'
-        : `paso navegador: no se pudo abrir el navegador (${msg.split('\n')[0]?.slice(0, 160)})`,
+        : 'paso navegador: no se pudo abrir el navegador del PC; prueba otra vez en un rato',
     );
   }
   try {
@@ -554,7 +576,9 @@ export function createRenfeTool(deps: RenfeDeps = {}): AgentTool<typeof RenfePar
         return { content: [{ type: 'text', text }], details: { trains, total } };
       } catch (err) {
         if (err instanceof StepError) throw err;
-        throw new Error(`Renfe falló: ${err instanceof Error ? err.message : String(err)}`);
+        const raw = err instanceof Error ? err.message : String(err);
+        log.warn('renfe: la búsqueda falló', { err: raw.slice(0, 300) });
+        throw new Error(`Renfe falló: ${renfeFailureText(raw)}`);
       }
     },
   };

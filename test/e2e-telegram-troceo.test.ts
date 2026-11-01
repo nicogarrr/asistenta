@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * E2E del troceo de Telegram: una respuesta larga del agente (con negritas, enlaces,
@@ -104,8 +104,16 @@ const paragraph = (i: number) =>
 const longAnswer = (n: number) =>
   Array.from({ length: n }, (_, i) => paragraph(i + 1)).join('\n\n');
 
-const send = (text: string, extra: Record<string, unknown> = {}) =>
-  channel().send({
+/** Tiempo real (no lo tocan los relojes falsos) que tardó el último send. */
+let lastSendWallMs = 0;
+
+// El canal espacia los mensajes ~1,1 s (límite de Telegram). Con relojes reales cada caso
+// dormía de verdad 3–4 s y el fichero entero ~24 s: bajo carga, con muchas lanes a la vez,
+// era de los que se pasaban de tiempo. Lo que se prueba aquí es el troceo, no el ritmo:
+// los temporizadores van con reloj falso y se avanzan hasta vaciar la cola.
+const send = async (text: string, extra: Record<string, unknown> = {}) => {
+  const t0 = performance.now();
+  const p = channel().send({
     channel: 'telegram',
     account: 'a',
     chatId: '7',
@@ -113,10 +121,19 @@ const send = (text: string, extra: Record<string, unknown> = {}) =>
     format: 'marks',
     ...extra,
   });
+  await vi.runAllTimersAsync();
+  await p;
+  lastSendWallMs = performance.now() - t0;
+};
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   state.sent.length = 0;
   state.htmlErrors.length = 0;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('e2e troceo de respuestas largas en Telegram', () => {
@@ -124,6 +141,8 @@ describe('e2e troceo de respuestas largas en Telegram', () => {
     const answer = longAnswer(40);
     await send(answer);
     expect(state.sent.length).toBeGreaterThan(1);
+    // Sin esperas reales entre trozos (antes ~1,1 s por trozo).
+    expect(lastSendWallMs).toBeLessThan(1000);
     for (const m of state.sent) {
       expect(m.parseMode).toBe('HTML');
       expect(Array.from(visible(m.text)).length).toBeLessThanOrEqual(LIMIT);
@@ -177,15 +196,15 @@ describe('e2e troceo de respuestas largas en Telegram', () => {
     }
   });
 
-  it('los botones (aprobar/denegar) van solo en el primer trozo', async () => {
+  it('los botones (aprobar/denegar) van solo en el último trozo', async () => {
     await send(longAnswer(40), {
       buttons: [
         { label: 'Sí', action: 'approve:1' },
         { label: 'No', action: 'deny:1' },
       ],
     });
-    expect(state.sent[0]?.markup).toBeDefined();
-    for (const m of state.sent.slice(1)) expect(m.markup).toBeUndefined();
+    expect(state.sent.at(-1)?.markup).toBeDefined();
+    for (const m of state.sent.slice(0, -1)) expect(m.markup).toBeUndefined();
   });
 
   it('si Telegram rechaza el HTML de un trozo, ESE trozo sale en texto plano y los demás en HTML', async () => {

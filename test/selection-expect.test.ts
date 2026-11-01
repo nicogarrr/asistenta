@@ -1,8 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { BrowserService, textIncludes } from '../src/browser/service.js';
 import { createBrowserTool } from '../src/tools/browser.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // SYNTHETIC store picker: clicking a button sets "Tienda activa" to that store.
 const PAGE = `<!doctype html><html><body><p id="act">Tienda activa: ninguna</p>
@@ -10,7 +11,7 @@ const PAGE = `<!doctype html><html><body><p id="act">Tienda activa: ninguna</p>
 <div><b>TIENDA SUR</b> <button id="s2" onclick="act.textContent='Tienda activa: SUR, Ciudad B'">ELEGIR</button></div>
 </body></html>`;
 
-describe('declared selection expectation is enforced in code (SYNTHETIC)', () => {
+describeBrowser('declared selection expectation is enforced in code (SYNTHETIC)', () => {
   let server: Server;
   let svc: BrowserService;
   let url = '';

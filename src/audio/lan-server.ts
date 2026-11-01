@@ -3,6 +3,7 @@ import { createReadStream, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { log } from '../log.js';
 
 /**
  * Un servidor HTTP de UN solo fichero para que la tele pueda descargar un audio.
@@ -90,19 +91,43 @@ export interface ServeOptions {
 
 const DEFAULT_TTL_MS = 10 * 60_000;
 
+/**
+ * Borra el audio temporal sin lanzar: en Windows puede fallar (EBUSY/EPERM si algo
+ * lo tiene abierto) y close() corre dentro de un temporizador del daemon.
+ */
+function removeQuietly(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch (err) {
+    log.warn('altavoz: no he podido borrar el audio temporal', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Un único rango `bytes=a-b` (lo que piden los reproductores de la tele). Lo que no
+ * entendemos (varios rangos, otra unidad, un rango mal escrito o al revés como
+ * `bytes=5-3`) se ignora y se sirve el fichero entero con 200, como manda el
+ * RFC 9110 §14.2; 416 solo para un rango bien escrito que no cabe.
+ */
 function parseRange(header: string | undefined, size: number): [number, number] | null | 'bad' {
   if (!header) return null;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!m) return 'bad';
+  const h = header.trim();
+  if (!/^bytes=/i.test(h) || h.includes(',')) return null;
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(h);
+  if (!m) return null;
+  if (m[1] === '' && m[2] === '') return null;
   let start: number;
   let end: number;
-  if (m[1] === '' && m[2] === '') return 'bad';
   if (m[1] === '') {
     const n = Number(m[2]);
+    if (n === 0) return 'bad';
     start = Math.max(0, size - n);
     end = size - 1;
   } else {
     start = Number(m[1]);
+    if (m[2] !== '' && Number(m[2]) < start) return null;
     end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
   }
   if (start > end || start >= size) return 'bad';
@@ -162,7 +187,14 @@ export function serveFileToHost(opts: ServeOptions): Promise<ServedFile> {
       res.end();
       return;
     }
-    createReadStream(opts.file, { start, end }).pipe(res);
+    // Un fallo leyendo (fichero borrado o bloqueado tras el stat) corta solo esta
+    // descarga: sin este listener sería una excepción no capturada en el daemon.
+    const stream = createReadStream(opts.file, { start, end });
+    stream.on('error', (err) => {
+      log.warn('altavoz: no he podido leer el audio servido a la tele', { error: err.message });
+      res.destroy();
+    });
+    stream.pipe(res);
   };
 
   const server = createServer(handler);
@@ -173,16 +205,27 @@ export function serveFileToHost(opts: ServeOptions): Promise<ServedFile> {
       clearTimeout(timer);
       server.close(() => resolveClosed());
       server.closeAllConnections?.();
-      if (opts.deleteOnClose !== false) rmSync(opts.file, { force: true });
+      if (opts.deleteOnClose !== false) removeQuietly(opts.file);
     };
     const timer = setTimeout(close, opts.ttlMs ?? DEFAULT_TTL_MS);
     timer.unref?.();
-    server.once('error', (err) => {
+    let listening = false;
+    server.on('error', (err) => {
+      if (listening) {
+        // Tras abrir, un error del servidor lo cierra del todo (y borra el audio):
+        // antes solo se paraba el temporizador y el puerto quedaba abierto para siempre.
+        log.warn('altavoz: el servidor del audio para la tele ha fallado; lo cierro', {
+          error: err.message,
+        });
+        close();
+        return;
+      }
       clearTimeout(timer);
-      if (opts.deleteOnClose !== false) rmSync(opts.file, { force: true });
+      if (opts.deleteOnClose !== false) removeQuietly(opts.file);
       reject(err);
     });
     server.listen(opts.port ?? 0, opts.bindIp, () => {
+      listening = true;
       const { port } = server.address() as AddressInfo;
       resolve({
         url: `http://${opts.bindIp}:${port}${route}`,

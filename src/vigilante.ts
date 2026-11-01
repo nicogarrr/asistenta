@@ -38,6 +38,12 @@ import { zonedAddDays, zonedDayKey, zonedDayStart } from './agenda/ics.js';
 import type { AgendaItem, AgendaKind, UnifiedAgenda } from './agenda/unified.js';
 import { localTimeZone } from './datecontext.js';
 import { log } from './log.js';
+import {
+  ingestDeliveries,
+  markDeliveriesNotified,
+  pendingDeliveryAlerts,
+} from './mail/deliveries.js';
+import { formatDeliveryAlert } from './mail/deliveries-text.js';
 import type { MailMessage } from './mail/types.js';
 import {
   type Conflict,
@@ -69,6 +75,7 @@ import {
   pendingDownloads,
 } from './ojo-downloads.js';
 import {
+  burnNotices,
   confirmNotices,
   dropStaleReservations,
   initIgnoreStore,
@@ -460,6 +467,8 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
           'vigilante: correos de cargos',
         );
         ingestCharges(deps.db, msgs, now());
+        // Repartos: los mismos correos leídos, sin otra lectura del buzón.
+        ingestDeliveries(deps.db, msgs, now());
       } catch (err) {
         log.warn('vigilante: cargos no disponibles en este barrido', { err: String(err) });
       }
@@ -572,6 +581,8 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
 
     // Cargos raros pendientes: no críticos, esperan al fin del silencio sin marcarse.
     const chargeAlerts = quiet ? [] : pendingChargeAlerts(deps.db, nowMs);
+    // Repartos: un aviso por cambio real (en reparto, entregado, incidencia).
+    const deliveryAlerts = quiet ? [] : pendingDeliveryAlerts(deps.db, nowMs);
     // Descargas nuevas (solo si /ojo descargas on): tampoco críticas, esperan al silencio.
     if (deps.screenScan && !quiet && !deps.shouldAbort?.() && getScreenEnabled(deps.db)) {
       await withTimeout(
@@ -594,6 +605,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       remindersToSend.length === 0 &&
       conflicts.length === 0 &&
       chargeAlerts.length === 0 &&
+      deliveryAlerts.length === 0 &&
       downloads.length === 0 &&
       screenItems.length === 0 &&
       lostInfo.lost === 0
@@ -631,6 +643,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
     if (chargeAlerts.length > 0) parts.push(formatChargeAlerts(chargeAlerts, timeZone));
+    if (deliveryAlerts.length > 0) parts.push(deliveryAlerts.map(formatDeliveryAlert).join('\n'));
     if (downloads.length > 0 || lostInfo.lost > 0) {
       parts.push(formatDownloads(downloads, lostInfo.lost));
     }
@@ -643,23 +656,28 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
       parts.push(agenda.notes.map((note) => note.replace(/\s+/g, ' ').slice(0, 600)).join('\n'));
 
     let sent = false;
+    let unknown = false;
     try {
-      // Vencido el plazo cuenta como no enviado: los números se sueltan y el
-      // aviso se reintenta en el próximo barrido. Si el envío lento llegara a
-      // entregarse, el peor caso es un aviso repetido, nunca uno perdido ni un
-      // daemon que no cierra.
+      // Vencido el plazo cuenta como no enviado: el aviso se reintenta en el próximo
+      // barrido. Si el envío lento llegara a entregarse, el peor caso es un aviso
+      // repetido, nunca uno perdido ni un daemon que no cierra.
       sent = await withTimeout(
         deps.send(parts.join('\n\n')),
         Math.max(1, deps.sendTimeoutMs ?? SEND_TIMEOUT_MS),
         'vigilante: envío del aviso',
       );
     } catch (err) {
+      unknown = true;
       log.warn('vigilante: envío fallido, se reintenta en el próximo barrido', {
         err: String(err),
       });
     }
     if (!sent) {
-      releaseNotices(deps.db, reserved);
+      // Solo un «no enviado» explícito suelta los números para reutilizarlos. Si el
+      // resultado es desconocido (plazo vencido o error) se queman: un aviso entregado
+      // tarde con sus [#N] no debe acabar nombrando otro aviso en /ignora N.
+      if (unknown) burnNotices(deps.db, reserved);
+      else releaseNotices(deps.db, reserved);
       return { seen: findings.length, fresh: toSend.length, notified: 0 };
     }
 
@@ -700,6 +718,7 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
         }
       }
       confirmNotices(deps.db, reserved);
+      markDeliveriesNotified(deps.db, deliveryAlerts);
       markChargesNotified(
         deps.db,
         chargeAlerts.map((a) => a.msgId),

@@ -8,6 +8,7 @@
  */
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
+import { localDay } from '../datecontext.js';
 
 export const MCP_SERVER_NAME = 'asistenta';
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -26,6 +27,17 @@ export interface ReadOnlyMcpDeps {
   goals: () => Array<{ title: string; status: string; cadence: string | null }>;
   /** Filtro de secretos (scrubLogText). */
   scrub: (text: string) => string;
+  /**
+   * Agenda de hoy del chat del dueño: seguimientos y rutinas programadas
+   * (sin calendario remoto). Opcional: sin ella, `agenda_hoy` lo dice.
+   */
+  agenda?: () => {
+    followups: Array<{ subject: string; dueAt: number }>;
+    routines: Array<{ name: string; enabled: boolean; next: number | null }>;
+  };
+  now?: () => number;
+  /** Zona horaria de Nico (PA_TIMEZONE). */
+  timeZone?: string;
   version?: string;
 }
 
@@ -56,6 +68,71 @@ function readQuery(args: Record<string, unknown>): { q: string; limit: number } 
 
 class McpToolError extends Error {}
 
+function dayKey(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(at));
+}
+
+function clock(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('es-ES', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(at));
+}
+
+function shortDate(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('es-ES', {
+    day: '2-digit',
+    month: '2-digit',
+    ...(timeZone ? { timeZone } : {}),
+  }).format(new Date(at));
+}
+
+/** Seguimientos de hoy (y los vencidos sin cerrar) y rutinas que tocan hoy. */
+export function agendaTodayText(deps: ReadOnlyMcpDeps): string {
+  if (!deps.agenda) throw new McpToolError('La agenda no está disponible en este servidor.');
+  const now = (deps.now ?? Date.now)();
+  const tz = deps.timeZone;
+  const today = dayKey(now, tz);
+  const { followups, routines } = deps.agenda();
+  const lines: string[] = [];
+  const due = followups
+    .filter((f) => Number.isFinite(f.dueAt) && f.dueAt > 0 && dayKey(f.dueAt, tz) <= today)
+    .sort((a, b) => a.dueAt - b.dueAt)
+    .slice(0, 50);
+  for (const f of due) {
+    const when =
+      dayKey(f.dueAt, tz) < today ? `vencido ${shortDate(f.dueAt, tz)}` : clock(f.dueAt, tz);
+    lines.push(`- ${when} seguimiento: ${f.subject}`);
+  }
+  const runs = routines
+    .filter(
+      (r) =>
+        r.enabled &&
+        r.next !== null &&
+        Number.isFinite(r.next) &&
+        r.next >= now &&
+        dayKey(r.next, tz) === today,
+    )
+    .sort((a, b) => (a.next ?? 0) - (b.next ?? 0))
+    .slice(0, 50);
+  for (const r of runs) lines.push(`- ${clock(r.next ?? 0, tz)} rutina: ${r.name}`);
+  const title = new Intl.DateTimeFormat('es-ES', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    ...(tz ? { timeZone: tz } : {}),
+  }).format(new Date(now));
+  if (!lines.length) return `Hoy, ${title}: nada pendiente (ni seguimientos ni rutinas).`;
+  return [`Hoy, ${title}:`, ...lines].join('\n');
+}
+
 /** Las únicas tools que existen. Todas leen; ninguna escribe. */
 export const READ_ONLY_TOOLS: readonly ToolDef[] = [
   {
@@ -78,12 +155,7 @@ export const READ_ONLY_TOOLS: readonly ToolDef[] = [
       const { q, limit } = readQuery(args);
       const hits = deps.sessionSearch(q, limit);
       return hits.length
-        ? hits
-            .map(
-              (h) =>
-                `- ${new Date(h.at).toISOString().slice(0, 10)} ${h.title}: ${h.summary || h.snippet}`,
-            )
-            .join('\n')
+        ? hits.map((h) => `- ${localDay(h.at)} ${h.title}: ${h.summary || h.snippet}`).join('\n')
         : 'Ninguna sesión casa con esa búsqueda.';
     },
   },
@@ -99,6 +171,13 @@ export const READ_ONLY_TOOLS: readonly ToolDef[] = [
             .join('\n')
         : 'No hay objetivos.';
     },
+  },
+  {
+    name: 'agenda_hoy',
+    description:
+      'Agenda de hoy del dueño: seguimientos pendientes (y vencidos) y rutinas que tocan hoy. Sin calendario remoto. Solo lectura.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: (deps) => agendaTodayText(deps),
   },
 ];
 
@@ -141,7 +220,8 @@ export function handleMcpMessage(deps: ReadOnlyMcpDeps, raw: unknown): object | 
         protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: MCP_SERVER_NAME, version: deps.version ?? '0' },
-        instructions: 'Asistenta en solo lectura: memoria, sesiones y objetivos del dueño.',
+        instructions:
+          'Asistenta en solo lectura: memoria, sesiones, objetivos y agenda de hoy del dueño.',
       });
     }
     case 'ping':

@@ -1,9 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { formatApproval } from '../src/approval-text.js';
 import { BrowserService } from '../src/browser/service.js';
 import { CONTEXT_MARK, createBrowserTool } from '../src/tools/browser.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
 // SYNTHETIC store list. Two identical buttons; only the card around each says which store it is.
 const PAGE = `<!doctype html><html><body>
@@ -11,7 +12,7 @@ const PAGE = `<!doctype html><html><body>
 <div class="card"><b>TIENDA SUR (#2)</b><p>Calle Dos 9, Ciudad B</p><button id="s2">ELEGIR TIENDA</button></div>
 </body></html>`;
 
-describe('gate sees the card a selection button belongs to', () => {
+describeBrowser('gate sees the card a selection button belongs to', () => {
   let server: Server;
   let svc: BrowserService;
   beforeAll(async () => {

@@ -1,15 +1,17 @@
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
+  readlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
-import { uniqueTmpPath } from './fs-tmp.js';
+import { basename, dirname } from 'node:path';
+import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
+import { formatStartRecord, ownIdentity, sameProcessAsRecorded } from './process-identity.js';
 
 /**
  * Daemon lifecycle for Windows.
@@ -47,6 +49,11 @@ function pidPath(stateDir: string, name: string): string {
   return `${stateDir}/${name}.pid`;
 }
 
+/** «<pid> <start identity>» written next to the pid file (see process-identity.ts). */
+function startPath(stateDir: string, name: string): string {
+  return `${stateDir}/${name}.pid.start`;
+}
+
 /**
  * Refuse to start if another live process owns this state dir. A second instance
  * racing a first one on the same channel credentials is the documented way to end
@@ -57,16 +64,31 @@ function pidPath(stateDir: string, name: string): string {
  * with a dead pid means the previous run died uncleanly; it is reported, cleaned,
  * and only then may boot proceed.
  */
-export function assertNotRunning(stateDir: string, name: string): void {
+export function assertNotRunning(
+  stateDir: string,
+  name: string,
+  opts: {
+    imageOf?: (pid: number) => string | null;
+    identityOf?: (pid: number) => string | null;
+  } = {},
+): void {
   const pidFile = pidPath(stateDir, name);
-  if (!existsSync(pidFile)) return;
+  const startFile = startPath(stateDir, name);
+  if (!existsSync(pidFile)) {
+    try {
+      unlinkSync(startFile);
+    } catch {}
+    return;
+  }
   const raw = readFileSync(pidFile, 'utf8').trim();
   const pid = Number(raw);
   if (!Number.isInteger(pid) || pid <= 0) {
     log.warn('pid file is unreadable; removing it', { raw: raw.slice(0, 32) });
-    try {
-      unlinkSync(pidFile);
-    } catch {}
+    for (const f of [pidFile, startFile]) {
+      try {
+        unlinkSync(f);
+      } catch {}
+    }
     return;
   }
   // In a container the daemon is always PID 1, so the pid file left in the volume by
@@ -74,7 +96,7 @@ export function assertNotRunning(stateDir: string, name: string): void {
   // not written our own file yet), so it is a leftover: reclaim it.
   if (pid === process.pid) {
     log.warn('pid file names this very process (container restart); reclaiming it', { pid });
-    for (const f of [stalePath(stateDir, name), pidFile]) {
+    for (const f of [stalePath(stateDir, name), pidFile, startFile]) {
       try {
         unlinkSync(f);
       } catch {}
@@ -82,7 +104,30 @@ export function assertNotRunning(stateDir: string, name: string): void {
     return;
   }
   if (processAlive(pid)) {
-    throw new Error(`another ${name} is already running (pid ${pid}); stop it first`);
+    // A pid file left by a crash or a hard exit can name a pid the OS has since
+    // handed to an unrelated program (Windows reuses pids quickly). Only a pid
+    // whose executable is known NOT to be node is treated as stale; an unknown
+    // image keeps refusing. The foreign process is never signalled.
+    const image = (opts.imageOf ?? processImageName)(pid);
+    if (image === null || isNodeImage(image)) {
+      // Another node program (or one we cannot name) may hold the reused pid.
+      // The start identity recorded at boot tells them apart: only a live
+      // process that provably started at another moment is a stranger.
+      const same = sameProcessAsRecorded(startFile, pid, opts.identityOf);
+      if (same !== 'different') {
+        throw new Error(
+          `Asistenta ya está en marcha (proceso ${pid}): no hace falta abrirla otra vez. Para reiniciarla, párala antes con pa stop.`,
+        );
+      }
+      log.warn('pid file names a process that started at another time (pid reused); ignoring it', {
+        pid,
+      });
+    } else {
+      log.warn('pid file names a process that is not Asistenta (pid reused); ignoring it', {
+        pid,
+        image: image.slice(0, 64),
+      });
+    }
   }
   if (existsSync(stalePath(stateDir, name))) {
     log.warn('previous instance died without clean shutdown', { pid });
@@ -92,9 +137,55 @@ export function assertNotRunning(stateDir: string, name: string): void {
   } else {
     log.warn('removing pid file from a dead process', { pid });
   }
+  for (const f of [pidFile, startFile]) {
+    try {
+      unlinkSync(f);
+    } catch {}
+  }
+}
+
+/** True for the node executable that runs Asistenta (node, node.exe, this execPath). */
+export function isNodeImage(image: string): boolean {
+  const b = basename(image.trim()).toLowerCase();
+  if (b === '') return false;
+  const own = basename(process.execPath).toLowerCase();
+  return b === own || /^node(\d+)?(\.exe)?$/.test(b);
+}
+
+/** First field of `tasklist /FO CSV /NH` output («"chrome.exe","1234",…»), or null. */
+export function parseTasklistImage(out: string, pid: number): string | null {
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
+    if (m && Number(m[2]) === pid) return m[1] ?? null;
+  }
+  return null;
+}
+
+/**
+ * Executable name of a live pid, or null when it cannot be told (then the
+ * caller stays conservative and refuses to start). Read-only: never signals.
+ */
+export function processImageName(pid: number): string | null {
   try {
-    unlinkSync(pidFile);
-  } catch {}
+    if (process.platform === 'linux') {
+      return basename(readlinkSync(`/proc/${pid}/exe`));
+    }
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        timeout: 3000,
+        windowsHide: true,
+      });
+      return parseTasklistImage(out, pid);
+    }
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      encoding: 'utf8',
+      timeout: 3000,
+    }).trim();
+    return out === '' ? null : basename(out);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -128,6 +219,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
 
   const pidFile = pidPath(stateDir, deps.name);
   const stale = stalePath(stateDir, deps.name);
+  const startFile = startPath(stateDir, deps.name);
   const beatFile = `${stateDir}/${deps.name}.heartbeat`;
 
   let closing = false;
@@ -137,11 +229,44 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
     resolveDone = r;
   });
 
+  // Claim the pid file FIRST, before any handler is installed: the loser of
+  // the race must leave nothing behind - no signal or crash handler whose
+  // stop() would later write a .stale marker over the winner's and delete the
+  // winner's pid file (which reopens the door to a third instance).
+  // Exclusive create: two daemons racing through assertNotRunning together must not
+  // both proceed. Whoever loses gets EEXIST instead of a second live instance.
+  try {
+    writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    log.warn('pid file claimed by another instance (lost the start race)', {
+      pidFile,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new Error(
+      'Asistenta ya se está abriendo en otra ventana: no hace falta abrirla otra vez.',
+    );
+  }
+  // Record who we are next to the pid, so a later start (or the watchdog) can
+  // tell this process from another one that inherits the pid after a crash.
+  // Best effort: without it the old, cautious behaviour applies.
+  const identity = ownIdentity();
+  if (identity !== null) {
+    try {
+      writeFileSync(startFile, formatStartRecord(process.pid, identity), 'utf8');
+    } catch {}
+  }
+  // Only ever remove the pid file while it still names this process.
+  const releasePidFile = (): void => {
+    try {
+      if (readFileSync(pidFile, 'utf8').trim() !== String(process.pid)) return;
+      unlinkSync(pidFile);
+      unlinkSync(startFile);
+    } catch {}
+  };
+
   const writeAtomic = (file: string, contents: string): void => {
-    const tmp = uniqueTmpPath(file);
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(tmp, contents, 'utf8');
-    renameSync(tmp, file); // atomic on NTFS
+    writeFileReplacing(file, contents); // atomic on NTFS; no .tmp left if the rename fails
   };
 
   const heartbeat = async (): Promise<void> => {
@@ -178,9 +303,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
             unlinkSync(stale);
           } catch {}
         }
-        try {
-          unlinkSync(pidFile);
-        } catch {}
+        releasePidFile();
         clearInterval(timer);
         outcome = code === 0 ? 'clean' : 'failed';
         process.exitCode = code;
@@ -221,15 +344,6 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
     log.error('unhandled rejection', { err: reason });
   });
 
-  // Exclusive create: two daemons racing through assertNotRunning together must not
-  // both proceed. Whoever loses gets EEXIST instead of a second live instance.
-  try {
-    writeFileSync(pidFile, String(process.pid), { encoding: 'utf8', flag: 'wx' });
-  } catch (err) {
-    throw new Error(
-      `could not claim ${pidFile} (another instance won the race): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
   const timer = setInterval(() => void heartbeat(), 15_000);
   timer.unref();
   void heartbeat();

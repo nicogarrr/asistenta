@@ -40,6 +40,7 @@
  * reads is never folded; only the copy the patterns run against.
  */
 
+import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { localTimeZone } from '../datecontext.js';
 import type { MailMessage } from '../mail/types.js';
 import { zonedAddDays, zonedDayKey, zonedParts, zonedTime } from './ics.js';
@@ -348,6 +349,41 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 88, 'dd/mm'),
   },
   {
+    // «el 3-12»: en España el día y el mes también se escriben con guion. Solo detrás de
+    // «el»/«del»: un «3-12» suelto es un rango («niños de 3-12 años») y «el 10-12 por ciento»
+    // no es una fecha.
+    re: /\b(?:el|del|hasta el|para el) (\d{1,2})-(\d{1,2})\b(?!-?\d| por ciento)/,
+    specificity: 87,
+    rule: 'dd-mm',
+    build: (m, ctx) => slashHit(m, ctx, 87, 'dd-mm'),
+  },
+  {
+    // «el lunes 9»: el día de la semana con su número es ese día, no el lunes más cercano
+    // (antes la cita del lunes 9 caía el lunes 2, una semana antes). Solo si el próximo
+    // día 9 cae en lunes; si no cuadra, decide la regla del día de la semana. «el lunes
+    // 10:00» o «el lunes 9 de la mañana» son horas, no días.
+    re: /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo),? (?:dia )?(\d{1,2})\b(?![:.,]\d| ?(?:h|hrs?|horas?|am|pm)\b| ?(?:de|del) [a-z]| (?:a|al|hasta|y)\s+\d)/,
+    specificity: 86,
+    rule: 'dia de semana y numero',
+    build: (m, ctx) => {
+      const hit = nextDayOfMonth(Number(m[2]), ctx, m);
+      if (!hit) return undefined;
+      const local = ymd(hit.at, ctx.timeZone);
+      const weekday = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
+      if (weekday !== WEEKDAYS[m[1] ?? '']) return undefined;
+      return { ...hit, specificity: 86, rule: 'dia de semana y numero' };
+    },
+  },
+  {
+    // "el día 5" with no month: the next 5th - this month if it has not gone by, else
+    // the next month that has that day. With a month after it, 'dia de mes' reads it;
+    // "el día 5 de cada mes" is a routine, not a date.
+    re: /\b(?:el )?dia (\d{1,2})\b(?![:./h]\d| ?(?:de|del) [a-z])/,
+    specificity: 70,
+    rule: 'dia sin mes',
+    build: (m, ctx) => nextDayOfMonth(Number(m[1]), ctx, m),
+  },
+  {
     // A weekday, with or without "el" / "next". "Next Monday" said on a Monday is a
     // week away, which is what the word means; a bare "el lunes" said on a Monday is
     // today, which is what that means.
@@ -425,6 +461,22 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => relativeHit(m, ctx, 7, 'la semana que viene', 45),
   },
 ];
+
+/** The next calendar day numbered `day` from today (today included), in the user's zone. */
+function nextDayOfMonth(day: number, ctx: Context, match: RegExpExecArray): DateHit | undefined {
+  if (!Number.isInteger(day) || day < 1 || day > 31) return undefined;
+  const today = ymd(ctx.now, ctx.timeZone);
+  for (let k = 0; k < 13; k++) {
+    const month0 = today.month - 1 + k;
+    const year = today.year + Math.floor(month0 / 12);
+    const month = (month0 % 12) + 1;
+    if (day > daysInMonth(year, month) || (k === 0 && day < today.day)) continue;
+    const at = zonedTime({ year, month, day, hour: NOMINAL_HOUR }, ctx.timeZone);
+    if (Number.isNaN(at)) return undefined;
+    return { at, specificity: 70, index: match.index, rule: 'dia sin mes' };
+  }
+  return undefined;
+}
 
 function calendarHit(
   year: number | undefined,
@@ -734,17 +786,26 @@ function summarize(message: MailMessage, kind: CommitmentKind): string {
  * letter, a digit nor a date separator goes too, so one pattern covers both languages.
  */
 function fold(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      // «el 10-12%» es un porcentaje: borrar el «%» lo dejaba como «el 10-12», el 10 de
+      // diciembre. En palabras, la regla de fechas ya sabe que «por ciento» no es fecha.
+      .replace(/\s*%/g, ' por ciento ')
+      .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
-const SPOKEN_TIME_RE =
-  /\b(a las|a la|sobre las|hacia las|desde las) (\d{1,2})(?:[:.](\d{2})(?!\d)| y (media|cuarto)| menos (cuarto))?(?: ?(?:h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?/g;
+// «y diez», «y veinte», «menos veinte», «y treinta y cinco», «y 15» (gaps8): before,
+// only media/cuarto were read and «a las 9 y diez» was 9:00.
+const SPOKEN_TIME_RE = new RegExp(
+  `\\b(a las|a la|sobre las|hacia las|desde las) (\\d{1,2})(?:[:.](\\d{2})(?!\\d)| y (${MINUTES_AFTER})(?![\\d:.])| menos (${MINUTES_BEFORE})(?![\\d:.]))?(?: ?(?:h|hs|hrs|horas)\\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia))?`,
+  'g',
+);
 
 /**
  * Spoken Spanish clocks, rewritten as "a las HH:MM" before anything else reads the text.
@@ -756,6 +817,9 @@ const SPOKEN_TIME_RE =
  * "medianoche" was no time at all. Only clocks introduced by "a las" (or a qualifier)
  * are touched, so "12.50 €" is never a time.
  */
+const SLOT_RE =
+  /\b(?:de|desde|entre) (?:las )?(\d{1,2})(?:[:.](\d{2}))? (?:a|y|hasta) (?:las )?(\d{1,2})(?:[:.](\d{2}))?(?: ?(h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia)\b)?(?! ?(?:personas|plazas|asistentes|invitados|participantes|alumnos|ninos|adultos|euros|eur|dolares|dias|semanas|meses|anos|minutos|min|segundos|kg|km|metros|m2|unidades|anos|por ?ciento|%|\.\d|[:/.,-]?\d))/g;
+
 function spokenTimes(folded: string): string {
   // "esta tarde a las 5" is today at 17:00. Without this the sentence had no date at
   // all ("esta tarde" is not a day word) and the meeting never reached the agenda.
@@ -763,20 +827,46 @@ function spokenTimes(folded: string): string {
     /\besta (manana|tarde|noche),? (a las|a la) (\d{1,2}(?:[:.]\d{2})?)\b/g,
     (_w, part: string, lead: string, clock: string) => `hoy ${lead} ${clock} de la ${part}`,
   );
-  const out = today.replace(
+  // "de 10 a 12", "de 16 a 18 h", "entre las 10 y las 12": a slot whose start is
+  // the time of the meeting. Without this the date stayed untimed (and "de 10" next to
+  // a month could be read as a year). Counted things are not hours: "de 10 a 12
+  // personas" is left alone.
+  const ranges = today.replace(
+    SLOT_RE,
+    (
+      whole,
+      h1: string,
+      m1: string | undefined,
+      h2: string,
+      m2: string | undefined,
+      mark: string | undefined,
+      part: string | undefined,
+    ) => {
+      const start = Number(h1);
+      const end = Number(h2);
+      if (start > 23 || end > 24 || (end <= start && !part)) return whole;
+      const minute = m1 ? `:${m1}` : '';
+      const hasMark = mark || m2 ? ' h' : '';
+      return `a las ${h1}${minute}${minute ? '' : hasMark}${part ? ` ${part}` : ''} hasta ${h2}`;
+    },
+  );
+  const out = ranges.replace(
     SPOKEN_TIME_RE,
     (whole, lead: string, h: string, mm?: string, half?: string, less?: string, part?: string) => {
       let hour = Number(h);
       let minute = mm !== undefined ? Number(mm) : 0;
-      if (half === 'media') minute = 30;
-      else if (half === 'cuarto') minute = 15;
+      if (half) minute = minuteSaid(half);
       else if (less) {
+        const before = minuteSaid(less);
+        if (!(before >= 1 && before <= 30)) return whole;
         hour -= 1;
-        minute = 45;
+        minute = 60 - before;
       }
-      if (hour < 0 || hour > 23 || minute > 59) return whole;
+      if (hour < 0 || hour > 23 || !(minute >= 0 && minute <= 59)) return whole;
       const explicit = mm !== undefined || /h|hs|hrs|horas/.test(whole.slice(lead.length));
-      if (part === 'de la manana' || part === 'de la madrugada') {
+      if (part === 'de la manana') {
+        // «a las 12 de la mañana» es mediodía en España, no medianoche.
+      } else if (part === 'de la madrugada') {
         if (hour === 12) hour = 0;
       } else if (part === 'de la tarde' || part === 'del mediodia') {
         if (hour >= 1 && hour < 12) hour += 12;
@@ -809,8 +899,41 @@ function withoutTimeOfDay(folded: string): string {
     // mañana te mandé la factura" put a commitment on the next day. With a clock after
     // it, spokenTimes() has already turned it into "hoy a las ...".
     /\b(?:(?:por|en|a|de|esta) la (?:manana|tarde|noche|morning|afternoon|evening)|esta (?:manana|tarde|noche))\b/g,
-    ' ',
+    (phrase: string) => {
+      // "por la tarde" is still not a date, but next to one it says when that day:
+      // leave a marker no date or kind pattern reads (see partOfDayHour()).
+      const part = /^(?:por|en|a|de) la (manana|tarde|noche)$/.exec(phrase)?.[1];
+      return part ? ` ${PART_OF_DAY_MARK}${part} ` : ' ';
+    },
   );
+}
+
+const PART_OF_DAY_MARK = 'pdxfranja';
+const PART_OF_DAY_RE = new RegExp(`\\b${PART_OF_DAY_MARK}(manana|tarde|noche)\\b`, 'g');
+/**
+ * Nominal hours for "el sábado por la tarde": still `timed: false` (no clock was given),
+ * but a reminder for Saturday afternoon must not fire at 09:00 on Saturday morning.
+ */
+const PART_OF_DAY_HOUR: Record<string, number> = { manana: NOMINAL_HOUR, tarde: 16, noche: 21 };
+/** "el sábado por la tarde" / "por la tarde del sábado": a few words, not a paragraph. */
+const PART_OF_DAY_NEAR = 30;
+
+function partOfDayHour(date: DateHit, folded: string): number | undefined {
+  let best: number | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const m of folded.matchAll(PART_OF_DAY_RE)) {
+    const distance = Math.abs((m.index ?? 0) - date.index);
+    if (distance > PART_OF_DAY_NEAR || distance >= bestDistance) continue;
+    best = PART_OF_DAY_HOUR[m[1] ?? ''];
+    bestDistance = distance;
+  }
+  return best;
+}
+
+function nominalAt(date: DateHit, folded: string, timeZone: string): number {
+  const hour = partOfDayHour(date, folded);
+  if (hour === undefined || hour === NOMINAL_HOUR) return date.at;
+  return zonedTime({ ...ymd(date.at, timeZone), hour, minute: 0 }, timeZone);
 }
 
 /**
@@ -854,7 +977,7 @@ export function extractCommitments(
           },
           timeZone,
         )
-      : date.at;
+      : nominalAt(date, folded, timeZone);
 
     // Filter 2: the past is not pending. An untimed date is compared as a DAY, because
     // "hoy" written at 14:00 is still today even though the 09:00 anchor is behind us.

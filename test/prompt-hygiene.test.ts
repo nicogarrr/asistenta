@@ -14,7 +14,7 @@ describe('system prompt hygiene', () => {
   it('states the voice-note rule once and the honesty-on-failure rule once', () => {
     expect(SYSTEM_PROMPT.match(/already transcribed/g)?.length).toBe(1);
     expect(SYSTEM_PROMPT).not.toContain('Report outcomes honestly.');
-    expect(SYSTEM_PROMPT).toContain('with what blocked it and the error');
+    expect(SYSTEM_PROMPT).toContain('with what blocked it in plain words');
     expect(SYSTEM_PROMPT).toContain('which part and why');
     expect(SYSTEM_PROMPT).toContain('transcription prefix');
   });
@@ -26,8 +26,8 @@ describe('system prompt hygiene', () => {
     expect(SYSTEM_PROMPT).toContain('Never claim an action happened unless you verified it');
   });
 
-  it('does not grow past its current size (about 2.3k tokens at 4 chars per token; raised from 8_700 for the delivery-order and current-facts rules)', () => {
-    expect(SYSTEM_PROMPT.length).toBeLessThan(9_500);
+  it('does not grow past its current size (about 2.3k tokens at 4 chars per token; raised from 8_700 for the delivery-order and current-facts rules, and from 9_500 for the no-placeholders rule)', () => {
+    expect(SYSTEM_PROMPT.length).toBeLessThan(9_700);
   });
 
   it('server mode keeps every rule after the first line and swaps only the opening', () => {

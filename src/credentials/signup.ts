@@ -1,0 +1,169 @@
+import { normalizeDomain, siteKey } from '../gestor/login.js';
+import {
+  type Account,
+  AvisoCuenta,
+  deleteAccount,
+  listAccounts,
+  maskUser,
+  metaKey,
+  type PasswordRules,
+  realVault,
+  saveAccount,
+  type VaultOps,
+} from './store.js';
+
+/**
+ * «Créame una cuenta en X», en cuatro pasos que el modelo no puede saltarse:
+ * 1. preparar: genera la contraseña y la deja en el vault como cuenta «pendiente»
+ *    (el navegador la escribe con `secret_key`, el valor nunca pasa por el modelo).
+ * 2. el modelo rellena el formulario con el nombre y correo del dueño (de .env, nunca inventados).
+ * 3. confirmar: la Gate lo pregunta SIEMPRE con «Voy a crear tu cuenta en X con tu correo n…@…»
+ *    antes de pulsar el botón; sin ese sí, la cuenta no se crea.
+ * 4. guardar cuando la web confirme el alta, o descartar si no sale (borra la pendiente).
+ * Captchas, códigos por SMS o correo y planes de pago no se resuelven aquí: son del dueño.
+ */
+
+export interface OwnerIdentity {
+  name: string;
+  email: string;
+}
+
+/** Nombre y correo del dueño: PA_OWNER_NAME / PA_OWNER_EMAIL, o el correo de envío del vault. */
+export async function ownerIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+  vault: VaultOps = realVault,
+): Promise<OwnerIdentity | null> {
+  const name = env.PA_OWNER_NAME?.trim() ?? '';
+  const email = env.PA_OWNER_EMAIL?.trim() || (await vault.get('mailSend:address'))?.trim() || '';
+  if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return { name, email };
+}
+
+export const MISSING_IDENTITY =
+  'Me faltan tu nombre y tu correo para registrarte: ponlos en .env (PA_OWNER_NAME y PA_OWNER_EMAIL) y vuelve a pedírmelo.';
+
+async function rawMeta(domain: string, vault: VaultOps): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse((await vault.get(metaKey(domain))) ?? '{}') as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/** El alta a medias de esa web; con `byName`, el nombre a secas vale si solo encaja una. */
+export async function pendingOf(
+  site: string,
+  vault: VaultOps,
+  byName = false,
+): Promise<Account | null> {
+  const domain = normalizeDomain(site);
+  if (!domain) return null;
+  const pending = (await listAccounts(vault)).filter((a) => a.status === 'pendiente');
+  const exact = pending.find((a) => a.domain === domain);
+  if (exact || !byName || domain.includes('.')) return exact ?? null;
+  // «descarta lo de wallapop»: el nombre a secas vale si solo encaja un registro a medias.
+  const hits = pending.filter((a) => a.domain.split('.').includes(domain));
+  if (hits.length > 1)
+    throw new AvisoCuenta(
+      `Tienes varios registros a medias con ese nombre (${hits.map((a) => a.domain).join(', ')}): dime cuál.`,
+    );
+  return hits[0] ?? null;
+}
+
+export async function prepareSignup(
+  site: string,
+  owner: OwnerIdentity,
+  rules: PasswordRules = {},
+  vault: VaultOps = realVault,
+): Promise<Account> {
+  const domain = normalizeDomain(site);
+  if (!domain)
+    throw new AvisoCuenta('No reconozco esa web: dime el dominio, por ejemplo wallapop.es.');
+  // «wallapop» a secas no es una web: la contraseña quedaría con una clave que el navegador
+  // nunca rellena en wallapop.es. Mejor preguntar el dominio exacto.
+  if (!domain.includes('.'))
+    throw new AvisoCuenta(
+      `¿En qué web exactamente? Dime el dominio completo, por ejemplo ${domain}.es o ${domain}.com.`,
+    );
+  const existing = (await listAccounts(vault)).find((a) => a.domain === domain);
+  if (existing?.status === 'activa') {
+    throw new AvisoCuenta(
+      `Ya tienes cuenta en ${domain} (${maskUser(existing.username)}); no creo otra.`,
+    );
+  }
+  // Repetir «preparar» (p. ej. tras recargar la página) no cambia la contraseña: si no, la que ya
+  // se escribió en el formulario y la del gestor dejarían de coincidir y la cuenta quedaría sin
+  // acceso. Solo con reglas nuevas (la web rechazó la contraseña) se genera otra.
+  const sameRules = Object.values(rules).every((v) => v === undefined);
+  if (existing?.status === 'pendiente') {
+    const sameMail = existing.username.trim().toLowerCase() === owner.email.trim().toLowerCase();
+    // Ya aprobado: puede que la web ya tenga la cuenta con esa contraseña. Cambiarla (u otro
+    // correo) la dejaría sin acceso; solo se rehace tras descartar, que pregunta al dueño.
+    const approved = typeof (await rawMeta(domain, vault)).approvedAt === 'number';
+    if (approved && (!sameMail || !sameRules))
+      throw new AvisoCuenta(
+        `El alta en ${domain} ya la aprobaste y puede que la web ya tenga la cuenta, así que no cambio su contraseña. Pregúntale al dueño: si la web la creó, llama a guardar; si no, descártala primero y vuelve a prepararla.`,
+      );
+    if (!sameMail)
+      throw new AvisoCuenta(
+        `Ya hay un alta a medias en ${domain} con otro correo (${maskUser(existing.username)}); no la piso. Si quieres usar este correo, descarta antes esa.`,
+      );
+    if (sameRules && (await vault.get(siteKey(domain, 'password')))) return existing;
+  }
+  return saveAccount({ site: domain, username: owner.email, rules, status: 'pendiente' }, vault);
+}
+
+/** El sí del dueño (ya dado por la Gate): solo vale para la pendiente y el correo exactos que vio. */
+export async function approveSignup(
+  site: string,
+  correo: string,
+  vault: VaultOps = realVault,
+  shown?: string,
+): Promise<Account> {
+  let p = await pendingOf(site, vault);
+  if (!p) {
+    // El sí vale solo para la web exacta; con el nombre a secas se dice cuál es, sin aprobar nada.
+    // Excepción: la pregunta de la Gate ya le enseñó al dueño esa web exacta (`shown`) y el
+    // nombre sigue llevando a ella sola; entonces ese sí es para esa web y no hace falta otro.
+    const named = await pendingOf(site, vault, true);
+    if (!named) throw new AvisoCuenta('No hay ningún registro preparado para esa web.');
+    if (!shown || named.domain !== shown)
+      throw new AvisoCuenta(
+        `Para confirmar necesito la web exacta: vuelve a llamar con sitio=${named.domain}.`,
+      );
+    p = named;
+  }
+  // El correo no distingue mayúsculas en la práctica: «Nico@Gmail.com» es el mismo buzón.
+  if (p.username.trim().toLowerCase() !== correo.trim().toLowerCase())
+    throw new AvisoCuenta('Ese correo no es el del registro preparado; no sigo.');
+  await vault.set(
+    metaKey(p.domain),
+    JSON.stringify({
+      ...(await rawMeta(p.domain, vault)),
+      approvedAt: Date.now(),
+      approvedEmail: p.username,
+    }),
+  );
+  return p;
+}
+
+/** La web confirmó el alta: la cuenta pasa a activa. Solo si el dueño la había aprobado. */
+export async function finishSignup(site: string, vault: VaultOps = realVault): Promise<Account> {
+  const p = await pendingOf(site, vault, true);
+  if (!p) throw new AvisoCuenta('No hay ningún registro pendiente para esa web.');
+  const meta = await rawMeta(p.domain, vault);
+  if (typeof meta.approvedAt !== 'number')
+    throw new AvisoCuenta('Ese registro no está aprobado todavía.');
+  await vault.set(
+    metaKey(p.domain),
+    JSON.stringify({ created: p.created, notes: p.notes, status: 'activa' }),
+  );
+  return { ...p, status: 'activa' };
+}
+
+/** El alta no salió: borra la pendiente. Nunca toca una cuenta activa. */
+export async function discardSignup(site: string, vault: VaultOps = realVault): Promise<boolean> {
+  const p = await pendingOf(site, vault, true);
+  if (!p) return false;
+  return deleteAccount(p.domain, vault);
+}

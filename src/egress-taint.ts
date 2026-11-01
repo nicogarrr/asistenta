@@ -14,6 +14,8 @@
  * preguntaba deje de preguntar.
  */
 
+import { normalizeHostname } from './text.js';
+
 /** Herramientas cuyo resultado NO trae contenido privado al turno. Todo lo demás sí. */
 export const NON_TAINTING_TOOLS: ReadonlySet<string> = new Set([
   'fetch',
@@ -63,7 +65,8 @@ function privateWebHost(url: unknown): string | null {
   if (typeof url !== 'string' || !url.trim()) return null;
   let host: string;
   try {
-    host = new URL(url.trim()).hostname.toLowerCase().replace(/\.$/, '');
+    // Todos los puntos finales («mail.google.com..»), no solo uno: mismo helper que egressHost.
+    host = normalizeHostname(new URL(url.trim()).hostname);
   } catch {
     return null;
   }
@@ -134,19 +137,83 @@ export function taintSourceOf(tool: string, args: Record<string, unknown>): stri
 
 /** La URL a la que una llamada va a enviar una petición, o null si no sale a la red. */
 export function egressUrlOf(tool: string, args: Record<string, unknown>): string | null {
+  // Una herramienta MCP con una URL http(s): el servidor externo hará esa petición, y la
+  // lista libre o un «Siempre» no deben cubrirla tras leer algo privado.
+  if (tool.startsWith('mcp_')) return mcpEgressUrl(args);
+  // Una orden de shell (`curl`, `Invoke-WebRequest`, `start <url>`…) o un texto tecleado
+  // con `computer` (la barra de direcciones de un navegador del escritorio) con una URL:
+  // la petición sale igual, y fullControl o la ventana de 90 s no deben cubrirla.
+  if (tool === 'shell' && typeof args.command === 'string') return textEgressUrl(args.command);
+  if (tool === 'computer' && args.action === 'type' && typeof args.text === 'string') {
+    return textEgressUrl(args.text);
+  }
   const url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) return null;
   if (tool === 'fetch' || tool === 'download') return url;
   if (tool === 'browser' && (args.action === 'open' || args.action === undefined)) return url;
   // Una vigilancia hace peticiones periódicas a esa URL: misma salida que un fetch.
   if (tool === 'vigilar_precio' && args.action === 'add') return url;
+  // Otras herramientas que piden esa URL a la red: misma salida que un fetch.
+  if (tool === 'web' && args.action === 'fetch') return url;
+  if (tool === 'book' && args.action === 'get_url') return url;
+  if (tool === 'checkout' && args.action === 'search') return url;
+  // La tele abre esa página en su navegador: la petición sale igual que un fetch.
+  if (tool === 'tv' && args.action === 'url') return url;
   return null;
+}
+
+/** Las URL http(s) escritas en un texto; si hay varias, primero la que lleva datos. */
+function textEgressUrl(text: string): string | null {
+  const urls = (text.match(/https?:\/\/[^\s"'`<>()]+/gi) ?? []).map((u) =>
+    u.replace(/[.,;]+$/, ''),
+  );
+  return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
+}
+
+/** Nombres de argumento con los que una herramienta MCP suele pedir una dirección. */
+const MCP_URL_KEYS = ['url', 'uri', 'href', 'link', 'endpoint'];
+
+/**
+ * La URL http(s) que una herramienta MCP va a pedir, la nombre como la nombre el
+ * servidor (`url`, `uri`, `href`…), también dentro de un objeto o lista de los
+ * argumentos (`{ request: { url } }`, hasta 3 niveles). Si hay varias, primero la
+ * que lleva datos.
+ */
+function mcpEgressUrl(args: Record<string, unknown>): string | null {
+  const urls: string[] = [];
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 3 || value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    const obj = value as Record<string, unknown>;
+    for (const key of MCP_URL_KEYS) {
+      const v = obj[key];
+      if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) urls.push(v.trim());
+    }
+    for (const v of Object.values(obj)) visit(v, depth + 1);
+  };
+  visit(args, 1);
+  return urls.find((u) => urlCarriesData(u)) ?? urls[0] ?? null;
+}
+
+/**
+ * El texto libre que una búsqueda envía a un servicio externo (buscador, tienda,
+ * catálogo de libros), o null. No es una URL, pero es otro canal de salida: solo se
+ * pregunta si repite un trozo literal del contenido privado leído en el turno.
+ */
+export function searchQueryOf(tool: string, args: Record<string, unknown>): string | null {
+  if (args.action !== 'search') return null;
+  if (tool !== 'web' && tool !== 'checkout' && tool !== 'book') return null;
+  const q = typeof args.query === 'string' ? args.query.trim() : '';
+  return q || null;
 }
 
 /** Hostname normalizado (minúsculas, sin punto final), o null si la URL no parsea. */
 export function egressHost(url: string): string | null {
   try {
-    return new URL(url).hostname.toLowerCase().replace(/\.+$/, '') || null;
+    return normalizeHostname(new URL(url).hostname) || null;
   } catch {
     return null;
   }
@@ -170,6 +237,9 @@ export function urlCarriesData(url: string): boolean {
     return true;
   }
   if (u.search.length > 1) return true;
+  // `#…` no viaja en la petición, pero la página abierta en el navegador (o en la tele)
+  // lo lee con location.hash y puede mandarlo donde quiera.
+  if (u.hash.length > 1) return true;
   if (u.username || u.password) return true;
   const path = decodeSafe(u.pathname);
   if (path.replace(/^\/+|\/+$/g, '').length > LONG_PATH_CHARS) return true;
@@ -189,5 +259,5 @@ function decodeSafe(s: string): string {
 
 /** El motivo que se enseña en la pregunta (la URL completa la añade el formateador). */
 export function egressTaintReason(source: string, host: string): string {
-  return `Este turno ya ha leído contenido privado (${source}) y ahora quiere enviar una petición con datos a un dominio nuevo (${host}). Revisa la URL completa: si no la esperabas, puede ser una página intentando sacar tus datos.`;
+  return `Acabo de leer contenido privado (${source}) y ahora iba a mandar datos a una web nueva (${host}). Mira la dirección completa: si no te la esperabas, puede ser una página intentando sacar tus datos.`;
 }

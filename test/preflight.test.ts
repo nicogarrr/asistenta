@@ -50,6 +50,7 @@ describe('runPreflight', () => {
       'vault',
       'telegram',
       'usuarios',
+      'dueno',
       'modelo',
       'tele',
       'pc',
@@ -141,7 +142,7 @@ describe('runPreflight', () => {
     expect((await byId(deps({ platform: 'linux' }))).pc?.status).toBe('aviso');
     const off = await byId(deps({ computerUseEnabled: () => false }));
     expect(off.pc?.status).toBe('aviso');
-    expect(off.pc?.hint).toMatch(/\/ordenador on/);
+    expect(off.pc?.hint).toMatch(/dime «enciéndelo»/);
   });
 
   it('correo: sin configurar es info; a medias es aviso', async () => {
@@ -177,7 +178,9 @@ describe('formatPreflight', () => {
     expect(plain).toMatch(/^Asistenta — comprobación de arranque/);
     expect(plain).toContain('❌ Telegram');
     expect(plain).toContain('⚠️ Tele');
-    expect(plain).toContain('→ pa vault set telegram:botToken');
+    expect(plain).toContain(
+      '→ Haz doble clic en instalar.bat (o pa vault set-stdin telegram:botToken)',
+    );
     expect(plain).toContain('1 problema impide arrancar y hay 1 aviso.');
     expect(plain).not.toContain('\x1b[');
     expect(formatPreflight(checks, { color: true })).toContain('\x1b[31m');

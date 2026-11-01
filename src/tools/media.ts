@@ -1,7 +1,11 @@
 import { rmSync } from 'node:fs';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
-import { TV_FIREWALL_HINT } from '../audio/tv-cast.js';
+import {
+  claimTeleFirewallWarning,
+  TV_FIREWALL_HINT,
+  teleFirewallAlreadyWarned,
+} from '../audio/tv-cast.js';
 import { log } from '../log.js';
 import { type AudioRecall, agoLabel } from '../media/recall.js';
 import {
@@ -39,13 +43,8 @@ import { playAudioFile, playbackRestoreText } from './system.js';
 const MAX_CLIP_SECONDS = 60;
 const MAX_PLAY_BYTES = 25_000_000;
 
-/** El aviso del firewall sale una sola vez por sesión del daemon. */
-let teleFirewallWarned = false;
-
-/** Solo para pruebas: vuelve a permitir el aviso del firewall. */
-export function resetTeleFirewallWarning(): void {
-  teleFirewallWarned = false;
-}
+/** Solo para pruebas: vuelve a permitir el aviso del firewall (compartido con /altavoz). */
+export { resetTeleFirewallWarning } from '../audio/tv-cast.js';
 
 /**
  * Tras una orden aceptada por la tele, espera (sin bloquear la respuesta) a que la tele
@@ -55,18 +54,19 @@ function watchTeleFetch(
   hits: (() => number) | undefined,
   notify: ((text: string) => void) | undefined,
   ms = 15_000,
+  stopped?: () => boolean,
 ): void {
-  if (!hits || !notify || teleFirewallWarned) return;
+  if (!hits || !notify || teleFirewallAlreadyWarned()) return;
   const timer = setTimeout(() => {
-    if (teleFirewallWarned) return;
+    // /stop paró la nota antes de que la tele pidiera el fichero: no es el firewall.
+    if (stopped?.() || teleFirewallAlreadyWarned()) return;
     let served = 1;
     try {
       served = hits();
     } catch {
       return;
     }
-    if (served > 0) return;
-    teleFirewallWarned = true;
+    if (served > 0 || !claimTeleFirewallWarning()) return;
     try {
       notify(`📺 ${TV_FIREWALL_HINT}`);
     } catch {
@@ -74,6 +74,18 @@ function watchTeleFetch(
     }
   }, ms);
   timer.unref?.();
+}
+
+/** `onTeleCast` puede devolver el asa del cast (altavoz.noteTele) para saber si /stop lo paró. */
+function castStopped(cast: unknown): boolean {
+  if (!cast || typeof cast !== 'object') return false;
+  const fn = (cast as { stopped?: unknown }).stopped;
+  if (typeof fn !== 'function') return false;
+  try {
+    return fn.call(cast) === true;
+  } catch {
+    return false;
+  }
 }
 
 export interface MediaToolDeps {
@@ -113,7 +125,20 @@ export interface MediaToolDeps {
    * Plays an already-playable MP3 on the TV. Takes ownership of the file (deletes it
    * when done). Absent when the TV target is off (PA_AUDIO_TELE) or no TV is paired.
    */
-  castToTv?: (file: string) => Promise<{ ok: boolean; message: string; hits?: () => number }>;
+  castToTv?: (file: string) => Promise<{
+    ok: boolean;
+    message: string;
+    hits?: () => number;
+    /** Para ESTA nota en la tele (cierra el navegador/Glasshouse solo si lo abrió este cast). */
+    stop?: () => Promise<unknown>;
+    /** Cierra ya el servidor LAN de esta nota y borra la copia. */
+    close?: () => void;
+  }>;
+  /**
+   * La tele aceptó el audio: quien lleva /stop apunta el «parar» de este cast para que
+   * /stop en este chat lo pare (mismo plazo y mismas reglas que /altavoz tele).
+   */
+  onTeleCast?: (stop?: () => Promise<unknown>, close?: () => void) => unknown;
   /**
    * Aviso al chat cuando la tele aceptó el audio pero no lo ha descargado en
    * `teleNoFetchMs` (15 s): suele ser el firewall de Windows. Una vez por sesión.
@@ -164,6 +189,23 @@ function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
 }
 
+/**
+ * Motivo llano de una reproducción fallida. El texto crudo («spawn …/ffplay ENOENT»)
+ * se iba al modelo y acababa en el chat; ahora solo queda en el registro.
+ */
+export function playbackFailureText(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? `${(err as NodeJS.ErrnoException).code ?? ''} ${err.message}`
+      : String(err);
+  if (/ENOENT/.test(raw)) return 'No he podido reproducirlo: falta el programa de audio en el PC.';
+  if (/EACCES|EPERM/.test(raw))
+    return 'No he podido reproducirlo: no tengo permiso para usar el audio.';
+  if (/timed? ?out|tiempo agotado|ETIMEDOUT/i.test(raw))
+    return 'No he podido reproducirlo: tardó demasiado.';
+  return 'No he podido reproducirlo por un fallo del reproductor.';
+}
+
 export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
   const clamp = (value: unknown, fallback: number, min: number, max: number): number => {
     const n = Number(value);
@@ -209,7 +251,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
     ].join('\n'),
     parameters: Params,
     executionMode: 'sequential',
-    execute: async (_id, args) => {
+    execute: async (_id, args, signal) => {
       switch (args.action) {
         case 'play':
           return playReceived(
@@ -217,6 +259,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
             clamp(args.volume, 100, 0, 100),
             args.target ?? 'pc',
             Math.max(1, Math.floor(args.which ?? 1)),
+            signal,
           );
 
         case 'list_audio':
@@ -295,7 +338,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
           }
           if (!deps.live) {
             return ok(
-              'La vista en directo no está disponible en este canal; usa /screen live o /camera on.',
+              'La vista en directo no está disponible en este canal; solo va en el chat de Telegram.',
             );
           }
           const interval = clamp(args.intervalSeconds, 5, 2, 30);
@@ -308,6 +351,9 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
     },
   };
 }
+
+/** Respuesta cuando /stop corta «reprodúcelo en la tele». */
+const TELE_STOPPED = 'Parado: no lo he dejado sonar en la tele.';
 
 /**
  * Download, convert and play the audio the user last sent.
@@ -325,6 +371,7 @@ async function playReceived(
   volume: number,
   target: 'pc' | 'tele' = 'pc',
   which = 1,
+  signal?: AbortSignal,
 ) {
   if (target === 'tele' && !deps.castToTv) {
     return ok(
@@ -362,15 +409,44 @@ async function playReceived(
   try {
     playable = await toPlayableAudio(bytes, audio.mimeType);
     if (target === 'tele' && deps.castToTv) {
+      // /stop antes de mandarlo: no se manda (la copia la borra el finally).
+      if (signal?.aborted) return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
       // El fichero pasa a la tele: castToTv lo borra cuando la tele ya lo ha bajado.
       const file = playable;
       playable = null;
       const res = await deps.castToTv(file);
-      if (res.ok) watchTeleFetch(res.hits, deps.notifyChat, deps.teleNoFetchMs);
+      if (res.ok && signal?.aborted) {
+        // /stop llegó mientras la tele abría el audio (conectar tarda segundos): antes
+        // se apuntaba el «parar» DESPUÉS de que /stop ya hubiera mirado, y la nota sonaba
+        // igual con su servidor abierto hasta 10 min. Se para ya y se cierra el servidor.
+        const { stop, close } = res;
+        void Promise.resolve()
+          .then(() => stop?.())
+          .catch((err) => log.warn('media: no pude parar la nota en la tele', { err }))
+          .finally(() => close?.());
+        return ok(TELE_STOPPED, { played: false, reason: 'stopped', target });
+      }
+      if (res.ok) {
+        const cast = deps.onTeleCast?.(res.stop, res.close);
+        watchTeleFetch(
+          res.hits,
+          deps.notifyChat,
+          deps.teleNoFetchMs,
+          () => signal?.aborted === true || castStopped(cast),
+        );
+      }
       return ok(res.message, { played: res.ok, target, audioAt: audio.at });
     }
     deps.beforePlayback?.();
-    const res = await playAudioFile(playable, { volume });
+    const res = await playAudioFile(playable, { volume, ...(signal ? { signal } : {}) });
+    if (!res.ok && signal?.aborted) {
+      // /stop: el sonido ya está cortado y el volumen restaurado; no es un fallo.
+      return ok(`Parado. ${playbackRestoreText(res)}`, {
+        played: false,
+        reason: 'stopped',
+        seconds: res.seconds,
+      });
+    }
     if (!res.ok) {
       return ok(
         `No he podido sacarlo por los altavoces: ${res.detail}. ${playbackRestoreText(res)}`,
@@ -397,7 +473,7 @@ async function playReceived(
     // the harness surfacing a raw stack to somebody holding a phone.
     const why = err instanceof Error ? err.message : String(err);
     log.warn('media playback failed', { err });
-    return ok(`No he podido reproducirlo: ${why}`, { played: false, reason: why });
+    return ok(playbackFailureText(err), { played: false, reason: why });
   } finally {
     // The playable copy is scratch. The original lives in Telegram and can be
     // fetched again, so leaving an mp3 behind would only accumulate.

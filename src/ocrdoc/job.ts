@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { openProgress, type PageProgress } from '../pdfmd/progress.js';
 import { type EngineDeps, OcrDocError, type OcrDocResult, ocrPdf, ocrPhoto } from './engine.js';
 
 /** Mismo tope que `telegram.downloadFile`: un bot no puede bajar más de 20 MB. */
@@ -67,7 +68,7 @@ function describe(r: OcrDocResult): string {
  */
 export async function runOcrJob(
   bytes: Buffer,
-  meta: { name?: string },
+  meta: { name?: string; progressDir?: string },
   mode: OcrMode,
   makeDeps: (workDir: string) => EngineDeps,
   now?: () => Date,
@@ -94,8 +95,11 @@ export async function runOcrJob(
   const name = meta.name ?? (kind === 'pdf' ? 'documento.pdf' : 'foto');
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
+  let progress: PageProgress | undefined;
   try {
-    const deps = { ...makeDeps(dir), shouldStop: () => stopped };
+    // PDFs largos: lo ya reconocido se guarda y, si se corta, se sigue por ahí (idea de pdf2md, MIT).
+    if (kind === 'pdf' && meta.progressDir) progress = await openProgress(meta.progressDir, bytes);
+    const deps = { ...makeDeps(dir), shouldStop: () => stopped, progress };
     const work =
       kind === 'pdf'
         ? ocrPdf(bytes, name, deps, now)
@@ -123,7 +127,13 @@ export async function runOcrJob(
     if (mode === 'md' || mode === 'todo') {
       files.push({ bytes: Buffer.from(r.markdown, 'utf8'), filename: outputName(name, '', 'md') });
     }
+    await progress?.finish();
     const lines: string[] = [];
+    if (progress?.resumed) {
+      lines.push(
+        `Ya tenía ${progress.resumed === 1 ? 'hecha 1 página' : `hechas ${progress.resumed} páginas`} de la otra vez: he seguido por ahí.`,
+      );
+    }
     if (r.alreadySearchable) {
       lines.push(
         'Este PDF ya tenía texto en todas las páginas: no hacía falta OCR. Te lo devuelvo igual, sin tocar.',
@@ -157,7 +167,11 @@ export async function runOcrJob(
       err instanceof OcrDocError
         ? err.message
         : 'Ha fallado algo al procesarlo y no he podido terminar.';
-    return { ok: false, message: msg, files: [] };
+    const kept = progress?.count() ?? 0;
+    const resume = kept
+      ? ` Lo hecho (${kept === 1 ? '1 página' : `${kept} páginas`}) queda guardado: mándamelo otra vez y sigo por donde iba.`
+      : '';
+    return { ok: false, message: msg + resume, files: [] };
   } finally {
     if (timer) clearTimeout(timer);
     await rm(dir, { recursive: true, force: true }).catch(() => {});

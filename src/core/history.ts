@@ -29,6 +29,27 @@ export const DEFAULT_COMPACTION: CompactionOptions = {
 };
 
 /**
+ * PA_COMPACT_TOKENS como lo escribe una persona. Antes un `PA_COMPACT_TOKENS=`
+ * vacío (tal cual viene en .env.example) daba 0 y apagaba el resumen sin avisar,
+ * y «100.000» (punto de miles) daba 100 y resumía en cada mensaje. Ahora:
+ * vacío o ilegible → por defecto; «0» → apagado a propósito; «100.000»,
+ * «100,000», «100 000» o «100k» → 100000.
+ */
+export function compactTokensFromEnv(
+  raw: string | undefined,
+  fallback = DEFAULT_COMPACTION.triggerTokens,
+): number {
+  const v = (raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s._,]/g, '');
+  if (!v) return fallback;
+  const m = /^(\d+)(k?)$/.exec(v);
+  if (!m) return fallback;
+  return Number(m[1]) * (m[2] ? 1000 : 1);
+}
+
+/**
  * /modelo: el umbral de resumen nunca pasa del 60 % de la ventana del modelo
  * que usa la conversación ahora. Con un modelo de ventana pequeña elegido con
  * /modelo, el historial se resume antes de desbordarla (antes valía el umbral

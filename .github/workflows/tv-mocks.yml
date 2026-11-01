@@ -1,0 +1,33 @@
+name: TV mocks
+
+# Mocks del driver telnet y del canal del botón TV: sin red externa ni tele.
+# Solo se lanzan si el cambio toca los scripts de la tele (antes corrían en
+# cada PR y ocupaban la cola de Actions sin motivo).
+on:
+  pull_request:
+    paths:
+      - 'scripts/tv/**'
+      - 'deploy/tv-webos/**'
+      - '.github/workflows/tv-mocks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/tv/**'
+      - 'deploy/tv-webos/**'
+      - '.github/workflows/tv-mocks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tv-mocks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tv-mocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/tv/test-tv-token-patch-mock.sh
+      - run: scripts/tv/test-tv-rollback-mock.sh

@@ -52,9 +52,15 @@ export function safePath(dir, rel) {
  * Applies {file, search, replace} edits. Each search must match exactly once; any problem
  * throws BEFORE anything is written, so an attempt never half-applies.
  */
-export function applyEdits(dir, edits, read = (p) => readFileSync(p, 'utf8'), write = writeFileSync) {
+export function applyEdits(
+  dir,
+  edits,
+  read = (p) => readFileSync(p, 'utf8'),
+  write = writeFileSync,
+) {
   if (!Array.isArray(edits) || !edits.length) throw new Error('el modelo no propuso ediciones');
-  if (edits.length > MAX_EDITS) throw new Error(`demasiadas ediciones (${edits.length} > ${MAX_EDITS})`);
+  if (edits.length > MAX_EDITS)
+    throw new Error(`demasiadas ediciones (${edits.length} > ${MAX_EDITS})`);
   const next = new Map();
   for (const e of edits) {
     const p = safePath(dir, e?.file);
@@ -64,7 +70,8 @@ export function applyEdits(dir, edits, read = (p) => readFileSync(p, 'utf8'), wr
     const cur = next.get(p.abs) ?? read(p.abs);
     const first = cur.indexOf(e.search);
     if (first < 0) throw new Error(`el texto a cambiar no existe en ${p.rel}`);
-    if (cur.indexOf(e.search, first + 1) >= 0) throw new Error(`el texto a cambiar es ambiguo en ${p.rel}`);
+    if (cur.indexOf(e.search, first + 1) >= 0)
+      throw new Error(`el texto a cambiar es ambiguo en ${p.rel}`);
     next.set(p.abs, cur.slice(0, first) + e.replace + cur.slice(first + e.search.length));
   }
   for (const [abs, text] of next) write(abs, text);
@@ -139,7 +146,10 @@ async function main() {
   process.stdout.write(`evolve-proposer: ${n} fichero(s) editado(s)\n`);
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}` || process.argv[1]?.endsWith('evolve-proposer.mjs')) {
+if (
+  import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}` ||
+  process.argv[1]?.endsWith('evolve-proposer.mjs')
+) {
   main().catch((err) => {
     process.stderr.write(`evolve-proposer: ${err?.message ?? err}\n`);
     process.exit(1);

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, it as baseIt, expect } from 'vitest';
+import { DaemonNotRunningError } from '../src/daemon-control.js';
 import { windowsNative } from '../src/windows-control-native.js';
 import { openWindowsDaemonControl, stopWindowsDaemon } from '../src/windows-daemon-control.js';
 
@@ -70,7 +71,7 @@ it('native private ACL plus actual CLI stop drains a separate lifecycle and rele
     env: { ...process.env, PA_STATE_DIR: dir, PA_DESKTOP: 'off' },
   });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain('cierre limpio confirmado');
+  expect(result.stdout).toContain('Asistenta parada: ha cerrado bien');
   expect(readFileSync(join(dir, 'drained'), 'utf8')).toBe('yes');
   expect(existsSync(join(dir, 'agent.pid'))).toBe(false);
   expect(windowsNative(dir, 'confirm')).toBe('free');
@@ -169,4 +170,9 @@ it('native empty-file creation sets the actual owner SID even on elevated Window
   );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain('OWNER_CURRENT_SID');
+});
+it('pa stop with no Asistenta running reports «not running», not a raw ENOENT', async () => {
+  const dir = state();
+  windowsNative(dir, 'init');
+  await expect(stopWindowsDaemon(dir)).rejects.toBeInstanceOf(DaemonNotRunningError);
 });

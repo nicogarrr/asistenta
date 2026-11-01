@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
+import { notePageAfterFailedCall } from '../browser/page-after-call.js';
 import {
   type BrowserService,
   type ExecJsResult,
@@ -8,6 +9,12 @@ import {
   type WaitResult,
 } from '../browser/service.js';
 import { UNREADABLE_TARGET } from '../browser/target.js';
+import {
+  armDesktopSignup,
+  signupEmailDomains,
+  signupPasswordDomain,
+  signupSubmitBlock,
+} from '../credentials/signup-guard.js';
 import { normalizeDomain, parseSiteKey, siteKey } from '../gestor/login.js';
 import { log, logHost } from '../log.js';
 import { isPaymentText } from '../permissions.js';
@@ -161,6 +168,12 @@ const BrowserParams = Type.Object({
     }),
   ),
   fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
+  mobile: Type.Optional(
+    Type.Boolean({
+      description:
+        'For screenshot: capture at phone width (390×844) to check how the page looks on a phone. The page size is put back afterwards.',
+    }),
+  ),
   send: Type.Optional(
     Type.Boolean({
       description:
@@ -728,7 +741,7 @@ export function createBrowserTool(
             if (stored === undefined) {
               throw new Error(
                 `El vault no tiene ningún secreto con la clave ${canonicalKey}. ` +
-                  `Nico lo guarda con: pa vault set ${canonicalKey} <valor>`,
+                  `Nico lo guarda con: pa vault set-stdin ${canonicalKey} (se escribe sin que se vea)`,
               );
             }
             value = stored;
@@ -897,7 +910,9 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
         }
 
         case 'screenshot': {
-          const shot = await service.screenshot(scope, Boolean(record.fullPage));
+          const shot = await service.screenshot(scope, Boolean(record.fullPage), {
+            mobile: record.mobile === true,
+          });
           // The user asked to SEE it: the image only reaches the model unless it is
           // sent to the chat. The result says plainly whether it got there.
           let delivery = '';
@@ -912,16 +927,23 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
             }
           }
           const visible = windowVisible(service, scope);
+          const mobileNote =
+            record.mobile !== true
+              ? ''
+              : shot.mobile
+                ? ' at phone width (390×844)'
+                : ' (phone width not available with a visible window: this is the normal size)';
           return {
             content: [
               {
                 type: 'text',
-                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}.${delivery}${visibleNote(visible)}`,
+                text: `Screenshot of the current page${record.fullPage ? ' (full page)' : ''}${mobileNote}.${delivery}${visibleNote(visible)}`,
               },
               { type: 'image', mimeType: shot.mimeType, data: shot.data },
             ],
             details: {
               fullPage: Boolean(record.fullPage),
+              mobile: shot.mobile === true,
               sent: delivery.includes('Enviada'),
               visible,
             },
@@ -1010,9 +1032,67 @@ return 'pressed ' + ${JSON.stringify(key)} + ' on ' + ${JSON.stringify(resolved.
     },
   };
   const run = tool.execute;
-  tool.execute = async (...a) =>
-    withPageUrl(service, scopeOf(), String(a[1]?.action ?? ''), await run(...a));
+  // Altas de cuenta: dominios cuya contraseña pendiente ya se escribió en cada sesión.
+  const signupFills = new Map<string, Set<string>>();
+  tool.execute = async (...a) => {
+    const action = String(a[1]?.action ?? '');
+    const scope = scopeOf();
+    if (action === 'open' || action === 'close') signupFills.delete(scope);
+    if (action === 'click' || action === 'press') {
+      const block = await signupSubmitBlock(signupFills.get(scope) ?? new Set());
+      if (block) {
+        return {
+          content: [{ type: 'text', text: block }],
+          details: { action, signupApprovalRequired: true },
+          isError: true,
+        };
+      }
+    }
+    let result: Awaited<ReturnType<typeof run>>;
+    try {
+      result = await run(...a);
+    } catch (err) {
+      // Falló, pero puede que ya hubiera navegado (un clic que llega a Gmail y luego
+      // un timeout): el agente recoge esta página y el Gate la mira igual.
+      if (action !== 'close')
+        notePageAfterFailedCall(String(a[0] ?? ''), pageUrlOf(service, scopeOf()));
+      throw err;
+    }
+    const signupDomain =
+      action === 'fill'
+        ? signupPasswordDomain((a[1] as { secret_key?: unknown }).secret_key)
+        : null;
+    const filledOk = action === 'fill' && !(result as { isError?: boolean }).isError;
+    const signupDomains = !filledOk
+      ? []
+      : signupDomain
+        ? [signupDomain]
+        : await signupEmailDomains(
+            (a[1] as { text?: unknown }).text,
+            pageUrlOf(service, scope),
+          ).catch(() => []);
+    if (signupDomains.length > 0) {
+      const set = signupFills.get(scope) ?? new Set<string>();
+      for (const d of signupDomains) set.add(d);
+      signupFills.set(scope, set);
+      // La ventana del navegador también se ve en el escritorio: un clic de `computer` cuenta.
+      armDesktopSignup(signupDomains);
+    }
+    return withPageUrl(service, scopeOf(), action, result);
+  };
   return tool;
+}
+
+/** URL en la que está ahora la sesión de navegador de `scope`, o undefined. */
+function pageUrlOf(service: BrowserService, scope: string): string | undefined {
+  try {
+    return (
+      (service as { currentUrl?: (s: string) => string | undefined }).currentUrl?.(scope) ||
+      undefined
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -1027,12 +1107,7 @@ function withPageUrl<T extends { details?: unknown }>(
   result: T,
 ): T {
   if (action === 'close') return result;
-  let pageUrl: string | undefined;
-  try {
-    pageUrl = (service as { currentUrl?: (s: string) => string | undefined }).currentUrl?.(scope);
-  } catch {
-    pageUrl = undefined;
-  }
+  const pageUrl = pageUrlOf(service, scope);
   if (!pageUrl) return result;
   const details =
     result.details && typeof result.details === 'object' ? (result.details as object) : {};

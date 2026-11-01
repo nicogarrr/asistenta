@@ -58,10 +58,20 @@ export async function getJson(url: string, fetcher: Fetcher = fetch): Promise<un
   return res.json();
 }
 
+/**
+ * A ZIP is not a book by itself: a .zip of PDFs, a DOCX or a site's "download.zip"
+ * also start with "PK". An EPUB carries its OCF markers: the uncompressed
+ * "application/epub+zip" mimetype entry at the start (the spec, checked by
+ * books/secret.ts sniffsAsEpub) or, in the many real files that store it compressed or later, the
+ * "META-INF/container.xml" entry whose name every ZIP keeps in plain text.
+ */
 export function sniff(bytes: Uint8Array): 'epub' | 'pdf' | null {
-  const head = Buffer.from(bytes.subarray(0, 8)).toString('latin1');
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const head = buf.subarray(0, 8).toString('latin1');
   if (head.startsWith('%PDF')) return 'pdf';
-  if (head.startsWith('PK')) return 'epub';
+  if (!head.startsWith('PK\u0003\u0004')) return null;
+  const spec = buf.length >= 64 && buf.subarray(0, 512).includes('application/epub+zip');
+  if (spec || buf.includes('META-INF/container.xml')) return 'epub';
   return null;
 }
 

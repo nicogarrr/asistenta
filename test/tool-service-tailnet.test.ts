@@ -140,7 +140,7 @@ describe('servicio: estados que no se pueden saltar', () => {
     await run(docker('alfa', 8071));
     const r = await run({ action: 'instalar', nombre: 'alfa' });
     expect(r.isError).toBe(true);
-    expect(text(r)).toContain('no such image');
+    expect(text(r)).toContain('Docker no encuentra esa imagen');
     expect(services.read('alfa')?.status).toBe('propuesto');
   });
 });

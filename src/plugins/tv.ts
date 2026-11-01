@@ -183,6 +183,9 @@ export function tvToolDeps(store: Store): TvToolDeps {
             {},
             {
               allowPlaintext: p.allowPlaintext,
+              // Cada sondeo tras el WoL: con la tele aun dormida no hay que
+              // esperar 5 s por intento; 2 s basta en la red de casa.
+              connectTimeoutMs: 2_000,
               onNewClientKey: saveNewKey,
               commandTimeoutMs: 3_000,
               connectRetries: 0,
@@ -200,6 +203,11 @@ export function tvToolDeps(store: Store): TvToolDeps {
           allowPlaintext: p.allowPlaintext,
           onNewClientKey: saveNewKey,
           commandTimeoutMs: 4_000,
+          // Los reintentos los hace readTvStatus (3 intentos, tope ~6 s, tambien
+          // si la apertura se queda colgada con la tele en reposo): aqui uno
+          // solo y 1,5 s por apertura, que en la red de casa sobra.
+          connectRetries: 0,
+          connectTimeoutMs: 1_500,
         });
       return readTvStatus({
         ssap,
@@ -253,7 +261,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
 }
 
 /** La tele como plugin: una tool `tv` por Store. Modos/exclusividad salen del catálogo (core/capabilities.ts). */
-export const tvPlugin: CapabilityPlugin<{ store: Store }> = {
+export const tvPlugin: CapabilityPlugin<{ store: Store; staleOrder?: () => string | null }> = {
   id: 'tv',
-  tools: ({ store }) => [createTvTool(tvToolDeps(store))],
+  tools: ({ store, staleOrder }) => [createTvTool({ ...tvToolDeps(store), staleOrder })],
 };

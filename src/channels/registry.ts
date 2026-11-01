@@ -30,6 +30,7 @@ export class ChannelRegistry {
   async startAll(handlers: ChannelHandlers): Promise<void> {
     this.#handlers = handlers;
     const onTvButton = handlers.onTvButton?.bind(handlers);
+    const onFuncionesButton = handlers.onFuncionesButton?.bind(handlers);
     for (const adapter of this.#adapters.values()) {
       await adapter.start({
         onMessage: (inbound) => handlers.onMessage(inbound),
@@ -40,6 +41,7 @@ export class ChannelRegistry {
         // no los pasaba y el adaptador veía `onTvButton` vacío: cada pulsación
         // contestaba «Este botón ya no sirve» y no mandaba nada a la tele.
         onTvButton,
+        onFuncionesButton,
         log: (level, msg, fields) => log[level](`[${adapter.name}] ${msg}`, fields ?? {}),
       });
       log.info('channel started', { channel: adapter.name });
@@ -115,12 +117,22 @@ export class ChannelRegistry {
   resolveApproval(id: string, approved: boolean): boolean {
     const entry = this.#pending.get(id);
     if (!entry) return false;
+    // Tras suspender el PC el temporizador de caducidad llega tarde: un «sí»
+    // pulsado después de expiresAt no vale, se trata como caducado.
+    if (approved && isExpired(entry, Date.now())) {
+      log.warn('approval expired', { id, tool: entry.tool });
+      entry.resolve(false);
+      return false;
+    }
     entry.resolve(approved);
     return true;
   }
 
   pendingApprovals(): ReadonlyArray<Omit<ApprovalRequest, 'resolve'>> {
-    return [...this.#pending.values()].map(({ resolve: _resolve, ...rest }) => rest);
+    const now = Date.now();
+    return [...this.#pending.values()]
+      .filter((e) => !isExpired(e, now))
+      .map(({ resolve: _resolve, ...rest }) => rest);
   }
 
   onPendingChange(fn: (count: number) => void): void {
@@ -140,4 +152,9 @@ export class ChannelRegistry {
     }
     await this.#handlers?.onApprovalNeeded?.(req);
   }
+}
+
+function isExpired(entry: Pick<ApprovalRequest, 'expiresAt'>, now: number): boolean {
+  const at = new Date(entry.expiresAt).getTime();
+  return Number.isFinite(at) && now >= at;
 }

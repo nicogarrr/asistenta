@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 import { type DownloadOptions, downloadFromLink } from '../media/download.js';
+import { urlHostname } from '../text.js';
 
 /**
  * "Descárgame este vídeo" / "pásame este PDF", with a link.
@@ -42,12 +43,24 @@ const Params = Type.Object({
   ),
 });
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return 'enlace no válido';
+/** Host para logs y avisos: el mismo host comparable que el navegador y las vigilancias. */
+export function hostOf(url: string): string {
+  return urlHostname(url) ?? 'enlace no válido';
+}
+
+/**
+ * Why Telegram refused the file, in words the owner can act on. The raw error
+ * («413: Request Entity Too Large», «http transport error: fetch failed») goes
+ * only to the log: the model repeats this text in the chat.
+ */
+export function sendFailureText(raw: string): string {
+  if (/\b413\b|too large|too big/i.test(raw)) {
+    return 'el archivo pesa demasiado para enviarlo por Telegram (máximo 50 MB)';
   }
+  if (/\b429\b|too many requests|retry after/i.test(raw)) {
+    return 'Telegram pide esperar un poco; prueba otra vez en un minuto';
+  }
+  return 'no hubo respuesta de Telegram; prueba otra vez en un rato';
 }
 
 function ok(text: string, details: Record<string, unknown> = {}) {
@@ -96,7 +109,12 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
           host: hostOf(params.url),
           reason: 'Telegram no aceptó el envío',
         });
-        return ok(`Descargado (${mb} MB) pero Telegram no aceptó el envío: ${msg}.`, { ok: false });
+        return ok(
+          `Descargado (${mb} MB) pero Telegram no aceptó el envío: ${sendFailureText(msg)}.`,
+          {
+            ok: false,
+          },
+        );
       }
       deps.onResult?.({ ok: true, kind: result.kind, host: hostOf(params.url) });
       const what =

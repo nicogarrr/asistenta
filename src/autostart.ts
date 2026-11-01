@@ -1,35 +1,309 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir, uptime } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  clearStoppedOnPurpose,
+  type DaemonRunState,
+  describeDecision,
+  readDaemonStartedAt,
+  readStoppedOnPurpose,
+  readWatchdogLast,
+  saveWatchdogLast,
+  schtasksArgs,
+  startDaemonTaskArgs,
+  WATCHDOG_INTERVAL_MIN,
+  watchdogDecide,
+  watchdogEnabled,
+  watchdogLastLine,
+  watchdogTaskXml,
+} from './autostart-watchdog.js';
+
+import { lockHeld, readAutoupdateState } from './autoupdate.js';
+import {
+  autoupdateStatusLine,
+  daemonRunState,
+  maybeLaunchAutoupdate,
+  sendOwnerTelegram,
+} from './autoupdate-cli.js';
+import { BOOT_NOTICE_FILE, formatBootNoticeResult, readBootNoticeResult } from './boot-notice.js';
+
+import { logFile } from './log.js';
+import { paths } from './paths.js';
+import { formatStartupRecord, readStartupRecord, STARTUP_RECORD_FILE } from './startup-record.js';
 import { unlock, vaultGet } from './vault.js';
-import { resolveOwnerUserId } from './vigilante.js';
 
 export function autostartRepo(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL('..', moduleUrl));
 }
 
-export async function autostartCommand(args: string[]): Promise<number> {
+type ExecError = Error & { code?: unknown; killed?: boolean };
+type ExecResult = { error: ExecError | null; stdout: string; stderr: string };
+
+function runExe(exe: string, flags: string[], timeout = 120_000): Promise<ExecResult> {
+  return new Promise<ExecResult>((resolve) => {
+    execFile(
+      exe,
+      flags,
+      { windowsHide: true, timeout, maxBuffer: 64 * 1024 },
+      (error, stdout, stderr) =>
+        resolve({
+          error: (error as ExecError | null) ?? null,
+          stdout: String(stdout ?? ''),
+          stderr: String(stderr ?? ''),
+        }),
+    );
+  });
+}
+
+const AUTOSTART_FAIL_HINTS: Record<string, string> = {
+  compilar: 'falta compilar Asistenta. Ejecuta instalar.bat (o npm run build) y repite.',
+  navegador:
+    'falta preparar el navegador de Asistenta. Ejecuta powershell -ExecutionPolicy Bypass -File deploy\\browserd\\setup-browserd.ps1 y repite.',
+  archivos: 'faltan archivos de Asistenta. Vuelve a descargarla (o haz git pull) y repite.',
+  node: 'Asistenta necesita Node 24 o más nuevo. Instálalo desde nodejs.org y repite.',
+  parada: 'no pude parar Asistenta antes de quitar el autoarranque. Ejecuta pa stop y repite.',
+  permiso:
+    'Windows no dio permiso para crear las tareas programadas. Repite desde una terminal abierta como administrador.',
+};
+
+/** Frase clara (qué pasó y qué hacer) para un fallo del instalador; nunca vuelca su stderr. */
+export function autostartFailureMessage(error: ExecError, stderr: string): string {
+  const head = 'Autoarranque no completado: ';
+  if (error.code === 'ENOENT') {
+    return `${head}no encuentro Windows PowerShell en este PC, y sin él no puedo registrar el arranque.`;
+  }
+  if (error.killed) {
+    return `${head}el instalador tardó más de 2 minutos y lo paré. Vuelve a probar; si se repite, reinicia el PC y repite.`;
+  }
+  const motivo = /^MOTIVO=([a-z]+)\s*$/m.exec(stderr)?.[1] ?? '';
+  return (
+    head +
+    (AUTOSTART_FAIL_HINTS[motivo] ??
+      'algo falló al registrar las tareas. Repite el comando; si vuelve a fallar, ejecuta pa doctor para ver qué falta.')
+  );
+}
+
+function windowsExe(...parts: string[]): string {
+  return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', ...parts);
+}
+
+export interface AutostartOptions {
+  stateDir?: string;
+  /** Ruta de dist/cli.js para la tarea del vigilante. */
+  cliJs?: string;
+  /** Arranque del PC (ms epoch); por defecto, ahora menos el uptime. */
+  bootAt?: number;
+  /** Estado del daemon; por defecto, el pid y su proceso. */
+  daemonState?: () => DaemonRunState;
+  /** Lanza `pa autoupdate aplicar` aparte; por defecto, un proceso desligado. */
+  launchAutoupdate?: (exe: string, args: string[]) => void;
+}
+
+export const WATCHDOG_REPAIR_FIRST =
+  'había una actualización a medias: primero vuelvo a la versión anterior y luego la arranco';
+
+/** `pa autostart vigilar`: lo que hace la tarea del vigilante cada 5 minutos. */
+async function vigilar(stateDir: string, opts: AutostartOptions): Promise<number> {
+  const decision = watchdogDecide({
+    enabled: watchdogEnabled(),
+    state: (opts.daemonState ?? (() => daemonRunState(stateDir)))(),
+    stoppedAt: readStoppedOnPurpose(stateDir),
+    updating: lockHeld(stateDir),
+    bootAt: opts.bootAt ?? Date.now() - uptime() * 1000,
+    daemonStartedAt: readDaemonStartedAt(stateDir),
+  });
+  let text = describeDecision(decision);
+  const cliJs = opts.cliJs ?? join(autostartRepo(), 'dist', 'cli.js');
+  // Tras un apagón a mitad de actualizar, arrancar la versión a medio montar podía fallar
+  // una y otra vez, y el arreglo solo se lanzaba con Asistenta ya en marcha: nunca llegaba.
+  // Primero se arregla (vuelve a la versión anterior), y el arreglo ya la arranca.
+  if (
+    decision.action === 'start' &&
+    readAutoupdateState(stateDir).pending &&
+    maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)
+  ) {
+    text = WATCHDOG_REPAIR_FIRST;
+    saveWatchdogLast(stateDir, text);
+    process.stdout.write(`Vigilante: ${text}\n`);
+    return 0;
+  }
+  if (decision.action === 'start') {
+    const r = await runExe(
+      windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      startDaemonTaskArgs(),
+    );
+    if (r.error) text = describeDecision({ action: 'start-failed' });
+  }
+  if (decision.action === 'skip' && decision.reason === 'en-marcha') {
+    // Corre aparte: la tarea del vigilante tiene 2 min y compilar puede tardar más.
+    await refreshWatchdogTask(stateDir, cliJs);
+    if (maybeLaunchAutoupdate(stateDir, cliJs, opts.launchAutoupdate)) {
+      text += '; miro si hay novedades en main';
+    }
+  }
+  saveWatchdogLast(stateDir, text);
+  process.stdout.write(`Vigilante: ${text}\n`);
+  return 0;
+}
+
+/** Sin espacio o sin permiso en TEMP: lo principal ya quedó instalado, así que solo se avisa. */
+export const WATCHDOG_TEMP_FAILED =
+  'Vigilante: no pude registrarlo porque no pude escribir en la carpeta temporal (¿disco lleno?). Asistenta arranca igual al iniciar sesión; libera espacio y repite pa autostart install.';
+
+/** Huella de la tarea del vigilante registrada (XML con sus rutas de Node y del CLI). */
+export const WATCHDOG_TASK_MARK_FILE = 'vigilante-tarea.json';
+
+function currentWatchdogXml(cliJs: string): string {
+  return watchdogTaskXml({ nodeExe: process.execPath, cliJs });
+}
+
+function xmlSha(xml: string): string {
+  return createHash('sha256').update(xml).digest('hex').slice(0, 16);
+}
+
+function readTaskMark(stateDir: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(stateDir, 'vigilante-tarea.json'), 'utf8')) as {
+      sha?: unknown;
+    };
+    return typeof raw.sha === 'string' ? raw.sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeTaskMark(stateDir: string, sha: string): void {
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, 'vigilante-tarea.json'), JSON.stringify({ sha }));
+  } catch {
+    // Sin la marca solo se vuelve a registrar en la siguiente pasada.
+  }
+}
+
+/**
+ * La tarea del vigilante solo se registraba con `pa autostart install`: tras una
+ * actualización que la cambia (p. ej. el disparador al despertar) o con Node en otra
+ * ruta, seguía la vieja. Con Asistenta en marcha, se vuelve a registrar una vez por
+ * versión del XML, sin decir nada por consola (el detalle de un fallo va al registro).
+ */
+async function refreshWatchdogTask(stateDir: string, cliJs: string): Promise<void> {
+  const xml = currentWatchdogXml(cliJs);
+  const sha = xmlSha(xml);
+  if (readTaskMark(stateDir) === sha) return;
+  writeTaskMark(stateDir, sha);
+  const xmlPath = join(tmpdir(), `asistenta-vigilante-${process.pid}.xml`);
+  try {
+    writeFileSync(xmlPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]));
+    const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
+    if (r.error) {
+      logFile.warn('autostart: watchdog task refresh failed', {
+        err: r.error.message,
+        stderr: r.stderr.slice(-1000),
+      });
+    }
+  } catch (err) {
+    logFile.warn('autostart: watchdog task refresh failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    removeQuietly(xmlPath);
+  }
+}
+
+async function installWatchdog(stateDir: string, cliJs: string): Promise<void> {
+  const xmlPath = join(tmpdir(), `asistenta-vigilante-${process.pid}.xml`);
+  const xml = currentWatchdogXml(cliJs);
+  try {
+    // schtasks lee el XML en UTF-16 con BOM, como lo exporta el propio Programador de tareas.
+    writeFileSync(xmlPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]));
+  } catch (err) {
+    logFile.warn('autostart: watchdog temp XML write failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    removeQuietly(xmlPath);
+    saveWatchdogLast(
+      stateDir,
+      'no se registró al instalar (no pude escribir en la carpeta temporal)',
+    );
+    process.stdout.write(`${WATCHDOG_TEMP_FAILED}\n`);
+    return;
+  }
+  try {
+    const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.create(xmlPath));
+    if (!r.error) writeTaskMark(stateDir, xmlSha(xml));
+    if (r.error) {
+      logFile.warn('autostart: watchdog schtasks failed', {
+        err: r.error.message,
+        stderr: r.stderr.slice(-1000),
+      });
+    }
+    process.stdout.write(
+      r.error
+        ? 'Vigilante: no pude registrarlo; Asistenta arranca igual al iniciar sesión.\n'
+        : `Vigilante: registrado (al iniciar sesión y cada ${WATCHDOG_INTERVAL_MIN} min la vuelve a arrancar si no está en marcha).\n`,
+    );
+  } finally {
+    removeQuietly(xmlPath);
+  }
+}
+
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Un antivirus puede tener el XML abierto: es un temporal, Windows lo limpiará.
+  }
+}
+
+async function watchdogStatus(stateDir: string): Promise<void> {
+  const r = await runExe(windowsExe('schtasks.exe'), schtasksArgs.query());
+  const installed = !r.error;
+  const off = watchdogEnabled() ? '' : ' (PA_WATCHDOG=0: no hace nada)';
+  let line = installed
+    ? `Vigilante: instalado, cada ${WATCHDOG_INTERVAL_MIN} min y al iniciar sesión${off}.`
+    : 'Vigilante: no instalado (pa autostart install lo registra).';
+  const last = readWatchdogLast(stateDir);
+  if (last) line += watchdogLastLine(last, Date.now());
+  process.stdout.write(`${line}\n${autoupdateStatusLine(stateDir)}\n`);
+}
+
+/** Fuera de Windows: qué usar en su lugar, no solo «no se puede». */
+export const AUTOSTART_NOT_WINDOWS =
+  'El arranque automático con el PC solo funciona en Windows. Aquí arráncala a mano con «pa serve», o con Docker (docker compose -f deploy/docker-compose.yml up -d), que vuelve a levantarla sola tras reiniciar.';
+
+/** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b [--x]». */
+export const AUTOSTART_USAGE =
+  'No conozco esa orden. Usa: pa autostart install (que arranque sola al encender el PC), pa autostart status (cómo está) o pa autostart uninstall (quitarlo). Con install puedes añadir --start (arrancarla ya), --what-if (solo ver qué haría) o --no-local-llm (sin el modelo local).';
+
+export async function autostartCommand(
+  args: string[],
+  opts: AutostartOptions = {},
+): Promise<number> {
   if (process.platform !== 'win32') {
-    process.stderr.write('Autoarranque completo disponible solo en Windows.\n');
+    process.stderr.write(`${AUTOSTART_NOT_WINDOWS}\n`);
     return 2;
   }
   const action = args[0] ?? 'status';
   if (
-    !['install', 'status', 'uninstall'].includes(action) ||
+    !['install', 'status', 'uninstall', 'vigilar'].includes(action) ||
+    (action === 'vigilar' && args.length > 1) ||
     args.slice(1).some((a) => !['--start', '--what-if', '--no-local-llm'].includes(a))
   ) {
-    process.stderr.write(
-      'uso: pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]\n',
-    );
+    process.stderr.write(`${AUTOSTART_USAGE}\n`);
     return 2;
   }
-  const exe = join(
-    process.env.SystemRoot ?? 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe',
-  );
+  const stateDir = opts.stateDir ?? paths.state;
+  if (action === 'vigilar') return vigilar(stateDir, opts);
+  if (action === 'status') {
+    const rec = readStartupRecord(join(stateDir, STARTUP_RECORD_FILE));
+    process.stdout.write(`${formatStartupRecord(rec)}\n`);
+    const aviso = readBootNoticeResult(join(stateDir, BOOT_NOTICE_FILE));
+    process.stdout.write(`${formatBootNoticeResult(aviso)}\n`);
+  }
   const repo = autostartRepo();
   const flags = [
     '-NoProfile',
@@ -49,34 +323,56 @@ export async function autostartCommand(args: string[]): Promise<number> {
   if (args.includes('--no-local-llm')) flags.push('-DisableLocalLlm');
   if (args.includes('--start')) flags.push('-Start');
   if (args.includes('--what-if')) flags.push('-WhatIf');
-  return new Promise<number>((resolve) => {
-    execFile(
-      exe,
-      flags,
-      { windowsHide: true, timeout: 120_000, maxBuffer: 64 * 1024 },
-      (error, stdout) => {
-        if (stdout) process.stdout.write(stdout);
-        if (error)
-          process.stderr.write(
-            'Autoarranque no completado; revisa requisitos y permisos locales.\n',
-          );
-        resolve(error ? 1 : 0);
-      },
+  const whatIf = args.includes('--what-if');
+  if (action === 'uninstall' && !whatIf) {
+    // Primero el vigilante: si no, entre que el instalador para Asistenta y quita su
+    // tarea, el vigilante podría volver a arrancarla. Sin comprobar antes: si no
+    // existía, schtasks falla y no pasa nada.
+    await runExe(windowsExe('schtasks.exe'), schtasksArgs.remove());
+  }
+  const r = await runExe(windowsExe('WindowsPowerShell', 'v1.0', 'powershell.exe'), flags);
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.error) {
+    // El detalle (código, salida de PowerShell) solo al registro: la consola enseña una línea llana.
+    logFile.warn('autostart: installer failed', {
+      action,
+      err: r.error.message,
+      stderr: r.stderr.slice(-2000),
+    });
+    process.stderr.write(`${autostartFailureMessage(r.error, r.stderr)}\n`);
+    return 1;
+  }
+  // --start la deja encendida a propósito: igual que `pa iniciar`, quita la marca de
+  // `pa stop` para que el vigilante vuelva a levantarla si se cae antes de reiniciar.
+  if (action === 'install' && !whatIf && args.includes('--start')) {
+    clearStoppedOnPurpose(stateDir);
+  }
+  if (action === 'install' && !whatIf && watchdogEnabled()) {
+    await installWatchdog(stateDir, opts.cliJs ?? join(repo, 'dist', 'cli.js'));
+  }
+  if (whatIf && action === 'install' && watchdogEnabled()) {
+    process.stdout.write(
+      `Vigilante: también se registraría (al iniciar sesión y cada ${WATCHDOG_INTERVAL_MIN} min).\n`,
     );
-  });
+  }
+  if (whatIf && action === 'uninstall') {
+    process.stdout.write('Vigilante: también se quitaría.\n');
+  }
+  if (action === 'status') await watchdogStatus(stateDir);
+  return 0;
 }
 
 export const SUPERVISOR_MESSAGES = {
   restart:
-    'Asistenta: latido detenido más de 120 s. El supervisor externo solicita cierre limpio y reinicio de la tarea. Máximo 3 intentos en 15 min.',
+    'Asistenta lleva más de 2 minutos sin responder: la estoy reiniciando. Lo intento como mucho 3 veces cada 15 minutos.',
   forced:
-    'Asistenta: el cierre limpio no terminó a tiempo. Se terminó solo el proceso propio del launcher. No se declara cierre limpio; revisa pa autostart status y los logs locales.',
+    'Asistenta no se cerró a tiempo y la cerré a la fuerza (solo su propio proceso). Lo último que estaba haciendo puede no haberse guardado. En el PC, pa autostart status te dice cómo está.',
   blocked:
-    'Asistenta: agotados 3 reinicios del supervisor en 15 min. No forzaré otro. Revisa pa autostart status.',
+    'Asistenta se ha reiniciado 3 veces en 15 minutos y sigue sin responder, así que dejo de intentarlo. En el PC, pa autostart status te dice cómo está.',
   supervisor:
-    'Asistenta: el supervisor externo no pudo completar una comprobación o guardar su presupuesto. No forzaré un reinicio ni declararé cierre limpio. Revisa pa autostart status y los logs locales.',
+    'No pude comprobar si Asistenta está bien, así que no la reinicio por si acaso. En el PC, pa autostart status te dice cómo está.',
   heartbeat:
-    'Asistenta: no puedo verificar un latido válido de esta instancia. No termino ningún proceso; revisa pa autostart status.',
+    'No puedo comprobar que Asistenta esté respondiendo, así que no cierro nada. En el PC, pa autostart status te dice cómo está.',
 } as const;
 
 /** No chat history or group fallback: only the configured owner who is also allowlisted. */
@@ -85,40 +381,8 @@ export async function notifyAutostart(
   deps = { unlock, get: vaultGet, fetch: globalThis.fetch },
 ): Promise<number> {
   if (!(event in SUPERVISOR_MESSAGES) || !Object.hasOwn(SUPERVISOR_MESSAGES, event)) return 2;
-  try {
-    await deps.unlock();
-    const allowed =
-      (await deps.get('telegram:allowedUserIds'))
-        ?.split(',')
-        .map(Number)
-        .filter((n) => Number.isSafeInteger(n) && n > 0) ?? [];
-    const explicit = Number(await deps.get('vigilante:ownerUserId'));
-    const owner = resolveOwnerUserId(
-      allowed,
-      Number.isSafeInteger(explicit) && explicit > 0 ? explicit : null,
-    );
-    const token = await deps.get('telegram:botToken');
-    if (!owner || !allowed.includes(owner) || !token) return 1;
-    const response = await deps.fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(8000),
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: owner,
-        text: SUPERVISOR_MESSAGES[event as keyof typeof SUPERVISOR_MESSAGES],
-      }),
-    });
-    const data: unknown = await response.json();
-    return response.ok &&
-      data !== null &&
-      typeof data === 'object' &&
-      'ok' in data &&
-      data.ok === true
-      ? 0
-      : 1;
-  } catch {
-    return 1;
-  }
+  const text = SUPERVISOR_MESSAGES[event as keyof typeof SUPERVISOR_MESSAGES];
+  return (await sendOwnerTelegram(text, deps)) ? 0 : 1;
 }
 
 export async function localLlmHealthy(fetcher: typeof fetch = fetch): Promise<boolean> {

@@ -15,11 +15,13 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
 import { Type } from 'typebox';
+import { QUESTION_BUDGET } from '../approval-text.js';
 import { localTimeZone } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
 import { goalRoutineName } from '../goals/runner.js';
 import { type Goal, type GoalStore, MAX_ACTIVE_GOALS, MAX_PROPOSED_GOALS } from '../goals/store.js';
+import { fechaCortaEs } from './reminder.js';
 
 /** Two ticks of one goal never land closer than this: autonomy, not a spin loop. */
 export const MIN_GOAL_TICK_MS = 60 * 60_000;
@@ -97,6 +99,43 @@ export function checkCadence(expr: string): string | null {
   return null;
 }
 
+/**
+ * Próximos ticks de una cadencia en la hora de pared de PA_TIMEZONE, en español
+ * («lun 09/11 09:00, mar 10/11 09:00»). Vacío si la cadencia no vale o no tiene
+ * ejecuciones futuras: la propuesta lo dice con su propio aviso.
+ */
+export function nextTicksEs(cadence: string, count = 3, from: Date = new Date()): string {
+  try {
+    const runs = new Cron(cadence.trim(), { paused: true, timezone: localTimeZone() }).nextRuns(
+      count,
+      from,
+    );
+    return runs.map((d) => fechaCortaEs(d)).join(', ');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Lo que enseña la pregunta del Gate al activar: el objetivo GUARDADO, palabra por
+ * palabra (título, lo que pidió, cada paso y la cadencia). Sin esto la pregunta solo
+ * decía el id, y un objetivo propuesto justo después de leer una web podía llevar
+ * texto copiado de ella que Nico no veía al aprobar.
+ */
+export function formatActivation(goal: Goal): string {
+  const steps = goal.plan.map((s, i) => `${i + 1}. ${s.text}`).join('\n');
+  return [
+    `Objetivo: "${goal.title}"`,
+    `Lo que pediste: ${goal.verbatim}`,
+    'Plan:',
+    steps,
+    `Cadencia: "${goal.cadence}"`,
+  ].join('\n');
+}
+
+/** Margen para la cabecera y el motivo de la pregunta de activación. */
+const ACTIVATION_HEADER = 300;
+
 /** The plan Nico approves: Spanish, one piece, no JSON. */
 export function formatProposal(goal: Goal): string {
   const steps = goal.plan.map((s, i) => `${i + 1}. ${s.text}`).join('\n');
@@ -109,10 +148,35 @@ export function formatProposal(goal: Goal): string {
     steps,
     '',
     `Cadencia de trabajo: cada tick según "${goal.cadence}" (hora local), nunca más de uno por hora, máximo 12 al día.`,
+    ...(() => {
+      const next = goal.cadence ? nextTicksEs(goal.cadence) : '';
+      return next ? [`Próximos ticks: ${next}.`] : [];
+    })(),
     'Te aviso solo cuando haya una novedad o una decisión tuya. Dinero, credenciales, terceros y acciones destructivas te preguntan siempre.',
     '',
     `Para activarlo responde "sí". Para cambiar algo, dime qué. (id: ${goal.id})`,
   ].join('\n');
+}
+
+function probeGoalFields(): Goal {
+  return {
+    id: '0'.repeat(36),
+    scope: '',
+    title: '',
+    verbatim: '',
+    plan: [],
+    status: 'proposed',
+    cadence: '',
+    blockedReason: null,
+    blockedAt: null,
+    lastOutcome: null,
+    lastTickAt: null,
+    ticksDay: '',
+    ticksToday: 0,
+    workstreamId: null,
+    createdAt: '',
+    updatedAt: '',
+  };
 }
 
 const STATUS_LABEL: Record<Goal['status'], string> = {
@@ -148,7 +212,9 @@ export interface GoalToolDeps {
   humanRepliedAfter: (scope: string, sinceIso: string) => boolean;
 }
 
-export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
+export function createGoalTool(
+  deps: GoalToolDeps,
+): AgentTool<typeof Params> & { gateHint: (args: Record<string, unknown>) => Promise<string> } {
   /** Reads the goal and pins it to the calling chat: no cross-chat reach. */
   const mine = (id: string | undefined): Goal | AgentToolResult => {
     if (!id) return reply('Falta el id del objetivo (lo ves con action=listar).', true);
@@ -173,6 +239,12 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
   };
 
   return {
+    gateHint: async (args) => {
+      if (args.action !== 'activar' || typeof args.id !== 'string') return '';
+      const goal = deps.goals.read(args.id);
+      if (!goal || goal.scope !== deps.scopeOf()) return '';
+      return formatActivation(goal);
+    },
     name: 'objetivo',
     label: 'Objetivo',
     description: [
@@ -249,6 +321,21 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<typeof Params> {
         if (probe.length > MAX_PROPOSAL_CHARS) {
           return reply(
             `El plan no cabe en un solo mensaje (${probe.length} caracteres, máximo ${MAX_PROPOSAL_CHARS}): resume los pasos o acorta el objetivo y proponlo de nuevo. Nada quedó guardado.`,
+            true,
+          );
+        }
+        // La pregunta de activación enseña todo el objetivo; si no cabriera entera, el
+        // Gate la denegaría después. Mejor decirlo ahora, antes de guardar nada.
+        const activation = formatActivation({
+          ...probeGoalFields(),
+          title,
+          verbatim,
+          plan,
+          cadence,
+        });
+        if (activation.length + ACTIVATION_HEADER > QUESTION_BUDGET) {
+          return reply(
+            `El objetivo no cabe entero en la pregunta para activarlo (${activation.length} caracteres): resume los pasos o acorta el objetivo y proponlo de nuevo. Nada quedó guardado.`,
             true,
           );
         }

@@ -16,6 +16,7 @@
 
 import { type BriefingInput, briefingDue, buildBriefing, watchHit } from './briefing.js';
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { looksLikePhishing, phishingSignals } from './mail/triage.js';
 import type { MailMessage } from './mail/types.js';
 import { isReminder, reminderText } from './tools/reminder.js';
 
@@ -46,9 +47,13 @@ export interface DailyBriefingDeps {
    * PA_BRIEFING_VOZ=1: manda además el resumen como nota de voz, después del texto y
    * sin esperarla. Solo se llama si el texto salió bien.
    */
-  speak?: (chatId: string, text: string) => Promise<void>;
+  speak?: (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
   /** Objetivos activos o bloqueados del dueño. */
   goals?: () => BriefingInput['goals'] | Promise<BriefingInput['goals']>;
+  /** Tareas del tablero del dueño: hoy sin hacer y atrasadas. */
+  tasks?: () => BriefingInput['tasks'] | Promise<BriefingInput['tasks']>;
+  /** Paquetes en camino, sacados de los correos de envío. */
+  deliveries?: () => BriefingInput['deliveries'] | Promise<BriefingInput['deliveries']>;
   /** Vigilancias de precio activas del dueño. */
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
   sourceTimeoutMs?: number;
@@ -113,8 +118,8 @@ export async function composeDailyBriefing(
 ): Promise<{ text: string; empty: boolean }> {
   const now = deps.now();
   const ms = deps.sourceTimeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS;
-  const [agenda, routines, reminders, followups, weather, mail, goals, watches] = await Promise.all(
-    [
+  const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks, deliveries] =
+    await Promise.all([
       within('agenda', deps.agenda, [], ms, deps.warn),
       within('rutinas', deps.routines, [], ms, deps.warn),
       within('recordatorios', deps.reminders, [], ms, deps.warn),
@@ -123,8 +128,9 @@ export async function composeDailyBriefing(
       within('correo', deps.mail, [], ms, deps.warn),
       within('objetivos', deps.goals, [], ms, deps.warn),
       within('precios', deps.watches, [], ms, deps.warn),
-    ],
-  );
+      within('tareas', deps.tasks, [], ms, deps.warn),
+      within('repartos', deps.deliveries, [], ms, deps.warn),
+    ]);
   const input: BriefingInput = {
     greeting: greetingFor(now),
     today: now,
@@ -136,10 +142,15 @@ export async function composeDailyBriefing(
     mail: (mail ?? []).slice(0, MAX_MAIL),
     goals: goals ?? [],
     watches: watches ?? [],
+    tasks: tasks ?? [],
+    deliveries: deliveries ?? [],
   };
   const empty =
     !input.weather &&
     input.agenda.length === 0 &&
+    (input.tasks?.length ?? 0) === 0 &&
+    // Un paquete «enviado» no justifica el mensaje; en reparto o con incidencia, sí.
+    !(input.deliveries ?? []).some((d) => d.notable) &&
     input.routines.length === 0 &&
     input.reminders.length === 0 &&
     input.followups.length === 0 &&
@@ -160,9 +171,58 @@ let inFlight = false;
  */
 function speakAfterText(deps: DailyBriefingDeps, chatId: string, text: string): void {
   if (!deps.speak) return;
+  const ctl = new AbortController();
+  let set = pendingVoice.get(chatId);
+  if (!set) {
+    set = new Set();
+    pendingVoice.set(chatId, set);
+  }
+  set.add(ctl);
   void Promise.resolve()
-    .then(() => deps.speak?.(chatId, text))
-    .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }));
+    .then(() => deps.speak?.(chatId, text, ctl.signal))
+    .catch((err: unknown) => deps.warn?.('briefing: voz falló', { err: String(err) }))
+    .finally(() => {
+      const s = pendingVoice.get(chatId);
+      s?.delete(ctl);
+      if (s && s.size === 0) pendingVoice.delete(chatId);
+    });
+}
+
+/** Notas de voz del resumen que aún se están preparando, por chat. */
+const pendingVoice = new Map<string, Set<AbortController>>();
+
+/**
+ * /stop: la nota de voz del resumen tarda unos segundos en sintetizarse y llegaba
+ * después de «Detenido.». Esto la cancela si aún no ha salido. Devuelve cuántas paró.
+ */
+export function stopBriefingVoice(chatId: string): number {
+  const set = pendingVoice.get(chatId);
+  if (!set) return 0;
+  let n = 0;
+  for (const ctl of set) {
+    if (!ctl.signal.aborted) {
+      ctl.abort();
+      n++;
+    }
+  }
+  pendingVoice.delete(chatId);
+  return n;
+}
+
+/**
+ * La voz del resumen (PA_BRIEFING_VOZ): sintetiza y manda la nota, salvo que /stop
+ * la haya cancelado mientras se sintetizaba.
+ */
+export function briefingSpeaker<A>(opts: {
+  synth: (text: string) => Promise<A | null | undefined>;
+  send: (chatId: string, audio: A) => Promise<unknown>;
+}): (chatId: string, text: string, signal?: AbortSignal) => Promise<void> {
+  return async (chatId, text, signal) => {
+    if (signal?.aborted) return;
+    const audio = await opts.synth(text);
+    if (!audio || signal?.aborted) return;
+    await opts.send(chatId, audio);
+  };
 }
 
 /**
@@ -217,6 +277,28 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
   }
 }
 
+/**
+ * Cada cuánto se mira si toca el resumen diario. Antes solo se miraba en el reloj de
+ * 2 h de las vigilancias de páginas: el resumen de las 8 llegaba hasta 2 h tarde y,
+ * si el PC arrancaba después de las 10, la primera mirada caía pasadas las 12 y el
+ * resumen de ese día se saltaba entero. Comprobar es barato: no llama al modelo.
+ */
+export const BRIEFING_CHECK_EVERY_MS = 60_000;
+
+/** Arranca la comprobación periódica del resumen diario. Devuelve cómo pararla. */
+export function startDailyBriefingTimer(
+  deps: DailyBriefingDeps,
+  everyMs: number = BRIEFING_CHECK_EVERY_MS,
+): () => void {
+  const timer = setInterval(() => {
+    runDailyBriefingIfDue(deps).catch((err: unknown) => {
+      deps.warn?.('briefing: comprobación falló', { err: String(err) });
+    });
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /** Hora local `HH:MM` de un instante, en la zona dada (Europe/Madrid en el PC de Nico). */
 export function hhmm(at: number, timeZone?: string): string {
   return new Intl.DateTimeFormat('es-ES', {
@@ -257,17 +339,32 @@ export function senderName(from: string): string {
  * Solo remitente y asunto: el cuerpo nunca entra en el mensaje.
  */
 export function pickImportantMail(
-  messages: ReadonlyArray<Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'>>,
+  messages: ReadonlyArray<
+    Pick<MailMessage, 'from' | 'subject' | 'at' | 'seen'> & { text?: string }
+  >,
   now: number,
   max = MAX_MAIL,
 ): Array<{ from: string; subject: string }> {
-  return messages
+  const recent = messages
     .filter((m) => !m.seen)
     .filter((m) => Number.isFinite(m.at) && m.at <= now + 60_000 && now - m.at <= DAY_MS)
+    .sort((a, b) => b.at - a.at);
+  // Lo que huele a estafa sale primero y avisado, aunque venga de un «no-reply»:
+  // solo se avisa, no se mueve ni se borra nada.
+  const suspicious = recent.flatMap((m) => {
+    const signals = phishingSignals({ from: m.from, subject: m.subject, text: m.text });
+    return looksLikePhishing(signals)
+      ? [{ from: senderName(m.from), subject: `⚠️ posible estafa (${signals[0]}): ${m.subject}` }]
+      : [];
+  });
+  const normal = recent
+    .filter(
+      (m) =>
+        !looksLikePhishing(phishingSignals({ from: m.from, subject: m.subject, text: m.text })),
+    )
     .filter((m) => !BULK_FROM.test(m.from) && !BULK_SUBJECT.test(m.subject))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, max)
     .map((m) => ({ from: senderName(m.from), subject: m.subject }));
+  return [...suspicious, ...normal].slice(0, max);
 }
 
 /** Códigos WMO de Open-Meteo, en español llano. */
@@ -311,15 +408,40 @@ export async function fetchWeatherLine(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 8_000,
 ): Promise<string | null> {
+  const days = await fetchWeatherDays(cfg, 1, fetchFn, timeoutMs);
+  const today = days[0];
+  if (!today) return null;
+  return `Tiempo${cfg.label ? ` en ${cfg.label}` : ''}: ${today.text}`;
+}
+
+export interface WeatherDay {
+  /** Fecha local YYYY-MM-DD del sitio configurado. */
+  date: string;
+  /** «8–17 °C, despejado» o «8–17 °C, lluvia (60 %)». */
+  text: string;
+}
+
+/**
+ * Previsión de 1 a 7 días con Open-Meteo (el mismo servicio gratis y sin clave del
+ * resumen diario). Los errores de red se propagan; días sin datos se omiten.
+ */
+export async function fetchWeatherDays(
+  cfg: WeatherConfig,
+  days: number,
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 8_000,
+): Promise<WeatherDay[]> {
+  const n = Math.min(7, Math.max(1, Math.round(days) || 1));
   const url =
     'https://api.open-meteo.com/v1/forecast' +
     `?latitude=${cfg.latitude}&longitude=${cfg.longitude}` +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-    '&timezone=auto&forecast_days=1';
+    `&timezone=auto&forecast_days=${n}`;
   const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`el servicio del tiempo ha respondido ${res.status}`);
   const body = (await res.json()) as {
     daily?: {
+      time?: string[];
       weather_code?: number[];
       temperature_2m_max?: number[];
       temperature_2m_min?: number[];
@@ -327,22 +449,26 @@ export async function fetchWeatherLine(
     };
   };
   const d = body.daily;
-  const max = d?.temperature_2m_max?.[0];
-  const min = d?.temperature_2m_min?.[0];
-  const code = d?.weather_code?.[0];
-  if (typeof max !== 'number' || typeof min !== 'number') return null;
-  const parts = [`${Math.round(min)}–${Math.round(max)} °C`];
-  const sky = typeof code === 'number' ? weatherCodeEs(code) : '';
-  const rain = d?.precipitation_probability_max?.[0];
-  const wet = sky === 'lluvia' || sky === 'llovizna' || sky === 'tormenta';
-  if (typeof rain === 'number' && rain >= 30) {
-    parts.push(
-      wet
-        ? `${sky} (${Math.round(rain)} %)`
-        : `${sky ? `${sky}, ` : ''}${Math.round(rain)} % de lluvia`,
-    );
-  } else if (sky) parts.push(sky);
-  return `Tiempo${cfg.label ? ` en ${cfg.label}` : ''}: ${parts.join(', ')}`;
+  const out: WeatherDay[] = [];
+  for (let i = 0; i < n; i++) {
+    const max = d?.temperature_2m_max?.[i];
+    const min = d?.temperature_2m_min?.[i];
+    if (typeof max !== 'number' || typeof min !== 'number') continue;
+    const code = d?.weather_code?.[i];
+    const parts = [`${Math.round(min)}–${Math.round(max)} °C`];
+    const sky = typeof code === 'number' ? weatherCodeEs(code) : '';
+    const rain = d?.precipitation_probability_max?.[i];
+    const wet = sky === 'lluvia' || sky === 'llovizna' || sky === 'tormenta';
+    if (typeof rain === 'number' && rain >= 30) {
+      parts.push(
+        wet
+          ? `${sky} (${Math.round(rain)} %)`
+          : `${sky ? `${sky}, ` : ''}${Math.round(rain)} % de lluvia`,
+      );
+    } else if (sky) parts.push(sky);
+    out.push({ date: String(d?.time?.[i] ?? ''), text: parts.join(', ') });
+  }
+  return out;
 }
 
 function sameLocalDay(a: Date, b: Date): boolean {

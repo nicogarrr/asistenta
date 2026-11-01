@@ -89,11 +89,11 @@ describe('durable goal -> prompt workstream lifecycle', () => {
     },
   );
   it('keeps paused-only fronts visible to context instead of dropping them as no active work', async () => {
-    const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    const context = cli.slice(
-      cli.indexOf('export function buildContextNote('),
-      cli.indexOf('function summarizeToolUse'),
-    );
+    // buildContextNote lives in src/daemon/context-note.ts (P2 move out of cli.ts).
+    const mod = await readFile(new URL('../src/daemon/context-note.ts', import.meta.url), 'utf8');
+    const start = mod.indexOf('export function buildContextNote(');
+    expect(start).toBeGreaterThan(-1);
+    const context = mod.slice(start);
     expect(context).not.toContain('workstreams?.active(thread.key)');
     expect(context).toContain("ws !== 'Sin frentes de trabajo abiertos.'");
   });

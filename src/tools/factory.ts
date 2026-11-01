@@ -28,6 +28,7 @@ import {
 } from '../factory/store.js';
 import { FACTORY_ID, type FactoryToolMeta, MAX_FACTORY_CODE_BYTES } from '../factory/types.js';
 import { log } from '../log.js';
+import { foldAccents } from '../text.js';
 
 export const FACTORY_TOOL_NAME = 'fabrica';
 
@@ -76,12 +77,10 @@ const FactoryParams = Type.Object({
   ),
 });
 
-function slugify(name: string): string {
+/** Id de herramienta a partir de su nombre: «Árbol Ñandú» → «arbol-nandu». Exportada para tests. */
+export function slugify(name: string): string {
   return (
-    name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+    foldAccents(name)
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 64) || 'tool'

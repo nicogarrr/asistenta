@@ -42,7 +42,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'tv',
-    description: 'Mando de la tele: /tv solo abre el mando; /tv apaga la tele (sin gastar)',
+    description: 'Mando de la tele: /tv solo abre el mando; o dime «apaga la tele» (sin gastar)',
   },
   {
     command: 'buscar',
@@ -56,6 +56,10 @@ export const TELEGRAM_COMMANDS = [
     command: 'help',
     description: 'Ver todos los comandos',
   },
+  {
+    command: 'funciones',
+    description: 'Todo lo que sé hacer, por áreas y con ejemplos',
+  },
   // Encargos: investigar, vigilar precios, rutinas.
   {
     command: 'investiga',
@@ -68,6 +72,10 @@ export const TELEGRAM_COMMANDS = [
   {
     command: 'vigilando',
     description: 'Listar páginas vigiladas',
+  },
+  {
+    command: 'vigilancias',
+    description: 'Todo lo que vigilo: páginas, precios, rutinas y avisos',
   },
   {
     command: 'dejar_de_vigilar',
@@ -129,6 +137,10 @@ export const TELEGRAM_COMMANDS = [
   {
     command: 'altavoz',
     description: 'Tus notas de voz suenan solas en el PC o la tele',
+  },
+  {
+    command: 'ordenador',
+    description: 'Apagar o encender el control del PC (/ordenador off lo para ya)',
   },
   {
     command: 'ojo',
@@ -199,7 +211,7 @@ export const TELEGRAM_COMMANDS = [
   },
   {
     command: 'learn',
-    description: 'Aprender una rutina; /learn end para acabar',
+    description: 'Aprender una rutina mirándote; al acabar dime «ya está»',
   },
   // Ajustes y diagnóstico.
   {
@@ -217,6 +229,10 @@ export const TELEGRAM_COMMANDS = [
   {
     command: 'servicios',
     description: 'Herramientas externas adoptadas y su estado',
+  },
+  {
+    command: 'mcp',
+    description: 'Recursos y prompts de tus servidores MCP',
   },
   {
     command: 'evolucion',

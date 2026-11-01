@@ -11,6 +11,7 @@
  * pueda avisar). La descarga usa redirecciones manuales para revalidar el
  * esquema en cada salto, timeout global y tope de bytes.
  */
+import { secondsText, sizeText } from './import.js';
 import { isSkillId } from './store.js';
 
 export interface CatalogEntry {
@@ -121,14 +122,14 @@ export function parseCatalog(
   try {
     root = JSON.parse(json) as unknown;
   } catch {
-    return { ok: false, reason: 'el catálogo no es JSON válido' };
+    return { ok: false, reason: 'el catálogo no tiene el formato esperado' };
   }
   if (!isRecord(root)) {
-    return { ok: false, reason: 'el catálogo debe ser un objeto JSON' };
+    return { ok: false, reason: 'el catálogo no tiene el formato esperado' };
   }
   const skills = root.skills;
   if (!Array.isArray(skills)) {
-    return { ok: false, reason: 'el catálogo no tiene una lista skills' };
+    return { ok: false, reason: 'el catálogo no trae la lista de skills' };
   }
   if (skills.length > MAX_ENTRIES) {
     return { ok: false, reason: `el catálogo supera el máximo de ${MAX_ENTRIES} skills` };
@@ -229,10 +230,10 @@ function parseHttpsCatalogUrl(raw: string): URL {
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error('la URL del catálogo no es válida');
+    throw new Error('el enlace del catálogo no es válido');
   }
   if (parsed.protocol !== 'https:') {
-    throw new Error('solo se puede descargar un catálogo desde una URL https');
+    throw new Error('solo leo catálogos desde enlaces https');
   }
   return parsed;
 }
@@ -257,7 +258,9 @@ function isRedirect(status: number): boolean {
 }
 
 function timeoutError(timeoutMs: number): Error {
-  return new Error(`la descarga del catálogo superó el tiempo límite (timeout) de ${timeoutMs} ms`);
+  return new Error(
+    `el catálogo ha tardado demasiado en responder (más de ${secondsText(timeoutMs)})`,
+  );
 }
 
 /**
@@ -268,7 +271,7 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
   const declaredRaw = headerValue(response.headers, 'content-length');
   const declared = declaredRaw === null ? Number.NaN : Number(declaredRaw);
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new Error(`el catálogo supera el límite de ${maxBytes} bytes`);
+    throw new Error(`el catálogo es demasiado grande (máximo ${sizeText(maxBytes)})`);
   }
   const body = response.body;
   if (body && typeof body.getReader === 'function') {
@@ -282,7 +285,7 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new Error(`el catálogo supera el límite de ${maxBytes} bytes`);
+        throw new Error(`el catálogo es demasiado grande (máximo ${sizeText(maxBytes)})`);
       }
       chunks.push(value);
     }
@@ -291,18 +294,18 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
   if (typeof response.arrayBuffer === 'function') {
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.byteLength > maxBytes) {
-      throw new Error(`el catálogo supera el límite de ${maxBytes} bytes`);
+      throw new Error(`el catálogo es demasiado grande (máximo ${sizeText(maxBytes)})`);
     }
     return buffer.toString('utf8');
   }
   if (typeof response.text === 'function') {
     const value = await response.text();
     if (Buffer.byteLength(value, 'utf8') > maxBytes) {
-      throw new Error(`el catálogo supera el límite de ${maxBytes} bytes`);
+      throw new Error(`el catálogo es demasiado grande (máximo ${sizeText(maxBytes)})`);
     }
     return value;
   }
-  throw new Error('la respuesta del catálogo no tiene un cuerpo legible');
+  throw new Error('el catálogo no ha devuelto nada que pueda leer');
 }
 
 /**
@@ -354,10 +357,12 @@ export async function fetchCatalog(
         if (isRedirect(response.status)) {
           const location = headerValue(response.headers, 'location');
           if (!location) {
-            throw new Error('la redirección no incluye una cabecera Location');
+            throw new Error('el enlace del catálogo redirige a otra dirección sin decir cuál');
           }
           if (redirects >= MAX_REDIRECTS) {
-            throw new Error(`demasiadas redirecciones (máximo ${MAX_REDIRECTS})`);
+            throw new Error(
+              `el enlace del catálogo da demasiadas vueltas (más de ${MAX_REDIRECTS} redirecciones)`,
+            );
           }
           current = parseHttpsCatalogUrl(new URL(location, current).toString());
           const body = response.body;
@@ -367,7 +372,7 @@ export async function fetchCatalog(
           continue;
         }
         if (!response.ok) {
-          throw new Error(`el servidor respondió con estado ${response.status}`);
+          throw new Error(`el servidor no me ha dado el catálogo (error ${response.status})`);
         }
         return await readCapped(response, maxBytes);
       }
@@ -386,4 +391,77 @@ export async function fetchCatalog(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/** Cuántas filas enseña `/skills catalogo` por bloque (el mensaje de Telegram es corto). */
+const SHOWN = 20;
+const DESC_MAX = 120;
+
+function shortDesc(value: string): string {
+  const d = oneLine(value);
+  return d.length > DESC_MAX ? `${d.slice(0, DESC_MAX - 1)}…` : d;
+}
+
+/** Los motivos propios de `fetchCatalog`/`parseCatalog` van en castellano; el resto no se enseña. */
+function friendlyReason(reason: string): string {
+  return /^(el |la |solo |demasiadas |no hay |maxBytes |timeoutMs )/.test(reason)
+    ? oneLine(reason)
+    : 'sin conexión o respuesta no válida';
+}
+
+/**
+ * `/skills catalogo`: las skills instaladas (sin red) y, solo si el dueño
+ * configuró `PA_SKILLS_CATALOG_URL`, el catálogo remoto cruzado con lo
+ * instalado. Nunca instala nada: las filas no instaladas van numeradas y se
+ * pregunta «¿Instalo alguna? Dime su número»; `onPicks` recibe esas filas para que
+ * la respuesta («la 2») complete la instalación (Nico, 1 nov: sin mandar a comandos).
+ */
+export async function skillsCatalogReply(
+  installed: Array<{ id: string; name: string; description?: string }>,
+  catalogUrl: string | undefined,
+  fetchImpl?: typeof fetch,
+  onPicks?: (picks: Array<{ name: string; url: string; description: string }>) => void,
+): Promise<string> {
+  const mine = catalogFromInstalled(installed);
+  const lines: string[] = [
+    mine.length ? `Skills instaladas (${mine.length}):` : 'No tienes skills instaladas.',
+  ];
+  for (const e of mine.slice(0, SHOWN)) {
+    lines.push(`• ${e.name}${e.description ? ` — ${shortDesc(e.description)}` : ''}`);
+  }
+  if (mine.length > SHOWN) lines.push(`… y ${mine.length - SHOWN} más`);
+  const url = catalogUrl?.trim();
+  if (!url) {
+    lines.push(
+      '',
+      'Sin catálogo remoto. Para verlo, pon PA_SKILLS_CATALOG_URL=https://… (un JSON { "skills": [...] }) en .env.',
+    );
+    return lines.join('\n');
+  }
+  const remote = await fetchCatalog(url, { fetchImpl });
+  if (!remote.ok) {
+    lines.push('', `No he podido leer el catálogo de skills (${friendlyReason(remote.reason)}).`);
+    return lines.join('\n');
+  }
+  const merged = mergeCatalog(
+    remote.entries,
+    installed.map((s) => s.id),
+  );
+  lines.push('', merged.length ? `Catálogo (${merged.length}):` : 'El catálogo está vacío.');
+  const picks: Array<{ name: string; url: string; description: string }> = [];
+  for (const e of merged.slice(0, SHOWN)) {
+    const desc = e.description ? ` — ${shortDesc(e.description)}` : '';
+    if (!e.installed && e.url) {
+      picks.push({ name: e.name, url: e.url, description: e.description });
+      lines.push(`${picks.length}. ${e.name}${desc}`, `   ${e.url}`);
+    } else {
+      lines.push(`• ${e.name}${e.installed ? ' ✓ instalada' : ''}${desc}`);
+    }
+  }
+  if (merged.length > SHOWN) lines.push(`… y ${merged.length - SHOWN} más`);
+  if (picks.length) {
+    lines.push('', '¿Instalo alguna? Dime su número (la reviso antes de guardarla).');
+    onPicks?.(picks);
+  }
+  return lines.join('\n');
 }

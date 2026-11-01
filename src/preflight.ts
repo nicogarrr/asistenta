@@ -10,6 +10,8 @@
  * `PreflightDeps`, así que los tests no abren nada real.
  */
 
+import { resolveOwnerUserId } from './vigilante.js';
+
 export type CheckStatus = 'ok' | 'aviso' | 'fallo' | 'info';
 
 export interface PreflightCheck {
@@ -38,11 +40,26 @@ export interface PreflightDeps {
   tvReachable(host: string): Promise<boolean>;
   desktopEnabled(): boolean;
   computerUseEnabled(): boolean;
+  /**
+   * True when a /ordenador off is saved on disk: the daemon will start with the PC
+   * control off even if `.env` allows it. Absent = not checked (old behaviour).
+   */
+  computerOffSaved?(): boolean;
   mailStatus(): Promise<{ read: string; send: string }>;
   /** Bytes libres en la carpeta de estado, o null si no se puede saber. */
   freeDiskBytes(): Promise<number | null>;
   /** Sin red: no se valida el token contra Telegram ni se mira la tele. */
   offline?: boolean;
+}
+
+/** false = no «off» saved (or not checked); true = saved; undefined = could not check. */
+function offSavedOrUnknown(deps: PreflightDeps): boolean | undefined {
+  if (!deps.computerOffSaved) return false;
+  try {
+    return deps.computerOffSaved();
+  } catch {
+    return undefined;
+  }
 }
 
 const GB = 1024 ** 3;
@@ -81,7 +98,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Caja fuerte (vault)',
       status: 'fallo',
       detail: 'no existe todavía',
-      hint: 'pa vault init (o pa setup para el asistente guiado)',
+      hint: 'Haz doble clic en instalar.bat (o pa vault init)',
     });
   } else {
     try {
@@ -111,7 +128,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Telegram',
       status: 'fallo',
       detail: 'falta el token del bot',
-      hint: 'pa vault set telegram:botToken <token de @BotFather>',
+      hint: 'Haz doble clic en instalar.bat (o pa vault set-stdin telegram:botToken)',
     });
   } else if (deps.offline) {
     add({
@@ -151,9 +168,37 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
           label: 'Usuarios autorizados',
           status: 'fallo',
           detail: 'no hay ninguno',
-          hint: 'pa vault set telegram:allowedUserIds <tu id de Telegram>',
+          hint: 'Haz doble clic en instalar.bat: le mandas «hola» al bot y guarda tu ID (o pa vault set telegram:allowedUserIds <tu id>)',
         },
   );
+
+  // Dueño: el chat privado al que van avisos, vigilantes y el aviso de arranque si algo falla.
+  // Misma regla que el daemon (resolveOwnerUserId): el elegido si está autorizado,
+  // o el único usuario autorizado.
+  if (allowed?.length) {
+    const explicit = Number(await get('vigilante:ownerUserId'));
+    const configured = Number.isSafeInteger(explicit) && explicit > 0 ? explicit : null;
+    const owner = resolveOwnerUserId(allowed, configured);
+    if (owner != null) {
+      add({ id: 'dueno', label: 'Dueño (chat privado)', status: 'ok', detail: `${owner}` });
+    } else if (configured != null) {
+      add({
+        id: 'dueno',
+        label: 'Dueño (chat privado)',
+        status: 'aviso',
+        detail: `${configured} no está entre los usuarios autorizados: los avisos no saldrán`,
+        hint: `pa vault set telegram:allowedUserIds ${[...allowed, configured].join(',')}  (o cambia vigilante:ownerUserId)`,
+      });
+    } else {
+      add({
+        id: 'dueno',
+        label: 'Dueño (chat privado)',
+        status: 'aviso',
+        detail: 'no sé cuál es tu chat privado: los avisos y vigilantes no saldrán',
+        hint: 'pa vault set vigilante:ownerUserId <tu id de Telegram>',
+      });
+    }
+  }
 
   // Modelo: mismas claves que usa pa serve, sin ninguna llamada de pago.
   try {
@@ -165,7 +210,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'Modelo',
       status: 'fallo',
       detail: deps.providerFailureMessage(error),
-      hint: 'pa vault set provider:apiKey <clave> (o pa llm-health para probar cada proveedor)',
+      hint: 'instalar.bat o pa vault set-stdin provider:apiKey (pa llm-health prueba cada proveedor)',
     });
   }
 
@@ -217,7 +262,18 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightCheck[
       label: 'PC (Computer Use)',
       status: 'aviso',
       detail: 'apagado (PA_COMPUTER_USE=0)',
-      hint: 'Actívalo desde Telegram con /ordenador on.',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
+    });
+  } else if (offSavedOrUnknown(deps) !== false) {
+    const unknown = offSavedOrUnknown(deps) === undefined;
+    add({
+      id: 'pc',
+      label: 'PC (Computer Use)',
+      status: 'aviso',
+      detail: unknown
+        ? 'no he podido mirar si lo dejaste apagado desde Telegram'
+        : 'lo apagaste desde Telegram (guardado: arrancará apagado)',
+      hint: 'En Telegram, toca /ordenador y dime «enciéndelo».',
     });
   } else {
     add({

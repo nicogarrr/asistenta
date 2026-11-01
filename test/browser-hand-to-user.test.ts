@@ -3,10 +3,11 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, expect, it } from 'vitest';
 import { BrowserService } from '../src/browser/service.js';
+import { describeBrowser } from './helpers/real-browser.js';
 
-describe('browser: handToUser sin pantalla', () => {
+describeBrowser('browser: handToUser sin pantalla', () => {
   const root = mkdtempSync(join(tmpdir(), 'pa-hand-'));
   const server = createServer((_req, res) => {
     res.setHeader('content-type', 'text/html');

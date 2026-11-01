@@ -31,6 +31,10 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { log } from './log.js';
+import { sameProcessAsRecorded } from './process-identity.js';
+
+/** A beat this far ahead of the clock was written before the clock went back. */
+const FUTURE_BEAT_TOLERANCE_MS = 60_000;
 
 /**
  * Heartbeat cadence, mirrored from `installLifecycle`'s `setInterval`. Duplicated
@@ -194,6 +198,31 @@ function defaultKill(pid: number): void {
   }
 }
 
+/**
+ * The default kill when the watchdog knows the pid file: a pid left by a crash
+ * may now belong to another program (Windows reuses pids quickly), and killing
+ * it would take down whatever the user has open. If the start identity the
+ * daemon recorded at boot (`<pid file>.start`) proves the live process started
+ * at another moment, it is left alone; the restart that follows goes through
+ * `assertNotRunning`, which makes the same check.
+ */
+export function killIfOurs(
+  pid: number,
+  pidFile: string,
+  deps: {
+    identityOf?: (pid: number) => string | null;
+    kill?: (pid: number) => void;
+  } = {},
+): void {
+  if (sameProcessAsRecorded(`${pidFile}.start`, pid, deps.identityOf) === 'different') {
+    log.warn('watchdog: the pid in the pid file now belongs to another process; not killing it', {
+      pid,
+    });
+    return;
+  }
+  (deps.kill ?? defaultKill)(pid);
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -237,6 +266,7 @@ export class Watchdog {
   };
 
   /** Timestamps of restarts still inside the window. */
+  #futureBeat: { at: number; seenAt: number } | null = null;
   #window: number[] = [];
   #totalRestarts = 0;
   #gaveUp = false;
@@ -262,7 +292,8 @@ export class Watchdog {
       now: options.now ?? Date.now,
       readPid:
         options.readPid ?? (pidFile !== undefined ? () => defaultReadPid(pidFile) : () => null),
-      kill: options.kill ?? defaultKill,
+      kill:
+        options.kill ?? (pidFile !== undefined ? (pid) => killIfOurs(pid, pidFile) : defaultKill),
       restart: options.restart,
       statusOnly: options.statusOnly === true,
       onReport: options.onReport,
@@ -318,9 +349,26 @@ export class Watchdog {
         healthy: false,
         restarts: this.#window.length,
         action: 'report',
-        reason: `intenté reiniciar y falló: ${this.#lastError}`,
+        reason: 'intenté reiniciarla y no pude',
       };
     }
+  }
+
+  /**
+   * How long the daemon has gone without a beat. A beat dated in the future means the
+   * clock went back after it was written (a fast clock corrected by Windows time sync,
+   * dual boot with Linux): counted from now - at it would read as fresh until the clock
+   * catches up, so a daemon that hung after the correction was never restarted. Such a
+   * beat counts from the moment we first saw it; a live daemon rewrites it within 15 s.
+   */
+  #staleness(at: number | null, now: number): number {
+    if (at === null) return Number.POSITIVE_INFINITY;
+    if (at - now <= FUTURE_BEAT_TOLERANCE_MS) {
+      this.#futureBeat = null;
+      return Math.max(0, now - at);
+    }
+    if (this.#futureBeat?.at !== at) this.#futureBeat = { at, seenAt: now };
+    return Math.max(0, now - this.#futureBeat.seenAt);
   }
 
   /** Everything `check()` would decide, without touching a process. */
@@ -330,7 +378,7 @@ export class Watchdog {
     const beat = readHeartbeat(this.#opts.heartbeatFile);
     this.#lastHeartbeatAt = beat.at;
     this.#lastSource = beat.source;
-    const staleMs = beat.at === null ? Number.POSITIVE_INFINITY : Math.max(0, now - beat.at);
+    const staleMs = this.#staleness(beat.at, now);
     this.#lastStaleMs = staleMs;
     this.#prune(now);
     // Read on every check, healthy or not: the pid is what lets a report name the
@@ -355,7 +403,7 @@ export class Watchdog {
 
     const silence =
       beat.source === 'missing'
-        ? 'no hay ningún heartbeat'
+        ? 'todavía no ha dado señales de vida'
         : `lleva ${formatDurationMs(staleMs)} sin responder`;
 
     if (this.#opts.statusOnly) {
@@ -365,7 +413,7 @@ export class Watchdog {
         restarts: this.#window.length,
         gaveUp: false,
         action: 'report',
-        reason: `modo consulta: ${silence}, no toco nada`,
+        reason: `${silence} y estoy en modo consulta`,
         pid,
       };
     }
@@ -397,7 +445,7 @@ export class Watchdog {
         restarts: this.#window.length,
         gaveUp: false,
         action: 'report',
-        reason: 'no pude leer el pid, así que no mato nada',
+        reason: 'no encuentro su proceso para cerrarlo',
         pid: null,
       };
     }
@@ -409,7 +457,7 @@ export class Watchdog {
       restarts: this.#window.length,
       gaveUp: false,
       action: 'restart',
-      reason: pid === null ? silence : `${silence} (pid ${pid})`,
+      reason: silence,
       pid,
     };
   }
@@ -432,11 +480,10 @@ export class Watchdog {
    */
   #prune(now: number): void {
     const cutoff = now - this.#opts.windowMs;
-    for (;;) {
-      const oldest = this.#window[0];
-      if (oldest === undefined || oldest >= cutoff) break;
-      this.#window.shift();
-    }
+    // Un reinicio fechado por delante del reloj (hora corregida hacia atrás al volver
+    // de suspender/hibernar) no caducaba hasta que el reloj lo alcanzara: con el cupo
+    // lleno, el vigilante dejaba de reiniciar durante horas. Fuera también esos.
+    this.#window = this.#window.filter((t) => t >= cutoff && t <= now + FUTURE_BEAT_TOLERANCE_MS);
   }
 
   stats(): WatchdogStats {
@@ -475,14 +522,14 @@ export class Watchdog {
    * The report, as text. Pure: it never checks, never kills, never restarts.
    *
    * Spanish and written to be pasted into a chat, which is why it carries the concrete
-   * numbers (how long, how many restarts, which pid) instead of "algo ha ido mal".
+   * numbers (how long, how many restarts) instead of "algo ha ido mal" — but no file
+   * paths, pids or raw errors.
    */
   summary(verdict?: WatchdogVerdict): string {
     const now = this.#opts.now();
     const beat = readHeartbeat(this.#opts.heartbeatFile);
-    const staleMs = beat.at === null ? Number.POSITIVE_INFINITY : Math.max(0, now - beat.at);
+    const staleMs = this.#staleness(beat.at, now);
     const healthy = staleMs < this.#opts.staleAfterMs;
-    const pid = verdict?.pid ?? this.#lastPid ?? this.#readPidSafely();
     const last = this.#safeLastTurn();
     const lines: string[] = [];
 
@@ -493,28 +540,28 @@ export class Watchdog {
     } else {
       const silence =
         beat.source === 'missing'
-          ? `${this.#opts.daemonName} no ha escrito ningún heartbeat en ${this.#opts.heartbeatFile}`
+          ? `${this.#opts.daemonName} todavía no ha dado señales de vida`
           : `${this.#opts.daemonName} lleva ${formatDurationMs(staleMs)} sin responder`;
       lines.push(`${silence}.`);
     }
-    lines.push(`Último turno: ${last}.`);
+    lines.push(`Lo último que hizo: ${last}.`);
 
     if (!healthy) {
       if (verdict?.gaveUp) {
         lines.push(
-          `La he reiniciado ${plural(verdict.restarts, 'vez', 'veces')} en ${formatDurationMs(this.#opts.windowMs)} y sigue igual, así que dejo de reiniciarla: ahora toca una persona.`,
+          `La he reiniciado ${plural(verdict.restarts, 'vez', 'veces')} en ${formatDurationMs(this.#opts.windowMs)} y sigue igual, así que dejo de reiniciarla: necesito que la mires tú (prueba «pa doctor»).`,
         );
       } else if (verdict?.action === 'restart') {
         lines.push(
           this.#opts.statusOnly
             ? 'Estoy en modo consulta, así que no la he tocado.'
-            : `La reinicio${pid === null ? '' : ` (pid ${pid})`}.`,
+            : 'La reinicio.',
         );
       } else if (verdict?.action === 'report') {
         lines.push(`${cap(verdict.reason)}, así que no toco nada.`);
       }
-      lines.push(`Heartbeat: ${this.#opts.heartbeatFile}`);
-      if (this.#lastError) lines.push(`Último fallo del watchdog: ${this.#lastError}`);
+      // Ni la ruta del latido ni el error en crudo: eso va al registro, no al chat.
+      if (this.#lastError) lines.push('Además, el vigilante tuvo un fallo al comprobarla.');
     }
 
     return lines.join('\n');
