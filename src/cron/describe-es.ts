@@ -35,6 +35,15 @@ export function scheduleEs(schedule: string): string | null {
   if (f.length !== 5) return null;
   const [m = '', h = '', dom = '', mon = '', dow = ''] = f;
   const minute = num(m, 59);
+  // «9,21»: varias tomas al día («a las 9 y a las 21»). Antes no se sabía decir y la
+  // lista ponía «se repite con un horario propio».
+  const hours = /^\d{1,2}(?:,\d{1,2})+$/.test(h) ? h.split(',').map((x) => num(x, 23)) : null;
+  if (minute !== null && hours && hours.every((x) => x !== null)) {
+    const times = hours.map((x) => `${pad(x as number)}:${pad(minute)}`);
+    const said = scheduleEs([m, '0', dom, mon, dow].join(' '));
+    const at = `a las ${times.slice(0, -1).join(', ')} y ${times.at(-1)}`;
+    return said ? said.replace(/a las \d{2}:\d{2}$/, at) : null;
+  }
   const hour = num(h, 23);
   if (minute === null) {
     const every = /^\*\/(\d{1,2})$/.exec(m);
