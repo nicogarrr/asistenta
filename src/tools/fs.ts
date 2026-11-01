@@ -37,11 +37,20 @@ const ListParams = Type.Object({
  * explicitly, not left to the OS to fail in a confusing way. Windows accepts both
  * separators and is case-insensitive, so this compares normalised lowercase paths.
  */
+/**
+ * Whether a path relative to the working directory leaves it: «..», «../x», «..\\x» or
+ * another drive. A name that only starts with dots («..notas.txt», «...») is inside;
+ * before, `startsWith('..')` refused it as an escape.
+ */
+function escapes(rel: string): boolean {
+  return rel === '..' || /^\.\.[\\/]/.test(rel) || isAbsolute(rel);
+}
+
 function guardPath(raw: string): string {
   const expanded = raw.replace(/^~(?=$|[\\/])/, homedir());
   const p = resolve(expanded);
   const rel = relative(process.cwd(), p);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (escapes(rel)) {
     throw new Error(`path escapes the working directory: ${raw}`);
   }
   // Same rule on the on-disk spelling (#1005): a symlink or junction inside the
@@ -50,7 +59,7 @@ function guardPath(raw: string): string {
   if (disk !== null) {
     const root = onDiskSpelling(process.cwd()) ?? process.cwd();
     const realRel = relative(root, disk);
-    if (realRel.startsWith('..') || isAbsolute(realRel)) {
+    if (escapes(realRel)) {
       throw new Error(`path escapes the working directory: ${raw}`);
     }
   }
