@@ -969,9 +969,16 @@ export function extractCommitments(
     const folded = withoutTimeOfDay(spokenTimes(fold(raw)));
     if (!folded) continue;
 
+    // «mañana», «el viernes», «hoy» se cuentan desde el día en que se escribió el correo,
+    // no desde hoy: un correo del viernes que dice «le esperamos mañana a las 10» leído
+    // el domingo apuntaba una cita el lunes. Sin fecha fiable (o del futuro), desde hoy.
+    const sent = message.at;
+    const written =
+      Number.isFinite(sent) && sent > 0 && sent <= now ? { now: sent, timeZone } : ctx;
+
     // Filter 1: no date, no commitment. This one rule is what keeps "tu pedido ha sido
     // enviado" - the archetypal false positive - out of the agenda.
-    const date = bestDate(folded, ctx);
+    const date = bestDate(folded, written);
     if (!date) continue;
 
     const signal = kindIn(folded);
