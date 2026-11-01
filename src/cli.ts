@@ -108,7 +108,7 @@ import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
-import { chatReplyText } from './core/friendly-error.js';
+import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
@@ -4238,6 +4238,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     preguntas.ask(chatKey(inbound), 'vigila', {
       answer: (t) => (AVISAR_OTRA_VEZ.test(t.trim()) ? `avisar ${id}` : null),
     });
+  /** Fallo del modelo en el chat: «sí» resume la conversación o repite el mensaje. */
+  const modelErrorAsk = (
+    inbound: Inbound,
+    r: { text: string; error: string | null },
+    ask: boolean,
+  ): string => {
+    const cmd = !ask || r.text.trim() || !r.error ? null : modelErrorFollowUp(r.error);
+    if (!cmd) return '';
+    preguntas.ask(chatKey(inbound), cmd, { answer: (t) => (SI_RESPUESTA.test(t) ? '' : null) });
+    return ` ${MODEL_ERROR_QUESTION[cmd]}`;
+  };
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
     if (precioMuteArgs(args)) {
@@ -6586,7 +6597,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
 
       // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
-      const text2 = chatReplyText(result);
+      const text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
       if (out) out.answer(text2);
       else await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
