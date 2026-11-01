@@ -24,7 +24,7 @@ describe('tvChatCommand', () => {
     const run = vi.fn();
     const out = await tvChatCommand('hazme un café', { isOwner: true, run });
     expect(out).toContain('No he entendido «hazme un café»');
-    expect(out).toContain('/tv abre Netflix');
+    expect(out).toContain('«abre Netflix»');
     expect(run).not.toHaveBeenCalled();
   });
 

@@ -55,7 +55,7 @@ describe('/ordenador estado y el apagado guardado', () => {
   });
 
   it('encendido sin nada guardado, o sin offSaved: el texto de siempre', () => {
-    const plain = '🖥️ Control del ordenador: ACTIVADO. Apágalo con /ordenador off.';
+    const plain = '🖥️ Control del ordenador: ACTIVADO. Si quieres quitármelo, dime «apágalo».';
     expect(
       computerSwitchCommand(
         'estado',
@@ -64,7 +64,7 @@ describe('/ordenador estado y el apagado guardado', () => {
     ).toBe(plain);
     expect(computerSwitchCommand('estado', deps(true))).toBe(plain);
     expect(computerSwitchCommand('', deps(false))).toBe(
-      '🛑 Control del ordenador: DESACTIVADO. Enciéndelo con /ordenador on.',
+      '🛑 Control del ordenador: DESACTIVADO. Si quieres que pueda usarlo, dime «enciéndelo».',
     );
   });
 

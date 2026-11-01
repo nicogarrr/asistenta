@@ -10,9 +10,14 @@
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 
 export const TV_CHAT_EXAMPLES =
-  '/tv apaga la tele · /tv abre Netflix · /tv volumen a 15 · /tv silencio · /tv modo cine · /tv estado';
+  '«apaga la tele», «abre Netflix», «volumen a 15», «silencio», «modo cine» o «estado»';
 
-export const TV_CHAT_USAGE = `¿Qué hago con la tele? Dímelo con palabras, por ejemplo: ${TV_CHAT_EXAMPLES}`;
+export const TV_CHAT_USAGE = `¿Qué hago con la tele? Dímelo con palabras, por ejemplo: ${TV_CHAT_EXAMPLES}.`;
+
+/** Si una respuesta normal es una orden de tele al momento (para completar el /tv preguntado). */
+export function isTvOrder(text: string): boolean {
+  return text.trim().length <= TV_CHAT_MAX_LEN && parseTvCommand(text) !== null;
+}
 
 export const TV_CHAT_MAX_LEN = 200;
 
@@ -28,14 +33,14 @@ export async function tvChatCommand(args: string, deps: TvChatCommandDeps): Prom
   if (!text) return TV_CHAT_USAGE;
   if (!deps.isOwner) return 'Solo el dueño, en su chat privado, puede mandar órdenes a la tele.';
   if (text.length > TV_CHAT_MAX_LEN) {
-    return `La orden es demasiado larga para /tv (máx. ${TV_CHAT_MAX_LEN} caracteres). Pídemelo sin /tv.`;
+    return `La orden es demasiado larga para hacerla al momento (máx. ${TV_CHAT_MAX_LEN} caracteres). Escríbemela como un mensaje normal.`;
   }
   const intent = parseTvCommand(text);
   if (!intent && tvOrderHasTime(text)) {
-    return `«${text.slice(0, 80)}» lleva hora o condición y /tv solo hace cosas al momento: no he tocado la tele. Pídemelo sin /tv.`;
+    return `«${text.slice(0, 80)}» lleva hora o condición, y así solo hago cosas al momento: no he tocado la tele. Escríbemelo como un mensaje normal.`;
   }
   if (!intent) {
-    return `No he entendido «${text.slice(0, 80)}» como orden para la tele. Ejemplos: ${TV_CHAT_EXAMPLES}. Para algo más complejo, pídemelo sin /tv.`;
+    return `No he entendido «${text.slice(0, 80)}» como orden para la tele. Prueba con algo como ${TV_CHAT_EXAMPLES}. Para algo más complejo, escríbemelo como un mensaje normal.`;
   }
   try {
     const out = (await deps.run(text)).trim();

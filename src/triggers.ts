@@ -171,7 +171,7 @@ export function parseTriggerAdd(
 ): { ok: true; value: ParsedTriggerAdd } | { ok: false; error: string } {
   const USAGE =
     'Dime qué lo dispara y qué rutina hago, separados por una barra. Por ejemplo: ' +
-    '/disparador archivo .pdf | macro/archiva fichero=documentos, o /disparador mensaje factura | macro/archiva';
+    '«archivo .pdf | macro/archiva fichero=documentos» o «mensaje factura | macro/archiva».';
   const [left, ...rightParts] = rest.split('|');
   const right = rightParts.join('|').trim();
   const leftTrim = (left ?? '').trim();
