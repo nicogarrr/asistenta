@@ -32,6 +32,10 @@ export default defineConfig({
     env: {
       TZ: 'Europe/Madrid',
       PA_STATE_DIR: testStateDir,
+      // El panel web está encendido por defecto en 127.0.0.1:8787: los tests que
+      // arrancan el daemon de verdad no deben ocupar ese puerto (en el PC de Nico es
+      // el de su panel). Los tests del panel pasan su propio env.
+      PA_WEB_PORT: '0',
       TMPDIR: testTmpDir,
       TEMP: testTmpDir,
       TMP: testTmpDir,

@@ -25,6 +25,7 @@ $Ordenes = @{
     Texto   = @('status')
     Pausar  = @('stop')
     Encender = @('iniciar')
+    Panel   = @('panel')
 }
 
 function Invoke-Pa([string[]] $Orden) {
@@ -62,19 +63,27 @@ function Start-Asistenta {
     Start-Process -FilePath $node -ArgumentList (@("`"$cli`"") + $Ordenes.Encender) -WorkingDirectory $app -WindowStyle Hidden
 }
 
-# El icono de Asistenta (la imagen elegida) con un punto de color abajo a la derecha;
-# instalada con instalar.bat no hay icono y queda solo el punto.
+# El logo de Asistenta sin su punto azul (bandeja.ico) y, en su esquina, el punto de estado
+# con un aro grafito que lo separa de la «A». Al tamaño de icono pequeño de Windows (16 px al
+# 100 %, 20 al 125 %, 24 al 150 %), así no se ve borroso con la escala. Sin bandeja.ico usa
+# asistenta.ico; instalada con instalar.bat no hay icono y queda solo el punto.
 $appIco = Join-Path (Split-Path $app -Parent) 'asistenta.ico'
+$trayIco = Join-Path (Split-Path $app -Parent) 'bandeja.ico'
+if (-not (Test-Path -LiteralPath $trayIco)) { $trayIco = $appIco }
+$tam = [Math]::Max(16, [System.Windows.Forms.SystemInformation]::SmallIconSize.Width)
+$k = [single]($tam / 16)
 function New-Punto([System.Drawing.Color] $color) {
-    $bmp = New-Object System.Drawing.Bitmap 16, 16
+    $bmp = New-Object System.Drawing.Bitmap $tam, $tam
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = 'AntiAlias'
-    if (Test-Path -LiteralPath $appIco) {
-        $base = New-Object System.Drawing.Icon($appIco, 16, 16)
-        $g.DrawIcon($base, (New-Object System.Drawing.Rectangle 0, 0, 16, 16))
-        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), 9, 9, 7, 7)
+    if (Test-Path -LiteralPath $trayIco) {
+        $base = New-Object System.Drawing.Icon($trayIco, $tam, $tam)
+        $g.DrawIcon($base, (New-Object System.Drawing.Rectangle 0, 0, $tam, $tam))
+        $aro = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(17, 24, 39))
+        $g.FillEllipse($aro, [single](8 * $k), [single](8 * $k), [single](9 * $k), [single](9 * $k))
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), [single](9 * $k), [single](9 * $k), [single](7 * $k), [single](7 * $k))
     } else {
-        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), 1, 1, 14, 14)
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush $color), $k, $k, [single](14 * $k), [single](14 * $k))
     }
     $g.Dispose()
     [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
@@ -108,15 +117,9 @@ function Show-Aviso([string] $texto) {
 
 $abrir = $menu.Items.Add('Abrir panel')
 $abrir.add_Click({
-    $envFile = Join-Path $app '.env'
-    $puerto = $null
-    if (Test-Path -LiteralPath $envFile) {
-        # Solo la línea del puerto: el token no se lee aquí (el panel lo recuerda o lo pide).
-        $m = Select-String -LiteralPath $envFile -Pattern '^\s*PA_WEB_PORT\s*=\s*"?(\d{2,5})"?\s*$' | Select-Object -Last 1
-        if ($m) { $puerto = $m.Matches[0].Groups[1].Value }
-    }
-    if ($puerto) { Start-Process "http://127.0.0.1:$puerto/" }
-    else { Show-Aviso 'El panel está apagado. Ponlo con PA_WEB_PORT y PA_WEB_TOKEN en el .env (Configurar Asistenta).' }
+    # pa panel abre el panel en el navegador ya con el token: la bandeja no lo lee nunca.
+    $r = Invoke-Pa $Ordenes.Panel
+    if ($r.Code -ne 0) { Show-Aviso $r.Text }
 })
 $pausa = $menu.Items.Add('Pausar / Reanudar')
 $pausa.add_Click({

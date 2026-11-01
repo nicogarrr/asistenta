@@ -21,7 +21,7 @@ export function steerChat(
   text: string,
 ): { sent: number; error?: string } {
   const clean = text.replace(/\s+/g, ' ').trim();
-  if (!clean) return { sent: 0, error: 'Dime qué cambiar: /steer <nueva instrucción>.' };
+  if (!clean) return { sent: 0, error: '¿Qué quieres que cambie?' };
   let sent = 0;
   for (const t of threads) {
     if (t.chatKey !== chatKey || !t.active) continue;

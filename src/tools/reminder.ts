@@ -348,7 +348,7 @@ function nameFor(prefix: string, text: string, suffix = ''): string {
 export const FIRED_BUTTON_MS = 24 * 3_600_000;
 /** Aviso de un botón de recordatorio caducado, ya usado o de antes de reiniciar. */
 export const FIRED_BUTTON_STALE =
-  'Este botón ya no sirve (vale una vez y 24 horas). Mira /recordatorios.';
+  'Este botón ya no sirve (vale una vez y 24 horas). Si quieres ver tus recordatorios, pídemelos.';
 
 /**
  * Recordatorios que acaban de avisar, para sus botones «✅ Hecho», «⏰ +1h» y «🌅 Mañana
@@ -724,7 +724,7 @@ export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()):
     `Recordatorios: ${rows.length}`,
     ...lines,
     '',
-    'Para borrar uno: /recordatorios borrar <número o palabra>',
+    'Si quieres quitar alguno, dime cuál.',
   ].join('\n');
 }
 
@@ -737,7 +737,11 @@ export function pickReminder(
   ref: string,
 ): { ok: true; routine: Routine } | { ok: false; error: string } {
   const want = ref.trim();
-  if (!want) return { ok: false, error: 'Dime cuál: /recordatorios borrar <número o palabra>' };
+  if (!want)
+    return {
+      ok: false,
+      error: '¿Cuál quito? Dime su número de la lista o una palabra.',
+    };
   if (/^\d+$/.test(want)) {
     const row = rows[Number(want) - 1];
     if (!row) {

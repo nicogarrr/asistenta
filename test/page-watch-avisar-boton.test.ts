@@ -13,7 +13,8 @@ describe('«🔔 Avisar otra vez» tras silenciar', () => {
   it('la respuesta de silenciar lleva el botón, que equivale a /vigila avisar <id>', () => {
     const r = vigilaSilenceReply('silenciar', w);
     expect(r.text).toContain('🔕 Silenciada 1 día: Tele 55');
-    expect(r.text).toContain('/vigila avisar abc123');
+    expect(r.text).toContain('pulsa «🔔 Avisar otra vez»');
+    expect(r.text).not.toContain('/vigila');
     expect(r.buttons).toHaveLength(1);
     expect(r.buttons[0]?.label).toBe('🔔 Avisar otra vez');
     expect(commandFromCallback(r.buttons[0]?.action ?? '')).toBe('/vigila avisar abc123');

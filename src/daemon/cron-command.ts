@@ -7,16 +7,18 @@
 
 import {
   approvalCode,
+  COMMAND_ADD_USAGE,
   COMMAND_PROMPT_PREFIX,
   type CommandRoutineStore,
   commandRoutinesEnabled,
   displayArgv,
   isApproved,
   isCommandRoutine,
+  looksLikeCommandAdd,
   parseCommandAdd,
 } from '../command-routine.js';
-import { parseCronAdd } from '../cron/scheduler.js';
-import type { Store } from '../db.js';
+import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
+import type { Routine, Store } from '../db.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
 import type { GoalStore } from '../goals/store.js';
 import {
@@ -27,6 +29,7 @@ import {
 import { type RoutineRunner, validateSchedule } from '../routines.js';
 import { foldAccents } from '../text.js';
 import { isReminder } from '../tools/reminder.js';
+import type { PreguntaOpts } from './pregunta-pendiente.js';
 
 const DAY_MS = 86_400_000;
 
@@ -149,6 +152,75 @@ export interface CronCommandDeps {
   commandsEnabled?: boolean;
   /** Para que `/cron probar objetivo:<id>` sepa si el objetivo puede avanzar. */
   goals?: Pick<GoalStore, 'read'>;
+  /**
+   * Nico (1 nov): «como estamos hablando nosotros». Cuando la respuesta hace una
+   * pregunta, la siguiente respuesta normal del chat completa el /cron sin
+   * reescribirlo (pregunta-pendiente.ts: una vez, 10 minutos).
+   */
+  ask?: (opts: PreguntaOpts) => void;
+}
+
+const SI = /^(?:s[ií]|vale|venga|ok|okay|claro|dale|hazlo|porfa|por favor)[.!]*$/i;
+
+const EJEMPLO_RUTINA = '«cada mañana a las 8 el resumen del día»';
+
+/** Las rutinas sueltas que este chat puede nombrar (sin las de un objetivo). */
+function routineNames(deps: CronCommandDeps, keep: (r: Routine) => boolean = () => true): string[] {
+  return deps.store
+    .listRoutines()
+    .filter(
+      (r) =>
+        (r.scope === deps.threadKey || r.scope === `${deps.chatKey}#main`) &&
+        r.kind === 'schedule' &&
+        Boolean(r.schedule) &&
+        !isGoalRoutine(r) &&
+        keep(r),
+    )
+    .map((r) => r.name);
+}
+
+/** «la rutina de resumen», «Resumen.» → «resumen» si existe. */
+function pickName(names: string[], text: string): string | null {
+  const said = foldAccents(text.toLowerCase())
+    .replace(/[«»"'.!?]/g, '')
+    .trim()
+    .replace(/^(?:la\s+rutina\s+(?:de\s+)?|la\s+de\s+|rutina\s+|la\s+|el\s+)/, '')
+    .trim();
+  return names.find((n) => foldAccents(n.toLowerCase()) === said) ?? null;
+}
+
+function nameList(names: string[]): string {
+  const shown = names.slice(0, 8).join(', ');
+  return names.length > 8 ? `${shown} y ${names.length - 8} más` : shown;
+}
+
+/** Pregunta qué rutina, con sus nombres, y deja la respuesta lista para `sub`. */
+function askRoutine(deps: CronCommandDeps, verb: string, sub: string, names: string[]): string {
+  deps.ask?.({
+    answer: (t) => {
+      const name = pickName(names, t);
+      return name ? `${sub} ${name}` : null;
+    },
+  });
+  return `¿Qué rutina ${verb}? ${names.length === 1 ? 'Tienes' : 'Tienes estas'}: ${nameList(names)}.`;
+}
+
+/** «resumen al chat, solo si cambia» → «resumen chat solo-si-cambia». */
+export function deliveryWords(text: string): string {
+  return text
+    .replace(/[,;]/g, ' ')
+    .replace(/\b(?:al|en el|por el|a este|en este)\s+chat\b/gi, 'chat')
+    .replace(/\b(?:a|en)\s+(?:un\s+)?fichero\b/gi, 'fichero')
+    .replace(/(?:\ba\s+)?\bning[uú]n\s+sitio\b|\ba\s+ninguno\b/gi, 'ninguno')
+    .replace(/\bs(?:o|ó)lo\s+si\s+cambia\b/gi, 'solo-si-cambia')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function askNewRoutine(deps: CronCommandDeps): void {
+  deps.ask?.({
+    answer: (t) => (parseCronAdd(t, validateSchedule).ok ? `add ${t}` : null),
+  });
 }
 
 /**
@@ -162,7 +234,7 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
   const id = name.slice(GOAL_ROUTINE_PREFIX.length).trim();
   const action = verb === 'borrar' ? 'cancela' : verb === 'pausar' ? 'pausa' : 'reanuda';
   return [
-    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} con /cron, porque el objetivo seguiría ${verb === 'reanudar' ? 'en pausa pero avanzando' : 'activo pero sin avanzar'}.`,
+    `"${name}" es la programación de un objetivo, no una rutina suelta: no la puedo ${verb} desde las rutinas, porque el objetivo seguiría ${verb === 'reanudar' ? 'en pausa pero avanzando' : 'activo pero sin avanzar'}.`,
     `Para eso dime «${action} el objetivo ${id}» (o pídeme la lista de objetivos).`,
   ].join('\n');
 }
@@ -178,9 +250,19 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   const rest = restParts.join(' ');
 
   if (sub === 'entrega') {
-    const parsed = parseDeliveryArgs(rest);
-    if (!parsed || !deps.delivery) {
-      return 'Uso: /cron entrega <nombre> [chat|fichero|ninguno] [solo-si-cambia|siempre].';
+    if (!deps.delivery) return 'Ahora mismo no puedo cambiar cómo se entregan las rutinas.';
+    const parsed = parseDeliveryArgs(deliveryWords(rest));
+    if (!parsed) {
+      deps.ask?.({
+        answer: (t) => {
+          const words = deliveryWords(t);
+          const p = parseDeliveryArgs(words);
+          return p && (p.setting.target !== undefined || p.setting.soloSiCambia !== undefined)
+            ? `entrega ${words}`
+            : null;
+        },
+      });
+      return '¿Qué rutina y cómo te la entrego? Puede llegar al chat, a un fichero o a ningún sitio, siempre o solo si cambia. Dímelo tal cual, por ejemplo: «resumen al chat, solo si cambia».';
     }
     const routine =
       deps.store.getRoutine(deps.threadKey, parsed.name) ??
@@ -211,9 +293,12 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     if ((restParts[0] ?? '').toLowerCase() === 'confirmar') {
       const name = restParts[1] ?? '';
       const code = restParts[2] ?? '';
-      if (!name || !code) return 'Uso: /cron comando confirmar <nombre> <código>.';
+      if (!name || !code) {
+        deps.ask?.({ prefix: 'comando confirmar ', accepts: (t) => /^\S+\s+\S+$/.test(t) });
+        return 'Me falta el nombre de la rutina o el código de aprobación. Dímelos los dos, por ejemplo «copia 1a2b3c4d».';
+      }
       if (deps.store.getRoutine(deps.threadKey, name)) {
-        return `Ya hay una rutina llamada "${name}". Vuelve a proponer el comando con /cron comando.`;
+        return `Ya hay una rutina llamada "${name}". Proponme el comando otra vez y le pongo otro nombre.`;
       }
       const spec = deps.commands.approve(deps.threadKey, name, code);
       if (!spec) {
@@ -230,15 +315,30 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       const live = deps.routineRunner
         .status()
         .find((st) => st.scope === created.scope && st.name === created.name);
+      if (deps.delivery) {
+        deps.ask?.({ answer: (t) => (SI.test(t) ? `entrega ${name} chat solo-si-cambia` : null) });
+      }
       return [
         `Rutina de comando "${name}" programada con horario ${spec.schedule}. No usa el modelo.`,
         `Comando: ${displayArgv(spec.argv)}`,
         `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-        `Para que solo avise cuando cambie la salida: /cron entrega ${name} chat solo-si-cambia`,
+        ...(deps.delivery
+          ? ['¿Quieres que solo te avise cuando cambie la salida? Dime «sí».']
+          : []),
       ].join('\n');
     }
-    const parsed = parseCommandAdd(restParts.join(' '), validateSchedule);
-    if (!parsed.ok) return parsed.error;
+    const parsed = parseCommandAdd(
+      restParts.join(' '),
+      validateSchedule,
+      (words) => parseNatural(words)?.schedule ?? null,
+    );
+    if (!parsed.ok) {
+      // La respuesta normal («cada día a las 8 ejecuta node saldo.js») completa la orden.
+      if (parsed.error === COMMAND_ADD_USAGE) {
+        deps.ask?.({ answer: (t) => (looksLikeCommandAdd(t) ? `comando ${t.trim()}` : null) });
+      }
+      return parsed.error;
+    }
     const program = (parsed.value.argv[0] ?? '').split(/[\\/]/).pop() ?? '';
     const name = uniqueRoutineName(
       deps.store,
@@ -252,19 +352,34 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       schedule: parsed.value.schedule,
       createdAt: new Date().toISOString(),
     });
+    const code = approvalCode(spec);
+    deps.ask?.({
+      answer: (t) =>
+        t
+          .replace(/[«»"'.]/g, '')
+          .trim()
+          .toLowerCase() === code.toLowerCase()
+          ? `comando confirmar ${name} ${code}`
+          : null,
+    });
     return [
       'Revisa el comando exacto antes de aprobarlo (se ejecuta sin shell y sin preguntarte cada vez):',
       `Programa y argumentos: ${displayArgv(spec.argv)}`,
       `Carpeta: ${spec.cwd}`,
       `Horario: ${spec.schedule} · tope: ${Math.round(spec.timeoutMs / 1000)} s`,
-      `Para aprobar exactamente este comando: /cron comando confirmar ${name} ${approvalCode(spec)}`,
+      `Para aprobar exactamente este comando, contéstame con el código ${code}.`,
       'Si cambia algo del comando, hará falta una aprobación nueva.',
     ].join('\n');
   }
 
   if (sub === 'del' || sub === 'borra' || sub === 'rm') {
     const name = rest.trim();
-    if (!name) return 'Uso: /cron del <nombre>.';
+    if (!name) {
+      const names = routineNames(deps);
+      return names.length
+        ? askRoutine(deps, 'borro', 'del', names)
+        : 'No tienes rutinas programadas que borrar.';
+    }
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -285,7 +400,20 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
     const resuming = sub === 'reanuda' || sub === 'reanudar';
     const name = rest.trim();
-    if (!name) return `Uso: /cron ${resuming ? 'reanudar' : 'pausa'} <nombre>.`;
+    if (!name) {
+      const names = routineNames(deps, (r) => r.enabled !== resuming);
+      if (names.length) {
+        return askRoutine(
+          deps,
+          resuming ? 'reanudo' : 'pauso',
+          resuming ? 'reanudar' : 'pausa',
+          names,
+        );
+      }
+      return resuming
+        ? 'No tienes ninguna rutina en pausa.'
+        : 'No tienes ninguna rutina activa que pausar.';
+    }
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -303,7 +431,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     deps.store.setRoutineEnabled(routine.scope, routine.name, resuming);
     deps.routineRunner.sync();
     if (!resuming) {
-      return `Rutina "${name}" en pausa: no se ejecutará hasta que hagas /cron reanudar ${name}. Si hay una en marcha ahora mismo, puede terminar.`;
+      return `Rutina "${name}" en pausa: no se ejecutará hasta que la reanudes desde la lista de rutinas. Si hay una en marcha ahora mismo, puede terminar.`;
     }
     const live = deps.routineRunner
       .status()
@@ -313,7 +441,12 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
 
   if (sub === 'probar' || sub === 'test' || sub === 'ahora') {
     const name = rest.trim();
-    if (!name) return 'Uso: /cron probar <nombre>.';
+    if (!name) {
+      const names = routineNames(deps);
+      return names.length
+        ? askRoutine(deps, 'pruebo', 'probar', names)
+        : 'No tienes rutinas programadas que probar.';
+    }
     const routine =
       deps.store.getRoutine(deps.threadKey, name) ??
       deps.store.getRoutine(`${deps.chatKey}#main`, name);
@@ -321,7 +454,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       return `No tengo ninguna rutina programada llamada "${name}".`;
     }
     if (!routine.enabled) {
-      return `La rutina "${name}" está en pausa. Reanúdala con /cron reanudar ${name} o dime si quieres probarla igualmente.`;
+      deps.ask?.({ answer: (t) => (SI.test(t) ? `reanudar ${routine.name}` : null) });
+      return `La rutina "${name}" está en pausa. ¿La reanudo? Dime «sí» y vuelve a su horario.`;
     }
     if (isGoalRoutine(routine) && deps.goals) {
       // El tick de un objetivo que no está activo no hace nada (runner.ts: «silent
@@ -363,7 +497,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
 
   if (sub === 'add') {
     if (!rest.trim()) {
-      return 'Uso: /cron add 0 8 * * * | resumen del día — o en lenguaje natural: /cron add cada mañana a las 8 resumen del día.';
+      askNewRoutine(deps);
+      return `¿Qué hago y cuándo? Dímelo normal, por ejemplo: ${EJEMPLO_RUTINA}.`;
     }
     const parsed = parseCronAdd(rest, validateSchedule);
     if (!parsed.ok) return parsed.error;
@@ -396,7 +531,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     .listRoutines()
     .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule' && r.schedule);
   if (!list.length) {
-    return 'No hay rutinas programadas. Crea una con /cron add 0 8 * * * | resumen del día.';
+    askNewRoutine(deps);
+    return `No hay rutinas programadas. Dime qué hago y cuándo, por ejemplo ${EJEMPLO_RUTINA}, y la programo.`;
   }
   const live = deps.routineRunner.status();
   const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
@@ -464,7 +600,7 @@ export function scheduledAgendaText(deps: {
     .listRoutines()
     .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule');
   if (!scheduled.length) {
-    return 'No hay rutinas programadas. Puedes crearlas con /routine.';
+    return 'No hay rutinas programadas. Si quieres una, dime qué hago y cuándo, por ejemplo «cada mañana a las 8 el resumen del día».';
   }
   const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
   const live = new Map(deps.routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));

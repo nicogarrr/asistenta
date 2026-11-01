@@ -22,6 +22,8 @@ export interface DepsDictado {
   /** Línea para el registro: nunca lleva lo dictado. */
   log?: (linea: string) => void;
   maxSegundos?: number;
+  /** Por defecto mantener. */
+  modo?: 'mantener' | 'alternar';
   temporizador?: (ms: number, fn: () => void) => () => void;
 }
 
@@ -49,12 +51,18 @@ export class Dictado {
   }
 
   async start(): Promise<void> {
+    const alternar = this.#d.modo === 'alternar';
     await this.#d.tecla.start(
       () => {
-        this.enCurso = this.#pulsar();
+        if (alternar && this.#estado === 'grabando')
+          this.enCurso = this.enCurso.then(() => this.#soltar());
+        else this.enCurso = this.#pulsar();
       },
       () => {
-        this.enCurso = this.enCurso.then(() => this.#soltar());
+        if (!alternar) this.enCurso = this.enCurso.then(() => this.#soltar());
+      },
+      () => {
+        this.enCurso = this.enCurso.then(() => this.#descartar());
       },
     );
   }
@@ -99,6 +107,18 @@ export class Dictado {
         this.enCurso = this.enCurso.then(() => this.#soltar());
       }
     });
+  }
+
+  /** Esc mientras graba: se tira lo grabado, sin pasarlo a texto. */
+  async #descartar(): Promise<void> {
+    if (this.#estado !== 'grabando') return;
+    this.#cancelarTope?.();
+    this.#cancelarTope = null;
+    this.#trozos = [];
+    await this.#d.capture.stop().catch(() => {});
+    this.#estado = 'quieto';
+    this.#d.avisar('fin');
+    this.#log('dictado: descartado con Esc');
   }
 
   async #soltar(): Promise<void> {

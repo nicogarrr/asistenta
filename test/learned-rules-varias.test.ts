@@ -41,7 +41,7 @@ describe('varias marcas en una respuesta: se guardan todas', () => {
     expect(r.text).toBe('Vale.');
     expect(texts()).toEqual(['Háblame de tú', 'Responde sin emojis']);
     expect(r.line).toBe(
-      '📝 Aprendido: Responde sin emojis (/olvida 2 para borrarla)\n📝 Aprendido: Háblame de tú (/olvida 1 para borrarla)',
+      '📝 Aprendido: Responde sin emojis (si no la quieres, dime «olvida la regla 2»)\n📝 Aprendido: Háblame de tú (si no la quieres, dime «olvida la regla 1»)',
     );
   });
 
@@ -66,7 +66,7 @@ describe('varias marcas en una respuesta: se guardan todas', () => {
     const r = turn('Ok. [[aprendido: Usa emojis]] [[aprendido: No uses emojis]]', true);
     expect(texts()).toEqual(['No uses emojis']);
     expect(r.line).toBe(
-      '📝 Aprendido: Usa emojis\n📝 Aprendido: No uses emojis (/olvida 1 para borrarla)',
+      '📝 Aprendido: Usa emojis\n📝 Aprendido: No uses emojis (si no la quieres, dime «olvida la regla 1»)',
     );
   });
 });

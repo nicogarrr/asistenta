@@ -27,8 +27,8 @@ afterEach(() => {
 });
 
 describe('habilidades generales sembradas', () => {
-  it('siembra las seis una vez y no pisa una edición ni una desactivada', () => {
-    expect(seedGeneralSkills(store, {})).toHaveLength(6);
+  it('siembra las siete una vez y no pisa una edición ni una desactivada', () => {
+    expect(seedGeneralSkills(store, {})).toHaveLength(7);
     store.improve('cumpleanos', ['solo avisar'], 'lo quiere más simple');
     store.setDisabled('casa-inteligente', true);
     expect(seedGeneralSkills(store, {})).toHaveLength(0);
@@ -58,7 +58,12 @@ describe('habilidades generales sembradas', () => {
       .list()
       .filter((skill) => checkSkill(skill, { capabilities: caps, toolNames: [] }).ready)
       .map((skill) => skill.id);
-    expect(ready).toEqual(['facturas-y-suscripciones', 'reservas-por-web', 'viajes']);
+    expect(ready).toEqual([
+      'cuestionario-para-otra-persona',
+      'facturas-y-suscripciones',
+      'reservas-por-web',
+      'viajes',
+    ]);
     const casa = store.read('casa-inteligente');
     if (!casa) throw new Error('falta casa');
     expect(checkSkill(casa, { capabilities: caps }).summary).toContain('falta configurar casa');

@@ -203,7 +203,7 @@ describe('deepResearch end to end (deps falsas)', () => {
   });
 
   it('sin pregunta, error de uso', async () => {
-    await expect(deepResearch('   ', deps)).rejects.toThrow('Falta la pregunta');
+    await expect(deepResearch('   ', deps)).rejects.toThrow('¿Qué quieres que investigue?');
   });
 });
 

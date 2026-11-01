@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 import { log } from '../log.js';
+import { PRICE_WATCH_REMOVE_HINT } from '../palabras-vigilancia.js';
 import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
 
 /**
@@ -138,7 +139,7 @@ export function createPriceWatchTool(deps: PriceWatchToolDeps): AgentTool<typeof
           dropPct,
         });
         return reply(
-          `Vigilancia creada: ${describe(w)}. Miro cada 2 horas y aviso en este chat; /vigilando la lista, /dejar_de_vigilar ${w.id} la quita.`,
+          `Vigilancia creada: ${describe(w)}. Miro cada 2 horas y aviso en este chat. ${PRICE_WATCH_REMOVE_HINT}`,
         );
       } catch (err) {
         return reply(`No he podido crear la vigilancia: ${addFailReason(err)}`, true);

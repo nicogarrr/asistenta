@@ -228,7 +228,7 @@ export class ServiceStore {
 /** What /servicios prints: one line per adopted service, Spanish, honest. */
 export function formatServicesList(all: AdoptedService[]): string {
   if (all.length === 0) {
-    return 'No hay servicios adoptados. Pídeme "adopta <herramienta>" y te propongo el plan antes de instalar nada.';
+    return 'No hay servicios adoptados. Si quieres alguno, dime cuál, por ejemplo «adopta Uptime Kuma», y te propongo el plan antes de instalar nada.';
   }
   const lines = all.map((s) => {
     const net = s.expose === 'tailnet' && s.tailscaleUrl ? ` · ${s.tailscaleUrl}` : '';
@@ -238,6 +238,6 @@ export function formatServicesList(all: AdoptedService[]): string {
     'Servicios adoptados:',
     ...lines,
     '',
-    'Detalle y verificación de cada uno: "estado de <nombre>" o mira su ficha.',
+    'Para ver uno en detalle, pídemelo por su nombre, por ejemplo «estado de ollama», o mira su ficha.',
   ].join('\n');
 }

@@ -86,15 +86,13 @@ describe('F15 /skills buscar: índice', () => {
     const out = formatSkillSearch('tdd', parseSkillIndex(index).slice(1, 2));
     expect(out).toContain('1. TDD — Escribe primero el test que falla');
     expect(out).toContain('https://example.com/tdd/SKILL.md');
-    expect(out).toContain('/skills instalar <url>');
+    expect(out).toContain('¿Instalo alguna? Dime su número');
     expect(formatSkillSearch('nada', [])).toContain('No hay skills');
   });
 
   it('/skills buscar: sin índice explica cómo configurarlo; con índice lista resultados', async () => {
     expect(await skillsSearchReply('tdd', undefined)).toContain('PA_SKILLS_INDEX_URL');
-    expect(await skillsSearchReply('', 'https://idx.example/s.json')).toBe(
-      'Uso: /skills buscar <texto>',
-    );
+    expect(await skillsSearchReply('', 'https://idx.example/s.json')).toBe('¿Qué habilidad busco?');
     const fetchImpl = (async () => new Response(JSON.stringify(index))) as unknown as typeof fetch;
     const out = await skillsSearchReply('tdd', 'https://idx.example/s.json', fetchImpl);
     expect(out).toContain('1. TDD');

@@ -170,8 +170,8 @@ export function parseTriggerAdd(
   rest: string,
 ): { ok: true; value: ParsedTriggerAdd } | { ok: false; error: string } {
   const USAGE =
-    'Uso: /disparador <mensaje|archivo|precio> <coincidencia> | <rutina> [clave=valor...]. ' +
-    'Ejemplo: /disparador archivo .pdf | macro/archiva fichero=documentos';
+    'Dime qué lo dispara y qué rutina hago, separados por una barra. Por ejemplo: ' +
+    '«archivo .pdf | macro/archiva fichero=documentos» o «mensaje factura | macro/archiva».';
   const [left, ...rightParts] = rest.split('|');
   const right = rightParts.join('|').trim();
   const leftTrim = (left ?? '').trim();
@@ -217,7 +217,7 @@ function localMinute(iso: string): string {
 /** One list line per trigger, numbered the way /disparador del expects. */
 export function formatTriggerList(triggers: readonly RoutineTrigger[]): string {
   if (!triggers.length) {
-    return 'No hay disparadores. Crea uno con /disparador <mensaje|archivo|precio> <coincidencia> | <rutina>.';
+    return 'No hay disparadores todavía.';
   }
   const lines = triggers.map((t, i) => {
     const off = t.enabled ? '' : ' (desactivado)';

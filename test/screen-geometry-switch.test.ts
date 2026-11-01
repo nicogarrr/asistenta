@@ -155,7 +155,7 @@ describe('/ordenador: todas las palabras y nadie más que el dueño', () => {
 
   it('palabra desconocida: uso, sin cambiar nada', () => {
     const { set, d } = deps(true);
-    expect(computerSwitchCommand('quizás', d)).toMatch(/^Uso: \/ordenador/);
+    expect(computerSwitchCommand('quizás', d)).toMatch(/^¿Enciendo o apago el control de tu PC\?/);
     expect(set).not.toHaveBeenCalled();
   });
 

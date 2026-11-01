@@ -99,7 +99,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   {
     name: 'autoupdate',
-    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada y el registro de cada fallo (*.log)',
+    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada, los cambios aún por enseñar tras el aviso y el registro de cada fallo (*.log)',
     backup: false,
     why: 'se regenera: el interruptor vuelve a encendido y el resto es diagnóstico',
     retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',
@@ -132,6 +132,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'memory', what: 'memoria a largo plazo (markdown por ámbito)', backup: 'dir' },
   { name: 'snapshot', what: 'instantáneas de memoria', backup: 'dir' },
   { name: 'skills', what: 'habilidades aprendidas', backup: 'dir' },
+  {
+    name: 'habilidades-repetidas.json',
+    what: 'recetas repetidas y la oferta pendiente de guardarlas como habilidad',
+    backup: 'file',
+  },
   { name: 'playbooks', what: 'playbooks', backup: 'dir' },
   { name: 'undo', what: 'deshacer de memoria', backup: 'dir' },
   { name: 'calendar', what: 'agenda local (sin Google)', backup: 'dir' },
@@ -163,6 +168,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: false,
     why: 'un duplicado en la misma máquina no protege nada y multiplica dónde viven los secretos',
     growth: 'no crece: un solo fichero que se reescribe',
+  },
+  {
+    name: 'panel-token',
+    what: 'token del panel web cuando no hay PA_WEB_TOKEN (se crea solo, solo lo lee el usuario)',
+    backup: false,
+    why: 'si falta se crea otro; copiarlo solo multiplica dónde vive un secreto',
+    growth: 'no crece: una sola línea',
   },
   {
     name: 'agent.pid',

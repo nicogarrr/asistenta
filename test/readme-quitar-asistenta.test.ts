@@ -4,22 +4,36 @@ import { describe, expect, it } from 'vitest';
 // Quitar Asistenta: si se borra la carpeta antes de `autostart uninstall`, las
 // tareas de Windows (y el vigilante, cada 5 min) se quedan apuntando a nada. Y los
 // datos viven fuera de la carpeta. La guía lo dice y coincide con el código.
-const readme = readFileSync('README.md', 'utf8');
-const seccion = (() => {
-  const i = readme.indexOf('## Quitar Asistenta del PC');
+// README.md está en inglés (Nico, 1 nov) y README.es.md en castellano: los dos.
+const seccionDe = (fichero: string, titulo: string) => {
+  const readme = readFileSync(fichero, 'utf8');
+  const i = readme.indexOf(titulo);
   if (i < 0) return '';
   const fin = readme.indexOf('\n#', i + 5);
   return readme.slice(i, fin < 0 ? undefined : fin);
-})();
+};
 
-describe('README: quitar Asistenta del PC', () => {
+describe.each([
+  {
+    fichero: 'README.es.md',
+    titulo: '## Quitar Asistenta del PC',
+    borra: 'Borra la carpeta de Asistenta',
+  },
+  {
+    fichero: 'README.md',
+    titulo: '## Uninstalling Asistenta',
+    borra: 'Delete the Asistenta folder',
+  },
+])('$fichero: quitar Asistenta del PC', ({ fichero, titulo, borra }) => {
+  const seccion = seccionDe(fichero, titulo);
+
   it('tiene la sección', () => {
     expect(seccion).not.toBe('');
   });
 
   it('quita el arranque con Windows antes de borrar la carpeta', () => {
     const quitar = seccion.indexOf('autostart uninstall');
-    const borrar = seccion.indexOf('Borra la carpeta de Asistenta');
+    const borrar = seccion.indexOf(borra);
     expect(quitar).toBeGreaterThan(0);
     expect(borrar).toBeGreaterThan(quitar);
   });

@@ -54,6 +54,7 @@ Section "Asistenta"
   File /r "@@STAGE@@/app/*"
   SetOutPath "$INSTDIR"
   File "@@STAGE@@/asistenta.ico"
+  File "@@STAGE@@/bandeja.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   ; Accesos directos con la carpeta app como carpeta de trabajo (ahí vive .env).
   CreateDirectory "$SMPROGRAMS\Asistenta"
@@ -81,6 +82,9 @@ Section "Asistenta"
     ; Solo el icono junto al reloj; a Asistenta la arranca su propia tarea.
     CreateShortcut "$SMSTARTUP\Asistenta.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\app\scripts\windows-app\asistenta.vbs"' "$INSTDIR\asistenta.ico"
   ${EndIf}
+  ; Actualización sin ventanas (pa autoupdate now, /S): al terminar vuelve a abrir Asistenta.
+  IfSilent 0 +2
+    Exec '"$SYSDIR\wscript.exe" "$INSTDIR\app\scripts\windows-app\asistenta.vbs"'
 SectionEnd
 
 Function .onInit
@@ -133,6 +137,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\node"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\asistenta.ico"
+  Delete "$INSTDIR\bandeja.ico"
   RMDir /r "$SMPROGRAMS\Asistenta"
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\Asistenta"

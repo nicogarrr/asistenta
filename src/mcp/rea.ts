@@ -1,6 +1,6 @@
 /**
  * REA (https://github.com/morluto/rea, MIT, npm `rea-agents`): servidor MCP para
- * mirar apps por dentro. Extra OPCIONAL, apagado salvo PA_REA=1 (docs/rea.md):
+ * mirar apps por dentro. Encendido salvo PA_REA=0 (docs/rea.md):
  * `rea` global o `npx -y rea-agents mcp`; sin las claves del entorno; solo tools
  * de solo lectura; solo el dueño; cada llamada pide permiso (src/permissions.ts);
  * su salida cuenta como contenido de fuera, como toda tool MCP.
@@ -9,9 +9,10 @@
 import { existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { log } from '../log.js';
 import type { McpServerConfig } from './client.js';
 
-/** Nombre del servidor: sus tools se llaman `mcp_rea_<tool>`. Reservado con PA_REA=1. */
+/** Nombre del servidor: sus tools se llaman `mcp_rea_<tool>`. Reservado mientras REA esté encendido. */
 export const REA_SERVER_NAME = 'rea';
 export const REA_TOOL_PREFIX = `mcp_${REA_SERVER_NAME}_`;
 
@@ -23,10 +24,28 @@ export const REA_ENV_ALLOWLIST: readonly string[] = (
   'GHIDRA_INSTALL_DIR'
 ).split(' ');
 
-/** PA_REA=1 enciende REA; cualquier otro valor lo deja apagado. */
-export function reaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.PA_REA ?? '').trim() === '1';
+/**
+ * Modo de REA (decisión del dueño, 31 oct): encendido por defecto.
+ * - `off`: PA_REA=0 (o no/false/off).
+ * - `on`: PA_REA=1 (o sí/true/yes/on): usa `rea` global o, si no hay, `npx -y rea-agents`.
+ * - `auto` (sin PA_REA): solo si hay un `rea` global; sin él no se descarga nada al
+ *   arrancar y queda una línea clara en el registro.
+ */
+export function reaMode(env: NodeJS.ProcessEnv = process.env): 'off' | 'on' | 'auto' {
+  const value = (env.PA_REA ?? '').trim().toLowerCase();
+  if (['0', 'no', 'false', 'off'].includes(value)) return 'off';
+  if (['1', 'sí', 'si', 'true', 'yes', 'on'].includes(value)) return 'on';
+  return 'auto';
 }
+
+/** REA está encendido salvo PA_REA=0. */
+export function reaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return reaMode(env) !== 'off';
+}
+
+export const REA_MISSING_LINE =
+  'REA no está instalado, así que analizar apps queda apagado. Para usarlo: ' +
+  'npm install --global rea-agents (o PA_REA=1 para que lo descargue solo con npx).';
 
 /** ¿Hay un `rea` global en el PATH? (en Windows, `rea.cmd`). */
 export function reaOnPath(
@@ -74,15 +93,25 @@ function reaOwnVars(env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
- * Servidores MCP a arrancar: los de PA_MCP_SERVERS y, con PA_REA=1, REA. Una
+ * Servidores MCP a arrancar: los de PA_MCP_SERVERS y REA (salvo PA_REA=0). Una
  * entrada de PA_MCP_SERVERS llamada «rea» se aparta para no saltarse estas reglas.
+ * Sin `rea` global y sin PA_REA=1, REA no arranca (ni bloquea el arranque): avisa una vez.
  */
 export function withRea(
   servers: McpServerConfig[],
   env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  exists: (path: string) => boolean = existsSync,
+  notice: (line: string) => void = (line) => log.info(line),
 ): McpServerConfig[] {
-  if (!reaEnabled(env)) return servers;
-  return [...servers.filter((s) => s.name !== REA_SERVER_NAME), reaServerConfig(env)];
+  const mode = reaMode(env);
+  if (mode === 'off') return servers;
+  const others = servers.filter((s) => s.name !== REA_SERVER_NAME);
+  if (mode === 'auto' && !reaOnPath(env, platform, exists)) {
+    notice(REA_MISSING_LINE);
+    return others;
+  }
+  return [...others, reaServerConfig(env, platform, exists)];
 }
 
 /** ¿Es una tool de REA? */

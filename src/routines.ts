@@ -157,7 +157,7 @@ export function buildMacroPrompt(
   if (!params) {
     return {
       ok: false,
-      error: `"${routine.name}" no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+      error: `"${routine.name}" no tiene un contrato de parámetros válido: no se ejecuta. Habría que enseñármela otra vez.`,
     };
   }
   const template = (routine.steps ?? '').trim();
@@ -172,7 +172,7 @@ export function buildMacroPrompt(
   if (undeclared.length) {
     return {
       ok: false,
-      error: `La macro ${routine.name} tiene placeholders sin declarar: ${undeclared.map((n) => `{${n}}`).join(', ')}. Regrábala con /learn.`,
+      error: `La macro ${routine.name} tiene placeholders sin declarar: ${undeclared.map((n) => `{${n}}`).join(', ')}. Habría que enseñármela otra vez.`,
     };
   }
   const errors: string[] = [];

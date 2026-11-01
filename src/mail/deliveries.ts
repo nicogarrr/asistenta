@@ -54,7 +54,7 @@ const CARRIERS: ReadonlyArray<[string, RegExp]> = [
 const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
   [
     'incidencia',
-    /incidencia|no (?:hemos )?podido entregar|intento de entrega|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
+    /incidencia|no (?:hemos )?podido entregar|intento de entrega|entrega fallida|no ha sido posible entregar|estabas ausente|en aduanas?|retenido|devuelto al remitente|delivery exception|failed delivery|delivery attempt/i,
   ],
   [
     'para_recoger',
@@ -62,11 +62,14 @@ const STATUS_RULES: ReadonlyArray<[DeliveryStatus, RegExp]> = [
   ],
   [
     'entregado',
-    /(?<!ser[aá] )(?<!sea )\b(?:entregado|entregada|se ha entregado|delivered)\b|ya (?:lo )?tienes|recogido en/i,
+    // «aún no ha sido entregado», «pendiente de ser entregado», «will be delivered», «has not
+    // been delivered»: dicen lo contrario. Antes se leían como entregado y el paquete
+    // desaparecía de los repartos activos sin haber llegado.
+    /(?<!(?:\bno|\bnot|n't|\bser|\bser[aá]|\bsea|\bbe)\s+(?:(?:ha|han|se|sido|fue|been|yet|a[uú]n)\s+){0,3})\b(?:entregado|entregada|se ha entregado|delivered|recogido en)\b|ya (?:lo )?tienes/i,
   ],
   [
     'en_reparto',
-    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|llegar[aá] hoy|lo recibir[aá]s hoy|en ruta de entrega|se entregar[aá] hoy|ser[aá] entregad[oa] hoy|entrega prevista (?:para )?hoy|arriving today/i,
+    /en reparto|saldr[aá] hoy|out for delivery|llega hoy|llegar[aá] hoy|lo recibir[aá]s hoy|en ruta de entrega|se entregar[aá] hoy|ser[aá] entregad[oa] hoy|entrega prevista (?:para )?hoy|arriving today|(?:will|to) be delivered today/i,
   ],
   [
     'enviado',

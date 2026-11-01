@@ -60,7 +60,7 @@ describe('/recordatorios', () => {
     );
     expect(text).toContain('4. Uno roto — sin próxima vez');
     expect(text).not.toContain('backup');
-    expect(text).toContain('/recordatorios borrar');
+    expect(text).toContain('Si quieres quitar alguno, dime cuál.');
   });
 
   it('sin recordatorios explica cómo crearlos', () => {

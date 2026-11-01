@@ -83,6 +83,8 @@ describe('/agenda marca las rutinas de comando', () => {
       commands,
       commandsEnabled: true,
     });
-    expect(out).toBe('No hay rutinas programadas. Puedes crearlas con /routine.');
+    expect(out).toBe(
+      'No hay rutinas programadas. Si quieres una, dime qué hago y cuándo, por ejemplo «cada mañana a las 8 el resumen del día».',
+    );
   });
 });

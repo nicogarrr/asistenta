@@ -528,6 +528,10 @@ function cutWithHint(text: string, budget: number): string {
     // rather than shipping half of it.
     const straddled = tokens.find((span) => limit > span.start && limit < span.end);
     cut = straddled ? straddled.start : limit;
+    // Sin hueco ninguno (una tira de emojis): no partir un emoji por la mitad, que deja
+    // medio par sustituto y Telegram lo enseña como «�» o rechaza el mensaje.
+    const high = text.charCodeAt(cut - 1);
+    if (cut > 0 && high >= 0xd800 && high <= 0xdbff) cut -= 1;
   }
   let body = text.slice(0, cut).trimEnd();
   // Una negrita **… partida por el corte se cierra: si no, telegramHtml no la
@@ -757,7 +761,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const code = (err as { code?: unknown } | null)?.code;
   const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
-    return 'Se me ha roto algo por dentro y no he podido terminar. Prueba otra vez o mira /estado.';
+    return 'Se me ha roto algo por dentro y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
   if (DISK_FULL_ERROR.test(probe)) {
     return 'El disco del PC está lleno y no puedo guardar nada. Libera espacio y vuelve a pedírmelo.';
@@ -793,7 +797,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const looksTechnical =
     !clean || /[{}[\]]|\bat \S+:\d+|https?:\/\//.test(clean) || clean.length > 200;
   if (looksTechnical) {
-    return 'Algo ha fallado y no he podido terminar. Prueba otra vez o mira /estado.';
+    return 'Algo ha fallado y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
   return `${prefix}${clean}`;
 }

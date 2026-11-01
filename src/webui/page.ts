@@ -23,12 +23,15 @@ import {
   tituloPestana,
 } from './client-format.js';
 
+// El logo de Asistenta (scripts/windows-app/icono.mjs: «A» blanca en placa grafito y punto azul).
 const ICON_SVG = [
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">',
-  '<rect width="180" height="180" rx="40" fill="#0b0f14"/>',
-  '<circle cx="90" cy="90" r="54" fill="none" stroke="#7dd3fc" stroke-width="9"/>',
-  '<path d="M66 116 90 64l24 52M74 101h32" fill="none" stroke="#e6edf3" stroke-width="9"',
-  ' stroke-linecap="round" stroke-linejoin="round"/>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">',
+  '<rect width="512" height="512" rx="112" fill="#111827"/>',
+  '<rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="#ffffff"',
+  ' stroke-opacity=".16" stroke-width="8"/>',
+  '<path d="M150 396 256 120l106 276" fill="none" stroke="#ffffff" stroke-width="58"',
+  ' stroke-linejoin="round"/>',
+  '<circle cx="256" cy="318" r="30" fill="#4f8cff"/>',
   '</svg>',
 ].join('');
 
@@ -1583,7 +1586,7 @@ ${renderFormatScript()}
           // «Reintentar») y desaparece, va al título de la tarjeta y no al principio de la página.
           var foco = document.activeElement;
           var focoDentro = silencio === true && !!foco && foco !== contenedor && contenedor.contains(foco);
-          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, pídemelo en el chat, por ejemplo «cada mañana a las 8 el resumen del día».'));
           if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
           rutinas.forEach(function (rutina) {
             var tarjeta = nodo('section', 'sesion rutina');
@@ -1754,7 +1757,7 @@ ${renderFormatScript()}
         try {
           ambitos = await pedir('/api/memory/scopes');
         } catch (error) {
-          return;
+          return false;
         }
         // Sin ámbito, /api/memory lee el ámbito por defecto (el privado del dueño si
         // está configurado): la primera opción lo dice en vez de «Local».
@@ -1763,7 +1766,7 @@ ${renderFormatScript()}
           porDefecto = typeof ambitos.porDefecto === 'string' ? ambitos.porDefecto : '';
           ambitos = ambitos.ambitos;
         }
-        if (!Array.isArray(ambitos)) return;
+        if (!Array.isArray(ambitos)) return false;
         var elegido = lista.value;
         var opciones = [nodo('option', null, formato.etiquetaAmbitoPorDefecto(porDefecto))];
         opciones[0].value = '';
@@ -1776,6 +1779,8 @@ ${renderFormatScript()}
         lista.replaceChildren.apply(lista, opciones);
         lista.value = elegido;
         if (lista.value !== elegido) lista.value = '';
+        // «Actualizar» cuenta como sección sin cargar todo lo que no devuelva true.
+        return true;
       }
 
       var formularioChat = document.getElementById('form-chat');

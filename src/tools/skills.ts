@@ -18,6 +18,7 @@ import { Type } from 'typebox';
 import { log } from '../log.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
 import { decideToSave } from '../skills/autocreate.js';
+import type { RepeatTracker } from '../skills/repeats.js';
 import { checkSkill, type SelfCheckEnv } from '../skills/selfcheck.js';
 import { type SkillStore, scoreSkill } from '../skills/store.js';
 
@@ -35,6 +36,7 @@ const SkillsParams = Type.Object({
     Type.Literal('enable'),
     Type.Literal('remove'),
     Type.Literal('check'),
+    Type.Literal('accept'),
   ]),
   id: Type.Optional(
     Type.String({
@@ -125,10 +127,12 @@ export interface SkillsToolDeps {
   semantic?: Embedder;
   /** Para el auto-chequeo: qué hay configurado y qué herramientas hay cargadas. */
   checkEnv?: () => SelfCheckEnv | Promise<SelfCheckEnv>;
+  /** Recetas repetidas: la oferta «¿la guardo como habilidad?» pendiente de un sí. */
+  repeats?: RepeatTracker;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
-  const { store, semantic, checkEnv } = deps;
+  const { store, semantic, checkEnv, repeats } = deps;
   return {
     name: SKILLS_TOOL_NAME,
     label: 'Skills',
@@ -156,6 +160,8 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
       'recoverable trash). Disabled skills are not followed.',
       'action=check runs the self-check of one skill (steps, needs set up, factory tool',
       'installed). Run it right after saving a new ability and tell the owner what is missing.',
+      'action=accept only when the owner says yes to your «🔁 … ¿Lo guardo como habilidad?»',
+      'offer: it saves that offered recipe (it will ask before acting outward).',
     ].join('\n'),
     parameters: SkillsParams,
     executionMode: 'sequential',
@@ -225,6 +231,26 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
               { type: 'text', text: `Skill guardado: ${id} (v${store.read(id)?.version ?? 1}).` },
             ],
             details: { id, version: store.read(id)?.version ?? 1 },
+          };
+        }
+
+        case 'accept': {
+          const draft = repeats?.takePending() ?? null;
+          if (!draft) {
+            return {
+              content: [{ type: 'text', text: 'No tengo ninguna habilidad pendiente de guardar.' }],
+              details: { saved: false },
+            };
+          }
+          const id = store.save(draft);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Guardada como habilidad «${draft.name}». Antes de enviar, reservar o gastar nada te pediré permiso.`,
+              },
+            ],
+            details: { saved: true, id },
           };
         }
 

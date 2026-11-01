@@ -526,7 +526,9 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
       if (args.action === 'listar') {
         const all = deps.services.list();
         if (all.length === 0) {
-          return reply('No hay servicios adoptados. Con "adopta <herramienta>" te propongo uno.');
+          return reply(
+            'No hay servicios adoptados. Si quieres alguno, dime cuál, por ejemplo «adopta Uptime Kuma».',
+          );
         }
         const lines = all.map(
           (s) =>

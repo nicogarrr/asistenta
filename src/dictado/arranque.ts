@@ -49,7 +49,12 @@ export async function arrancarDictado(o: OpcionesArranque = {}): Promise<Dictado
     return null;
   }
   const piezas = await (o.piezas ?? piezasWindows)(a.tecla);
-  const dictado = new Dictado({ ...piezas, transcribir: o.transcribir ?? transcribirLocal, log });
+  const dictado = new Dictado({
+    ...piezas,
+    transcribir: o.transcribir ?? transcribirLocal,
+    log,
+    modo: a.modo,
+  });
   await dictado.start();
   log(`dictado: listo, mantén ${a.teclaTexto} y habla`);
   return dictado;

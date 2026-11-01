@@ -73,7 +73,7 @@ describe('panel: puerto ocupado o reservado', () => {
     expect(await panelBootFacts(panelStartPlan({ PA_WEB_PORT: '8787' }))).toEqual({
       problems: ['panel-token'],
     });
-    expect(await panelBootFacts(panelStartPlan({}))).toEqual({ problems: [] });
+    expect(await panelBootFacts(panelStartPlan({ PA_WEB_PORT: '0' }))).toEqual({ problems: [] });
   });
 
   it('un panel que tarda no retrasa el arranque más de lo previsto', async () => {

@@ -17,7 +17,7 @@
  *   "que esta viendo" / "esta encendida" -> status
  *   "modo cine (con Netflix)"  -> scene cine
  */
-import { APP_ALIASES, normalizeTvText } from './apps.js';
+import { APP_ALIASES, APP_NAMES, normalizeTvText } from './apps.js';
 
 export type TvIntent =
   | { action: 'power'; on: boolean }
@@ -846,6 +846,11 @@ const DE_APP = new RegExp(`^(?:${LO_QUE_SE_VE}) (?:de|en) (.+)$`);
 const SOLO_TV = new RegExp(`^${TV}$`);
 
 /** Como se entendio la orden, en castellano (para confirmar al usuario). */
+/** «youtube» → «YouTube», «disney» → «Disney+»: el nombre de la app como se escribe. */
+function appLabel(appId: string): string {
+  return APP_NAMES[APP_ALIASES[appId] ?? appId] ?? appId;
+}
+
 export function describeTvIntent(i: TvIntent): string {
   switch (i.action) {
     case 'power':
@@ -867,7 +872,7 @@ export function describeTvIntent(i: TvIntent): string {
           ? 'volver al canal anterior'
           : `poner el canal ${i.channel}`;
     case 'launch':
-      return `abrir ${i.appId}`;
+      return `abrir ${appLabel(i.appId)}`;
     case 'media':
       return MEDIA_NAMES[i.command];
     case 'input':
@@ -876,7 +881,7 @@ export function describeTvIntent(i: TvIntent): string {
       return 'mirar el estado de la tele';
     case 'scene':
       if (i.scene === 'apagar-todo') return 'apagarlo todo';
-      return `activar el modo ${i.scene}${i.appId ? ` con ${i.appId}` : ''}`;
+      return `activar el modo ${i.scene}${i.appId ? ` con ${appLabel(i.appId)}` : ''}`;
     case 'key':
       return KEY_NAMES[i.name];
     case 'picture':

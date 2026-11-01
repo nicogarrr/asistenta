@@ -551,7 +551,7 @@ async function answers(
 }
 
 /** Uso de `/mcp` en Telegram. */
-export const MCP_COMMAND_USAGE = 'Uso: /mcp recursos o /mcp prompts';
+export const MCP_COMMAND_USAGE = 'No te he pillado. ¿Quieres ver los recursos o los prompts?';
 const MCP_COMMAND_ITEMS = 20;
 const MCP_COMMAND_TEXT = 80;
 const MCP_COMMAND_TIMEOUT_MS = 10_000;

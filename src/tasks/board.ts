@@ -76,6 +76,13 @@ function parseDay(day: string): Date {
   return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12);
 }
 
+/** ¿Existe ese día en el calendario? «2026-02-29» no, «2028-02-29» sí. */
+function realDay(day: string): boolean {
+  const [y, m, d] = day.split('-').map(Number);
+  const at = parseDay(day);
+  return at.getFullYear() === y && at.getMonth() + 1 === m && at.getDate() === d;
+}
+
 function addDays(day: string, n: number): string {
   const at = parseDay(day);
   at.setDate(at.getDate() + n);
@@ -223,7 +230,9 @@ export function resolveDay(input: string, now: Date): string | null {
   const part = /^(.+?)\s+(?:por|a|de)\s+la\s+(?:manana|tarde|noche)$/.exec(said);
   if (part?.[1] && /^(?:hoy|manana|pasado manana)$/.test(part[1])) return resolveDay(part[1], now);
   const text = said.replace(/^(el|este|esta|para el|para)\s+/, '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Number.isNaN(parseDay(text).getTime()) ? null : text;
+  // «2026-02-30» o «2026-13-01»: Date los pasa al mes siguiente sin avisar, y la tarea
+  // quedaba guardada en un día que no existe y no salía en ninguna vista.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return realDay(text) ? text : null;
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
   if (text === 'pasado manana') return addDays(today, 2);
@@ -265,25 +274,38 @@ export function resolveDay(input: string, now: Date): string | null {
   if (dated !== text) return resolveDay(dated, now);
   const named = monthNameDay(text, now);
   if (named !== undefined) return named;
-  const dm = /^(?:dia\s+)?(\d{1,2})(?:\/(\d{1,2})(?:\/(\d{2,4}))?)?$/.exec(text);
+  // «15/11», «15-11-2026», «15.11.2026»: barra, guion o punto (el mismo en toda la fecha).
+  const dm = /^(?:dia\s+)?(\d{1,2})(?:([/.-])(\d{1,2})(?:\2(\d{2,4}))?)?$/.exec(text);
   if (dm) {
     const d = Number(dm[1]);
-    let m = dm[2] ? Number(dm[2]) : now.getMonth() + 1;
-    let y = dm[3] ? Number(dm[3]) : now.getFullYear();
+    let m = dm[3] ? Number(dm[3]) : now.getMonth() + 1;
+    let y = dm[4] ? Number(dm[4]) : now.getFullYear();
     if (y < 100) y += 2000;
     if (m < 1 || m > 12 || d < 1 || d > 31) return null;
     let day = `${y}-${pad(m)}-${pad(d)}`;
-    if (localDay(parseDay(day)) !== day) return null;
-    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene.
-    if (!dm[2] && day < today) {
-      m += 1;
-      if (m > 12) {
-        m = 1;
+    const real = (value: string) => localDay(parseDay(value)) === value;
+    // «el 1/1» dicho en noviembre sin año: el que viene, como «el 1 de enero». Antes la
+    // tarea quedaba en el 1 de enero que ya pasó. «29/2» sin año en un año que no es
+    // bisiesto: el próximo 29 de febrero (antes se rechazaba).
+    if (dm[3] && !dm[4]) {
+      for (let i = 0; i < 8 && (day < today || !real(day)); i++) {
         y += 1;
+        day = `${y}-${pad(m)}-${pad(d)}`;
       }
-      day = `${y}-${pad(m)}-${pad(d)}`;
-      if (localDay(parseDay(day)) !== day) return null;
     }
+    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene. «el 31» en un mes
+    // de 30 días: el próximo mes que lo tenga (antes se rechazaba).
+    if (!dm[3]) {
+      for (let i = 0; i < 12 && (day < today || !real(day)); i++) {
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+        day = `${y}-${pad(m)}-${pad(d)}`;
+      }
+    }
+    if (!real(day)) return null;
     return day;
   }
   const next = /^(?:proximo\s+)?(\w+)(\s+que viene|\s+de la semana que viene)?$/.exec(text);

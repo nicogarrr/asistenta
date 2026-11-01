@@ -56,5 +56,7 @@ describe('Configurar Asistenta', () => {
     expect(doc).toContain('Ejecutar de todas formas');
     // La guía en castellano vive en README.es.md (README.md es la versión en inglés).
     expect(readFileSync('README.es.md', 'utf8')).toContain('### Instalador .exe (recomendado)');
+    expect(readFileSync('README.es.md', 'utf8')).toContain('### Instalador .exe (recomendado)');
+    expect(readFileSync('README.md', 'utf8')).toContain('### .exe installer (recommended)');
   });
 });

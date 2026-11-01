@@ -452,6 +452,24 @@ export class TelegramChannel implements ChannelAdapter {
     // A command with no text must still reach the handler: `/screen` and `/watch`
     // are handled before the agent exists, and a caption-less photo needs its file
     // id even though there is nothing to say about it.
+    // Un sticker, vídeo, ubicación, contacto o encuesta sin texto se perdía en
+    // silencio y el usuario esperaba una respuesta que nunca llegaba. Ahora se dice.
+    const unsupported = unsupportedKindNote(msg);
+    if (
+      unsupported &&
+      !inbound.text &&
+      !inbound.photoFileId &&
+      !inbound.audioFileId &&
+      !inbound.documentFileId
+    ) {
+      await ctx
+        .reply(unsupported, {
+          message_thread_id: msg.message_thread_id,
+          reply_to_message_id: msg.message_id,
+        } as never)
+        .catch(() => {});
+      return;
+    }
     if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId && !inbound.documentFileId)
       return;
 
@@ -1471,8 +1489,11 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => null);
     if (!file?.file_path) return null;
     const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    // Al rendirse, también corta la conexión: sin señal, una descarga colgada seguía
+    // abierta para siempre aunque ya hubiéramos devuelto null.
+    const abort = new AbortController();
     return withTimeout(
-      fetch(url).then(async (r) => {
+      fetch(url, { signal: abort.signal }).then(async (r) => {
         if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
         const buf = Buffer.from(await r.arrayBuffer());
         if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
@@ -1480,7 +1501,10 @@ export class TelegramChannel implements ChannelAdapter {
       }),
       60_000,
       'file download timed out',
-    ).catch(() => null);
+    ).catch(() => {
+      abort.abort();
+      return null;
+    });
   }
 
   /**
@@ -1945,7 +1969,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
-const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
+const TV_BUTTON_STALE =
+  'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 
@@ -2170,4 +2195,22 @@ export function tooBigForBotDownload(sizeBytes: number | undefined): string | un
   if (!sizeBytes || sizeBytes <= TELEGRAM_BOT_DOWNLOAD_LIMIT_BYTES) return undefined;
   const mb = Math.ceil(sizeBytes / 1_000_000);
   return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
+}
+
+/**
+ * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
+ * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta):
+ * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
+ * sin respuesta.
+ */
+export function unsupportedKindNote(msg: object): string | null {
+  if ('sticker' in msg) return 'Aún no sé ver stickers. Si quieres algo, escríbemelo.';
+  if ('video' in msg || 'animation' in msg)
+    return 'Aún no puedo ver vídeos ni GIF. Cuéntame qué hay o mándame una captura.';
+  if ('location' in msg || 'venue' in msg)
+    return 'Aún no sé leer ubicaciones compartidas. Escríbeme el sitio o la dirección.';
+  if ('contact' in msg)
+    return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
+  if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
+  return null;
 }

@@ -20,7 +20,7 @@ describe('/estado: proyecto y modelo de esta conversación', () => {
     });
     expect(lines).toEqual([
       'Proyecto: carpeta «web» (tengo en cuenta AGENTS.md).',
-      'Modelo: alt-model (elegido con /modelo).',
+      'Modelo: alt-model (el que elegiste).',
     ]);
   });
 

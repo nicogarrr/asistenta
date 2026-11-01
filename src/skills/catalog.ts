@@ -412,13 +412,15 @@ function friendlyReason(reason: string): string {
 /**
  * `/skills catalogo`: las skills instaladas (sin red) y, solo si el dueño
  * configuró `PA_SKILLS_CATALOG_URL`, el catálogo remoto cruzado con lo
- * instalado. Nunca instala nada: cada fila no instalada muestra el
- * `/skills instalar <url>` que el dueño puede escribir si la quiere.
+ * instalado. Nunca instala nada: las filas no instaladas van numeradas y se
+ * pregunta «¿Instalo alguna? Dime su número»; `onPicks` recibe esas filas para que
+ * la respuesta («la 2») complete la instalación (Nico, 1 nov: sin mandar a comandos).
  */
 export async function skillsCatalogReply(
   installed: Array<{ id: string; name: string; description?: string }>,
   catalogUrl: string | undefined,
   fetchImpl?: typeof fetch,
+  onPicks?: (picks: Array<{ name: string; url: string; description: string }>) => void,
 ): Promise<string> {
   const mine = catalogFromInstalled(installed);
   const lines: string[] = [
@@ -446,11 +448,20 @@ export async function skillsCatalogReply(
     installed.map((s) => s.id),
   );
   lines.push('', merged.length ? `Catálogo (${merged.length}):` : 'El catálogo está vacío.');
+  const picks: Array<{ name: string; url: string; description: string }> = [];
   for (const e of merged.slice(0, SHOWN)) {
     const desc = e.description ? ` — ${shortDesc(e.description)}` : '';
-    lines.push(`• ${e.name}${e.installed ? ' ✓ instalada' : ''}${desc}`);
-    if (!e.installed && e.url) lines.push(`  /skills instalar ${e.url}`);
+    if (!e.installed && e.url) {
+      picks.push({ name: e.name, url: e.url, description: e.description });
+      lines.push(`${picks.length}. ${e.name}${desc}`, `   ${e.url}`);
+    } else {
+      lines.push(`• ${e.name}${e.installed ? ' ✓ instalada' : ''}${desc}`);
+    }
   }
   if (merged.length > SHOWN) lines.push(`… y ${merged.length - SHOWN} más`);
+  if (picks.length) {
+    lines.push('', '¿Instalo alguna? Dime su número (la reviso antes de guardarla).');
+    onPicks?.(picks);
+  }
   return lines.join('\n');
 }

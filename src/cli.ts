@@ -9,7 +9,14 @@ import {
   WATCHDOG_USAGE,
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
-import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
+import { learnNameAnswer, PreguntasPendientes, SI_RESPUESTA } from './daemon/pregunta-pendiente.js';
+import {
+  ERASE_BUSY_ASK,
+  ERASE_PROMPT,
+  EraseConfirm,
+  eraseChat,
+  eraseSummary,
+} from './erase-command.js';
 import {
   formatModelos,
   ModelChoiceStore,
@@ -56,6 +63,7 @@ import {
   routeReplyToAltavoz,
 } from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
+import { answerPendingNovedades } from './autoupdate-novedades.js';
 import {
   BackupMirrorError,
   backupMirrorNotice,
@@ -106,14 +114,15 @@ import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
-import { chatReplyText } from './core/friendly-error.js';
+import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { parseNatural } from './cron/scheduler.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
-import { CloseLoop } from './daemon/close-loop.js';
+import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
+import { CloseLoop, closedLine } from './daemon/close-loop.js';
 import { buildCommandTable, dispatchCommand } from './daemon/commands.js';
 import { createGoalNotifySend } from './daemon/goal-notify.js';
 import { createGoalTickExecute } from './daemon/goal-tick.js';
@@ -138,7 +147,7 @@ import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
-import { handleFeatureAsk } from './evolve/ask.js';
+import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -146,7 +155,7 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
-import { LearnRecorder } from './learn.js';
+import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, redact } from './log.js';
@@ -169,6 +178,7 @@ import { InstinctStore } from './memory/instincts.js';
 import {
   correctionHint,
   forgetLearnedRule,
+  forgetRuleWords,
   formatLearnedRules,
   learnCorrectionsEnabled,
   learnedRules,
@@ -178,8 +188,9 @@ import {
 import { detectMemoryWorthy } from './memory/nudges.js';
 import {
   aboutMeText,
-  FACT_SAVED_LINE,
+  factSavedLine,
   forgetRequest,
+  forgotLine,
   isAboutMeRequest,
   RecentFacts,
   SAID_PREFIX,
@@ -201,10 +212,33 @@ import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
   getDownloadsEnabled,
+  resolveDownloadsDir,
   setDownloadsEnabled,
 } from './ojo-downloads.js';
 import { AttentionQueue } from './ojo-events.js';
-import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
+import {
+  activateRule,
+  deleteRule,
+  dismissNotice,
+  formatRules,
+  ignoraAnswer,
+  listRules,
+  rulesAnswer,
+} from './ojo-ignore.js';
+import {
+  DOWNLOADS_DIR_ASK,
+  DOWNLOADS_OFF_TEXT,
+  downloadsDirAnswer,
+  downloadsDirMissingText,
+  downloadsDirSavedText,
+  MEMORIA_FORGET_ASK,
+  memoriaForgetAnswer,
+  OJO_OFF_HINT,
+  ojoOffAnswer,
+  ojoOnAnswer,
+  SCREEN_OFF_TEXT,
+  WIDE_EXAMPLE,
+} from './ojo-respuestas.js';
 import {
   getScreenEnabled,
   type ScanOutcome,
@@ -229,20 +263,35 @@ import {
 import { drainThreadTails } from './shutdown-drain.js';
 import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
-import { fetchSkillIndex, formatSkillSearch, searchSkillIndex } from './skills/search.js';
+import {
+  fetchSkillIndex,
+  formatSkillSearch,
+  type SkillIndexEntry,
+  searchSkillIndex,
+  skillPickAnswer,
+} from './skills/search.js';
 import {
   checkTelegramToken,
   SERVE_TELEGRAM_RETRY_DELAYS_MS,
   startupFailureMessage,
   withInboundFailureReply,
 } from './startup.js';
-import { WebDemoRecorder } from './teach-demo-web.js';
+import { WebDemoRecorder, webDemoFollowUp } from './teach-demo-web.js';
 import {
   buildTriggerPrompt,
   formatTriggerList,
   parseTriggerAdd,
   TriggerEngine,
 } from './triggers.js';
+import {
+  CONVERSACION_OFF_HINT,
+  conversacionOffAnswer,
+  corteAnswer,
+  corteAsk,
+  MIC_CLOSED_ASK,
+  MIC_OFF_TEXT,
+  WAKE_AGAIN_ASK,
+} from './wake-texts.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -269,6 +318,7 @@ function delegateTool(config: Config): AgentTool {
   return delegateWiring.tool;
 }
 
+import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
@@ -343,6 +393,7 @@ import {
   setPace,
 } from './notice-pace.js';
 import { makeStrangerHint } from './owner-id-hint.js';
+import { evolveNowAnswer, stopWatchingWords } from './palabras-vigilancia.js';
 import {
   type PanelListenProblem,
   panelBootFacts,
@@ -350,6 +401,7 @@ import {
   panelListenProblem,
   panelStartPlan,
 } from './panel-doctor.js';
+import { ensurePanelToken } from './panel-token.js';
 import { pdfSummaryIntent, pdfToTextIntent } from './pdfmd/chat-intent.js';
 import { ocrScannedForModel } from './pdfmd/scanned.js';
 import { DESKTOP_OFF_MESSAGE, desktopEnabled, toolsForMode } from './platform.js';
@@ -390,13 +442,17 @@ import { formatServicesList, ServiceStore } from './services/store.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
 import { detectSkillEnv } from './skills/env.js';
 import { seedGeneralSkills } from './skills/general.js';
+import { GrillMe } from './skills/grill.js';
 import { fetchSkillMarkdown, importedSkillDraft, installSkill } from './skills/import.js';
 import { recordLessons } from './skills/lessons.js';
+import { RepeatTracker } from './skills/repeats.js';
 import { SkillStore } from './skills/store.js';
+import { repitchText, wantsRepitch } from './skills/wait-what.js';
 import { conversationStatus, formatStatus, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
 import { startTelegramEstado } from './telegram-estado.js';
+import { backToMainAnswer, topicReadyText } from './temas.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
@@ -450,6 +506,7 @@ import { tvRequest } from './tv/lgtv.js';
 import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
+  isTvOrder,
   TV_BUTTONS_TITLE,
   tvButtonCommand,
   tvButtons,
@@ -475,6 +532,7 @@ import {
   setOjoEnabled,
   startVigilanteLoop,
 } from './vigilante.js';
+import { LIVE_BUSY_TEXT, LIVE_STOPPED_TEXT, liveCaption, liveStopAnswer } from './vista-directo.js';
 import { createAloudSpeaker } from './voice/aloud.js';
 import { BargeStats, bargeFalseRate } from './voice/barge-stats.js';
 import { createBargeVadScorer } from './voice/barge-vad.js';
@@ -499,6 +557,7 @@ import {
 } from './watch/compare.js';
 import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
+  AVISAR_OTRA_VEZ,
   type CheckOutcome,
   describeChange,
   describeWatch,
@@ -507,6 +566,8 @@ import {
   type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
+  watchFromAnswer,
+  watchNotFound,
   watchValueText,
 } from './watch/pages.js';
 import { WebRouter } from './web/router.js';
@@ -559,6 +620,7 @@ Uso:
   pa stop                 parar Asistenta con un cierre limpio (Windows y Linux; no mata por PID)
   pa restart              no disponible: para y vuelve a abrir levantar.bat (o pa iniciar)
   pa doctor               revisar la configuración del PC
+  pa panel                abrir el panel web en el navegador (ya con su token)
   pa backup [lista]       copias de seguridad; pa backup restaurar <AAAA-MM-DD|ultima> con el daemon parado
   pa auditoria [--tool <n>] [--verdict allow|deny] [--since 24h|7d] [--last N] [--json]  registro de llamadas (solo lectura)
   pa mcp serve            servidor MCP de solo lectura por stdio (Claude Desktop, Cursor)
@@ -603,9 +665,11 @@ import {
   protectedPaths,
   secretStatePaths,
 } from './daemon/gate.js';
+import { inspectionThreadKey } from './daemon/inspection-thread.js';
 import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
 import { summarizeTranscript } from './daemon/transcript-summary.js';
+import { tvButtonAction } from './daemon/tv-button.js';
 import { retentionIfDue } from './maintenance.js';
 import { missingPieceMessage } from './setup-missing.js';
 import { tvCommand } from './tv/tv-cli.js';
@@ -623,9 +687,11 @@ export {
   uniqueRoutineName,
 } from './daemon/cron-command.js';
 export { approvalsDbPath, createDaemonGate, type DaemonGateOptions } from './daemon/gate.js';
+export { inspectionThreadKey } from './daemon/inspection-thread.js';
 export { formatSessionHits } from './daemon/session-hits.js';
 export { trimForSpeech } from './daemon/speech-text.js';
 export { summarizeTranscript } from './daemon/transcript-summary.js';
+export { type TvButtonAction, tvButtonAction } from './daemon/tv-button.js';
 
 /** Re-emparejado de la tele durante un cast de audio: misma clave que usa la tool `tv`. */
 const saveTvClientKey = (key: string): Promise<void> => vaultSet('tv:clientKey', key);
@@ -706,6 +772,12 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'autoupdate': {
       const { autostartRepo } = await import('./autostart.js');
+      // Copia instalada con el .exe (sin git): la actualiza el instalador de GitHub.
+      const inst = await import('./actualizar-instalado.js');
+      if (inst.isInstalledLayout(autostartRepo())) {
+        const code = await inst.instaladoAutoupdateCommand(rest, autostartRepo());
+        if (code !== null) return code;
+      }
       const { autoupdateCommand } = await import('./autoupdate-cli.js');
       return autoupdateCommand(rest, { stateDir: paths.state, repo: autostartRepo() });
     }
@@ -743,6 +815,15 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'doctor':
       return doctorCommand();
+    case 'panel': {
+      const { openInBrowser, panelCommand } = await import('./panel-abrir.js');
+      return panelCommand({
+        env: process.env,
+        stateDir: paths.state,
+        open: (url) => openInBrowser(url),
+        print: (line) => console.log(line),
+      });
+    }
     case 'llm-health':
       return llmHealthCommand();
     case 'evolve':
@@ -1000,7 +1081,13 @@ async function doctorCommand(): Promise<number> {
   lines.push(
     `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );
-  lines.push(briefingDoctorLine());
+  // La hora real del resumen: si el dueño dijo «no me escribas antes de las 10», sale a las 10.
+  lines.push(
+    briefingDoctorLine(
+      process.env,
+      new MemorySnapshot({ dir: join(paths.state, 'snapshot') }).load().split(ENTRY_SEPARATOR),
+    ),
+  );
   const switchesLine = envSwitchesDoctorLine();
   if (switchesLine) lines.push(switchesLine);
   const numbersLine = envNumbersDoctorLine();
@@ -1509,6 +1596,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
+  const skillRepeats = new RepeatTracker(join(paths.state, 'habilidades-repetidas.json'));
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
   seedBuiltinSkills(skills);
   seedGeneralSkills(skills);
@@ -1702,6 +1791,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const threads = new Map<string, Thread>();
   const eraseConfirm = new EraseConfirm();
+  const preguntas = new PreguntasPendientes();
   /** `${chatKey}:${messageId}` -> thread key, so a reply lands in its conversation. */
   // --- Integraciones opcionales del daemon -----------------------------------
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
@@ -1723,8 +1813,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       tools: mcpTools.length,
     });
   const panelGoals = createOwnerGoalsReader();
-  // Panel web local (PWA): solo si se pide con PA_WEB_PORT y hay token. Loopback.
-  const panelPlan = panelStartPlan();
+  // Panel web local (PWA), encendido por defecto en 127.0.0.1:8787 (PA_WEB_PORT=0 lo
+  // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
+  const panelPlan = panelStartPlan(process.env, () => ensurePanelToken(paths.state));
   let panelStarted: Promise<string | PanelListenProblem> | undefined;
   if (panelPlan.kind !== 'off') {
     if (panelPlan.kind === 'problem') {
@@ -2100,6 +2191,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createSkillsTool({
         store: skills,
         semantic: semanticRecall,
+        repeats: skillRepeats,
         // Auto-chequeo con lo que hay de verdad (correo, calendario, herramientas).
         checkEnv: () =>
           detectSkillEnv({
@@ -2513,7 +2605,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       splitGoalScope,
       getOrCreateThread,
       defaultThread,
-      looksLikeFollowUp,
+      // «pásame una captura cuando lo tengas» sigue la tarea en marcha (captura-tarea.ts).
+      looksLikeFollowUp: (t: string) => looksLikeFollowUp(t) || sigueLaTareaEnCurso(t),
     });
 
   const say = async (
@@ -3076,7 +3169,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'Uso: /correo estado, /correo lista o /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
+        'Para contestar un correo, responde a su aviso y escribe lo que quieres decir. Si quieres ver cómo va el correo o los últimos que han llegado, dímelo.',
         { quote: true },
       );
       return;
@@ -3109,11 +3202,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdOcr = async (inbound: Inbound, args: string): Promise<void> => {
     const mode = parseOcrMode(args);
     if (!mode) {
-      await say(
-        inbound,
-        'Uso: manda un PDF o una foto con el pie «/ocr» (PDF con texto), «/ocr md» (Markdown) o «/ocr todo» (los dos).',
-        { quote: true },
-      );
+      await say(inbound, 'Mándame el PDF o la foto y te saco el texto.', { quote: true });
       return;
     }
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -3181,8 +3270,52 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** La respuesta «precio | iPhone 16, Pixel 9» completa la investigación amplia. */
+  const askWideArgs = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'investiga', {
+      prefix: 'amplio ',
+      accepts: (t) => t.includes('|'),
+    });
+  /** «enciéndelo» tras «apagado (es lo normal)» enciende esa parte del ojo. */
+  const askOjoOn = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOnAnswer(t) ? `${what} on` : null),
+    });
+  /** «apágalo» tras «encendido… Si quieres que lo apague» apaga esa parte del ojo. */
+  const askOjoOff = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? `${what} off` : null),
+    });
+  /** Descargas encendido sin carpeta: «D:\\Descargas» (o «apágalo») tras la pregunta. */
+  const askDownloadsDir = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOffAnswer(t) ? 'descargas off' : downloadsDirAnswer(t)),
+    });
+  /** Guarda la carpeta de Descargas que dice el dueño (solo si existe) y vuelve a vigilar. */
+  const setDownloadsDirByWords = async (inbound: Inbound, raw: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const dir = resolveDownloadsDir({ override: raw });
+    if (!dir) {
+      askDownloadsDir(inbound);
+      await say(inbound, downloadsDirMissingText(raw), { quote: true });
+      return;
+    }
+    await vaultSet('ojo:downloadsDir', dir);
+    const st = getDownloadsEnabled(memoryDb) ? await downloadsCtl.apply() : null;
+    await say(inbound, downloadsDirSavedText(dir, st), { quote: true });
+  };
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
+    const dirM = /^descargas\s+carpeta\s+(.+)$/i.exec(args.trim());
+    if (dirM?.[1]) {
+      await setDownloadsDirByWords(inbound, dirM[1]);
+      return;
+    }
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
     if (dm) {
       if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -3195,15 +3328,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (want === 'on' || want === 'off') setDownloadsEnabled(memoryDb, want === 'on');
       const st = await downloadsCtl.apply();
       const on = getDownloadsEnabled(memoryDb);
+      if (!on) askOjoOn(inbound, 'descargas');
+      if (on) askOjoOff(inbound, 'descargas');
       await say(
         inbound,
         on
           ? st.running
-            ? 'Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. /ojo descargas off lo apaga.'
-            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. Puedes fijar la carpeta en la bóveda con ojo:downloadsDir.`
-          : 'Descargas: apagado (es lo normal; /ojo descargas on lo enciende).',
+            ? `Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. ${OJO_OFF_HINT}`
+            : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. ${DOWNLOADS_DIR_ASK}`
+          : DOWNLOADS_OFF_TEXT,
         { quote: true },
       );
+      if (on && !st.running) askDownloadsDir(inbound);
       return;
     }
     const pm = /^pantalla(?:\s+(on|off|estado))?$/.exec(arg);
@@ -3216,11 +3352,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const want = pm[1];
       if (want === 'on' || want === 'off') setScreenEnabled(memoryDb, want === 'on');
+      if (!getScreenEnabled(memoryDb)) askOjoOn(inbound, 'pantalla');
+      if (getScreenEnabled(memoryDb)) askOjoOff(inbound, 'pantalla');
       await say(
         inbound,
         getScreenEnabled(memoryDb)
-          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} /ojo pantalla off lo apaga.`
-          : 'Pantalla: apagado (es lo normal; /ojo pantalla on lo enciende).',
+          ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} ${OJO_OFF_HINT}`
+          : SCREEN_OFF_TEXT,
         { quote: true },
       );
       return;
@@ -3228,13 +3366,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (arg === 'on' || arg === 'off') {
       setOjoEnabled(memoryDb, arg === 'on');
     } else if (arg && arg !== 'estado') {
-      await say(
-        inbound,
-        'Uso: /ojo on, /ojo off, /ojo (estado), /ojo descargas on|off o /ojo pantalla on|off.',
-        {
-          quote: true,
-        },
-      );
+      await say(inbound, 'No te he pillado. ¿Lo enciendo, lo apago o te digo cómo está?', {
+        quote: true,
+      });
       return;
     }
     const quiet = ownerQuiet();
@@ -3244,11 +3378,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? null
       : getScreenEnabled(memoryDb)
         ? `Pantalla: encendido. ${screenStatusText(lastScreenScan)}`
-        : 'Pantalla: apagado (/ojo pantalla on lo enciende).';
+        : 'Pantalla: apagado (es lo normal).';
     const downloadsLine = !ownerView
       ? null
       : !dst
-        ? 'Descargas: apagado (/ojo descargas on lo enciende).'
+        ? 'Descargas: apagado (es lo normal).'
         : dst.running
           ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
           : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
@@ -3259,7 +3393,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         downloadsLine,
         screenLine,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas y la lectura de pantalla solo si lo pides: /ojo descargas on, /ojo pantalla on.',
-        `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
+        `Cada aviso lleva su número entre corchetes: si alguno no te interesa, dime «descarta el» y su número (por ejemplo «descarta el 3») y no te lo vuelvo a recordar; tras dos parecidos te propongo dejar de avisarte de esa clase. Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ]
         .filter((l): l is string => l !== null)
         .join('\n'),
@@ -3277,11 +3411,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^#?(\d{1,9})$/.exec(args.trim());
     if (!m) {
-      await say(
-        inbound,
-        'Uso: /ignora <número del aviso>, el que sale entre corchetes [#n]. /ignorados lista las reglas.',
-        { quote: true },
-      );
+      await say(inbound, '¿Qué aviso descarto? Dime el número que sale entre corchetes.', {
+        quote: true,
+      });
       return;
     }
     const res = dismissNotice(memoryDb, Number(m[1]), Date.now());
@@ -3303,8 +3435,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const r = res.proposal;
       lines.push(
         '',
-        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
+        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime «sí».`,
       );
+      preguntas.ask(chatKey(inbound), 'ignorados', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `activar ${r.id}` : null),
+      });
     }
     const stepped = recordDismissal(memoryDb, Date.now());
     if (stepped) {
@@ -3326,9 +3461,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const want = parsePace(args);
     if (want === null) {
-      await say(inbound, 'Uso: /avisos (estado), /avisos menos, /avisos minimo o /avisos normal.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres menos avisos, solo los importantes o volver a lo normal?',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (want !== 'estado') setPace(memoryDb, want);
@@ -3345,9 +3484,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^(activar|borrar)\s+R?(\d{1,9})$/i.exec(args.trim());
     if (args.trim() && !m) {
-      await say(inbound, 'Uso: /ignorados, /ignorados activar <id> o /ignorados borrar <id>.', {
-        quote: true,
-      });
+      await say(
+        inbound,
+        'No te he pillado. ¿Quieres ver las reglas, borrar una o volver a activarla? Dime cuál por su número.',
+        {
+          quote: true,
+        },
+      );
       return;
     }
     if (m) {
@@ -3361,7 +3504,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return;
       }
     }
-    await say(inbound, formatRules(listRules(memoryDb)), { quote: true });
+    const rules = listRules(memoryDb);
+    if (rules.length) preguntas.ask(chatKey(inbound), 'ignorados', { answer: rulesAnswer });
+    await say(inbound, formatRules(rules), { quote: true });
+  };
+
+  /** «descarta el 3» en el chat privado del dueño: lo mismo que /ignora 3. */
+  const ignoraByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = isOwnerDm(inbound, vigilanteOwnerId) ? ignoraAnswer(inbound.text) : null;
+    if (n === null) return false;
+    await cmdIgnora(inbound, String(n));
+    return true;
   };
 
   // ---- commands -----------------------------------------------------------
@@ -3379,9 +3532,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     caption: string,
     threadKey?: string,
   ): Promise<boolean> => {
-    if (!desktop) {
+    const service = threadKey ? browsers.get(threadKey) : undefined;
+    // Con escritorio también: si la tarea tiene una página abierta (el navegador va sin
+    // ventana), «pásame una captura» es esa página, no el escritorio (captura-tarea.ts).
+    const pagina =
+      service !== undefined &&
+      threadKey !== undefined &&
+      capturaDeLaPagina(inbound.text, service.isOpen(threadKey));
+    if (!desktop || pagina) {
       // Headless: no desktop to photograph, but the page the task is working on counts.
-      const service = threadKey ? browsers.get(threadKey) : undefined;
       if (!service || !threadKey) return false;
       try {
         const png = await capturePageIfOpen(service, threadKey);
@@ -3526,7 +3685,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           `Conversaciones abiertas: ${open.length}`,
           ...open.map((t) => `- ${t.name}${t.name === current ? ' (activa)' : ''}: ${t.label}`),
           '',
-          'Usa /topic <nombre> para abrir una conversación nueva y /topics para verlas.',
+          '¿Quieres abrir otra? Dime cómo la llamo.',
         ].join('\n'),
         { quote: true },
       );
@@ -3535,11 +3694,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     activeTopic.set(chatKey_, name);
     const thread = await getOrCreateThread(chatKey_, name, name);
     messageThread.set(`${chatKey_}:${inbound.messageId}`, thread.key);
-    await say(
-      inbound,
-      `Conversación "${name}" lista. Lo que escribas va aquí; /topic main vuelve a la principal.`,
-      { quote: true },
-    );
+    await say(inbound, topicReadyText(name), { quote: true });
+  };
+
+  /** «vuelve a la principal» con otra conversación activa: lo mismo que /topic main. */
+  const backToMainByWords = async (inbound: Inbound): Promise<boolean> => {
+    const current = activeTopic.get(chatKey(inbound));
+    if (!current || current === 'main' || !backToMainAnswer(inbound.text)) return false;
+    await cmdTopic(inbound, 'main');
+    return true;
+  };
+
+  /** «olvida la regla 2»: lo mismo que /olvida 2 (sigue siendo escrito, nunca un botón). */
+  const forgetRuleByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = forgetRuleWords(inbound.text);
+    if (!n) return false;
+    const thread = await resolveThread(inbound);
+    await say(inbound, forgetLearnedRule(memory, memoryScopesFor(thread.key).read, n), {
+      quote: true,
+    });
+    return true;
   };
 
   const cmdTopics = async (inbound: Inbound): Promise<void> => {
@@ -3569,6 +3743,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * demonstration is the only version of "it learns" that is reliable: asking a model
    * to invent steps it never performed produces plausible fiction.
    */
+  /** La respuesta normal («pedir cita») pone nombre a la rutina y empieza a grabar (Nico, 1 nov). */
+  const askLearnName = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'learn', { answer: learnNameAnswer });
+  /** Grabación en una web: «sí» la reintenta y el enlace como respuesta empieza otra. */
+  const askWebDemo = (inbound: Inbound, msg: string, url: string): void => {
+    const next = webDemoFollowUp(msg);
+    const link = (t: string) => /https?:\/\/\S+/i.exec(t)?.[0];
+    if (next === 'retry') {
+      preguntas.ask(chatKey(inbound), 'learn', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `web ${url}` : null),
+      });
+    } else if (next === 'link') {
+      preguntas.ask(chatKey(inbound), 'learn', { needsUrl: true, answer: (t) => `web ${link(t)}` });
+    }
+  };
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
@@ -3578,17 +3767,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         vaultValues: vaultSnapshotValues,
       });
       if (web !== null) {
+        askWebDemo(inbound, web, '');
         await say(inbound, web, { quote: true });
         return;
       }
       const ended = learning.end(inbound.chatId, thread.key, thread.agent);
       if (!ended.ok) {
+        if (ended.reason !== 'other-thread') askLearnName(inbound);
         const text =
           ended.reason === 'none'
-            ? 'No estaba grabando ninguna rutina. Empieza con /learn <nombre>.'
+            ? 'No estaba grabando ninguna rutina. Si quieres enseñarme una, dime cómo la llamo.'
             : ended.reason === 'other-thread'
-              ? `Estoy grabando "${ended.name}" en otra conversación. Cierra allí con /learn end, o empieza de nuevo aquí con /learn <nombre>.`
-              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empieza de nuevo con /learn <nombre>.';
+              ? `Estoy grabando "${ended.name}" en otra conversación. Termínala allí, o empieza una nueva aquí diciéndome cómo la llamo.`
+              : 'No puedo aislar con certeza lo que demostraste (la conversación se resumió o se reinició desde que empecé a grabar). Empecemos de nuevo: dime cómo la llamo.';
         await say(inbound, text, { quote: true });
         return;
       }
@@ -3639,14 +3830,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         params: macro ? params : null,
         steps,
       });
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
         [
           macro
-            ? `Macro "${routine.name}" guardada. La ejecutas con /routine ${routine.name} ${params
-                .map((p) => `${p.name}=...`)
-                .join(' ')}.`
-            : `Rutina "${routine.name}" guardada. Replaying con /routine ${routine.name}.`,
+            ? `Macro "${routine.name}" guardada. ¿La pruebo ahora? Dime «sí» y te pido los datos.`
+            : `Rutina "${routine.name}" guardada. ¿La repito ahora? Dime «sí».`,
           ...(macro
             ? [
                 '',
@@ -3667,12 +3859,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         browser: browserFor(thread.key),
       });
       if (msg !== null) {
+        askWebDemo(inbound, msg, webArg[1] ?? '');
         await say(inbound, msg, { quote: true });
         return;
       }
     }
     if (!name) {
-      await say(inbound, 'Uso: /learn <nombre> para empezar, /learn end para cerrar.', {
+      askLearnName(inbound);
+      await say(inbound, '¿Cómo llamo a la rutina? Dímelo y empiezo a grabar.', {
         quote: true,
       });
       return;
@@ -3680,7 +3874,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     learning.start(inbound.chatId, name, thread.key, thread.agent);
     await say(
       inbound,
-      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, /learn end.`,
+      `Grabando "${name}". Haz la tarea como la harías tú; cuando termines, dime «ya está».`,
       { quote: true },
     );
   };
@@ -3688,7 +3882,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdRoutine = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim().split(/\s+/)[0] ?? '';
     if (!name) {
-      await say(inbound, 'Uso: /routine <nombre>. Mira /routines para la lista.', { quote: true });
+      const names = store
+        .listRoutines()
+        .filter(
+          (r) =>
+            (r.scope === thread.key || r.scope === `${thread.chatKey}#main`) &&
+            r.kind === 'procedure',
+        )
+        .map((r) => r.name);
+      if (!names.length) {
+        await say(
+          inbound,
+          'Aún no me has enseñado ninguna rutina. Si quieres, dime cómo la llamo y te miro mientras la haces.',
+          { quote: true },
+        );
+        askLearnName(inbound);
+        return;
+      }
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => names.find((n) => n.toLowerCase() === t.trim().toLowerCase()) ?? null,
+      });
+      await say(inbound, `¿Qué rutina repito? Tienes: ${names.slice(0, 10).join(', ')}.`, {
+        quote: true,
+      });
       return;
     }
     const routine =
@@ -3718,7 +3934,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             `Rutina "${created.name}" programada con horario ${created.schedule}.`,
             `Tarea: ${created.prompt}`,
             `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
-            'La ves con /agenda; la repito cuando quieras con /routine.',
+            'La verás en tu agenda.',
           ].join('\n'),
           { quote: true },
         );
@@ -3737,18 +3953,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // valid contract the steps would reach the model with raw {placeholders}.
       await say(
         inbound,
-        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Regrábala con /learn.`,
+        `La macro ${routine.name} no tiene un contrato de parámetros válido: no se ejecuta. Habría que enseñármela otra vez.`,
         { quote: true },
       );
       return;
     } else if (routine.params?.length) {
       const parsed = parseMacroArgs(tokens);
       if (!parsed.ok) {
+        preguntas.ask(chatKey(inbound), 'routine', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${routine.name} ${t}` : null),
+        });
         await say(
           inbound,
-          `${parsed.error} Uso: /routine ${routine.name} ${routine.params
-            .map((p) => `${p.name}=...`)
-            .join(' ')}.`,
+          `${parsed.error} Dime los datos así: «${routine.params.map((p) => `${p.name}=...`).join(' ')}».`,
           { quote: true },
         );
         return;
@@ -3760,9 +3977,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       prompt = built.prompt;
     } else if (tokens.length) {
+      preguntas.ask(chatKey(inbound), 'routine', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? routine.name : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" no tiene parámetros: se repite tal cual con /routine ${routine.name}.`,
+        `"${routine.name}" no tiene parámetros: se repite tal cual. ¿La repito? Dime «sí».`,
         { quote: true },
       );
       return;
@@ -3772,9 +3992,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // F4: una rutina de comando jamás se manda al modelo.
     if (isCommandRoutine(routine)) {
+      preguntas.ask(chatKey(inbound), 'cron', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `probar ${routine.name}` : null),
+      });
       await say(
         inbound,
-        `"${routine.name}" es una rutina de comando: pruébala con /cron probar ${routine.name}.`,
+        `"${routine.name}" es una rutina de comando: no la hago con el modelo. ¿La pruebo ahora? Dime «sí».`,
         { quote: true },
       );
       return;
@@ -3788,7 +4011,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const chatKey_ = chatKey(inbound);
     const list = store.listRoutines().filter((r) => inChatScope(r.scope, chatKey_));
     if (!list.length) {
-      await say(inbound, 'Todavía no hay rutinas. Graba una con /learn <nombre>.', {
+      await say(inbound, 'Todavía no hay rutinas. Si quieres enseñarme una, dime cómo la llamo.', {
         quote: true,
       });
       return;
@@ -3830,7 +4053,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
       const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
       if (!victim) {
-        await say(inbound, 'Uso: /disparador del <número de /disparadores>.', { quote: true });
+        if (!scoped.length) {
+          await say(inbound, 'No tienes disparadores que quitar.', { quote: true });
+          return;
+        }
+        // La respuesta normal («el 2») completa el /disparador del (Nico, 1 nov).
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => {
+            const k = Number(/^(?:el\s+|la\s+)?(\d+)[.!]*$/i.exec(t.trim())?.[1]);
+            return Number.isInteger(k) && k >= 1 && k <= scoped.length ? `del ${k}` : null;
+          },
+        });
+        await say(inbound, `¿Cuál quito? Dime su número.\n${formatTriggerList(scoped)}`, {
+          quote: true,
+        });
         return;
       }
       store.deleteTrigger(victim.id);
@@ -3851,6 +4087,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const parsed = parseTriggerAdd(args.trim());
     if (!parsed.ok) {
+      preguntas.ask(chatKey_, 'disparador', { accepts: (t) => parseTriggerAdd(t).ok });
       await say(inbound, parsed.error, { quote: true });
       return;
     }
@@ -3861,7 +4098,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!routine) {
       await say(
         inbound,
-        `No tengo ninguna rutina llamada "${routineName}". Grábala primero con /learn ${routineName}.`,
+        `No tengo ninguna rutina llamada "${routineName}". Enséñamela primero y luego la engancho a este disparador.`,
         { quote: true },
       );
       return;
@@ -3889,11 +4126,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createdAt: '',
     });
     if (!probe.ok) {
+      if (isMacroName(routineName)) {
+        preguntas.ask(chatKey_, 'disparador', {
+          answer: (t) => (/^\S+=\S+(?:\s+\S+=\S+)*$/.test(t) ? `${args.trim()} ${t}` : null),
+        });
+      }
       await say(
         inbound,
         `Esa rutina no se puede disparar por evento: ${probe.error}. ` +
           (isMacroName(routineName)
-            ? `Pasa sus parámetros fijos: /disparador ${args.trim()} clave=valor.`
+            ? 'Dime sus parámetros fijos como clave=valor, por ejemplo «fichero=documentos», y lo guardo.'
             : ''),
         { quote: true },
       );
@@ -3910,7 +4152,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(
       inbound,
       `Disparador guardado: cuando [${event}] contenga "${match}", disparo "${routine.name}" ` +
-        `(mínimo cada ${saved.cooldownSeconds}s). Lo ves con /disparadores.`,
+        `(mínimo cada ${saved.cooldownSeconds}s). Lo verás en la lista de disparadores.`,
       { quote: true },
     );
   };
@@ -3931,6 +4173,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           isOwner: isOwnerDm(inbound, vigilanteOwnerId),
           commandCwd: homedir(),
           goals: goalStore,
+          ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
         },
         args,
       ),
@@ -4070,9 +4313,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const rawUrl = parsed?.url;
     if (!parsed || !rawUrl) {
+      preguntas.ask(chatKey(inbound), 'vigila', { needsUrl: true });
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. Si reconfiguras el mismo enlace, objetivo= y baja= reemplazan ambos ajustes anteriores: repite los dos si quieres conservarlos. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
+        '¿Qué página quieres que vigile? Pásame el enlace y te aviso si cambia el precio.',
         { quote: true },
       ));
     }
@@ -4125,6 +4369,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, r.text + note, { quote: true, format: 'marks', buttons: r.buttons });
   };
 
+  /** Silenciada: «avísame otra vez» quita el silencio sin escribir el comando. */
+  const askAvisarOtraVez = (inbound: Inbound, id: string): void =>
+    preguntas.ask(chatKey(inbound), 'vigila', {
+      answer: (t) => (AVISAR_OTRA_VEZ.test(t.trim()) ? `avisar ${id}` : null),
+    });
+  /** Fallo del modelo en el chat: «sí» resume la conversación o repite el mensaje. */
+  const modelErrorAsk = (
+    inbound: Inbound,
+    r: { text: string; error: string | null },
+    ask: boolean,
+  ): string => {
+    const cmd = !ask || r.text.trim() || !r.error ? null : modelErrorFollowUp(r.error);
+    if (!cmd) return '';
+    preguntas.ask(chatKey(inbound), cmd, { answer: (t) => (SI_RESPUESTA.test(t) ? '' : null) });
+    return ` ${MODEL_ERROR_QUESTION[cmd]}`;
+  };
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
     if (precioMuteArgs(args)) {
@@ -4135,8 +4395,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
       : undefined;
     if (!w) {
-      return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
+      return void (await say(inbound, watchNotFound(pageWatches.list(inbound.chatId)), {
+        quote: true,
+      }));
     }
+    if (w.mutedUntil > Date.now()) askAvisarOtraVez(inbound, w.id);
     await say(inbound, marksCardTitle(describeWatch(w, pageWatches.summary(w.id))), {
       quote: true,
       format: 'marks',
@@ -4150,9 +4413,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdCompara = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim().split(/\s+/)[0] ?? '';
     if (!url) {
+      preguntas.ask(chatKey(inbound), 'compara', { needsUrl: true });
       return void (await say(
         inbound,
-        'Uso: /compara <enlace de una ficha>. Busco ese mismo producto en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
+        '¿Qué producto comparo? Pásame el enlace y lo busco en las tiendas grandes.',
         { quote: true },
       ));
     }
@@ -4224,11 +4488,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdInvestiga = async (inbound: Inbound, args: string): Promise<void> => {
     const question = args.trim();
     if (!question) {
-      return void (await say(
-        inbound,
-        'Uso: /investiga <pregunta>. Hago un plan de sub-preguntas, busco y leo varias fuentes con el enrutador web (gratis) y te mando un informe con cada afirmacion citada [n] a su fuente verbatim. Lo que no pueda verificar queda marcado como tal.',
-        { quote: true },
-      ));
+      preguntas.ask(chatKey(inbound), 'investiga');
+      return void (await say(inbound, '¿Qué quieres que investigue?', { quote: true }));
     }
     const wide = /^amplio\b/i.test(question);
     if (wide) {
@@ -4242,9 +4503,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const parsed = parseWideArgs(question.replace(/^amplio\b/i, ''));
       if (!parsed) {
+        askWideArgs(inbound);
         return void (await say(
           inbound,
-          `Uso: /investiga amplio <pregunta> | elemento1, elemento2, ... (hasta ${WIDE_MAX_ITEMS}). Ejemplo: /investiga amplio precio y garantia | iPhone 16, Pixel 9, Galaxy S25`,
+          `Dime qué quieres saber y de qué cosas (hasta ${WIDE_MAX_ITEMS}), separando con una barra. Por ejemplo: ${WIDE_EXAMPLE}.`,
           { quote: true },
         ));
       }
@@ -4305,10 +4567,42 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** «deja de vigilar» (pregunta cuál) o «deja de vigilar la tele» (si una encaja). */
+  const stopWatchingByWords = async (inbound: Inbound): Promise<boolean> => {
+    const rest = stopWatchingWords(inbound.text);
+    if (rest === null) return false;
+    const list = pageWatches.list(inbound.chatId);
+    if (list.length === 0) return false;
+    if (!rest) {
+      await cmdDejarDeVigilar(inbound, '');
+      return true;
+    }
+    const w = watchFromAnswer(list, rest);
+    if (!w) return false;
+    await cmdDejarDeVigilar(inbound, w.id);
+    return true;
+  };
+
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
+    const list = pageWatches.list(inbound.chatId);
+    if (!id && list.length > 0) {
+      // «la de la tele» o el código: la respuesta suelta dice cuál.
+      preguntas.ask(chatKey(inbound), 'dejar_de_vigilar', {
+        answer: (t) => watchFromAnswer(list, t)?.id ?? null,
+      });
+      await say(
+        inbound,
+        `¿Cuál dejo de vigilar? Tienes: ${list
+          .slice(0, 8)
+          .map((w) => w.label || w.url)
+          .join(', ')}.`,
+        { quote: true },
+      );
+      return;
+    }
     const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
-    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : 'No encuentro ese id. Mira /vigilando.', {
+    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : watchNotFound(list), {
       quote: true,
     });
   };
@@ -4527,6 +4821,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Una petición hablada que llega con un ciclo en marcha se prueba al terminar ese.
   let evolveAgain = false;
   const featureAsks = new Map<string, { idea: string; at: number }>();
+  const grillMe = new GrillMe();
   const runEvolveCycle = async (chatId: string): Promise<void> => {
     if (evolving) {
       evolveAgain = true;
@@ -4669,6 +4964,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       void runEvolveCycle(inbound.chatId);
       return;
     }
+    preguntas.ask(chatKey(inbound), 'evolucion', {
+      answer: (t) => (evolveNowAnswer(t) ? 'ahora' : null),
+    });
     await say(inbound, describeLast(paths.state), { quote: true });
   };
 
@@ -4756,9 +5054,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «olvida eso» sin nada recién apuntado puede ser otra cosa: lo lleva el modelo.
       const target = forget.kind === 'last' ? recentFacts.take(chatKey(inbound)) : forget.query;
       if (!target) return false;
+      const before = snapshot.load().split(ENTRY_SEPARATOR);
       const removed = snapshot.removeEntries(target);
       if (removed === 0 && forget.kind === 'match') return false;
-      await say(inbound, removed > 0 ? 'Hecho, lo he olvidado.' : 'Ya no lo tenía apuntado.', {
+      const left = new Set(snapshot.load().split(ENTRY_SEPARATOR));
+      await say(inbound, forgotLine(removed > 0 ? before.filter((e) => !left.has(e)) : []), {
         quote: true,
       });
       return true;
@@ -4804,11 +5104,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const ck = chatKey(inbound);
     const live = [...threads.values()].filter((t) => t.chatKey === ck);
     if (live.some((t) => t.active)) {
-      await say(
-        inbound,
-        'Hay una tarea en marcha en este chat. Usa /stop y vuelve a pedir /borrar_chat. No he borrado nada.',
-        { quote: true },
-      );
+      eraseAfterStop.set(ck, Date.now());
+      await say(inbound, ERASE_BUSY_ASK, { quote: true });
       return;
     }
     const result = eraseChat({
@@ -4822,6 +5119,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     for (const t of live) threads.delete(t.key);
     await say(inbound, eraseSummary(result), { quote: true });
+  };
+  /** «sí» tras ERASE_BUSY_ASK: para la tarea, espera a que suelte el chat y borra. */
+  const eraseAfterStop = new Map<string, number>();
+  const stopAndEraseByWords = async (inbound: Inbound): Promise<boolean> => {
+    const ck = chatKey(inbound);
+    const at = eraseAfterStop.get(ck);
+    if (at === undefined) return false;
+    eraseAfterStop.delete(ck);
+    if (Date.now() - at > 2 * 60_000 || !SI_RESPUESTA.test(inbound.text.trim())) return false;
+    await cmdStop(inbound);
+    const busy = () => [...threads.values()].some((t) => t.chatKey === ck && t.active);
+    for (let i = 0; i < 40 && busy(); i++) await new Promise((r) => setTimeout(r, 250));
+    await cmdBorrarChatConfirmado(inbound);
+    return true;
   };
   // F13: liga una carpeta de proyecto (su ASISTENTA.md/AGENTS.md entra en el contexto).
   const cmdProyecto = async (inbound: Inbound, args: string): Promise<void> => {
@@ -4938,6 +5249,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const action = parseModelo(args, thread.agent.availableModels);
     if (action.kind === 'show') {
+      const available = thread.agent.availableModels;
+      // «el 2», «normal» o el nombre: la respuesta suelta elige el modelo.
+      if (available.length > 1) {
+        preguntas.ask(chatKey(inbound), 'modelo', {
+          answer: (t) => {
+            const said = t
+              .trim()
+              .replace(/^(?:el|la)\s+/i, '')
+              .replace(/[.!«»"]/g, '');
+            return parseModelo(said, available).kind === 'set' && said ? said : null;
+          },
+        });
+      }
       await say(inbound, formatModelos(thread.agent.availableModels, thread.agent.modelId), {
         quote: true,
       });
@@ -4981,21 +5305,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const key = chatKey(inbound);
     const parsed = parseAltavozArgs(args);
+    // La respuesta normal («por la tele», «apágalo») completa el /altavoz (Nico, 1 nov).
+    const askAltavoz = () =>
+      preguntas.ask(key, 'altavoz', { accepts: (t) => parseAltavozArgs(t).kind === 'set' });
     if (parsed.kind === 'error') {
+      askAltavoz();
       await say(inbound, ALTAVOZ_USAGE, { quote: true });
       return;
     }
     if (parsed.kind === 'set') {
       if (parsed.mode === 'tele' && !audioTeleEnabled()) {
+        askAltavoz();
         await say(
           inbound,
-          'La tele no está activada para audio. Pon PA_AUDIO_TELE=1 en el .env y reinicia; mientras, /altavoz pc.',
+          'La tele no está activada para audio: hace falta PA_AUDIO_TELE=1 en el .env y reiniciar. Mientras, si quieres, te hablo por el PC: dime «por el PC».',
           { quote: true },
         );
         return;
       }
       altavoz.set(key, parsed.mode);
     }
+    askAltavoz();
     await say(inbound, altavozStatusText(altavoz.get(key)), { quote: true });
   };
 
@@ -5021,9 +5351,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const m = /^(borrar|cancelar|quitar|del)\b\s*(.*)$/i.exec(args.trim());
     if (!m) {
       if (args.trim()) {
-        await say(inbound, 'Uso: /recordatorios ⬦ /recordatorios borrar <número o palabra>', {
-          quote: true,
-        });
+        await say(
+          inbound,
+          'No te he pillado. Si quieres un recordatorio nuevo, dímelo sin más, como «recuérdame mañana a las 9 llamar al taller».',
+          { quote: true },
+        );
         return;
       }
       await say(inbound, marksWithTitles(formatReminderRows(rows()), isReminderTitle), {
@@ -5031,6 +5363,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         format: 'marks',
       });
       return;
+    }
+    if (!(m[2] ?? '').trim()) {
+      preguntas.ask(chatKey(inbound), 'recordatorios', { prefix: 'borrar ' });
     }
     const pick = pickReminder(rows(), m[2] ?? '');
     if (!pick.ok) {
@@ -5067,6 +5402,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const reply = await tvChatCommand(args, { isOwner, run: runTvOrder });
+    // Si no la entendió, la siguiente orden dicha normal («bájale el volumen») completa el /tv.
+    if (isOwner && reply.startsWith('No he entendido «')) {
+      preguntas.ask(chatKey(inbound), 'tv', { accepts: isTvOrder });
+    }
     await say(inbound, reply, { quote: true });
   };
 
@@ -5081,6 +5420,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
       save: (on) => saveComputerSwitch(paths.state, on),
       offSaved: () => computerOffSaved(paths.state),
+      ask: (opts) => preguntas.ask(chatKey(inbound), 'ordenador', opts),
     });
     await say(inbound, reply, { quote: true });
   };
@@ -5089,7 +5429,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
     if (days === null) {
-      await say(inbound, 'Uso: /consumo [hoy|semana|mes|1-31]', { quote: true });
+      preguntas.ask(chatKey(inbound), 'consumo', { accepts: (t) => parseUsageDays(t) !== null });
+      await say(inbound, '¿De cuándo quieres ver el consumo? ¿De hoy, de la semana, del mes?', {
+        quote: true,
+      });
       return;
     }
     const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
@@ -5179,11 +5522,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdResolve = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim();
     if (!want) {
-      await say(
-        inbound,
-        'Uso: /resolver <id del pendiente>. Mira los pendientes con /pendientes.',
-        { quote: true },
-      );
+      preguntas.ask(chatKey(inbound), 'resolver');
+      await say(inbound, '¿Cuál doy por resuelto?', { quote: true });
       return;
     }
     const needle = want.toLowerCase();
@@ -5223,7 +5563,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSearch = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const query = args.trim();
     if (!query) {
-      await say(inbound, 'Uso: /buscar <texto> para buscar en conversaciones pasadas.', {
+      preguntas.ask(chatKey(inbound), 'buscar');
+      await say(inbound, '¿Qué quieres que busque?', {
         quote: true,
       });
       return;
@@ -5262,7 +5603,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'buscar' || sub === 'search') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria buscar <texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'memoria', { prefix: 'buscar ' });
+        await say(inbound, '¿Qué quieres que busque en lo que recuerdo?', {
+          quote: true,
+        });
         return;
       }
       const hits = memory
@@ -5283,7 +5627,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'borrar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /memoria olvidar <id> (el id sale en /memoria)', {
+        preguntas.ask(chatKey(inbound), 'memoria', { answer: memoriaForgetAnswer });
+        await say(inbound, MEMORIA_FORGET_ASK, {
           quote: true,
         });
         return;
@@ -5329,7 +5674,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'Uso: /memoria [listar | buscar <texto> | revisar | olvidar <id> | exportar]',
+      'No te he pillado. ¿Quieres ver lo que recuerdo, buscar algo u olvidar algo?',
       {
         quote: true,
       },
@@ -5401,14 +5746,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           ? `Perfil (${facts.length}):\n${facts
               .map((f) => `- [${f.id}] (${f.updatedAt.slice(0, 10)}) ${f.text}`)
               .join('\n')}`
-          : 'El perfil está vacío. Guarda algo con /perfil guardar <texto>.',
+          : 'Aún no sé nada de ti. Cuéntame lo que quieras que recuerde.',
         { quote: true },
       );
       return;
     }
     if (sub === 'guardar' || sub === 'add') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil guardar <texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'guardar ' });
+        await say(inbound, '¿Qué quieres que recuerde de ti?', {
+          quote: true,
+        });
         return;
       }
       try {
@@ -5432,7 +5780,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (sub === 'olvidar' || sub === 'forget') {
       if (!restText) {
-        await say(inbound, 'Uso: /perfil olvidar <id|texto>', { quote: true });
+        preguntas.ask(chatKey(inbound), 'perfil', { prefix: 'olvidar ' });
+        await say(inbound, '¿Qué quieres que olvide?', { quote: true });
         return;
       }
       const removed = profile.forget(restText);
@@ -5465,7 +5814,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(
       inbound,
-      'Uso: /perfil [listar | guardar <texto> | buscar <texto> | olvidar <id|texto> | migrar | exportar]',
+      'No te he pillado. ¿Quieres ver lo que sé de ti, guardar algo nuevo u olvidar algo?',
       { quote: true },
     );
   };
@@ -5480,14 +5829,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
-    if (!m) {
-      await say(inbound, 'Uso: /calendario add 2026-11-02 18:00 | Dentista', { quote: true });
+    // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
+    const natural = m ? null : parseFechaCalendario(args);
+    if (!m && !natural) {
+      // La respuesta normal completa el /calendario (Nico, 1 nov).
+      preguntas.ask(chatKey(inbound), 'calendario', {
+        answer: (t) => (parseFechaCalendario(t) ? `add ${t}` : null),
+      });
+      await say(
+        inbound,
+        args.trim()
+          ? 'No he pillado la fecha o la hora. Dímelo de otra forma, por ejemplo «el 2 de noviembre a las 18:00 dentista».'
+          : '¿Qué apunto y cuándo? Dímelo normal, por ejemplo «mañana a las 18:00 dentista» o «el viernes a las 10 revisión del coche».',
+        { quote: true },
+      );
       return;
     }
-    const start = new Date((m[1] ?? '').trim());
-    const title = (m[2] ?? '').trim();
+    const start = natural ? natural.start : new Date((m?.[1] ?? '').trim());
+    const title = natural ? natural.title : (m?.[2] ?? '').trim();
     if (Number.isNaN(start.getTime()) || !title) {
-      await say(inbound, 'Fecha no válida. Usa 2026-11-02 18:00 | Título.', { quote: true });
+      await say(
+        inbound,
+        'No entiendo esa fecha. Dímela de otra forma, por ejemplo «el 2 de noviembre a las 18:00».',
+        { quote: true },
+      );
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
@@ -5505,7 +5870,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();
     if (!url) {
-      await say(inbound, 'Uso: /skills instalar <url de SKILL.md>', { quote: true });
+      await say(inbound, '¿Cuál instalo? Pásame el enlace a su SKILL.md.', { quote: true });
       return;
     }
     try {
@@ -5519,14 +5884,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
   const cmdSkillsSearch = async (inbound: Inbound, args: string): Promise<void> => {
-    await say(inbound, await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL), {
-      quote: true,
-    });
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsSearchReply(args, process.env.PA_SKILLS_INDEX_URL, undefined, pick);
+    await say(inbound, reply, { quote: true });
   };
   const cmdSkillsCatalog = async (inbound: Inbound): Promise<void> => {
-    await say(inbound, await skillsCatalogReply(skills.list(), process.env.PA_SKILLS_CATALOG_URL), {
-      quote: true,
-    });
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsCatalogReply(
+      skills.list(),
+      process.env.PA_SKILLS_CATALOG_URL,
+      undefined,
+      pick,
+    );
+    await say(inbound, reply, { quote: true });
   };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
@@ -5606,15 +5978,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   ): Promise<string> => {
     const chatId = inbound.chatId;
     const announce = opts.announce !== false;
-    const caption =
-      source === 'camera'
-        ? 'Camara en directo, se actualiza sola. /camera off para parar.'
-        : 'Pantalla en directo, se actualiza sola. /screen off para parar.';
+    const caption = liveCaption(source);
 
     if (liveViews.has(chatId)) {
       // A second request must not silently replace the first view: two loops writing
       // to two different messages both look like a broken feed.
-      const note = 'Ya hay una vista en directo. Para pararla, /screen off o /camera off.';
+      const note = LIVE_BUSY_TEXT;
       if (announce) await say(inbound, note, { quote: true });
       return note;
     }
@@ -5657,6 +6026,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     timer.unref();
     liveViews.set(chatId, { timer, messageId: id });
     return caption;
+  };
+
+  /** «para» mientras hay una vista en directo en el chat: la para sin pasar por el modelo. */
+  const stopLiveByWords = async (inbound: Inbound): Promise<boolean> => {
+    if (!liveViews.has(inbound.chatId) || !liveStopAnswer(inbound.text)) return false;
+    stopLiveView(inbound.chatId);
+    await say(inbound, LIVE_STOPPED_TEXT, { quote: true });
+    return true;
   };
 
   const stopLiveView = (chatId: string): void => {
@@ -6321,7 +6698,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const factSaved =
         saidNow !== null && saidNow === `${SAID_PREFIX} ${statedFact(inbound.text) ?? ''}`;
       if (factSaved && !/apunt|guard|anot|record/i.test(result.text)) {
-        result = { ...result, text: `${result.text}\n\n${FACT_SAVED_LINE}`.trim() };
+        result = { ...result, text: `${result.text}\n\n${factSavedLine(saidNow)}`.trim() };
       }
 
       // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la
@@ -6332,7 +6709,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         reply: result.text,
         hinted: learnHint !== null,
         tainted: thread.gate.taintOf(thread.key) !== null,
-        // «(/olvida N para borrarla)» solo donde /olvida existe (Telegram y el panel).
+        // «(si no la quieres, dime «olvida la regla N»)» solo donde eso funciona (Telegram y el panel).
         forgetScopes:
           opts.out && opts.panel !== true ? undefined : memoryScopesFor(thread.key).read,
       });
@@ -6354,6 +6731,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // momento, sin esperar al evolve semanal. Solo anota; nunca reescribe.
       const refined = refineFromLessons(skills, learned, learnDay);
       if (refined.length) log.info('skills refined in use', { thread: thread.name, ids: refined });
+      // Receta repetida: solo al dueño, una línea al final; dice sí con skills accept.
+      if (result.error === null && isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
+        const offer = skillRepeats.observe(result.steps, skills.list());
+        if (offer) result = { ...result, text: `${result.text}\n\n${offer.line}`.trim() };
+      }
 
       log.info('task done', {
         thread: thread.name,
@@ -6391,7 +6773,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
 
       // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
-      const text2 = chatReplyText(result);
+      const text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
       if (out) out.answer(text2);
       else await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
@@ -6618,25 +7000,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * nothing to attach this to, and a fabricated id would make it look like a reply to
    * something the user never wrote.
    */
-  const notifyLastChat = async (text: string): Promise<void> => {
+  /** Con `ask`, la respuesta «sí» en ese chat lanza el comando (sin escribirlo). */
+  const notifyLastChat = async (
+    text: string,
+    ask?: { command: string; args: string },
+  ): Promise<void> => {
     const chat = lastChat;
     if (!chat) return;
-    await say(
-      {
-        channel: 'telegram',
-        account: telegram.account,
-        chatId: chat.chatId,
-        threadId: chat.threadId,
-        userId: String(chat.chatId),
-        text: '',
-        authorised: true,
-        messageId: 'wake-notice',
-        receivedAt: new Date().toISOString(),
-      },
-      text,
-      { quote: false },
-    );
+    const to: Inbound = {
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: chat.chatId,
+      threadId: chat.threadId,
+      userId: String(chat.chatId),
+      text: '',
+      authorised: true,
+      messageId: 'wake-notice',
+      receivedAt: new Date().toISOString(),
+    };
+    if (ask) {
+      preguntas.ask(chatKey(to), ask.command, {
+        answer: (t) => (SI_RESPUESTA.test(t) ? ask.args : null),
+      });
+    }
+    await say(to, text, { quote: false });
   };
+  /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
+  const WAKE_ON_ASK = { command: 'wake', args: 'on' };
 
   // ---- spoken conversation (capability 6, V1) --------------------------------
 
@@ -6828,7 +7218,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (told) return;
         told = true;
         void notifyLastChat(
-          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} Vuelve a activarlo con /wake on.`,
+          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} ${WAKE_AGAIN_ASK}`,
+          WAKE_ON_ASK,
         ).catch(() => {});
       },
     });
@@ -6872,9 +7263,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (action === 'need-mic') {
       // Sin listener no hay audio que darle a la sesion: se dice, no se calla.
       log.info('tv button pressed with the mic off', { source });
-      void notifyLastChat(
-        'Has pulsado el botón del mando pero el micrófono está apagado: actívalo con /wake on o /conversacion on.',
-      ).catch(() => {});
+      void notifyLastChat(MIC_OFF_TEXT, WAKE_ON_ASK).catch(() => {});
       return;
     }
     if (action === 'already-open') {
@@ -7014,9 +7403,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   };
 
+  /** Tras una pregunta de /conversacion, la respuesta normal completa el comando. */
+  const askConversacion = (inbound: Inbound, answer: (t: string) => string | null): void =>
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer });
+  const micOpenAnswer = (t: string): string | null => (SI_RESPUESTA.test(t) ? 'on' : null);
+
   const cmdConversacion = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     if (want === 'estado' || want === '') {
+      if (!currentWake()?.isRunning()) askConversacion(inbound, micOpenAnswer);
       const st = session?.stats();
       const bargeHist = bargeStats.totals();
       const bargeRate = bargeFalseRate(bargeHist);
@@ -7036,9 +7431,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 st.lastError ? ' La última vez algo falló al oírte.' : ''
               }`
             : `Ahora no estamos hablando${lastConversationEnd ? ` (la última conversación acabó ${lastConversationEnd})` : ''}.`) +
-          (currentWake()?.isRunning()
-            ? ''
-            : ' El micrófono está cerrado: /conversacion on lo abre.') +
+          (currentWake()?.isRunning() ? '' : MIC_CLOSED_ASK) +
           (bargeHist.bargeIns > 0
             ? ` En total me has cortado ${bargeHist.bargeIns} ${bargeHist.bargeIns === 1 ? 'vez' : 'veces'}${
                 bargeRate !== null
@@ -7053,11 +7446,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (want === 'corte') {
       const level = args.trim().split(/\s+/)[1]?.toLowerCase() ?? '';
       if (level !== 'off' && level !== 'altavoces' && level !== 'auriculares') {
-        await say(
-          inbound,
-          `Corte al interrumpirme: ${bargeLevel}. Uso: /conversacion corte off|altavoces|auriculares (vale desde la próxima sesión).`,
-          { quote: true },
-        );
+        askConversacion(inbound, corteAnswer);
+        await say(inbound, corteAsk(bargeLevel), { quote: true });
         return;
       }
       bargeLevel = level;
@@ -7080,7 +7470,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (want !== 'on' && want !== 'off') {
-      await say(inbound, 'Uso: /conversacion on|off|estado|corte', { quote: true });
+      await say(
+        inbound,
+        'No te he pillado. ¿Activo la conversación por voz, la apago o te digo cómo está?',
+        { quote: true },
+      );
       return;
     }
     if (want === 'off') {
@@ -7104,9 +7498,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     conversationOn = true;
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer: conversacionOffAnswer });
     await say(
       inbound,
-      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio, con "adiós"/"nada más" o con /conversacion off. Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
+      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio o con "adiós"/"nada más". ${CONVERSACION_OFF_HINT} Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
       { quote: true },
     );
   };
@@ -7274,6 +7669,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: async (inbound, args) => {
         const thread = await resolveThread(inbound);
         const reply = forgetLearnedRule(memory, memoryScopesFor(thread.key).read, args);
+        if (reply.startsWith('¿Cuál')) preguntas.ask(chatKey(inbound), 'olvida');
         await say(inbound, reply, { quote: true });
       },
     },
@@ -7298,7 +7694,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
         return say(
           inbound,
-          'Uso: /skills buscar <texto> · /skills catalogo · /skills instalar <url de SKILL.md>',
+          'No te he pillado. Puedo buscar habilidades, enseñarte el catálogo o instalar una si me pasas el enlace.',
           { quote: true },
         );
       },
@@ -7392,6 +7788,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             eraseConfirmed: (m) => cmdBorrarChatConfirmado(m),
             eraseCancelled: (m) => say(m, 'Cancelado: no he borrado nada.', { quote: true }),
             parseCommand,
+            consumeAnswer: (key, text) => preguntas.consume(key, text),
+            clearAnswer: (key) => preguntas.clear(key),
             // Commands bypass the agent entirely: they are the user's hands on the
             // machine, not a task to delegate, and they must work even when every thread
             // is busy or the provider is down.
@@ -7409,9 +7807,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await cmdOcr(inbound, 'md');
             return;
           }
+          // «para» con una vista en directo abierta en este chat: la para como /screen off.
+          if (await stopLiveByWords(inbound)) return;
+          // «descarta el 3»: descarta el aviso [#3] como /ignora 3.
+          if (await ignoraByWords(inbound)) return;
+          // «vuelve a la principal» con otra conversación activa: como /topic main.
+          if (await backToMainByWords(inbound)) return;
+          // «sí» tras «¿La paro y lo borro todo?»: para la tarea y borra el chat.
+          if (await stopAndEraseByWords(inbound)) return;
+          // «olvida la regla 2» tras «📝 Aprendido: …»: la borra como /olvida 2.
+          if (await forgetRuleByWords(inbound)) return;
+          // «deja de vigilar (la tele)» con vigilancias en este chat: como /dejar_de_vigilar.
+          if (await stopWatchingByWords(inbound)) return;
+          // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
+          if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
+            const learnThread = await resolveThread(inbound);
+            if (learning.isRecording(inbound.chatId) || webDemo.isRecording(learnThread.key)) {
+              await cmdLearn(learnThread, inbound, 'end');
+              return;
+            }
+          }
           // «ya está» justo después de una pregunta de seguimiento: se cierra sin gastar un turno.
-          if (inbound.chatId === briefingOwner() && closeLoop.answered(inbound.text)) {
-            await say(inbound, 'Perfecto, lo quito de pendientes.', { quote: true });
+          const closed =
+            inbound.chatId === briefingOwner() ? closeLoop.answered(inbound.text) : null;
+          if (closed) {
+            await say(inbound, closedLine(closed.subject), { quote: true });
             return;
           }
           const parcelAnswer =
@@ -7420,11 +7840,43 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             await say(inbound, parcelAnswerReply(parcelAnswer), { quote: true });
             return;
           }
+          // «sí» tras «Hay otros N cambios. ¿Quieres verlos?» del aviso de actualización.
+          const novedadesReply =
+            inbound.chatId === briefingOwner()
+              ? answerPendingNovedades(paths.state, inbound.text)
+              : null;
+          if (novedadesReply) {
+            for (const [i, part] of novedadesReply.entries())
+              await say(inbound, part, { quote: i === 0 });
+            return;
+          }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
 
           // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
           const plainText =
             !inbound.documentFileId && !inbound.audioFileId && !inbound.images?.length;
+          // Lo grande o abierto: 3–5 preguntas y un resumen antes de empezar (skill grill-me).
+          const grill =
+            plainText && isOwnerDm(inbound, vigilanteOwnerId)
+              ? await grillMe.handle(chatKey_, inbound.text, {
+                  // El modelo solo se prepara si de verdad toca preguntar.
+                  llm: async (system, user, max) => {
+                    const llm = await researchLlm();
+                    if (!llm) throw new Error('sin modelo');
+                    return llm(system, user, max);
+                  },
+                  reply: (text) => say(inbound, text, { quote: true }).then(() => undefined),
+                })
+              : ({ kind: 'pass' } as const);
+          if (grill.kind === 'handled') return;
+          if (grill.kind === 'go' && grill.feature) {
+            const busy = evolving;
+            addHypothesis(paths.state, `Petición del dueño: ${grill.request} — ${grill.spec}`);
+            await say(inbound, busy ? ASK_QUEUED_BUSY : ASK_QUEUED, { quote: true });
+            void runEvolveCycle(inbound.chatId);
+            return;
+          }
+          if (grill.kind === 'go') inbound.text = grill.text;
           if (
             plainText &&
             (await handleFeatureAsk(chatKey_, inbound.text, {
@@ -7440,6 +7892,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
+          // «no te entiendo», «¿cómo?» tras una respuesta: re-explicarlo en llano (skill wait-what).
+          if (thread.agent.messages.length > 0 && wantsRepitch(inbound.text)) {
+            inbound.text = repitchText(inbound.text);
+          }
           // "Dime más"/"sigue": sirve la respuesta completa cacheada sin gastar un turno.
           const full = cachedFullReply(inbound, thread.key, { isMoreRequest, takeFullReply });
           if (full) {
@@ -7679,59 +8135,6 @@ export function followupFromMessage(
 }
 
 /**
- * What the TV remote button does when pressed. It is an activation path of
- * its own — pressing a physical button IS the intent — so conversation mode
- * is NOT an input: /conversacion resets to off at every boot, and that used
- * to turn the button into a silent no-op (audit, "botón TV"). Without a chat
- * (nobody has talked yet) there is nowhere to open the session; without a
- * live wake listener there is no audio to feed it: the chat notice says so
- * instead of staying silent, and with no chat at all the log line is all
- * there is.
- */
-export type TvButtonAction = 'open-session' | 'need-mic' | 'no-chat' | 'already-open';
-
-export function tvButtonAction(opts: {
-  hasChat: boolean;
-  hasListener: boolean;
-  sessionOpen: boolean;
-}): TvButtonAction {
-  if (!opts.hasChat) return 'no-chat';
-  if (opts.sessionOpen) return 'already-open';
-  if (!opts.hasListener) return 'need-mic';
-  return 'open-session';
-}
-
-/**
- * The conversation an inspection command (/memory and friends) reads. Unlike
- * resolveThread it NEVER creates a thread — a read-only command has no
- * business spawning a conversation — and it never looks at occupancy: the
- * new-request heuristic ("main is busy, start #m<messageId>") is exactly what
- * made /memory answer "No recuerdo nada" with a full memory and litter a new
- * thread per read (auditor #152 ronda 1). Explicit intent wins, in
- * resolveThread's order: /topic, a reply to one of our messages, a real
- * Telegram thread id; without any of them, main is read even while busy.
- */
-export function inspectionThreadKey(opts: {
-  chatKey: string;
-  activeTopic?: string | undefined;
-  replyThreadKey?: string | undefined;
-  /** Durable reply routing: a goal notification's owning scope, from SQLite. */
-  replyGoalScope?: string | undefined;
-  threadId?: string | undefined;
-}): string {
-  if (opts.activeTopic) return `${opts.chatKey}#${opts.activeTopic}`;
-  if (opts.replyThreadKey) return opts.replyThreadKey;
-  if (opts.replyGoalScope) {
-    // Same validation as resolveThread: the notification must belong to THIS
-    // chat — a foreign scope is ignored, never followed.
-    const { chatKey, thread } = splitGoalScope(opts.replyGoalScope);
-    if (chatKey === opts.chatKey) return `${chatKey}#${thread}`;
-  }
-  if (opts.threadId) return `${opts.chatKey}#t${opts.threadId}`;
-  return `${opts.chatKey}#main`;
-}
-
-/**
  * The whole /memory reply, free of I/O so its canary runs against a real
  * MemoryStore without a daemon. The scope is thread.key — the same one the
  * turn context and the memory tool use (chatKey#thread). Any other scope
@@ -7831,8 +8234,7 @@ export function vigilaSilenceReply(
   action: 'silenciar' | 'avisar',
   w: { id: string; label: string; url: string; mutedUntil: number } | null | undefined,
 ): { text: string; buttons: Array<{ label: string; action: string }> } {
-  if (!w)
-    return { text: 'No encuentro esa vigilancia en este chat. Mira /vigilando.', buttons: [] };
+  if (!w) return { text: 'No encuentro esa vigilancia en este chat.', buttons: [] };
   const name = w.label || w.url;
   if (action === 'avisar') {
     const mute = commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar');
@@ -7840,7 +8242,7 @@ export function vigilaSilenceReply(
   }
   const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
   return {
-    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`,
+    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}.${again ? ' Si quieres que vuelva a avisarte antes, pulsa «🔔 Avisar otra vez».' : ''}`,
     buttons: again ? [again] : [],
   };
 }
@@ -8060,7 +8462,8 @@ export function vigilanciasReply(
 }
 
 export function formatWatchList(list: readonly PageWatch[]): string {
-  if (!list.length) return 'No vigilo ninguna página. Prueba /vigila <enlace>.';
+  if (!list.length)
+    return 'No estoy vigilando ninguna página. Pásame un enlace y te aviso si cambia el precio.';
   return [
     `Páginas vigiladas: ${list.length}`,
     ...list.map(
@@ -8074,21 +8477,25 @@ export function formatWatchList(list: readonly PageWatch[]): string {
 
 /**
  * F15 `/skills buscar <texto>`: busca en el índice JSON de PA_SKILLS_INDEX_URL.
- * Solo lista nombre + URL; instalar sigue siendo `/skills instalar <url>`.
+ * Lista nombre + URL; «la 2» o el enlace como respuesta la instala (con su revisión).
  */
 export async function skillsSearchReply(
   query: string,
   indexUrl: string | undefined,
   fetchImpl?: typeof fetch,
+  /** Con resultados: «¿Instalo alguna?» espera el número como respuesta. */
+  onHits?: (hits: readonly SkillIndexEntry[]) => void,
 ): Promise<string> {
   const q = query.trim();
-  if (!q) return 'Uso: /skills buscar <texto>';
+  if (!q) return '¿Qué habilidad busco?';
   if (!indexUrl?.trim()) {
     return 'No hay índice de skills configurado. Pon PA_SKILLS_INDEX_URL=https://… (un JSON con [{ "name", "url", "description" }]) en .env.';
   }
   try {
     const entries = await fetchSkillIndex(indexUrl.trim(), { fetchImpl });
-    return formatSkillSearch(q, searchSkillIndex(entries, q));
+    const hits = searchSkillIndex(entries, q);
+    if (hits.length) onHits?.(hits);
+    return formatSkillSearch(q, hits);
   } catch (err) {
     return failedReply('No he podido leer el índice de skills', err);
   }

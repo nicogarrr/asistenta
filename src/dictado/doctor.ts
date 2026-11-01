@@ -18,7 +18,9 @@ export function dictadoDoctorLine(
       `no entiendo PA_DICTADO_TECLA «${a.teclaTexto.slice(0, 30)}»: usa por ejemplo ctrl+win`,
     );
   }
-  return linea(
-    `listo: mantén ${a.teclaTexto}, habla y suelta (prueba el micro con: pa dictado prueba)`,
-  );
+  const uso =
+    a.modo === 'alternar'
+      ? `pulsa ${a.teclaTexto} para empezar y otra vez para terminar`
+      : `mantén ${a.teclaTexto}, habla y suelta`;
+  return linea(`listo: ${uso}; Esc descarta (prueba el micro con: pa dictado prueba)`);
 }

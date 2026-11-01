@@ -38,8 +38,14 @@ describe('primera instalación en Windows', () => {
   });
 
   it('el README dice qué hacer sin git y con el aviso de SmartScreen', () => {
-    const readme = readFileSync(join(import.meta.dirname, '..', 'README.md'), 'utf8');
-    expect(readme).toContain('https://git-scm.com');
-    expect(readme).toContain('«Ejecutar de todas formas»');
+    for (const f of ['README.md', 'README.es.md']) {
+      const readme = readFileSync(join(import.meta.dirname, '..', f), 'utf8');
+      expect(readme, f).toContain('https://git-scm.com');
+      expect(readme, f).toContain('«Ejecutar de todas formas»');
+    }
+    // README.md está en inglés: también el nombre del botón en un Windows en inglés.
+    expect(readFileSync(join(import.meta.dirname, '..', 'README.md'), 'utf8')).toContain(
+      '"Run anyway"',
+    );
   });
 });

@@ -41,7 +41,9 @@ describe('reglas iguales en otro ámbito que enseña /aprendido', () => {
       tainted: false,
       forgetScopes: read,
     });
-    expect(r.line).toBe('📝 Aprendido: Sin emojis en las respuestas (/olvida 1 para borrarla)');
+    expect(r.line).toBe(
+      '📝 Aprendido: Sin emojis en las respuestas (si no la quieres, dime «olvida la regla 1»)',
+    );
     expect(shown()).toEqual(['Sin emojis en las respuestas']);
   });
 

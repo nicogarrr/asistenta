@@ -1,22 +1,87 @@
 # Asistenta
 
-> Language: **English** | [Español](README.es.md)
+<p align="center"><img src="docs/img/hero.jpg" alt="Asistenta: your personal assistant on your PC, via Telegram. Two chats: a reminder with buttons and an email waiting for your OK; opening YouTube on the TV, a photo from the PC camera, turning the volume down and the reminder list" width="100%" /></p>
+
+<p align="center"><b>Your personal assistant on your own PC. You talk to it on Telegram and it gets things done: your computer, your TV, your email and your reminders.</b></p>
+
+<p align="center">
 
 [![CI](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/ci.yml)
 [![Windows](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml/badge.svg)](https://github.com/nicogarrr/asistenta/actions/workflows/windows.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Node 24+](https://img.shields.io/badge/Node-24%2B-339933?logo=node.js&logoColor=white)](package.json)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4)](docs/app-windows.md)
+[![Tests: vitest](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)](#development-and-qa)
 
-**A personal assistant on Telegram, with memory, multi-day goals and tools that work on your computer.**
+</p>
 
-Asistenta is a daemon that runs on your own PC. You talk to it through your private Telegram bot; it remembers context across conversations, proposes plans for multi-day goals that only run after your approval, and can use tools: browse the web, control the desktop, transcribe voice, run local OCR, send mail from your own account, control the TV and an iPhone. A local web panel shows chat, approvals, sessions, memory, status and audit, sharing the same permission flow as Telegram.
+> Language: **English** | [Español](README.es.md)
 
 > **Status:** work in progress. A feature existing in the code does not mean it is configured or validated on your machine. Messages sent to the LLM provider leave your PC to that provider. Preset names do not guarantee quota or zero cost.
 
 - **Problem it solves:** having an assistant that actually does things (not just chat) while your data, keys and approvals stay on your own machine.
-- **Who it is for:** technical users who want a self-hosted personal agent and are comfortable creating a Telegram bot and an LLM API key.
+- **Who it is for:** people who want their own personal agent and are comfortable creating a Telegram bot and an LLM API key.
 - **Cost:** everything is free except the LLM API key, billed by your provider per use.
 
-## How it works
+> The assistant speaks Spanish: the screenshots below show its real Spanish interface.
+
+## A quick look
+
+<p><img src="docs/img/panel.jpg" alt="Asistenta's local web panel with a pending email approval, the chat, goals and routines, with sample data" width="100%" /></p>
+
+**Telegram to talk to it, the local panel to see everything.** Approvals, chat, goals, routines, tasks and parcels in one place, on your PC.
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/telegram-estado.jpg" alt="Asistenta's answer to /estado on Telegram: version, tools, today's log and model" /></td>
+    <td width="33%"><img src="docs/img/panel-semana.jpg" alt="Panel: this week's tasks and parcels on their way" /></td>
+    <td width="33%"><img src="docs/img/bandeja.jpg" alt="Asistenta's icon next to the Windows clock in its three colours, and its menu" /></td>
+  </tr>
+  <tr>
+    <td><b>/estado</b><br/>How Asistenta is doing, which tools are ready and which model it uses, without spending tokens.</td>
+    <td><b>Your week</b><br/>Tasks with day and time, and the parcels you are waiting for, with their tracking number.</td>
+    <td><b>Next to the clock</b><br/>Green: running and on Telegram. Amber: no Telegram. Red: stopped. No console windows.</td>
+  </tr>
+</table>
+
+<sub>All sample data. The panel is the real panel (<code>src/webui</code>) served locally with sample data. The Telegram chats reproduce the exact texts the code produces (reminder, email approval, <code>/tv</code>, <code>/recordatorios</code> and <code>/estado</code>); the phone frame is a drawing and the camera photo is a generated sample picture. The tray icons are drawn with the same colours and menu as <code>scripts/windows-app/bandeja.ps1</code>. No real account or data.</sub>
+
+## What makes it different
+
+- **It drives your PC for real.** It sees the screen and uses the mouse and keyboard: opens apps, clicks and types for you (Computer Use).
+- **Your TV, from the chat.** It wakes your LG TV with Wake-on-LAN and handles apps, volume and channels. Simple orders with `/tv` run instantly, without spending model tokens.
+- **Speaker mode.** `/altavoz pc` or `/altavoz tele`: every voice note you send plays as it arrives, on the PC or the TV.
+- **The PC camera on demand.** "Take a photo with the PC camera" and it lands in the chat. Short video clips too.
+- **Dictation in any app.** Hold the key, speak, let go: the text appears wherever your cursor is, transcribed on your own PC.
+- **Local OCR.** It reads scanned PDFs and photos on your PC, with no cloud.
+- **It learns from your corrections.** Say "no, I prefer…" and it keeps that as a rule for next time. At night it merges duplicate memories, with a backup first.
+- **It grows new abilities.** Ask for a feature in plain words: it proposes it and builds it only after your "sí". When a multi-step task works out, it offers to save it as a skill.
+- **Email with your OK.** You see the exact draft (to, subject, text) before it goes out. Mail rules in plain words ("LinkedIn to the bin") always show you the list before acting.
+- **Parcels and your week at a glance.** It tracks deliveries from your email and shows tasks and parcels in the panel.
+- **It respects your quiet hours.** "Don't text me before 9" also applies to its own check-ins. Optional morning briefing (`PA_BRIEFING=1`).
+- **Natural reminders.** "Every two weeks", "Monday to Friday"… and they arrive with buttons to snooze.
+- **Secrets never reach the model.** Keys live in a local vault on your PC.
+- **It updates itself, safely.** If an update fails halfway, it goes back to the previous version on its own.
+
+## Contents
+
+- [What makes it different](#what-makes-it-different)
+- [What it is and how it works](#what-it-is-and-how-it-works)
+- [Start here (Windows)](#start-here-windows-10-minutes) · [.exe installer](#exe-installer-recommended)
+- [What you can do](#what-you-can-do)
+- [What is free](#what-is-free)
+- [Useful commands](#useful-commands)
+- [Essential configuration](#essential-configuration-env)
+- [Security and privacy](#security-and-privacy)
+- [FAQ and troubleshooting](#faq-and-troubleshooting)
+- [Uninstalling Asistenta](#uninstalling-asistenta)
+- Manual install: [Prerequisites](#prerequisites) · [Preparing the code](#preparing-the-code) · [Configuration without secrets](#configuration-without-secrets) · [Secrets and Telegram](#secrets-and-telegram) · [Check and start](#check-and-start)
+- [Local web panel](#local-web-panel) · [Autostart](#autostart) · [Local OCR](#local-ocr-optional) · [Voice dictation](#voice-dictation-anywhere-optional)
+- [Development and QA](#development-and-qa) · [How it is organized](#how-it-is-organized) · [Glossary](#glossary) · [Contributing](#contributing) · [License and credits](#license-and-credits)
+
+## What it is and how it works
+
+Asistenta is an open-source personal assistant that lives on your Windows PC. You talk to it from your private Telegram bot (text or voice notes) and it acts: it uses your computer, your TV, your email, your reminders and your documents. It only obeys you, and anything sensitive (sending an email, opening a new website, actions outside the allow list) is asked first with buttons. It remembers context across conversations and proposes plans for multi-day goals that only run after your approval. The daemon runs on your machine; a local web panel shows chat, approvals, sessions, memory, status and audit, sharing the same permission flow as Telegram.
 
 ```text
 You on Telegram  <-->  Asistenta daemon (your PC)  <-->  LLM provider (the only paid part)
@@ -36,7 +101,7 @@ In this guide `pa` means `node dist\cli.js`, run from the Asistenta folder.
 2. Download Asistenta. Best with git, so it updates itself: `git clone https://github.com/nicogarrr/asistenta` (if Windows says "git is not recognized", install it free from https://git-scm.com and open a new window). "Code -> Download ZIP" also works (unzip before opening anything), but then it does not self-update: download the ZIP again for a new version. Put it outside OneDrive (e.g. `C:\Asistenta`): OneDrive locks files and the install fails.
 3. In Telegram, talk to @BotFather, create your bot with `/newbot` and copy the token it gives you.
 4. Get the model key from your provider's website (OpenCode by default). This is the only paid part.
-5. With internet access, double-click `instalar.bat`. It checks Node and npm, downloads the pieces, installs, compiles and asks for the token and the key (they are not shown as you paste them). If you see "Windows protected your PC", click "More info" and then "Run anyway".
+5. With internet access, double-click `instalar.bat`. It checks Node and npm, downloads the pieces, installs, compiles and asks for the token and the key (they are not shown as you paste them). If you see "Windows protected your PC", click "More info" and then "Run anyway" (on a Spanish Windows: «Más información» and «Ejecutar de todas formas»).
 6. When asked, send "hola" to your bot and confirm on the PC that it is you. That way only you can talk to it.
 7. Double-click `levantar.bat`. If something is missing, you will see a green/red list with the fix for each failure.
 8. Write to your bot. Done.
@@ -50,28 +115,43 @@ With the `Asistenta-Instalador-<version>.exe` installer you need neither Node no
 
 To uninstall an .exe install: Settings -> Apps -> Asistenta -> Uninstall. Your data and keys stay unless you tick the box to delete them.
 
-## Uninstalling Asistenta
-
-1. Stop it: close the `levantar.bat` window or run `node dist\cli.js stop`.
-2. If you enabled Windows autostart, remove it before deleting anything: `node dist\cli.js autostart uninstall`. If you delete the folder first, Windows keeps trying to start it every few minutes; in that case open Task Scheduler and delete `personal-agent-daemon`, `browserd-sidecar` and `Asistenta-vigilante`.
-3. Delete the Asistenta folder.
-4. Your data (memory, conversations and the secrets vault) lives separately, in `%USERPROFILE%\.local\share\personal-agent` (or in `PA_STATE_DIR` if you changed it). Delete it only if you are not coming back.
-5. If you are not coming back, revoke the bot token in @BotFather (`/revoke`) and the model key on your provider's website.
-
-## What is free
-
-The only paid part is **the model key**: your provider bills you per use according to your plan. Everything else is free and runs on your PC:
-
-- the program, the Telegram bot and the local web panel;
-- memory, reminders, routines and goals;
-- web search (by default it only uses free search engines: `PA_WEB_MAX_COST_EUR=0`);
-- voice transcription and OCR, which run locally;
-- PC and TV control, mail with your own account and calendar;
-- autostart, the watchdog and self-update.
-
-No other feature needs a key.
-
 ## What you can do
+
+Ask in your own words, by text or by voice (in Spanish). Some examples:
+
+### Your computer (Computer Use)
+
+"Open the expenses spreadsheet and tell me October's total", "find the electricity bill PDF and send it to me". It sees the screen, moves the mouse, types and uses a real browser. Anything that leaves your PC or touches something sensitive asks for your approval first. Needs Windows with a signed-in session; on Linux use `PA_DESKTOP=off`.
+
+### Your TV
+
+"Put on channel one", "turn the volume down by half", "open Netflix". LG webOS TVs: wake on LAN, volume, channels and apps. Simple commands run directly without spending model tokens (`/tv`). Guide (Spanish): [docs/tv-ordenes.md](docs/tv-ordenes.md).
+
+### Email
+
+"Do I have emails from the bank?", "reply to the garage that I'll check it on Monday". It reads and sends from your own Gmail. Before sending it shows you the exact email (to, subject and text) and waits for your yes. Guide (Spanish): [docs/correo.md](docs/correo.md).
+
+### PDFs, photos and OCR
+
+Send it a scanned PDF or a photo of a document and it sends it back with selectable text, all on your PC and free. Tables are checked without AI. Guides: [docs/ocr-telegram.md](docs/ocr-telegram.md), [docs/pdf-texto.md](docs/pdf-texto.md) and [Local OCR](#local-ocr-optional).
+
+### Reminders, tasks and parcels
+
+"Remind me tomorrow at 6 pm to call the garage", "every Monday, take the bins out". The reminder arrives with buttons (✅ Done, ⏰ +1h, 🌅 Tomorrow 9:00) and if the PC was off you get it when it is back. It also follows your parcels, watches prices ("tell me if it drops below €400") and, if you turn it on, sends you a morning summary that respects your quiet hours. Guides (Spanish): [docs/recordatorios.md](docs/recordatorios.md), [docs/vigilar-precio.md](docs/vigilar-precio.md) and [docs/resumen-diario.md](docs/resumen-diario.md).
+
+### Voice dictation
+
+Hold a key, speak and release: it types wherever your cursor is, in any app. Local, free and no audio kept. See [Voice dictation](#voice-dictation-anywhere-optional).
+
+### REA: see how an app works inside
+
+If you have [REA](https://github.com/morluto/rea) installed (`npm install --global rea-agents`), Asistenta uses it to analyse Windows programs, Electron apps, .NET and websites. `PA_REA=0` turns it off. Guide (Spanish): [docs/rea.md](docs/rea.md).
+
+### It learns with you
+
+It remembers what you tell it (persistent memory you can see in the panel), you can ask for new features by just saying so (it asks yes/no before building them) and, before a big task, it asks you a few questions so it is done your way. Guide (Spanish): [docs/skills-matt.md](docs/skills-matt.md).
+
+### Summary and conditions
 
 | Area | What you get | Limits |
 | --- | --- | --- |
@@ -91,21 +171,100 @@ No other feature needs a key.
 
 Goals are stored in SQLite with their conversation scope. The panel includes a **read-only view of the owner's goals**, with their states, blockers and steps. It does not allow activating, pausing or cancelling goals from that view. An editable board and a separate review state would be future work, not capabilities available from this guide.
 
-## Contents
+## What is free
 
-- [Start here](#start-here-windows-10-minutes)
-- [What is free](#what-is-free)
-- [Prerequisites](#prerequisites)
-- [Preparing the code](#preparing-the-code)
-- [Configuration without secrets](#configuration-without-secrets)
-- [Secrets and Telegram](#secrets-and-telegram)
-- [Check and start](#check-and-start)
-- [Local web panel](#local-web-panel)
-- [Autostart](#autostart)
-- [Development and QA](#development-and-qa)
-- [How it is organized](#how-it-is-organized)
-- [Security and limits](#security-and-limits)
-- [Glossary](#glossary)
+The only paid part is **the model key**: your provider bills you per use according to your plan. Everything else is free and runs on your PC:
+
+- the program, the Telegram bot and the local web panel;
+- memory, reminders, routines and goals;
+- web search (by default it only uses free search engines: `PA_WEB_MAX_COST_EUR=0`);
+- voice transcription and OCR, which run locally;
+- PC and TV control, mail with your own account and calendar;
+- autostart, the watchdog and self-update.
+
+No other feature needs a key.
+
+## Useful commands
+
+On Windows, `pa` means `node dist\cli.js` inside the Asistenta folder.
+
+| Command | What for |
+| --- | --- |
+| `pa iniciar` | Checks everything and starts. With `--solo-comprobar` it only lists what is missing (green and red list) |
+| `pa stop` | Stops it; the watchdog does not bring it back until `pa iniciar` or the next reboot |
+| `pa doctor` | Checks the environment (Node, Telegram, keys, panel, time zone…) and tells you what is missing |
+| `pa panel` | Opens the web panel in your browser, already signed in with its token |
+| `pa diagnose` | Gathers local evidence of what happened (review it before sharing) |
+| `pa autostart install --start` | Starts with Windows and installs the watchdog; `status` and `uninstall` to check and remove it |
+| `pa autoupdate status` | How the last automatic update went; also `now`, `off` and `on` |
+| `pa dictado prueba` | Tests the microphone and dictation without typing anything |
+| `pa backup` | Lists the daily backups; `pa backup restaurar ultima` restores the latest ([guide](docs/copias-de-seguridad.md)) |
+| `pa vault list` | Names of the stored keys, never their values |
+| `pa tv mac auto` | Reads the TV's MAC address so it can be woken over the network |
+
+On Telegram: `/estado` (Asistenta's health), `/recordatorios` (list and delete reminders without spending tokens), `/tv` (TV remote) and `/help` (every command).
+
+## Essential configuration (.env)
+
+`instalar.bat` creates the `.env` for you. Keys (bot token and model key) do **not** go in `.env`: they are stored encrypted in the Windows vault. The settings people change most:
+
+| Variable | What it does |
+| --- | --- |
+| `PA_PROVIDER_PRESET` | Model provider (default `opencode`; also `openrouter` and `opencode-local`) |
+| `PA_MODEL` | Main model |
+| `PA_TIMEZONE` | Your time zone for reminders, for example `Europe/Madrid` |
+| `PA_DESKTOP` | `off` to skip desktop control (Linux or server) |
+| `PA_WEB_PORT` and `PA_WEB_TOKEN` | The [web panel](#local-web-panel) is on by default at `127.0.0.1:8787` with its own token; `PA_WEB_PORT=0` turns it off, and your own `PA_WEB_TOKEN` (24+ random characters) is only needed to open it from your phone |
+| `PA_DICTADO` | `1` turns on voice dictation |
+| `PA_OCR_LOCAL` | `1` turns on local OCR |
+| `PA_BRIEFING` | `1` turns on the morning summary |
+| `PA_REA` | `0` turns REA off |
+| `PA_AUTOUPDATE` and `PA_WATCHDOG` | `0` turns off self-update and the watchdog |
+| `PA_STATE_DIR` | Another folder for your data (by default, in your user profile) |
+
+Every option, commented, is in [`.env.example`](.env.example). More in [Configuration without secrets](#configuration-without-secrets).
+
+## Security and privacy
+
+- **It only obeys you.** During install you send "hola" to your bot and confirm on the PC that it is you; it ignores anyone else.
+- **Sensitive actions need your OK.** Sending an email, opening a new website or any action outside the allow list is asked with buttons (once, for now, always or deny), on Telegram and in the panel.
+- **Your keys stay on your PC.** They are stored in the Windows vault (DPAPI), never sent to the model, and `pa vault list` only shows names.
+- **The panel is yours only.** It listens on `127.0.0.1`, requires a token and rejects any other host name.
+- **What does leave:** the messages you send to the model go to your LLM provider, under its terms.
+
+### Limits
+
+- Do not use real data, accounts or sessions in automated tests.
+- Do not commit secrets, state directories, private screenshots or unreviewed logs.
+- The portable store is not equivalent to Windows DPAPI encryption. See [the safe stdin input](docs/vault-stdin-qa.md).
+- Browsing, running a tool and getting a result are distinct facts. A mocked or Linux test does not certify Windows desktop control.
+- External services have their own terms, quotas and data policies. Review the plan before enabling a key or an integration.
+- Exfiltration gate: as soon as a turn reads something private (files, memory, mail, documents, screen, terminal...), a `fetch`, `download` or browser request carrying data (query, long path, user in the URL or long subdomain) to a domain the turn has not yet visited asks for approval showing the full URL. Before reading anything private, browsing stays free. `PA_TAINT_GATE=0` disables it.
+- The delegation code is not presented here as an operational multi-agent system: its existence does not prove connection to the daemon.
+
+## FAQ and troubleshooting
+
+**Installing shows "Windows protected your PC".** Click "More info" and then "Run anyway". It happens with new programs Windows does not know yet.
+
+**The install fails with locked files.** It is almost always OneDrive or the antivirus. Move the folder outside OneDrive (for example `C:\Asistenta`) and run `instalar.bat` again.
+
+**The bot does not answer.** Look at the icon next to the clock: red means it is stopped (`pa iniciar`), amber means it cannot reach Telegram (check the connection). If it persists, `pa iniciar --solo-comprobar` lists what is missing and `pa doctor` checks the rest.
+
+**It says "No he podido actualizarme" (I could not update).** It tried to update itself, the new version did not start in time and it went back to the previous one, so it keeps working. `pa autoupdate status` says what happened. To update by hand: `pa stop`, `git pull`, `npm ci`, `npm run build` and `levantar.bat`.
+
+**The web panel does not open.** Open it with `pa panel` or «Abrir panel» on the tray icon: it comes in already carrying its token. If it says it is off, remove `PA_WEB_PORT=0` from `.env` and restart Asistenta; `pa doctor` tells you what is wrong. To open it from your phone away from home: [docs/panel-remoto.md](docs/panel-remoto.md).
+
+**How much does it cost?** Only the model key. See [What is free](#what-is-free).
+
+**Can I run it on Linux?** Chat, memory, reminders and the panel, yes, with `PA_DESKTOP=off`. Desktop control, dictation and the tray icon are Windows-only. Follow [the manual install](#prerequisites).
+
+## Uninstalling Asistenta
+
+1. Stop it: close the `levantar.bat` window or run `node dist\cli.js stop`.
+2. If you enabled Windows autostart, remove it before deleting anything: `node dist\cli.js autostart uninstall`. If you delete the folder first, Windows keeps trying to start it every few minutes; in that case open Task Scheduler and delete `personal-agent-daemon`, `browserd-sidecar` and `Asistenta-vigilante`.
+3. Delete the Asistenta folder.
+4. Your data (memory, conversations and the secrets vault) lives separately, in `%USERPROFILE%\.local\share\personal-agent` (or in `PA_STATE_DIR` if you changed it). Delete it only if you are not coming back.
+5. If you are not coming back, revoke the bot token in @BotFather (`/revoke`) and the model key on your provider's website.
 
 ## Prerequisites
 
@@ -211,7 +370,7 @@ On Linux the new controller requires the state directory to be private (700, cur
 
 ## Local web panel
 
-It is optional: set `PA_WEB_PORT` and `PA_WEB_TOKEN` through a private channel before starting. Without a token, the daemon does not start the panel. It listens on loopback by default, its APIs require Bearer and it only answers to local names (`127.0.0.1`, `localhost`, `[::1]`): any other Host header gets a 403, which stops DNS rebinding. If you serve the panel through your own proxy (e.g. `tailscale serve`), add its exact name to `PA_WEB_ALLOWED_HOSTS` (comma-separated). Do not publish the token, its initial URL or the browser storage. Do not expose the port to the Internet as if it had user management.
+It is on by default: it listens on `127.0.0.1:8787` and opens with `pa panel` (or «Abrir panel» on the tray), which loads it already carrying its token. Without `PA_WEB_TOKEN` in `.env`, Asistenta generates a random one the first time and keeps it in its state folder, readable only by your user. `PA_WEB_PORT=0` turns it off and another number changes the port. It only listens on loopback, its APIs require Bearer and it only answers to local names (`127.0.0.1`, `localhost`, `[::1]`): any other Host header gets a 403, which stops DNS rebinding. If you serve the panel through your own proxy (e.g. `tailscale serve`), add its exact name to `PA_WEB_ALLOWED_HOSTS` (comma-separated). Do not publish the token, its initial URL or the browser storage. Do not expose the port to the Internet as if it had user management.
 
 The panel and Telegram see the same pending approvals. The web view does not imply that every tool is configured or that the daemon is supervised.
 
@@ -220,6 +379,10 @@ The panel and Telegram see the same pending approvals. The web view does not imp
 See [`deploy/windows/README.md`](deploy/windows/README.md). Do not enable it until you have verified a manual start. The script uses the repository root as working directory; the CLI loads the optional `.env` from there. Variables already present in the task user's environment take precedence over the file. Do not put secrets in the task command. A native Windows install has not been validated in this QA round.
 
 On Windows, the full autostart (a single `node dist/cli.js autostart install --start`, the prior `pa iniciar --solo-comprobar` list and the "Asistenta-vigilante" watchdog, which restarts it every 5 min if it crashes) is in [`docs/windows-startup.md`](docs/windows-startup.md); the watchdog has its own section at [Watchdog: "Asistenta-vigilante"](docs/windows-startup.md#vigilante-asistenta-vigilante). `pa stop` keeps it off until the PC restarts or `pa iniciar`, even if it was not running.
+
+`pa autostart install` also registers a watchdog ("Asistenta-vigilante" task, at logon and every 5 min) that restarts Asistenta if it is not running; if you stop it with `pa stop`, it stays off until the PC restarts or `pa iniciar`. `PA_WATCHDOG=0` disables it and `pa autostart status` tells you its state.
+
+Asistenta also self-updates from `main` (`PA_AUTOUPDATE=1` by default): it waits until idle, fast-forwards, builds, restarts and tells you on Telegram what's new; if anything fails it rolls back to the previous version by itself. `pa autoupdate status|now|off|on`. Details in [docs/windows-startup.md](docs/windows-startup.md#autoactualización-desde-main).
 
 ## Local OCR (optional)
 
@@ -286,16 +449,6 @@ docs/              Technical guides and QA limits
 
 You do not need to start every component for basic chat. Read each feature's guide before adding services.
 
-## Security and limits
-
-- Do not use real data, accounts or sessions in automated tests.
-- Do not commit secrets, state directories, private screenshots or unreviewed logs.
-- The portable store is not equivalent to Windows DPAPI encryption. See [the safe stdin input](docs/vault-stdin-qa.md).
-- Browsing, running a tool and getting a result are distinct facts. A mocked or Linux test does not certify Windows desktop control.
-- External services have their own terms, quotas and data policies. Review the plan before enabling a key or an integration.
-- Exfiltration gate: as soon as a turn reads something private (files, memory, mail, documents, screen, terminal...), a `fetch`, `download` or browser request carrying data (query, long path, user in the URL or long subdomain) to a domain the turn has not yet visited asks for approval showing the full URL. Before reading anything private, browsing stays free. `PA_TAINT_GATE=0` disables it.
-- The delegation code is not presented here as an operational multi-agent system: its existence does not prove connection to the daemon.
-
 ## Glossary
 
 - **Daemon:** the background program that stays running on your PC and answers on Telegram.
@@ -311,10 +464,10 @@ You do not need to start every component for basic chat. Read each feature's gui
 
 Propose small changes, explain the problem and add a check that reproduces it. Use `npm run lint:check` to review without rewriting files. Do not describe a local test as validation of someone else's install. Keep implemented features, pending configuration and [roadmap](ROADMAP.md) proposals separate.
 
-## License
+## License and credits
 
-`package.json` declares MIT. This checkout does not include a `LICENSE` file; before redistributing code, confirm the applicable text and notices with the maintainer. This documentation neither adds nor changes a license.
+MIT, the same license `package.json` declares: full text in [LICENSE](LICENSE). Dependencies keep their own licenses; for example, `ffmpeg-static` ships an ffmpeg binary (GPL-3.0 or later) and `lamejs` is LGPL-3.0.
 
-`pa autostart install` also registers a watchdog ("Asistenta-vigilante" task, at logon and every 5 min) that restarts Asistenta if it is not running; if you stop it with `pa stop`, it stays off until the PC restarts or `pa iniciar`. `PA_WATCHDOG=0` disables it and `pa autostart status` tells you its state.
-
-Asistenta also self-updates from `main` (`PA_AUTOUPDATE=1` by default): it waits until idle, fast-forwards, builds, restarts and tells you on Telegram what's new; if anything fails it rolls back to the previous version by itself. `pa autoupdate status|now|off|on`. Details in [docs/windows-startup.md](docs/windows-startup.md#autoactualización-desde-main).
+- The question and explanation skills are inspired by [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock (MIT), rewritten in Spanish ([docs/skills-matt.md](docs/skills-matt.md)).
+- [REA](https://github.com/morluto/rea) (MIT) is a separate tool; Asistenta only uses it if you have it installed ([docs/rea.md](docs/rea.md)).
+- The images in `docs/img/` come from the real panel and the real texts in the code, with made-up data.

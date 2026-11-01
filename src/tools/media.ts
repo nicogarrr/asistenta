@@ -338,7 +338,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
           }
           if (!deps.live) {
             return ok(
-              'La vista en directo no está disponible en este canal; usa /screen live o /camera on.',
+              'La vista en directo no está disponible en este canal; solo va en el chat de Telegram.',
             );
           }
           const interval = clamp(args.intervalSeconds, 5, 2, 30);

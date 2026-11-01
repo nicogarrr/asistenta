@@ -2,7 +2,8 @@
 
 /** La tecla que se mantiene pulsada. */
 export interface TeclaDictado {
-  start(alPulsar: () => void, alSoltar: () => void): Promise<void>;
+  /** alCancelar: Esc mientras graba descarta lo grabado (idea de pi-voice, MIT). */
+  start(alPulsar: () => void, alSoltar: () => void, alCancelar?: () => void): Promise<void>;
   stop(): Promise<void>;
 }
 
