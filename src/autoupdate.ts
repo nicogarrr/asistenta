@@ -23,8 +23,11 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonRunState } from './autostart-watchdog.js';
+import { buildUpdateNotice, savePendingNovedades } from './autoupdate-novedades.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { BUSY_DIR, type BusyState } from './ocupada.js';
+
+export { cleanSubject, formatChangelog, successMessage } from './autoupdate-novedades.js';
 
 export const AUTOUPDATE_DIR = BUSY_DIR;
 export const AUTOUPDATE_STATE_FILE = 'estado.json';
@@ -45,7 +48,6 @@ export function autoupdateHealthMs(env: NodeJS.ProcessEnv = process.env): number
   const n = Number((env.PA_AUTOUPDATE_SALUD_SEG ?? '').trim() || HEALTH_TIMEOUT_MS / 1000);
   return Number.isFinite(n) ? Math.min(600, Math.max(60, Math.round(n))) * 1000 : HEALTH_TIMEOUT_MS;
 }
-export const CHANGELOG_MAX = 8;
 /** Una versión que ya falló al instalarse no se reintenta antes de esto (salvo pa autoupdate now). */
 export const FAILED_RETRY_MS = 6 * 60 * 60_000;
 
@@ -191,38 +193,6 @@ export function refreshLock(stateDir: string, now: number = Date.now()): void {
   } catch {
     // Sin candado que renovar (lo quitaron a mano): seguimos.
   }
-}
-
-/** «feat(tele): sube a tope (#712)» → «Sube a tope». */
-export function cleanSubject(subject: string): string {
-  let s = subject
-    .trim()
-    .replace(/^[a-z]+(\([^)]*\))?!?:\s*/i, '')
-    .replace(/\s*\(#\d+\)\s*$/, '')
-    .trim();
-  if (s.length > 110) s = `${s.slice(0, 109).trimEnd()}…`;
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-export function formatChangelog(subjects: string[], max: number = CHANGELOG_MAX): string[] {
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const raw of subjects) {
-    const s = cleanSubject(raw);
-    if (!s || /^merge (pull request|branch|remote-tracking)/i.test(s)) continue;
-    if (seen.has(s.toLowerCase())) continue;
-    seen.add(s.toLowerCase());
-    items.push(s);
-  }
-  if (!items.length) return ['• Cambios internos'];
-  const lines = items.slice(0, max).map((s) => `• ${s}`);
-  const rest = items.length - max;
-  if (rest > 0) lines.push(`y ${rest} ${rest === 1 ? 'cambio' : 'cambios'} más`);
-  return lines;
-}
-
-export function successMessage(subjects: string[]): string {
-  return ['🆕 Me he actualizado', ...formatChangelog(subjects)].join('\n');
 }
 
 export function failureMessage(reason: string): string {
@@ -546,7 +516,10 @@ export async function runAutoupdate(
     state.lastUpdateAt = new Date(deps.now()).toISOString();
     state.failedRemote = undefined;
     state.failedAt = undefined;
-    await deps.notify(successMessage(subjects)).catch(() => {});
+    // Lo que no cabe en el aviso queda apuntado: un «sí» del dueño lo trae (daemon).
+    const notice = buildUpdateNotice(subjects);
+    savePendingNovedades(stateDir, notice.rest, deps.now());
+    await deps.notify(notice.text).catch(() => {});
     return done(
       'actualizada',
       `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} cambios)`,

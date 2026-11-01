@@ -17,6 +17,7 @@ import {
   unlock,
   writeAutoupdateState,
 } from '../src/autoupdate.js';
+import { answerPendingNovedades } from '../src/autoupdate-novedades.js';
 
 const OLD = 'a'.repeat(40);
 const NEW = 'b'.repeat(40);
@@ -68,6 +69,8 @@ function fake(
     healthy?: boolean;
     /** Cuántos arranques ignora Windows (la tarea aún figuraba en marcha). */
     ignoredStarts?: number;
+    /** Salida de `git log` (asuntos de los cambios nuevos). */
+    logOut?: string;
   } = {},
 ) {
   const calls: string[] = [];
@@ -87,7 +90,8 @@ function fake(
       if (args[0] === 'log') {
         return {
           code: 0,
-          out: 'feat(tele): sube a tope (#712)\nfix: algo roto (#713)\nfix: algo roto\n',
+          out:
+            o.logOut ?? 'feat(tele): sube a tope (#712)\nfix: algo roto (#713)\nfix: algo roto\n',
         };
       }
       if (args[0] === 'diff') return { code: 0, out: o.lockChanged ? 'package-lock.json\n' : '' };
@@ -125,6 +129,16 @@ function fake(
 }
 
 describe('runAutoupdate', () => {
+  it('muchos cambios: el aviso pregunta y el resto queda apuntado para un «sí»', async () => {
+    const logOut = Array.from({ length: 40 }, (_, i) => `feat: cosa ${i + 1}`).join('\n');
+    const f = fake({ logOut });
+    expect((await runAutoupdate(dir, f.deps, { env: {} })).kind).toBe('actualizada');
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]).toContain('Hay otros 30 cambios. ¿Quieres verlos? Dime «sí» y te los paso.');
+    const parts = answerPendingNovedades(dir, 'sí', Date.parse('2026-10-30T19:00:00Z'));
+    expect(parts?.join('\n')).toContain('• Cosa 40');
+  });
+
   it('al día: no toca nada ni avisa', async () => {
     const f = fake({ head: NEW });
     const out = await runAutoupdate(dir, f.deps, { env: {} });
@@ -314,17 +328,17 @@ describe('candado durante una actualización larga', () => {
 });
 
 describe('changelog', () => {
-  it('quita prefijos y números de PR, deduplica y corta en 8 con «y N cambios más»', () => {
+  it('quita prefijos y números de PR, deduplica y enseña todos si caben (sin «y N más»)', () => {
     expect(cleanSubject('feat(arranque)!: vigilante de Windows (#746)')).toBe(
       'Vigilante de Windows',
     );
     expect(cleanSubject('refactor: x')).toBe('X');
     const many = Array.from({ length: 11 }, (_, i) => `fix: cambio ${i}`);
     const lines = formatChangelog([...many, 'fix: cambio 0', 'Merge branch main']);
-    expect(lines).toHaveLength(9);
+    expect(lines).toHaveLength(11);
     expect(lines[0]).toBe('• Cambio 0');
-    expect(lines.at(-1)).toBe('y 3 cambios más');
-    expect(formatChangelog(['a', 'b', 'c'], 2).at(-1)).toBe('y 1 cambio más');
+    expect(lines.at(-1)).toBe('• Cambio 10');
+    expect(lines.join('\n')).not.toMatch(/cambios? más/);
     expect(successMessage([])).toBe('🆕 Me he actualizado\n• Cambios internos');
   });
 
