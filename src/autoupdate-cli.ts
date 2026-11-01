@@ -35,7 +35,7 @@ import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
 import { readBusy } from './ocupada.js';
 import { sameProcessAsRecorded } from './process-identity.js';
-import { futureDated } from './startup-record.js';
+import { futureDated, span, withPeriod } from './startup-record.js';
 import { unlock as unlockVault, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
 
@@ -223,10 +223,10 @@ export function autoupdateStatusLine(
   if (state.last) {
     const at = Date.parse(state.last.at);
     const future = Number.isNaN(at) ? undefined : futureDated(at, now);
-    const min = Number.isNaN(at) ? '?' : Math.max(0, Math.round((now - at) / 60_000));
+    const when = Number.isNaN(at) ? '? min' : span(Math.max(0, Math.round((now - at) / 60_000)));
     line += future
-      ? ` Última (${future}): ${state.last.text}.`
-      : ` Última (hace ${min} min): ${state.last.text}.`;
+      ? ` Última (${future}): ${withPeriod(state.last.text)}`
+      : ` Última (hace ${when}): ${withPeriod(state.last.text)}`;
   }
   if (state.pending) line += lockHeld(stateDir, now) ? AUTOUPDATE_PENDING_BUSY : AUTOUPDATE_PENDING;
   return line;

@@ -81,7 +81,13 @@ export function ago(at: string, now: Date): string {
   return `hace ${span(min)}`;
 }
 
-function span(min: number): string {
+/** El texto con un solo punto final, aunque ya traiga el suyo. */
+export function withPeriod(text: string): string {
+  return `${text.replace(/[.\s]+$/, '')}.`;
+}
+
+/** «5 min», «3 h», «2 días». */
+export function span(min: number): string {
   if (min < 60) return `${min} min`;
   const h = Math.round(min / 60);
   if (h < 48) return `${h} h`;

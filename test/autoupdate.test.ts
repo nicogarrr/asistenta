@@ -129,6 +129,13 @@ function fake(
 }
 
 describe('runAutoupdate', () => {
+  it('un solo cambio se dice «1 cambio», no «1 cambios»', async () => {
+    const f = fake({ logOut: 'fix: algo roto (#713)\n' });
+    const out = await runAutoupdate(dir, f.deps, { env: {} });
+    expect(out.kind).toBe('actualizada');
+    expect(out.text).toBe('aaaaaaa → bbbbbbb (1 cambio)');
+  });
+
   it('muchos cambios: el aviso pregunta y el resto queda apuntado para un «sí»', async () => {
     const logOut = Array.from({ length: 40 }, (_, i) => `feat: cosa ${i + 1}`).join('\n');
     const f = fake({ logOut });

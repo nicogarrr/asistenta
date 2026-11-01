@@ -15,7 +15,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, win32 } from 'node:path';
-import { futureDated } from './startup-record.js';
+import { futureDated, span, withPeriod } from './startup-record.js';
 
 export const WATCHDOG_TASK_NAME = 'Asistenta-vigilante';
 export const WATCHDOG_INTERVAL_MIN = 5;
@@ -256,9 +256,9 @@ export function saveWatchdogLast(stateDir: string, text: string, now: Date = new
 /** « Última revisión hace N min: …» para `pa autostart status`. */
 export function watchdogLastLine(last: { at: number; text: string }, nowMs: number): string {
   const future = futureDated(last.at, nowMs);
-  if (future) return ` Última revisión ${future}: ${last.text}.`;
+  if (future) return ` Última revisión ${future}: ${withPeriod(last.text)}`;
   const min = Math.max(0, Math.round((nowMs - last.at) / 60_000));
-  return ` Última revisión hace ${min} min: ${last.text}.`;
+  return ` Última revisión hace ${span(min)}: ${withPeriod(last.text)}`;
 }
 
 export function readWatchdogLast(stateDir: string): { at: number; text: string } | undefined {
