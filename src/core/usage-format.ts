@@ -102,7 +102,14 @@ export function formatUsageReport(report: UsageReport, opts: UsageFormatOptions 
  * 'mes' = 30, un numero 1..31. null si no se entiende.
  */
 export function parseUsageDays(args: string): number | null {
-  const want = args.trim().toLowerCase();
+  // «de la semana», «del mes», «los últimos 10 días»: la respuesta dicha con palabras.
+  const want = args
+    .trim()
+    .toLowerCase()
+    .replace(/[¿?.!]+/g, '')
+    .replace(/^(?:de la|de esta|de este|del|de|los|lo|el|esta|este|la|últimos|ultimos|\s)+/, '')
+    .replace(/\s*d[ií]as?$/, '')
+    .trim();
   if (!want || want === 'semana') return 7;
   if (want === 'hoy') return 1;
   if (want === 'mes') return 30;

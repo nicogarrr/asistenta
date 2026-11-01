@@ -40,7 +40,7 @@ describe('todas las reglas guardadas se ven y se pueden borrar', () => {
     expect(forgetLearnedRule(memory, [SCOPE], '20')).toBe('🗑️ Olvidada: Llamar al dueño Nico');
     expect(learnedRules(memory, [SCOPE])).toHaveLength(19);
     expect(forgetLearnedRule(memory, [SCOPE], String(MAX_LEARNED_RULES + 1))).toMatch(
-      /^¿Cuál borro\? Dime su número del 1 al 19 /,
+      /^¿Cuál borro\? Dime su número \(del 1 al 19\)/,
     );
   });
 });

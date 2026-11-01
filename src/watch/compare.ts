@@ -460,7 +460,7 @@ export function suggestedTargetCents(report: CompareReport): number | undefined 
 export const COMPARE_WATCH_MS = 24 * 3_600_000;
 /** Respuesta de un «👀 Vigilar» caducado, ya usado, de otro chat o de antes de reiniciar. */
 export const COMPARE_WATCH_STALE =
-  'Este botón ya no sirve (vale una vez y 24 horas). Mándame /vigila con el enlace del producto.';
+  'Este botón ya ha caducado. Si quieres que lo vigile, pásame otra vez el enlace.';
 
 /**
  * Enlaces de /compara para su botón «👀 Vigilar». El enlace no cabe (ni debe ir) en el

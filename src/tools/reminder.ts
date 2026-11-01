@@ -724,7 +724,7 @@ export function formatReminderRows(rows: ReminderRow[], now: Date = new Date()):
     `Recordatorios: ${rows.length}`,
     ...lines,
     '',
-    'Para quitar uno, dime cuál: por ejemplo /recordatorios borrar 2, o «quita el del taller».',
+    'Si quieres quitar alguno, dime cuál.',
   ].join('\n');
 }
 
@@ -740,8 +740,7 @@ export function pickReminder(
   if (!want)
     return {
       ok: false,
-      error:
-        '¿Cuál quito? Dime su número de la lista o una palabra, por ejemplo /recordatorios borrar 2 o /recordatorios borrar taller.',
+      error: '¿Cuál quito? Dime su número de la lista o una palabra.',
     };
   if (/^\d+$/.test(want)) {
     const row = rows[Number(want) - 1];

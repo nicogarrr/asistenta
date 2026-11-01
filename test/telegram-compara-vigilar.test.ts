@@ -38,7 +38,7 @@ describe('«👀 Vigilar» en /compara', () => {
     const ids = Array.from({ length: 205 }, () => links.remember('42', LINK));
     expect(links.take(ids[0] as string, '42')).toBeUndefined();
     expect(links.take(ids[204] as string, '42')).toBe(LINK);
-    expect(COMPARE_WATCH_STALE).toContain('/vigila');
+    expect(COMPARE_WATCH_STALE).toContain('pásame otra vez el enlace');
   });
 
   it('el daemon pone el botón tras comparar y /vigila resuelve el id', () => {

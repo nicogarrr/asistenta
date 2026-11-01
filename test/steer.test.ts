@@ -27,7 +27,7 @@ describe('/steer', () => {
   it('rechaza una instrucción vacía y recorta las larguísimas', () => {
     const got: string[] = [];
     const t = [thread('tg:1', true, got)];
-    expect(steerChat(t, 'tg:1', '   ').error).toMatch(/^¿Qué cambio\? Por ejemplo/);
+    expect(steerChat(t, 'tg:1', '   ').error).toBe('¿Qué quieres que cambie?');
     steerChat(t, 'tg:1', 'x'.repeat(5000));
     expect(got[0]?.length).toBe(2000);
   });
