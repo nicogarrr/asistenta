@@ -230,6 +230,16 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       ).exec(rest);
       if (last && !take(last)) return null;
     }
+    // «a las 9 pastilla y a las 21 otra», «a las 7 riega y otra vez a las 8 de la tarde»:
+    // la segunda hora llega más tarde en la frase. Antes se perdía (o, con «de la
+    // tarde», movía la primera toma a la tarde); ahora cuenta como otra toma.
+    for (const later of rest.matchAll(
+      new RegExp(`\\by\\s+(?:otra(?:\\s+vez)?\\s+|tambien\\s+)?a\\s+las?\\s+${CLOCK}`, 'g'),
+    )) {
+      const clock = clockOf(later as RegExpExecArray);
+      if (!clock || clock.minute !== minute) return null;
+      extraHours.push(clock.hour);
+    }
     const part = timeMatch[6];
     if (!part && extraHours.length === 0 && /(tarde|noche)/.test(normalised) && hour < 12) {
       // "a las 6 … por la tarde" means six in the evening to a person, and a scheduler
