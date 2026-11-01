@@ -375,8 +375,14 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
   // La franja («de 9 a 18», «entre las 9 y las 14») y los días («de lunes a viernes», «los
   // lunes») cuentan también: antes «cada hora de 9 a 18» sonaba toda la noche y «cada
   // media hora de lunes a viernes», también el finde.
-  const window = hourWindow(normalised);
-  const dowField = daysOfWeek(normalised) ?? '*';
+  // «cada hora por la mañana», «cada media hora en horario laboral»: antes sonaban todo el
+  // día (y el finde). Una franja dicha con horas («de 9 a 12») manda.
+  const workday = WORKDAY.test(normalised);
+  const part = /\b(?:por|durante) las? (manana|tarde|noche)s?\b/.exec(normalised)?.[1];
+  const said = hourWindow(normalised);
+  const window =
+    said !== undefined ? said : workday ? { from: 9, to: 18 } : PART_OF_DAY_WINDOW[part ?? ''];
+  const dowField = daysOfWeek(normalised) ?? (workday ? '1-5' : '*');
   const every = (minutes: number): { schedule: string; prompt: string } | null => {
     if (window === null) return null;
     if (minutes < 60) {
@@ -390,6 +396,12 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     const hoursField = step === 1 ? range : `${range}/${step}`;
     return { schedule: `0 ${hoursField} * * ${dowField}`, prompt: text.trim() };
   };
+  // «cada hora y media», «cada 2 horas y cuarto»: un cron no lo dice (antes sonaba cada
+  // hora o cada 2 horas). Se pregunta, como «cada 90 minutos».
+  if (
+    /\bcada (?:\S+ )?horas? y (?:media|cuarto|tres cuartos|\d{1,2} min(?:utos)?)\b/.test(normalised)
+  )
+    return null;
   if (/\bcada media hora\b/.test(normalised)) return every(30);
   if (/\bcada cuarto de hora\b/.test(normalised)) return every(15);
   const everyN = new RegExp(`cada (\\d{1,3}|${INTERVAL_WORDS}) (minutos?|min|horas?)\\b`).exec(
@@ -495,6 +507,15 @@ function daysOfWeek(normalised: string): string | null {
   return days.join(',');
 }
 
+/** «en horario laboral», «en horario de oficina», «en horas de trabajo». */
+const WORKDAY = /\ben (?:horario|horas?) (?:laboral(?:es)?|de (?:oficina|trabajo))\b/;
+/** La franja de un intervalo dicho con una parte del día («cada hora por la mañana»). */
+const PART_OF_DAY_WINDOW: Record<string, { from: number; to: number }> = {
+  manana: { from: 8, to: 13 },
+  tarde: { from: 15, to: 20 },
+  noche: { from: 20, to: 23 },
+};
+
 /**
  * La franja de horas de un intervalo: «de 9 a 18», «entre las 9 y las 14», «desde las 8
  * hasta las 20», «de 4 a 8 de la tarde». undefined si no se dice; null si un cron no la
@@ -505,7 +526,7 @@ function hourWindow(normalised: string): { from: number; to: number } | null | u
     /\b(?:de(?:sde)?|entre)(?: las?)? (\d{1,2})(?:[:.](\d{2}))?(?: ?h)? (?:a|hasta|y)(?: las?)? (\d{1,2})(?:[:.](\d{2}))?(?: ?h\b| horas\b)?(?! ?(?:veces|vasos|litros|personas|euros|minutos|min)\b)(?: de la (manana|tarde|noche))?/.exec(
       normalised,
     );
-  if (!m) return undefined;
+  if (!m) return fromOnly(normalised);
   if (Number(m[2] ?? 0) !== 0 || Number(m[4] ?? 0) !== 0) return null;
   let from = Number(m[1]);
   let to = Number(m[3]);
@@ -515,6 +536,22 @@ function hourWindow(normalised: string): { from: number; to: number } | null | u
   }
   if (to > 24 || from >= to) return null;
   return { from, to };
+}
+
+/**
+ * «cada hora a partir de las 9», «cada media hora desde las 4 de la tarde»: hasta el final
+ * del día. Antes la hora de inicio no se leía y sonaba también de madrugada.
+ */
+function fromOnly(normalised: string): { from: number; to: number } | null | undefined {
+  const m =
+    /\b(?:a partir de|desde) las? (\d{1,2})(?:[:.](\d{2}))?(?: ?h\b)?(?: de la (manana|tarde|noche))?/.exec(
+      normalised,
+    );
+  if (!m) return undefined;
+  if (Number(m[2] ?? 0) !== 0) return null;
+  let from = Number(m[1]);
+  if ((m[3] === 'tarde' || m[3] === 'noche') && from < 12) from += 12;
+  return from > 23 ? null : { from, to: 24 };
 }
 
 /** Los días quitados con «excepto / menos / salvo / quitando», y dónde empieza la excepción. */
