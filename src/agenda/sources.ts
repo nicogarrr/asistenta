@@ -8,6 +8,8 @@ export interface CalendarSources {
   getUrl: () => Promise<string | undefined>;
   fetchText: (url: string) => Promise<string>;
   readLocal?: () => Promise<string | undefined>;
+  /** Tu Google Calendar (si está conectado) como texto iCal; en vivo, no con retraso. */
+  readGoogle?: () => Promise<string | undefined>;
 }
 export async function readLocalCalendar(file: string): Promise<string | undefined> {
   try {
@@ -44,7 +46,17 @@ export async function loadCalendarSources(deps: CalendarSources) {
   } catch (err) {
     remoteError = err;
   }
-  return { local, localError, remote, url, remoteError, invalidUrl };
+  let google: string | undefined;
+  let googleError: string | undefined;
+  try {
+    google = deps.readGoogle
+      ? await withTimeout(deps.readGoogle(), 25_000, 'Google Calendar no ha respondido en 25s')
+      : undefined;
+  } catch (err) {
+    googleError =
+      err instanceof Error && err.message ? err.message : 'No he podido leer tu Google Calendar.';
+  }
+  return { local, localError, remote, url, remoteError, invalidUrl, google, googleError };
 }
 /** UID alone is not enough: recurring events share it across distinct occurrences. */
 export function mergeCalendarEvents(

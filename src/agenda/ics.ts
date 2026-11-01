@@ -263,19 +263,23 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
   const source = await loadCalendarSources(opts);
   const reasons: string[] = [];
   if (source.localError) reasons.push(source.localError);
+  if (source.googleError) reasons.push(source.googleError);
   if (source.invalidUrl)
     reasons.push('La dirección del calendario no es una URL http(s) válida; revisa la bóveda.');
   if (source.remoteError) reasons.push(failureMessage(source.remoteError, source.url ?? ''));
-  if (!source.local && !source.remote && !reasons.length) {
+  if (!source.local && !source.remote && !source.google && !reasons.length) {
     reasons.push('No hay calendario configurado todavía (falta la dirección iCal en la bóveda).');
   }
-  if (reasons.length && (source.remoteError || source.invalidUrl || source.localError)) {
+  if (
+    reasons.length &&
+    (source.remoteError || source.invalidUrl || source.localError || source.googleError)
+  ) {
     log.warn('agenda: calendar unavailable', { reason: reasons.join(' ') });
   }
-  const parsed = mergeCalendarEvents(
-    source.local ? parseIcs(source.local, new Date(now)) : [],
-    source.remote ? parseIcs(source.remote, new Date(now)) : [],
-  );
+  const parsed = mergeCalendarEvents(source.local ? parseIcs(source.local, new Date(now)) : [], [
+    ...(source.remote ? parseIcs(source.remote, new Date(now)) : []),
+    ...(source.google ? parseIcs(source.google, new Date(now)) : []),
+  ]);
   const from = zonedDayStart(now, timeZone);
   // Local midnight `days` calendar days from now, walked by date so a DST change
   // inside the window cannot shift the last day.

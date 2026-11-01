@@ -156,6 +156,7 @@ import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
+import { googleCalendarReader } from './google/calendar.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { llmHealthCommand, providerKeySource } from './llm-health.js';
@@ -595,6 +596,7 @@ Uso:
   pa vault init           crear la caja fuerte cifrada de claves
   pa vault set <k> <v>    guardar una clave (mejor set-stdin: así no queda en el historial)
   pa vault set-stdin <k>  guardar un secreto: te lo pide sin que se vea (no queda en el historial)
+  pa google conectar      conecta tu Google Calendar (pasos en docs/google.md); también estado y desconectar
   pa vault get <k>        enseñar una clave en pantalla
   pa vault list           ver los nombres de las claves (nunca los valores)
   pa vault rm <k>         borrar una clave
@@ -713,6 +715,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'setup': {
       const { setupCommand } = await import('./setup.js');
       return setupCommand(rest);
+    }
+    case 'google': {
+      const { googleCommand } = await import('./google/cli.js');
+      return googleCommand(rest);
     }
     case 'vault':
       return vaultCommand(rest);
@@ -2255,6 +2261,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             : Promise.resolve(undefined),
         getUrl: () => vaultGet('calendar:icsUrl'),
         fetchText: (url) => fetchIcsText(url),
+        // Tu Google Calendar, como el local: solo en el chat privado del dueño.
+        readGoogle: () =>
+          isOwnerDm(inboundFor(thread), vigilanteOwnerId)
+            ? googleCalendarReader()()
+            : Promise.resolve(undefined),
       }),
       // «correo»: el buzón de Gmail, solo lectura y solo en el chat privado del dueño.
       createMailTool({
@@ -3057,6 +3068,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
               fetchText: (url) => fetchIcsText(url),
+              readGoogle: googleCalendarReader(),
               // Los mismos 35 días que pide la agenda de abajo (sin esto, el calendario
               // solo se leía 7 días y las caducidades a 30 días nunca llegaban de él).
               days: calendarDaysFor(VIGILANTE_AGENDA_DAYS),
@@ -4239,6 +4251,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
             getUrl: () => vaultGet('calendar:icsUrl'),
             fetchText: (url) => fetchIcsText(url),
+            readGoogle: googleCalendarReader(),
             days: window,
           }),
         followups: () => followups.forChat(chatKey(inbound), 200),
@@ -4739,6 +4752,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               readLocal: () => readLocalCalendar(join(paths.state, 'calendar', 'local.ics')),
               getUrl: () => vaultGet('calendar:icsUrl'),
               fetchText: (url) => fetchIcsText(url),
+              readGoogle: googleCalendarReader(),
               days: 1,
             })
           ).events,

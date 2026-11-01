@@ -20,10 +20,12 @@ export const GOOGLE_KEYS = {
 
 const CAL = 'https://www.googleapis.com/auth/calendar';
 export const GOOGLE_SCOPES = {
-  calendar: [`${CAL}.events`, `${CAL}.readonly`],
+  // Solo lectura: Asistenta no crea, mueve ni borra eventos.
+  calendar: [`${CAL}.readonly`],
   gmailRead: ['https://www.googleapis.com/auth/gmail.readonly'],
 } as const;
-export const DEFAULT_SCOPES: string[] = [...GOOGLE_SCOPES.calendar, ...GOOGLE_SCOPES.gmailRead];
+/** Lo mínimo que se usa hoy: leer tu calendario. */
+export const DEFAULT_SCOPES: string[] = [...GOOGLE_SCOPES.calendar];
 
 export const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -38,7 +40,7 @@ export const GOOGLE_HOSTS = new Set([
 ]);
 
 export const NOT_CONNECTED =
-  'Google no está conectado. Dime «conecta mi Google» y te paso el enlace.';
+  'Tu cuenta de Google no está conectada. Se conecta una vez desde el PC: abre una terminal y escribe «pa google conectar» (los pasos están en docs/google.md).';
 
 export class GoogleNotConnectedError extends Error {
   constructor(message = NOT_CONNECTED) {
@@ -172,7 +174,7 @@ export async function startLoopbackFlow(
       res.end(`<!doctype html><meta charset="utf-8"><p style="font:18px sans-serif">${text}</p>`);
     };
     if (u.searchParams.get('state') !== state) {
-      reply(false, 'Enlace no válido. Vuelve a pedir «conecta mi Google».');
+      reply(false, 'Enlace no válido. Vuelve a escribir «pa google conectar» en el PC.');
       return;
     }
     const code = u.searchParams.get('code');
@@ -273,7 +275,7 @@ export class GoogleAuth {
         // Revocado desde la cuenta de Google o caducado: hay que volver a conectar.
         await this.deps.vault.delete(GOOGLE_KEYS.refreshToken);
         throw new GoogleNotConnectedError(
-          'Google ha retirado el permiso. Dime «conecta mi Google» para volver a conectarlo.',
+          'Google ha retirado el permiso. Para volver a conectarlo, escribe «pa google conectar» en una terminal del PC.',
         );
       }
       throw new Error('Google ha rechazado la conexión. Revisa el cliente en docs/google.md.');
