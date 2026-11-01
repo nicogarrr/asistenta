@@ -76,6 +76,13 @@ function parseDay(day: string): Date {
   return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12);
 }
 
+/** ¿Existe ese día en el calendario? «2026-02-29» no, «2028-02-29» sí. */
+function realDay(day: string): boolean {
+  const [y, m, d] = day.split('-').map(Number);
+  const at = parseDay(day);
+  return at.getFullYear() === y && at.getMonth() + 1 === m && at.getDate() === d;
+}
+
 function addDays(day: string, n: number): string {
   const at = parseDay(day);
   at.setDate(at.getDate() + n);
@@ -223,7 +230,9 @@ export function resolveDay(input: string, now: Date): string | null {
   const part = /^(.+?)\s+(?:por|a|de)\s+la\s+(?:manana|tarde|noche)$/.exec(said);
   if (part?.[1] && /^(?:hoy|manana|pasado manana)$/.test(part[1])) return resolveDay(part[1], now);
   const text = said.replace(/^(el|este|esta|para el|para)\s+/, '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Number.isNaN(parseDay(text).getTime()) ? null : text;
+  // «2026-02-30» o «2026-13-01»: Date los pasa al mes siguiente sin avisar, y la tarea
+  // quedaba guardada en un día que no existe y no salía en ninguna vista.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return realDay(text) ? text : null;
   if (text === 'hoy') return today;
   if (text === 'manana') return addDays(today, 1);
   if (text === 'pasado manana') return addDays(today, 2);
