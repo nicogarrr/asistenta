@@ -643,7 +643,8 @@ async function sweepOnce(deps: VigilanteDeps, timeZone: string): Promise<Vigilan
     }
     if (conflicts.length > 0) parts.push(formatConflicts(conflicts, timeZone, MAX_TITULO));
     if (chargeAlerts.length > 0) parts.push(formatChargeAlerts(chargeAlerts, timeZone));
-    if (deliveryAlerts.length > 0) parts.push(deliveryAlerts.map(formatDeliveryAlert).join('\n'));
+    if (deliveryAlerts.length > 0)
+      parts.push(deliveryAlerts.map((d) => formatDeliveryAlert(d, nowMs, timeZone)).join('\n'));
     if (downloads.length > 0 || lostInfo.lost > 0) {
       parts.push(formatDownloads(downloads, lostInfo.lost));
     }
