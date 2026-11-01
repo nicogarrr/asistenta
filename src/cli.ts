@@ -477,6 +477,7 @@ import { createFactoryTool } from './tools/factory.js';
 import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
+import { createGasolinerasTool } from './tools/gasolineras.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createLuzTool } from './tools/luz.js';
@@ -2171,6 +2172,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      createGasolinerasTool({
+        store,
+        scopeOf: scope,
+        sync: () => routineRunner.sync(),
+        delivery: {
+          set: (s, name, setting) => routineDelivery.set(s, name, setting),
+          commit: (s, name, hash) => routineDelivery.commit(s, name, hash),
+        },
+      }),
       // «Avísame si baja de X»: mismo registro que /vigila, lecturas sin modelo.
       createPriceWatchTool({
         watches: pageWatches,
