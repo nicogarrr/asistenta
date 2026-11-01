@@ -30,6 +30,24 @@ function daysEs(dow: string): string | null {
   return `los ${plural.slice(0, -1).join(', ')} y ${plural.at(-1)}`;
 }
 
+/** «cada 30 min de 09:00 a 14:00», «cada 2 horas de 08:00 a 20:00»; null si no se sabe decir. */
+function intervalEs(m: string, h: string, minute: number | null): string | null {
+  const range = /^(\d{1,2})-(\d{1,2})(?:\/(\d{1,2}))?$/.exec(h);
+  const from = range ? num(range[1] ?? '', 23) : null;
+  const to = range ? num(range[2] ?? '', 23) : null;
+  if (range && (from === null || to === null || from >= to)) return null;
+  if (minute === null) {
+    const every = /^\*\/(\d{1,2})$/.exec(m);
+    if (!every || (h !== '*' && (!range || range[3]))) return null;
+    const base = `cada ${every[1]} min`;
+    return range ? `${base} de ${pad(from as number)}:00 a ${pad((to as number) + 1)}:00` : base;
+  }
+  const step = range ? range[3] : /^\*\/(\d{1,2})$/.exec(h)?.[1];
+  const base = step ? `cada ${step} horas` : 'cada hora';
+  if (!range) return h === '*' || step ? base : null;
+  return `${base} de ${pad(from as number)}:${pad(minute)} a ${pad(to as number)}:${pad(minute)}`;
+}
+
 export function scheduleEs(schedule: string): string | null {
   const f = schedule.trim().split(/\s+/);
   if (f.length !== 5) return null;
@@ -45,6 +63,17 @@ export function scheduleEs(schedule: string): string | null {
     return said ? said.replace(/a las \d{2}:\d{2}$/, at) : null;
   }
   const hour = num(h, 23);
+  // «cada 30 min de 09:00 a 14:00, de lunes a viernes»: intervalo con franja o días.
+  if (
+    (minute === null || hour === null) &&
+    dom === '*' &&
+    mon === '*' &&
+    (h !== '*' || dow !== '*')
+  ) {
+    const span = intervalEs(m, h, minute);
+    const days = dow === '*' ? '' : daysEs(dow);
+    return span && days !== null ? (days ? `${span}, ${days}` : span) : null;
+  }
   if (minute === null) {
     const every = /^\*\/(\d{1,2})$/.exec(m);
     return every && h === '*' && dom === '*' && mon === '*' && dow === '*'

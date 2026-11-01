@@ -363,11 +363,26 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
 
   // Intervals beat fixed times: "cada 5 minutos" is a schedule on its own.
   // «cada media hora», «cada cuarto de hora», «cada dos horas», «cada 30 min».
-  if (/\bcada media hora\b/.test(normalised))
-    return { schedule: '*/30 * * * *', prompt: text.trim() };
-  if (/\bcada cuarto de hora\b/.test(normalised)) {
-    return { schedule: '*/15 * * * *', prompt: text.trim() };
-  }
+  // La franja («de 9 a 18», «entre las 9 y las 14») y los días («de lunes a viernes», «los
+  // lunes») cuentan también: antes «cada hora de 9 a 18» sonaba toda la noche y «cada
+  // media hora de lunes a viernes», también el finde.
+  const window = hourWindow(normalised);
+  const dowField = daysOfWeek(normalised) ?? '*';
+  const every = (minutes: number): { schedule: string; prompt: string } | null => {
+    if (window === null) return null;
+    if (minutes < 60) {
+      const hoursField = window ? `${window.from}-${window.to - 1}` : '*';
+      return { schedule: `*/${minutes} ${hoursField} * * ${dowField}`, prompt: text.trim() };
+    }
+    const step = minutes / 60;
+    if (step === 24)
+      return window ? null : { schedule: `0 0 * * ${dowField}`, prompt: text.trim() };
+    const range = window ? `${window.from}-${Math.min(window.to, 23)}` : '*';
+    const hoursField = step === 1 ? range : `${range}/${step}`;
+    return { schedule: `0 ${hoursField} * * ${dowField}`, prompt: text.trim() };
+  };
+  if (/\bcada media hora\b/.test(normalised)) return every(30);
+  if (/\bcada cuarto de hora\b/.test(normalised)) return every(15);
   const everyN = new RegExp(`cada (\\d{1,3}|${INTERVAL_WORDS}) (minutos?|min|horas?)\\b`).exec(
     normalised,
   );
@@ -382,14 +397,11 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     // «cada 7 horas» at 0, 7, 14 and 21. Only steps that divide evenly are honest;
     // «cada 120 minutos» is «cada 2 horas». The rest are asked, like «cada 2 días».
     const hours = unit.startsWith('min') ? n / 60 : n;
-    if (unit.startsWith('min') && 60 % n === 0) {
-      return { schedule: `*/${n} * * * *`, prompt: text.trim() };
-    }
+    if (unit.startsWith('min') && 60 % n === 0) return every(n);
     if (!Number.isInteger(hours) || 24 % hours !== 0) return null;
-    const schedule = hours === 24 ? '0 0 * * *' : `0 */${hours} * * *`;
-    return { schedule, prompt: text.trim() };
+    return every(hours * 60);
   }
-  if (/cada hora\b/.test(normalised)) return { schedule: '0 * * * *', prompt: text.trim() };
+  if (/cada hora\b/.test(normalised)) return every(60);
   // «todos los días excepto los domingos», «de lunes a viernes menos el miércoles»:
   // antes los días quitados se leían como los días de la rutina (solo los domingos).
   const except = exceptDays(normalised);
@@ -472,6 +484,28 @@ function daysOfWeek(normalised: string): string | null {
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
   const days = [...new Set(said.map((d) => DAY_VALUE[d] as number))].sort((a, b) => a - b);
   return days.join(',');
+}
+
+/**
+ * La franja de horas de un intervalo: «de 9 a 18», «entre las 9 y las 14», «desde las 8
+ * hasta las 20», «de 4 a 8 de la tarde». undefined si no se dice; null si un cron no la
+ * dice (minutos sueltos o una franja que cruza la medianoche): entonces se pregunta.
+ */
+function hourWindow(normalised: string): { from: number; to: number } | null | undefined {
+  const m =
+    /\b(?:de(?:sde)?|entre)(?: las?)? (\d{1,2})(?:[:.](\d{2}))?(?: ?h)? (?:a|hasta|y)(?: las?)? (\d{1,2})(?:[:.](\d{2}))?(?: ?h\b| horas\b)?(?! ?(?:veces|vasos|litros|personas|euros|minutos|min)\b)(?: de la (manana|tarde|noche))?/.exec(
+      normalised,
+    );
+  if (!m) return undefined;
+  if (Number(m[2] ?? 0) !== 0 || Number(m[4] ?? 0) !== 0) return null;
+  let from = Number(m[1]);
+  let to = Number(m[3]);
+  if (m[5] === 'tarde' || m[5] === 'noche') {
+    if (from < 12) from += 12;
+    if (to < 12) to += 12;
+  }
+  if (to > 24 || from >= to) return null;
+  return { from, to };
 }
 
 /** Los días quitados con «excepto / menos / salvo / quitando», y dónde empieza la excepción. */
