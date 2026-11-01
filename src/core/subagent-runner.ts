@@ -25,6 +25,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import {
   buildSpecialistPrompt,
   resolveSpecialist,
+  SPECIALIST_READ_TOOLS,
   type SpecialistSpec,
   specialistAllowsCall,
   specialistToolNames,
@@ -134,7 +135,14 @@ export function isolateSpecialistTools(
   maxCalls?: number,
 ): AgentTool[] {
   let used = 0;
-  const names = new Set(allowed.filter((n) => specialist.tools.includes(n)));
+  // Sin efectos = solo lectura: una herramienta fuera de las de lectura comprobada
+  // solo entra si sus acciones estan acotadas en `actions`.
+  const readable = (n: string) =>
+    specialist.effectful ||
+    SUBAGENT_SAFE_TOOLS.includes(n) ||
+    SPECIALIST_READ_TOOLS.includes(n) ||
+    specialist.actions?.[n] !== undefined;
+  const names = new Set(allowed.filter((n) => specialist.tools.includes(n) && readable(n)));
   return tools
     .filter((tool) => names.has(tool.name))
     .map((tool) => ({
@@ -182,6 +190,19 @@ export interface SubagentRunnerOptions {
   parentTools: () => readonly AgentTool[];
 }
 
+/**
+ * Herramientas del HILO que delega (si el cableado por hilo las pasa en
+ * `context.parentTools`); si no, las del proceso. Asi el especialista de correo
+ * ve el `correo` de ESTE chat, con sus propias comprobaciones (solo el privado
+ * del dueno), y nunca el de otro.
+ */
+function contextTools(context: unknown): (() => readonly AgentTool[]) | undefined {
+  const c = context as { parentTools?: unknown } | null | undefined;
+  return c && typeof c.parentTools === 'function'
+    ? (c.parentTools as () => readonly AgentTool[])
+    : undefined;
+}
+
 function readBudget(budget: unknown): SubagentBudget | undefined {
   const b = budget as Partial<SubagentBudget> | null | undefined;
   if (!b || typeof b.maxToolCalls !== 'number' || !b.signal) return undefined;
@@ -221,6 +242,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
         };
       }
       if (budget.signal.aborted) return { text: '', error: 'Subagente abortado antes de empezar.' };
+      const parentTools = contextTools(request.context) ?? options.parentTools;
       let child: ChildHandle;
       let prompt: string;
       if (specialist) {
@@ -228,7 +250,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
         const allowed = specialistToolNames(specialist, request.tools);
         prompt = buildSpecialistPrompt(specialist, request.task);
         const toolset = isolateSpecialistTools(
-          options.parentTools(),
+          parentTools(),
           specialist,
           allowed,
           budget.signal,
@@ -248,12 +270,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
         // Pedido del caller: request.tools (undefined = las del rol, [] = ninguna).
         const { allowed } = resolveChildToolNames(genericRole, request.tools);
         prompt = buildChildPrompt(genericRole, request.task);
-        const toolset = isolateTools(
-          options.parentTools(),
-          allowed,
-          budget.signal,
-          budget.maxToolCalls,
-        );
+        const toolset = isolateTools(parentTools(), allowed, budget.signal, budget.maxToolCalls);
         child = await options.makeChild({
           prompt,
           role: genericRole,

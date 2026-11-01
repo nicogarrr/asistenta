@@ -312,14 +312,18 @@ import {
  * proceso para que los limites de concurrencia valgan para todos los hilos.
  */
 let delegateWiring: ReturnType<typeof createDelegateWiring> | undefined;
-function delegateTool(config: Config): AgentTool {
+/**
+ * Con `threadTools`, los especialistas (correo, calendario…) eligen de las
+ * herramientas de ESE hilo, con sus propias comprobaciones; el pool es el mismo.
+ */
+function delegateTool(config: Config, threadTools?: () => readonly AgentTool[]): AgentTool {
   delegateWiring ??= createDelegateWiring({
     config,
     protectedPaths: protectedPaths(),
     secretPaths: secretStatePaths(),
     parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
   });
-  return delegateWiring.tool;
+  return threadTools ? delegateWiring.forThread(threadTools) : delegateWiring.tool;
 }
 
 import {
@@ -2096,6 +2100,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const computerGate: ActionGate = (call) =>
       thread.gate.check(thread.key, { ...call, actor: 'asistenta' });
     const ctx = threadContext({ key: thread.key, outputs: threadOutputs, gate: computerGate });
+    // Lo que recibe de verdad el agente del hilo (modo y mutex incluidos): de aqui
+    // eligen los especialistas de `delegate`, nunca de una lista mas amplia.
+    let threadFinal: AgentTool[] = [];
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
@@ -2103,7 +2110,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createDoneTool(),
       createAskTool(),
       createShellTool(config),
-      delegateTool(config),
+      // Especialistas: eligen de las herramientas finales de este hilo (threadFinal).
+      delegateTool(config, () => threadFinal),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
       // silently blocks every batch. `sendPhoto` is what lets the model put a
@@ -2503,7 +2511,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
     const raw = toolsForMode(all, desktop);
-    return raw.map((tool): AgentTool => {
+    threadFinal = raw.map((tool): AgentTool => {
       if (!MACHINE_TOOLS.has(tool.name)) return tool;
       const inner = tool.execute.bind(tool);
       return {
@@ -2513,6 +2521,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           machine.run(() => inner(id, params, signal, onUpdate), signal),
       };
     });
+    return threadFinal;
   };
 
   /**

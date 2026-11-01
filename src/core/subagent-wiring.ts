@@ -15,7 +15,7 @@ import { Gate } from '../permissions.js';
 import { createDelegateTool } from '../tools/delegate.js';
 import type { AgentRunResult } from './agent.js';
 import { PersonalAgent } from './agent.js';
-import type { SpecialistSpec } from './specialists.js';
+import { SPECIALIST_READ_TOOLS, type SpecialistSpec } from './specialists.js';
 import { SubagentPool, type SubagentPoolOptions } from './subagent.js';
 import {
   type ChildHandle,
@@ -65,7 +65,9 @@ export interface ChildGateOptions {
 export function createChildGate(options: ChildGateOptions = {}, specialist?: SpecialistSpec): Gate {
   const allow = specialist
     ? specialist.tools.filter(
-        (name) => specialist.actions?.[name] === undefined && SUBAGENT_SAFE_TOOLS.includes(name),
+        (name) =>
+          specialist.actions?.[name] === undefined &&
+          (SUBAGENT_SAFE_TOOLS.includes(name) || SPECIALIST_READ_TOOLS.includes(name)),
       )
     : [...SUBAGENT_SAFE_TOOLS];
   const allowActions = specialist
@@ -139,10 +141,15 @@ export interface DelegateWiringOptions extends ChildFactoryOptions {
   pool?: SubagentPoolOptions;
 }
 
-/** La tool `delegate` lista para registrar en el toolset del agente de nivel 0. */
+/**
+ * La tool `delegate` lista para registrar en el toolset del agente de nivel 0.
+ * `forThread(tools)` da otra `delegate` sobre el MISMO pool (los limites valen
+ * para todos los hilos) cuyos hijos eligen de las herramientas de ESE hilo.
+ */
 export function createDelegateWiring(options: DelegateWiringOptions): {
   tool: AgentTool;
   pool: SubagentPool;
+  forThread: (threadTools: () => readonly AgentTool[]) => AgentTool;
 } {
   const deps = createSubagentDeps({
     makeChild: createChildFactory(options),
@@ -151,5 +158,7 @@ export function createDelegateWiring(options: DelegateWiringOptions): {
   const pool = new SubagentPool(deps, options.pool);
   // depthOf = 0: solo el agente principal tiene esta tool; el hijo jamas la recibe.
   const tool = createDelegateTool(pool, () => 0) as unknown as AgentTool;
-  return { tool, pool };
+  const forThread = (threadTools: () => readonly AgentTool[]) =>
+    createDelegateTool(pool, () => 0, { parentTools: threadTools }) as unknown as AgentTool;
+  return { tool, pool, forThread };
 }
