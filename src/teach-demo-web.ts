@@ -198,10 +198,10 @@ export class WebDemoRecorder {
     try {
       url = new URL(rawUrl.trim());
     } catch {
-      return 'Uso: /learn web <https://sitio>, y cuando acabes /learn end.';
+      return '¿En qué web te miro? Pásame el enlace.';
     }
     if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-      return 'Uso: /learn web <https://sitio>, y cuando acabes /learn end.';
+      return '¿En qué web te miro? Pásame el enlace.';
     }
     url.username = '';
     url.password = '';

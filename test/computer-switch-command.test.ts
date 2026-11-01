@@ -42,7 +42,7 @@ describe('/ordenador · interruptor de Computer Use', () => {
 
   it('una palabra desconocida no cambia nada y enseña el uso', () => {
     const { state, d } = deps(true);
-    expect(computerSwitchCommand('quizás', d)).toMatch(/^Uso:/);
+    expect(computerSwitchCommand('quizás', d)).toMatch(/^Con \/ordenador te digo/);
     expect(state.sets).toBe(0);
   });
 
