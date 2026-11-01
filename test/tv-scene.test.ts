@@ -125,7 +125,7 @@ describe('modo cine', () => {
     const { d, calls } = deps({ status: async () => status('encendida') });
     const r = await run(d, { action: 'command', text: 'modo cine con YouTube' });
     expect(calls).toContain('launch:youtube.leanback.v4');
-    expect(text(r)).toMatch(/^Entendido: activar el modo cine con youtube\./);
+    expect(text(r)).toMatch(/^Entendido: activar el modo cine con YouTube\./);
   });
 
   it('catalogo y alias', () => {
