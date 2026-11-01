@@ -1,5 +1,6 @@
 import { log } from '../log.js';
 import type { RoutineRunContext } from '../routines.js';
+import { sliceSafe } from '../text.js';
 import { type ThreadTickDeps, type TickThread, threadLabel } from './goal-tick.js';
 
 /**
@@ -31,7 +32,7 @@ export function createRoutineTask<T extends TickThread>(
       safeRemember(() => {
         sessionId = sessions.begin(
           thread.key,
-          `[rutina] ${ctx.routine.name}`.slice(0, 80),
+          sliceSafe(`[rutina] ${ctx.routine.name}`, 80),
           'goal-tick',
         );
       });
@@ -41,11 +42,11 @@ export function createRoutineTask<T extends TickThread>(
         text = result.text ?? '';
         if (result.error)
           log.warn('routine run error', { routine: ctx.routine.name, error: result.error });
-        safeRemember(() => sessions.addTurn(sessionId, 'assistant', text.slice(0, 500)));
+        safeRemember(() => sessions.addTurn(sessionId, 'assistant', sliceSafe(text, 500)));
       } finally {
         thread.active = false;
         thread.gate.clearSession(thread.key);
-        safeRemember(() => sessions.end(sessionId, text.slice(0, 200)));
+        safeRemember(() => sessions.end(sessionId, sliceSafe(text, 200)));
       }
       return text;
     };

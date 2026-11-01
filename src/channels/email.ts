@@ -15,6 +15,7 @@
  */
 
 import type { SendRequest, SendResult } from '../mail/types.js';
+import { sliceSafe } from '../text.js';
 import type { ChannelAdapter, ChannelHandlers, Inbound, Outbound } from './types.js';
 
 export const EMAIL_CHANNEL = 'correo';
@@ -194,7 +195,7 @@ export function verifyCommandMail(
       notify: { ok: true, from, subject, text: '', messageId, references },
     };
   }
-  const text = stripQuoted(mail.text).slice(0, MAX_TEXT);
+  const text = sliceSafe(stripQuoted(mail.text), MAX_TEXT);
   if (!text) return { ok: false, reason: 'correo sin texto' };
   return { ok: true, from, subject, text, messageId, references };
 }

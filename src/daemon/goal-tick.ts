@@ -5,6 +5,7 @@ import type { GoalTickResult } from '../goals/runner.js';
 import { type Goal, splitGoalScope } from '../goals/store.js';
 import type { SessionStore } from '../memory/sessions.js';
 import type { Gate } from '../permissions.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * Lo que un tick de máquina (objetivo o rutina) necesita de un hilo del daemon.
@@ -71,7 +72,7 @@ export function createGoalTickExecute<T extends TickThread>(
         // Nico's answer to a pending decision (provenance, not titles).
         sessionId = sessions.begin(
           thread.key,
-          `[objetivo] ${goal.title}`.slice(0, 80),
+          sliceSafe(`[objetivo] ${goal.title}`, 80),
           'goal-tick',
         );
       });
@@ -80,7 +81,7 @@ export function createGoalTickExecute<T extends TickThread>(
         thread.agent.attachContext(contextNoteFor(thread, prompt));
         result = await thread.agent.run(prompt);
         safeRemember(() =>
-          sessions.addTurn(sessionId, 'assistant', (result?.text ?? '').slice(0, 500)),
+          sessions.addTurn(sessionId, 'assistant', sliceSafe(result?.text ?? '', 500)),
         );
         actions.record({
           actor: 'asistenta',
@@ -95,7 +96,7 @@ export function createGoalTickExecute<T extends TickThread>(
       } finally {
         thread.active = false;
         thread.gate.clearSession(thread.key);
-        safeRemember(() => sessions.end(sessionId, (result?.text ?? '').slice(0, 200)));
+        safeRemember(() => sessions.end(sessionId, sliceSafe(result?.text ?? '', 200)));
       }
     };
     const next = thread.tail.then(tick);

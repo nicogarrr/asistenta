@@ -4,6 +4,7 @@
  * skills, fecha actual y el proyecto ligado. Movido tal cual desde cli.ts (paso P2
  * de ARCHITECTURE.md); cli.ts lo reexporta para no cambiar ningún import.
  */
+
 import { buildNowNote } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { log } from '../log.js';
@@ -19,6 +20,7 @@ import type { ProjectContextStore } from '../project-context.js';
 import { skillsForContext } from '../skills/builtin.js';
 import { skillsIndex } from '../skills/lessons.js';
 import type { SkillStore } from '../skills/store.js';
+import { sliceSafe } from '../text.js';
 import { plainInline } from '../utils.js';
 
 /**
@@ -108,9 +110,7 @@ export function buildContextNote(
               // Title and summary are stored text (the summary is a past agent
               // reply): they render inside <historial>, so markup characters go.
               const title = plainInline(s.title).replace(/\s+/g, ' ').trim();
-              const summary = plainInline(s.summary ?? '')
-                .replace(/\s+/g, ' ')
-                .slice(0, 200);
+              const summary = sliceSafe(plainInline(s.summary ?? '').replace(/\s+/g, ' '), 200);
               return `- ${when} · ${title}: ${summary}`;
             })
             .join('\n')}\n</historial>`,
