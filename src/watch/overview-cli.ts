@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { Store } from '../db.js';
 import { logFile } from '../log.js';
 import { paths } from '../paths.js';
+import { loadDatabaseSync } from '../sqlite.js';
 import {
   formatOverview,
   forScope,
@@ -90,6 +91,7 @@ export function collectWatches(src: OverviewSources): {
   const memFile = join(src.stateDir, 'memory.db');
   if (existsSync(memFile)) {
     let db: DatabaseSync | undefined;
+    const DatabaseSync = loadDatabaseSync();
     try {
       db = new DatabaseSync(memFile);
       db.exec('PRAGMA busy_timeout = 5000');

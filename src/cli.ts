@@ -48,7 +48,6 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { loadCalendar } from './agenda/ics.js';
@@ -274,6 +273,7 @@ import {
   searchSkillIndex,
   skillPickAnswer,
 } from './skills/search.js';
+import { loadDatabaseSync } from './sqlite.js';
 import {
   checkTelegramToken,
   SERVE_TELEGRAM_RETRY_DELAYS_MS,
@@ -1585,6 +1585,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * other out mid-turn.
    */
   setUndoDir(join(paths.state, 'undo'));
+  const DatabaseSync = loadDatabaseSync();
   const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
   const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
   memoryDb.exec('PRAGMA journal_mode = WAL');

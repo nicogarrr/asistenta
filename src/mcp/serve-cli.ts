@@ -5,7 +5,6 @@
  */
 
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { FollowupTracker } from '../alerts/followups.js';
 import { localTimeZone } from '../datecontext.js';
 import { Store } from '../db.js';
@@ -15,6 +14,7 @@ import { SessionStore } from '../memory/sessions.js';
 import { MemoryStore } from '../memory.js';
 import { paths } from '../paths.js';
 import { nextScheduleRun } from '../routines.js';
+import { loadDatabaseSync } from '../sqlite.js';
 import { vaultGet } from '../vault.js';
 import { resolveOwnerUserId } from '../vigilante.js';
 import { serveMcpStdio } from './server.js';
@@ -48,6 +48,7 @@ export async function mcpCommand(args: string[]): Promise<number> {
   }
   const main = `${chat}#main`;
   const memory = new MemoryStore();
+  const DatabaseSync = loadDatabaseSync();
   const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
   const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
   const sessions = new SessionStore({ db: memoryDb });

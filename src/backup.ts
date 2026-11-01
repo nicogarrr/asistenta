@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { wallClock } from './datecontext.js';
+import { loadDatabaseSync } from './sqlite.js';
 import { backedUp } from './state-files.js';
 
 /**
@@ -82,6 +82,7 @@ function dayStamp(d: Date): string {
 
 /** `VACUUM INTO` da una copia coherente aunque la base esté abierta y en modo WAL. */
 function copyDb(src: string, dest: string): void {
+  const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(src);
   try {
     db.exec('PRAGMA busy_timeout = 5000');

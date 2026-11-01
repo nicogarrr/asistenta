@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { COMPUTER_GRANT_WINDOW_MS, unapprovableOperation } from './approval-text.js';
 import { hashArgs } from './audit/calls.js';
@@ -18,6 +18,7 @@ import {
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { reaAskReason } from './mcp/rea.js';
+import { loadDatabaseSync } from './sqlite.js';
 import { stableStringify } from './utils.js';
 
 /**
@@ -713,6 +714,7 @@ function blobOf(c: ToolCall): string {
 export function listAlwaysGrants(dbPath: string | undefined): string[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
+  const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(dbPath);
   try {
     ensureScopeTable(db);
@@ -742,6 +744,7 @@ export interface AlwaysGrantWithChat {
 export function listAlwaysGrantsWithChat(dbPath: string | undefined): AlwaysGrantWithChat[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
+  const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(dbPath);
   try {
     ensureScopeTable(db);
@@ -771,6 +774,7 @@ export function deleteAlwaysGrant(
 ): boolean {
   if (!dbPath) return false;
   mkdirSync(dirname(dbPath), { recursive: true });
+  const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(dbPath);
   try {
     ensureScopeTable(db);
@@ -2204,6 +2208,7 @@ export class Gate {
   #withScopeDb<T>(fn: (db: DatabaseSync) => T): T | undefined {
     if (!this.#dbPath) return undefined;
     mkdirSync(dirname(this.#dbPath), { recursive: true });
+    const DatabaseSync = loadDatabaseSync();
     const db = new DatabaseSync(this.#dbPath);
     try {
       ensureScopeTable(db);
@@ -3225,6 +3230,7 @@ export interface AlwaysGrantDated {
 export function listAlwaysGrantsDated(dbPath: string | undefined): AlwaysGrantDated[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
+  const DatabaseSync = loadDatabaseSync();
   const db = new DatabaseSync(dbPath);
   try {
     ensureScopeTable(db);
