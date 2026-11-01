@@ -69,7 +69,7 @@ const COUNT_WORDS = Object.keys(COUNT_WORD_VALUE).join('|');
  * user never asked for. A bare `1/2` is not a date ("tomo 1/2 pastilla"); `el 15/11` is.
  */
 export const DATE_SIGNALS = new RegExp(
-  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) mes(?:es)?|mes que viene|proximo mes|fin(?:al(?:es)?)? del? mes|(?:a )?(?:principios|mediados|finales|fin) de (?:${MONTH_WORDS})|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) anos?|ano que viene|proximo ano|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
+  String.raw`\b(vence\w*|ma[nñ]ana|pasado ma[nñ]ana|antes del|antes de|proxima semana|semana que viene|(?:en|dentro de) (?:\d{1,3}|${COUNT_WORDS}) (?:dias?|semanas?)|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) mes(?:es)?|mes que viene|proximo mes|fin(?:al(?:es)?)? del? mes|(?:a )?(?:principios|mediados|finales|fin) de (?:${MONTH_WORDS})|(?:en|dentro de) (?:\d{1,2}|${COUNT_WORDS}) anos?|ano que viene|proximo ano|(?:proximo )?(?:fin de semana|finde)|esta semana|en (?:${MONTH_WORDS})|(?:el|del|hasta el) \d{1,2}[/.-]\d{1,2}|\d{1,2} de (?:${MONTH_WORDS})|(?:el )?dia \d{1,2}|(?:el |al |los |cada )?(?:proximo |proxima )?(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?: que viene)?)\b`,
 );
 
 const DAY_MS = 86_400_000;
@@ -232,6 +232,25 @@ export function estimateDueAt(text: string, now: number): number {
     const month = inYears ? w.month : 1;
     const last = new Date(Date.UTC(w.year + ahead, month, 0)).getUTCDate();
     const at = onDay(now, w.year + ahead, month, inYears ? Math.min(w.day, last) : 1);
+    if (at !== null) return at;
+  }
+  // «este fin de semana», «el finde»: el domingo; «el próximo fin de semana», «el fin de
+  // semana que viene»: el de la semana siguiente. «esta semana»: el domingo (dicho en
+  // domingo, el de la semana que empieza). «en diciembre»: el último día de ese
+  // mes, este año o el que viene. Antes no contaban como fecha y no había seguimiento.
+  const weekend = /\b(proximo )?(?:fin de semana|finde)( que viene)?\b/.exec(folded);
+  const thisWeek = /\besta semana\b/.test(folded);
+  if (weekend || thisWeek) {
+    const toSunday = (7 - wallClock(new Date(now)).weekday) % 7;
+    if (weekend) return plusDays(now, toSunday + (weekend[1] || weekend[2] ? 7 : 0));
+    return plusDays(now, toSunday === 0 ? 7 : toSunday);
+  }
+  const inMonth = new RegExp(String.raw`\ben (${MONTH_WORDS})(?: de (\d{4}))?\b`).exec(folded);
+  if (inMonth) {
+    const w = wallClock(new Date(now));
+    const month = MONTHS[inMonth[1] ?? ''] ?? 0;
+    const year = inMonth[2] ? Number(inMonth[2]) : month < w.month ? w.year + 1 : w.year;
+    const at = onDay(now, year, month, new Date(Date.UTC(year, month, 0)).getUTCDate());
     if (at !== null) return at;
   }
   // «el lunes 9»: ese día 9 si cae en lunes. Antes ganaba el lunes más cercano y el aviso
