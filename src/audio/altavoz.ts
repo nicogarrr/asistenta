@@ -59,6 +59,26 @@ export function stopReplyText(threads: number, notes: number): string {
   return parts.length ? `Detenido. ${parts.join('; ')}.` : 'No había nada en curso.';
 }
 
+/**
+ * «pon el modo altavoz (en la tele)» / «quita el modo altavoz»: lo mismo que /altavoz pc|tele|off,
+ * dicho como en un chat. Pide «modo altavoz» para no confundirlo con «pon el altavoz» (sonar algo).
+ */
+export function altavozWords(text: string): 'pc' | 'tele' | 'off' | null {
+  const t = text
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.!]+$/g, '');
+  const on =
+    /^(?:pon|activa|enciende)\s+(?:el\s+)?modo\s+altavoz(?:\s+(?:en|por)\s+(?:el\s+|la\s+)?(pc|ordenador|tele|tv))?$/.exec(
+      t,
+    );
+  if (on) return on[1] === 'tele' || on[1] === 'tv' ? 'tele' : 'pc';
+  if (/^(?:quita|apaga|desactiva)\s+(?:el\s+)?modo\s+altavoz$/.test(t)) return 'off';
+  return null;
+}
+
 export const ALTAVOZ_USAGE = '¿Por dónde te hablo: por el PC, por la tele, o lo apago?';
 
 export class AltavozStore {
