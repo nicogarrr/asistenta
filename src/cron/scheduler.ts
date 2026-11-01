@@ -28,7 +28,8 @@ export function parseCronAdd(
     if (!schedule || !prompt) {
       return {
         ok: false,
-        error: 'Faltan el horario o la tarea. Formato: /cron add 0 8 * * * | resumen del día',
+        error:
+          'Faltan el horario o la tarea. Dime cuándo y qué, por ejemplo «cada mañana a las 8 el resumen del día».',
       };
     }
     const check = validate(schedule);
@@ -40,7 +41,7 @@ export function parseCronAdd(
     return {
       ok: false,
       error:
-        'No entiendo ese horario. Prueba "/cron add 0 8 * * * | tarea" o "/cron add cada mañana a las 8 tarea".',
+        'No entiendo ese horario. Dímelo de otra forma, por ejemplo «cada mañana a las 8 el resumen del día» o «cada lunes a las 9 revisar el correo».',
     };
   }
   // The natural branch is heuristic output, so it goes through the SAME
