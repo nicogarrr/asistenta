@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { request } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildAuthUrl,
@@ -87,6 +88,32 @@ describe('google oauth', () => {
       auth.searchParams.get('code_challenge'),
     );
     expect(sent?.get('code')).toBe('c1');
+  });
+
+  it('una línea de petición malformada no tumba el loopback', async () => {
+    const vault = fakeVault(client);
+    const gfetch = vi.fn() as unknown as typeof fetch;
+    const flow = await startLoopbackFlow({ vault, fetch: gfetch });
+    try {
+      const redirect = new URL(flow.url).searchParams.get('redirect_uri') ?? '';
+      const target = new URL(redirect);
+      const bad = await new Promise<number>((resolve, reject) => {
+        const req = request(
+          { host: '127.0.0.1', port: Number(target.port), path: 'http://[::1' },
+          (res) => {
+            res.resume();
+            res.on('end', () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+      expect(bad).toBe(400);
+      const still = await fetch(`${redirect}/?code=c&state=wrong`);
+      expect(still.status).toBe(400);
+    } finally {
+      flow.close();
+    }
   });
 
   it('without a client it says what to do', async () => {

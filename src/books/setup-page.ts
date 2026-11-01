@@ -50,7 +50,13 @@ export function validCredentialFormats(apiId: string, apiHash: string): boolean 
 export function isAllowedRequest(req: IncomingMessage, port: number, token: string): boolean {
   const host = req.headers.host ?? '';
   if (host !== `127.0.0.1:${port}`) return false;
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
+  } catch {
+    // Una línea de petición malformada no debe tumbar el servidor de setup.
+    return false;
+  }
   if (url.searchParams.get('k') !== token) return false;
   const origin = req.headers.origin;
   if (origin !== undefined && origin !== `http://127.0.0.1:${port}`) return false;
