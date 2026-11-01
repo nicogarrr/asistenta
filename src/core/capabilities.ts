@@ -143,6 +143,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'festivos nacionales y de tu comunidad (date.nager.at, sin clave): solo lectura por red.',
   },
   {
+    name: 'aire',
+    note: 'calidad del aire y polen (Open-Meteo/Copernicus, sin clave): solo lectura por red; la Gate decide.',
+  },
+  {
     name: 'tiempo',
     note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },

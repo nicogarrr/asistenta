@@ -467,6 +467,7 @@ import { backToMainAnswer, topicReadyText } from './temas.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
 import { createAgendaTool } from './tools/agenda.js';
+import { createAireTool } from './tools/aire.js';
 import { createBoeTool } from './tools/boe.js';
 import { createBookTool } from './tools/book.js';
 import { createBrowserTool } from './tools/browser.js';
@@ -2214,6 +2215,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createWeatherTool(() => weatherConfigFromEnv()),
+      // «¿Cómo está el aire?» / «¿hay polen?»: mismo sitio que el tiempo (o Gijón), solo lectura.
+      createAireTool(() => weatherConfigFromEnv()),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
       createTraficoTool({
