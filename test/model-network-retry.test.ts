@@ -189,7 +189,7 @@ describe('el fallo dicho en claro', () => {
       ['429 Too Many Requests', /límite de uso/],
       ['401 Unauthorized', /clave no vale/],
       ['402 insufficient funds', /saldo/],
-      ['prompt is too long: 300000 tokens', /\/compactar/],
+      ['prompt is too long: 300000 tokens', /demasiado larga/],
       ["TypeError: Cannot read properties of undefined (reading 'x')", /fallo interno/],
     ];
     for (const [raw, want] of cases) {
