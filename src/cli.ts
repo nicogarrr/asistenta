@@ -5799,9 +5799,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, reply, { quote: true });
   };
   const cmdSkillsCatalog = async (inbound: Inbound): Promise<void> => {
-    await say(inbound, await skillsCatalogReply(skills.list(), process.env.PA_SKILLS_CATALOG_URL), {
-      quote: true,
-    });
+    const pick = (hits: readonly SkillIndexEntry[]) =>
+      preguntas.ask(chatKey(inbound), 'skills', { answer: (t) => skillPickAnswer(hits, t) });
+    const reply = await skillsCatalogReply(
+      skills.list(),
+      process.env.PA_SKILLS_CATALOG_URL,
+      undefined,
+      pick,
+    );
+    await say(inbound, reply, { quote: true });
   };
   const cmdVoice = async (inbound: Inbound, args: string): Promise<void> => {
     const want = args.trim().toLowerCase();
