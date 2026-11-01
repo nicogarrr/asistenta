@@ -19,7 +19,7 @@ import {
 } from '../command-routine.js';
 import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
-import { localDay } from '../datecontext.js';
+import { localDay, wallDateMinute } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
 import type { GoalStore } from '../goals/store.js';
@@ -96,9 +96,9 @@ export function routineNameFromPrompt(prompt: string): string {
 
 /** A local stamp with a rough distance, for the agenda and the creation reply. */
 export function formatNextRun(at: number, now = Date.now()): string {
-  const d = new Date(at);
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // En la hora de pared de PA_TIMEZONE, la misma con la que croner dispara la rutina:
+  // con el proceso en otra zona, «0 21 * * *» se enseñaba como «20:00».
+  const stamp = wallDateMinute(new Date(at));
   const delta = at - now;
   if (delta <= 0) return `${stamp} (ya)`;
   // Whole units chosen before rounding, so half an hour never rounds up into
