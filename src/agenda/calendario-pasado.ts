@@ -38,8 +38,14 @@ export function confirmacionCalendario(
 ): string {
   const w = wallClock(start, timeZone);
   const today = wallClock(now, timeZone);
-  const tomorrow = wallClock(new Date(now.getTime() + 24 * 3600_000), timeZone);
-  const isDay = (d: typeof w): boolean =>
+  // El día siguiente del calendario, no «ahora + 24 h» (los días del cambio de hora no tienen 24 h).
+  const next = new Date(Date.UTC(today.year, today.month - 1, today.day + 1));
+  const tomorrow = {
+    year: next.getUTCFullYear(),
+    month: next.getUTCMonth() + 1,
+    day: next.getUTCDate(),
+  };
+  const isDay = (d: { year: number; month: number; day: number }): boolean =>
     d.year === w.year && d.month === w.month && d.day === w.day;
   const day = isDay(today)
     ? 'hoy'
