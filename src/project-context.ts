@@ -208,6 +208,22 @@ export function projectLinkedReply(ctx: Extract<ProjectContext, { ok: true }>): 
   return `Hecho: en esta conversación tendré en cuenta ${ctx.name} de la carpeta «${projectFolderName(ctx.dir)}»${first ? ` («${first}»)` : ''}.`;
 }
 
+/**
+ * La respuesta en texto normal a la pregunta de `projectStateReply`: «quítala» → `quitar`,
+ * una ruta → la ruta. Otra cosa no es una respuesta y el mensaje sigue su camino.
+ */
+export function projectAnswer(text: string): string | null {
+  const t = text
+    .trim()
+    .replace(/^[«"']+|[»"'.]+$/g, '')
+    .trim();
+  if (/^(?:qu[ií]tal[ao]|qu[ií]ta(?:la)? la carpeta|desl[ií]gal[ao])[.!]*$/i.test(t))
+    return 'quitar';
+  if (/^(?:[A-Za-z]:[\\/]|\\\\|~[\\/])/.test(t)) return t;
+  if (t.includes('\\') && !/\s/.test(t)) return t;
+  return null;
+}
+
 /** Respuesta de `/proyecto` (o `/proyecto estado`). */
 export function projectStateReply(
   dir: string | null | undefined,
@@ -218,5 +234,8 @@ export function projectStateReply(
     : ctx?.ok
       ? `En esta conversación tengo en cuenta ${ctx.name} de la carpeta «${projectFolderName(ctx.dir)}».`
       : `Tengo ligada la carpeta «${projectFolderName(dir)}», pero ahora no puedo leer nada: ${ctx?.ok === false ? ctx.reason : 'no hay fichero'}.`;
-  return `${state}\nPara ligar una: /proyecto <carpeta>. Para quitarla: /proyecto quitar.`;
+  const next = dir
+    ? 'Si quieres quitarla, dime «quítala»; si quieres otra, pégame su ruta.'
+    : '¿Quieres que tenga en cuenta una? Pégame la ruta de la carpeta.';
+  return `${state}\n${next}`;
 }

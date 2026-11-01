@@ -26,6 +26,7 @@ import {
 import {
   cleanProjectPath,
   ProjectContextStore,
+  projectAnswer,
   projectLinkedReply,
   projectStateReply,
 } from './project-context.js';
@@ -389,6 +390,7 @@ import { OwnerProfile } from './memory/profile.js';
 import {
   currentLimits,
   getPace,
+  paceAnswer,
   paceText,
   parsePace,
   recordDismissal,
@@ -3455,6 +3457,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         '',
         `Has descartado 3 avisos en dos días, así que bajo el ritmo a «${stepped}». ${paceText(stepped)}`,
       );
+      if (!res.proposal) preguntas.ask(chatKey(inbound), 'avisos', { answer: paceAnswer });
     }
     await say(inbound, lines.join('\n'), { quote: true });
   };
@@ -3468,6 +3471,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const want = parsePace(args);
+    // La respuesta en palabras («menos avisos», «normal») cambia el ritmo como /avisos.
+    preguntas.ask(chatKey(inbound), 'avisos', { answer: paceAnswer });
     if (want === null) {
       await say(
         inbound,
@@ -5167,6 +5172,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!arg || verb === 'estado') {
       const dir = projectContexts.get(thread.key);
       const ctx = projectContexts.load(thread.key);
+      // «quítala» o una ruta, en texto normal, como /proyecto quitar o /proyecto <carpeta>.
+      preguntas.ask(chatKey(inbound), 'proyecto', { answer: projectAnswer });
       await say(inbound, projectStateReply(dir, ctx), { quote: true });
       return;
     }
