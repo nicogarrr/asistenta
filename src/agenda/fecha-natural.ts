@@ -26,7 +26,7 @@ const DAY =
   '(hoy|pasado manana|manana' +
   String.raw`|(?:el\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
-  String.raw`|(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?` +
+  String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
   String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}))?(?:\s+de\s+(\d{4}))?)`;
 const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?`;
 const RE = new RegExp(
@@ -96,6 +96,11 @@ export function parseFechaCalendario(
     } else if (d < today.day) {
       [y, mo] = mo === 12 ? [y + 1, 1] : [y, mo + 1];
     }
+  }
+  // «el 31» en un mes de 30 días: el próximo mes que lo tenga, no volver a preguntar.
+  if (m[9] && !m[10]) {
+    for (let i = 0; i < 12 && !exists(y, mo, d); i++)
+      [y, mo] = mo === 12 ? [y + 1, 1] : [y, mo + 1];
   }
   if (!exists(y, mo, d)) return null;
   let h = Number(m[12] ?? m[14]);
