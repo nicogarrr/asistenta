@@ -39,9 +39,9 @@ describe('pa iniciar: /ordenador off guardado', () => {
   it('con el apagado guardado, el PC sale como aviso y no como «activado»', async () => {
     const c = await byId(deps({ computerUseEnabled: () => true, computerOffSaved: () => true }));
     expect(c.pc?.status).toBe('aviso');
-    expect(c.pc?.detail).toMatch(/\/ordenador off/);
+    expect(c.pc?.detail).toMatch(/lo apagaste desde Telegram/);
     expect(c.pc?.detail).not.toMatch(/activado/);
-    expect(c.pc?.hint).toMatch(/\/ordenador on/);
+    expect(c.pc?.hint).toBe('En Telegram, toca /ordenador y dime «enciéndelo».');
   });
 
   it('sin apagado guardado sigue igual (ok)', async () => {

@@ -26,7 +26,7 @@ const DAY =
   '(hoy|pasado manana|manana' +
   String.raw`|(?:el\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
-  String.raw`|(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?` +
+  String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
   String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}))?(?:\s+de\s+(\d{4}))?)`;
 const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?`;
 const RE = new RegExp(
@@ -97,11 +97,21 @@ export function parseFechaCalendario(
       [y, mo] = mo === 12 ? [y + 1, 1] : [y, mo + 1];
     }
   }
+  // «el 31» en un mes de 30 días: el próximo mes que lo tenga, no volver a preguntar.
+  if (m[9] && !m[10]) {
+    for (let i = 0; i < 12 && !exists(y, mo, d); i++)
+      [y, mo] = mo === 12 ? [y + 1, 1] : [y, mo + 1];
+  }
   if (!exists(y, mo, d)) return null;
   let h = Number(m[12] ?? m[14]);
   const mi = Number(m[13] ?? m[15] ?? 0);
   const part = m[16];
   if ((part === 'tarde' || part === 'noche') && h < 12) h += 12;
+  // «a las 12 de la noche» es la medianoche al acabar ese día y «a las 12 de la
+  // madrugada» las 00:00 de ese día, como lo lee la agenda del correo; antes las dos
+  // quedaban a mediodía.
+  if (h === 12 && part === 'noche') [y, mo, d] = addDays(y, mo, d, 1);
+  if (h === 12 && (part === 'noche' || part === 'madrugada')) h = 0;
   if (h > 23 || mi > 59) return null;
   return { start: new Date(zonedTime(y, mo, d, h, mi, timeZone)), title };
 }

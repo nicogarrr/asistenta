@@ -25,13 +25,13 @@ export function parseModelo(args: string, available: readonly string[]): ModeloA
     const id = available[Number(raw) - 1];
     return id
       ? { kind: 'set', id }
-      : { kind: 'error', text: `No hay modelo ${raw}. Escribe /modelo para ver la lista.` };
+      : { kind: 'error', text: `No hay modelo ${raw}: tengo del 1 al ${available.length}.` };
   }
   const id = available.find((m) => m === raw) ?? available.find((m) => m.toLowerCase() === lower);
   if (id) return { kind: 'set', id };
   return {
     kind: 'error',
-    text: `«${raw.slice(0, 60)}» no está entre los modelos configurados. Escribe /modelo para ver la lista.`,
+    text: `«${raw.slice(0, 60)}» no está entre los modelos configurados. Tengo: ${available.join(', ')}.`,
   };
 }
 
@@ -48,7 +48,7 @@ export function formatModelos(available: readonly string[], current: string): st
       'Solo hay un modelo configurado. Pon PA_FALLBACK_MODEL o PA_MODELS en .env para tener otros.',
     );
   } else {
-    lines.push('Cambia con /modelo <número|nombre>; /modelo normal vuelve al principal.');
+    lines.push('¿Cuál quieres? Dime su número o su nombre, o «normal» para volver al principal.');
   }
   lines.push('Solo afecta a esta conversación y se mantiene aunque el asistente reinicie.');
   return lines.join('\n');

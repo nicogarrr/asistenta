@@ -23,7 +23,7 @@ describe('panel: «Reintentar» de un mensaje con fotos explica que se repite de
       expect(r.status).toBe(409);
       const cuerpo = (await r.json()) as { error: string };
       expect(cuerpo.error).toMatch(/fotos/);
-      expect(cuerpo.error).toContain('/reintentar');
+      expect(cuerpo.error).toContain('Mándamelo otra vez por Telegram');
       expect(cuerpo.error).not.toMatch(/No hay un mensaje/);
     } finally {
       await ui.close();

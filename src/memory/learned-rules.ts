@@ -457,9 +457,9 @@ export function learnFromTurn(opts: {
 function lineFor(outcome: LearnOutcome, order: readonly MemoryEntry[]): string | null {
   if (outcome.status === 'saved' || outcome.status === 'updated') {
     const n = order.findIndex((e) => e.id === outcome.id) + 1;
-    // Solo con un número que /olvida acepta (sale en /aprendido). Una regla que otra
+    // Solo con un número que «olvida la regla N» acepta (sale en /aprendido). Una regla que otra
     // del mismo turno ya sustituyó no tiene número.
-    const how = n >= 1 && n <= MAX_LEARNED_RULES ? ` (/olvida ${n} para borrarla)` : '';
+    const how = n >= 1 && n <= MAX_LEARNED_RULES ? ` (${forgetRuleHint(n)})` : '';
     return `📝 Aprendido: ${outcome.rule}${how}`;
   }
   if (outcome.status === 'unsafe') {
@@ -528,7 +528,7 @@ export function forgetLearnedRule(
       const hit = found[0] as { r: MemoryEntry; i: number };
       return memory.forgetIn(scopes, hit.r.id)
         ? `🗑️ Olvidada: ${hit.r.text}`
-        : 'No he podido borrarla; mira /aprendido.';
+        : 'No he podido borrarla; puede que ya estuviera borrada.';
     }
     if (found.length > 1) {
       return [
@@ -546,7 +546,9 @@ export function forgetLearnedRule(
   }
   const target = rules[n - 1] as MemoryEntry;
   const ok = memory.forgetIn(scopes, target.id);
-  return ok ? `🗑️ Olvidada: ${target.text}` : 'No he podido borrarla; mira /aprendido.';
+  return ok
+    ? `🗑️ Olvidada: ${target.text}`
+    : 'No he podido borrarla; puede que ya estuviera borrada.';
 }
 
 /**
@@ -559,8 +561,21 @@ export function learnedRulesCommand(
   scopes: readonly string[],
   text: string,
 ): string | null {
+  const byWords = forgetRuleWords(text);
+  if (byWords) return forgetLearnedRule(memory, scopes, byWords);
   const m = /^\/(aprendido|aprendidas|olvida)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!m) return null;
   if ((m[1] ?? '').toLowerCase() === 'olvida') return forgetLearnedRule(memory, scopes, m[2] ?? '');
   return formatLearnedRules(learnedRules(memory, scopes));
+}
+
+/** Cómo se borra una regla recién aprendida, dicho como en un chat (sin «/olvida N»). */
+export function forgetRuleHint(n: number): string {
+  return `si no la quieres, dime «olvida la regla ${n}»`;
+}
+
+/** «olvida la regla 2» (o «borra la regla 2») → «2» para /olvida; lo demás, null. */
+export function forgetRuleWords(text: string): string | null {
+  const m = /^(?:olv[ií]da|borra|quita)\s+la\s+regla\s+(\d{1,3})[.!]*$/i.exec(text.trim());
+  return m?.[1] ?? null;
 }

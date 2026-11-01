@@ -13,7 +13,8 @@ describe('friendlyError: lo que ve el usuario cuando algo falla', () => {
     );
     expect(text).not.toContain('Cannot read');
     expect(text).not.toContain('undefined');
-    expect(text).toContain('/estado');
+    expect(text).toContain('Vuelve a intentarlo en un momento.');
+    expect(text).not.toContain('/estado');
   });
 
   it('red, tiempo agotado, límite y clave: frase en español con qué hacer', () => {

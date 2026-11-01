@@ -76,7 +76,7 @@ describe('/learn web: la grabación caduca y los errores son amables', () => {
       },
     };
     const msg = await rec.start('c1', 'https://example.com', { browser, env: ON });
-    expect(msg).toBe('No pude abrir el navegador para grabar. Prueba otra vez con /learn web.');
+    expect(msg).toBe('No pude abrir el navegador para grabar. ¿Lo intento otra vez? Dime «sí».');
     expect(rec.isRecording('c1')).toBe(false);
   });
 });

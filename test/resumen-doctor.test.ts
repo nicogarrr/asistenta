@@ -58,6 +58,8 @@ describe('pa doctor: resumen de la mañana', () => {
 
   it('cli.ts lo añade a pa doctor', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
-    expect(src).toMatch(/lines\.push\(\s*briefingDoctorLine\(\s*process\.env,\s*new MemorySnapshot\(/);
+    expect(src).toMatch(
+      /lines\.push\(\s*briefingDoctorLine\(\s*process\.env,\s*new MemorySnapshot\(/,
+    );
   });
 });

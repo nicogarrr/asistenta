@@ -760,11 +760,49 @@ export function describeWatch(
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
   if (w.mutedUntil > now) {
     lines.push(
-      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)} (/vigila avisar ${w.id} para quitarlo).`,
+      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
     );
   }
   return lines.join('\n');
 }
+
+/**
+ * Id que no existe: en vez de «Mira /vigilando», las vigilancias que hay, dichas por
+ * su nombre (Nico, 1 nov: hablar normal, sin comandos).
+ */
+export function watchNotFound(
+  list: ReadonlyArray<Pick<PageWatch, 'id' | 'label' | 'url'>>,
+): string {
+  if (list.length === 0) return 'No encuentro esa vigilancia: ahora no vigilo ninguna página.';
+  const names = list.slice(0, 8).map((w) => `${w.label || w.url} (${w.id})`);
+  return `No encuentro esa vigilancia. Las que tengo: ${names.join(', ')}${list.length > 8 ? '…' : ''}.`;
+}
+
+/** «la de la tele», «Tele 55» o el código: qué vigilancia nombra una respuesta suelta. */
+export function watchFromAnswer<T extends Pick<PageWatch, 'id' | 'label' | 'url'>>(
+  list: readonly T[],
+  answer: string,
+): T | null {
+  const said = foldSaid(answer.replace(/^(?:la|el)\s+(?:de\s+(?:la|el|los|las)\s+)?/i, ''));
+  if (!said) return null;
+  const byId = list.find((w) => w.id.toLowerCase() === said);
+  if (byId) return byId;
+  const hits = list.filter((w) => w.label && foldSaid(w.label).includes(said));
+  return hits.length === 1 ? (hits[0] as T) : null;
+}
+
+function foldSaid(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[«»"'.!?¿¡]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/** «avísame otra vez», «quita el silencio»… tras ver una vigilancia silenciada. */
+export const AVISAR_OTRA_VEZ =
+  /^(?:s[ií],?\s*)?(?:av[ií]same(?:\s+otra\s+vez|\s+ya)?|vuelve\s+a\s+avisarme|qu[ií]ta(?:le)?\s+el\s+silencio|qu[ií]talo)\s*[.!]*$/iu;
 
 export interface VigilaArgs {
   url: string;

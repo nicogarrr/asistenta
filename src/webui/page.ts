@@ -1586,7 +1586,7 @@ ${renderFormatScript()}
           // «Reintentar») y desaparece, va al título de la tarjeta y no al principio de la página.
           var foco = document.activeElement;
           var focoDentro = silencio === true && !!foco && foco !== contenedor && contenedor.contains(foco);
-          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, usa /cron en Telegram o pídelo en el chat.'));
+          contenedor.replaceChildren(nodo('p', 'muted', 'Solo lectura: para crear o cambiar una rutina, pídemelo en el chat, por ejemplo «cada mañana a las 8 el resumen del día».'));
           if (!rutinas.length) contenedor.appendChild(nodo('p', 'muted', 'No hay rutinas programadas.'));
           rutinas.forEach(function (rutina) {
             var tarjeta = nodo('section', 'sesion rutina');

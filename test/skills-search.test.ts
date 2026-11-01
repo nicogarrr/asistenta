@@ -86,7 +86,7 @@ describe('F15 /skills buscar: índice', () => {
     const out = formatSkillSearch('tdd', parseSkillIndex(index).slice(1, 2));
     expect(out).toContain('1. TDD — Escribe primero el test que falla');
     expect(out).toContain('https://example.com/tdd/SKILL.md');
-    expect(out).toContain('pásame su enlace con /skills instalar');
+    expect(out).toContain('¿Instalo alguna? Dime su número');
     expect(formatSkillSearch('nada', [])).toContain('No hay skills');
   });
 

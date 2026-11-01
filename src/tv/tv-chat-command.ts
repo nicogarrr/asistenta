@@ -89,7 +89,7 @@ export const TV_BUTTONS: ReadonlyArray<{
   { id: 'pic_eco', label: '🌙 Oscura', order: 'pon la imagen en oscura' },
 ];
 
-export const TV_BUTTONS_TITLE = 'Mando de la tele (o escribe /tv <orden>):';
+export const TV_BUTTONS_TITLE = 'Mando de la tele (o dime qué hago, por ejemplo «abre Netflix»):';
 
 export function tvButtons(): Array<{ label: string; action: string }> {
   return TV_BUTTONS.map((b) => ({ label: b.label, action: `${TV_CALLBACK_PREFIX}${b.id}` }));
@@ -139,7 +139,8 @@ export async function tvButtonCommand(data: string, deps: TvButtonDeps): Promise
   if (!deps.isOwner) return 'Solo el dueño, en su chat privado, puede mandar órdenes a la tele.';
   const id = data.startsWith(TV_CALLBACK_PREFIX) ? data.slice(TV_CALLBACK_PREFIX.length) : '';
   const button = TV_BUTTONS.find((b) => b.id === id);
-  if (!button) return 'Ese botón ya no existe. Escribe /tv para sacar el mando otra vez.';
+  if (!button)
+    return 'Ese botón ya no existe. Dime qué hago con la tele, por ejemplo «abre Netflix».';
   if (!button.repeatable && deps.guard?.isRepeat(`${deps.chatId ?? ''}:${button.id}`)) {
     return TV_REPEAT_IGNORED;
   }

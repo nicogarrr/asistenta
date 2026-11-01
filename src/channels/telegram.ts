@@ -1489,8 +1489,11 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => null);
     if (!file?.file_path) return null;
     const url = `https://api.telegram.org/file/bot${this.#options.token}/${file.file_path}`;
+    // Al rendirse, también corta la conexión: sin señal, una descarga colgada seguía
+    // abierta para siempre aunque ya hubiéramos devuelto null.
+    const abort = new AbortController();
     return withTimeout(
-      fetch(url).then(async (r) => {
+      fetch(url, { signal: abort.signal }).then(async (r) => {
         if (!r.ok) throw new Error(`file download: HTTP ${r.status}`);
         const buf = Buffer.from(await r.arrayBuffer());
         if (buf.length > limitBytes) throw new Error(`file exceeds ${limitBytes} bytes`);
@@ -1498,7 +1501,10 @@ export class TelegramChannel implements ChannelAdapter {
       }),
       60_000,
       'file download timed out',
-    ).catch(() => null);
+    ).catch(() => {
+      abort.abort();
+      return null;
+    });
   }
 
   /**
@@ -1963,7 +1969,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
-const TV_BUTTON_STALE = 'Este botón ya no sirve. Escribe /tv para sacar el mando.';
+const TV_BUTTON_STALE =
+  'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 export const MORE_BUTTON_LABEL = '📖 Ver todo';
 const MORE_GONE = 'Ya no tengo el texto completo. Pídemelo otra vez.';
 

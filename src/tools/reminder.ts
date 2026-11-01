@@ -348,7 +348,7 @@ function nameFor(prefix: string, text: string, suffix = ''): string {
 export const FIRED_BUTTON_MS = 24 * 3_600_000;
 /** Aviso de un botón de recordatorio caducado, ya usado o de antes de reiniciar. */
 export const FIRED_BUTTON_STALE =
-  'Este botón ya no sirve (vale una vez y 24 horas). Mira /recordatorios.';
+  'Este botón ya no sirve (vale una vez y 24 horas). Si quieres ver tus recordatorios, pídemelos.';
 
 /**
  * Recordatorios que acaban de avisar, para sus botones «✅ Hecho», «⏰ +1h» y «🌅 Mañana

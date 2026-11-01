@@ -761,7 +761,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const code = (err as { code?: unknown } | null)?.code;
   const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
-    return 'Se me ha roto algo por dentro y no he podido terminar. Prueba otra vez o mira /estado.';
+    return 'Se me ha roto algo por dentro y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
   if (DISK_FULL_ERROR.test(probe)) {
     return 'El disco del PC está lleno y no puedo guardar nada. Libera espacio y vuelve a pedírmelo.';
@@ -797,7 +797,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
   const looksTechnical =
     !clean || /[{}[\]]|\bat \S+:\d+|https?:\/\//.test(clean) || clean.length > 200;
   if (looksTechnical) {
-    return 'Algo ha fallado y no he podido terminar. Prueba otra vez o mira /estado.';
+    return 'Algo ha fallado y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
   return `${prefix}${clean}`;
 }
