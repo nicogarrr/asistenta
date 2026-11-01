@@ -89,7 +89,7 @@ export const TV_BUTTONS: ReadonlyArray<{
   { id: 'pic_eco', label: '🌙 Oscura', order: 'pon la imagen en oscura' },
 ];
 
-export const TV_BUTTONS_TITLE = 'Mando de la tele (o escribe /tv <orden>):';
+export const TV_BUTTONS_TITLE = 'Mando de la tele (o dime qué hago, por ejemplo «abre Netflix»):';
 
 export function tvButtons(): Array<{ label: string; action: string }> {
   return TV_BUTTONS.map((b) => ({ label: b.label, action: `${TV_CALLBACK_PREFIX}${b.id}` }));

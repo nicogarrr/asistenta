@@ -142,7 +142,7 @@ describe('runPreflight', () => {
     expect((await byId(deps({ platform: 'linux' }))).pc?.status).toBe('aviso');
     const off = await byId(deps({ computerUseEnabled: () => false }));
     expect(off.pc?.status).toBe('aviso');
-    expect(off.pc?.hint).toMatch(/\/ordenador on/);
+    expect(off.pc?.hint).toMatch(/dime «enciéndelo»/);
   });
 
   it('correo: sin configurar es info; a medias es aviso', async () => {
