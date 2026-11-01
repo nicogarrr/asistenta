@@ -349,6 +349,15 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
     return { schedule: `${minute} ${hasTime ? hours : 8} ${day} * *`, prompt: text.trim() };
   }
 
+  // «cada 1 de mes a las 9», «cada 15 del mes», «cada primero de mes»: antes sonaban
+  // todos los días.
+  const dayOfMonth = /\b(?:cada|todos los) (\d{1,2}|primero) del? mes\b/.exec(normalised);
+  if (dayOfMonth) {
+    const day = dayOfMonth[1] === 'primero' ? 1 : Number(dayOfMonth[1]);
+    if (day < 1 || day > 31) return null;
+    return { schedule: `${minute} ${hasTime ? hours : 8} ${day} * *`, prompt: text.trim() };
+  }
+
   // «cada mes el día 5», «el día 1 de cada mes», «todos los meses el 15».
   if (/\b(?:cada mes|todos los meses|de cada mes|mensualmente)\b/.test(normalised)) {
     const rest = normalised.replace(/\ba las? \S+/, '');
