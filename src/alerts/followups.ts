@@ -279,8 +279,12 @@ export class FollowupTracker {
     const mine = (f: Followup): boolean =>
       opts.chatKey === undefined || f.scope.startsWith(`${opts.chatKey}#`);
     const due = this.due(now).filter(mine);
+    // Una promesa con fecha que aún no ha llegado no está «sin tocar»: su aviso es el
+    // vencimiento. Antes «pagar el seguro» para dentro de un mes salía a los 3 días
+    // como «Llevas 3 d sin tocar». El silencio es para las notas sin fecha (o vencidas).
     const late = this.overdue(3, now)
       .filter(mine)
+      .filter((f) => f.dueAt <= now)
       .filter((f) => !due.some((d) => d.id === f.id));
     const lines: string[] = [];
 
