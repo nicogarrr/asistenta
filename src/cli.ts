@@ -10,7 +10,13 @@ import {
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
 import { learnNameAnswer, PreguntasPendientes, SI_RESPUESTA } from './daemon/pregunta-pendiente.js';
-import { ERASE_PROMPT, EraseConfirm, eraseChat, eraseSummary } from './erase-command.js';
+import {
+  ERASE_BUSY_ASK,
+  ERASE_PROMPT,
+  EraseConfirm,
+  eraseChat,
+  eraseSummary,
+} from './erase-command.js';
 import {
   formatModelos,
   ModelChoiceStore,
@@ -5021,11 +5027,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const ck = chatKey(inbound);
     const live = [...threads.values()].filter((t) => t.chatKey === ck);
     if (live.some((t) => t.active)) {
-      await say(
-        inbound,
-        'Hay una tarea en marcha en este chat. Usa /stop y vuelve a pedir /borrar_chat. No he borrado nada.',
-        { quote: true },
-      );
+      eraseAfterStop.set(ck, Date.now());
+      await say(inbound, ERASE_BUSY_ASK, { quote: true });
       return;
     }
     const result = eraseChat({
@@ -5039,6 +5042,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     for (const t of live) threads.delete(t.key);
     await say(inbound, eraseSummary(result), { quote: true });
+  };
+  /** «sí» tras ERASE_BUSY_ASK: para la tarea, espera a que suelte el chat y borra. */
+  const eraseAfterStop = new Map<string, number>();
+  const stopAndEraseByWords = async (inbound: Inbound): Promise<boolean> => {
+    const ck = chatKey(inbound);
+    const at = eraseAfterStop.get(ck);
+    if (at === undefined) return false;
+    eraseAfterStop.delete(ck);
+    if (Date.now() - at > 2 * 60_000 || !SI_RESPUESTA.test(inbound.text.trim())) return false;
+    await cmdStop(inbound);
+    const busy = () => [...threads.values()].some((t) => t.chatKey === ck && t.active);
+    for (let i = 0; i < 40 && busy(); i++) await new Promise((r) => setTimeout(r, 250));
+    await cmdBorrarChatConfirmado(inbound);
+    return true;
   };
   // F13: liga una carpeta de proyecto (su ASISTENTA.md/AGENTS.md entra en el contexto).
   const cmdProyecto = async (inbound: Inbound, args: string): Promise<void> => {
@@ -7722,6 +7739,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (await ignoraByWords(inbound)) return;
           // «vuelve a la principal» con otra conversación activa: como /topic main.
           if (await backToMainByWords(inbound)) return;
+          // «sí» tras «¿La paro y lo borro todo?»: para la tarea y borra el chat.
+          if (await stopAndEraseByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);
