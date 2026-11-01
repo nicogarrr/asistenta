@@ -45,7 +45,7 @@ describe('/olvida por texto', () => {
 
   it('«/olvida 2.» también vale y lo que no está da el uso', () => {
     expect(forgetLearnedRule(memory, [SCOPE], '2.')).toContain('Olvidada: Avisar 10 min');
-    expect(forgetLearnedRule(memory, [SCOPE], 'tortilla')).toContain('Uso: /olvida');
+    expect(forgetLearnedRule(memory, [SCOPE], 'tortilla')).toContain('¿Cuál borro?');
     expect(texts()).toHaveLength(2);
   });
 });

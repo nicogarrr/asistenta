@@ -67,8 +67,8 @@ describe('/aprendido y /olvida en el chat del panel', () => {
 
   it('/olvida sin número no borra nada', () => {
     saveLearnedRule(memory, SCOPE, 'Respuestas cortas');
-    expect(learnedRulesCommand(memory, [SCOPE], '/olvida')).toMatch(/^Uso: \/olvida/);
-    expect(learnedRulesCommand(memory, [SCOPE], '/olvida todo')).toMatch(/^Uso: \/olvida/);
+    expect(learnedRulesCommand(memory, [SCOPE], '/olvida')).toMatch(/^¿Cuál borro\?/);
+    expect(learnedRulesCommand(memory, [SCOPE], '/olvida todo')).toMatch(/^¿Cuál borro\?/);
     expect(learnedRulesCommand(memory, [SCOPE], '/aprendido')).toContain('Respuestas cortas');
   });
 

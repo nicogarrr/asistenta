@@ -37,7 +37,7 @@ describe('/aprendido y /olvida', () => {
     expect(text).toContain('1. Llamar al dueño Nico');
     expect(text).toContain('2. Responder corto');
     expect(text).not.toContain('talla');
-    expect(text).toContain('/olvida <número>');
+    expect(text).toContain('/olvida 2');
   });
 
   it('/olvida <n> borra esa regla y nada más', () => {
@@ -45,8 +45,8 @@ describe('/aprendido y /olvida', () => {
     saveLearnedRule(memory, SCOPE, 'Llamar al dueño Nico', 'nombre');
     expect(forgetLearnedRule(memory, [SCOPE], '1')).toBe('🗑️ Olvidada: Llamar al dueño Nico');
     expect(learnedRules(memory, [SCOPE]).map((e) => e.text)).toEqual(['Responder corto']);
-    expect(forgetLearnedRule(memory, [SCOPE], '7')).toContain('Uso: /olvida');
-    expect(forgetLearnedRule(memory, [SCOPE], 'todo')).toContain('Uso: /olvida');
+    expect(forgetLearnedRule(memory, [SCOPE], '7')).toContain('¿Cuál borro?');
+    expect(forgetLearnedRule(memory, [SCOPE], 'todo')).toContain('¿Cuál borro?');
     expect(learnedRules(memory, [SCOPE])).toHaveLength(1);
   });
 
