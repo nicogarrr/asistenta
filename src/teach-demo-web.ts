@@ -215,7 +215,7 @@ export class WebDemoRecorder {
       return 'No pude abrir el navegador para grabar. Prueba otra vez con /learn web.';
     }
     this.#active.set(key, { host: url.hostname, startedMs: this.#now() });
-    return `Grabando la demostración en ${url.hostname}. Hazla en la ventana del navegador; cuando acabes, /learn end. Las contraseñas no se graban.`;
+    return `Grabando la demostración en ${url.hostname}. Hazla en la ventana del navegador; cuando acabes, dime «ya está». Las contraseñas no se graban.`;
   }
 
   /**
