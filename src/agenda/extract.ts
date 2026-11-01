@@ -358,6 +358,23 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 87, 'dd-mm'),
   },
   {
+    // «el lunes 9»: el día de la semana con su número es ese día, no el lunes más cercano
+    // (antes la cita del lunes 9 caía el lunes 2, una semana antes). Solo si el próximo
+    // día 9 cae en lunes; si no cuadra, decide la regla del día de la semana. «el lunes
+    // 10:00» o «el lunes 9 de la mañana» son horas, no días.
+    re: /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo),? (?:dia )?(\d{1,2})\b(?![:.,]\d| ?(?:h|hrs?|horas?|am|pm)\b| ?(?:de|del) [a-z]| (?:a|al|hasta|y)\s+\d)/,
+    specificity: 86,
+    rule: 'dia de semana y numero',
+    build: (m, ctx) => {
+      const hit = nextDayOfMonth(Number(m[2]), ctx, m);
+      if (!hit) return undefined;
+      const local = ymd(hit.at, ctx.timeZone);
+      const weekday = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
+      if (weekday !== WEEKDAYS[m[1] ?? '']) return undefined;
+      return { ...hit, specificity: 86, rule: 'dia de semana y numero' };
+    },
+  },
+  {
     // "el día 5" with no month: the next 5th - this month if it has not gone by, else
     // the next month that has that day. With a month after it, 'dia de mes' reads it;
     // "el día 5 de cada mes" is a routine, not a date.

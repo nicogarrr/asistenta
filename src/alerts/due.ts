@@ -169,6 +169,17 @@ export function estimateDueAt(text: string, now: number): number {
     const at = nextDayMonth(now, MONTHS[named[2] ?? ''] ?? 0, Number(named[1]));
     if (at !== null) return at;
   }
+  // «el lunes 9»: ese día 9 si cae en lunes. Antes ganaba el lunes más cercano y el aviso
+  // llegaba una semana antes del día prometido.
+  const dayAndNumber =
+    /\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo),? (?:dia )?(\d{1,2})\b(?![:.,]\d| ?(?:h|horas?)\b| ?(?:de|del) [a-z])/.exec(
+      folded,
+    );
+  if (dayAndNumber) {
+    const at = nextDayOfMonth(now, Number(dayAndNumber[2]));
+    if (at !== null && wallClock(new Date(at)).weekday === WEEKDAYS[dayAndNumber[1] ?? ''])
+      return at;
+  }
   const dayName =
     /\b(?:(proximo|proxima) )?(lunes|martes|miercoles|jueves|viernes|sabado|domingo)( que viene)?\b/.exec(
       folded,
