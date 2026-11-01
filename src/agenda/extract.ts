@@ -855,10 +855,37 @@ const SPOKEN_TIME_RE = new RegExp(
 const SLOT_RE =
   /\b(?:de|desde|entre) (?:las )?(\d{1,2})(?:[:.](\d{2}))? (?:a|y|hasta) (?:las )?(\d{1,2})(?:[:.](\d{2}))?(?: ?(h|hs|hrs|horas)\b)?(?: (de la manana|de la madrugada|de la tarde|de la noche|del mediodia)\b)?(?! ?(?:personas|plazas|asistentes|invitados|participantes|alumnos|ninos|adultos|euros|eur|dolares|dias|semanas|meses|anos|minutos|min|segundos|kg|km|metros|m2|unidades|anos|por ?ciento|%|\.\d|[:/.,-]?\d))/g;
 
+// «a las ocho», «a la una»: la hora escrita en letras. Antes no se leía y la cita quedaba
+// a las 09:00 (la hora por defecto). Se pasa a cifra y la leen las reglas de siempre.
+// Delante de un plural («a las dos empresas») no es una hora y se deja como está.
+const HOUR_WORDS: Readonly<Record<string, number>> = {
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+};
+const HOUR_WORD_RE =
+  /\b(a las|sobre las|hacia las|desde las|entre las|y las|hasta las) (dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b(?! (?!(?:menos|horas|hrs|hs)\b)[a-z]+s\b)/g;
+const ONE_RE =
+  /\b(a la|sobre la|hacia la|desde la|entre la|y la|hasta la) una\b(?! (?!(?:menos|horas|hrs|hs)\b)[a-z]+s\b)/g;
+
+function hourWords(folded: string): string {
+  return folded
+    .replace(HOUR_WORD_RE, (_w, lead: string, word: string) => `${lead} ${HOUR_WORDS[word]}`)
+    .replace(ONE_RE, (_w, lead: string) => `${lead}s 1`);
+}
+
 function spokenTimes(folded: string): string {
   // "esta tarde a las 5" is today at 17:00. Without this the sentence had no date at
   // all ("esta tarde" is not a day word) and the meeting never reached the agenda.
-  const today = folded.replace(
+  const today = hourWords(folded).replace(
     /\besta (manana|tarde|noche),? (a las|a la) (\d{1,2}(?:[:.]\d{2})?)\b/g,
     (_w, part: string, lead: string, clock: string) => `hoy ${lead} ${clock} de la ${part}`,
   );
