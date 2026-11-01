@@ -443,7 +443,17 @@ function htmlText(html: string, b: Budget): string {
 /** Resolve `href` (relative to the OPF file) to a zip entry name. */
 function zipPath(base: string, href: string): string {
   const parts = base.split('/').slice(0, -1);
-  for (const seg of decodeURIComponent(href.split('#')[0] ?? '').split('/')) {
+  const raw = href.split('#')[0] ?? '';
+  // Un % mal formado (un libro hecho a mano) lanzaba URIError y tumbaba la lectura
+  // entera: con el href sin decodificar el capítulo simplemente no se encuentra y
+  // manda el respaldo de leer por nombre.
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // href literal
+  }
+  for (const seg of decoded.split('/')) {
     if (seg === '..') parts.pop();
     else if (seg && seg !== '.') parts.push(seg);
   }
@@ -467,11 +477,16 @@ function epubText(z: Reader, b: Budget): string {
       const href = /\bhref\s*=\s*"([^"]+)"/.exec(item)?.[1];
       if (id && href) manifest.set(id, zipPath(opfPath, decodeEntities(href)));
     }
+    let unusable = false;
     for (const ref of opf.match(/<(?:\w+:)?itemref\b[^>]*>/g) ?? []) {
       const idref = /\bidref\s*=\s*"([^"]+)"/.exec(ref)?.[1];
       const path = idref ? manifest.get(idref) : undefined;
       if (path && z.has(path) && !chapters.includes(path)) chapters.push(path);
+      // Un itemref que no resuelve (href roto o fuera del manifiesto): antes se
+      // perdía ese capítulo en silencio; una guía a medias no es usable.
+      else if (!path || !z.has(path)) unusable = true;
     }
+    if (unusable) chapters = [];
   }
   if (chapters.length === 0)
     chapters = [...z.entries.keys()].filter((n) => /\.x?html?$/i.test(n)).sort();
