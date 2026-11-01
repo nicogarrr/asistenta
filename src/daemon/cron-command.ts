@@ -17,6 +17,7 @@ import {
   looksLikeCommandAdd,
   parseCommandAdd,
 } from '../command-routine.js';
+import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
 import type { Routine, Store } from '../db.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
@@ -319,7 +320,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
         deps.ask?.({ answer: (t) => (SI.test(t) ? `entrega ${name} chat solo-si-cambia` : null) });
       }
       return [
-        `Rutina de comando "${name}" programada con horario ${spec.schedule}. No usa el modelo.`,
+        `Rutina de comando "${name}" ${programadaEs(spec.schedule)}. No usa el modelo.`,
         `Comando: ${displayArgv(spec.argv)}`,
         `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
         ...(deps.delivery
@@ -366,7 +367,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       'Revisa el comando exacto antes de aprobarlo (se ejecuta sin shell y sin preguntarte cada vez):',
       `Programa y argumentos: ${displayArgv(spec.argv)}`,
       `Carpeta: ${spec.cwd}`,
-      `Horario: ${spec.schedule} · tope: ${Math.round(spec.timeoutMs / 1000)} s`,
+      `Horario: ${scheduleEs(spec.schedule) ?? spec.schedule} · tope: ${Math.round(spec.timeoutMs / 1000)} s`,
       `Para aprobar exactamente este comando, contéstame con el código ${code}.`,
       'Si cambia algo del comando, hará falta una aprobación nueva.',
     ].join('\n');
@@ -519,8 +520,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       .find((st) => st.scope === created.scope && st.name === created.name);
     return [
       name !== base
-        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${created.schedule}.`
-        : `Rutina "${created.name}" programada con horario ${created.schedule}.`,
+        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${scheduleEs(created.schedule ?? '') ?? created.schedule}.`
+        : `Rutina "${created.name}" ${programadaEs(created.schedule)}.`,
       `Tarea: ${created.prompt}`,
       `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
     ].join('\n');

@@ -120,6 +120,7 @@ import { dedupeNewFacts } from './core/history.js';
 import { createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
+import { programadaEs } from './cron/describe-es.js';
 import { parseNatural } from './cron/scheduler.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
 import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
@@ -3974,7 +3975,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await say(
           inbound,
           [
-            `Rutina "${created.name}" programada con horario ${created.schedule}.`,
+            `Rutina "${created.name}" ${programadaEs(created.schedule)}.`,
             `Tarea: ${created.prompt}`,
             `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
             'La verás en tu agenda.',

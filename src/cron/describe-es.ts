@@ -68,3 +68,14 @@ export function scheduleEs(schedule: string): string | null {
   const month = num(mon, 12);
   return month === null ? null : `cada año el ${pad(day)}/${pad(month)} ${at}`;
 }
+
+/**
+ * Al crear una rutina, el horario dicho en palabras: «programada: cada día a las
+ * 09:00». Antes enseñaba el cron crudo («con horario 0 9 * * *»); el cron solo
+ * queda si no se sabe decir.
+ */
+export function programadaEs(schedule: string | null): string {
+  if (!schedule) return 'programada';
+  const said = scheduleEs(schedule);
+  return said ? `programada: ${said}` : `programada con horario ${schedule}`;
+}

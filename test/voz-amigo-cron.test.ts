@@ -63,7 +63,7 @@ describe('/cron habla como un amigo', () => {
       'No hay rutinas programadas. Dime qué hago y cuándo, por ejemplo «cada mañana a las 8 el resumen del día», y la programo.',
     );
     expect(contesta('cada mañana a las 8 el resumen del día')).toContain(
-      'programada con horario 0 8 * * *',
+      'programada: cada día a las 08:00',
     );
     expect(store.listRoutines().map((r) => r.schedule)).toEqual(['0 8 * * *']);
   });
