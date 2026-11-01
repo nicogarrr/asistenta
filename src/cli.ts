@@ -208,7 +208,15 @@ import {
   setDownloadsEnabled,
 } from './ojo-downloads.js';
 import { AttentionQueue } from './ojo-events.js';
-import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
+import {
+  activateRule,
+  deleteRule,
+  dismissNotice,
+  formatRules,
+  ignoraAnswer,
+  listRules,
+  rulesAnswer,
+} from './ojo-ignore.js';
 import {
   DOWNLOADS_OFF_TEXT,
   ojoOnAnswer,
@@ -3331,7 +3339,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         downloadsLine,
         screenLine,
         'Cada 30 min miro calendario, correo y pendientes y te aviso de plazos, pagos, viajes y citas nuevos. Plazos, pagos y citas con hora llevan además un recordatorio a 24 h y otro a 2 h; los que no tienen hora, uno solo el día antes a las 9:00; los viajes, solo el aviso inicial. Lo que caduca o se renueva avisa a 30, 7 y 1 día (a las 9:00). También te aviso de citas con hora que se pisan y de cargos raros en el correo (más de 1,5 veces lo habitual o un remitente nuevo; es una lectura del correo, puede fallar). Las descargas nuevas y la lectura de pantalla solo si lo pides: /ojo descargas on, /ojo pantalla on.',
-        `Cada aviso lleva [#n]: /ignora n lo descarta, y tras dos parecidos te propongo una regla (/ignorados). Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
+        `Cada aviso lleva su número entre corchetes: si alguno no te interesa, dime «descarta el» y su número (por ejemplo «descarta el 3») y no te lo vuelvo a recordar; tras dos parecidos te propongo dejar de avisarte de esa clase. Silencio de ${quiet.startHour}:00 a ${quiet.endHour}:00; solo rompo el silencio por un pago o plazo con hora a menos de 2 h (las citas, viajes y conflictos esperan a que acabe).`,
       ]
         .filter((l): l is string => l !== null)
         .join('\n'),
@@ -3442,7 +3450,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return;
       }
     }
-    await say(inbound, formatRules(listRules(memoryDb)), { quote: true });
+    const rules = listRules(memoryDb);
+    if (rules.length) preguntas.ask(chatKey(inbound), 'ignorados', { answer: rulesAnswer });
+    await say(inbound, formatRules(rules), { quote: true });
+  };
+
+  /** «descarta el 3» en el chat privado del dueño: lo mismo que /ignora 3. */
+  const ignoraByWords = async (inbound: Inbound): Promise<boolean> => {
+    const n = isOwnerDm(inbound, vigilanteOwnerId) ? ignoraAnswer(inbound.text) : null;
+    if (n === null) return false;
+    await cmdIgnora(inbound, String(n));
+    return true;
   };
 
   // ---- commands -----------------------------------------------------------
@@ -7689,6 +7707,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
           // «para» con una vista en directo abierta en este chat: la para como /screen off.
           if (await stopLiveByWords(inbound)) return;
+          // «descarta el 3»: descarta el aviso [#3] como /ignora 3.
+          if (await ignoraByWords(inbound)) return;
           // «ya está» con una grabación de /learn en curso: la cierra como /learn end.
           if (LEARN_END_RESPUESTA.test(inbound.text.trim())) {
             const learnThread = await resolveThread(inbound);

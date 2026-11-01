@@ -206,7 +206,7 @@ export function dismissNotice(db: DatabaseSync, n: number, now: number): Dismiss
     .prepare("SELECT 1 AS x FROM vigilante_notices WHERE n = ? AND status = 'reservado'")
     .get(n);
   if (pend) {
-    return { ok: false, error: `El aviso #${n} se está enviando; repite /ignora en un momento.` };
+    return { ok: false, error: `El aviso #${n} se está enviando; dímelo otra vez en un momento.` };
   }
   const notice = db
     .prepare("SELECT * FROM vigilante_notices WHERE n = ? AND status = 'enviado'")
@@ -326,5 +326,23 @@ export function formatRules(rules: ReturnType<typeof listRules>): string {
     (r) =>
       `• R${r.id} [${r.status}] ${r.kind} · ${r.src} · «${r.pattern}» (avisos distintos descartados: ${r.dismissed})`,
   );
-  return `Reglas de ignorar:\n${lines.join('\n')}\nActivar una propuesta: /ignorados activar <id>. Borrar: /ignorados borrar <id>.`;
+  return `Reglas de ignorar:\n${lines.join('\n')}\n¿Activo o borro alguna? Dime, por ejemplo, «activa la R${rules[0]?.id}» o «borra la R${rules[0]?.id}».`;
+}
+
+/** «descarta el 3», «ignora el aviso #3»: el número del aviso a descartar, o null. */
+export function ignoraAnswer(text: string): number | null {
+  const m =
+    /^(?:descarta|ignora|olv[ií]da(?:te\s+de)?)\s+(?:el\s+)?(?:aviso\s+)?(?:#|n[uú]mero\s+)?(\d{1,9})[.!]*$/i.exec(
+      text.trim(),
+    );
+  return m ? Number(m[1]) : null;
+}
+
+/** «activa la R3», «borra la 3»: los argumentos de /ignorados, o null. */
+export function rulesAnswer(text: string): string | null {
+  const m = /^(activa|borra|quita)(?:la|r)?\s+(?:la\s+)?(?:regla\s+)?R?(\d{1,9})[.!]*$/i.exec(
+    text.trim(),
+  );
+  if (!m) return null;
+  return `${(m[1] ?? '').toLowerCase() === 'activa' ? 'activar' : 'borrar'} ${m[2]}`;
 }
