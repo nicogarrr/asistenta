@@ -304,7 +304,7 @@ describe('cableado real en cli.ts', () => {
     const start = source.indexOf('const threadTools = (thread: Thread): AgentTool[] => {');
     const end = source.indexOf('const gateFor = (', start);
     const block = source.slice(start, end);
-    expect(block).toContain('delegateTool(config, () => threadFinal)');
+    expect(block).toMatch(/delegateTool\(\s*config,\s*\(\) => threadFinal/);
     expect(block).toContain('threadFinal = raw.map(');
     expect(block).toContain('return threadFinal;');
   });

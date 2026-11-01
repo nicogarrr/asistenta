@@ -70,7 +70,11 @@ export function createDelegateTool(
   pool: SubagentPool,
   depthOf: () => number,
   /** Herramientas del hilo que delega; sin ellas, las del proceso (ver subagent-runner). */
-  thread?: { parentTools: () => readonly AgentTool[] },
+  thread?: {
+    parentTools: () => readonly AgentTool[];
+    /** Pregunta al humano del hilo; solo la usan los especialistas con efectos. */
+    approve?: (question: string) => Promise<boolean>;
+  },
 ): AgentTool<typeof DelegateParams, DelegateDetails> {
   return {
     name: DELEGATE_TOOL_NAME,
@@ -93,7 +97,14 @@ export function createDelegateTool(
         ...(specialist ? { specialist: specialist.name } : {}),
         ...(args.role ? { role: args.role } : {}),
         ...(args.tools ? { tools: args.tools } : {}),
-        ...(thread ? { context: { parentTools: thread.parentTools } } : {}),
+        ...(thread
+          ? {
+              context: {
+                parentTools: thread.parentTools,
+                ...(thread.approve ? { approve: thread.approve } : {}),
+              },
+            }
+          : {}),
       });
 
       // El modelo debe ver el fallo como texto util, no un contenido vacio; el
