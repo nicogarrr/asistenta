@@ -27,6 +27,7 @@ export type FuncionAreaId =
   | 'memoria'
   | 'modelo'
   | 'sistema'
+  | 'casa'
   | 'gimnasio';
 
 export interface FuncionArea {
@@ -102,6 +103,12 @@ export const FUNCION_AREAS: readonly FuncionArea[] = [
     example: '/estado · /stop',
   },
   {
+    id: 'casa',
+    title: '🏠 Casa',
+    summary: 'luces, enchufes y ventiladores de tu Home Assistant (encender pregunta)',
+    example: '«enciende la luz del salón» · «¿qué luces hay encendidas?»',
+  },
+  {
     id: 'gimnasio',
     title: '🏋️ Gimnasio',
     summary: 'tu entreno y tu peso desde openGym',
@@ -122,6 +129,7 @@ const SECTION_RULES: ReadonlyArray<readonly [RegExp, FuncionAreaId]> = [
   [/correo|aviso/, 'correo'],
   [/\bvoz\b|audio/, 'audio'],
   [/gimnasio|opengym/, 'gimnasio'],
+  [/casa|hogar|domótica|luces/, 'casa'],
 ];
 
 /** Excepciones por comando: van a otra área que la de su sección. */
@@ -257,6 +265,10 @@ export const TOOL_ABILITIES: Readonly<
   book: { area: 'investigar', text: 'busco y descargo libros de dominio público' },
   documents: { area: 'investigar', text: 'guardo tus documentos y busco dentro de ellos' },
   renfe: { area: 'investigar', text: 'busco trenes de Renfe con horario y precio' },
+  casa: {
+    area: 'casa',
+    text: 'enciendo, apago o miro luces, enchufes y ventiladores de tu Home Assistant',
+  },
   vigilar_precio: { area: 'compras', text: 'vigilo el precio de un producto y te aviso si baja' },
   checkout: { area: 'compras', text: 'preparo una compra y te pido permiso antes de pagar' },
   memory: { area: 'memoria', text: 'recuerdo datos tuyos y los uso cuando hacen falta' },
