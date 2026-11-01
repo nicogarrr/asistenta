@@ -283,23 +283,29 @@ export function resolveDay(input: string, now: Date): string | null {
     if (y < 100) y += 2000;
     if (m < 1 || m > 12 || d < 1 || d > 31) return null;
     let day = `${y}-${pad(m)}-${pad(d)}`;
+    const real = (value: string) => localDay(parseDay(value)) === value;
     // «el 1/1» dicho en noviembre sin año: el que viene, como «el 1 de enero». Antes la
-    // tarea quedaba en el 1 de enero que ya pasó.
-    if (dm[3] && !dm[4] && day < today) {
-      y += 1;
-      day = `${y}-${pad(m)}-${pad(d)}`;
-    }
-    if (localDay(parseDay(day)) !== day) return null;
-    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene.
-    if (!dm[3] && day < today) {
-      m += 1;
-      if (m > 12) {
-        m = 1;
+    // tarea quedaba en el 1 de enero que ya pasó. «29/2» sin año en un año que no es
+    // bisiesto: el próximo 29 de febrero (antes se rechazaba).
+    if (dm[3] && !dm[4]) {
+      for (let i = 0; i < 8 && (day < today || !real(day)); i++) {
         y += 1;
+        day = `${y}-${pad(m)}-${pad(d)}`;
       }
-      day = `${y}-${pad(m)}-${pad(d)}`;
-      if (localDay(parseDay(day)) !== day) return null;
     }
+    // «el 3» sin mes ni año ya pasado este mes: el del mes que viene. «el 31» en un mes
+    // de 30 días: el próximo mes que lo tenga (antes se rechazaba).
+    if (!dm[3]) {
+      for (let i = 0; i < 12 && (day < today || !real(day)); i++) {
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+        day = `${y}-${pad(m)}-${pad(d)}`;
+      }
+    }
+    if (!real(day)) return null;
     return day;
   }
   const next = /^(?:proximo\s+)?(\w+)(\s+que viene|\s+de la semana que viene)?$/.exec(text);

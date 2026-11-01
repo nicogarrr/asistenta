@@ -25,7 +25,7 @@ describe('tablero: día con barra, guion o punto', () => {
   });
 
   it('29/2 sin año: el próximo que exista', () => {
-    expect(resolveDay('29/2', now)).toBeNull();
+    expect(resolveDay('29/2', now)).toBe('2028-02-29');
     expect(resolveDay('29/2/2028', now)).toBe('2028-02-29');
   });
 });
