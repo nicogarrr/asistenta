@@ -240,6 +240,15 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       if (!clock || clock.minute !== minute) return null;
       extraHours.push(clock.hour);
     }
+    // «los lunes a las 9 y los jueves a las 5»: otro día con su propia hora. Un cron no
+    // dice dos horarios distintos; antes el segundo se perdía sin avisar.
+    if (
+      new RegExp(
+        `\\by\\s+(?:el\\s+|los\\s+|cada\\s+)?(?:${DAY})\\b.*?\\ba\\s+las?\\s+${CLOCK}`,
+      ).test(rest)
+    ) {
+      return null;
+    }
     const part = timeMatch[6];
     // Solo la tarde o la noche como parte del día («por la tarde», «esta noche», «las
     // tardes»): «no llegar tarde» o «el resumen de anoche» no mueven la hora doce horas.
