@@ -12,6 +12,7 @@
  * Usa la misma cola por hilo que el resto (`queueThreadTurn`), así que espera al turno
  * vivo y se descarta si el hilo se reinició (/nuevo, /borrar_chat) mientras esperaba.
  */
+import { resolveSpecialist } from '../core/specialists.js';
 import { sliceSafe } from '../text.js';
 import { queueThreadTurn } from './inbound.js';
 
@@ -35,6 +36,8 @@ export interface TurnOutput {
    * voz). Devuelve `false` si no cabe: entonces el turno lo manda por el canal, como antes.
    */
   file?(f: TurnFile): boolean;
+  /** Un especialista terminó una tarea delegada (nombre canónico, ver core/specialists). */
+  specialist?(name: string): void;
 }
 
 /** Un archivo enviado por un turno: los bytes y el nombre con que se descarga. */
@@ -103,6 +106,22 @@ export function imageDataUrl(bytes: Buffer): string | null {
   return null;
 }
 
+/**
+ * Línea final de la respuesta del panel con los especialistas que trabajaron, en
+ * orden y sin repetir; un nombre que no está en el registro no sale. `null` si ninguno.
+ */
+export function specialistNote(names: readonly string[]): string | null {
+  const titles: string[] = [];
+  for (const name of names) {
+    const title = resolveSpecialist(name)?.title;
+    if (title && !titles.includes(title)) titles.push(title);
+  }
+  if (titles.length === 0) return null;
+  if (titles.length === 1) return `🧩 Lo hizo el especialista ${titles[0]}.`;
+  const list = `${titles.slice(0, -1).join(', ')} y ${titles[titles.length - 1]}`;
+  return `🧩 Lo hicieron los especialistas ${list}.`;
+}
+
 export interface PanelChatDeps<T extends PanelChatThread> {
   /** Apunta el mensaje para /reintentar (lastTurns), ya dentro de la cola del hilo. */
   remember(thread: T, text: string): void;
@@ -125,6 +144,7 @@ export async function runPanelChat<T extends PanelChatThread>(
     const notes: string[] = [];
     const images: string[] = [];
     const files: PanelFileLink[] = [];
+    const specialists: string[] = [];
     let dropped = 0;
     const direct = deps.command?.(thread, text) ?? null;
     if (direct !== null) return { text: direct };
@@ -146,7 +166,12 @@ export async function runPanelChat<T extends PanelChatThread>(
         files.push({ name: panelFileName(f.name), url: panelFileDataUrl(f) });
         return true;
       },
+      specialist: (name) => {
+        specialists.push(name);
+      },
     });
+    const worked = specialistNote(specialists);
+    if (worked) notes.push(worked);
     if (dropped > 0) notes.push(`(${dropped} imagen(es) más no se muestran en el panel)`);
     const reply = [answer.trim(), ...notes].filter(Boolean).join('\n\n');
     const result: PanelChatReply = { text: reply };

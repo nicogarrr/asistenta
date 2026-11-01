@@ -69,6 +69,18 @@ export interface AgentRunResult {
 }
 
 /**
+ * Especialista que hizo un `delegate` (su resultado ya lo trae en
+ * `details.specialist`); nada si la delegación devolvió un error (no llegó a correr).
+ */
+function delegateSpecialist(tool: string, result: unknown): string | undefined {
+  if (tool !== 'delegate') return undefined;
+  const details = (result as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== 'object') return undefined;
+  const d = details as { specialist?: unknown; error?: unknown };
+  return typeof d.specialist === 'string' && d.error === undefined ? d.specialist : undefined;
+}
+
+/**
  * Progress hook for channels. The summary is deliberately generic — never a command,
  * path, URL, or typed text — because snippets of tool arguments can contain secrets
  * and there is no safe way to scrub them downstream.
@@ -79,7 +91,13 @@ export interface RunHooks {
    * Fin de una herramienta: si salió bien y si fue el control de permisos quien la
    * paró (eso no es un fallo de la herramienta). Sin argumentos ni salida.
    */
-  onToolEnd?: (info: { tool: string; ok: boolean; blocked: boolean }) => void;
+  onToolEnd?: (info: {
+    tool: string;
+    ok: boolean;
+    blocked: boolean;
+    /** Solo `delegate` que llegó a correr: nombre canónico del especialista que lo hizo. */
+    specialist?: string;
+  }) => void;
   /**
    * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
    * el mismo orden en que llega y sin acumular ni trocear. Un delta vacio o
@@ -1315,7 +1333,15 @@ export class PersonalAgent {
         }
         if (hooks?.onToolEnd) {
           try {
-            hooks.onToolEnd({ tool: event.toolName, ok: !event.isError, blocked: gateBlocked });
+            const specialist = event.isError
+              ? undefined
+              : delegateSpecialist(event.toolName, event.result);
+            hooks.onToolEnd({
+              tool: event.toolName,
+              ok: !event.isError,
+              blocked: gateBlocked,
+              ...(specialist ? { specialist } : {}),
+            });
           } catch (err) {
             log.warn('tool end hook failed', { err: String(err) });
           }
