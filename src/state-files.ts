@@ -99,7 +99,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   {
     name: 'autoupdate',
-    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada y el registro de cada fallo (*.log)',
+    what: 'autoactualización desde main: interruptor y último resultado, candado, si está ocupada, los cambios aún por enseñar tras el aviso y el registro de cada fallo (*.log)',
     backup: false,
     why: 'se regenera: el interruptor vuelve a encendido y el resto es diagnóstico',
     retention: 'PA_FILE_RETENTION_DAYS (maintenance.ts, 04:00; apagada por defecto)',

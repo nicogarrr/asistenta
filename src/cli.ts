@@ -56,6 +56,7 @@ import {
   routeReplyToAltavoz,
 } from './audio/altavoz-inbound.js';
 import { ActionLog } from './audit/log.js';
+import { answerPendingNovedades } from './autoupdate-novedades.js';
 import {
   BackupMirrorError,
   backupMirrorNotice,
@@ -7475,6 +7476,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             inbound.chatId === briefingOwner() ? parcelCheckIn.answered(inbound.text) : null;
           if (parcelAnswer) {
             await say(inbound, parcelAnswerReply(parcelAnswer), { quote: true });
+            return;
+          }
+          // «sí» tras «Hay otros N cambios. ¿Quieres verlos?» del aviso de actualización.
+          const novedadesReply =
+            inbound.chatId === briefingOwner()
+              ? answerPendingNovedades(paths.state, inbound.text)
+              : null;
+          if (novedadesReply) {
+            for (const [i, part] of novedadesReply.entries())
+              await say(inbound, part, { quote: i === 0 });
             return;
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
