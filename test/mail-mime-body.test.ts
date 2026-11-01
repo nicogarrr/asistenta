@@ -48,6 +48,28 @@ describe('cuerpo de correo decodificado (MIME)', () => {
     expect(m.text).toBe('Año nuevo');
   });
 
+  it('charset iso-8859-1: el rango 0x80-0x9F sale como windows-1252 (€, «», …) aunque Node lo decodifique mal', () => {
+    const head = Buffer.from(
+      'Subject: x\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: 8bit\r\n\r\n',
+    );
+    // "12,50 €" · «…» · comillas tipográficas y raya, en bytes windows-1252.
+    const body = Buffer.from([
+      0x31, 0x32, 0x2c, 0x35, 0x30, 0x20, 0x80, 0x20, 0x85, 0x20, 0x93, 0x6c, 0x69, 0x73, 0x74,
+      0x6f, 0x94, 0x20, 0x96,
+    ]);
+    const m = toMessage({ uid: 6, source: Buffer.concat([head, body]) }, 'INBOX');
+    expect(m.text).toBe('12,50 € … “listo” –');
+    expect(m.text).not.toMatch(/[\u0080-\u009F]/);
+  });
+
+  it('charset windows-1252 en quoted-printable: igual, con el decodificador nativo roto o sano', () => {
+    const source = crlf(
+      'Subject: x\nContent-Type: text/plain; charset="windows-1252"\nContent-Transfer-Encoding: quoted-printable\n\nTotal: 10=80 =93sí=94',
+    );
+    const m = toMessage({ uid: 7, source: Buffer.from(source, 'latin1') }, 'INBOX');
+    expect(m.text).toBe('Total: 10€ “sí”');
+  });
+
   it('entidades: &amp;lt; no se decodifica dos veces', () => {
     const source = crlf('Subject: x\nContent-Type: text/html\n\n<p>a &amp;lt; b</p>');
     expect(extractBodyText(source).trim()).toBe('a &lt; b');

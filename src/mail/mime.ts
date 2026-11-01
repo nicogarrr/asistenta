@@ -12,6 +12,8 @@
  * cualquier parte rara se salta en vez de lanzar.
  */
 
+import { decodeWin1252, WIN1252_LABELS, win1252NativeOk } from '../win1252.js';
+
 const MAX_DEPTH = 8;
 
 interface Part {
@@ -90,10 +92,16 @@ function decodeTransfer(body: string, encoding: string): Buffer {
 
 function decodeCharset(bytes: Buffer, charset: string | undefined): string {
   const label = (charset ?? 'utf-8').trim().toLowerCase();
+  if (label === 'us-ascii' || label === 'ascii') {
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  // Familia windows-1252 con el decodificador nativo roto (ver win1252.ts):
+  // el € y las comillas tipográficas de un correo latin1 salían como controles C1.
+  if (WIN1252_LABELS.has(label) && !win1252NativeOk()) {
+    return decodeWin1252(bytes);
+  }
   try {
-    return new TextDecoder(label === 'us-ascii' || label === 'ascii' ? 'utf-8' : label).decode(
-      bytes,
-    );
+    return new TextDecoder(label).decode(bytes);
   } catch {
     return new TextDecoder('utf-8').decode(bytes);
   }

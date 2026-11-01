@@ -9,6 +9,7 @@ import {
   type TranscriptResult,
 } from '../media/transcript.js';
 import { normalizeHostname } from '../text.js';
+import { decodeWin1252, WIN1252_LABELS, win1252NativeOk } from '../win1252.js';
 
 /**
  * Read a web page, or fetch a URL the user pasted in chat.
@@ -286,84 +287,6 @@ export interface FetchedPage {
  * 30 s del timeout (cientos de MB) antes de recortar a `maxChars`.
  */
 export const MAX_FETCH_BYTES = 10 * 1024 * 1024;
-
-/** Etiquetas que WHATWG equipara a windows-1252 (iso-8859-1, latin1, us-ascii…). */
-const WIN1252_LABELS = new Set([
-  'windows-1252',
-  'cp1252',
-  'x-cp1252',
-  'iso-8859-1',
-  'iso8859-1',
-  'iso_8859-1',
-  'iso_8859-1:1987',
-  'latin1',
-  'l1',
-  'csisolatin1',
-  'us-ascii',
-  'ascii',
-  'ansi_x3.4-1968',
-  'cp819',
-  'ibm819',
-  'iso-ir-100',
-]);
-
-/** Rango 0x80-0x9F: lo que windows-1252 imprime donde latin1 solo tiene controles C1. */
-const WIN1252_HIGH: Record<number, string> = {
-  128: '\u20AC',
-  130: '\u201A',
-  131: '\u0192',
-  132: '\u201E',
-  133: '\u2026',
-  134: '\u2020',
-  135: '\u2021',
-  136: '\u02C6',
-  137: '\u2030',
-  138: '\u0160',
-  139: '\u2039',
-  140: '\u0152',
-  142: '\u017D',
-  145: '\u2018',
-  146: '\u2019',
-  147: '\u201C',
-  148: '\u201D',
-  149: '\u2022',
-  150: '\u2013',
-  151: '\u2014',
-  152: '\u02DC',
-  153: '\u2122',
-  154: '\u0161',
-  155: '\u203A',
-  156: '\u0153',
-  158: '\u017E',
-  159: '\u0178',
-};
-
-function decodeWin1252(bytes: Uint8Array): string {
-  const chars: string[] = new Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) {
-    const b = bytes[i] as number;
-    chars[i] = WIN1252_HIGH[b] ?? String.fromCharCode(b);
-  }
-  return chars.join('');
-}
-
-/**
- * Node 24.11.0 devuelve los bytes 0x80-0x9F como controles C1 en crudo para
- * windows-1252 (su TextDecoder se salta la tabla): el «€», las comillas
- * tipográficas y la raya salian rotos en paginas ISO-8859-1/windows-1252.
- * Se detecta una vez y solo entonces se decodifica con la tabla propia.
- */
-let nativeWin1252Ok: boolean | undefined;
-function win1252NativeOk(): boolean {
-  if (nativeWin1252Ok === undefined) {
-    try {
-      nativeWin1252Ok = new TextDecoder('windows-1252').decode(Uint8Array.of(0x80)) === '\u20AC';
-    } catch {
-      nativeWin1252Ok = false;
-    }
-  }
-  return nativeWin1252Ok;
-}
 
 /** Juego de caracteres declarado: cabecera Content-Type o, si no, `<meta charset>`. */
 function charsetOf(contentType: string, bytes: Uint8Array): string {
