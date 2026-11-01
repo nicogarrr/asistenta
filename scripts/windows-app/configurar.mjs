@@ -14,6 +14,7 @@ export function configurarDeps(base, cwd) {
   return {
     ...base,
     cwd,
+    instalado: true,
     internet: undefined,
     npm: async () => true,
     run: async (cmd, args) => (cmd === 'npm' ? 0 : base.run(cmd, args)),
