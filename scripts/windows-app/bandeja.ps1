@@ -173,6 +173,22 @@ $lento.Interval = 60000
 $lento.add_Tick({ Update-Estado })
 $lento.Start()
 
+# Primer arranque sin configurar (aún no hay .env): encenderla solo daría un punto rojo.
+# Se abre «Configurar Asistenta» (token, clave, tu ID y tu nombre, sin tocar el .env) y,
+# cuando termina, se sigue como siempre. Si ya está abierto (página final del
+# instalador), se espera a ese en vez de abrir otro.
+$configurar = Join-Path $app 'scripts\windows-app\configurar.mjs'
+if (-not (Test-Path -LiteralPath (Join-Path $app '.env')) -and (Test-Path -LiteralPath $configurar)) {
+    $p = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*configurar.mjs*' } | Select-Object -First 1
+    if ($p) { $p = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue }
+    else {
+        Show-Aviso 'Antes de empezar necesito un par de datos: te abro «Configurar Asistenta».'
+        $p = Start-Process -FilePath $node -ArgumentList "`"$configurar`"" -WorkingDirectory $app -PassThru
+    }
+    while ($p -and -not $p.HasExited) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 500 }
+}
+
 # Al abrir: si Asistenta no está en marcha, se da un margen a la tarea de arranque
 # automático (al encender el PC) y, si sigue parada, se enciende.
 Update-Estado
