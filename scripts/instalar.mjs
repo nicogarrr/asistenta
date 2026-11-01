@@ -5,7 +5,7 @@
 // Telegram. Los secretos van por `pa vault set-stdin` (nunca en la línea de
 // órdenes ni en pantalla). Sin dependencias: corre antes de `npm ci`.
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
@@ -54,6 +54,51 @@ export function envText(file = '.env') {
   if (buf[0] === 0xfe && buf[1] === 0xff)
     return Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
   return buf.toString('utf8');
+}
+
+/**
+ * El .env con `clave=valor` puesto: cambia la última línea activa, o si no la de ejemplo
+ * comentada (`# CLAVE=…`), o si no la añade al final. Así nadie tiene que abrir el .env.
+ * El valor va en una sola línea; con espacios o # va entre comillas.
+ */
+export function conValor(text, key, value) {
+  const v = String(value)
+    .replace(/[\r\n"\\]/g, ' ')
+    .trim();
+  const line = `${key}=${/[\s#'=]/.test(v) ? `"${v}"` : v}`;
+  const lines = String(text ?? '').split(/\r?\n/);
+  const find = (re) => lines.findLastIndex((l) => re.test(l));
+  let i = find(new RegExp(`^\\s*${key}\\s*=`));
+  if (i < 0) i = find(new RegExp(`^\\s*#\\s*${key}\\s*=`));
+  if (i >= 0) lines[i] = line;
+  else {
+    if (lines.length && lines.at(-1) === '') lines.pop();
+    lines.push(line, '');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * En la copia del instalador .exe no hay instalar.bat ni levantar.bat: el asistente se
+ * abre con «Configurar Asistenta» del menú Inicio. Los mensajes dicen eso.
+ */
+export function paraInstalado(s) {
+  return s
+    .replaceAll(
+      'volver a abrir instalar.bat',
+      'volver a abrir «Configurar Asistenta» (menú Inicio)',
+    )
+    .replaceAll(
+      'vuelve a abrir instalar.bat',
+      'vuelve a abrir «Configurar Asistenta» (menú Inicio)',
+    )
+    .replaceAll(
+      'Vuelve a abrir instalar.bat',
+      'Vuelve a abrir «Configurar Asistenta» (menú Inicio)',
+    )
+    .replaceAll('Abre instalar.bat', 'Abre «Configurar Asistenta» (menú Inicio)')
+    .replaceAll('abre instalar.bat', 'abre «Configurar Asistenta» (menú Inicio)')
+    .replaceAll('Has abierto instalar.bat', 'Has abierto «Configurar Asistenta»');
 }
 
 /**
@@ -170,7 +215,7 @@ const encendida = (parar) =>
   `Asistenta sigue encendida y así Windows no deja cambiar sus archivos. Apágala (cierra la ventana de levantar.bat o escribe ${parar}) y vuelve a abrir instalar.bat.`;
 
 export async function instalar(d) {
-  const say = (s) => d.write(`${s}\n`);
+  const say = (s) => d.write(`${d.instalado ? paraInstalado(s) : s}\n`);
   const fail = (s) => {
     say(`✗ ${s}`);
     return 1;
@@ -389,7 +434,35 @@ export async function instalar(d) {
     );
   }
 
+  // Tu nombre, sin abrir el .env: lo usa al registrarte en una web cuando se lo pides.
+  if (d.setEnv) {
+    let ya = String(d.env?.PA_OWNER_NAME ?? '').trim();
+    try {
+      ya ||= String(parseEnv(d.readEnv() ?? '').PA_OWNER_NAME ?? '').trim();
+    } catch {}
+    if (ya) say(`✓ Te llamas ${ya}`);
+    else {
+      const nombre = (
+        await d.ask(
+          '¿Cómo te llamas? Lo pongo cuando me pidas registrarte en una web (Enter para saltar): ',
+        )
+      )
+        .replace(/[\r\n"\\]/g, ' ')
+        .trim()
+        .slice(0, 80);
+      if (nombre) {
+        try {
+          d.setEnv('PA_OWNER_NAME', nombre);
+          say(`✓ Encantada, ${nombre}`);
+        } catch {
+          say('⚠ No he podido guardar tu nombre; me lo puedes decir luego por Telegram.');
+        }
+      }
+    }
+  }
+
   say('');
+  if (d.instalado) return 0; // «Configurar Asistenta» la deja encendida junto al reloj.
   say('Listo. Para encender Asistenta: doble clic en levantar.bat.');
   say('Para que arranque sola con Windows: node dist\\cli.js autostart install --start');
   return 0;
@@ -452,6 +525,7 @@ export const realDeps = {
     }
   },
   readEnv: () => envText('.env'),
+  setEnv: (key, value) => writeFileSync('.env', conValor(envText('.env'), key, value), 'utf8'),
   // `pa --help` carga el programa compilado; la ayuda no se enseña.
   arranca: async () =>
     spawnSync(process.execPath, cliArgs(['--help']), { stdio: 'ignore', timeout: 60_000 })
