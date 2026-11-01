@@ -123,6 +123,6 @@ describe('google oauth', () => {
     });
     await expect(auth.accessToken()).rejects.toBeInstanceOf(GoogleNotConnectedError);
     expect(vault.m.has(GOOGLE_KEYS.refreshToken)).toBe(false);
-    await expect(auth.accessToken()).rejects.toThrow(/conecta mi Google/);
+    await expect(auth.accessToken()).rejects.toThrow(/pa google conectar/);
   });
 });

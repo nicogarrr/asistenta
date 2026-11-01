@@ -20,8 +20,6 @@ const KNOWN_UNWIRED: Record<string, string> = {
   'src/tools/renfe.ts':
     'herramienta usada solo por las evals; falta decidir si se ofrece al agente',
   'src/tv/diagnostics.ts': 'rescate telnet de la tele (#145), solo manual; no se toca la TV',
-  'src/google/oauth.ts':
-    'primera pieza de Google OAuth (PKCE); el comando `pa google conectar|estado|desconectar` la conecta en la siguiente PR',
 };
 
 function walk(dir: string): string[] {
