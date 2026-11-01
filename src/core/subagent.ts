@@ -58,6 +58,11 @@ export interface SubagentRequest {
   tools?: string[];
   /** Especialista con nombre (core/specialists.ts); desconocido = hijo generico. */
   specialist?: string;
+  /**
+   * Contexto del hilo que delega, opaco para el pool (p. ej. sus herramientas).
+   * Se pasa tal cual al ejecutor; nunca lleva el transcript del padre.
+   */
+  context?: unknown;
 }
 
 /** Lo que recibe el ejecutor inyectado. No incluye el transcript del padre. */
@@ -68,6 +73,8 @@ export interface SubagentRunRequest {
   tools?: readonly string[];
   /** Especialista pedido por el padre; lo resuelve el ejecutor. */
   specialist?: string;
+  /** Contexto del hilo (ver SubagentRequest.context). */
+  context?: unknown;
   depth: number;
   budget: unknown;
 }
@@ -202,6 +209,7 @@ export class SubagentPool {
     const task = request.task;
     const role = request.role;
     const specialist = typeof request.specialist === 'string' ? request.specialist : undefined;
+    const context = request.context;
     const tools =
       request.tools === undefined
         ? undefined
@@ -209,7 +217,7 @@ export class SubagentPool {
 
     await this.#acquire();
     try {
-      return await this.#execute(task, depth, tools, role, specialist);
+      return await this.#execute(task, depth, tools, role, specialist, context);
     } finally {
       this.#release();
     }
@@ -243,6 +251,7 @@ export class SubagentPool {
     toolNames: string[] | undefined,
     role?: string,
     specialist?: string,
+    context?: unknown,
   ): Promise<SubagentResult> {
     const controller = new AbortController();
     const budget: SubagentBudget = Object.freeze({
@@ -267,6 +276,7 @@ export class SubagentPool {
           budget,
           ...(role ? { role } : {}),
           ...(specialist ? { specialist } : {}),
+          ...(context !== undefined ? { context } : {}),
           ...(toolNames ? { tools: Object.freeze([...toolNames]) } : {}),
         }),
         timeout,
