@@ -513,7 +513,7 @@ import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTasksTool } from './tools/tasks.js';
-import { createTraficoTool } from './tools/trafico.js';
+import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
 import { createTvTool } from './tools/tv.js';
 import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
@@ -2215,7 +2215,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
       createWeatherTool(() => weatherConfigFromEnv()),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
-      createTraficoTool(),
+      // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
+      createTraficoTool({
+        store,
+        scopeOf: scope,
+        sync: () => routineRunner.sync(),
+        delivery: {
+          set: (s, name, setting) => routineDelivery.set(s, name, setting),
+          commit: (s, name, hash) => routineDelivery.commit(s, name, hash),
+        },
+        vistos: {
+          get: (s, name) => traficoVistos.get(s, name),
+          set: (s, name, value) => traficoVistos.set(s, name, value),
+        },
+      }),
       // Home Assistant local, solo si el dueño puso PA_HA_URL (token en el vault).
       ...(process.env.PA_HA_URL?.trim()
         ? [
@@ -2890,6 +2903,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const runRoutineTask = createRoutineTask(threadTickDeps);
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
+  const traficoVistos = new TraficoVistosStore(join(paths.state, 'trafico-avisos.json'));
   const sendToChat = (
     chatId: string,
     text: string,
