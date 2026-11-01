@@ -3,7 +3,7 @@
  * (src/funciones.ts, sacados del catálogo de /help), en solo lectura. El panel es del
  * dueño (loopback + token), así que ve también los comandos solo-dueño.
  */
-import { FUNCION_AREAS, funcionCommands, visibleAreas } from '../funciones.js';
+import { areaAbilities, FUNCION_AREAS, funcionCommands, visibleAreas } from '../funciones.js';
 
 export interface PanelFuncionComando {
   /** «/comando [args]», tal y como se escribe en Telegram. */
@@ -17,6 +17,8 @@ export interface PanelFuncionArea {
   resumen: string;
   ejemplo: string;
   comandos: PanelFuncionComando[];
+  /** Líneas «Pídemelo con tus palabras», como en Telegram (áreas sin comando). */
+  habilidades: string[];
 }
 
 export function panelFunciones(): PanelFuncionArea[] {
@@ -33,5 +35,6 @@ export function panelFunciones(): PanelFuncionArea[] {
         comando: `/${c.command}${c.args ? ` ${c.args}` : ''}`,
         descripcion: c.description,
       })),
+    habilidades: areaAbilities({ owner: true }, a.id),
   }));
 }

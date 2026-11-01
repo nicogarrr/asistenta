@@ -18,6 +18,7 @@ interface Area {
   resumen: string;
   ejemplo: string;
   comandos: { comando: string; descripcion: string }[];
+  habilidades: string[];
 }
 
 describe('panel: vista Funciones (la misma lista que /funciones en Telegram)', () => {
@@ -33,7 +34,10 @@ describe('panel: vista Funciones (la misma lista que /funciones en Telegram)', (
         expect(a.titulo).toBeTruthy();
         expect(a.resumen).toBeTruthy();
         expect(a.ejemplo).toBeTruthy();
-        expect(a.comandos.length).toBeGreaterThan(0);
+        expect(
+          a.comandos.length + a.habilidades.length,
+          `área ${a.id} sin comandos ni habilidades`,
+        ).toBeGreaterThan(0);
         for (const c of a.comandos) expect(c.comando.startsWith('/')).toBe(true);
       }
       const todos = areas.flatMap((a) => a.comandos.map((c) => c.comando.split(' ')[0]));
