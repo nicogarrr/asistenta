@@ -63,6 +63,11 @@ export function vaultSplitValueText(pieces: number): string {
   return `No he guardado nada: el valor tiene espacios y me llegó partido en ${pieces} trozos. Ponlo entre comillas ("…") o, mejor, usa pa vault set-stdin <nombre> y pégalo.\n`;
 }
 
+/** `pa vault set` con el valor vacío (p. ej. una variable sin definir). */
+export function vaultEmptyValueText(): string {
+  return 'No he guardado nada: el valor está vacío. Usa pa vault set-stdin <nombre> y pégalo.\n';
+}
+
 /** `pa vault` sin orden o con una mal escrita: ayuda corta, no la de `pa` entera. */
 export function vaultUsageText(sub?: string): string {
   const head = sub ? `No conozco «${sub}» en pa vault.\n` : '';
