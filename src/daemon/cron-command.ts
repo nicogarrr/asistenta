@@ -19,6 +19,7 @@ import {
 } from '../command-routine.js';
 import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
+import { localDay } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
 import type { GoalStore } from '../goals/store.js';
@@ -102,7 +103,14 @@ export function formatNextRun(at: number, now = Date.now()): string {
   if (delta <= 0) return `${stamp} (ya)`;
   // Whole units chosen before rounding, so half an hour never rounds up into
   // "en 1 h" and reads wrong for the next thirty minutes.
-  if (delta >= 2 * DAY_MS) return `${stamp} (en ${Math.round(delta / DAY_MS)} d)`;
+  if (delta >= 2 * DAY_MS) {
+    // Días del calendario, no horas redondeadas: 60 h que caen pasado mañana son «en 2 d».
+    const utc = (t: number): number => {
+      const [y, m, dd] = localDay(t).split('-').map(Number);
+      return Date.UTC(y ?? 0, (m ?? 1) - 1, dd ?? 1);
+    };
+    return `${stamp} (en ${Math.round((utc(at) - utc(now)) / DAY_MS)} d)`;
+  }
   if (delta >= 3_600_000) return `${stamp} (en ${Math.round(delta / 3_600_000)} h)`;
   return `${stamp} (en ${Math.max(1, Math.round(delta / 60_000))} min)`;
 }
