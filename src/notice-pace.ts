@@ -77,8 +77,18 @@ export function recordDismissal(db: DatabaseSync, now: number): Pace | null {
   return next;
 }
 
+/** Cómo cambiar el ritmo en palabras; la respuesta la lee `paceAnswer` (sin escribir comandos). */
+export const PACE_CHANGE_HINT =
+  'Si lo quieres cambiar, dime «menos avisos», «solo lo importante» o «normal».';
+
+/** La respuesta en texto normal a `PACE_CHANGE_HINT` («menos avisos», «normal»…), o null. */
+export function paceAnswer(text: string): Pace | null {
+  const p = parsePace(text.replace(/[«»"'.,!¡?¿]/g, ' ').replace(/\s+/g, ' '));
+  return p === null || p === 'estado' ? null : p;
+}
+
 export function paceText(pace: Pace): string {
   const l = PACE_LIMITS[pace];
   const gap = l.cooldownMs / HOUR;
-  return `Ritmo de avisos: ${pace}. Máximo ${l.noticesPerDay} aviso(s) del filtro de correo/citas cada 24 h, con al menos ${gap >= 1 ? `${gap} h` : '30 min'} entre ellos. Los recordatorios de plazos y pagos no cambian. /avisos menos | minimo | normal.`;
+  return `Ritmo de avisos: ${pace}. Máximo ${l.noticesPerDay} aviso(s) del filtro de correo/citas cada 24 h, con al menos ${gap >= 1 ? `${gap} h` : '30 min'} entre ellos. Los recordatorios de plazos y pagos no cambian. ${PACE_CHANGE_HINT}`;
 }
