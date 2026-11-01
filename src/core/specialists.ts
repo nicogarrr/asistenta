@@ -32,6 +32,11 @@ export interface SpecialistSpec {
   readonly actions?: Readonly<Record<string, readonly string[]>>;
   /** true = sus herramientas tienen efectos y cada accion vuelve a pedir permiso. */
   readonly effectful: boolean;
+  /**
+   * Que cambia, en palabras de Nico, para el aviso de «sin forma de pedirte
+   * permiso» (por defecto «actúa sobre aparatos o cuentas»).
+   */
+  readonly changes?: string;
   /** Ejemplos de tareas que encajan, para la descripcion de `delegate`. */
   readonly examples: readonly string[];
 }
@@ -107,6 +112,7 @@ export const SPECIALISTS: Readonly<Record<string, SpecialistSpec>> = Object.free
       reminder: ['list', 'create', 'cancel'],
     },
     effectful: true,
+    changes: 'cambia tus notas o recordatorios',
     examples: [
       'apunta varias cosas y recuérdamelas',
       'repasa mis recordatorios y quita los viejos',

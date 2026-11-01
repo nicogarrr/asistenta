@@ -245,7 +245,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
       if (specialist?.effectful && !approve) {
         return {
           text: '',
-          error: `El especialista ${specialist.title} actúa sobre aparatos o cuentas y aquí no tiene forma de pedirte permiso; no se ejecuta.`,
+          error: `El especialista ${specialist.title} ${specialist.changes ?? 'actúa sobre aparatos o cuentas'} y aquí no tiene forma de pedirte permiso; no se ejecuta.`,
         };
       }
       const budget = readBudget(request.budget);
