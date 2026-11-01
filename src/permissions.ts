@@ -1652,6 +1652,8 @@ export class Gate {
       case 'windows':
       case 'ocr':
       case 'cargar_herramienta':
+      // «¿El lunes es festivo?»: solo el servicio fijo de festivos; sin URL del modelo.
+      case 'festivos':
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
         return 'lee';
@@ -2655,6 +2657,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'windows',
   'ocr',
   'repartos',
+  'festivos',
   'cargar_herramienta',
   'tiempo',
   'luz',

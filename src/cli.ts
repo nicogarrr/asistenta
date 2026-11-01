@@ -472,6 +472,7 @@ import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createFactoryTool } from './tools/factory.js';
+import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGestionTool } from './tools/gestion.js';
@@ -2170,6 +2171,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         isFetchable: (url) => isFetchableResolved(url),
       }),
       createAgendaTool((days) => personalAgenda(inboundFor(thread), days)),
+      createFestivosTool(),
       createDeliveriesTool({
         db: memoryDb,
         recentMail: async (since) => {
