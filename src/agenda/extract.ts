@@ -558,7 +558,32 @@ function relativeHit(
 }
 
 /** The best date in the text, or nothing. Never a guess. */
+/**
+ * «se mueve al», «queda aplazada al», «pasa al», «nueva fecha:»: lo que viene detrás es
+ * la fecha que vale. Se mira el final del texto justo antes de la fecha.
+ */
+const MOVED_TO_RE =
+  /(?:\b(?:mueve|movid[ao]|cambia|cambiad[ao]|pasa|pasad[ao]|traslada|trasladad[ao]|aplaza|aplazad[ao]|pospone|pospuest[ao]|retrasa|retrasad[ao]|adelanta|adelantad[ao]|reprograma|reprogramad[ao])\s+(?:al?|para|hasta)|\bnueva fecha\s*:?|\b(?:moved|rescheduled|postponed)\s+(?:to|for|until)(?: the)?)(?:\s+(?:el|la|del|dia|para|hasta))*\s*$/;
+
+function movedTo(folded: string, index: number, text: string): boolean {
+  // Algunas reglas empiezan con «el» o «para el»: cuentan como parte del texto de antes.
+  const lead = /^(?:(?:el|del|para|hasta|dia)\s+)*/.exec(text)?.[0].length ?? 0;
+  return MOVED_TO_RE.test(folded.slice(Math.max(0, index - 40), index + lead));
+}
+
 function bestDate(folded: string, ctx: Context): DateHit | undefined {
+  // «La reunión del lunes 2 se mueve al martes 3», «su cita del 5 queda aplazada al 12»:
+  // antes ganaba la primera fecha (la que ya no vale) y la agenda apuntaba la cita vieja.
+  for (const entry of DATE_RULES) {
+    const scanner = new RegExp(entry.re.source, 'gu');
+    let best: DateHit | undefined;
+    for (let match = scanner.exec(folded); match; match = scanner.exec(folded)) {
+      if (!movedTo(folded, match.index, match[0])) continue;
+      const hit = entry.build(match, ctx);
+      if (hit && (!best || hit.specificity > best.specificity)) best = hit;
+    }
+    if (best) return best;
+  }
   for (const entry of DATE_RULES) {
     const scanner = new RegExp(entry.re.source, 'gu');
     let best: DateHit | undefined;
