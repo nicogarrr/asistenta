@@ -3107,7 +3107,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'Uso: /correo estado, /correo lista o /correo responder UIDVALIDITY:UID seguido de una nueva línea con el texto exacto (máximo 2500 caracteres).',
+        'No te he entendido. Con /correo estado te digo cómo va el correo y con /correo lista te enseño los últimos. Para contestar uno, responde a su aviso con /correo responder y, en la línea de abajo, el texto exacto (hasta 2500 caracteres).',
         { quote: true },
       );
       return;
@@ -3142,7 +3142,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!mode) {
       await say(
         inbound,
-        'Uso: manda un PDF o una foto con el pie «/ocr» (PDF con texto), «/ocr md» (Markdown) o «/ocr todo» (los dos).',
+        'Mándame el PDF o la foto y escribe /ocr en el pie: te devuelvo el texto. Si lo quieres con formato, pon /ocr md, y /ocr todo para las dos cosas.',
         { quote: true },
       );
       return;
@@ -3563,7 +3563,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           `Conversaciones abiertas: ${open.length}`,
           ...open.map((t) => `- ${t.name}${t.name === current ? ' (activa)' : ''}: ${t.label}`),
           '',
-          'Usa /topic <nombre> para abrir una conversación nueva y /topics para verlas.',
+          'Para abrir otra, ponle nombre, por ejemplo /topic viaje. Con /topics las ves todas.',
         ].join('\n'),
         { quote: true },
       );
@@ -4109,7 +4109,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!parsed || !rawUrl) {
       return void (await say(
         inbound,
-        'Uso: /vigila <enlace> [objetivo=500€] [baja=15%] [palabra=agotado] [nombre]. Te aviso si cambia el precio, si baja de tu objetivo o un %, o si esa palabra aparece o desaparece. Si reconfiguras el mismo enlace, objetivo= y baja= reemplazan ambos ajustes anteriores: repite los dos si quieres conservarlos. /vigilando para ver la lista, /precio <id> para el histórico, /dejar_de_vigilar <id> para quitar una.',
+        '¿Qué página vigilo? Pásame el enlace, por ejemplo: /vigila https://tienda.es/producto objetivo=500€. Te aviso si cambia el precio o baja de tu objetivo; también vale baja=15% o palabra=agotado. Si cambias el objetivo de un enlace que ya vigilo, repite también baja= si quieres conservarlo. Con /vigilando ves la lista con el código de cada una: /precio a1b2 te da su histórico y /dejar_de_vigilar a1b2 la quita.',
         { quote: true },
       ));
     }
@@ -4189,7 +4189,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!url) {
       return void (await say(
         inbound,
-        'Uso: /compara <enlace de una ficha>. Busco ese mismo producto en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
+        '¿Qué producto comparo? Pásame el enlace de su ficha, por ejemplo: /compara https://tienda.es/producto. Lo busco en Amazon, MediaMarkt, PcComponentes, Carrefour, El Corte Inglés, Fnac y Worten, y te digo el precio verificado en cada una.',
         { quote: true },
       ));
     }
@@ -4263,7 +4263,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!question) {
       return void (await say(
         inbound,
-        'Uso: /investiga <pregunta>. Hago un plan de sub-preguntas, busco y leo varias fuentes con el enrutador web (gratis) y te mando un informe con cada afirmacion citada [n] a su fuente verbatim. Lo que no pueda verificar queda marcado como tal.',
+        '¿Qué investigo? Por ejemplo: /investiga ¿merece la pena la aerotermia en Madrid? Leo varias fuentes y te mando un informe con cada dato citado a su fuente. Lo que no pueda comprobar te lo marco.',
         { quote: true },
       ));
     }
@@ -4281,7 +4281,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!parsed) {
         return void (await say(
           inbound,
-          `Uso: /investiga amplio <pregunta> | elemento1, elemento2, ... (hasta ${WIDE_MAX_ITEMS}). Ejemplo: /investiga amplio precio y garantia | iPhone 16, Pixel 9, Galaxy S25`,
+          `Dime qué quieres saber y de qué cosas (hasta ${WIDE_MAX_ITEMS}), separando con una barra. Por ejemplo: /investiga amplio precio y garantía | iPhone 16, Pixel 9, Galaxy S25`,
           { quote: true },
         ));
       }
@@ -5129,7 +5129,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
     const days = parseUsageDays(args);
     if (days === null) {
-      await say(inbound, 'Uso: /consumo [hoy|semana|mes|1-31]', { quote: true });
+      await say(
+        inbound,
+        'No te he entendido. Prueba /consumo hoy, /consumo semana, /consumo mes o un número de días, como /consumo 10.',
+        { quote: true },
+      );
       return;
     }
     const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
@@ -5221,7 +5225,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!want) {
       await say(
         inbound,
-        'Uso: /resolver <id del pendiente>. Mira los pendientes con /pendientes.',
+        '¿Cuál doy por resuelto? Mira /pendientes y dime su código o una palabra, por ejemplo /resolver factura.',
         { quote: true },
       );
       return;
@@ -5521,13 +5525,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const m = /^(?:add|anadir|añadir)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
     if (!m) {
-      await say(inbound, 'Uso: /calendario add 2026-11-02 18:00 | Dentista', { quote: true });
+      await say(
+        inbound,
+        'Para apuntar algo, escribe la fecha, la hora y qué es, por ejemplo: /calendario add 2026-11-02 18:00 | Dentista.',
+        { quote: true },
+      );
       return;
     }
     const start = new Date((m[1] ?? '').trim());
     const title = (m[2] ?? '').trim();
     if (Number.isNaN(start.getTime()) || !title) {
-      await say(inbound, 'Fecha no válida. Usa 2026-11-02 18:00 | Título.', { quote: true });
+      await say(inbound, 'No entiendo esa fecha. Escríbela así: 2026-11-02 18:00 | Dentista.', {
+        quote: true,
+      });
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
@@ -8080,7 +8090,8 @@ export function vigilanciasReply(
 }
 
 export function formatWatchList(list: readonly PageWatch[]): string {
-  if (!list.length) return 'No vigilo ninguna página. Prueba /vigila <enlace>.';
+  if (!list.length)
+    return 'No vigilo ninguna página. Pásame un enlace, por ejemplo: /vigila https://tienda.es/producto';
   return [
     `Páginas vigiladas: ${list.length}`,
     ...list.map(
