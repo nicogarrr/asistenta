@@ -35,10 +35,10 @@ function learn(topic: string, rule: string, telegram = true) {
 describe('«📝 Aprendido» dice cómo borrarla', () => {
   it('en Telegram añade el número de /olvida, y ese número borra justo esa regla', () => {
     expect(learn('formato', 'Respuestas cortas').line).toBe(
-      '📝 Aprendido: Respuestas cortas (/olvida 1 para borrarla)',
+      '📝 Aprendido: Respuestas cortas (si no la quieres, dime «olvida la regla 1»)',
     );
     expect(learn('saludo', 'Sin saludos al empezar').line).toBe(
-      '📝 Aprendido: Sin saludos al empezar (/olvida 1 para borrarla)',
+      '📝 Aprendido: Sin saludos al empezar (si no la quieres, dime «olvida la regla 1»)',
     );
     expect(forgetLearnedRule(memory, [SCOPE], '1')).toBe('🗑️ Olvidada: Sin saludos al empezar');
     expect(learnedRules(memory, [SCOPE]).map((r) => r.text)).toEqual(['Respuestas cortas']);
@@ -48,7 +48,7 @@ describe('«📝 Aprendido» dice cómo borrarla', () => {
     learn('formato', 'Respuestas cortas');
     learn('saludo', 'Sin saludos al empezar');
     const out = learn('formato', 'Respuestas muy cortas');
-    const n = Number(/\/olvida (\d+)/.exec(out.line ?? '')?.[1]);
+    const n = Number(/olvida la regla (\d+)/.exec(out.line ?? '')?.[1]);
     expect(n).toBeGreaterThanOrEqual(1);
     expect(forgetLearnedRule(memory, [SCOPE], String(n))).toBe('🗑️ Olvidada: Respuestas muy cortas');
   });
