@@ -210,6 +210,12 @@ import {
 import { AttentionQueue } from './ojo-events.js';
 import { activateRule, deleteRule, dismissNotice, formatRules, listRules } from './ojo-ignore.js';
 import {
+  DOWNLOADS_OFF_TEXT,
+  ojoOnAnswer,
+  SCREEN_OFF_TEXT,
+  WIDE_EXAMPLE,
+} from './ojo-respuestas.js';
+import {
   getScreenEnabled,
   type ScanOutcome,
   scanScreenOnce,
@@ -3234,6 +3240,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /** La respuesta «precio | iPhone 16, Pixel 9» completa la investigación amplia. */
+  const askWideArgs = (inbound: Inbound): void =>
+    preguntas.ask(chatKey(inbound), 'investiga', {
+      prefix: 'amplio ',
+      accepts: (t) => t.includes('|'),
+    });
+  /** «enciéndelo» tras «apagado (es lo normal)» enciende esa parte del ojo. */
+  const askOjoOn = (inbound: Inbound, what: 'descargas' | 'pantalla'): void =>
+    preguntas.ask(chatKey(inbound), 'ojo', {
+      answer: (t) => (ojoOnAnswer(t) ? `${what} on` : null),
+    });
   const cmdOjo = async (inbound: Inbound, args: string): Promise<void> => {
     const arg = args.trim().toLowerCase();
     const dm = /^descargas(?:\s+(on|off|estado))?$/.exec(arg);
@@ -3248,13 +3265,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (want === 'on' || want === 'off') setDownloadsEnabled(memoryDb, want === 'on');
       const st = await downloadsCtl.apply();
       const on = getDownloadsEnabled(memoryDb);
+      if (!on) askOjoOn(inbound, 'descargas');
       await say(
         inbound,
         on
           ? st.running
             ? 'Descargas: encendido. Te aviso de los archivos nuevos que lleguen a tu carpeta de Descargas (solo el nombre y el tipo, no los abro) en el siguiente barrido; en horas de silencio esperan. /ojo descargas off lo apaga.'
             : `Descargas: encendido, pero ${st.reason ?? 'no he podido empezar a vigilar'}. Puedes fijar la carpeta en la bóveda con ojo:downloadsDir.`
-          : 'Descargas: apagado (es lo normal; /ojo descargas on lo enciende).',
+          : DOWNLOADS_OFF_TEXT,
         { quote: true },
       );
       return;
@@ -3269,11 +3287,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const want = pm[1];
       if (want === 'on' || want === 'off') setScreenEnabled(memoryDb, want === 'on');
+      if (!getScreenEnabled(memoryDb)) askOjoOn(inbound, 'pantalla');
       await say(
         inbound,
         getScreenEnabled(memoryDb)
           ? `Pantalla: encendido. En cada barrido (cada 30 min, fuera de las horas de silencio) miro la pantalla un instante con el OCR de Windows y te aviso de plazos, pagos o importes que vea. No guardo la captura ni el texto bruto (solo aviso con lo que vi, ocultando IBAN, emails, números largos y claves; nombres propios no los reconoce, pueden salir); no miro si hay abierto un banco, un gestor de contraseñas, una ventana privada o algo de salud. Es una lectura que puede fallar. ${screenStatusText(lastScreenScan)} /ojo pantalla off lo apaga.`
-          : 'Pantalla: apagado (es lo normal; /ojo pantalla on lo enciende).',
+          : SCREEN_OFF_TEXT,
         { quote: true },
       );
       return;
@@ -3293,11 +3312,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? null
       : getScreenEnabled(memoryDb)
         ? `Pantalla: encendido. ${screenStatusText(lastScreenScan)}`
-        : 'Pantalla: apagado (/ojo pantalla on lo enciende).';
+        : 'Pantalla: apagado (es lo normal).';
     const downloadsLine = !ownerView
       ? null
       : !dst
-        ? 'Descargas: apagado (/ojo descargas on lo enciende).'
+        ? 'Descargas: apagado (es lo normal).'
         : dst.running
           ? 'Descargas: encendido y vigilando tu carpeta de Descargas.'
           : `Descargas: encendido pero SIN vigilar (${dst.reason ?? 'error'}).`;
@@ -4393,9 +4412,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
       const parsed = parseWideArgs(question.replace(/^amplio\b/i, ''));
       if (!parsed) {
+        askWideArgs(inbound);
         return void (await say(
           inbound,
-          `Dime qué quieres saber y de qué cosas (hasta ${WIDE_MAX_ITEMS}), separando con una barra. Por ejemplo: /investiga amplio precio y garantía | iPhone 16, Pixel 9, Galaxy S25`,
+          `Dime qué quieres saber y de qué cosas (hasta ${WIDE_MAX_ITEMS}), separando con una barra. Por ejemplo: ${WIDE_EXAMPLE}.`,
           { quote: true },
         ));
       }
