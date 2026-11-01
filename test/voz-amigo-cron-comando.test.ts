@@ -60,7 +60,7 @@ describe('rutinas de comando habladas normal', () => {
     expect(cmd?.args).toBe('comando cada día a las 8 ejecuta node saldo.js');
     const r = runCronCommand(deps(), cmd?.args ?? '');
     expect(r).toContain('Programa y argumentos: node saldo.js');
-    expect(r).toContain('Horario: 0 8 * * *');
+    expect(r).toContain('Horario: cada día a las 08:00');
   });
 
   it('parseCommandAdd entiende el horario en palabras y sigue aceptando el de siempre', () => {
