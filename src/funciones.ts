@@ -247,6 +247,7 @@ export const TOOL_ABILITIES: Readonly<
   },
   festivos: { area: 'agenda', text: 'te digo si un día es festivo y qué puentes vienen' },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  trafico: { area: 'agenda', text: 'te digo si hay obras, cortes o accidentes en la carretera' },
   luz: { area: 'agenda', text: 'te digo las horas más baratas de la luz, hoy y mañana' },
   cuentas: {
     area: 'agenda',
