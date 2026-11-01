@@ -95,7 +95,7 @@ describe('limpiar correo: vista previa y lote aprobado', () => {
   it('por remitente, y papelera solo si se pide', async () => {
     const { run } = setup();
     const view = await run({ action: 'limpiar_vista', remitente: 'linkedin', destino: 'papelera' });
-    expect(view).toContain('papelera (recuperable): 1 correos');
+    expect(view).toContain('papelera (recuperable): 1 correo');
   });
 
   it('una regla guardada elige los correos y su acción', async () => {
@@ -107,7 +107,7 @@ describe('limpiar correo: vista previa y lote aprobado', () => {
       accion: 'archivar',
     });
     const view = await run({ action: 'limpiar_vista', id: 1 });
-    expect(view).toContain('archivar: 1 correos');
+    expect(view).toContain('archivar: 1 correo');
     await run({ action: 'limpiar', lote: loteOf(view) });
     expect(calls).toContain('move 4 -> [Gmail]/Todos');
   });

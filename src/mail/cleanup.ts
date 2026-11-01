@@ -90,7 +90,9 @@ export function describeSelection(
   const byCat = new Map<MailCategory, number>();
   for (const m of picked) byCat.set(m.category, (byCat.get(m.category) ?? 0) + 1);
   const senders = [...bySender.entries()].sort((a, b) => b[1].length - a[1].length);
-  const lines = [`${MOVE_TARGET_LABEL[accion]}: ${picked.length} correos.`];
+  const lines = [
+    `${MOVE_TARGET_LABEL[accion]}: ${picked.length} ${picked.length === 1 ? 'correo' : 'correos'}.`,
+  ];
   for (const [sender, list] of senders.slice(0, 8)) {
     const examples = list
       .slice(0, 2)

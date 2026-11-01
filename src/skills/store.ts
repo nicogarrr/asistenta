@@ -256,7 +256,7 @@ export function buildChangeNote(
   const shown = markers.slice(0, MAX_NOTE_MARKERS);
   const hidden = markers.length - shown.length;
   const diff = shown.length > 0 ? ` ${shown.join(' ')}` : '';
-  const more = hidden > 0 ? ` ... y ${hidden} cambios mas` : '';
+  const more = hidden > 0 ? ` ... y ${hidden} ${hidden === 1 ? 'cambio más' : 'cambios más'}` : '';
   return `(${date}, v${version}) ${reason}${diff}${more}`;
 }
 
