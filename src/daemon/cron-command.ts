@@ -600,7 +600,7 @@ export function scheduledAgendaText(deps: {
     .listRoutines()
     .filter((r) => inChatScope(r.scope, deps.chatKey) && r.kind === 'schedule');
   if (!scheduled.length) {
-    return 'No hay rutinas programadas. Puedes crearlas con /routine.';
+    return 'No hay rutinas programadas. Si quieres una, dime qué hago y cuándo, por ejemplo «cada mañana a las 8 el resumen del día».';
   }
   const commandsOn = deps.commandsEnabled ?? commandRoutinesEnabled();
   const live = new Map(deps.routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s]));

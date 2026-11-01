@@ -518,6 +518,8 @@ import {
   type PageWatch,
   PageWatchStore,
   parseVigilaArgs,
+  watchFromAnswer,
+  watchNotFound,
   watchValueText,
 } from './watch/pages.js';
 import { WebRouter } from './web/router.js';
@@ -4246,7 +4248,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
       : undefined;
     if (!w) {
-      return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
+      return void (await say(inbound, watchNotFound(pageWatches.list(inbound.chatId)), {
+        quote: true,
+      }));
     }
     if (w.mutedUntil > Date.now()) askAvisarOtraVez(inbound, w.id);
     await say(inbound, marksCardTitle(describeWatch(w, pageWatches.summary(w.id))), {
@@ -4417,8 +4421,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const cmdDejarDeVigilar = async (inbound: Inbound, args: string): Promise<void> => {
     const id = args.trim();
+    const list = pageWatches.list(inbound.chatId);
+    if (!id && list.length > 0) {
+      // «la de la tele» o el código: la respuesta suelta dice cuál.
+      preguntas.ask(chatKey(inbound), 'dejar_de_vigilar', {
+        answer: (t) => watchFromAnswer(list, t)?.id ?? null,
+      });
+      await say(
+        inbound,
+        `¿Cuál dejo de vigilar? Tienes: ${list
+          .slice(0, 8)
+          .map((w) => w.label || w.url)
+          .join(', ')}.`,
+        { quote: true },
+      );
+      return;
+    }
     const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
-    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : 'No encuentro ese id. Mira /vigilando.', {
+    await say(inbound, ok ? 'Hecho, ya no la vigilo.' : watchNotFound(list), {
       quote: true,
     });
   };
@@ -8006,8 +8026,7 @@ export function vigilaSilenceReply(
   action: 'silenciar' | 'avisar',
   w: { id: string; label: string; url: string; mutedUntil: number } | null | undefined,
 ): { text: string; buttons: Array<{ label: string; action: string }> } {
-  if (!w)
-    return { text: 'No encuentro esa vigilancia en este chat. Mira /vigilando.', buttons: [] };
+  if (!w) return { text: 'No encuentro esa vigilancia en este chat.', buttons: [] };
   const name = w.label || w.url;
   if (action === 'avisar') {
     const mute = commandButton('🔕 Silenciar 1 día', 'vigila', w.id, 'silenciar');
