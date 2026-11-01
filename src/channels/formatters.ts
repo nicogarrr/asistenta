@@ -734,7 +734,13 @@ const DATA_CORRUPT_ERROR =
   /file is not a database|database disk image is malformed|SQLITE_CORRUPT|SQLITE_NOTADB/i;
 const DATA_BUSY_ERROR = /database is locked|SQLITE_BUSY|\bEBUSY\b/i;
 const FILE_DENIED_ERROR =
-  /\b(?:EPERM|EACCES)\b[^\n]*\b(?:open|mkdir|rename|unlink|scandir|copyfile)\b/;
+  /\b(?:EPERM|EACCES)\b(?:[^\n]*\b(?:open|mkdir|rename|unlink|scandir|copyfile)\b|: [^,\n]+, \w+)/;
+/**
+ * La ruta entre comillas de un error de fichero de Node («ENOENT: …, open 'C:\…'»).
+ * Se quita antes de buscar familias: «Factura 401.pdf» o «IMG 429.jpg» se leían como
+ * clave rechazada o límite del modelo.
+ */
+const FS_ERROR_PATH = /(\bE[A-Z]+: [^,\n]+, \w+) '[^'\n]*'(?: -> '[^'\n]*')?/g;
 /** Fallos de programación: el texto es para el registro, no para el chat. */
 const BUG_ERROR =
   /\b(?:Cannot read propert|Cannot set propert|is not a function|is not defined|is not iterable|undefined is not|null is not|Maximum call stack|Unexpected token|ReferenceError|TypeError|SyntaxError|RangeError)\b/;
@@ -759,7 +765,7 @@ export function friendlyError(err: unknown, prefix = ''): string {
       : String(err ?? '');
   const firstLine = raw.split('\n')[0]?.trim() ?? '';
   const code = (err as { code?: unknown } | null)?.code;
-  const probe = `${raw} ${typeof code === 'string' ? code : ''}`;
+  const probe = `${raw.replace(FS_ERROR_PATH, '$1')} ${typeof code === 'string' ? code : ''}`;
   if (BUG_ERROR.test(probe)) {
     return 'Se me ha roto algo por dentro y no he podido terminar. Vuelve a intentarlo en un momento.';
   }
