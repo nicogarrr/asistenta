@@ -56,16 +56,64 @@ function addDays(y: number, m: number, d: number, n: number): [number, number, n
   return [t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()];
 }
 
+const PALABRAS: Readonly<Record<string, number>> = {
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+};
+
+/**
+ * La hora como se dice: «a las ocho», «a la una», «a las 9 y media», «a las 10 y cuarto»,
+ * «a las 6 menos cuarto», «a mediodía». Se reescribe como «a las 9:30» antes de leer.
+ * Antes «a las 9 y media médico» quedaba a las 09:00 con el título «y media médico», y
+ * lo demás no se entendía. Solo la primera hora del texto (la del aviso, no el título).
+ */
+function horaHablada(text: string): string {
+  return text
+    .replace(/\ba\s+mediodia\b/, 'a las 12:00')
+    .replace(
+      /\ba\s+las?\s+(una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b/,
+      // «a la una» es la hora de comer (13:00) salvo «de la madrugada/mañana/noche».
+      (_w, word: string, at: number, all: string) =>
+        word === 'una' &&
+        !/^\s+de\s+la\s+(?:madrugada|manana|noche)\b/.test(all.slice(at + _w.length))
+          ? 'a las 13'
+          : `a las ${PALABRAS[word]}`,
+    )
+    .replace(
+      /\ba\s+las?\s+(\d{1,2})\s+(y\s+media|y\s+cuarto|menos\s+cuarto)\b/,
+      (whole, h: string, how: string) => {
+        const hour = Number(h);
+        if (how.startsWith('y') && hour <= 23) {
+          return `a las ${hour}:${how.endsWith('media') ? '30' : '15'}`;
+        }
+        if (how.startsWith('menos') && hour >= 1 && hour <= 24) return `a las ${hour - 1}:45`;
+        return whole;
+      },
+    );
+}
+
 export function parseFechaCalendario(
   text: string,
   now: Date = new Date(),
   timeZone?: string,
 ): { start: Date; title: string } | null {
   const original = text.normalize('NFC').trim();
-  const m = RE.exec(fold(original));
+  const m = RE.exec(horaHablada(fold(original)));
   if (!m) return null;
-  const titleStart = m.index + m[0].length - (m[17] ?? '').length;
-  const title = original.slice(titleStart).trim();
+  // El título es el final del texto: se toma del original con su misma longitud (la hora
+  // hablada que se reescribió va antes y no cambia el título).
+  const tail = (m[17] ?? '').length;
+  const title = original.slice(original.length - tail).trim();
   if (!title) return null;
   const today = wallClock(now, timeZone);
   let y = today.year;
