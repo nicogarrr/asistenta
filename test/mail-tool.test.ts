@@ -51,7 +51,8 @@ describe('herramienta correo (lectura)', () => {
       { action: 'buscar', de: 'ana', no_leidos: true, dias: 2, max: 50 },
       d,
     );
-    expect(out).toContain('7:42 · 2026-10-30 09:00 · ana@ejemplo.es · Cena viernes · no leído');
+    // Hora local del usuario (vitest fija TZ=Europe/Madrid): 09:00 UTC del 30-oct = 10:00 CET.
+    expect(out).toContain('7:42 · 2026-10-30 10:00 · ana@ejemplo.es · Cena viernes · no leído');
     expect(out).toContain('7:41');
     expect(d.queries[0]).toEqual({
       query: {
@@ -63,6 +64,13 @@ describe('herramienta correo (lectura)', () => {
       },
       limit: 20,
     });
+  });
+  it('la fecha del listado se enseña en la hora local del usuario, no en UTC', async () => {
+    // Regresión: antes se formateaba con toISOString() (UTC) y un correo de las 10:00
+    // se leía como «09:00». TZ=Europe/Madrid la fija vitest.config.ts para toda la suite.
+    const out = await runMailTool({ action: 'buscar' }, deps());
+    expect(out).toContain('2026-10-30 10:00');
+    expect(out).not.toContain('2026-10-30 09:00');
   });
   it('leer devuelve el correo marcado como texto de terceros', async () => {
     const out = await runMailTool({ action: 'leer', ref: '7:42' }, deps());
