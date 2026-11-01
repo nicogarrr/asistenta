@@ -1087,7 +1087,10 @@ ${renderFormatScript()}
           botones.setAttribute('role', 'group');
           botones.setAttribute('aria-label', 'Decisión');
           if (id) {
+            // Lo que pide un especialista solo admite «una vez» o «denegar» (onceOnly).
+            var soloUnaVez = !!(item && typeof item === 'object' && item.onceOnly === true);
             for (var j = 0; j < DECISIONES.length; j += 1) {
+              if (soloUnaVez && DECISIONES[j].id !== 'once' && DECISIONES[j].id !== 'deny') continue;
               (function (identificador, decision, tarjetaActual) {
                 var boton = nodo('button', decision.clase, decision.texto);
                 boton.type = 'button';

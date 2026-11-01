@@ -20,6 +20,11 @@ export interface PendingApproval {
   expiresAt: number;
   chatId?: string;
   threadId?: string;
+  /**
+   * Solo admite «una vez» o «denegar» (lo pide un especialista: nunca deja permisos
+   * para más tarde). «Por ahora» y «Siempre» se rechazan y la pregunta sigue pendiente.
+   */
+  onceOnly?: boolean;
 }
 
 /** TTL por defecto: cinco minutos, igual que la caducidad del canal de Telegram. */
@@ -99,6 +104,7 @@ export class ApprovalBroker {
   resolve(id: string, decision: ApprovalDecision): boolean {
     const entry = this.#pending.get(id);
     if (!entry) return false;
+    if (entry.approval.onceOnly && decision !== 'once' && decision !== 'deny') return false;
 
     // Una aprobación caducada que aún no barrió `expire()` NO puede concederse:
     // se cierra como `deny` y quien intentó aprobar recibe `false`.

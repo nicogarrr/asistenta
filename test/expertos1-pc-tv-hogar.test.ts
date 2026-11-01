@@ -362,8 +362,9 @@ describe('cableado real en cli.ts', () => {
     const source = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const start = source.indexOf('const threadTools = (thread: Thread): AgentTool[] => {');
     const block = source.slice(start, source.indexOf('const gateFor = (', start));
+    // En Telegram, askOncePerTurn (Permitir/Denegar); en el panel, su tarjeta (expertos-3).
     expect(block).toMatch(
-      /delegateTool\(\s*config,\s*\(\) => threadFinal,\s*\(question\) => askOncePerTurn\(thread, question\),?\s*\)/,
+      /delegateTool\(\s*config,\s*\(\) => threadFinal,\s*createSpecialistAsk\(\{[^}]*viaChannel: \(question\) => askOncePerTurn\(thread, question\),[^}]*\}\),?\s*\)/,
     );
   });
 });
