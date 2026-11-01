@@ -1640,7 +1640,7 @@ ${renderFormatScript()}
         try {
           var areas = await pedir('/api/funciones');
           if (!Array.isArray(areas)) throw new Error('Respuesta de funciones inválida');
-          contenedor.replaceChildren(nodo('p', 'muted', 'Lo mismo que /funciones en Telegram: qué sé hacer, por áreas, con un ejemplo de cómo pedirlo.'));
+          contenedor.replaceChildren(nodo('p', 'muted', 'Qué sé hacer, por áreas, con un ejemplo de cómo pedírmelo.'));
           var guardadas = funcionesGuardadas();
           areas.forEach(function (area) {
             // Cada área se pliega (details/summary): en el móvil (≤ 780 px) empiezan

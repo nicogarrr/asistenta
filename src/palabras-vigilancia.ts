@@ -30,3 +30,8 @@ export function evolveNowAnswer(text: string): boolean {
     text.trim(),
   );
 }
+
+/** Un «/algo» que no existe: lo dice y pide la petición en palabras, sin mandar a /help. */
+export function unknownCommandText(name: string): string {
+  return `No conozco «/${name}». Dime con tus palabras qué quieres y me pongo.`;
+}
