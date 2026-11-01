@@ -68,6 +68,10 @@ export interface StatusInfo {
  * fichero cargo) y el modelo de /modelo. Solo para el dueño en privado: la
  * ruta de una carpeta local no se enseña en un grupo.
  */
+/** Sin carpeta de proyecto: cómo ligar una en palabras (la ruta pegada la lee `projectAnswer`). */
+export const PROJECT_NONE_LINE =
+  'Proyecto: ninguno (si quieres que tenga en cuenta una carpeta, pégame su ruta).';
+
 export function conversationStatus(c: {
   projectDir?: string;
   project?: ProjectContext | null;
@@ -75,7 +79,7 @@ export function conversationStatus(c: {
   primaryModel: string;
 }): string[] {
   const project = !c.projectDir
-    ? 'Proyecto: ninguno (/proyecto <carpeta> para ligar uno).'
+    ? PROJECT_NONE_LINE
     : c.project?.ok
       ? `Proyecto: carpeta «${projectFolderName(c.project.dir)}» (tengo en cuenta ${c.project.name}).`
       : `Proyecto: carpeta «${projectFolderName(c.projectDir)}», pero ahora no puedo leer nada: ${c.project?.ok === false ? c.project.reason : 'no hay fichero'}.`;

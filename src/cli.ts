@@ -5493,6 +5493,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         model: thread.agent.modelId,
         primaryModel: thread.agent.availableModels[0] ?? config.model,
       });
+      // Sin carpeta: una ruta pegada en texto normal la liga, como /proyecto <carpeta>.
+      if (!projectContexts.get(thread.key)) {
+        preguntas.ask(chatKey(inbound), 'proyecto', { answer: projectAnswer });
+      }
     }
     const text = formatStatus({
       conversation,

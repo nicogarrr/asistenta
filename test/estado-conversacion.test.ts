@@ -24,9 +24,9 @@ describe('/estado: proyecto y modelo de esta conversación', () => {
     ]);
   });
 
-  it('sin proyecto lo dice y explica cómo ligar uno; con carpeta rota dice por qué no carga', () => {
+  it('sin proyecto lo dice y explica en palabras cómo ligar uno; con carpeta rota dice por qué no carga', () => {
     expect(conversationStatus({ model: 'm', primaryModel: 'm' })).toEqual([
-      'Proyecto: ninguno (/proyecto <carpeta> para ligar uno).',
+      'Proyecto: ninguno (si quieres que tenga en cuenta una carpeta, pégame su ruta).',
       'Modelo: m (principal).',
     ]);
     const [p] = conversationStatus({
