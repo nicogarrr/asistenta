@@ -786,13 +786,18 @@ function summarize(message: MailMessage, kind: CommitmentKind): string {
  * letter, a digit nor a date separator goes too, so one pattern covers both languages.
  */
 function fold(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      // «el 10-12%» es un porcentaje: borrar el «%» lo dejaba como «el 10-12», el 10 de
+      // diciembre. En palabras, la regla de fechas ya sabe que «por ciento» no es fecha.
+      .replace(/\s*%/g, ' por ciento ')
+      .replace(/[^\p{L}\p{N}:/.-]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 // «y diez», «y veinte», «menos veinte», «y treinta y cinco», «y 15» (gaps8): before,
