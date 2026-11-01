@@ -246,6 +246,23 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
     return `Hecho: miro a las 9:00 y a las 19:00 y te aviso cuando alguna gasolinera de ${sitio} tenga el ${label} a ${euros(umbral)} o menos. Para quitarlo, dime «quita el aviso de la gasolina».`;
   };
 
+  /**
+   * Ninguna por debajo del umbral de un aviso puesto: «nada» pasa a ser lo último dicho,
+   * así la vuelta siguiente no escribe «ninguna» tras una bajada o un rato sin servicio
+   * (como el aviso del BOE). Una pregunta suelta con otro umbral no toca el aviso.
+   */
+  const nadaEnAviso = (c: Combustible, umbral: number, sitio: string): string => {
+    const text = sinNovedad(c, umbral, sitio);
+    const { store, scopeOf, delivery } = deps;
+    if (store && scopeOf && delivery) {
+      const scope = scopeOf();
+      const name = avisoRoutineName(c);
+      const prompt = store.getRoutine(scope, name)?.prompt ?? '';
+      if (prompt.includes(`umbral ${umbral} `)) delivery.commit(scope, name, outputHash(text));
+    }
+    return text;
+  };
+
   return {
     name: 'gasolineras',
     label: 'Gasolineras más baratas',
@@ -284,7 +301,7 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
           if (all.length === 0)
             return `No hay precios de ${COMBUSTIBLES[c].label.toLowerCase()} en ${place.name} ahora mismo.`;
           const below = all.filter((g) => g.precio <= umbral + 1e-9);
-          if (below.length === 0) return sinNovedad(c, umbral, place.name);
+          if (below.length === 0) return nadaEnAviso(c, umbral, place.name);
           return `${COMBUSTIBLES[c].label} a ${euros(umbral)} o menos en ${place.name}:\n${below.slice(0, n).map(linea).join('\n')}`;
         }
 
