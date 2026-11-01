@@ -419,6 +419,8 @@ export interface WeatherDay {
   date: string;
   /** «8–17 °C, despejado» o «8–17 °C, lluvia (60 %)». */
   text: string;
+  /** Días desde hoy (0 = hoy), aunque se haya saltado un día sin datos. */
+  offset?: number;
 }
 
 /**
@@ -466,7 +468,7 @@ export async function fetchWeatherDays(
           : `${sky ? `${sky}, ` : ''}${Math.round(rain)} % de lluvia`,
       );
     } else if (sky) parts.push(sky);
-    out.push({ date: String(d?.time?.[i] ?? ''), text: parts.join(', ') });
+    out.push({ date: String(d?.time?.[i] ?? ''), text: parts.join(', '), offset: i });
   }
   return out;
 }
