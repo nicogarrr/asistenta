@@ -17,6 +17,7 @@ import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSy
 import { dirname } from 'node:path';
 import { wallHourMinute } from '../datecontext.js';
 import { log, redact, scrubLogText } from '../log.js';
+import { sliceSafe } from '../text.js';
 
 export type ActionResult = 'ok' | 'error' | 'blocked';
 
@@ -76,7 +77,7 @@ function hhmm(ts: string): string {
 }
 
 function clip(text: string, max = 60): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return text.length > max ? `${sliceSafe(text, max - 1)}…` : text;
 }
 
 function formatEntry(e: ActionEntry): string {

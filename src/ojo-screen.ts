@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { log } from './log.js';
+import { sliceSafe } from './text.js';
 
 /**
  * Ojo de águila, pantalla (opt-in). Cada barrido, y solo si el dueño lo encendió con
@@ -205,7 +206,7 @@ export function findScreenFindings(lines: readonly string[]): ScreenFinding[] {
     if (!CONTEXT.test(line)) continue;
     if (!(DATE_NUM.test(line) || DATE_TXT.test(line) || AMOUNT.test(line))) continue;
     let snippet = redact(line);
-    if (snippet.length > SNIPPET_MAX) snippet = `${snippet.slice(0, SNIPPET_MAX - 1)}…`;
+    if (snippet.length > SNIPPET_MAX) snippet = `${sliceSafe(snippet, SNIPPET_MAX - 1)}…`;
     // Si tras redactar no queda contexto ni fecha/importe, no aporta: fuera.
     if (
       !CONTEXT.test(snippet) ||

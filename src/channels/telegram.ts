@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
+import { sliceSafe } from '../text.js';
 import {
   isTooOldButtonError,
   STALE_TV_BUTTON_NOTICE,
@@ -1723,7 +1724,7 @@ export function commandButton(
 ): { label: string; action: string } | undefined {
   const action = `${COMMAND_CALLBACK_PREFIX}${command} ${sub ? `${sub} ` : ''}${arg}`;
   if (!allowed(command, sub) || !BUTTON_ARG.test(arg) || action.length > 64) return undefined;
-  const short = label.length > 40 ? `${label.slice(0, 39)}…` : label;
+  const short = label.length > 40 ? `${sliceSafe(label, 39)}…` : label;
   return { label: short, action };
 }
 
@@ -2180,7 +2181,7 @@ export function clipDraftText(text: string): string {
   let cut = DRAFT_MAX_CHARS - 1;
   const code = text.charCodeAt(cut - 1);
   if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
-  return `${text.slice(0, cut)}…`;
+  return `${sliceSafe(text, cut)}…`;
 }
 
 /** Lo más que un bot puede descargar de Telegram (getFile de la Bot API); lo mismo que corta downloadFile. */

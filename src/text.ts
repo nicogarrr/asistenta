@@ -32,3 +32,14 @@ export function urlHostname(url: string): string | null {
     return null;
   }
 }
+
+/**
+ * `text.slice(0, end)` sin partir un emoji (par sustituto) por la mitad: un corte a
+ * ciegas dejaba medio carácter suelto, que Telegram enseña como «�» y que un
+ * proveedor de IA puede rechazar como JSON inválido.
+ */
+export function sliceSafe(text: string, end: number): string {
+  const cut = text.slice(0, Math.max(0, end));
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}

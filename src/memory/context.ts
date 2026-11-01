@@ -23,6 +23,7 @@
  * maximum, never a promise: the cap wins.
  */
 import type { MemoryEntry } from '../memory.js';
+import { sliceSafe } from '../text.js';
 import { plainInline } from '../utils.js';
 import { LEARNED_TAG } from './learned-rules.js';
 
@@ -55,7 +56,7 @@ export interface MemoryContextRender {
 const pinned = (entry: MemoryEntry) => entry.tags.includes(LEARNED_TAG);
 
 const snip = (text: string) =>
-  text.length > MEMORY_CONTEXT_SNIPPET ? `${text.slice(0, MEMORY_CONTEXT_SNIPPET)}…` : text;
+  text.length > MEMORY_CONTEXT_SNIPPET ? `${sliceSafe(text, MEMORY_CONTEXT_SNIPPET)}…` : text;
 
 // Entry text is rendered inside the <memory> fence of the context note: a stored
 // fact must not be able to close that fence (see plainInline). Storage is untouched.
@@ -113,6 +114,6 @@ export function renderMemoryContext(entries: MemoryEntry[]): MemoryContextRender
   }
   let body = build(rows, hidden);
   // One pathological entry could exceed the cap on its own; the cap still holds.
-  if (body.length > MEMORY_CONTEXT_CAP) body = `${body.slice(0, MEMORY_CONTEXT_CAP - 1)}…`;
+  if (body.length > MEMORY_CONTEXT_CAP) body = `${sliceSafe(body, MEMORY_CONTEXT_CAP - 1)}…`;
   return { body, active: active.length, superseded, hiddenByCap: hidden, fullShown };
 }

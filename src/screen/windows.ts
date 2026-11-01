@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { childEnv } from '../child-env.js';
+import { sliceSafe } from '../text.js';
 import type { ScreenBackend } from '../tools/computer.js';
 import {
   escapeForSendKeys,
@@ -605,7 +606,7 @@ export function powerShellError(err: unknown, timeoutMs = POWERSHELL_TIMEOUT_MS)
     if (line) lines.push(line);
   }
   const reason = lines.join(' ').replace(/\s+/g, ' ').trim();
-  const short = reason.length > 300 ? `${reason.slice(0, 297)}…` : reason;
+  const short = reason.length > 300 ? `${sliceSafe(reason, 297)}…` : reason;
   const code = typeof e.code === 'number' ? ` (código ${e.code})` : '';
   return new Error(
     short ? `PowerShell falló${code}: ${short}` : `PowerShell falló${code} sin mensaje de error.`,

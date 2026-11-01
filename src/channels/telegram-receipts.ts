@@ -1,3 +1,4 @@
+import { sliceSafe } from '../text.js';
 /**
  * Acuse de recibo de lo que llega con peso: nota de voz, audio, foto o documento.
  *
@@ -42,7 +43,7 @@ export function receiptKind(inbound: ReceiptInput): ReceiptKind | null {
 function shortName(name: string | undefined): string {
   const base = (name ?? '').split(/[\\/]/).pop()?.trim() ?? '';
   if (!base) return '';
-  return base.length > 60 ? `${base.slice(0, 57)}…` : base;
+  return base.length > 60 ? `${sliceSafe(base, 57)}…` : base;
 }
 
 /** El texto inicial del acuse. */

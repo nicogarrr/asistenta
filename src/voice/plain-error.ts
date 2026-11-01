@@ -1,3 +1,5 @@
+import { sliceSafe } from '../text.js';
+
 /**
  * Lo que se ve de un fallo de voz en /conversacion y en el aviso de cierre.
  *
@@ -39,7 +41,7 @@ export function plainVoiceError(err: unknown): string {
   const raw = (err instanceof Error ? err.message : String(err)).trim();
   if (!raw) return 'algo ha fallado por mi parte';
   if (!TECHNICAL.some((p) => p.test(raw)))
-    return raw.length > MAX ? `${raw.slice(0, MAX - 1)}…` : raw;
+    return raw.length > MAX ? `${sliceSafe(raw, MAX - 1)}…` : raw;
   for (const [p, text] of RULES) if (p.test(raw)) return text;
   return 'algo ha fallado por mi parte';
 }

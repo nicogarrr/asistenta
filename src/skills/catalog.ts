@@ -11,6 +11,8 @@
  * pueda avisar). La descarga usa redirecciones manuales para revalidar el
  * esquema en cada salto, timeout global y tope de bytes.
  */
+
+import { sliceSafe } from '../text.js';
 import { secondsText, sizeText } from './import.js';
 import { isSkillId } from './store.js';
 
@@ -399,7 +401,7 @@ const DESC_MAX = 120;
 
 function shortDesc(value: string): string {
   const d = oneLine(value);
-  return d.length > DESC_MAX ? `${d.slice(0, DESC_MAX - 1)}…` : d;
+  return d.length > DESC_MAX ? `${sliceSafe(d, DESC_MAX - 1)}…` : d;
 }
 
 /** Los motivos propios de `fetchCatalog`/`parseCatalog` van en castellano; el resto no se enseña. */

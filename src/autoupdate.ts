@@ -26,6 +26,7 @@ import type { DaemonRunState } from './autostart-watchdog.js';
 import { buildUpdateNotice, savePendingNovedades } from './autoupdate-novedades.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { BUSY_DIR, type BusyState } from './ocupada.js';
+import { sliceSafe } from './text.js';
 
 export { cleanSubject, formatChangelog, successMessage } from './autoupdate-novedades.js';
 
@@ -260,7 +261,7 @@ export function plainLogLine(line: string): string {
     .replace(/[«»]/g, '"')
     .replace(/\s+/g, ' ')
     .trim();
-  if (text.length > 160) text = `${text.slice(0, 159)}…`;
+  if (text.length > 160) text = `${sliceSafe(text, 159)}…`;
   return text;
 }
 
