@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateEntry } from './state-files.js';
 
@@ -34,6 +34,15 @@ export function restorable(name: string): boolean {
   return /\.(json|db|sqlite)$/.test(name);
 }
 
+/** Por qué falló la copia de `name`, dicho para el dueño (no el error crudo de Node). */
+function restoreFailure(err: unknown, name: string): string {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'EBUSY') return `${name} está abierto por otro programa`;
+  if (code === 'EPERM' || code === 'EACCES') return `no tengo permiso para escribir ${name}`;
+  if (code === 'ENOSPC') return 'no queda espacio en el disco';
+  return `falló al copiar ${name}`;
+}
+
 export interface RestoreResult {
   from: string;
   restored: string[];
@@ -49,6 +58,8 @@ export function restoreBackup(opts: {
   date?: string;
   destDir?: string;
   now?: Date;
+  /** Copia un fichero o carpeta de la copia al estado (los tests simulan fallos). */
+  copy?: (from: string, to: string) => void;
 }): RestoreResult {
   const root = opts.destDir ?? join(opts.stateDir, 'backups');
   const available = listBackups(root);
@@ -62,25 +73,41 @@ export function restoreBackup(opts: {
   const savedDir = join(root, `antes-de-restaurar-${stamp}`);
   const restored: string[] = [];
   const skipped: string[] = [];
+  const copy = opts.copy ?? ((a: string, b: string) => cpSync(a, b, { recursive: true }));
+  const setAsideDone: string[] = [];
   const setAside = (name: string): void => {
     const target = join(opts.stateDir, name);
     if (!existsSync(target)) return;
     mkdirSync(savedDir, { recursive: true });
     renameSync(target, join(savedDir, name));
+    setAsideDone.push(name);
   };
-  for (const name of readdirSync(from)) {
-    if (name === 'backups') continue;
-    if (!restorable(name)) {
-      skipped.push(name);
-      continue;
+  let current = '';
+  try {
+    for (const name of readdirSync(from)) {
+      if (name === 'backups') continue;
+      if (!restorable(name)) {
+        skipped.push(name);
+        continue;
+      }
+      current = name;
+      setAside(name);
+      if (/\.(db|sqlite)$/.test(name)) {
+        setAside(`${name}-wal`);
+        setAside(`${name}-shm`);
+      }
+      restored.push(name);
+      copy(join(from, name), join(opts.stateDir, name));
     }
-    setAside(name);
-    if (/\.(db|sqlite)$/.test(name)) {
-      setAside(`${name}-wal`);
-      setAside(`${name}-shm`);
-    }
-    cpSync(join(from, name), join(opts.stateDir, name), { recursive: true });
-    restored.push(name);
+  } catch (err) {
+    // A medias, el estado quedaba mezclado: se deshace todo antes de avisar.
+    for (const name of restored)
+      rmSync(join(opts.stateDir, name), { recursive: true, force: true });
+    for (const name of setAsideDone) renameSync(join(savedDir, name), join(opts.stateDir, name));
+    if (existsSync(savedDir)) rmSync(savedDir, { recursive: true, force: true });
+    throw new Error(
+      `No he podido restaurar la copia del ${wanted}: ${restoreFailure(err, current)}. No he cambiado nada.`,
+    );
   }
   return { from, restored, skipped, savedDir: existsSync(savedDir) ? savedDir : '' };
 }
