@@ -167,7 +167,7 @@ describe('tool tv: launch por nombre, canal, volumen por pasos y command', () =>
     expect(r.details.intent).toEqual({ action: 'power', on: false });
     const r2 = await run(d, { action: 'command', text: 'abre Netflix' });
     expect(calls.at(-1)).toBe('launch:netflix');
-    expect(text(r2)).toMatch(/^Entendido: abrir netflix\./);
+    expect(text(r2)).toMatch(/^Entendido: abrir Netflix\./);
   });
 
   it('command: si no entiende, no toca la tele y da ejemplos', async () => {
