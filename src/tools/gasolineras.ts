@@ -68,6 +68,11 @@ const Params = Type.Object({
         'Only when the owner asks: turn on/off an alert (checked at 9:00 and 19:00) when the fuel drops to umbral or below.',
     }),
   ),
+  rutina: Type.Optional(
+    Type.Boolean({
+      description: 'Only set by the fuel alert routine itself. Never set it otherwise.',
+    }),
+  ),
 });
 
 export interface GasolinerasDeps {
@@ -144,6 +149,10 @@ export function sinNovedad(c: Combustible, umbral: number, sitio: string): strin
 
 const DOWN =
   'No pude consultar los precios de las gasolineras ahora: el servicio del Ministerio no responde. Prueba en un rato.';
+
+/** La rutina del aviso con el Ministerio caído: frase fija, así «solo si cambia» la dice una vez por caída. */
+export const caidoEnRutina = (c: Combustible): string =>
+  `Ahora no he podido mirar el precio del ${COMBUSTIBLES[c].label.toLowerCase()}: el Ministerio no respondía. Sigo mirando a las 9:00 y a las 19:00.`;
 
 const fold = (s: string): string =>
   s
@@ -235,7 +244,7 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
       name,
       kind: 'schedule',
       schedule: AVISO_SCHEDULE,
-      prompt: `Usa la herramienta gasolineras con combustible «${c}» y umbral ${umbral} y responde solo con el texto que te devuelva, tal cual, sin añadir nada.`,
+      prompt: `Usa la herramienta gasolineras con combustible «${c}» y umbral ${umbral} y rutina true y responde solo con el texto que te devuelva, tal cual, sin añadir nada.`,
       enabled: true,
     });
     // «Solo si cambia», y el «ninguna por debajo» ya cuenta como dicho: la rutina solo
@@ -273,12 +282,16 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {
         const chosen = args.combustible ?? defaultFuel();
+        const down =
+          args.rutina === true && chosen && args.umbral !== undefined
+            ? caidoEnRutina(chosen)
+            : DOWN;
         let place: { id: string; name: string } | null;
         try {
           place = await municipio();
         } catch (err) {
           log.warn('gasolineras: fallo al leer municipios', { err: String(err) });
-          return DOWN;
+          return down;
         }
         if (!place)
           return 'No encuentro el municipio de PA_GASOLINERAS_MUNICIPIO. Escríbelo como sale en el mapa, por ejemplo «Oviedo».';
@@ -288,7 +301,7 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
           body = await estaciones(place.id);
         } catch (err) {
           log.warn('gasolineras: fallo al consultar', { err: String(err) });
-          return DOWN;
+          return down;
         }
         const hora = horaDe((body as { Fecha?: unknown })?.Fecha);
         const n = args.cuantas ?? 5;
