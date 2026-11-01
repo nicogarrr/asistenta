@@ -1654,6 +1654,8 @@ export class Gate {
       case 'cargar_herramienta':
       // «¿El lunes es festivo?»: solo el servicio fijo de festivos; sin URL del modelo.
       case 'festivos':
+      // «¿Cómo está el aire?»: sin URL ni lugar del modelo; solo la API fija de calidad del aire.
+      case 'aire':
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
         return 'lee';
@@ -2676,6 +2678,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'festivos',
   'cargar_herramienta',
   'tiempo',
+  'aire',
   'trafico',
   'luz',
   'cuentas',
