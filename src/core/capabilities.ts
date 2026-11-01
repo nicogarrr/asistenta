@@ -131,6 +131,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'OCR local opcional (PA_OCR_LOCAL=1): lee una imagen/PDF de las carpetas permitidas; la Gate decide.',
   },
   {
+    name: 'festivos',
+    note: 'festivos nacionales y de tu comunidad (date.nager.at, sin clave): solo lectura por red.',
+  },
+  {
     name: 'tiempo',
     note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },
