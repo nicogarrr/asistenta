@@ -320,7 +320,7 @@ export function ruleSuppresses(state: IgnoreState, item: AgendaItem): boolean {
 
 export function formatRules(rules: ReturnType<typeof listRules>): string {
   if (rules.length === 0) {
-    return 'No hay reglas de ignorar. Cuando descartes dos avisos parecidos con /ignora <número>, te propongo una.';
+    return 'No hay reglas de ignorar. Cuando descartes dos avisos parecidos, te propongo una.';
   }
   const lines = rules.map(
     (r) =>

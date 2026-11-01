@@ -509,6 +509,7 @@ import {
 } from './watch/compare.js';
 import { forChat, formatOverview, isOverviewTitle, type OverviewEntry } from './watch/overview.js';
 import {
+  AVISAR_OTRA_VEZ,
   type CheckOutcome,
   describeChange,
   describeWatch,
@@ -3335,8 +3336,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const r = res.proposal;
       lines.push(
         '',
-        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime /ignorados activar ${r.id}, o /ignorados borrar ${r.id} para olvidarla.`,
+        `Has descartado ya 2 avisos parecidos (${r.kind} · ${r.src} · «${r.pattern}»). ¿Dejo de avisarte de esa clase? Dime «sí».`,
       );
+      preguntas.ask(chatKey(inbound), 'ignorados', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `activar ${r.id}` : null),
+      });
     }
     const stepped = recordDismissal(memoryDb, Date.now());
     if (stepped) {
@@ -4227,6 +4231,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, r.text + note, { quote: true, format: 'marks', buttons: r.buttons });
   };
 
+  /** Silenciada: «avísame otra vez» quita el silencio sin escribir el comando. */
+  const askAvisarOtraVez = (inbound: Inbound, id: string): void =>
+    preguntas.ask(chatKey(inbound), 'vigila', {
+      answer: (t) => (AVISAR_OTRA_VEZ.test(t.trim()) ? `avisar ${id}` : null),
+    });
   /** /precio <id>: histórico de la vigilancia (mín/mediana/máx, evolución y avisos). */
   const cmdPrecio = async (inbound: Inbound, args: string): Promise<void> => {
     if (precioMuteArgs(args)) {
@@ -4239,6 +4248,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!w) {
       return void (await say(inbound, 'No encuentro ese id. Mira /vigilando.', { quote: true }));
     }
+    if (w.mutedUntil > Date.now()) askAvisarOtraVez(inbound, w.id);
     await say(inbound, marksCardTitle(describeWatch(w, pageWatches.summary(w.id))), {
       quote: true,
       format: 'marks',
@@ -5041,6 +5051,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     const action = parseModelo(args, thread.agent.availableModels);
     if (action.kind === 'show') {
+      const available = thread.agent.availableModels;
+      // «el 2», «normal» o el nombre: la respuesta suelta elige el modelo.
+      if (available.length > 1) {
+        preguntas.ask(chatKey(inbound), 'modelo', {
+          answer: (t) => {
+            const said = t
+              .trim()
+              .replace(/^(?:el|la)\s+/i, '')
+              .replace(/[.!«»"]/g, '');
+            return parseModelo(said, available).kind === 'set' && said ? said : null;
+          },
+        });
+      }
       await say(inbound, formatModelos(thread.agent.availableModels, thread.agent.modelId), {
         quote: true,
       });
@@ -7992,7 +8015,7 @@ export function vigilaSilenceReply(
   }
   const again = commandButton('🔔 Avisar otra vez', 'vigila', w.id, 'avisar');
   return {
-    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}. Para quitarlo antes: /vigila avisar ${w.id}`,
+    text: `🔕 Silenciada 1 día: ${name}. Sigo leyendo el precio, pero no te aviso hasta ${fmtMuteUntil(w.mutedUntil)}.${again ? ' Si quieres que vuelva a avisarte antes, pulsa «🔔 Avisar otra vez».' : ''}`,
     buttons: again ? [again] : [],
   };
 }
