@@ -164,6 +164,19 @@ const failed = (text: string) => text.startsWith('error:');
 /** Tiempo máximo de una grabación web antes de caducar. */
 export const DEMO_TTL_MS = 30 * 60_000;
 
+/** Tras fallar al abrir el navegador, «sí» lo intenta otra vez (Nico, 1 nov). */
+export const WEB_DEMO_RETRY = '¿Lo intento otra vez? Dime «sí».';
+
+/**
+ * Qué espera la respuesta normal a un mensaje de la grabación en una web: «sí» para
+ * reintentar, o el enlace para empezar otra. Null si no hay pregunta.
+ */
+export function webDemoFollowUp(msg: string): 'retry' | 'link' | null {
+  if (msg.endsWith(WEB_DEMO_RETRY)) return 'retry';
+  if (/pásame el enlace\.$/i.test(msg)) return 'link';
+  return null;
+}
+
 export class WebDemoRecorder {
   readonly #active = new Map<string, { host: string; startedMs: number }>();
   readonly #ttlMs: number;
@@ -209,10 +222,10 @@ export class WebDemoRecorder {
       await deps.browser.open(key, url.href, { visible: true });
       const r = await deps.browser.execJs(key, START_JS, { visible: true });
       if (r.timedOut || failed(r.text) || r.text !== 'paDemo:ok') {
-        return 'No pude empezar a grabar en el navegador. Prueba otra vez con /learn web.';
+        return `No pude empezar a grabar en el navegador. ${WEB_DEMO_RETRY}`;
       }
     } catch {
-      return 'No pude abrir el navegador para grabar. Prueba otra vez con /learn web.';
+      return `No pude abrir el navegador para grabar. ${WEB_DEMO_RETRY}`;
     }
     this.#active.set(key, { host: url.hostname, startedMs: this.#now() });
     return `Grabando la demostración en ${url.hostname}. Hazla en la ventana del navegador; cuando acabes, dime «ya está». Las contraseñas no se graban.`;
@@ -245,7 +258,7 @@ export class WebDemoRecorder {
         // El navegador puede estar cerrado ya: no hay nada más que apagar.
       }
       const min = Math.round(this.#ttlMs / 60_000);
-      return `La grabación en ${entry.host} caducó (más de ${min} min) y no se ha guardado nada. Empieza otra con /learn web.`;
+      return `La grabación en ${entry.host} caducó (más de ${min} min) y no se ha guardado nada. Si quieres empezar otra, pásame el enlace.`;
     }
     const raw: unknown[] = [];
     try {
