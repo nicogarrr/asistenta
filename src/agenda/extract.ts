@@ -349,6 +349,15 @@ const DATE_RULES: ReadonlyArray<{
     build: (m, ctx) => slashHit(m, ctx, 88, 'dd/mm'),
   },
   {
+    // «el 3-12»: en España el día y el mes también se escriben con guion. Solo detrás de
+    // «el»/«del»: un «3-12» suelto es un rango («niños de 3-12 años») y «el 10-12 por ciento»
+    // no es una fecha.
+    re: /\b(?:el|del|hasta el|para el) (\d{1,2})-(\d{1,2})\b(?!-?\d| por ciento)/,
+    specificity: 87,
+    rule: 'dd-mm',
+    build: (m, ctx) => slashHit(m, ctx, 87, 'dd-mm'),
+  },
+  {
     // "el día 5" with no month: the next 5th - this month if it has not gone by, else
     // the next month that has that day. With a month after it, 'dia de mes' reads it;
     // "el día 5 de cada mes" is a routine, not a date.
