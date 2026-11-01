@@ -246,13 +246,19 @@ import {
   startupFailureMessage,
   withInboundFailureReply,
 } from './startup.js';
-import { WebDemoRecorder } from './teach-demo-web.js';
+import { WebDemoRecorder, webDemoFollowUp } from './teach-demo-web.js';
 import {
   buildTriggerPrompt,
   formatTriggerList,
   parseTriggerAdd,
   TriggerEngine,
 } from './triggers.js';
+import {
+  CONVERSACION_OFF_HINT,
+  conversacionOffAnswer,
+  MIC_OFF_TEXT,
+  WAKE_AGAIN_ASK,
+} from './wake-texts.js';
 
 /**
  * Never-writable paths, in every mode: the user's secrets, the OS, and the
@@ -3630,6 +3636,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** La respuesta normal («pedir cita») pone nombre a la rutina y empieza a grabar (Nico, 1 nov). */
   const askLearnName = (inbound: Inbound): void =>
     preguntas.ask(chatKey(inbound), 'learn', { answer: learnNameAnswer });
+  /** Grabación en una web: «sí» la reintenta y el enlace como respuesta empieza otra. */
+  const askWebDemo = (inbound: Inbound, msg: string, url: string): void => {
+    const next = webDemoFollowUp(msg);
+    const link = (t: string) => /https?:\/\/\S+/i.exec(t)?.[0];
+    if (next === 'retry') {
+      preguntas.ask(chatKey(inbound), 'learn', {
+        answer: (t) => (SI_RESPUESTA.test(t) ? `web ${url}` : null),
+      });
+    } else if (next === 'link') {
+      preguntas.ask(chatKey(inbound), 'learn', { needsUrl: true, answer: (t) => `web ${link(t)}` });
+    }
+  };
   const cmdLearn = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const name = args.trim();
     if (name.toLowerCase() === 'end') {
@@ -3639,6 +3657,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         vaultValues: vaultSnapshotValues,
       });
       if (web !== null) {
+        askWebDemo(inbound, web, '');
         await say(inbound, web, { quote: true });
         return;
       }
@@ -3730,6 +3749,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         browser: browserFor(thread.key),
       });
       if (msg !== null) {
+        askWebDemo(inbound, msg, webArg[1] ?? '');
         await say(inbound, msg, { quote: true });
         return;
       }
@@ -6831,25 +6851,33 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * nothing to attach this to, and a fabricated id would make it look like a reply to
    * something the user never wrote.
    */
-  const notifyLastChat = async (text: string): Promise<void> => {
+  /** Con `ask`, la respuesta «sí» en ese chat lanza el comando (sin escribirlo). */
+  const notifyLastChat = async (
+    text: string,
+    ask?: { command: string; args: string },
+  ): Promise<void> => {
     const chat = lastChat;
     if (!chat) return;
-    await say(
-      {
-        channel: 'telegram',
-        account: telegram.account,
-        chatId: chat.chatId,
-        threadId: chat.threadId,
-        userId: String(chat.chatId),
-        text: '',
-        authorised: true,
-        messageId: 'wake-notice',
-        receivedAt: new Date().toISOString(),
-      },
-      text,
-      { quote: false },
-    );
+    const to: Inbound = {
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: chat.chatId,
+      threadId: chat.threadId,
+      userId: String(chat.chatId),
+      text: '',
+      authorised: true,
+      messageId: 'wake-notice',
+      receivedAt: new Date().toISOString(),
+    };
+    if (ask) {
+      preguntas.ask(chatKey(to), ask.command, {
+        answer: (t) => (SI_RESPUESTA.test(t) ? ask.args : null),
+      });
+    }
+    await say(to, text, { quote: false });
   };
+  /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
+  const WAKE_ON_ASK = { command: 'wake', args: 'on' };
 
   // ---- spoken conversation (capability 6, V1) --------------------------------
 
@@ -7041,7 +7069,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (told) return;
         told = true;
         void notifyLastChat(
-          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} Vuelve a activarlo con /wake on.`,
+          `${failedReply(`He dejado de escuchar "${wakeWord}"`, err).replace(/\.?$/, '.')} ${WAKE_AGAIN_ASK}`,
+          WAKE_ON_ASK,
         ).catch(() => {});
       },
     });
@@ -7085,9 +7114,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (action === 'need-mic') {
       // Sin listener no hay audio que darle a la sesion: se dice, no se calla.
       log.info('tv button pressed with the mic off', { source });
-      void notifyLastChat(
-        'Has pulsado el botón del mando pero el micrófono está apagado: actívalo con /wake on o /conversacion on.',
-      ).catch(() => {});
+      void notifyLastChat(MIC_OFF_TEXT, WAKE_ON_ASK).catch(() => {});
       return;
     }
     if (action === 'already-open') {
@@ -7321,9 +7348,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     conversationOn = true;
+    preguntas.ask(chatKey(inbound), 'conversacion', { answer: conversacionOffAnswer });
     await say(
       inbound,
-      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio, con "adiós"/"nada más" o con /conversacion off. Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
+      `Conversación por voz activada hasta el próximo reinicio. Di "${wakeWord}" y habla; se cierra tras 45 s en silencio o con "adiós"/"nada más". ${CONVERSACION_OFF_HINT} Las confirmaciones y compras siguen pidiéndose aquí, nunca por voz.`,
       { quote: true },
     );
   };
