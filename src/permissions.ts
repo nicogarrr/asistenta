@@ -1691,6 +1691,9 @@ export class Gate {
         return argString(c.args, 'action') === 'estado' ? 'lee' : null;
       // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
       // «Ya lo he recogido» marca el envío como entregado en la base local.
+      // «¿Cómo está el tráfico?»: solo el feed fijo de la DGT; nunca escribe.
+      case 'trafico':
+        return 'lee';
       case 'repartos':
         return argString(c.args, 'recogido') ? 'escribe-local' : 'lee';
       // «¿Dónde echo gasolina más barata?»: solo la API fija del Ministerio. El aviso
@@ -2670,6 +2673,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'festivos',
   'cargar_herramienta',
   'tiempo',
+  'trafico',
   'luz',
   'cuentas',
   'tareas',

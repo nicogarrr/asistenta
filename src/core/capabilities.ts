@@ -147,6 +147,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },
   {
+    name: 'trafico',
+    note: 'incidencias de tráfico de la DGT (feed DATEX II, sin clave): solo lectura por red.',
+  },
+  {
     name: 'casa',
     note: 'Home Assistant de la red de casa (solo con PA_HA_URL): mirar es lectura; encender o apagar pregunta siempre.',
   },

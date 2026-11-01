@@ -513,6 +513,7 @@ import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTasksTool } from './tools/tasks.js';
+import { createTraficoTool } from './tools/trafico.js';
 import { createTvTool } from './tools/tv.js';
 import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
@@ -2213,6 +2214,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createWeatherTool(() => weatherConfigFromEnv()),
+      // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
+      createTraficoTool(),
       // Home Assistant local, solo si el dueño puso PA_HA_URL (token en el vault).
       ...(process.env.PA_HA_URL?.trim()
         ? [
