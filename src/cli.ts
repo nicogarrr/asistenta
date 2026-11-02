@@ -605,7 +605,13 @@ import { plainVoiceError } from './voice/plain-error.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
-import { DEFAULT_STT_MODEL, SttError, transcribeVoiceNote } from './voice/stt.js';
+import {
+  SMALL_STT_MODEL,
+  SttError,
+  sttModelFromEnv,
+  transcribeVoiceNote,
+  whisperCached,
+} from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { createTtsConVozLocal } from './voice/voz-local.js';
@@ -1156,9 +1162,10 @@ async function doctorCommand(): Promise<number> {
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
     // model is already cached. A cold cache means the first voice note pays a download.
-    const modelCached = existsSync(join(paths.models, ...DEFAULT_STT_MODEL.split('/')));
+    const sttModel = sttModelFromEnv();
+    const sttName = sttModel === SMALL_STT_MODEL ? 'whisper-small' : 'whisper-large-v3-turbo';
     lines.push(
-      `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
+      `voice stt       ${sttName}: ${whisperCached(sttModel) ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );
     lines.push('voice tts       la voz de Windows (sin internet, gratis)');
 
@@ -7137,6 +7144,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Solo si no se oyó nada, para que el silencio no parezca que se ignoró el audio.
           if (!heard.text.trim()) await receipt.show(voiceHeardText(''));
           else await receipt.update(voiceHeardText(heard.text));
+          // Una sola vez: el modelo grande se está bajando y esta nota fue con el pequeño.
+          if (heard.notice) await tell(inbound, heard.notice);
           log.info('voice transcribed', {
             seconds: heard.durationSeconds,
             chars: heard.text.length,
