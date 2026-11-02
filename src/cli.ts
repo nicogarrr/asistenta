@@ -2921,6 +2921,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       },
     });
+    // Sus marcas de «ocupada» son de este chat: /stop en otro chat no las libera.
+    thread.agent.busyOwner = chatKey_;
     // /modelo guardado: solo si sigue configurado (chooseModel lo comprueba).
     const savedModel = modelChoices.get(key);
     if (savedModel) thread.agent.chooseModel(savedModel);
@@ -6516,7 +6518,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     {
       const stopAt = Date.now();
       setTimeout(() => {
-        const freed = releaseBusyOpenedBefore(stopAt);
+        const freed = releaseBusyOpenedBefore(stopAt, chatKey_);
         if (freed > 0) log.warn('/stop: ocupada pegada liberada', { freed });
       }, 5000).unref();
     }

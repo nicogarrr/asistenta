@@ -26,6 +26,11 @@ export interface BusyItem {
   since: string;
 }
 const open = new Set<BusyItem>();
+/**
+ * De qué chat es cada turno o permiso (chatKey), solo en memoria: ocupada.json lo lee otro
+ * proceso y no necesita saberlo. Sin dueño = no se sabe (un especialista, un test).
+ */
+const owners = new WeakMap<BusyItem, string>();
 let interrupted: BusyItem[] = [];
 
 /** Tareas que el cierre anterior cortó a medias (hasta que el dueño las retome o descarte). */
@@ -41,11 +46,16 @@ export function clearInterrupted(): void {
 /**
  * Tras un /stop: lo que sigue abierto 5 s después de abortar y se abrió antes del /stop es un
  * contador pegado (un turno cuyo hijo no murió). Se cierra para que no frene la actualización.
+ * Con `chat`, solo lo de ese chat y lo que no tiene dueño; lo de otro chat sigue abierto.
  */
-export function releaseBusyOpenedBefore(cutoff: number): number {
+export function releaseBusyOpenedBefore(cutoff: number, chat?: string): number {
   let n = 0;
   for (const item of [...open]) {
     if (Date.parse(item.since) > cutoff) continue;
+    // /stop en un chat solo para ese chat: antes también se liberaba un turno o un permiso de
+    // otro chat que seguía en marcha, y la autoactualización podía reiniciar en mitad.
+    const owner = owners.get(item);
+    if (chat !== undefined && owner !== undefined && owner !== chat) continue;
     open.delete(item);
     counts[item.kind] = Math.max(0, counts[item.kind] - 1);
     n += 1;
@@ -111,9 +121,10 @@ function previousOpenItems(file: string): BusyItem[] {
 }
 
 /** Abre un turno o una aprobación; la función devuelta lo cierra (una sola vez). */
-export function busyBegin(kind: BusyKind, label = ''): () => void {
+export function busyBegin(kind: BusyKind, label = '', owner?: string): () => void {
   counts[kind] += 1;
   const item: BusyItem = { kind, label: sliceSafe(label, 80), since: new Date().toISOString() };
+  if (owner) owners.set(item, owner);
   open.add(item);
   write();
   let isOpen = true;
