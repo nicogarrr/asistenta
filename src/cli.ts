@@ -1937,6 +1937,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // El chat del dueño usa SIEMPRE el mismo perfil de Chrome: inicia sesión una vez
       // (WhatsApp Web, Gmail...) y vale para todos sus hilos. Los demás chats siguen con
       // perfil propio, para que una sesión iniciada no se vea desde otra conversación.
+      cdpPort: config.browserCdpPort,
       sharedProfileKey: (scope) => {
         try {
           return ownerBrowserProfileKey(scope, vigilanteOwnerId);
