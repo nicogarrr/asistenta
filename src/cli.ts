@@ -678,6 +678,8 @@ const WAKE_TAIL_MS = 2_000;
 import { booksSetupCommand } from './books/setup-cli.js';
 import {
   cliFatalMessage,
+  memoryExportCaption,
+  profileMigratedText,
   unknownCommandMessage,
   vaultEmptyValueText,
   vaultListText,
@@ -5832,7 +5834,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           Number(inbound.chatId),
           bytes,
           'memoria.json',
-          `Memoria de este chat (${entries.length} entradas)`,
+          memoryExportCaption(entries.length),
         );
       } catch (err) {
         log.warn('memory export send failed', { err });
@@ -5955,7 +5957,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (sub === 'migrar') {
       const legacy = snapshot ? snapshot.load() : '';
       const migrated = profile.migrateFromLegacy(legacy);
-      await say(inbound, `Migrados ${migrated} hechos del perfil antiguo.`, { quote: true });
+      await say(inbound, profileMigratedText(migrated), { quote: true });
       return;
     }
     if (sub === 'exportar' || sub === 'export') {
