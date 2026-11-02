@@ -56,7 +56,24 @@ export function xmlTag(xml: string, tag: string): string | undefined {
   return value ? value : undefined;
 }
 
-export type TvBrand = 'lg' | 'sony' | 'roku';
+export type TvBrand = 'lg' | 'sony' | 'roku' | 'samsung';
+
+/** Es una tele Samsung (no un móvil ni una barra): «[TV]» en el nombre, su ST de mando o un modelo de tele. */
+export function isSamsungTv(info: {
+  manufacturer?: string;
+  friendlyName?: string;
+  modelName?: string;
+  st?: string;
+}): boolean {
+  if (/RemoteControlReceiver/i.test(info.st ?? '') && /samsung/i.test(info.manufacturer ?? '')) {
+    return true;
+  }
+  if (!/samsung/i.test(info.manufacturer ?? '')) return false;
+  return (
+    /^\s*\[TV\]/i.test(info.friendlyName ?? '') ||
+    /^(UE|QE|UN|QN|GQ|GU|LS)\d/i.test(info.modelName ?? '')
+  );
+}
 
 /** Es un Roku (o una tele con Roku dentro): su SERVER o su fabricante lo dicen. */
 export function isRoku(info: { server?: string; manufacturer?: string; st?: string }): boolean {
@@ -214,6 +231,7 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         'urn:dial-multiscreen-org:service:dial:1',
         'urn:schemas-sony-com:service:ScalarWebAPI:1',
         'roku:ecp',
+        'urn:samsung.com:device:RemoteControlReceiver:1',
       ]) {
         try {
           socket.send(msearch(st), SSDP_PORT, SSDP_ADDR, () => {});
@@ -267,7 +285,9 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         ? 'lg'
         : isRoku(info)
           ? 'roku'
-          : (undefined as never);
+          : isSamsungTv(info)
+            ? 'samsung'
+            : (undefined as never);
     if (!brand) continue;
     const uuid = tv.uuid ?? uuidFromUsn(tv.usn);
     out.push({

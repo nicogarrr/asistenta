@@ -81,5 +81,8 @@ export async function saveTvClientKey(host: string, key: string): Promise<void> 
   const tv = list.find((t) => t.host === host);
   if (tv)
     await vaultSet(TV_REGISTRY_KEY, registryToJson(upsertTv(list, { ...tv, clientKey: key })));
-  if ((await vaultGet(TV_HOST_KEY)) === host) await vaultSet(TV_CLIENT_KEY, key);
+  // tv:clientKey es la clave LG de la activa: el token de otra marca no va ahí.
+  if ((tv?.brand ?? 'lg') === 'lg' && (await vaultGet(TV_HOST_KEY)) === host) {
+    await vaultSet(TV_CLIENT_KEY, key);
+  }
 }
