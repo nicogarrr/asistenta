@@ -153,7 +153,8 @@ describe('delegate(specialist)', () => {
 
   it('especialista desconocido: hijo generico de siempre y se avisa en details', async () => {
     const r = await delegate({ task: 'mira esto', specialist: 'astrologo' });
-    expect(r.text).toBe('hecho');
+    expect(r.text).toMatch(/^Aviso: no existe el especialista «astrologo»/);
+    expect(r.text.endsWith('\n\nhecho')).toBe(true);
     expect(r.details).toMatchObject({ unknownSpecialist: 'astrologo' });
     expect(r.details).not.toHaveProperty('specialist');
     const spec = specs[0] as ChildSpec;
