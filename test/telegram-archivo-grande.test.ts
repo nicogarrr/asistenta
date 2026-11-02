@@ -76,7 +76,7 @@ describe('archivo reenviado de más de 20 MB', () => {
 
   it('cli.ts usa la frase del límite en las notas de archivo', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli.match(/tooBigForBotDownload\(inbound\.documentSizeBytes\)/g)).toHaveLength(3);
+    expect(cli.match(/tooBigForBotDownload\(doc\.sizeBytes\)/g)).toHaveLength(3);
     expect(cli).toContain('tooBigForBotDownload(inbound.audioSizeBytes)');
   });
 });

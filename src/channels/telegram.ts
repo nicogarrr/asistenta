@@ -544,8 +544,9 @@ export class TelegramChannel implements ChannelAdapter {
     }
     // Un álbum llega como un mensaje por foto con el mismo media_group_id: antes cada
     // foto era un turno y «¿cuál te gusta más?» recibía una respuesta suelta por foto.
+    // Igual con varios documentos enviados de una vez: un turno «indexado» por fichero.
     const album = (msg as { media_group_id?: string }).media_group_id;
-    if (album && inbound.photoFileId && !inbound.documentFileId && !inbound.audioFileId) {
+    if (album && (inbound.photoFileId || inbound.documentFileId) && !inbound.audioFileId) {
       this.#holdAlbum(`${inbound.chatId}:${album}`, inbound, handlers);
       return;
     }
@@ -597,8 +598,9 @@ export class TelegramChannel implements ChannelAdapter {
   >();
 
   /**
-   * Junta las fotos de un álbum en el primer mensaje: el resto de fotos, y el texto si
-   * venía en otra foto. Sale como un solo turno cuando deja de llegar ninguna.
+   * Junta las fotos (o documentos) de un álbum en el primer mensaje: el resto de
+   * ficheros, y el texto si venía en otro. Sale como un solo turno cuando deja de
+   * llegar ninguno.
    */
   #holdAlbum(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
     const held = this.#albumHeld.get(key);
@@ -613,6 +615,18 @@ export class TelegramChannel implements ChannelAdapter {
     const more = first.albumPhotoFileIds ?? [];
     if (inbound.photoFileId && more.length < ALBUM_MAX_PHOTOS - 1) {
       first.albumPhotoFileIds = [...more, inbound.photoFileId];
+    }
+    const docs = first.albumDocuments ?? [];
+    if (inbound.documentFileId && docs.length < ALBUM_MAX_PHOTOS - 1) {
+      first.albumDocuments = [
+        ...docs,
+        {
+          fileId: inbound.documentFileId,
+          mimeType: inbound.documentMimeType,
+          name: inbound.documentName,
+          sizeBytes: inbound.documentSizeBytes,
+        },
+      ];
     }
     if (inbound.text) first.text = first.text ? `${first.text}\n${inbound.text}` : inbound.text;
   }

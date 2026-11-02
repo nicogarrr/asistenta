@@ -111,7 +111,7 @@ import {
   receiptStartText,
   voiceHeardText,
 } from './channels/telegram-receipts.js';
-import type { ChannelAudio, Inbound, Outbound } from './channels/types.js';
+import type { AlbumDocument, ChannelAudio, Inbound, Outbound } from './channels/types.js';
 import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
@@ -6708,48 +6708,51 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           );
         documentNote = notes.filter(Boolean).join('\n');
       }
-      if (inbound.documentFileId) {
-        const label = inbound.documentName ?? inbound.documentMimeType ?? 'documento';
-        const docMime = inbound.documentMimeType?.toLowerCase() ?? '';
+      // Un documento (y cada uno más de un álbum: varios ficheros enviados de una vez)
+      // se lee e indexa igual; antes cada fichero del álbum era un turno suelto.
+      const indexDocument = async (doc: InboundDocument): Promise<string> => {
+        let note = '';
+        const label = doc.name ?? doc.mimeType ?? 'documento';
+        const docMime = doc.mimeType?.toLowerCase() ?? '';
         if (imageExtension(docMime)) {
-          const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
-          documentNote = bytes
+          const bytes = await telegram.downloadFile(doc.fileId).catch(() => null);
+          note = bytes
             ? await indexImage(
                 bytes,
                 docMime,
-                inbound.documentFileId,
-                inbound.documentName ?? inbound.text,
+                doc.fileId,
+                doc.name ?? inbound.text,
                 `Imagen reenviada "${label}"`,
               )
-            : `[Imagen reenviada: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
+            : `[Imagen reenviada: ${label}. ${tooBigForBotDownload(doc.sizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
         } else if (docMime.startsWith('audio/')) {
-          const bytes = await telegram.downloadFile(inbound.documentFileId).catch(() => null);
+          const bytes = await telegram.downloadFile(doc.fileId).catch(() => null);
           if (!bytes) {
-            documentNote = `[Audio reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
+            note = `[Audio reenviado: ${label}. ${tooBigForBotDownload(doc.sizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
           } else {
             try {
               const heard = await transcribeVoiceNote(bytes, { mimeType: docMime });
               const indexed = docMemory.indexTranscript(
                 memoryScopesFor(thread.key).write,
-                inbound.messageId,
+                doc.ref,
                 heard.text,
-                inbound.documentName ?? inbound.text,
+                doc.name ?? inbound.text,
               );
-              documentNote = indexed
+              note = indexed
                 ? `[Audio reenviado: "${label}", transcrito e indexado${indexed.truncated ? ' PARCIALMENTE (la transcripción era demasiado larga)' : ''} en la memoria documental (${indexed.chars} caracteres)${heard.truncated ? ', leyendo solo los primeros 15 minutos del audio' : ''}. La transcripción puede tener errores. Úsalo con la herramienta documents cuando pregunte por él.]`
                 : `[Audio reenviado: ${label}. No se entendió ninguna palabra; no se indexó nada.]`;
             } catch (err) {
               log.warn('audio document index failed', { err: String(err) });
-              documentNote = forwardedAudioFailNote(label, err);
+              note = forwardedAudioFailNote(label, err);
             }
           }
-        } else if (!canExtract(inbound.documentMimeType, inbound.documentName)) {
-          documentNote = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), libros EPUB, imágenes con texto y audios (notas de voz, mp3, m4a, wav). Los formatos antiguos (doc, xls, ppt) no.]`;
+        } else if (!canExtract(doc.mimeType, doc.name)) {
+          note = `[Documento reenviado: ${label}. No se indexó: por ahora leo PDF con texto, archivos de texto, Word/Excel/PowerPoint modernos (docx, xlsx, pptx), LibreOffice (odt, ods, odp), libros EPUB, imágenes con texto y audios (notas de voz, mp3, m4a, wav). Los formatos antiguos (doc, xls, ppt) no.]`;
         } else {
           try {
-            const bytes = await telegram.downloadFile(inbound.documentFileId);
+            const bytes = await telegram.downloadFile(doc.fileId);
             if (!bytes) {
-              documentNote = `[Documento reenviado: ${label}. ${tooBigForBotDownload(inbound.documentSizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
+              note = `[Documento reenviado: ${label}. ${tooBigForBotDownload(doc.sizeBytes) ?? 'Telegram no devolvió el archivo.'}]`;
             } else {
               // The thread key is the memory scope everywhere: the documents
               // tool reads with () => thread.key, so indexing MUST use the
@@ -6757,9 +6760,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               const indexed = await docMemory.index(
                 memoryScopesFor(thread.key).write,
                 {
-                  fileId: inbound.documentFileId,
-                  name: inbound.documentName,
-                  mimeType: inbound.documentMimeType,
+                  fileId: doc.fileId,
+                  name: doc.name,
+                  mimeType: doc.mimeType,
                 },
                 bytes,
               );
@@ -6783,13 +6786,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                       index: (md) =>
                         docMemory.indexOcr(
                           memoryScopesFor(thread.key).write,
-                          inbound.documentFileId ?? label,
+                          doc.fileId,
                           md,
                           inbound.text,
                         ),
                     })
                   : null;
-              documentNote = indexed
+              note = indexed
                 ? indexed.truncated
                   ? `[Documento reenviado: "${indexed.title}", indexado PARCIALMENTE en la memoria documental (${indexed.chars} primeros caracteres indexados; el resto no cabe). Úsalo con la herramienta documents cuando pregunte por él.]`
                   : `[Documento reenviado: "${indexed.title}", indexado en la memoria documental (${indexed.chunks} fragmentos, ${indexed.chars} caracteres). Úsalo con la herramienta documents cuando pregunte por él.]`
@@ -6798,9 +6801,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }
           } catch (err) {
             log.warn('document index failed', { err });
-            documentNote = `[Documento reenviado: ${label}. Falló la indexación: ${err instanceof Error ? err.message : String(err)}]`;
+            note = `[Documento reenviado: ${label}. Falló la indexación: ${err instanceof Error ? err.message : String(err)}]`;
           }
         }
+        return note;
+      };
+      if (inbound.documentFileId) {
+        const notes: string[] = [];
+        for (const doc of inboundDocuments(inbound)) notes.push(await indexDocument(doc));
+        documentNote = notes.join('\n');
       }
 
       await settleFileReceipt();
@@ -8566,6 +8575,29 @@ export function voiceNotePrompt(
  */
 export function withReplyQuote(prompt: string, quote: string | undefined, linked: boolean): string {
   return quote && !linked ? `${quote}\n${prompt}` : prompt;
+}
+
+/** Un documento del mensaje, con la referencia con la que se indexa su transcripción. */
+export interface InboundDocument extends AlbumDocument {
+  ref: string;
+}
+
+/**
+ * El documento del mensaje y, si llegó en un álbum (varios ficheros a la vez), el resto,
+ * en orden: se leen todos en el mismo turno.
+ */
+export function inboundDocuments(inbound: Inbound): InboundDocument[] {
+  if (!inbound.documentFileId) return [];
+  return [
+    {
+      fileId: inbound.documentFileId,
+      mimeType: inbound.documentMimeType,
+      name: inbound.documentName,
+      sizeBytes: inbound.documentSizeBytes,
+      ref: inbound.messageId,
+    },
+    ...(inbound.albumDocuments ?? []).map((d) => ({ ...d, ref: d.fileId })),
+  ];
 }
 
 /**
