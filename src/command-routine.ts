@@ -66,27 +66,33 @@ export function displayArgv(argv: string[]): string {
     .join(' ');
 }
 
+/** Comillas dobles que abren y las que cierran cada una (las del móvil: “…”, „…”). */
+const DOUBLE_CLOSE: Record<string, string> = { '"': '"”', '“': '”“"', '„': '”“"' };
+
 /**
  * Trocea una línea en argv como lo haría una persona, sin shell: espacios separan,
  * comillas simples o dobles agrupan; dentro de dobles solo `\"` es escape (las rutas
- * de Windows conservan sus `\`).
+ * de Windows conservan sus `\`). Las comillas tipográficas que pone el teclado del
+ * móvil (“ ” „) agrupan igual que `"`; un apóstrofo dentro de una palabra
+ * («C:\Users\O'Brien») es parte de ella. Antes las dos cosas rompían la ruta.
  * Devuelve null si una comilla queda abierta.
  */
 export function splitArgv(line: string): string[] | null {
   const out: string[] = [];
   let cur = '';
   let has = false;
-  let quote: '"' | "'" | null = null;
+  // Lo que cierra la comilla abierta, o null fuera de comillas.
+  let close: string | null = null;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i] as string;
-    if (quote) {
-      if (ch === quote) quote = null;
-      else if (quote === '"' && ch === '\\' && line[i + 1] === '"') cur += line[++i];
+    if (close !== null) {
+      if (close.includes(ch)) close = null;
+      else if (close !== "'" && ch === '\\' && line[i + 1] === '"') cur += line[++i];
       else cur += ch;
       continue;
     }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
+    if (DOUBLE_CLOSE[ch] !== undefined || (ch === "'" && cur === '')) {
+      close = DOUBLE_CLOSE[ch] ?? "'";
       has = true;
     } else if (/\s/.test(ch)) {
       if (has) out.push(cur);
@@ -97,7 +103,7 @@ export function splitArgv(line: string): string[] | null {
       has = true;
     }
   }
-  if (quote) return null;
+  if (close !== null) return null;
   if (has) out.push(cur);
   return out;
 }
