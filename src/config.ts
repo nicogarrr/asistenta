@@ -52,6 +52,8 @@ export interface Config {
    * screenshots included, is refused before touching the desktop. On by default.
    */
   computerUse?: boolean;
+  /** Con map: true, dibuja el número de cada elemento sobre la captura (Set-of-Mark). */
+  computerMarks?: boolean;
   /** How long to wait after an action before comparing frames. Windows animations land in ~250ms. */
   verifySettleMs: number;
   /** Cron jobs from PA_CRON, newline separated `schedule<TAB>prompt`. */
@@ -259,6 +261,7 @@ export function loadConfig(): Config {
     // "off" instead of "invalid".
     verifyActions: flag('PA_VERIFY_ACTIONS', true),
     computerUse: flag('PA_COMPUTER_USE', true),
+    computerMarks: flag('PA_COMPUTER_MARKS', true),
     verifySettleMs: num('PA_VERIFY_SETTLE_MS', 350),
     cron,
     retry: {

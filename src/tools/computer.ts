@@ -10,6 +10,8 @@ import {
   describeElement,
   type ElementLookup,
   formatMap,
+  type MarkBox,
+  marksOf,
   shareMap,
   type UiElement,
   type UiMap,
@@ -109,7 +111,8 @@ export interface ScreenShot {
 }
 
 export interface ScreenBackend {
-  screenshot(): Promise<ScreenShot>;
+  /** `marks`: cajas numeradas que dibujar sobre la imagen (Set-of-Mark). */
+  screenshot(opts?: { marks?: readonly MarkBox[] }): Promise<ScreenShot>;
   click(x: number, y: number, opts?: { button?: string; clicks?: number }): Promise<void>;
   move(x: number, y: number): Promise<void>;
   drag(x: number, y: number, toX: number, toY: number): Promise<void>;
@@ -257,7 +260,9 @@ const ComputerParams = lazySchema(() =>
       Type.Boolean({
         description:
           'For screenshot: also return a numbered map of the buttons, fields, menus and tabs ' +
-          'of the active window, read from Windows itself. Then use element instead of x/y.',
+          'of the active window, read from Windows itself, with each number drawn on the ' +
+          'image. Then use element instead of x/y. With look: true on any other action, the ' +
+          'screen after it comes with a fresh map too.',
       }),
     ),
     element: Type.Optional(
@@ -626,6 +631,63 @@ export function createComputerTool(
   };
 
   /**
+   * Captura + mapa de la ventana activa. El mapa se lee primero para poder dibujar sus
+   * números sobre la captura (Set-of-Mark, `PA_COMPUTER_MARKS`); si el mapa falla, la
+   * captura llega igual y se dice por qué. Las coordenadas del texto van en píxeles de
+   * la captura, como las de cualquier clic.
+   */
+  const captureWithMap = async (
+    drawMarks: boolean,
+  ): Promise<{ shot: Screenshot; mapText: string; mapDetails: Record<string, unknown> }> => {
+    if (!backend.uiMap) {
+      return {
+        shot: await backend.screenshot(),
+        mapText: 'El mapa de ventanas solo existe en Windows; usa la captura.',
+        mapDetails: {},
+      };
+    }
+    let map: UiMap | null = null;
+    let failure = '';
+    try {
+      mapSeq += 1;
+      map = await backend.uiMap(`m${Date.now().toString(36)}-${mapSeq}`, DEFAULT_MAP_LIMIT);
+    } catch (err) {
+      failure = errorText(err);
+    }
+    lastMap = map;
+    shareMap(map);
+    const marks =
+      map && drawMarks && config.computerMarks !== false && map.elements.length > 0
+        ? marksOf(map)
+        : [];
+    const shot = marks.length ? await backend.screenshot({ marks }) : await backend.screenshot();
+    if (!map) {
+      return {
+        shot,
+        // Sin mapa la captura sigue valiendo: se dice y se sigue con coordenadas.
+        mapText: `No he podido leer el mapa de la ventana (${failure}); usa la captura.`,
+        mapDetails: { mapError: failure },
+      };
+    }
+    const toView = (x: number, y: number) => ({
+      x: Math.round((x * shot.width) / shot.nativeWidth),
+      y: Math.round((y * shot.height) / shot.nativeHeight),
+    });
+    return {
+      shot,
+      mapText:
+        formatMap(map, toView) +
+        (marks.length ? '\nCada número está dibujado sobre su elemento en la captura.' : ''),
+      mapDetails: {
+        mapElements: map.elements.length,
+        mapTotal: map.total,
+        mapPartial: map.partial,
+        marks: marks.length > 0,
+      },
+    };
+  };
+
+  /**
    * `look: true`: the screen after the action, as the same image a `screenshot`
    * action returns, so the model checks the result and picks its next target in
    * the SAME tool call instead of paying another round trip for a screenshot. The
@@ -633,9 +695,23 @@ export function createComputerTool(
    * model's size); otherwise one capture after the settle delay. It also becomes
    * the coordinate space for the next click, like any screenshot.
    */
-  const lookAfter = async (): Promise<ContentBlock[]> => {
+  const lookAfter = async (withMap = false): Promise<ContentBlock[]> => {
     let shot = lastAfter;
-    if (!shot) {
+    let mapText = '';
+    if (withMap) {
+      // `look` + `map`: la pantalla de después CON su mapa nuevo, para seguir por número
+      // (un menú que se acaba de abrir) sin otra vuelta al modelo solo para mirar.
+      if (!shot) await sleep(config.verifySettleMs);
+      try {
+        const mapped = await captureWithMap(true);
+        shot = mapped.shot;
+        mapText = mapped.mapText;
+      } catch (err) {
+        return [
+          { type: 'text', text: `No he podido capturar la pantalla después (${errorText(err)}).` },
+        ];
+      }
+    } else if (!shot) {
       await sleep(config.verifySettleMs);
       try {
         shot = await backend.screenshot();
@@ -653,6 +729,7 @@ export function createComputerTool(
         text: `Captura tras la acción: ${shot.width}x${shot.height}. Origen arriba a la izquierda.`,
       },
       { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
+      ...(mapText ? [{ type: 'text' as const, text: mapText }] : []),
     ];
   };
 
@@ -822,45 +899,15 @@ export function createComputerTool(
             at: null,
           };
         }
-        const shot: Screenshot = await backend.screenshot();
+        // Con map, el mapa va antes que la captura: así la imagen puede llevar dibujados
+        // los números (y es la foto más reciente). Una captura que va al chat sale limpia.
+        const mapped = wantsMap
+          ? await captureWithMap(record.send !== true)
+          : { shot: await backend.screenshot(), mapText: '', mapDetails: {} };
+        const { shot, mapText, mapDetails } = mapped;
         view = { width: shot.width, height: shot.height };
         viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
-        let mapText = '';
-        let mapDetails: Record<string, unknown> = {};
-        if (wantsMap) {
-          if (!backend.uiMap) {
-            mapText = 'El mapa de ventanas solo existe en Windows; usa la captura.';
-          } else {
-            const shown = { width: shot.width, height: shot.height };
-            const real = { width: shot.nativeWidth, height: shot.nativeHeight };
-            const toView = (x: number, y: number) => ({
-              x: Math.round((x * shown.width) / real.width),
-              y: Math.round((y * shown.height) / real.height),
-            });
-            try {
-              mapSeq += 1;
-              const map = await backend.uiMap(
-                `m${Date.now().toString(36)}-${mapSeq}`,
-                DEFAULT_MAP_LIMIT,
-              );
-              lastMap = map;
-              shareMap(map);
-              mapText = formatMap(map, toView);
-              mapDetails = {
-                mapElements: map.elements.length,
-                mapTotal: map.total,
-                mapPartial: map.partial,
-              };
-            } catch (err) {
-              // Sin mapa la captura sigue valiendo: se dice y se sigue con coordenadas.
-              lastMap = null;
-              shareMap(null);
-              mapText = `No he podido leer el mapa de la ventana (${errorText(err)}); usa la captura.`;
-              mapDetails = { mapError: errorText(err) };
-            }
-          }
-        }
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
         const sent =
           record.send === true
@@ -1313,6 +1360,8 @@ export function createComputerTool(
       'On Windows, screenshot with map: true also lists the buttons, fields, menus and tabs of',
       'the active window, numbered. Then click or type with element: N instead of x/y: it',
       'lands on the exact control. Prefer it whenever the target is in the map.',
+      'With a map you can fill several fields and press a button in ONE batch of element',
+      'actions; add look: true and map: true to see the result with its new map.',
       'Every click, drag, type and keypress returns a VERIFICACION line saying whether',
       'the screen really changed (once for a whole batch). If it says it did not, do not',
       'repeat the action: take a fresh screenshot and locate the element again, because the',
@@ -1345,7 +1394,7 @@ export function createComputerTool(
           if (args.action === 'batch') {
             const out = await runBatch(record, signal);
             if (!wantsLook) return out;
-            return { ...out, content: [...out.content, ...(await lookAfter())] };
+            return { ...out, content: [...out.content, ...(await lookAfter(record.map === true))] };
           }
           if (signal?.aborted && args.action !== 'screenshot') {
             // A queued call that arrives after /stop must not touch mouse or keyboard.
@@ -1355,7 +1404,10 @@ export function createComputerTool(
           }
           const out = await runAction(record, { verifyResult: true });
           if (!wantsLook) return { content: out.content, details: out.details };
-          return { content: [...out.content, ...(await lookAfter())], details: out.details };
+          return {
+            content: [...out.content, ...(await lookAfter(record.map === true))],
+            details: out.details,
+          };
         })();
         return withSlowNote(out, Date.now() - startedAt);
       } catch (err) {

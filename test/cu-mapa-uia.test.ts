@@ -207,7 +207,7 @@ describe('computer: screenshot con map y acciones por elemento', () => {
     expect(out.content.map((c) => c.type)).toEqual(['text', 'image', 'text']);
     expect(text(out)).toContain('[8] Botón «Guardar» en 903,624');
     expect(out.details).toMatchObject({ mapElements: 10, mapTotal: 12, mapPartial: false });
-    expect(f.calls).toEqual(['screenshot', 'map']);
+    expect(f.calls).toEqual(['map', 'screenshot']);
   });
 
   it('sin map la captura no pide el árbol (nada cambia para lo de siempre)', async () => {

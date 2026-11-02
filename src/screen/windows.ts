@@ -18,7 +18,9 @@ import { PsHost, PsHostLost, PsScriptError, recordPsLatency } from './ps-host.js
 import {
   type ElementLookup,
   elementScript,
+  type MarkBox,
   mapScript,
+  marksScript,
   parseElement,
   parseMap,
   type UiMap,
@@ -134,7 +136,7 @@ export class WindowsScreen implements ScreenBackend {
     this.#maxEdge = maxEdge;
   }
 
-  async screenshot(): Promise<{
+  async screenshot(opts: { marks?: readonly MarkBox[] } = {}): Promise<{
     image: Buffer;
     mimeType: string;
     /** Size of the returned image. Coordinates the model uses are in this space. */
@@ -146,7 +148,7 @@ export class WindowsScreen implements ScreenBackend {
   }> {
     const dir = this.#temp();
     const out = join(dir, `shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-    const { stdout } = await this.#physicalPs(captureScript(out, this.#maxEdge));
+    const { stdout } = await this.#physicalPs(captureScript(out, this.#maxEdge, opts.marks ?? []));
     if (!existsSync(out)) {
       throw new Error('screen capture produced no file (is there an interactive desktop session?)');
     }
@@ -475,7 +477,11 @@ ${up}
  * alternative would be a native image encoder, which costs more than the bytes it
  * saves.
  */
-export function captureScript(out: string, maxEdge: number): string {
+export function captureScript(
+  out: string,
+  maxEdge: number,
+  marks: readonly MarkBox[] = [],
+): string {
   const path = out.replace(/'/g, "''");
   return `
 $ErrorActionPreference='Stop'
@@ -494,7 +500,7 @@ $bmp = New-Object System.Drawing.Bitmap $w, $h
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen($b[0], $b[1], 0, 0, $bmp.Size)
 $g.Dispose()
-if ($scale -lt 1.0) {
+${marksScript(marks)}if ($scale -lt 1.0) {
   $small = New-Object System.Drawing.Bitmap $tw, $th
   $g2 = [System.Drawing.Graphics]::FromImage($small)
   $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
