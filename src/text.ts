@@ -43,3 +43,14 @@ export function sliceSafe(text: string, end: number): string {
   const last = cut.charCodeAt(cut.length - 1);
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
+
+/**
+ * Texto de reserva cuando Telegram no acepta un fichero exportado: el contenido en el
+ * mensaje, hasta `max` caracteres. Si no cabe entero lo dice, en vez de mandar un
+ * JSON cortado sin avisar.
+ */
+export function fileFallbackText(content: string, max = 3500): string {
+  const cut = sliceSafe(content, max);
+  if (cut.length === content.length) return `No pude enviar el archivo; aquí va:\n${content}`;
+  return `No pude enviar el archivo; aquí van los primeros ${cut.length} de ${content.length} caracteres (va cortado):\n${cut}\n…`;
+}

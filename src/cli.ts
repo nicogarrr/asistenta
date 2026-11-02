@@ -36,7 +36,7 @@ import {
   projectStateReply,
 } from './project-context.js';
 import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
-import { foldAccents, sliceSafe } from './text.js';
+import { fileFallbackText, foldAccents, sliceSafe } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
 import './envfile.js';
 import { execFile } from 'node:child_process';
@@ -5846,11 +5846,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         );
       } catch (err) {
         log.warn('memory export send failed', { err });
-        await say(
-          inbound,
-          `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
-          { quote: true },
-        );
+        await say(inbound, fileFallbackText(bytes.toString('utf8')), { quote: true });
       }
       return;
     }
@@ -5898,11 +5894,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
     } catch (err) {
       log.warn('session export send failed', { err });
-      await say(
-        inbound,
-        `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
-        { quote: true },
-      );
+      await say(inbound, fileFallbackText(bytes.toString('utf8')), { quote: true });
     }
   };
   /** Perfil v2: hechos estructurados y por propietario, con export y borrado. */
@@ -5986,11 +5978,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           'Perfil estructurado (v2)',
         );
       } catch {
-        await say(
-          inbound,
-          `No pude enviar el archivo; aquí va:\n${sliceSafe(bytes.toString('utf8'), 3500)}`,
-          { quote: true },
-        );
+        await say(inbound, fileFallbackText(bytes.toString('utf8')), { quote: true });
       }
       return;
     }
